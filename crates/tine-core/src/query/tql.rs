@@ -33,8 +33,16 @@ use crate::query::ir::{
 /// a pathological nesting cannot exhaust the stack inside the parser.
 const RECURSION_LIMIT: usize = 64;
 
-/// The ONE TQL entry point: text → `Query`.
-pub(crate) fn parse_tql(text: &str) -> (Query, ViewSettings) {
+/// The ONE TQL entry point: text → `Query`, against a registry snapshot.
+///
+/// The registry changes exactly one thing: an unknown identifier or function
+/// names the nearest property keys the graph actually has (§4.2.2). Nothing is
+/// ever rewritten — a suggestion is text. Pass
+/// [`crate::query::registry::Registry::none`] where there is no graph.
+pub(crate) fn parse_tql(
+    text: &str,
+    registry: &crate::query::registry::Registry,
+) -> (Query, ViewSettings) {
     let mut diagnostics = Vec::new();
     let pre = pre_pass(text, &mut diagnostics);
     let filter = match parse_expr_guarded(&pre.sql) {
@@ -47,6 +55,7 @@ pub(crate) fn parse_tql(text: &str) -> (Query, ViewSettings) {
                 let mut lower = Lower {
                     anchor: pre.anchor,
                     diagnostics: &mut diagnostics,
+                    registry,
                 };
                 let scope = match pre.anchor {
                     Anchor::Block => Scope::Block,
@@ -584,6 +593,10 @@ enum Target {
 struct Lower<'a> {
     anchor: Anchor,
     diagnostics: &'a mut Vec<Diagnostic>,
+    /// The snapshot `UnknownIdent` suggestions are drawn from (§4.2.2, §6.2).
+    /// Never consulted for anything else: the vocabulary is the whitelist in
+    /// this file, not whatever keys a graph happens to hold.
+    registry: &'a crate::query::registry::Registry,
 }
 
 impl Lower<'_> {
@@ -657,8 +670,8 @@ impl Lower<'_> {
                     format!("`{other}` is a value, not a condition"),
                 ),
             },
-            Expr::Identifier(ident) => self.reject(
-                DiagnosticKind::UnknownIdent,
+            Expr::Identifier(ident) => self.reject_ident(
+                &ident.value,
                 format!("`{ident}` is not a condition on its own"),
             ),
             other => self.reject(
@@ -863,8 +876,8 @@ impl Lower<'_> {
                         key: crate::doc::property_key_norm(&key),
                     }),
                     _ => {
-                        self.reject(
-                            DiagnosticKind::UnknownIdent,
+                        self.reject_ident(
+                            &name,
                             format!("`{name}` is not something the query language compares"),
                         );
                         None
@@ -881,21 +894,37 @@ impl Lower<'_> {
         }
     }
 
-    /// SPEC §4.2.2 guard 2. Suggestions are the registry's nearest keys, which
-    /// the registry does not yet exist to provide (Wave B): the list is empty
-    /// rather than guessed, and nothing is rewritten silently.
+    /// SPEC §4.2.2 guard 2. Suggestions are the registry's nearest keys —
+    /// property keys the graph actually has, written as the `prop('…')` call
+    /// that would have worked. Nothing is rewritten silently.
     fn unknown_ident(&mut self, name: &str) {
-        self.diagnostics.push(Diagnostic::new(
+        let diagnostic = Diagnostic::new(
             DiagnosticKind::UnknownIdent,
             format!("`{name}` is not a field of this query"),
-        ));
+        );
+        self.diagnostics.push(self.suggested(diagnostic, name));
+    }
+
+    /// Attach the registry's nearest keys to a diagnostic that named an
+    /// identifier the vocabulary does not have.
+    fn suggested(&self, mut diagnostic: Diagnostic, name: &str) -> Diagnostic {
+        diagnostic.suggestions = self.registry.suggestions(name);
+        diagnostic
+    }
+
+    /// `reject` for the identifier-shaped rejections, which carry suggestions.
+    fn reject_ident(&mut self, name: &str, message: impl Into<String>) -> Filter {
+        let diagnostic = Diagnostic::new(DiagnosticKind::UnknownIdent, message);
+        self.diagnostics.push(self.suggested(diagnostic, name));
+        Filter::False
     }
 
     // -- values -------------------------------------------------------------
 
-    /// The compared type: an attribute's fixed type, or — for a property atom,
-    /// until the registry lands (Wave B, §6) — the type of the literal it is
-    /// compared against, which is what the walk's atom comparison already does.
+    /// The compared type: an attribute's fixed type, or — for a property atom —
+    /// the type the literal spells. This types the IR's *value*, not the atom:
+    /// the atom is coerced at evaluation by its key's effective type (§6.3), so
+    /// the same printed query answers correctly under either.
     fn value_type(&mut self, target: &Target, operand: &Expr) -> ValueType {
         match target {
             Target::Attr { ty, .. } => *ty,
@@ -1024,8 +1053,8 @@ impl Lower<'_> {
             ("any", 2) => self.quantified(Quant::Any, args[0], args[1], scope),
             ("every", 2) => self.quantified(Quant::Every, args[0], args[1], scope),
             ("none", 2) => self.quantified(Quant::None, args[0], args[1], scope),
-            _ => self.reject(
-                DiagnosticKind::UnknownIdent,
+            _ => self.reject_ident(
+                &name,
                 format!("`{name}` is not a function of the query language"),
             ),
         }
@@ -1073,10 +1102,7 @@ impl Lower<'_> {
                 let pred = self.filter(pred, Scope::Block);
                 Filter::rel(Rel::Blocks, quant, pred)
             }
-            (name, _) => self.reject(
-                DiagnosticKind::UnknownIdent,
-                format!("`{name}` is not a relation of this row"),
-            ),
+            (name, _) => self.reject_ident(name, format!("`{name}` is not a relation of this row")),
         }
     }
 }
@@ -1192,8 +1218,8 @@ fn op_applies(target: &Target, op: CmpOp, ty: ValueType) -> bool {
     }
 }
 
-/// The type a literal spells, used as the effective type of a property atom
-/// until the registry lands (Wave B).
+/// The type a literal spells. It decides how the IR stores the VALUE; the atom
+/// it is compared against is typed by the registry at evaluation (§6.3).
 fn literal_type(expr: &Expr) -> ValueType {
     match expr {
         Expr::Nested(inner) => literal_type(inner),
@@ -1298,7 +1324,7 @@ mod tests {
     use crate::query::ir::Leaf;
 
     fn parse(text: &str) -> Query {
-        parse_tql(text).0
+        parse_tql(text, crate::query::registry::Registry::none()).0
     }
 
     fn ok(text: &str) -> Filter {
@@ -1543,13 +1569,95 @@ mod tests {
 
     // -- vocabulary ---------------------------------------------------------
 
+    /// A registry holding exactly these property keys and nothing else, so a
+    /// suggestion test asserts on the keys it named rather than on a fixture
+    /// graph's incidental vocabulary.
+    fn registry_with(keys: &[&str]) -> crate::query::registry::Registry {
+        use crate::query::atom::AtomFormat;
+        use crate::query::registry::{build_registry, OwnerRow, OwnerType, PageMeta};
+        let config = crate::config::ParseConfig::default();
+        let rows = keys.iter().enumerate().map(|(index, key)| OwnerRow {
+            owner_type: OwnerType::Block,
+            owner_id: format!("block-{index}"),
+            page_id: "page".to_string(),
+            source_name: (*key).to_string(),
+            normalized_name: crate::doc::property_key_norm(key),
+            ordinal: 0,
+            value: "v".to_string(),
+        });
+        build_registry(
+            rows,
+            &|_| {
+                Some(PageMeta {
+                    format: AtomFormat::Markdown,
+                    name: "page".to_string(),
+                })
+            },
+            &config,
+        )
+        .expect("every row names the one page")
+    }
+
     #[test]
     fn an_unknown_identifier_is_named_and_never_rewritten() {
         let diagnostics = rejected("frobnicate = 'x'");
         assert!(diagnostics
             .iter()
             .any(|d| d.kind == DiagnosticKind::UnknownIdent));
+        // Against no registry there is nothing to suggest, and a guess is not
+        // a suggestion: the list is empty rather than invented.
         assert!(diagnostics.iter().all(|d| d.suggestions.is_empty()));
+        // The filter is refused either way -- a suggestion never rewrites.
+        assert_eq!(parse("frobnicate = 'x'").filter, Filter::False);
+    }
+
+    #[test]
+    fn an_unknown_identifier_suggests_the_registrys_nearest_keys() {
+        let registry = registry_with(&["status", "statuses", "author", "unrelated"]);
+        let (query, _) = parse_tql("statuss = 'done'", &registry);
+        let diagnostic = query
+            .diagnostics
+            .iter()
+            .find(|d| d.kind == DiagnosticKind::UnknownIdent)
+            .expect("an unknown identifier is named");
+        // Best first: `statuses` shares one more leading character with
+        // `statuss` than `status` does, so Jaro-Winkler ranks it above.
+        assert_eq!(
+            diagnostic.suggestions,
+            vec!["prop('statuses')".to_string(), "prop('status')".to_string()],
+        );
+        // Suggesting is not rewriting (I-22): the query is still refused.
+        assert_eq!(query.filter, Filter::False);
+    }
+
+    #[test]
+    fn a_registry_key_that_is_nothing_like_the_identifier_is_not_suggested() {
+        let registry = registry_with(&["author", "unrelated"]);
+        let (query, _) = parse_tql("statuss = 'done'", &registry);
+        assert!(query.diagnostics.iter().all(|d| d.suggestions.is_empty()));
+    }
+
+    #[test]
+    fn an_unknown_function_and_an_unknown_relation_suggest_keys_too() {
+        let registry = registry_with(&["status"]);
+        let (function, _) = parse_tql("statuss('done')", &registry);
+        assert_eq!(
+            function
+                .diagnostics
+                .iter()
+                .find(|d| d.kind == DiagnosticKind::UnknownIdent)
+                .map(|d| d.suggestions.clone()),
+            Some(vec!["prop('status')".to_string()]),
+        );
+        let (relation, _) = parse_tql("any(statuss, content = 'x')", &registry);
+        assert_eq!(
+            relation
+                .diagnostics
+                .iter()
+                .find(|d| d.kind == DiagnosticKind::UnknownIdent)
+                .map(|d| d.suggestions.clone()),
+            Some(vec!["prop('status')".to_string()]),
+        );
     }
 
     #[test]

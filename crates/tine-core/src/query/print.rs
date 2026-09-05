@@ -752,7 +752,7 @@ mod tests {
     use crate::query::{parse_query_text, tql::parse_tql};
 
     fn tql(source: &str) -> Query {
-        parse_tql(source).0
+        parse_tql(source, crate::query::registry::Registry::none()).0
     }
 
     fn og(source: &str) -> (Query, ViewSettings) {

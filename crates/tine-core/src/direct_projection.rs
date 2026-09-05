@@ -203,6 +203,7 @@ impl DirectProjection {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn sparse_task_query(
         &self,
         graph_root: &Path,
@@ -212,6 +213,8 @@ impl DirectProjection {
         query_src: &str,
         max_rows: usize,
         max_bytes: usize,
+        config: &crate::config::ParseConfig,
+        registry: &crate::query::registry::Registry,
     ) -> Option<BoundedGroups> {
         let eligibility = sparse_task_query_eligibility(query_src)?;
         if !self.shared.ready.load(Ordering::Acquire)
@@ -301,9 +304,15 @@ impl DirectProjection {
                 })
             })
             .collect::<Option<Vec<_>>>()?;
-        let result =
-            run_parser_sparse_task_query_bounded(&candidates, query_src, max_rows, max_bytes)
-                .ok()?;
+        let result = run_parser_sparse_task_query_bounded(
+            &candidates,
+            query_src,
+            max_rows,
+            max_bytes,
+            config,
+            registry,
+        )
+        .ok()?;
         let current = (self.shared.ready.load(Ordering::Acquire)
             && self.shared.ready_generation.load(Ordering::Acquire) == cache_generation)
             .then_some(result);

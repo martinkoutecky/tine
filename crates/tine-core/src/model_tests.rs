@@ -21065,3 +21065,388 @@ fn graph_text_writers_take_the_identity_gate_before_any_page_lock() {
         inversions.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// The observed property registry: lifecycle and cache identity
+// (SPEC §6.2 end, §6.4, §5.9 guards (b) and (c); dossier B3, B4, O11).
+
+/// A graph with one property key, one page NAMED after that key carrying a
+/// `tine.type::` declaration, and one page that is not a key page.
+fn registry_graph(tag: &str) -> PathBuf {
+    let dir = scratch(tag);
+    fs::write(
+        dir.join("pages/Data.md"),
+        "- row one\n  score:: 01\n- row two\n  score:: 02\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("pages/score.md"),
+        "tine.type:: number\n\n- the key page\n",
+    )
+    .unwrap();
+    fs::write(dir.join("pages/Unrelated.md"), "- nothing to do with it\n").unwrap();
+    dir
+}
+
+#[test]
+fn a_key_page_save_advances_the_registry_generation_and_an_unrelated_save_does_not() {
+    let dir = registry_graph("registry-key-page-save");
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+    let before = graph.property_registry_generation();
+
+    // A page that is not a property key: its rows are covered by the page-cache
+    // generation, and nothing about the key's declarations moved.
+    let unrelated = graph
+        .load_named("Unrelated", PageKind::Page)
+        .unwrap()
+        .unwrap();
+    graph
+        .save_page(&unrelated, unrelated.rev.as_deref())
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        graph.property_registry_generation(),
+        before,
+        "an unrelated save changes no row and no declaration"
+    );
+
+    // The key page. Its `tine.type::` is what the walk coerces by, so the
+    // snapshot has to be rebuilt even though no property ROW changed.
+    let mut key_page = graph.load_named("score", PageKind::Page).unwrap().unwrap();
+    key_page.blocks[0].raw = "the key page, reworded".into();
+    key_page.pre_block = Some("tine.type:: text".to_string());
+    graph.save_page(&key_page, key_page.rev.as_deref()).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        graph.property_registry_generation() > before,
+        "a declaration change advances the generation"
+    );
+    assert_eq!(
+        graph
+            .property_registry()
+            .effective_type("score")
+            .expect("the key is in the registry"),
+        crate::query::ir::ObservedType::Text,
+        "the declared type overrides the observed one (§6.3)"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// SPEC §5.9 guard (b): a declared-type change on a key page evicts every
+/// cached typed query over that key.
+///
+/// The edit is deliberately a page the query does not participate in, so
+/// per-page retention (`page_affects_query`) keeps the entry and only the
+/// registry generation can evict it. The answer flips because `01` is the
+/// number 1 under a number key and the text `01` under a text key.
+#[test]
+fn a_declared_type_change_evicts_the_cached_typed_query_it_retypes() {
+    let dir = registry_graph("registry-declared-type-eviction");
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+
+    let matched = |graph: &Graph| -> usize {
+        graph
+            .run_query_bounded("(property score 1)", usize::MAX, usize::MAX)
+            .groups
+            .iter()
+            .map(|group| group.blocks.len())
+            .sum()
+    };
+    assert_eq!(
+        matched(&graph),
+        1,
+        "under a number key `01` is the number 1"
+    );
+
+    let mut key_page = graph.load_named("score", PageKind::Page).unwrap().unwrap();
+    key_page.pre_block = Some("tine.type:: text".to_string());
+    graph.save_page(&key_page, key_page.rev.as_deref()).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+
+    assert_eq!(
+        matched(&graph),
+        0,
+        "under a text key `01` is not `1` -- a served stale entry would still say 1"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// SPEC §5.9 guard (c), Direct Files half (E6): a query with NO property leaf
+/// is still config-sensitive, because `journal_page_title_format` decides
+/// whether a page in `pages/` is a journal day at all. The config is read at
+/// open, so the guard is a reopen — and the digest is what keeps the two
+/// answers apart in the cache.
+#[test]
+fn a_journal_title_format_change_answers_a_journal_day_query_anew() {
+    let dir = scratch("registry-journal-title-format");
+    fs::create_dir_all(dir.join("logseq")).unwrap();
+    // A title none of the default fallback patterns recognises (`yyyy_MM_dd`,
+    // `MMM do, yyyy`, `yyyy-MM-dd`), so the classification turns on the
+    // configured title format alone.
+    fs::write(
+        dir.join("pages/25-12-2020.md"),
+        "- a day written as a page\n",
+    )
+    .unwrap();
+
+    let day_rows = |graph: &Graph| -> usize {
+        graph
+            .run_query_bounded("(between -10y +10y)", usize::MAX, usize::MAX)
+            .groups
+            .iter()
+            .map(|group| group.blocks.len())
+            .sum()
+    };
+
+    let before = Graph::open(&dir);
+    before.warm_cache();
+    assert_eq!(
+        day_rows(&before),
+        0,
+        "under the default formats the title parses as nothing, so it is an ordinary page"
+    );
+    let before_digest = before.config.parse_config().digest();
+    drop(before);
+
+    fs::write(
+        dir.join("logseq/config.edn"),
+        "{:journal/page-title-format \"dd-MM-yyyy\"}\n",
+    )
+    .unwrap();
+    let after = Graph::open(&dir);
+    after.warm_cache();
+    let after_digest = after.config.parse_config().digest();
+    assert_ne!(
+        before_digest, after_digest,
+        "the title format is one of the six projected-fact inputs (§5.8)"
+    );
+    assert_eq!(
+        day_rows(&after),
+        1,
+        "the same page is now a journal day inside the interval"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Two readers racing the rebuild never see a half-built table: every snapshot
+/// handed out is internally complete, and one generation always means one set
+/// of rows.
+#[test]
+fn concurrent_readers_never_observe_a_half_built_registry() {
+    let dir = registry_graph("registry-concurrent-readers");
+    let graph = Arc::new(Graph::open(&dir));
+    graph.warm_cache();
+
+    let observations = Arc::new(std::sync::Mutex::new(Vec::<(u64, Vec<String>)>::new()));
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let graph = Arc::clone(&graph);
+        let observations = Arc::clone(&observations);
+        handles.push(std::thread::spawn(move || {
+            for _ in 0..40 {
+                let snapshot = graph.property_registry();
+                let shape = snapshot
+                    .rows()
+                    .iter()
+                    .map(|row| {
+                        format!(
+                            "{}:{:?}:{}",
+                            row.normalized_name, row.observed_type, row.count_blocks
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                // A snapshot is never empty-but-generation-advanced: the key is
+                // in every published table this graph can produce.
+                assert!(
+                    shape.iter().any(|row| row.starts_with("score:")),
+                    "a published snapshot always carries the graph's keys: {shape:?}"
+                );
+                observations
+                    .lock()
+                    .unwrap()
+                    .push((snapshot.generation(), shape));
+            }
+        }));
+    }
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let observations = observations.lock().unwrap();
+    let mut by_generation: std::collections::BTreeMap<u64, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for (generation, shape) in observations.iter() {
+        match by_generation.get(generation) {
+            Some(seen) => assert_eq!(
+                seen, shape,
+                "generation {generation} was published with two different tables"
+            ),
+            None => {
+                by_generation.insert(*generation, shape.clone());
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// O11: the registry built from the Direct Files document iterator and the one
+/// built from the Managed per-page owner rows are the same table. The two
+/// producers disagree only about opaque owner identity, which the aggregation
+/// deliberately does not carry.
+#[test]
+fn every_implemented_row_source_builds_the_same_registry() {
+    let dir = registry_graph("registry-source-identity");
+    fs::write(
+        dir.join("pages/More.md"),
+        "tags:: alpha, beta\n\n- another row\n  score:: 7\n  note:: [[Book]], plain\n",
+    )
+    .unwrap();
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+    let config = graph.config.parse_config();
+
+    let (document_rows, document_pages) = crate::query::property_owner_rows(&graph);
+    let from_documents = crate::query::registry::build_registry(
+        document_rows.into_iter(),
+        &|page_id| document_pages.get(page_id).cloned(),
+        &config,
+    )
+    .expect("every document row names its own page");
+
+    // The Managed producer's shape: one page DTO at a time, page properties
+    // included, keyed by an opaque per-snapshot page id.
+    let mut managed_rows = Vec::new();
+    let mut managed_pages = std::collections::HashMap::new();
+    graph.with_pages(|entries| {
+        for (entry, _) in entries {
+            let page = graph
+                .load_named(&entry.name, entry.kind)
+                .unwrap()
+                .expect("a page the inventory listed loads");
+            let page_id = format!("managed:{}", entry.rel_path);
+            managed_pages.insert(
+                page_id.clone(),
+                crate::query::registry::PageMeta {
+                    format: Format::from_path(Path::new(&entry.rel_path)).into(),
+                    name: entry.name.clone(),
+                },
+            );
+            managed_rows.extend(crate::query::application_page_property_owner_rows(
+                &page, &page_id, true,
+            ));
+        }
+    });
+    let from_managed = crate::query::registry::build_registry(
+        managed_rows.into_iter(),
+        &|page_id| managed_pages.get(page_id).cloned(),
+        &config,
+    )
+    .expect("every managed row names its own page");
+
+    assert_eq!(
+        from_documents.rows(),
+        from_managed.rows(),
+        "the two implemented row sources build one table"
+    );
+    assert!(
+        from_documents
+            .rows()
+            .iter()
+            .any(|row| row.normalized_name == "score"),
+        "the fixture's key is actually in the table"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The registry build is a whole-graph pass, so its cost is reported rather
+/// than assumed. The bound the dossier asks for is measured on the anonymized
+/// corpus by the lane and recorded in the receipt; this test measures the same
+/// code on a graph it can construct, so a regression that made the build
+/// quadratic fails here instead of in the field.
+#[test]
+fn the_registry_build_is_measured_and_bounded() {
+    let dir = scratch("registry-build-timing");
+    for page in 0..200 {
+        let mut text = String::new();
+        for block in 0..10 {
+            text.push_str(&format!(
+                "- block {block}\n  score:: {block}\n  note:: [[Ref {block}]], plain text\n"
+            ));
+        }
+        fs::write(dir.join(format!("pages/Page {page}.md")), text).unwrap();
+    }
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+    let config = graph.config.parse_config();
+
+    let mut micros = Vec::new();
+    for _ in 0..20 {
+        let started = Instant::now();
+        let (rows, pages) = crate::query::property_owner_rows(&graph);
+        let registry = crate::query::registry::build_registry(
+            rows.into_iter(),
+            &|page_id| pages.get(page_id).cloned(),
+            &config,
+        )
+        .expect("every row names its own page");
+        micros.push(started.elapsed().as_micros() as u64);
+        assert!(!registry.rows().is_empty());
+    }
+    micros.sort_unstable();
+    let median = micros[micros.len() / 2];
+    println!("REGISTRYBUILD\tpages=200\tblocks=2000\tmedian_micros={median}");
+    assert!(
+        median < 2_000_000,
+        "a 2000-block graph must not take seconds to aggregate: {median} us"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The same measurement against a REAL graph, named by
+/// `TINE_REGISTRY_TIMING_GRAPH`, so the dossier's bound can be re-measured on
+/// the anonymized corpus by anyone who has it:
+///
+/// ```text
+/// TINE_REGISTRY_TIMING_GRAPH=~/research/logseq-anonymized \
+///   cargo test --release -p tine-core registry_build_timing_on_a_real_graph \
+///   -- --ignored --nocapture
+/// ```
+///
+/// Ignored by default: it needs a graph this repository does not ship, and it
+/// prints a number rather than asserting one — the bound is a receipt line the
+/// manager reads, not a threshold that should fail a build on a slow machine.
+/// It prints page and block COUNTS and a duration, never any content.
+#[test]
+#[ignore = "needs a real graph named by TINE_REGISTRY_TIMING_GRAPH"]
+fn registry_build_timing_on_a_real_graph() {
+    let Ok(root) = std::env::var("TINE_REGISTRY_TIMING_GRAPH") else {
+        panic!("set TINE_REGISTRY_TIMING_GRAPH to a graph directory");
+    };
+    let graph = Graph::open(std::path::Path::new(&root));
+    graph.warm_cache();
+    let config = graph.config.parse_config();
+
+    let mut micros = Vec::new();
+    let mut rows_seen = 0usize;
+    let mut keys_seen = 0usize;
+    for _ in 0..20 {
+        let started = Instant::now();
+        let (rows, pages) = crate::query::property_owner_rows(&graph);
+        rows_seen = rows.len();
+        let registry = crate::query::registry::build_registry(
+            rows.into_iter(),
+            &|page_id| pages.get(page_id).cloned(),
+            &config,
+        )
+        .expect("every row names its own page");
+        micros.push(started.elapsed().as_micros() as u64);
+        keys_seen = registry.rows().len();
+    }
+    micros.sort_unstable();
+    println!(
+        "REGISTRYBUILD\tgraph=<named by env>\tproperty_rows={rows_seen}\tkeys={keys_seen}\tmedian_micros={}",
+        micros[micros.len() / 2]
+    );
+}

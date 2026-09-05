@@ -13,7 +13,8 @@ adapter call edges.
 | --- | --- | --- | --- | --- |
 | application_page_block_referrers | `crates/tine-core/src/query.rs` | adapter | collect_reference_matches | Walks the page's projected forest through the shared reference visitor; owns no traversal of its own. |
 | application_page_property_dto | `crates/tine-core/src/query.rs` | necessary | — | Projects one Managed page-property DTO input. |
-| application_page_property_pairs | `crates/tine-core/src/query.rs` | necessary | — | Normalizes Managed wire property pairs. |
+| application_page_property_owner_rows | `crates/tine-core/src/query.rs` | necessary | — | Owner-preserving property rows of one Managed overlay page: the property registry's overlay source (SPEC §6.2). Owner identity is exactly what the pair form drops. |
+| application_page_property_pairs | `crates/tine-core/src/query.rs` | adapter | application_page_property_owner_rows | Normalizes Managed wire property pairs by projecting the owner rows to `(key, value)` — one producer, not a twin. |
 | application_page_reference_matches | `crates/tine-core/src/query.rs` | adapter | collect_reference_matches | Matches references over a page's projected forest through the shared reference visitor. |
 | application_page_templates | `crates/tine-core/src/query.rs` | adapter | visit_template_blocks | Walks Managed DTO shape and delegates each result to the canonical template leaf. |
 | application_query_doc_block | `crates/tine-core/src/query.rs` | necessary | — | Rehydrates a complete Managed DTO subtree. |
@@ -66,9 +67,15 @@ adapter call edges.
 | application_preview_block_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed bounded-subtree preview boundary. |
 | application_projection_roots | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Owns the cached complete DocBlock view for a Managed page. |
 | application_property_facets_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed property-facet index plus overlay. |
+| application_property_registry | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Owns the Managed-only refusal policy for the property registry: a refused materialized read serves the last published snapshot rather than a half-built table (D-3 recovery). |
+| application_property_registry_cache_key | `crates/tine-core/src/sync_runtime.rs` | necessary | — | The evidence stamp a registry snapshot was built from — accepted frontier pair plus `ParseConfig::digest()` — so an unchanged graph reuses the snapshot instead of rebuilding it per query (SPEC §6.2). Managed-only: it encodes the acceptance-sequence/pending-suffix rule the Direct Files side has no analogue for. |
+| application_property_registry_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed property-registry snapshot: the materialized owner-row stream masked by the unaccepted local overlay, merged with the overlay's own rows (SPEC §6.2 C4). |
+| application_property_registry_snapshot_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | SPEC §7.1 `query_registry` on the Managed side: the wire snapshot of the merged registry, carrying `application_property_registry`'s refusal policy (the last published table, never a half-built one). |
+| application_query_explain_empty_ready | `crates/tine-core/src/sync_runtime.rs` | adapter | explain_application_empty_query | SPEC §7.1 `query_explain_empty` (Q14, N19): assembles the Managed page set and calls the shared computation. |
 | application_query_page_journal | `crates/tine-core/src/sync_runtime.rs` | adapter | parse | Calls `crate::date::JournalFormat::parse` (the census records a call by its last path segment) to read the page's journal day from the graph's CONFIGURED format — the same producer that fills Direct's `PageEntry::date_key`. Never `JournalDate::from_title`, which hardcodes the default format. |
 | application_query_page_recency | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Computes recency from Managed path and graph config. |
 | application_query_plan_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed query-plan/index preparation boundary. |
+| application_query_run_ready | `crates/tine-core/src/sync_runtime.rs` | adapter | run_application_query_result | SPEC §7.1 `query_run`: the IR arrives parsed, so only the Managed page assembly is mode-specific; the evaluator is the shared one. |
 | application_request | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Handle-side Managed application request boundary. |
 | application_resolve_blocks_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Materializes resolved Managed UUID groups. |
 | application_simple_query_pages_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed simple-query candidate index boundary. |

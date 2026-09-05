@@ -473,8 +473,24 @@ const APPLICATION_SIMPLE_QUERY_MEMO_MAX_BLOCKS: usize = 4_096;
 /// dropped or absent entry costs one recomputation and nothing else.
 #[derive(Debug, Default)]
 struct ApplicationSimpleQueryMemo {
-    stamp: Option<u64>,
+    stamp: Option<ApplicationSimpleQueryMemoStamp>,
+    /// The registry generation the `props` entries were computed under (C6).
+    /// A generation advance is a graph-wide effective-type change, which
+    /// per-page retention cannot see, so every `props` entry goes.
+    registry_generation: u64,
     entries: VecDeque<ApplicationSimpleQueryMemoEntry>,
+}
+
+/// The C6 cache identity's graph-wide half for the Managed memo: the accepted
+/// frontier the answer was computed from, and the parse rules it was computed
+/// under. The digest is carried **unconditionally** (E6): `journal_page_title
+/// _format` decides a page's kind and day, so a `page.journal` query with no
+/// property leaf at all is config-sensitive, and the acceptance sequence never
+/// moves when only `logseq/config.edn` changes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ApplicationSimpleQueryMemoStamp {
+    acceptance_sequence: u64,
+    config_digest: ContentDigest,
 }
 
 #[derive(Debug)]
@@ -482,22 +498,28 @@ struct ApplicationSimpleQueryMemoEntry {
     query: String,
     max_rows: usize,
     max_bytes: usize,
+    /// Whether the query has a `props` leaf, so its answer depends on the
+    /// registry's effective types and a generation advance evicts it (C6).
+    props: bool,
     result: SyncApplicationBoundedRefGroups,
 }
 
 impl ApplicationSimpleQueryMemo {
     fn get(
         &mut self,
-        stamp: u64,
+        stamp: &ApplicationSimpleQueryMemoStamp,
+        registry_generation: u64,
         query: &str,
         max_rows: usize,
         max_bytes: usize,
     ) -> Option<SyncApplicationBoundedRefGroups> {
-        if self.stamp != Some(stamp) {
-            self.stamp = Some(stamp);
+        if self.stamp.as_ref() != Some(stamp) {
+            self.stamp = Some(stamp.clone());
             self.entries.clear();
+            self.registry_generation = registry_generation;
             return None;
         }
+        self.note_registry_generation(registry_generation);
         self.entries
             .iter()
             .find(|entry| {
@@ -506,17 +528,33 @@ impl ApplicationSimpleQueryMemo {
             .map(|entry| entry.result.clone())
     }
 
+    /// Drop every `props` entry when the registry generation advanced. The
+    /// non-`props` entries are untouched: their answers cannot depend on an
+    /// effective type they never read (C6).
+    fn note_registry_generation(&mut self, registry_generation: u64) {
+        if self.registry_generation == registry_generation {
+            return;
+        }
+        self.registry_generation = registry_generation;
+        self.entries.retain(|entry| !entry.props);
+    }
+
     fn insert(
         &mut self,
-        stamp: u64,
+        stamp: &ApplicationSimpleQueryMemoStamp,
+        registry_generation: u64,
         query: &str,
+        props: bool,
         max_rows: usize,
         max_bytes: usize,
         result: &SyncApplicationBoundedRefGroups,
     ) {
-        if self.stamp != Some(stamp) {
-            self.stamp = Some(stamp);
+        if self.stamp.as_ref() != Some(stamp) {
+            self.stamp = Some(stamp.clone());
             self.entries.clear();
+            self.registry_generation = registry_generation;
+        } else {
+            self.note_registry_generation(registry_generation);
         }
         let blocks = result
             .groups
@@ -536,6 +574,7 @@ impl ApplicationSimpleQueryMemo {
             query: query.to_owned(),
             max_rows,
             max_bytes,
+            props,
             result: result.clone(),
         });
     }
@@ -567,6 +606,32 @@ struct ApplicationJournalFeedIndexKey {
     file_name_format: crate::config::FileNameFormat,
     journal_file_format: String,
     journal_title_format: String,
+}
+
+/// The evidence one Managed property-registry snapshot was built from, so an
+/// unchanged graph is answered from that snapshot instead of rebuilt per query
+/// (SPEC §6.2: the registry is rebuilt on a generation change, never per
+/// query).
+///
+/// The frontier pair covers the accepted rows exactly as it does for the
+/// journal day index; the config digest covers the atomizer's rules, which are
+/// not in the frontier stamp. An actor still holding a pending local suffix has
+/// evidence the sequence does not cover, so it neither reads nor fills this
+/// cache -- the same rule `application_simple_query_memo` follows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ApplicationPropertyRegistryKey {
+    acceptance_sequence: u64,
+    state_digest: ContentDigest,
+    config_digest: ContentDigest,
+}
+
+/// The published Managed registry snapshot and the evidence it was built from.
+struct ApplicationPropertyRegistryState {
+    registry: std::sync::Arc<crate::query::registry::Registry>,
+    /// `None` when the snapshot was built while a pending local suffix was
+    /// outstanding: it is still publishable as the last-known table, but it is
+    /// never reusable, because no stamp describes the suffix it merged.
+    key: Option<ApplicationPropertyRegistryKey>,
 }
 
 /// The graph's journal days, deduplicated and newest first, retained across
@@ -2604,7 +2669,11 @@ pub enum SyncApplicationJournalFeedOutcome {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// `Eq` is deliberately absent: `QueryRun` carries the IR, and a numeric
+/// comparison value is an `f64`. Total equality on a request that can hold a
+/// float would be a lie, and nothing here needs one — the request is a message,
+/// never a map key.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SyncApplicationNavigationRequest {
     ReferencedPageNames {
@@ -2688,6 +2757,24 @@ pub enum SyncApplicationNavigationRequest {
         limit: usize,
         lane: Option<String>,
     },
+    /// SPEC §7.1 `query_registry`: the observed property registry snapshot the
+    /// walk, the TQL diagnostics and the Display popover all read.
+    PropertyRegistry,
+    /// SPEC §7.1 `query_run`: the IR arrives already parsed, so the managed
+    /// side runs the same evaluator the Direct Files side does.
+    QueryRun {
+        query: crate::query::ir::Query,
+        view: crate::query::ir::ViewSettings,
+        max_rows: usize,
+        max_bytes: usize,
+    },
+    /// SPEC §7.1 `query_explain_empty` (Q14, N19).
+    QueryExplainEmpty {
+        query: crate::query::ir::Query,
+        view: crate::query::ir::ViewSettings,
+        max_rows: usize,
+        max_bytes: usize,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2735,6 +2822,9 @@ pub enum SyncApplicationNavigationReply {
     OrphanAssets(Vec<AssetInfo>),
     GraphSearch(crate::query_plan::QueryExecution),
     BlockSearch(Vec<RefGroup>),
+    PropertyRegistry(crate::query::ir::RegistrySnapshot),
+    QueryRun(crate::query::ir::QueryResult),
+    QueryExplainEmpty(Vec<crate::query::view::EmptyExplanation>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -7903,6 +7993,40 @@ fn validate_application_navigation_request(
         }
         return Ok(());
     }
+    // The registry snapshot takes no parameters: there is nothing to bound.
+    if matches!(request, SyncApplicationNavigationRequest::PropertyRegistry) {
+        return Ok(());
+    }
+    // §7.1's IR-carrying requests. The IR arrived through `query_parse`, which
+    // applied the I-22 source limits to the TEXT; what is bounded here is what
+    // this request can make the runtime construct, exactly as for the text
+    // queries above.
+    if let SyncApplicationNavigationRequest::QueryRun {
+        max_rows,
+        max_bytes,
+        ..
+    }
+    | SyncApplicationNavigationRequest::QueryExplainEmpty {
+        max_rows,
+        max_bytes,
+        ..
+    } = request
+    {
+        if *max_rows == 0
+            || *max_rows > MAX_SYNC_APPLICATION_RESULT_ROWS
+            || *max_bytes == 0
+            || *max_bytes > MAX_SYNC_APPLICATION_RESULT_BYTES
+        {
+            return Err(SyncApplicationPageRequestError::RequestTooLarge(
+                SyncEditorRequestSize {
+                    blocks: *max_rows,
+                    text_bytes: *max_bytes,
+                    ..SyncEditorRequestSize::default()
+                },
+            ));
+        }
+        return Ok(());
+    }
     if let SyncApplicationNavigationRequest::PropertyFacets {
         hidden_properties,
         max_items,
@@ -8148,6 +8272,9 @@ fn validate_application_navigation_request(
         SyncApplicationNavigationRequest::GraphSearch { .. }
         | SyncApplicationNavigationRequest::BlockSearch { .. }
         | SyncApplicationNavigationRequest::AdvancedQuery { .. }
+        | SyncApplicationNavigationRequest::PropertyRegistry
+        | SyncApplicationNavigationRequest::QueryRun { .. }
+        | SyncApplicationNavigationRequest::QueryExplainEmpty { .. }
         | SyncApplicationNavigationRequest::ExportQuerySubtrees { .. } => unreachable!(),
     };
     if names.len() > MAX_SYNC_APPLICATION_PAGE_BLOCKS {
@@ -12822,6 +12949,11 @@ struct RuntimeActor {
     /// evaluator. See [`ApplicationSimpleQueryMemo`] for what it holds and
     /// what drops it; it is a cache of durable evidence, never authority.
     application_simple_query_memo: std::cell::RefCell<ApplicationSimpleQueryMemo>,
+    /// The Managed Storage half of the graph's observed property registry
+    /// (§6.1–§6.4): a disposable in-memory snapshot, swapped atomically, built
+    /// under the mask-and-overlay merge so a query sees one generation end to
+    /// end. Nothing is persisted (D-3).
+    application_property_registry: std::cell::RefCell<Option<ApplicationPropertyRegistryState>>,
     /// Converted managed block trees retained across query evaluations. See
     /// [`crate::query::ApplicationProjectionCache`]: it is content-addressed by
     /// exact comparison, so it holds no authority and cannot go stale -- a
@@ -13309,6 +13441,7 @@ impl RuntimeActor {
             application_simple_query_memo: std::cell::RefCell::new(
                 ApplicationSimpleQueryMemo::default(),
             ),
+            application_property_registry: std::cell::RefCell::new(None),
             application_projection_cache: std::cell::RefCell::new(
                 crate::query::ApplicationProjectionCache::default(),
             ),
@@ -14230,6 +14363,27 @@ impl RuntimeActor {
                 max_bytes,
             } => SyncApplicationNavigationReply::SimpleQuery(
                 self.application_simple_query_ready(&query, max_rows, max_bytes)?,
+            ),
+            SyncApplicationNavigationRequest::PropertyRegistry => {
+                SyncApplicationNavigationReply::PropertyRegistry(
+                    self.application_property_registry_snapshot_ready()?,
+                )
+            }
+            SyncApplicationNavigationRequest::QueryRun {
+                query,
+                view,
+                max_rows,
+                max_bytes,
+            } => SyncApplicationNavigationReply::QueryRun(
+                self.application_query_run_ready(&query, &view, max_rows, max_bytes)?,
+            ),
+            SyncApplicationNavigationRequest::QueryExplainEmpty {
+                query,
+                view,
+                max_rows,
+                max_bytes,
+            } => SyncApplicationNavigationReply::QueryExplainEmpty(
+                self.application_query_explain_empty_ready(&query, &view, max_rows, max_bytes)?,
             ),
             SyncApplicationNavigationRequest::AdvancedQuery {
                 query,
@@ -15303,6 +15457,265 @@ impl RuntimeActor {
         Ok(accumulator.finish())
     }
 
+    /// The Managed Storage property registry (SPEC §6.2): the materialized owner
+    /// rows with the unaccepted local overlay's pages **masked**, followed by the
+    /// overlay's own owner rows — the same mask-and-overlay merge
+    /// `application_property_facets_ready` performs, over the raw rows rather
+    /// than the owner-less `(key, value)` pairs.
+    ///
+    /// **C4:** the `page_id → (format, name)` map is masked and overlaid exactly
+    /// as the rows are, so a new pending page has an entry and a replaced path
+    /// does not keep its accepted format.
+    fn application_property_registry_ready(
+        &self,
+    ) -> Result<std::sync::Arc<crate::query::registry::Registry>, SyncApplicationPageRequestError>
+    {
+        /// The registry's snapshot-scoped page identity on the Managed side.
+        /// The overlay uses its path instead, because a pending page may have
+        /// no accepted `PageId` yet.
+        fn managed_registry_page_key(page_id: PageId) -> String {
+            format!("page:{}", page_id.as_uuid())
+        }
+
+        let config = self.graph.config.parse_config();
+        // Before any evidence is touched: a snapshot built from the same
+        // frontier under the same parse rules is the same table, and rebuilding
+        // it would hydrate overlay pages a query never asked for.
+        let cache_key = self.application_property_registry_cache_key(&config)?;
+        if let Some(key) = cache_key.as_ref() {
+            if let Some(state) = self.application_property_registry.borrow().as_ref() {
+                if state.key.as_ref() == Some(key) {
+                    return Ok(std::sync::Arc::clone(&state.registry));
+                }
+            }
+        }
+        let overlay = self.application_navigation_overlay_ready()?;
+        let read = self.application_materialized_read_ready()?;
+
+        let mut masked_page_ids = HashSet::new();
+        for path in overlay.keys() {
+            let rows = read.pages_by_path(path, 2).map_err(|_| {
+                SyncApplicationPageRequestError::ActorRefusedAt(
+                    "application_property_registry_overlay_pages_by_path",
+                )
+            })?;
+            if rows.len() > 1 {
+                return Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                    "application_property_registry_overlay_path_ambiguous",
+                ));
+            }
+            masked_page_ids.extend(rows.into_iter().map(|page| page.page_id));
+        }
+
+        const INITIAL_BATCH: usize = 512;
+        let mut pages: std::collections::HashMap<String, crate::query::registry::PageMeta> =
+            std::collections::HashMap::new();
+        let mut cursor: Option<(ManagedPath, PageId)> = None;
+        let mut batch = INITIAL_BATCH;
+        loop {
+            let rows = loop {
+                match read.navigation_pages_after(
+                    cursor.as_ref().map(|(path, page_id)| (path, *page_id)),
+                    batch,
+                ) {
+                    Ok(rows) => break rows,
+                    Err(
+                        crate::oplog::sqlite_materialization::MaterializationError::ResourceLimit {
+                            ..
+                        },
+                    ) if batch > 1 => batch = (batch / 2).max(1),
+                    Err(_) => {
+                        return Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                            "application_property_registry_page_scan",
+                        ))
+                    }
+                }
+            };
+            if rows.is_empty() {
+                break;
+            }
+            let len = rows.len();
+            for row in rows {
+                cursor = Some((row.path.clone(), row.page_id));
+                if masked_page_ids.contains(&row.page_id) {
+                    continue;
+                }
+                pages.insert(
+                    managed_registry_page_key(row.page_id),
+                    crate::query::registry::PageMeta {
+                        format: crate::model::Format::from_path(std::path::Path::new(
+                            row.path.as_str(),
+                        ))
+                        .into(),
+                        name: row.name,
+                    },
+                );
+            }
+            if len < batch {
+                break;
+            }
+        }
+
+        let mut owner_rows: Vec<crate::query::registry::OwnerRow> = Vec::new();
+        let mut cursor = None;
+        let mut batch = INITIAL_BATCH;
+        loop {
+            let rows = loop {
+                match read.property_facet_rows_after(false, cursor.clone(), batch) {
+                    Ok(rows) => break rows,
+                    Err(
+                        crate::oplog::sqlite_materialization::MaterializationError::ResourceLimit {
+                            ..
+                        },
+                    ) if batch > 1 => batch = (batch / 2).max(1),
+                    Err(_) => {
+                        return Err(SyncApplicationPageRequestError::ActorRefusedAt(
+                            "application_property_registry_row_scan",
+                        ))
+                    }
+                }
+            };
+            if rows.is_empty() {
+                break;
+            }
+            let len = rows.len();
+            for row in rows {
+                cursor = Some((row.owner, row.source_name.clone(), row.ordinal));
+                if masked_page_ids.contains(&row.page_id) {
+                    continue;
+                }
+                let (owner_type, owner_id) = match row.owner {
+                    crate::oplog::sqlite_materialization::MaterializedEntityId::Page(page) => (
+                        crate::query::registry::OwnerType::Page,
+                        format!("p:{}", page.as_uuid()),
+                    ),
+                    crate::oplog::sqlite_materialization::MaterializedEntityId::Block(block) => (
+                        crate::query::registry::OwnerType::Block,
+                        format!("b:{}", block.as_uuid()),
+                    ),
+                };
+                owner_rows.push(crate::query::registry::OwnerRow {
+                    owner_type,
+                    owner_id,
+                    page_id: managed_registry_page_key(row.page_id),
+                    source_name: row.source_name,
+                    normalized_name: row.normalized_name,
+                    ordinal: row.ordinal,
+                    value: row.value,
+                });
+            }
+            if len < batch {
+                break;
+            }
+        }
+        drop(read);
+
+        for (path, current) in overlay {
+            let Some((_, page)) = current else {
+                continue;
+            };
+            let page_key = format!("overlay:{}", path.as_str());
+            pages.insert(
+                page_key.clone(),
+                crate::query::registry::PageMeta {
+                    format: page.format.into(),
+                    name: page.name.clone(),
+                },
+            );
+            owner_rows.extend(crate::query::application_page_property_owner_rows(
+                &page, &page_key, true,
+            ));
+        }
+
+        let registry = crate::query::registry::build_registry(
+            owner_rows.into_iter(),
+            &|page_id: &str| pages.get(page_id).cloned(),
+            &config,
+        )
+        .map_err(|_| {
+            SyncApplicationPageRequestError::ActorRefusedAt(
+                "application_property_registry_unknown_page",
+            )
+        })?;
+        Ok(self.publish_application_property_registry(registry, cache_key))
+    }
+
+    /// The evidence stamp for a registry snapshot, or `None` when this runtime
+    /// holds a pending local suffix the accepted sequence does not describe.
+    fn application_property_registry_cache_key(
+        &self,
+        config: &crate::config::ParseConfig,
+    ) -> Result<Option<ApplicationPropertyRegistryKey>, SyncApplicationPageRequestError> {
+        if self
+            .managed_local
+            .as_ref()
+            .is_some_and(|managed| !managed.latest_projection_frames.is_empty())
+        {
+            return Ok(None);
+        }
+        let read = self.application_materialized_read_ready()?;
+        let acceptance_sequence = read.acceptance_sequence();
+        drop(read);
+        let state_digest = self
+            .active_engine()
+            .map_err(|_| SyncApplicationPageRequestError::ActorUnavailable)?
+            .accepted_frontier_root()
+            .map_err(|_| {
+                SyncApplicationPageRequestError::ActorRefusedAt(
+                    "application_property_registry_frontier_root",
+                )
+            })?
+            .state_digest();
+        Ok(Some(ApplicationPropertyRegistryKey {
+            acceptance_sequence,
+            state_digest,
+            config_digest: config.digest(),
+        }))
+    }
+
+    /// Publish a freshly built Managed registry, advancing the generation when
+    /// its rows or its config digest differ from the last published snapshot
+    /// (§6.2, G7), and swapping it in atomically.
+    fn publish_application_property_registry(
+        &self,
+        built: crate::query::registry::Registry,
+        key: Option<ApplicationPropertyRegistryKey>,
+    ) -> std::sync::Arc<crate::query::registry::Registry> {
+        let mut guard = self.application_property_registry.borrow_mut();
+        let previous = guard.as_ref().map(|state| &state.registry);
+        let previous_generation = previous.map_or(0, |current| current.generation());
+        let changed = previous.is_none_or(|current| {
+            !current.rows_equal(&built) || current.config_digest() != built.config_digest()
+        });
+        let generation = if changed {
+            previous_generation.saturating_add(1)
+        } else {
+            previous_generation
+        };
+        let published = std::sync::Arc::new(built.with_generation(generation));
+        *guard = Some(ApplicationPropertyRegistryState {
+            registry: std::sync::Arc::clone(&published),
+            key,
+        });
+        published
+    }
+
+    /// The registry snapshot the Managed walk coerces against. A refusal from
+    /// the materialized read is never a reason to answer with a half-built
+    /// table: the last published snapshot stands, and an empty one is the honest
+    /// answer before the first build.
+    fn application_property_registry(&self) -> std::sync::Arc<crate::query::registry::Registry> {
+        match self.application_property_registry_ready() {
+            Ok(registry) => registry,
+            Err(_) => match self.application_property_registry.borrow().as_ref() {
+                Some(current) => std::sync::Arc::clone(&current.registry),
+                None => std::sync::Arc::new(crate::query::registry::Registry::empty(
+                    &self.graph.config.parse_config(),
+                )),
+            },
+        }
+    }
+
     fn application_simple_query_ready(
         &self,
         query: &str,
@@ -15557,11 +15970,26 @@ impl RuntimeActor {
             });
         }
         metrics.parser_rows = sparse_candidates.len();
+        // The sparse task path is candidate-bounded: it reads the pages the
+        // marker index named and nothing else. Building the registry would
+        // merge the whole overlay and hydrate pages this query never asked
+        // for, so it is built only when the query actually has a property
+        // leaf to coerce -- and `sparse_task_query_eligibility` admits only
+        // task-marker sources, so in practice it never does.
+        let registry = if crate::query::query_source_has_props_leaf(query) {
+            self.application_property_registry()
+        } else {
+            std::sync::Arc::new(crate::query::registry::Registry::empty(
+                &self.graph.config.parse_config(),
+            ))
+        };
         let result = crate::query::run_application_sparse_task_query_bounded(
             &sparse_candidates,
             query,
             max_rows,
             max_bytes,
+            &self.graph.config.parse_config(),
+            &registry,
         )
         .map_err(|_| ManagedSparseTaskQueryFallback::Runner)?;
         metrics.dto_constructions = result.groups.iter().map(|group| group.blocks.len()).sum();
@@ -15598,24 +16026,41 @@ impl RuntimeActor {
         // the accepted frontier is the whole story. An actor still holding a
         // pending local suffix has evidence that sequence does not cover, so it
         // neither reads nor fills the memo.
+        let config = self.graph.config.parse_config();
+        // C6: the registry generation is part of the key only for a query that
+        // reads property atoms. A query without a `props` leaf never consults an
+        // effective type, so building the registry to key it would be cost with
+        // no meaning.
+        let props = crate::query::query_source_has_props_leaf(query);
+        let registry = if props {
+            self.application_property_registry()
+        } else {
+            std::sync::Arc::new(crate::query::registry::Registry::empty(&config))
+        };
+        let registry_generation = if props { registry.generation() } else { 0 };
         let memo_stamp = if self
             .managed_local
             .as_ref()
             .is_none_or(|managed| managed.latest_projection_frames.is_empty())
         {
             let read = self.application_materialized_read_ready()?;
-            let stamp = read.acceptance_sequence();
+            let stamp = ApplicationSimpleQueryMemoStamp {
+                acceptance_sequence: read.acceptance_sequence(),
+                config_digest: config.digest(),
+            };
             drop(read);
             Some(stamp)
         } else {
             None
         };
-        if let Some(stamp) = memo_stamp {
-            if let Some(memoized) = self
-                .application_simple_query_memo
-                .borrow_mut()
-                .get(stamp, query, max_rows, max_bytes)
-            {
+        if let Some(stamp) = memo_stamp.as_ref() {
+            if let Some(memoized) = self.application_simple_query_memo.borrow_mut().get(
+                stamp,
+                registry_generation,
+                query,
+                max_rows,
+                max_bytes,
+            ) {
                 return Ok(memoized);
             }
         }
@@ -15699,17 +16144,24 @@ impl RuntimeActor {
                 page,
             })
             .collect::<Vec<_>>();
-        let result =
-            crate::query::run_application_query_pages_bounded(&pages, query, max_rows, max_bytes);
+        let result = crate::query::run_application_query_pages_bounded(
+            &pages, query, max_rows, max_bytes, config, registry,
+        );
         let bounded = SyncApplicationBoundedRefGroups {
             groups: result.groups,
             total: result.total,
             exceeded: result.exceeded,
         };
-        if let Some(stamp) = memo_stamp {
-            self.application_simple_query_memo
-                .borrow_mut()
-                .insert(stamp, query, max_rows, max_bytes, &bounded);
+        if let Some(stamp) = memo_stamp.as_ref() {
+            self.application_simple_query_memo.borrow_mut().insert(
+                stamp,
+                registry_generation,
+                query,
+                props,
+                max_rows,
+                max_bytes,
+                &bounded,
+            );
         }
         Ok(bounded)
     }
@@ -15757,6 +16209,8 @@ impl RuntimeActor {
             current_page,
             max_rows,
             max_bytes,
+            self.graph.config.parse_config(),
+            self.application_property_registry(),
         );
         Ok(SyncApplicationBoundedAdvancedResult {
             result,
@@ -15781,6 +16235,64 @@ impl RuntimeActor {
             max_roots,
             max_nodes,
             max_bytes,
+            self.graph.config.parse_config(),
+            self.application_property_registry(),
+        ))
+    }
+
+    /// SPEC §7.1 `query_registry`: the wire snapshot of the Managed registry.
+    /// The refusal policy is `application_property_registry`'s -- a refused
+    /// materialized read serves the last published table, never a half-built
+    /// one -- so this is the snapshot and nothing more.
+    fn application_property_registry_snapshot_ready(
+        &self,
+    ) -> Result<crate::query::ir::RegistrySnapshot, SyncApplicationPageRequestError> {
+        Ok(self.application_property_registry().snapshot())
+    }
+
+    /// SPEC §7.1 `query_run` over Managed pages. The IR arrives parsed, so the
+    /// only Managed-specific work is assembling the same page set the simple
+    /// and advanced query paths assemble.
+    fn application_query_run_ready(
+        &self,
+        query: &crate::query::ir::Query,
+        view: &crate::query::ir::ViewSettings,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> Result<crate::query::ir::QueryResult, SyncApplicationPageRequestError> {
+        let pages = self.application_all_query_pages_ready()?;
+        Ok(crate::query::run_application_query_result(
+            &pages,
+            query,
+            view,
+            crate::query::ir::Bounds {
+                max_rows,
+                max_bytes,
+            },
+            self.graph.config.parse_config(),
+            self.application_property_registry(),
+        ))
+    }
+
+    /// SPEC §7.1 `query_explain_empty` over Managed pages (Q14, N19).
+    fn application_query_explain_empty_ready(
+        &self,
+        query: &crate::query::ir::Query,
+        view: &crate::query::ir::ViewSettings,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<crate::query::view::EmptyExplanation>, SyncApplicationPageRequestError> {
+        let pages = self.application_all_query_pages_ready()?;
+        Ok(crate::query::explain_application_empty_query(
+            &pages,
+            query,
+            view,
+            crate::query::ir::Bounds {
+                max_rows,
+                max_bytes,
+            },
+            self.graph.config.parse_config(),
+            self.application_property_registry(),
         ))
     }
 

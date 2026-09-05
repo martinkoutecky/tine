@@ -7,22 +7,31 @@
 //! does. `Any` over an empty relation is false and `Every` over an empty
 //! relation is true (OData §5.1.1.13).
 //!
-//! **Property leaves in Wave A keep today's matching semantics exactly**
-//! (`value_matches`: comma-split, ref-stripped, lowercased), so retargeting the
-//! walk onto the IR is a pure refactor; Wave B swaps the atomizer in underneath
-//! the same `Rel::Props` leaf and re-runs the corpus-parity export (O8).
+//! **Property leaves quantify over the ATOMS of ONE key** (§3.3, Wave B): the
+//! key equality conjunct scopes the relation, every source row of that key is
+//! flattened into one atom list by the shared atomizer (§5.8), and each atom is
+//! compared by the key's **effective type** from the registry (§6.3). Wave A's
+//! `value_matches` — comma-split, ref-stripped, ASCII-lowercased, untyped — is
+//! deleted; the corpus-parity export (O8) is what accounts for the difference.
 
 use std::collections::HashMap;
 
+use crate::config::ParseConfig;
 use crate::date::JournalDate;
 use crate::doc::{property_key_norm, DocBlock};
 use crate::model::PageKind;
-use crate::query::ir::{Attr, CmpOp, Filter, Leaf, Quant, Rel, Value};
+use crate::query::atom::{atom_key, Atom, AtomFormat};
+use crate::query::ir::{Attr, CmpOp, Filter, Leaf, ObservedType, Quant, Rel, Value};
+use crate::query::registry::Registry;
 use crate::refs;
 use crate::search_query::{canonical_fold, Matcher};
 
 /// Per-page evaluation context: the page row a block row belongs to, plus the
 /// evaluation's `today` (relative date literals stay unresolved in the IR).
+///
+/// `Copy` so one leaf can evaluate under a narrowed [`CompareMode`] without
+/// rebuilding the context — see `eval_props`'s page-identity keys.
+#[derive(Clone, Copy)]
 pub(crate) struct EvalCtx<'a> {
     /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
     pub(crate) journal: Option<i64>,
@@ -31,6 +40,20 @@ pub(crate) struct EvalCtx<'a> {
     pub(crate) page_props: &'a [(String, String)],
     pub(crate) today: JournalDate,
     pub(crate) compiled: &'a CompiledLeaves,
+    /// The page's on-disk format: the atomizer parses a property value with the
+    /// page's own inline grammar (§6.2 E4), never with a guess.
+    pub(crate) format: AtomFormat,
+    /// The graph config the atomizer reads (comma-split keys, unparsed keys,
+    /// journal title format).
+    pub(crate) config: &'a ParseConfig,
+    /// ONE coherent registry snapshot for the whole query, so every property
+    /// leaf coerces at the same generation (§6.2).
+    pub(crate) registry: &'a Registry,
+    /// Which of the §8.1 counterfactual modes this evaluation runs under.
+    /// [`CompareMode::Both`] is Tine and is what every product path uses; the
+    /// other four exist so gate 1 can attribute a walk/OG difference to the
+    /// decision that caused it.
+    pub(crate) mode: crate::query::atom::CompareMode,
 }
 
 /// Patterns that cost real work to build (`(search …)`'s friendly matcher, a
@@ -159,9 +182,7 @@ fn eval_block_leaf(
             Rel::Tags => quantify(*quant, block.projection().tags.iter(), |tag| {
                 eval_name_element(pred, tag)
             }),
-            Rel::Props => quantify(*quant, block.properties().iter(), |(key, value)| {
-                eval_property_element(pred, key, value)
-            }),
+            Rel::Props => eval_props(*quant, pred, &block.properties(), ctx),
             Rel::Children => quantify(*quant, block.children.iter(), |child| {
                 // A child is a fresh row: it carries no ancestor-ref context of
                 // its own here, matching the direct-children-only rule (A1).
@@ -216,9 +237,7 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                 _ => false,
             },
             Leaf::Rel { rel, quant, pred } => match rel {
-                Rel::Props => quantify(*quant, ctx.page_props.iter(), |(key, value)| {
-                    eval_property_element(pred, key, value)
-                }),
+                Rel::Props => eval_props(*quant, pred, ctx.page_props, ctx),
                 // A page's own refs, its blocks and its tag table are not walked
                 // by this evaluator: the OG DSL cannot express them and the
                 // page-anchored walk of Wave A reads only the page index.
@@ -309,85 +328,352 @@ fn single_ref_name(pred: &Filter) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Property elements — Wave A keeps `value_matches`'s exact semantics
+// Property elements — atoms of ONE key, compared by the key's effective type
 // ---------------------------------------------------------------------------
 
-/// One property element `(key, raw value)` of the owner row. Its attributes are
-/// `key`, `value` (one atom test) and `atom_count`.
-fn eval_property_element(pred: &Filter, key: &str, value: &str) -> bool {
-    match pred {
-        Filter::True => true,
-        Filter::False => false,
-        Filter::And { items } => items
-            .iter()
-            .all(|item| eval_property_element(item, key, value)),
-        Filter::Or { items } => items
-            .iter()
-            .any(|item| eval_property_element(item, key, value)),
-        Filter::Not { inner } => !eval_property_element(inner, key, value),
-        Filter::Leaf {
-            leaf: Leaf::Attr { attr, op, value: v },
-        } => match attr {
-            Attr::Key => match (op, v) {
-                (CmpOp::Eq, Value::Text { text }) => {
-                    property_key_norm(key) == property_key_norm(text)
-                }
-                _ => false,
-            },
-            Attr::Value => match (op, v) {
-                (CmpOp::Eq, Value::Text { text }) => value_matches(value, Some(text)),
-                (CmpOp::In, Value::List { items }) => items.iter().any(|item| match item {
-                    Value::Text { text } => value_matches(value, Some(text)),
-                    _ => false,
-                }),
-                // K3: `!=` is "coercible AND unequal" — an owner with no atom at
-                // all fails it, exactly as it fails `=`.
-                (CmpOp::NotEq, Value::Text { text }) => {
-                    atom_count(value) > 0 && !value_matches(value, Some(text))
-                }
-                (CmpOp::IsSet, Value::None) => true,
-                _ => false,
-            },
-            Attr::AtomCount => match (op, v) {
-                (CmpOp::Gt, Value::Number { number }) => atom_count(value) as f64 > *number,
-                (CmpOp::Eq, Value::Number { number }) => atom_count(value) as f64 == *number,
-                _ => false,
-            },
-            _ => false,
-        },
-        _ => false,
+/// The property keys OG resolves to page references rather than to text, and
+/// therefore compares by lower-cased page name in every mode.
+const OG_PAGE_NAME_KEYS: [&str; 3] = ["tags", "alias", "aliases"];
+
+/// The five forms of §3.3, evaluated over the owner's property rows.
+///
+/// The quantifier ranges over the **atoms of one key**, never over the owner's
+/// `(key, value)` pairs: `k:: a` written twice plus `K:: b` is one atom list
+/// `[a, b]` (§5.8's flattening rule), so `every(prop('k'), …)` sees the union a
+/// user sees and not one row at a time.
+fn eval_props(quant: Quant, pred: &Filter, properties: &[(String, String)], ctx: &EvalCtx) -> bool {
+    // Every property leaf the parsers build carries the `key = 'k'` conjunct
+    // (§3.3); without it the leaf names no relation to quantify over.
+    let Some(key) = pred.props_key() else {
+        return false;
+    };
+    let key_norm = property_key_norm(&key);
+    let mut rows: Vec<&str> = Vec::new();
+    let mut source_key: &str = key.as_str();
+    for (name, value) in properties {
+        if property_key_norm(name) == key_norm {
+            source_key = name.as_str();
+            rows.push(value.as_str());
+        }
+    }
+    let present = !rows.is_empty();
+
+    let Some(test) = pred.props_atom_test() else {
+        // `prop('k') is not null` = Any(key='k'); `prop('k') is null` =
+        // None(key='k'); property `Every` carries the presence conjunct (K2).
+        return match quant {
+            Quant::Any | Quant::Every => present,
+            Quant::None => !present,
+        };
+    };
+
+    let atoms = flatten_atoms(source_key, &rows, ctx);
+
+    // `= ''` (IsBlank) and `all-page-tags`'s `atom_count > 0` are properties of
+    // the whole atom list, not of one atom.
+    if let Some(hit) = eval_atom_count_test(&test, present, atoms.len()) {
+        return match quant {
+            Quant::Any | Quant::Every => hit,
+            Quant::None => !hit,
+        };
+    }
+
+    // OG resolves `tags`, `alias` and `aliases` to PAGES, and a page's identity
+    // in OG is its lower-cased `:block/name` — which is why `(page-tags genre)`
+    // finds a page whose `tags:: Genre` (measured, `case.cljs`). That is page
+    // identity, not property equality, so it folds case in EVERY mode; only
+    // property equality is the case-SENSITIVE thing Q20 changes.
+    let ctx = &if OG_PAGE_NAME_KEYS.contains(&key_norm.as_str()) {
+        EvalCtx {
+            mode: ctx.mode.folding_case(),
+            ..*ctx
+        }
+    } else {
+        *ctx
+    };
+
+    let effective = if ctx.mode.coerces_by_effective_type() {
+        ctx.registry
+            .effective_type(&key_norm)
+            .unwrap_or(ObservedType::Text)
+    } else {
+        // §8.1: the OG-ward modes do not coerce. Every atom compares as OG
+        // compares it, which `eval_atom_value` reads off the mode.
+        ObservedType::Text
+    };
+    let matches = |atom: &Atom| eval_atom_test(&test, atom, effective, ctx);
+    match quant {
+        Quant::Any => atoms.iter().any(matches),
+        Quant::None => !atoms.iter().any(matches),
+        // Property `Every`: present, and no atom violates. An uncoercible atom
+        // IS a violator, because every comparison on it is false (§3.3, §3.4).
+        Quant::Every => present && atoms.iter().all(matches),
     }
 }
 
-/// The number of atoms of a property value under Wave A's semantics: the
-/// non-empty comma-separated segments `value_matches` already compares against.
-fn atom_count(stored: &str) -> usize {
-    stored
-        .split(',')
-        .filter(|part| !strip_ref(part.trim()).is_empty())
-        .count()
+/// §5.8's flattening: atomize each source row of the key in source order,
+/// concatenate, de-duplicate by [`atom_key`] with first occurrence winning, and
+/// renumber. The walk and the registry producer run the SAME rule (D-14) — this
+/// is the walk's streaming form over an owner it already holds in memory.
+fn flatten_atoms(source_key: &str, rows: &[&str], ctx: &EvalCtx) -> Vec<Atom> {
+    let mut out: Vec<Atom> = Vec::new();
+    for value in rows {
+        for atom in crate::query::atom::property_atoms_in(
+            source_key, value, ctx.format, ctx.config, ctx.mode,
+        ) {
+            if out.iter().any(|existing| existing.key == atom.key) {
+                continue;
+            }
+            let ordinal = out.len() as u32;
+            out.push(Atom { ordinal, ..atom });
+        }
+    }
+    out
 }
 
-/// Match a stored property value against a query value: multi-value
-/// (comma-separated) and page-ref / tag wrapping, case-insensitively. A `None`
-/// query value matches any present value.
-pub(crate) fn value_matches(stored: &str, query: Option<&str>) -> bool {
-    let Some(q) = query else { return true };
-    let q = strip_ref(q).to_lowercase();
-    stored
-        .split(',')
-        .map(|p| strip_ref(p.trim()).to_lowercase())
-        .any(|v| v == q)
+/// `Some(truth)` when the test reads only `atom_count`; `None` when it is an
+/// atom-level test the quantifier has to range over.
+fn eval_atom_count_test(test: &Filter, present: bool, count: usize) -> Option<bool> {
+    match test {
+        Filter::Leaf {
+            leaf:
+                Leaf::Attr {
+                    attr: Attr::AtomCount,
+                    op,
+                    value: Value::Number { number },
+                },
+        } => {
+            let count = count as f64;
+            let hit = match op {
+                CmpOp::Eq => count == *number,
+                CmpOp::NotEq => count != *number,
+                CmpOp::Gt => count > *number,
+                CmpOp::Ge => count >= *number,
+                CmpOp::Lt => count < *number,
+                CmpOp::Le => count <= *number,
+                _ => return None,
+            };
+            // Both `= ''` and `(all-page-tags)` are scoped by presence: a key
+            // that is absent has no blank value and no tags.
+            Some(present && hit)
+        }
+        _ => None,
+    }
 }
 
-pub(crate) fn strip_ref(s: &str) -> String {
-    let t = s.trim();
-    let t = t.strip_prefix('#').unwrap_or(t).trim();
-    let t = t
-        .strip_prefix("[[")
-        .and_then(|x| x.strip_suffix("]]"))
-        .unwrap_or(t);
-    t.trim().to_string()
+/// The predicate over ONE atom. `Attr::Value` is the atom; the boolean skeleton
+/// is classical (§3.4).
+fn eval_atom_test(test: &Filter, atom: &Atom, effective: ObservedType, ctx: &EvalCtx) -> bool {
+    match test {
+        Filter::True => true,
+        Filter::False | Filter::Raw { .. } => false,
+        Filter::And { items } => items
+            .iter()
+            .all(|item| eval_atom_test(item, atom, effective, ctx)),
+        Filter::Or { items } => items
+            .iter()
+            .any(|item| eval_atom_test(item, atom, effective, ctx)),
+        Filter::Not { inner } => !eval_atom_test(inner, atom, effective, ctx),
+        Filter::Off { .. } => {
+            debug_assert!(false, "Off must be removed before evaluation (§3.5)");
+            true
+        }
+        Filter::Leaf {
+            leaf: Leaf::Attr { attr, op, value },
+        } => match attr {
+            Attr::Value => eval_atom_value(*op, value, atom, effective, ctx),
+            // A key equality reaching here is the leaf's own scoping conjunct,
+            // already applied by `eval_props`.
+            Attr::Key => true,
+            _ => false,
+        },
+        Filter::Leaf { .. } => false,
+    }
+}
+
+/// One `atom op value` comparison, coerced by the key's **effective type**
+/// (§3.3, §6.3): a number key compares `num`, a date key compares `day`, and
+/// text/ref/checkbox keys compare the NFC-lowercased [`atom_key`]. An atom whose
+/// typed value is absent fails EVERY comparison, including `!=` (K3).
+fn eval_atom_value(
+    op: CmpOp,
+    value: &Value,
+    atom: &Atom,
+    effective: ObservedType,
+    ctx: &EvalCtx,
+) -> bool {
+    if op == CmpOp::IsSet {
+        return true;
+    }
+    if !ctx.mode.coerces_by_effective_type() {
+        return compare_atom_as_og(op, value, atom, ctx.mode);
+    }
+    match effective {
+        ObservedType::Number => match atom.num {
+            Some(num) => compare_number(op, value, num),
+            None => false,
+        },
+        ObservedType::Date => match atom.day {
+            Some(day) => compare_day(op, value, day, ctx.today),
+            None => false,
+        },
+        // Text, ref and checkbox atoms all compare their NFC-lowercased text
+        // (Q20). A ref atom's key IS the page-name key for every name without a
+        // boundary slash, which is what makes `(property type [[Book]])` match
+        // `type:: book`.
+        _ => compare_atom_text(op, value, &atom.key),
+    }
+}
+
+/// OG's own property comparison (SPEC §8.1, v13 Y3), for the four non-`both`
+/// modes.
+///
+/// OG's rule, transcribed from what it actually does rather than from what it
+/// looks like it does:
+///
+/// * both the stored value and the query's value pass through
+///   `text/parse-non-string-property-value`, so a value matching `^\d+$` — and
+///   ONLY that — becomes an integer on both sides (`01` is the integer 1, which
+///   is why `k:: 01` answers `(property k 1)`);
+/// * everything else compares as text, **case-sensitively**, refs included:
+///   OG stores a ref as the page name AS WRITTEN, and `[[Book]]` and `[[book]]`
+///   are two different strings in that set even though they are one page
+///   (measured, `case.cljs`). Case-insensitive page identity belongs to the
+///   `[[x]]` page-ref leaf, not to `(property k v)`.
+///
+/// Q20 and Q21 are already applied — or not — by the atomizer, so this reads
+/// the mode only to decide whether the text comparison folds case.
+fn compare_atom_as_og(
+    op: CmpOp,
+    value: &Value,
+    atom: &Atom,
+    mode: crate::query::atom::CompareMode,
+) -> bool {
+    /// OG `text/parse-non-string-property-value`'s integer branch: an unsigned
+    /// run of ASCII digits, and nothing else. `1.5`, `-1` and `1,5` are text.
+    fn og_integer(text: &str) -> Option<u64> {
+        let trimmed = text.trim();
+        (!trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()))
+            .then(|| trimmed.parse::<u64>().ok())
+            .flatten()
+    }
+
+    let literal = |value: &Value| -> Option<String> {
+        match value {
+            Value::Text { text } => Some(text.clone()),
+            Value::Date { literal } => Some(literal.clone()),
+            Value::Number { number } => Some(format_number(*number)),
+            Value::Bool { value } => Some(value.to_string()),
+            _ => None,
+        }
+    };
+    let equal = |needle: &str| -> bool {
+        match (og_integer(&atom.text), og_integer(needle)) {
+            (Some(left), Some(right)) => left == right,
+            _ => {
+                crate::query::atom::atom_key_in(&atom.text, mode)
+                    == crate::query::atom::atom_key_in(needle, mode)
+            }
+        }
+    };
+    match (op, value) {
+        (CmpOp::In, Value::List { items }) => items
+            .iter()
+            .filter_map(|item| literal(item))
+            .any(|needle| equal(&needle)),
+        (CmpOp::NotIn, Value::List { items }) => !items
+            .iter()
+            .filter_map(|item| literal(item))
+            .any(|needle| equal(&needle)),
+        (op, value) => match literal(value) {
+            None => false,
+            Some(needle) => match op {
+                CmpOp::Eq => equal(&needle),
+                CmpOp::NotEq => !equal(&needle),
+                _ => false,
+            },
+        },
+    }
+}
+
+fn compare_number(op: CmpOp, value: &Value, num: f64) -> bool {
+    let operand = |value: &Value| match value {
+        Value::Number { number } => Some(*number),
+        Value::Text { text } => text.trim().parse::<f64>().ok().filter(|n| n.is_finite()),
+        Value::Date { literal } => literal.trim().parse::<f64>().ok().filter(|n| n.is_finite()),
+        _ => None,
+    };
+    match (op, value) {
+        (CmpOp::Between, Value::List { items }) if items.len() == 2 => {
+            match (operand(&items[0]), operand(&items[1])) {
+                (Some(low), Some(high)) => {
+                    let (low, high) = if low > high { (high, low) } else { (low, high) };
+                    num >= low && num <= high
+                }
+                _ => false,
+            }
+        }
+        (CmpOp::In, Value::List { items }) => items.iter().any(|item| operand(item) == Some(num)),
+        (CmpOp::NotIn, Value::List { items }) => {
+            !items.iter().any(|item| operand(item) == Some(num))
+        }
+        (op, value) => match operand(value) {
+            None => false,
+            Some(bound) => match op {
+                CmpOp::Eq => num == bound,
+                CmpOp::NotEq => num != bound,
+                CmpOp::Lt => num < bound,
+                CmpOp::Le => num <= bound,
+                CmpOp::Gt => num > bound,
+                CmpOp::Ge => num >= bound,
+                _ => false,
+            },
+        },
+    }
+}
+
+fn compare_atom_text(op: CmpOp, value: &Value, key: &str) -> bool {
+    let operand = |value: &Value| match value {
+        Value::Text { text } => Some(atom_key(text)),
+        Value::Number { number } => Some(atom_key(&format_number(*number))),
+        Value::Date { literal } => Some(atom_key(literal)),
+        Value::Bool { value } => Some(if *value {
+            "true".into()
+        } else {
+            "false".into()
+        }),
+        _ => None,
+    };
+    match (op, value) {
+        (CmpOp::In, Value::List { items }) => items
+            .iter()
+            .any(|item| operand(item).is_some_and(|item| item == key)),
+        (CmpOp::NotIn, Value::List { items }) => !items
+            .iter()
+            .any(|item| operand(item).is_some_and(|item| item == key)),
+        (CmpOp::Like, value) => operand(value).is_some_and(|pattern| like_matches(key, &pattern)),
+        (CmpOp::StartsWith, value) => operand(value).is_some_and(|prefix| key.starts_with(&prefix)),
+        (op, value) => match operand(value) {
+            None => false,
+            Some(operand) => match op {
+                CmpOp::Eq => key == operand,
+                // K3: `!=` is "coercible AND unequal"; a text atom always
+                // coerces, so this is plain inequality on the comparison key.
+                CmpOp::NotEq => key != operand,
+                _ => false,
+            },
+        },
+    }
+}
+
+/// A number written back as a comparison operand: integers without a `.0` tail,
+/// so `prop('k') = 12` compares against the atom text `12`.
+fn format_number(number: f64) -> String {
+    if number.fract() == 0.0 && number.abs() < 1e15 {
+        format!("{}", number as i64)
+    } else {
+        format!("{number}")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -622,14 +908,18 @@ pub(crate) fn like_matches(haystack: &str, pattern: &str) -> bool {
 
 /// Does this page row satisfy a `@page`-anchored query? Used by the page-anchored
 /// walk, which reads the page index and loads no document (K16).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn page_row_matches(
     query: &Filter,
     name: &str,
     kind: PageKind,
     journal: Option<i64>,
     page_props: &[(String, String)],
+    format: AtomFormat,
     today: JournalDate,
     compiled: &CompiledLeaves,
+    config: &ParseConfig,
+    registry: &Registry,
 ) -> bool {
     let ctx = EvalCtx {
         journal,
@@ -638,6 +928,10 @@ pub(crate) fn page_row_matches(
         page_props,
         today,
         compiled,
+        format,
+        config,
+        registry,
+        mode: crate::query::atom::CompareMode::Both,
     };
     eval_page(query, &ctx)
 }

@@ -494,6 +494,17 @@ impl JournalFormat {
         self.parse_list.iter().find_map(|f| f.parse(s))
     }
 
+    /// Parse a display TITLE with the user's title pattern **alone** — never the
+    /// file pattern and never the default fallback list `parse` walks.
+    ///
+    /// The registry's date classification (SPEC §6.2, B6) needs exactly this:
+    /// with file format `yyyy_MM_dd` and title format `MMM do, yyyy`, the atom
+    /// `2026_09_04` must classify as text while `Sep 4th, 2026` classifies as a
+    /// date. `parse` would accept both and re-type a filename-shaped value.
+    pub fn parse_title(&self, s: &str) -> Option<JournalDate> {
+        self.title.parse(s.trim())
+    }
+
     /// Display title for a date, in the user's `:journal/page-title-format`.
     pub fn title(&self, d: JournalDate) -> String {
         self.title.format(d)

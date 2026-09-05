@@ -1667,25 +1667,86 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
     map
 }
 
-/// The five graph-config facts that decide **projected page facts and property
-/// atomization** (SPEC §5.8 M21, C3).
+/// The six graph-config facts that decide **projected page facts, property
+/// atomization and registry membership** (SPEC §5.8 M21, C3, B3).
 ///
-/// Why exactly these five and why they travel together: `JournalFormat::new(
+/// Why exactly these six and why they travel together: `JournalFormat::new(
 /// file_name_format, title_format)` and `decode_page_name(stem, file_name_format)`
-/// decide every page's name, kind and `date_key`, and the atomizer's comma-split
-/// and unparsed-key rules read the two keyword sets. Direct reconciliation
+/// decide every page's name, kind and `date_key`; the atomizer's comma-split and
+/// unparsed-key rules read the two keyword sets; and `hidden_properties` is the
+/// configured half of the registry's internal-key exclusion (§6.2 K15) — a
+/// config input exactly like the other lists (B3). Direct reconciliation
 /// compares only source revisions, so an omitted field would leave unchanged
-/// files with stale `pages` rows after a config edit — which is why the digest
-/// over these five (Wave B, §5.8 H6) is what forces a projection rebuild.
+/// files with stale `pages` rows after a config edit — which is why
+/// [`ParseConfig::digest`] over these six is what forces a projection rebuild.
 ///
 /// This is a read-only projection of [`Config`], never a second source of truth.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseConfig {
     pub separated_by_commas: Vec<String>,
     pub ignored_page_references_keywords: Vec<String>,
+    pub hidden_properties: Vec<String>,
     pub journal_page_title_format: Option<String>,
     pub journal_file_name_format: Option<String>,
     pub file_name_format: FileNameFormat,
+}
+
+/// The domain tag of [`ParseConfig::digest`]'s canonical encoding (§5.8 H6).
+const PARSE_CONFIG_DIGEST_DOMAIN: &[u8] = b"tine.parse-config.v1\0";
+
+impl ParseConfig {
+    /// The 32-byte stamp a projection records so a config edit forces a rebuild
+    /// (§5.8 H6, D-1: rebuild, never migrate).
+    ///
+    /// The encoding is frozen and pinned by a hex constant in this module's
+    /// tests, so changing it is a deliberate edit rather than a silent drift:
+    /// the domain tag, then the three key lists in the order
+    /// `separated_by_commas`, `ignored_page_references_keywords`,
+    /// `hidden_properties` — each NFC-lowercased with the §3.3 `atom_key`
+    /// normalization, sorted bytewise, de-duplicated, written as a `u32-LE`
+    /// count followed by each key as `u32-LE` byte length + UTF-8 bytes — then
+    /// `journal_page_title_format` and `journal_file_name_format`, each a single
+    /// `0x00` when absent or `0x01` + length-prefixed UTF-8 when present, then
+    /// `file_name_format` as one byte.
+    pub fn digest(&self) -> tine_storage::ContentDigest {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(PARSE_CONFIG_DIGEST_DOMAIN);
+        for list in [
+            &self.separated_by_commas,
+            &self.ignored_page_references_keywords,
+            &self.hidden_properties,
+        ] {
+            let mut keys: Vec<String> = list
+                .iter()
+                .map(|key| crate::query::atom::atom_key(key))
+                .collect();
+            keys.sort();
+            keys.dedup();
+            bytes.extend_from_slice(&(keys.len() as u32).to_le_bytes());
+            for key in keys {
+                bytes.extend_from_slice(&(key.len() as u32).to_le_bytes());
+                bytes.extend_from_slice(key.as_bytes());
+            }
+        }
+        for format in [
+            self.journal_page_title_format.as_deref(),
+            self.journal_file_name_format.as_deref(),
+        ] {
+            match format {
+                None => bytes.push(0x00),
+                Some(text) => {
+                    bytes.push(0x01);
+                    bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+                    bytes.extend_from_slice(text.as_bytes());
+                }
+            }
+        }
+        bytes.push(match self.file_name_format {
+            FileNameFormat::Legacy => 0x00,
+            FileNameFormat::TripleLowbar => 0x01,
+        });
+        tine_storage::ContentDigest::of(&bytes)
+    }
 }
 
 impl Default for ParseConfig {
@@ -1695,14 +1756,12 @@ impl Default for ParseConfig {
 }
 
 impl Config {
-    /// The parse-relevant slice of this config (SPEC §5.8). `ParseConfig::digest()`
-    /// — the on-disk stamp that forces a rebuild — is Wave B of P0-rust; it needs
-    /// tine-storage's `ContentDigest` and the atom-key normalization, neither of
-    /// which exists on this path yet.
+    /// The parse-relevant slice of this config (SPEC §5.8).
     pub fn parse_config(&self) -> ParseConfig {
         ParseConfig {
             separated_by_commas: self.separated_by_commas.clone(),
             ignored_page_references_keywords: self.ignored_page_references_keywords.clone(),
+            hidden_properties: self.block_hidden_properties.clone(),
             journal_page_title_format: self.journal_page_title_format.clone(),
             journal_file_name_format: self.journal_file_name_format.clone(),
             file_name_format: self.file_name_format,
@@ -1737,9 +1796,9 @@ mod parse_config_tests {
     }
 
     #[test]
-    fn parse_config_carries_all_five_projected_fact_inputs() {
+    fn parse_config_carries_all_six_projected_fact_inputs() {
         let cfg = Config::parse(
-            "{:journal/page-title-format \"yyyy-MM-dd\"\n :journal/file-name-format \"yyyy_MM_dd\"\n :file/name-format :triple-lowbar}",
+            "{:journal/page-title-format \"yyyy-MM-dd\"\n :journal/file-name-format \"yyyy_MM_dd\"\n :file/name-format :triple-lowbar\n :block-hidden-properties #{:secret}\n :property/separated-by-commas #{:authors}\n :ignored-page-references-keywords #{:url}}",
         );
         let parse = cfg.parse_config();
         assert_eq!(
@@ -1751,6 +1810,74 @@ mod parse_config_tests {
             Some("yyyy_MM_dd")
         );
         assert_eq!(parse.file_name_format, FileNameFormat::TripleLowbar);
+        assert_eq!(parse.separated_by_commas, vec!["authors"]);
+        assert_eq!(parse.ignored_page_references_keywords, vec!["url"]);
+        assert_eq!(
+            parse.hidden_properties, cfg.block_hidden_properties,
+            "the sixth field IS `block_hidden_properties` (B3), never a second list"
+        );
+        assert_eq!(parse.hidden_properties, vec!["secret"]);
+    }
+
+    // --- §5.8 H6: `ParseConfig::digest()` ---------------------------------
+
+    /// The on-disk encoding is frozen: this hex constant is what makes a change
+    /// to the byte layout a deliberate edit rather than a silent projection
+    /// invalidation across every user's graph.
+    #[test]
+    fn the_digest_of_one_fixed_config_is_pinned() {
+        let config = ParseConfig {
+            separated_by_commas: vec!["authors".into(), "Tags".into()],
+            ignored_page_references_keywords: vec!["url".into()],
+            hidden_properties: vec!["secret".into()],
+            journal_page_title_format: Some("MMM do, yyyy".into()),
+            journal_file_name_format: None,
+            file_name_format: FileNameFormat::TripleLowbar,
+        };
+        assert_eq!(
+            config.digest().to_string(),
+            "1cf44f4cc3319c8655e194b0feb4c50f09570995612dc79e540cf80582c26258"
+        );
+    }
+
+    #[test]
+    fn changing_only_hidden_properties_changes_the_digest() {
+        let base = ParseConfig::default();
+        let mut with_hidden = base.clone();
+        with_hidden.hidden_properties = vec!["secret".into()];
+        assert_ne!(
+            base.digest(),
+            with_hidden.digest(),
+            "the third key list is part of the stamp (B3), or a hidden-key edit \
+             would leave a stale registry behind"
+        );
+    }
+
+    #[test]
+    fn key_lists_are_normalized_sorted_and_deduplicated_before_hashing() {
+        let mut one = ParseConfig::default();
+        one.separated_by_commas = vec!["Tags".into(), "authors".into(), "tags".into()];
+        let mut two = ParseConfig::default();
+        two.separated_by_commas = vec!["authors".into(), "tags".into()];
+        assert_eq!(one.digest(), two.digest());
+    }
+
+    #[test]
+    fn the_two_journal_formats_occupy_distinct_digest_positions() {
+        let mut title = ParseConfig::default();
+        title.journal_page_title_format = Some("yyyy-MM-dd".into());
+        let mut file = ParseConfig::default();
+        file.journal_file_name_format = Some("yyyy-MM-dd".into());
+        assert_ne!(title.digest(), file.digest());
+    }
+
+    #[test]
+    fn the_file_name_format_byte_mapping_is_pinned() {
+        let mut legacy = ParseConfig::default();
+        legacy.file_name_format = FileNameFormat::Legacy;
+        let mut triple = ParseConfig::default();
+        triple.file_name_format = FileNameFormat::TripleLowbar;
+        assert_ne!(legacy.digest(), triple.digest());
     }
 }
 

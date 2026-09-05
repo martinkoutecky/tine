@@ -8,6 +8,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- **`{{query (property …)}}` now matches the way you read the page, not the way
+  the bytes happen to be written.** A property value matches whatever its
+  letter case — `status:: Done` answers `(property status done)`; a value
+  written as a list matches any of its items, so `topics:: rust, queries`
+  answers `(property topics rust)`; and a key whose values are all numbers or
+  all dates is compared as a number or a date instead of as text, so
+  `rank:: 007` answers `(property rank 7)` and a date property compares in
+  calendar order. Logseq compares the raw text, case-sensitively, and splits
+  only a handful of built-in keys — so a property query that found nothing in
+  Logseq may well find what you meant here. Page names (`[[…]]`, `tags::`,
+  `alias::`) were already matched case-insensitively and still are.
+
 ### Added
 
 - **`{{query (all-page-tags)}}` works.** Logseq has this filter — every page

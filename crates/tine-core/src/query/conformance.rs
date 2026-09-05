@@ -16,6 +16,7 @@ use std::path::PathBuf;
 
 use crate::date::JournalDate;
 use crate::model::Graph;
+use crate::query::atom::CompareMode;
 use crate::query::ir::{Anchor, Bounds, QueryRows};
 use crate::query::{
     parse_query_text, print::print_tql, run_query_bounded, run_query_result, QueryDialect,
@@ -446,6 +447,110 @@ fn ad_hoc_graph(label: &str, pages: &[(&str, &str)]) -> (Graph, PathBuf) {
     (graph, dir)
 }
 
+/// The §3.4 rows that only exist once a key HAS a type: a property atom is
+/// coerced by its key's effective type (§6.3), not by how the query spells its
+/// literal. The three rows are numeric, date and uncoercible.
+///
+/// The point of each `!` case is that the SAME comparison under text semantics
+/// would answer differently — `'10' > '9'` is false as text and true as a
+/// number — so a regression that dropped the registry would fail here rather
+/// than pass silently.
+#[test]
+fn property_atoms_compare_by_their_keys_effective_type() {
+    let (graph, dir) = ad_hoc_graph(
+        "effective-type",
+        &[(
+            "pages/Typed.md",
+            "\
+- score ten
+  score:: 10
+- score nine
+  score:: 9
+- score is a word
+  score:: high
+- due in august
+  due:: 2026-08-05
+- due in september
+  due:: 2026-09-01
+- due someday
+  due:: someday
+",
+        )],
+    );
+    let typed = |query: &str| -> Vec<String> {
+        let result = run_query_result(&graph, query, QueryDialect::Tql, Bounds::unbounded());
+        let QueryRows::Block { groups } = &result.rows else {
+            panic!("a block-anchored query returns block rows");
+        };
+        let mut matched: Vec<String> = groups
+            .iter()
+            .flat_map(|group| group.blocks.iter())
+            .map(|block| {
+                block
+                    .raw
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
+            .collect();
+        matched.sort();
+        matched
+    };
+
+    // NUMERIC. Two of the three `score` atoms are numbers, so the key is a
+    // number key and `10 > 9` holds -- as text, `'10' > '9'` would be false and
+    // this would answer with `score nine` instead.
+    assert_eq!(typed("prop('score') > 9"), vec!["score ten".to_string()]);
+    // UNCOERCIBLE. `high` is not a number, so EVERY comparison on it is false,
+    // `!=` included (K3): the word row is absent from both answers.
+    assert_eq!(
+        typed("prop('score') != 9"),
+        vec!["score ten".to_string()],
+        "an uncoercible atom fails `!=` too"
+    );
+    assert_eq!(typed("prop('score') = 'high'"), Vec::<String>::new());
+    // ... but it is still PRESENT, which is a property of the list and not of
+    // any atom's type.
+    assert_eq!(
+        typed("prop('score') is not null"),
+        vec![
+            "score is a word".to_string(),
+            "score nine".to_string(),
+            "score ten".to_string(),
+        ]
+    );
+    // `every` over a key holding one uncoercible atom is false for that row and
+    // true for the rows whose every atom satisfies the predicate.
+    assert_eq!(
+        typed("every(prop('score'), value > 3)"),
+        vec!["score nine".to_string(), "score ten".to_string()]
+    );
+
+    // DATE. Two of the three `due` atoms are dates, so the key is a date key
+    // and the comparison is on the day, not on the string.
+    assert_eq!(
+        typed("prop('due') < '2026-08-15'"),
+        vec!["due in august".to_string()]
+    );
+    assert_eq!(
+        typed("prop('due') between '2026-08-01' and '2026-09-30'"),
+        vec!["due in august".to_string(), "due in september".to_string()]
+    );
+    // The uncoercible date atom fails every comparison and is still present.
+    assert_eq!(
+        typed("prop('due') is not null"),
+        vec![
+            "due in august".to_string(),
+            "due in september".to_string(),
+            "due someday".to_string(),
+        ]
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 /// `finish_query_groups` orders result groups by page name and breaks a tie on
 /// page KIND, journal first.
 ///
@@ -511,11 +616,20 @@ fn two_groups_of_the_same_name_are_ordered_journal_first() {
 /// A `SCHEDULED:` on the block's own first line, after the marker, is the one
 /// planning shape whose expectation the spec defers to a measurement on the OG
 /// oracle ("expectation = OG's measured answer, whatever it is; walk and SQL
-/// must agree with it"). That measurement has NOT been taken in this lane — the
-/// headless OG oracle is not part of the P0-rust packet — so this test pins what
-/// TINE answers today rather than what OG answers. It exists so the P1 lane that
-/// takes the measurement finds a red test if the two disagree, instead of
-/// discovering the divergence in the field.
+/// must agree with it").
+///
+/// **Measured (P0-rust Wave B).** `tools/og-query-oracle/fixture-planning-graph`
+/// holds exactly these two blocks; `./q.sh dump.cljs fixture-planning-graph`
+/// reports:
+///
+/// ```text
+/// "TODO SCHEDULED: <2026-09-01 Tue>" |marker "TODO" |scheduled 0        |deadline 0
+/// "TODO on its own"                  |marker "TODO" |scheduled 20260902 |deadline 0
+/// ```
+///
+/// OG reads no planning timestamp from the marker's own line either: it stores
+/// `:block/scheduled 0`. Tine agrees, so the expectation below is now OG's
+/// measured answer and not a placeholder.
 #[test]
 fn planning_on_the_markers_own_line_pins_tines_current_answer() {
     let (graph, dir) = ad_hoc_graph(
@@ -532,7 +646,312 @@ fn planning_on_the_markers_own_line_pins_tines_current_answer() {
         matched,
         vec!["TODO on its own".to_string()],
         "Tine reads planning only from a timestamp that STARTS a source line, so \
-         the marker's own line is not a planning row. OG's answer is unmeasured."
+         the marker's own line is not a planning row -- and OG, measured on the \
+         oracle, stores :block/scheduled 0 for exactly that block."
     );
     let _ = fs::remove_dir_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// SPEC §8.1 / §8.3: the five counterfactual modes, over the SAME fixture graph
+// the OG oracle measures (`tools/og-query-oracle/fixture-case-graph`).
+//
+// Gate 1 attributes a walk/OG difference by running the walk with one decision
+// switched off at a time. That attribution is only trustworthy if each mode
+// actually differs where it should, which is what this matrix pins: the answer
+// under every mode, for every case `case.cljs` measures on OG, plus the typed
+// case v12 §8.3 adds. Mode `OG` must equal OG's measured answer.
+
+/// The Rust twin of `tools/og-query-oracle/fixture-case-graph`, byte for byte.
+/// Two copies of one fixture would drift; this comment is the contract, and
+/// `the_case_matrix_mode_og_reproduces_ogs_measured_answers` below carries OG's
+/// measured column so a drift shows up as a failing row rather than a silence.
+const CASE_PAGES: &[Page] = &[
+    Page {
+        path: "pages/book.md",
+        text: "- the book page\n",
+    },
+    Page {
+        path: "pages/cases.md",
+        text: "\
+- block A
+  status:: Done
+- block B
+  status:: done
+- block C
+  type:: [[Book]]
+- block D
+  type:: [[book]]
+- block E
+  kind:: Foo Bar
+- block F
+  type:: #Novel
+- block G
+  list:: Foo, Bar
+- block H
+  list:: Foo
+",
+    },
+    Page {
+        path: "pages/novel.md",
+        text: "type:: Fiction\ntags:: Genre\n\n- page body\n",
+    },
+    // §8.3's typed case: a key whose declared type is `number`, holding one
+    // number and one text value, so `type-attributed` is exercised -- the
+    // difference between `both-untyped` and `both` on the SAME atoms.
+    Page {
+        path: "pages/typed.md",
+        text: "- block I\n  score:: 01\n- block J\n  score:: high\n",
+    },
+    Page {
+        path: "pages/score.md",
+        text: "tine.type:: number\n\n- the score key page\n",
+    },
+];
+
+fn case_graph(label: &str) -> (Graph, PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "tine-query-case-matrix-{label}-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("pages")).expect("pages");
+    fs::create_dir_all(dir.join("journals")).expect("journals");
+    fs::create_dir_all(dir.join("logseq")).expect("logseq");
+    fs::write(dir.join("logseq/config.edn"), "{}\n").expect("config");
+    for page in CASE_PAGES {
+        fs::write(dir.join(page.path), page.text).expect("page");
+    }
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+    (graph, dir)
+}
+
+fn matched_in(graph: &Graph, query: &str, mode: CompareMode) -> Vec<String> {
+    let bounded =
+        crate::query::run_query_bounded_in_mode(graph, query, mode, usize::MAX, usize::MAX);
+    let mut out: Vec<String> = bounded
+        .groups
+        .iter()
+        .flat_map(|group| group.blocks.iter())
+        .map(|block| {
+            block
+                .raw
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Mode `OG` must equal OG's own answer. The right-hand column is copied from
+/// the oracle run `./q.sh case.cljs fixture-case-graph`, which prints it.
+///
+/// All twelve rows, including the two page-identity ones: gate 1 runs the
+/// same list against the same fixture through the walk
+/// (`tools/og-query-oracle/case-queries.txt`) and every row agrees.
+#[test]
+fn the_case_matrix_mode_og_reproduces_ogs_measured_answers() {
+    let (graph, dir) = case_graph("og");
+    let rows: &[(&str, &[&str])] = &[
+        // Property values are case-SENSITIVE in OG.
+        ("(property status Done)", &["block A"]),
+        ("(property status done)", &["block B"]),
+        // ...and so are ref values, although Book/book is one page.
+        ("(property type Book)", &["block C"]),
+        ("(property type book)", &["block D"]),
+        ("(property type Novel)", &["block F"]),
+        ("(property type novel)", &[]),
+        // Commas on a non-configured key: OG keeps one string.
+        ("(property list Foo)", &["block H"]),
+        ("(property list \"Foo, Bar\")", &["block G"]),
+        // Page-property is case-sensitive; page-tags is not.
+        ("(page-property type Fiction)", &["page body"]),
+        ("(page-property type fiction)", &[]),
+        // Page identity. OG resolves `[[book]]` and `tags:: Genre` to a PAGE
+        // and compares lower-cased names, so both are case-insensitive even in
+        // mode `OG` -- and `[[book]]`'s answer includes `book.md`'s own block,
+        // which OG reaches through `:block/path-refs` and the walk reaches as
+        // the page's own row.
+        ("[[book]]", &["block C", "block D", "the book page"]),
+        ("(page-tags genre)", &["page body"]),
+    ];
+    for (query, expected) in rows {
+        assert_eq!(
+            matched_in(&graph, query, CompareMode::Og),
+            expected.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            "mode OG: {query}"
+        );
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Each of Q20 and Q21 changes exactly the answers it is supposed to change,
+/// and nothing else. This is what makes a gate-1 label attributable: if
+/// `Q20-only` closes the gap, case folding caused it.
+#[test]
+fn each_mode_changes_only_the_answers_its_decision_owns() {
+    let (graph, dir) = case_graph("modes");
+
+    // Q20 (case folding) turns a case-sensitive miss into a hit, in every mode
+    // that carries it, and in no mode that does not.
+    for (mode, expected) in [
+        (CompareMode::Og, vec!["block A"]),
+        (CompareMode::Q20Only, vec!["block A", "block B"]),
+        (CompareMode::Q21Only, vec!["block A"]),
+        (CompareMode::BothUntyped, vec!["block A", "block B"]),
+        (CompareMode::Both, vec!["block A", "block B"]),
+    ] {
+        assert_eq!(
+            matched_in(&graph, "(property status Done)", mode),
+            expected,
+            "case folding under {}",
+            mode.label()
+        );
+    }
+
+    // Q21 (comma split on every key) turns the whole-string value into two
+    // atoms, so a single segment matches.
+    for (mode, expected) in [
+        (CompareMode::Og, vec!["block H"]),
+        (CompareMode::Q20Only, vec!["block H"]),
+        (CompareMode::Q21Only, vec!["block G", "block H"]),
+        (CompareMode::BothUntyped, vec!["block G", "block H"]),
+        (CompareMode::Both, vec!["block G", "block H"]),
+    ] {
+        assert_eq!(
+            matched_in(&graph, "(property list Foo)", mode),
+            expected,
+            "comma split under {}",
+            mode.label()
+        );
+    }
+    // ...and the whole string stops matching once it is split.
+    for (mode, expected) in [
+        (CompareMode::Og, vec!["block G"]),
+        (CompareMode::Q21Only, Vec::<&str>::new()),
+        (CompareMode::Both, Vec::<&str>::new()),
+    ] {
+        assert_eq!(
+            matched_in(&graph, "(property list \"Foo, Bar\")", mode),
+            expected,
+            "the whole string under {}",
+            mode.label()
+        );
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// §8.3's typed case (v12): `score:: 01` under a key DECLARED `number`.
+///
+/// Every OG-ward mode compares `01` by OG's `^\d+$` integer rule, so it matches
+/// `(property score 1)`. Only `both` also coerces, which is what distinguishes
+/// `type-attributed` from the other labels — and the distinguishing row is the
+/// TEXT value `high`, which `both` refuses on a number key while every untyped
+/// mode compares as text.
+#[test]
+fn the_typed_case_separates_both_untyped_from_both() {
+    let (graph, dir) = case_graph("typed");
+
+    // OG's own integer rule holds in all four non-`both` modes (v13 §8.1, Y3),
+    // and `both` agrees because the declared type is `number`.
+    for mode in CompareMode::all() {
+        assert_eq!(
+            matched_in(&graph, "(property score 1)", mode),
+            vec!["block I".to_string()],
+            "`01` is the integer 1 under {}",
+            mode.label()
+        );
+    }
+
+    // The text value on a number key: text under every untyped mode, refused
+    // under `both`. This is the ONLY row in the matrix where `both-untyped`
+    // and `both` differ, so `type-attributed` means exactly this.
+    for (mode, expected) in [
+        (CompareMode::Og, vec!["block J"]),
+        (CompareMode::Q20Only, vec!["block J"]),
+        (CompareMode::Q21Only, vec!["block J"]),
+        (CompareMode::BothUntyped, vec!["block J"]),
+        (CompareMode::Both, Vec::<&str>::new()),
+    ] {
+        assert_eq!(
+            matched_in(&graph, "(property score high)", mode),
+            expected,
+            "a text value on a declared-number key under {}",
+            mode.label()
+        );
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// SPEC §6.2's frozen atom fixture vectors, in the module gate 3 runs.
+///
+/// `query::atom`'s own tests pin the MECHANISM (origin, ordinal, de-duplication,
+/// classification). This is the frozen TABLE, here because gate 3 is
+/// `cargo test -p tine-core conformance::` and the table is part of what that
+/// gate asserts. Each row is also an oracle case in
+/// `tools/og-query-oracle/atoms.cljs`, which records what OG retains for the
+/// same value.
+#[test]
+fn the_frozen_atom_fixture_vectors_hold() {
+    use crate::query::atom::{property_atoms, AtomFormat, AtomOrigin};
+
+    let config = crate::config::ParseConfig::default();
+    let texts = |key: &str, value: &str| -> Vec<String> {
+        property_atoms(key, value, AtomFormat::Markdown, &config)
+            .into_iter()
+            .map(|atom| atom.text)
+            .collect()
+    };
+
+    assert_eq!(texts("k", "foo"), vec!["foo"]);
+    assert_eq!(texts("k", "[[a]]"), vec!["a"]);
+    assert_eq!(texts("k", "foo [[a]]"), vec!["a"]);
+    assert_eq!(texts("k", "[[a]] #b"), vec!["a", "b"]);
+    assert_eq!(texts("tags", "a, b"), vec!["a", "b"]);
+    assert_eq!(texts("k", "a, b"), vec!["a", "b"]);
+    assert_eq!(texts("k", "1,5"), vec!["1", "5"]);
+    assert!(texts("k", "").is_empty());
+    assert!(texts("k", "   ").is_empty());
+    assert_eq!(texts("k", "[[a]] [[a]]"), vec!["a"]);
+    assert_eq!(texts("k", "\"x, [[y]]\""), vec!["\"x, [[y]]\""]);
+    assert_eq!(texts("k", "12"), vec!["12"]);
+    assert_eq!(texts("k", "1.5"), vec!["1.5"]);
+    assert_eq!(texts("tags", "[[a]], a"), vec!["a"]);
+    assert_eq!(texts("template", "weekly review"), vec!["weekly review"]);
+    assert_eq!(texts("title", "A, B"), vec!["A", "B"]);
+
+    // Step 1 (v12, VERIFY-11 A1): reference parsing suppressed, comma split
+    // still applied.
+    let mut ignored = crate::config::ParseConfig::default();
+    ignored.ignored_page_references_keywords = vec!["url".into()];
+    let atoms = property_atoms("url", "http://a.b/x, [[y]]", AtomFormat::Markdown, &ignored);
+    assert_eq!(
+        atoms.iter().map(|a| a.text.clone()).collect::<Vec<_>>(),
+        vec!["http://a.b/x", "[[y]]"]
+    );
+    assert!(atoms.iter().all(|a| a.origin == AtomOrigin::Plain));
+
+    // The G8 repeated-row flattening fixture: `k:: a` twice, `K:: b`, then
+    // `k:: a, c` -- one owner, four source rows, first occurrence wins.
+    let flattened: Vec<String> = ["a", "a", "b", "a, c"]
+        .iter()
+        .flat_map(|value| property_atoms("k", value, AtomFormat::Markdown, &config))
+        .fold(
+            Vec::new(),
+            |mut out: Vec<crate::query::atom::Atom>, atom| {
+                if !out.iter().any(|existing| existing.key == atom.key) {
+                    out.push(atom);
+                }
+                out
+            },
+        )
+        .into_iter()
+        .map(|atom| atom.text)
+        .collect();
+    assert_eq!(flattened, vec!["a", "b", "c"]);
 }

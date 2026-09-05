@@ -18,100 +18,15 @@
 //! stdout rather than failing, so the same command line works with and without
 //! the anonymized graph.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tine_core::query::run_query_bounded;
 use tine_core::Graph;
 
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
+#[path = "support/query_corpus.rs"]
+mod query_corpus;
 
-/// Every `{{query …}}` / `{{tine-query …}}` macro argument in one file, in
-/// source order. Brace-balanced so a trailing options map `{:title …}` stays
-/// inside the macro.
-fn macro_args(text: &str, name: &str) -> Vec<String> {
-    let opener = format!("{{{{{name}");
-    let bytes: Vec<char> = text.chars().collect();
-    let opener_chars: Vec<char> = opener.chars().collect();
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    while i + opener_chars.len() <= bytes.len() {
-        if bytes[i..i + opener_chars.len()] != opener_chars[..] {
-            i += 1;
-            continue;
-        }
-        let after = i + opener_chars.len();
-        // `{{query}}` and `{{query …}}`; `{{query-foo}}` is a different macro.
-        match bytes.get(after) {
-            Some(' ') | Some('\t') | Some('\n') => {}
-            Some('}') => {
-                i = after;
-                continue;
-            }
-            _ => {
-                i += 1;
-                continue;
-            }
-        }
-        let mut depth = 1usize;
-        let mut j = after;
-        let mut arg = String::new();
-        while j < bytes.len() {
-            if bytes[j] == '{' && bytes.get(j + 1) == Some(&'{') {
-                depth += 1;
-                arg.push('{');
-                arg.push('{');
-                j += 2;
-                continue;
-            }
-            if bytes[j] == '}' && bytes.get(j + 1) == Some(&'}') {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-                arg.push('}');
-                arg.push('}');
-                j += 2;
-                continue;
-            }
-            arg.push(bytes[j]);
-            j += 1;
-        }
-        if depth == 0 {
-            out.push(arg.trim().to_string());
-        }
-        i = j.max(after);
-    }
-    out
-}
-
-fn graph_files(root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for dir in ["pages", "journals"] {
-        let dir = root.join(dir);
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(str::to_ascii_lowercase);
-            if matches!(ext.as_deref(), Some("md") | Some("org") | Some("markdown")) {
-                out.push(path);
-            }
-        }
-    }
-    out.sort();
-    out
-}
+use query_corpus::{fnv1a, graph_files, macro_args, materialize_single_file};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -126,26 +41,7 @@ fn main() {
             .and_then(|n| n.to_str())
             .unwrap_or(arg.as_str())
             .to_string();
-        // A single Markdown/Org file (the kitchen-sink fixture) is materialized
-        // as a one-page graph in a temp dir so it can be walked like the others.
-        let mut scratch: Option<PathBuf> = None;
-        let root = if root.is_file() {
-            let stem = root
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("page")
-                .to_string();
-            let dir = std::env::temp_dir().join(format!("query-walk-dump-{stem}"));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(dir.join("pages")).expect("scratch graph");
-            let ext = root.extension().and_then(|e| e.to_str()).unwrap_or("md");
-            std::fs::copy(&root, dir.join("pages").join(format!("{stem}.{ext}")))
-                .expect("scratch page");
-            scratch = Some(dir.clone());
-            dir
-        } else {
-            root
-        };
+        let (root, scratch) = materialize_single_file(&root);
         if !root.is_dir() {
             println!("# skipped {label} (absent)");
             continue;

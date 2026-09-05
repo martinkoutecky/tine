@@ -2774,11 +2774,15 @@ fn sparse_task_query_dfs_keys_match_materializer_order_for_equal_parent_orders()
         ]),
     };
     assert!(low_root_subtree.dfs_order < high_root_subtree.dfs_order);
+    let parse_config = crate::config::ParseConfig::default();
+    let registry = crate::query::registry::Registry::empty(&parse_config);
     let result = crate::query::run_application_sparse_task_query_bounded(
         &[high_root_subtree, low_root_subtree],
         "(task TODO)",
         8,
         1024,
+        &parse_config,
+        &registry,
     )
     .unwrap();
     assert_eq!(result.total, 2);
@@ -32679,4 +32683,80 @@ fn c7b_measure_anonymized_corpus() {
         SyncShutdownOutcome::Safe(_)
     ));
     let _ = fs::remove_dir_all(&root);
+}
+
+// ---------------------------------------------------------------------------
+// C6 cache identity for the Managed memo (SPEC §5.9, guards (b) and (c)).
+//
+// The memo is a private structure with two entry points, so its identity rule
+// is asserted where the rule lives. The end-to-end behaviour it produces -- a
+// config edit or a declared-type change answering anew -- is covered on the
+// Direct Files side in `model_tests.rs`, which can reopen a graph.
+
+fn memo_result(total: usize) -> SyncApplicationBoundedRefGroups {
+    SyncApplicationBoundedRefGroups {
+        groups: Vec::new(),
+        total,
+        exceeded: false,
+    }
+}
+
+fn memo_stamp(acceptance_sequence: u64, config: &str) -> ApplicationSimpleQueryMemoStamp {
+    ApplicationSimpleQueryMemoStamp {
+        acceptance_sequence,
+        config_digest: ContentDigest::of(config.as_bytes()),
+    }
+}
+
+#[test]
+fn the_managed_memo_is_keyed_by_the_parse_config_digest_as_well_as_the_sequence() {
+    let mut memo = ApplicationSimpleQueryMemo::default();
+    let before = memo_stamp(7, "one");
+    memo.insert(&before, 0, "(task TODO)", false, 10, 100, &memo_result(3));
+    assert_eq!(
+        memo.get(&before, 0, "(task TODO)", 10, 100)
+            .map(|r| r.total),
+        Some(3),
+        "the same evidence under the same rules is the same answer"
+    );
+
+    // E6: `journal_page_title_format` decides a page's kind and day, so a query
+    // with no property leaf at all is config-sensitive -- and editing
+    // `logseq/config.edn` never moves the acceptance sequence.
+    let after = memo_stamp(7, "two");
+    assert_eq!(
+        memo.get(&after, 0, "(task TODO)", 10, 100).map(|r| r.total),
+        None,
+        "a config change under an unchanged sequence must not serve the old answer"
+    );
+}
+
+#[test]
+fn a_registry_generation_advance_evicts_the_managed_memos_props_entries_only() {
+    let mut memo = ApplicationSimpleQueryMemo::default();
+    let stamp = memo_stamp(7, "one");
+    memo.insert(
+        &stamp,
+        4,
+        "(property size 5)",
+        true,
+        10,
+        100,
+        &memo_result(1),
+    );
+    memo.insert(&stamp, 4, "(task TODO)", false, 10, 100, &memo_result(2));
+
+    // A graph-wide effective-type change. Per-page retention cannot see it: the
+    // pages holding the answer did not change, only the key's type did.
+    assert_eq!(
+        memo.get(&stamp, 5, "(property size 5)", 10, 100)
+            .map(|r| r.total),
+        None,
+        "the typed query is recomputed under the new generation"
+    );
+    assert_eq!(
+        memo.get(&stamp, 5, "(task TODO)", 10, 100).map(|r| r.total),
+        Some(2),
+        "a query that reads no property atom cannot depend on an effective type"
+    );
 }

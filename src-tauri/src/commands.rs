@@ -2113,6 +2113,292 @@ pub(crate) async fn run_advanced_query(
     .map_err(CommandError::worker)?
 }
 
+// ---------------------------------------------------------------------------
+// The query-language command surface (SPEC §7.1).
+//
+// Six commands over ONE engine. `query_parse`, `query_print` and
+// `query_og_expressible` are pure functions of their arguments plus (for
+// suggestions) the graph's property registry; `query_registry`, `query_run` and
+// `query_explain_empty` read the graph. The old `run_query` /
+// `run_advanced_query` / `query_facets` / `export_query_subtrees` commands stay
+// and keep working: P0-ts moves the frontend, and their deletion is a P1 item.
+
+/// The dialect a query TEXT is written in, on the wire.
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum QueryTextDialect {
+    Og,
+    Tql,
+    /// `{{query #+BEGIN_QUERY …}}` — datalog, parsed as the advanced form.
+    Advanced,
+}
+
+/// The `{query, view}` pair every parse returns (SPEC §7.1).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ParsedQuery {
+    pub(crate) query: tine_core::query::ir::Query,
+    pub(crate) view: tine_core::query::ir::ViewSettings,
+}
+
+/// The core dialect a wire dialect parses and prints as. `Advanced` is OG's
+/// `{{query #+BEGIN_QUERY …}}` form, which the OG parser already detects and
+/// reports (M5); it is not a third parser.
+fn core_query_dialect(dialect: QueryTextDialect) -> tine_core::query::QueryDialect {
+    match dialect {
+        QueryTextDialect::Og | QueryTextDialect::Advanced => tine_core::query::QueryDialect::Og,
+        QueryTextDialect::Tql => tine_core::query::QueryDialect::Tql,
+    }
+}
+
+/// The whole of `query_parse` that is not slot plumbing: parse, then merge the
+/// host block's `tine.*` properties over the lifted directives (§4.1).
+fn parse_query_pair(
+    text: &str,
+    dialect: QueryTextDialect,
+    block_properties: &[(String, String)],
+    registry: &tine_core::query::registry::Registry,
+) -> ParsedQuery {
+    let (query, parsed_view) = tine_core::query::parse_query_text_with_registry(
+        text,
+        core_query_dialect(dialect),
+        tine_core::date::JournalDate::today(),
+        registry,
+    );
+    ParsedQuery {
+        query,
+        view: tine_core::query::view::merge_block_property_view(&parsed_view, block_properties),
+    }
+}
+
+/// The whole of `query_print` that is not `#[tauri::command]`: print, and turn
+/// a printer refusal into the one `CommandError` carrying the diagnostic.
+fn print_query_text(
+    query: &tine_core::query::ir::Query,
+    view: &tine_core::query::ir::ViewSettings,
+    dialect: QueryTextDialect,
+) -> Result<String, CommandError> {
+    tine_core::query::print::query_print(query, view, core_query_dialect(dialect)).map_err(
+        |diagnostic| {
+            let reason_code = match diagnostic.kind {
+                tine_core::query::ir::DiagnosticKind::NotApplicable => "not_applicable",
+                _ => "syntax",
+            };
+            CommandError::tagged(
+                "query-print-refused",
+                Some(reason_code),
+                Some(serde_json::to_value(&diagnostic).unwrap_or(serde_json::Value::Null)),
+            )
+        },
+    )
+}
+
+/// A result the WebView cannot be handed is a refusal, not a truncation: the
+/// same rule `run_query` applies, over the §7.1 shape.
+fn query_result_or_error(
+    result: tine_core::query::ir::QueryResult,
+) -> Result<tine_core::query::ir::QueryResult, CommandError> {
+    if result.exceeded {
+        return Err(CommandError::coded(
+            "result-too-large",
+            format!(
+                "{} matching rows; narrow the query or add a sample (construction limits: {RESULT_BRIDGE_MAX_ROWS} rows / {RESULT_BRIDGE_MAX_BYTES} bytes)",
+                result.total
+            ),
+        ));
+    }
+    Ok(result)
+}
+
+/// Fetch the registry snapshot the parse reads for its `UnknownIdent`
+/// suggestions, through whichever storage mode this slot is bound to.
+fn query_registry_snapshot(
+    slot: &crate::state::GraphSlot,
+) -> Result<tine_core::query::ir::RegistrySnapshot, CommandError> {
+    match sparse_application_handle(slot)? {
+        Some(handle) => {
+            match sparse_navigation(handle, SyncApplicationNavigationRequest::PropertyRegistry)? {
+                SyncApplicationNavigationReply::PropertyRegistry(snapshot) => Ok(snapshot),
+                _ => Err(CommandError::prose(
+                    "managed navigation returned the wrong reply",
+                )),
+            }
+        }
+        None => Ok(slot.legacy_graph()?.property_registry().snapshot()),
+    }
+}
+
+/// SPEC §7.1 `query_parse`: text → `{query, view}`, with the §4.1 precedence
+/// merge of the host block's `tine.*` properties applied here and nowhere else
+/// (M14).
+#[tauri::command]
+pub(crate) async fn query_parse(
+    text: String,
+    dialect: QueryTextDialect,
+    block_properties: Option<Vec<(String, String)>>,
+    state: GraphContext<'_>,
+) -> Result<ParsedQuery, CommandError> {
+    validate_query_source(&text)?;
+    let (app, label, binding_generation) = owned_graph_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        // managed-command-routing: managed -- the sparse/legacy dispatch lives
+        // in `query_registry_snapshot`, shared with `query_registry`.
+        // The registry only ever adds suggestions to a diagnostic. A storage
+        // mode that cannot answer must not turn a parse into a failure, so a
+        // refusal degrades to the empty registry rather than propagating.
+        let snapshot =
+            query_registry_snapshot(&slot).unwrap_or(tine_core::query::ir::RegistrySnapshot {
+                rows: Vec::new(),
+                generation: 0,
+            });
+        let registry = tine_core::query::registry::Registry::from_snapshot(&snapshot);
+        Ok(parse_query_pair(
+            &text,
+            dialect,
+            &block_properties.unwrap_or_default(),
+            &registry,
+        ))
+    })
+    .await
+    .map_err(CommandError::worker)?
+}
+
+/// SPEC §7.1 `query_print` (A4). `Ok(text)` for a printable IR; the OG printer
+/// is partial, so a non-OG-expressible IR **rejects**, carrying the whole
+/// `NotApplicable` diagnostic — never an empty string and never a stringified
+/// message. The one caller entitled to see it is the save path, which switches
+/// dialect; every other caller asked the OG printer without first checking
+/// `query_og_expressible`, and that is a bug.
+///
+/// **Reconciliation with §7.1, recorded:** the spec says the command rejects
+/// with the serialized `Diagnostic`. I-9 says every fallible command returns
+/// the ONE `CommandError`. Both hold here: the rejection is a `CommandError`
+/// whose structured `detail` IS the serialized diagnostic, so the frontend
+/// reads `kind`, `message` and `suggestions` as objects rather than parsing
+/// prose.
+#[tauri::command]
+pub(crate) async fn query_print(
+    query: tine_core::query::ir::Query,
+    view: tine_core::query::ir::ViewSettings,
+    dialect: QueryTextDialect,
+) -> Result<String, CommandError> {
+    print_query_text(&query, &view, dialect)
+}
+
+/// SPEC §7.1 `query_og_expressible`: whether the OG DSL can say this query, so
+/// the save path can choose the macro name (Q3) without provoking a rejection.
+#[tauri::command]
+pub(crate) async fn query_og_expressible(
+    query: tine_core::query::ir::Query,
+    view: tine_core::query::ir::ViewSettings,
+) -> bool {
+    tine_core::query::print::og_expressible(&query, &view)
+}
+
+/// SPEC §7.1 `query_registry`: the observed property registry (§6.1).
+#[tauri::command]
+pub(crate) async fn query_registry(
+    state: GraphContext<'_>,
+) -> Result<tine_core::query::ir::RegistrySnapshot, CommandError> {
+    let (app, label, binding_generation) = owned_graph_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        // managed-command-routing: managed -- see `query_registry_snapshot`.
+        query_registry_snapshot(&slot)
+    })
+    .await
+    .map_err(CommandError::worker)?
+}
+
+/// SPEC §7.1 `query_run`: the IR, already parsed, evaluated by the one walk.
+/// `@page` rows carry `{name, kind, journal_day?}` and need no document load
+/// (K16).
+#[tauri::command]
+pub(crate) async fn query_run(
+    query: tine_core::query::ir::Query,
+    view: tine_core::query::ir::ViewSettings,
+    state: GraphContext<'_>,
+) -> Result<tine_core::query::ir::QueryResult, CommandError> {
+    let (app, label, binding_generation) = owned_graph_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        let bounds = tine_core::query::ir::Bounds {
+            max_rows: RESULT_BRIDGE_MAX_ROWS,
+            max_bytes: RESULT_BRIDGE_MAX_BYTES,
+        };
+        let result = match sparse_application_handle(&slot)? {
+            Some(handle) => match sparse_navigation(
+                handle,
+                SyncApplicationNavigationRequest::QueryRun {
+                    query,
+                    view,
+                    max_rows: bounds.max_rows,
+                    max_bytes: bounds.max_bytes,
+                },
+            )? {
+                SyncApplicationNavigationReply::QueryRun(result) => result,
+                _ => {
+                    return Err(CommandError::prose(
+                        "managed navigation returned the wrong reply",
+                    ))
+                }
+            },
+            None => {
+                let graph = slot.legacy_graph()?;
+                tine_core::query::run_query_result_ir(&graph, &query, &view, bounds)
+            }
+        };
+        query_result_or_error(result)
+    })
+    .await
+    .map_err(CommandError::worker)?
+}
+
+/// SPEC §7.1 `query_explain_empty` (Q14, N19): why the query returned nothing.
+#[tauri::command]
+pub(crate) async fn query_explain_empty(
+    query: tine_core::query::ir::Query,
+    view: tine_core::query::ir::ViewSettings,
+    state: GraphContext<'_>,
+) -> Result<Vec<tine_core::query::view::EmptyExplanation>, CommandError> {
+    let (app, label, binding_generation) = owned_graph_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
+        let bounds = tine_core::query::ir::Bounds {
+            max_rows: RESULT_BRIDGE_MAX_ROWS,
+            max_bytes: RESULT_BRIDGE_MAX_BYTES,
+        };
+        match sparse_application_handle(&slot)? {
+            Some(handle) => match sparse_navigation(
+                handle,
+                SyncApplicationNavigationRequest::QueryExplainEmpty {
+                    query,
+                    view,
+                    max_rows: bounds.max_rows,
+                    max_bytes: bounds.max_bytes,
+                },
+            )? {
+                SyncApplicationNavigationReply::QueryExplainEmpty(lines) => Ok(lines),
+                _ => Err(CommandError::prose(
+                    "managed navigation returned the wrong reply",
+                )),
+            },
+            None => {
+                let graph = slot.legacy_graph()?;
+                Ok(tine_core::query::explain_empty_query(
+                    &graph, &query, &view, bounds,
+                ))
+            }
+        }
+    })
+    .await
+    .map_err(CommandError::worker)?
+}
+
 #[tauri::command]
 pub(crate) async fn query_facets(
     state: GraphContext<'_>,
@@ -5562,5 +5848,280 @@ mod direct_save_error_tests {
             assert_eq!(reported["kind"], "direct-save-failure");
             assert_eq!(reported["reason_code"], code);
         }
+    }
+}
+
+#[cfg(test)]
+mod query_command_surface_tests {
+    //! SPEC §7.1, O12. The six commands are `#[tauri::command]` wrappers around
+    //! decisions made in the helpers above; those decisions are what a test can
+    //! actually pin, and they are what would be wrong. The routing half is
+    //! pinned by `managed_command_surface`, which now classifies all six.
+
+    use super::*;
+    use tine_core::query::ir::{Query, ViewSettings};
+
+    fn graph_free_registry() -> tine_core::query::registry::Registry {
+        tine_core::query::registry::Registry::from_snapshot(
+            &tine_core::query::ir::RegistrySnapshot {
+                rows: Vec::new(),
+                generation: 0,
+            },
+        )
+    }
+
+    fn parsed(text: &str, dialect: QueryTextDialect) -> ParsedQuery {
+        parse_query_pair(text, dialect, &[], &graph_free_registry())
+    }
+
+    #[test]
+    fn query_parse_returns_the_pair_for_both_dialects() {
+        let og = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
+        assert!(!og.query.is_invalid(), "{:?}", og.query.diagnostics);
+        // OG's `(task TODO)` is a marker SET, so its TQL spelling is `in`;
+        // `task = 'TODO'` is the one-marker special case and a different node.
+        let tql = parsed("task in ('TODO') and [[Project]]", QueryTextDialect::Tql);
+        assert!(!tql.query.is_invalid(), "{:?}", tql.query.diagnostics);
+        assert_eq!(
+            og.query.normalized().filter,
+            tql.query.normalized().filter,
+            "one IR, two spellings"
+        );
+    }
+
+    #[test]
+    fn query_parse_reports_an_unknown_head_instead_of_a_shorter_query() {
+        let parsed = parsed("(and (task TODO) (frobnicate x))", QueryTextDialect::Og);
+        assert!(parsed
+            .query
+            .diagnostics
+            .iter()
+            .any(|d| d.kind == tine_core::query::ir::DiagnosticKind::UnknownHead));
+    }
+
+    #[test]
+    fn query_parse_merges_the_host_blocks_view_properties() {
+        let merged = parse_query_pair(
+            "(and (task TODO) (sort-by page asc))",
+            QueryTextDialect::Og,
+            &[("tine.sample".to_string(), "5".to_string())],
+            &graph_free_registry(),
+        );
+        assert_eq!(merged.view.sample, Some(5));
+        assert!(
+            !merged.view.sort.is_empty(),
+            "the directive survives where no property covers it"
+        );
+    }
+
+    #[test]
+    fn query_print_prints_tql_for_every_ir_and_og_where_it_can() {
+        let parsed = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
+        let tql = print_query_text(&parsed.query, &parsed.view, QueryTextDialect::Tql)
+            .expect("TQL is total");
+        assert!(tql.contains("[[Project]]"), "{tql}");
+        let og = print_query_text(&parsed.query, &parsed.view, QueryTextDialect::Og)
+            .expect("this filter is OG-expressible");
+        assert!(og.starts_with('('), "{og}");
+    }
+
+    /// A4: the OG printer is partial and REJECTS, carrying the whole
+    /// diagnostic. Never an empty string, never a stringified message.
+    #[test]
+    fn query_print_rejects_a_non_og_expressible_ir_with_the_diagnostic() {
+        let parsed = parsed("any(children, task = 'DONE')", QueryTextDialect::Tql);
+        assert!(!parsed.query.is_invalid(), "{:?}", parsed.query.diagnostics);
+        assert!(
+            !tine_core::query::print::og_expressible(&parsed.query, &parsed.view),
+            "the fixture must be a filter the OG DSL cannot say"
+        );
+        let error = print_query_text(&parsed.query, &parsed.view, QueryTextDialect::Og)
+            .expect_err("the OG printer is partial");
+        let wire = serde_json::to_string(&error).expect("the rejection serializes");
+        assert!(wire.contains("query-print-refused"), "{wire}");
+        assert!(wire.contains("not_applicable"), "{wire}");
+        assert!(
+            wire.contains("not_applicable\\\",\\\"message") || wire.contains("message"),
+            "the diagnostic travels as structure, not as prose: {wire}"
+        );
+    }
+
+    #[test]
+    fn query_og_expressible_separates_the_two_printers() {
+        let og = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
+        assert!(tine_core::query::print::og_expressible(&og.query, &og.view));
+        let tql_only = parsed("any(children, task = 'DONE')", QueryTextDialect::Tql);
+        assert!(!tine_core::query::print::og_expressible(
+            &tql_only.query,
+            &tql_only.view
+        ));
+    }
+
+    /// `query_registry` returns whatever the bound storage mode published, and
+    /// a registry rebuilt from that wire shape answers suggestions with it.
+    #[test]
+    fn the_registry_snapshot_round_trips_through_the_wire_shape() {
+        let snapshot = tine_core::query::ir::RegistrySnapshot {
+            rows: vec![tine_core::query::ir::RegistryRow {
+                normalized_name: "status".into(),
+                cardinality: tine_core::query::ir::Cardinality::One,
+                observed_type: tine_core::query::ir::ObservedType::Text,
+                count_blocks: 2,
+                count_pages: 0,
+                histogram: Vec::new(),
+                mismatch_count: 0,
+                declared: None,
+                top_values: Vec::new(),
+            }],
+            generation: 7,
+        };
+        let registry = tine_core::query::registry::Registry::from_snapshot(&snapshot);
+        assert_eq!(registry.generation(), 7);
+        assert_eq!(registry.snapshot(), snapshot);
+        let parsed = parse_query_pair("statuss = 'x'", QueryTextDialect::Tql, &[], &registry);
+        assert_eq!(
+            parsed
+                .query
+                .diagnostics
+                .iter()
+                .find(|d| d.kind == tine_core::query::ir::DiagnosticKind::UnknownIdent)
+                .map(|d| d.suggestions.clone()),
+            Some(vec!["prop('status')".to_string()]),
+            "the registry the command fetched is the one the parse reads"
+        );
+    }
+
+    /// `query_run` never truncates: an over-budget answer is a refusal with the
+    /// count, the same rule `run_query` applies.
+    #[test]
+    fn query_run_refuses_an_over_budget_result_rather_than_truncating_it() {
+        let result = tine_core::query::ir::QueryResult {
+            rows: tine_core::query::ir::QueryRows::Block { groups: Vec::new() },
+            diagnostics: Vec::new(),
+            report: tine_core::query::ir::QueryReport {
+                supported: true,
+                ..Default::default()
+            },
+            total: 99_999,
+            exceeded: true,
+        };
+        let error = query_result_or_error(result).expect_err("an exceeded result is a refusal");
+        let wire = serde_json::to_string(&error).expect("the rejection serializes");
+        assert!(wire.contains("result-too-large"), "{wire}");
+        assert!(wire.contains("99999"), "{wire}");
+    }
+
+    #[test]
+    fn query_run_passes_a_result_within_budget_through_unchanged() {
+        let result = tine_core::query::ir::QueryResult {
+            rows: tine_core::query::ir::QueryRows::Page { pages: Vec::new() },
+            diagnostics: Vec::new(),
+            report: tine_core::query::ir::QueryReport {
+                supported: true,
+                ..Default::default()
+            },
+            total: 3,
+            exceeded: false,
+        };
+        let passed = query_result_or_error(result).expect("within budget");
+        assert_eq!(passed.total, 3);
+        assert!(matches!(
+            passed.rows,
+            tine_core::query::ir::QueryRows::Page { .. }
+        ));
+    }
+
+    /// `query_explain_empty` (N19): a root `And` explains per conjunct with a
+    /// `without` count; anything else explains as a whole and has none.
+    #[test]
+    fn query_explain_empty_answers_per_conjunct_only_for_a_root_and() {
+        let dir = std::env::temp_dir().join(format!("tine-query-explain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        std::fs::write(
+            dir.join("pages/Explain.md"),
+            "- TODO a task with no project\n- a project mention [[Project]]\n",
+        )
+        .unwrap();
+        let graph = tine_core::model::Graph::open(&dir);
+        graph.warm_cache();
+        let bounds = tine_core::query::ir::Bounds::unbounded();
+
+        let conjunction = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
+        let lines = tine_core::query::explain_empty_query(
+            &graph,
+            &conjunction.query,
+            &conjunction.view,
+            bounds,
+        );
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines.iter().all(|line| line.without.is_some()),
+            "every conjunct of a root `And` reports what the others match: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.alone == 1),
+            "each conjunct matches a row on its own: {lines:?}"
+        );
+
+        let single = parsed("(task TODO)", QueryTextDialect::Og);
+        let lines =
+            tine_core::query::explain_empty_query(&graph, &single.query, &single.view, bounds);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0].without, None, "there is no `other` to be without");
+        assert_eq!(lines[0].alone, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn parse_and_run(graph: &tine_core::model::Graph, text: &str) -> Vec<String> {
+        let parsed = parsed(text, QueryTextDialect::Tql);
+        let result = tine_core::query::run_query_result_ir(
+            graph,
+            &parsed.query,
+            &parsed.view,
+            tine_core::query::ir::Bounds::unbounded(),
+        );
+        match result.rows {
+            tine_core::query::ir::QueryRows::Page { pages } => {
+                pages.into_iter().map(|page| page.name).collect()
+            }
+            tine_core::query::ir::QueryRows::Block { groups } => groups
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter())
+                .map(|block| {
+                    block
+                        .raw
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string()
+                })
+                .collect(),
+        }
+    }
+
+    /// K16: a `@page` query answers with page rows and never loads a document.
+    #[test]
+    fn query_run_answers_page_rows_for_a_page_anchored_query() {
+        let dir = std::env::temp_dir().join(format!("tine-query-run-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        std::fs::create_dir_all(dir.join("journals")).unwrap();
+        std::fs::write(dir.join("pages/Proj%2FSub.md"), "- under a namespace\n").unwrap();
+        std::fs::write(dir.join("pages/Other.md"), "- elsewhere\n").unwrap();
+        let graph = tine_core::model::Graph::open(&dir);
+        graph.warm_cache();
+
+        assert_eq!(
+            parse_and_run(&graph, "@page and name like 'proj/%'"),
+            vec!["Proj/Sub".to_string()]
+        );
+        assert_eq!(
+            parse_and_run(&graph, "content like '%namespace%'"),
+            vec!["under a namespace".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

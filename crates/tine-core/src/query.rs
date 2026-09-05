@@ -3,13 +3,16 @@
 //! task markers, and property filters. Advanced datalog (`[:find ...]`) is
 //! detected and reported as unsupported rather than crashed.
 
+pub mod atom;
 #[cfg(test)]
 mod conformance;
 pub(crate) mod eval;
 pub mod ir;
 pub(crate) mod og;
 pub mod print;
+pub mod registry;
 pub(crate) mod tql;
+pub mod view;
 
 use eval::EvalCtx;
 use ir::{
@@ -1652,6 +1655,19 @@ pub fn parse_query_text(
     dialect: QueryDialect,
     today: JournalDate,
 ) -> (Query, ViewSettings) {
+    parse_query_text_with_registry(query_src, dialect, today, registry::Registry::none())
+}
+
+/// [`parse_query_text`] against a registry snapshot. The parse is identical;
+/// only an `UnknownIdent` diagnostic differs, gaining the nearest property keys
+/// the graph actually has as `prop('…')` suggestions (§4.2.2). The OG dialect
+/// has no identifier vocabulary to be wrong about, so it ignores the registry.
+pub fn parse_query_text_with_registry(
+    query_src: &str,
+    dialect: QueryDialect,
+    today: JournalDate,
+    registry: &registry::Registry,
+) -> (Query, ViewSettings) {
     match dialect {
         QueryDialect::Og => parse_query_source(query_src, today),
         QueryDialect::Tql => {
@@ -1670,7 +1686,7 @@ pub fn parse_query_text(
                 ));
                 return (query, ViewSettings::default());
             }
-            tql::parse_tql(query_src)
+            tql::parse_tql(query_src, registry)
         }
     }
 }
@@ -1736,6 +1752,10 @@ pub(crate) struct QueryPageView<'a> {
     /// Files from the filename it parsed at inventory time, managed storage
     /// from the page title.
     pub(crate) journal: Option<i64>,
+    /// The page's on-disk format. The property atomizer parses a value with the
+    /// page's own inline grammar (§6.2 E4), so an `Outline.ORG` page's values
+    /// are read as Org by the walk exactly as by the projection.
+    pub(crate) format: crate::query::atom::AtomFormat,
     pub(crate) recency: &'a dyn Fn() -> i64,
 }
 
@@ -1755,12 +1775,73 @@ pub(crate) trait QueryPageSource {
     /// [`QueryPageSource::for_each_page`] and allocate nothing extra.
     fn with_hydration_pages(&self, run: &mut dyn FnMut(&[ExportHydrationPage<'_>]));
 
+    /// The graph config the property atomizer reads (§5.8 M21). Supplied by the
+    /// backend so the walk never re-reads `config.edn` per query.
+    fn parse_config(&self) -> crate::config::ParseConfig;
+
+    /// ONE coherent registry snapshot for the whole query (§6.2): the walk's
+    /// coercion, the TQL diagnostics and `query_registry` all read the same
+    /// `Arc`, so a query sees one generation end to end.
+    fn registry(&self) -> std::sync::Arc<crate::query::registry::Registry>;
+
+    /// Which of the §8.1 counterfactual modes this source evaluates under.
+    /// Every product source is Tine; only gate 1's wrapper says otherwise.
+    fn compare_mode(&self) -> atom::CompareMode {
+        atom::CompareMode::Both
+    }
+
     /// Test-only instrumentation hook: one predicate evaluation over this
     /// source is about to begin. Only Direct Files' whole-graph source counts,
     /// because the counter exists to prove the candidate planner avoided a full
     /// graph walk.
     #[cfg(test)]
     fn note_predicate_evaluation(&self) {}
+}
+
+/// One Direct Files graph walked under one of the §8.1 counterfactual modes.
+///
+/// Gate 1 needs the SAME walk over the SAME pages with one decision switched
+/// off, so this delegates everything except the mode. Nothing in the product
+/// constructs it; [`run_query_bounded_in_mode`] is its only caller.
+pub(crate) struct GraphQueryPagesInMode<'a>(
+    pub(crate) GraphQueryPages<'a>,
+    pub(crate) atom::CompareMode,
+);
+
+impl QueryPageSource for GraphQueryPagesInMode<'_> {
+    fn for_each_page(&self, visit: &mut dyn FnMut(QueryPageView<'_>) -> std::ops::ControlFlow<()>) {
+        self.0.for_each_page(visit);
+    }
+    fn with_hydration_pages(&self, run: &mut dyn FnMut(&[ExportHydrationPage<'_>])) {
+        self.0.with_hydration_pages(run);
+    }
+    fn parse_config(&self) -> crate::config::ParseConfig {
+        self.0.parse_config()
+    }
+    fn registry(&self) -> std::sync::Arc<crate::query::registry::Registry> {
+        self.0.registry()
+    }
+    fn compare_mode(&self) -> atom::CompareMode {
+        self.1
+    }
+}
+
+/// [`run_query_bounded`] under one §8.1 mode. Gate 1's entry point: the walk is
+/// identical, only the atomizer's split, the atom identity and the coercion
+/// change, so a difference between two modes attributes itself.
+pub fn run_query_bounded_in_mode(
+    graph: &Graph,
+    query_src: &str,
+    mode: atom::CompareMode,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    run_query_bounded_over(
+        &GraphQueryPagesInMode(GraphQueryPages(graph), mode),
+        query_src,
+        max_rows,
+        max_bytes,
+    )
 }
 
 /// Direct Files' page source: the cached `Arc<Document>` snapshot.
@@ -1777,6 +1858,7 @@ impl QueryPageSource for GraphQueryPages<'_> {
                     pre_block: doc.pre_block.as_deref(),
                     roots: &doc.roots,
                     journal: entry.date_key,
+                    format: Format::from_path(std::path::Path::new(&entry.rel_path)).into(),
                     recency: &recency,
                 });
                 if flow.is_break() {
@@ -1800,6 +1882,14 @@ impl QueryPageSource for GraphQueryPages<'_> {
         });
     }
 
+    fn parse_config(&self) -> crate::config::ParseConfig {
+        self.0.config.parse_config()
+    }
+
+    fn registry(&self) -> std::sync::Arc<crate::query::registry::Registry> {
+        self.0.property_registry()
+    }
+
     #[cfg(test)]
     fn note_predicate_evaluation(&self) {
         FULL_GRAPH_QUERY_EVALUATIONS.with(|count| count.set(count.get().saturating_add(1)));
@@ -1808,11 +1898,15 @@ impl QueryPageSource for GraphQueryPages<'_> {
 
 /// Managed storage's page source: the already-narrowed candidate set, each page
 /// carrying the `DocBlock` forest the projection cache retained for it.
-pub(crate) struct ApplicationQueryPages<'a>(pub(crate) &'a [ApplicationQueryPage]);
+pub(crate) struct ApplicationQueryPages<'a> {
+    pub(crate) pages: &'a [ApplicationQueryPage],
+    pub(crate) config: crate::config::ParseConfig,
+    pub(crate) registry: std::sync::Arc<crate::query::registry::Registry>,
+}
 
 impl QueryPageSource for ApplicationQueryPages<'_> {
     fn for_each_page(&self, visit: &mut dyn FnMut(QueryPageView<'_>) -> std::ops::ControlFlow<()>) {
-        for source in self.0 {
+        for source in self.pages {
             let page = &source.page;
             let recency = || source.recency;
             let flow = visit(QueryPageView {
@@ -1821,6 +1915,7 @@ impl QueryPageSource for ApplicationQueryPages<'_> {
                 pre_block: page.pre_block.as_deref(),
                 roots: source.roots.as_slice(),
                 journal: source.journal,
+                format: page.format.into(),
                 recency: &recency,
             });
             if flow.is_break() {
@@ -1831,7 +1926,7 @@ impl QueryPageSource for ApplicationQueryPages<'_> {
 
     fn with_hydration_pages(&self, run: &mut dyn FnMut(&[ExportHydrationPage<'_>])) {
         let pages = self
-            .0
+            .pages
             .iter()
             .map(|source| ExportHydrationPage {
                 kind: source.page.kind,
@@ -1840,6 +1935,14 @@ impl QueryPageSource for ApplicationQueryPages<'_> {
             })
             .collect::<Vec<_>>();
         run(&pages);
+    }
+
+    fn parse_config(&self) -> crate::config::ParseConfig {
+        self.config.clone()
+    }
+
+    fn registry(&self) -> std::sync::Arc<crate::query::registry::Registry> {
+        std::sync::Arc::clone(&self.registry)
     }
 }
 
@@ -1919,6 +2022,8 @@ pub(crate) fn run_query_result_over(
     let filter = query.evaluable_filter();
     let today = JournalDate::today();
     let compiled = eval::CompiledLeaves::for_query(&filter);
+    let parse_config = source.parse_config();
+    let registry = source.registry();
     let mut pages: Vec<ir::PageRow> = Vec::new();
     let mut exceeded = false;
     source.for_each_page(&mut |page| {
@@ -1929,8 +2034,11 @@ pub(crate) fn run_query_result_over(
             page.kind,
             page.journal,
             &page_props,
+            page.format,
             today,
             &compiled,
+            &parse_config,
+            &registry,
         ) {
             return std::ops::ControlFlow::Continue(());
         }
@@ -1998,6 +2106,9 @@ fn run_pred_bounded_over(
     };
     let today = JournalDate::today();
     let compiled = eval::CompiledLeaves::for_query(&filter);
+    let parse_config = source.parse_config();
+    let registry = source.registry();
+    let mode = source.compare_mode();
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
     // An unsorted `(sample N)` semantically needs only the first N matches in
     // deterministic traversal order. Do not construct or classify the rest as
@@ -2020,6 +2131,10 @@ fn run_pred_bounded_over(
             page_props: &page_props,
             today,
             compiled: &compiled,
+            format: page.format,
+            config: &parse_config,
+            registry: &registry,
+            mode,
         };
         let mut matched: Vec<BlockDto> = Vec::new();
         let mut path = Vec::new();
@@ -2937,13 +3052,85 @@ pub(crate) fn run_application_query_pages_bounded(
     query_src: &str,
     max_rows: usize,
     max_bytes: usize,
+    config: crate::config::ParseConfig,
+    registry: std::sync::Arc<registry::Registry>,
 ) -> BoundedGroups {
     run_query_bounded_over(
-        &ApplicationQueryPages(pages),
+        &ApplicationQueryPages {
+            pages,
+            config,
+            registry,
+        },
         query_src,
         max_rows,
         max_bytes,
     )
+}
+
+/// The §7.1 `query_run` evaluator over managed pages: the IR arrives already
+/// parsed, so this is `run_query_result_over` with the managed page source
+/// bound. One evaluator, two backends (I-19) — the Direct Files twin is
+/// [`run_query_result`].
+pub(crate) fn run_application_query_result(
+    pages: &[ApplicationQueryPage],
+    query: &Query,
+    view: &ViewSettings,
+    bounds: ir::Bounds,
+    config: crate::config::ParseConfig,
+    registry: std::sync::Arc<registry::Registry>,
+) -> ir::QueryResult {
+    run_query_result_over(
+        &ApplicationQueryPages {
+            pages,
+            config,
+            registry,
+        },
+        query,
+        view,
+        bounds,
+    )
+}
+
+/// The §7.1 `query_explain_empty` computation over managed pages.
+pub(crate) fn explain_application_empty_query(
+    pages: &[ApplicationQueryPage],
+    query: &Query,
+    view: &ViewSettings,
+    bounds: ir::Bounds,
+    config: crate::config::ParseConfig,
+    registry: std::sync::Arc<registry::Registry>,
+) -> Vec<view::EmptyExplanation> {
+    view::explain_empty(
+        &ApplicationQueryPages {
+            pages,
+            config,
+            registry,
+        },
+        query,
+        view,
+        bounds,
+    )
+}
+
+/// The Direct Files twin of [`run_application_query_result`]: `query_run` when
+/// the IR is already parsed (the §7.1 command hands the IR, not text).
+pub fn run_query_result_ir(
+    graph: &Graph,
+    query: &Query,
+    view: &ViewSettings,
+    bounds: ir::Bounds,
+) -> ir::QueryResult {
+    run_query_result_over(&GraphQueryPages(graph), query, view, bounds)
+}
+
+/// The Direct Files twin of [`explain_application_empty_query`].
+pub fn explain_empty_query(
+    graph: &Graph,
+    query: &Query,
+    view: &ViewSettings,
+    bounds: ir::Bounds,
+) -> Vec<view::EmptyExplanation> {
+    view::explain_empty(&GraphQueryPages(graph), query, view, bounds)
 }
 
 /// Storage-independent shallow block supplied by the managed sparse reader.
@@ -3013,6 +3200,8 @@ pub(crate) fn run_application_sparse_task_query_bounded(
     query_src: &str,
     max_rows: usize,
     max_bytes: usize,
+    config: &crate::config::ParseConfig,
+    registry: &registry::Registry,
 ) -> Result<BoundedGroups, ApplicationSparseQueryError> {
     let blocks = candidates
         .iter()
@@ -3029,7 +3218,7 @@ pub(crate) fn run_application_sparse_task_query_bounded(
             dfs_order: &candidate.dfs_order,
         })
         .collect::<Vec<_>>();
-    run_parser_sparse_task_query_bounded(&views, query_src, max_rows, max_bytes)
+    run_parser_sparse_task_query_bounded(&views, query_src, max_rows, max_bytes, config, registry)
 }
 
 pub(crate) fn run_parser_sparse_task_query_bounded(
@@ -3037,6 +3226,8 @@ pub(crate) fn run_parser_sparse_task_query_bounded(
     query_src: &str,
     max_rows: usize,
     max_bytes: usize,
+    config: &crate::config::ParseConfig,
+    registry: &registry::Registry,
 ) -> Result<BoundedGroups, ApplicationSparseQueryError> {
     if sparse_task_query_eligibility(query_src).is_none() {
         return Err(ApplicationSparseQueryError::Ineligible);
@@ -3083,6 +3274,13 @@ pub(crate) fn run_parser_sparse_task_query_bounded(
             page_props: &empty_props,
             today,
             compiled: &compiled,
+            mode: atom::CompareMode::Both,
+            // A sparse task candidate is a marker-narrowed block; the eligibility
+            // gate (`sparse_task_query_eligibility`) admits no property leaf, so
+            // no atom is ever parsed on this path. Markdown is the honest default.
+            format: crate::query::atom::AtomFormat::Markdown,
+            config,
+            registry,
         };
         let matched = eval::eval_block(&filter, candidate.block, &PathRefCounts::new(), &ctx);
         evaluated.push(EvaluatedCandidate { candidate, matched });
@@ -3173,7 +3371,13 @@ pub(crate) fn run_parser_sparse_task_query_bounded(
 // the keep/evict decision can never drift from what a full recompute would give.
 
 /// Whether page (entry, doc) contributes any block to query `src`.
-pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -> bool {
+pub(crate) fn page_affects_query(
+    src: &str,
+    entry: &PageEntry,
+    doc: &Document,
+    config: &crate::config::ParseConfig,
+    registry: &registry::Registry,
+) -> bool {
     let today = JournalDate::today();
     let (query, _view) = parse_query_source(src, today);
     if query.is_invalid() {
@@ -3183,7 +3387,16 @@ pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -
         Anchor::Block => query.evaluable_filter(),
         Anchor::Page => og::rebase_to_block(&query.evaluable_filter()),
     };
-    page_contributes_to_filter(&filter, entry, doc, today)
+    page_contributes_to_filter(&filter, entry, doc, today, config, registry)
+}
+
+/// Whether a query source carries a `props` leaf, and is therefore sensitive to
+/// the registry's effective types (C6): its cached result must be evicted when
+/// the registry generation advances, because per-page retention evaluates the
+/// query against ONE saved page and cannot see a graph-wide type change.
+pub fn query_source_has_props_leaf(src: &str) -> bool {
+    let (query, _view) = parse_query_source(src, JournalDate::today());
+    query.filter.has_props_leaf()
 }
 
 /// "Could an edit to this page change the derived result of `filter`?" — the
@@ -3194,6 +3407,8 @@ fn page_contributes_to_filter(
     entry: &PageEntry,
     doc: &Document,
     today: JournalDate,
+    config: &crate::config::ParseConfig,
+    registry: &registry::Registry,
 ) -> bool {
     let (page_props, _page_tags) = page_facets(doc.pre_block.as_deref());
     let compiled = eval::CompiledLeaves::for_query(filter);
@@ -3204,6 +3419,10 @@ fn page_contributes_to_filter(
         page_props: &page_props,
         today,
         compiled: &compiled,
+        mode: atom::CompareMode::Both,
+        format: Format::from_path(std::path::Path::new(&entry.rel_path)).into(),
+        config,
+        registry,
     };
     let mut hit = false;
     let mut path_refs = PathRefCounts::new();
@@ -3334,12 +3553,21 @@ pub(crate) fn page_affects_advanced_query(
     current_page: Option<&str>,
     entry: &PageEntry,
     doc: &Document,
+    config: &crate::config::ParseConfig,
+    registry: &registry::Registry,
 ) -> bool {
     let today = JournalDate::today();
     let (Some(query), _, _) = advanced_pred(query_src, current_page, today) else {
         return false;
     };
-    page_contributes_to_filter(&query.evaluable_filter(), entry, doc, today)
+    page_contributes_to_filter(
+        &query.evaluable_filter(),
+        entry,
+        doc,
+        today,
+        config,
+        registry,
+    )
 }
 
 /// Result of an advanced (datalog) query: matched groups + which clause heads
@@ -3398,9 +3626,15 @@ pub(crate) fn run_application_advanced_query_pages_bounded(
     current_page: Option<&str>,
     max_rows: usize,
     max_bytes: usize,
+    config: crate::config::ParseConfig,
+    registry: std::sync::Arc<registry::Registry>,
 ) -> (AdvancedResult, bool, usize) {
     run_advanced_query_bounded_over(
-        &ApplicationQueryPages(pages),
+        &ApplicationQueryPages {
+            pages,
+            config,
+            registry,
+        },
         query_src,
         current_page,
         max_rows,
@@ -4248,6 +4482,14 @@ const INTERNAL_PROPS: &[&str] = &[
     "template-including-parent",
 ];
 
+/// The built-in half of the registry's internal-key exclusion (§6.2 K15). ONE
+/// definition: the registry excludes this set ∪ the user's configured
+/// `hidden_properties` ∪ every `tine.*` key, and the query-builder facets hide
+/// exactly this set.
+pub fn internal_property_keys() -> &'static [&'static str] {
+    INTERNAL_PROPS
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum PropertyFacetMode {
     QueryBuilder,
@@ -4395,23 +4637,122 @@ impl PropertyFacetAccumulator {
     }
 }
 
-pub(crate) fn application_page_property_pairs(
+/// The owner-preserving property rows of ONE Managed Storage overlay page
+/// (§6.2): the registry's Managed source is the masked materialized stream
+/// followed by this iterator over every unaccepted local overlay page, so a
+/// pending edit's properties are in the snapshot the walk coerces against.
+///
+/// `application_page_property_pairs` is a thin wrapper over this function —
+/// ONE producer, never a twin (D-4).
+pub(crate) fn application_page_property_owner_rows(
     page: &PageDto,
+    page_id: &str,
     include_page_properties: bool,
-) -> Vec<(String, String)> {
-    fn visit(blocks: &[BlockDto], output: &mut Vec<(String, String)>) {
+) -> Vec<registry::OwnerRow> {
+    fn visit(blocks: &[BlockDto], page_id: &str, output: &mut Vec<registry::OwnerRow>) {
         for block in blocks {
-            output.extend(block.properties.iter().cloned());
-            visit(&block.children, output);
+            for (ordinal, (key, value)) in block.properties.iter().enumerate() {
+                output.push(registry::OwnerRow {
+                    owner_type: registry::OwnerType::Block,
+                    owner_id: format!("b:{}", block.id),
+                    page_id: page_id.to_owned(),
+                    source_name: key.clone(),
+                    normalized_name: property_key_norm(key),
+                    ordinal: ordinal as u32,
+                    value: value.clone(),
+                });
+            }
+            visit(&block.children, page_id, output);
         }
     }
 
     let mut output = Vec::new();
     if include_page_properties {
-        output.extend(page_facets(page.pre_block.as_deref()).0);
+        for (ordinal, (key, value)) in page_facets(page.pre_block.as_deref())
+            .0
+            .into_iter()
+            .enumerate()
+        {
+            output.push(registry::OwnerRow {
+                owner_type: registry::OwnerType::Page,
+                owner_id: format!("p:{page_id}"),
+                page_id: page_id.to_owned(),
+                source_name: key.clone(),
+                normalized_name: property_key_norm(&key),
+                ordinal: ordinal as u32,
+                value,
+            });
+        }
     }
-    visit(&page.blocks, &mut output);
+    visit(&page.blocks, page_id, &mut output);
     output
+}
+
+pub(crate) fn application_page_property_pairs(
+    page: &PageDto,
+    include_page_properties: bool,
+) -> Vec<(String, String)> {
+    application_page_property_owner_rows(page, page.name.as_str(), include_page_properties)
+        .into_iter()
+        .map(|row| (row.source_name, row.value))
+        .collect()
+}
+
+/// The Direct Files **document** row source (§6.2): the registry's iterator when
+/// the projection is not ready. Walks pages (preamble properties, owner = page)
+/// and blocks (owner = block) out of the cached `Arc<Document>` snapshot, next
+/// to [`property_facets_bounded`] — which is NOT a source, because it aggregates
+/// owner identity away and owner identity is what gives cardinality and the
+/// distinct-owner counts.
+pub fn property_owner_rows(
+    graph: &Graph,
+) -> (
+    Vec<registry::OwnerRow>,
+    std::collections::HashMap<String, registry::PageMeta>,
+) {
+    let mut rows = Vec::new();
+    let mut pages = std::collections::HashMap::new();
+    graph.with_pages(|entries| {
+        for (entry, doc) in entries {
+            let page_id = entry.rel_path.clone();
+            pages.insert(
+                page_id.clone(),
+                registry::PageMeta {
+                    format: Format::from_path(std::path::Path::new(&entry.rel_path)).into(),
+                    name: entry.name.clone(),
+                },
+            );
+            for (ordinal, (key, value)) in page_facets(doc.pre_block.as_deref())
+                .0
+                .into_iter()
+                .enumerate()
+            {
+                rows.push(registry::OwnerRow {
+                    owner_type: registry::OwnerType::Page,
+                    owner_id: format!("p:{page_id}"),
+                    page_id: page_id.clone(),
+                    source_name: key.clone(),
+                    normalized_name: property_key_norm(&key),
+                    ordinal: ordinal as u32,
+                    value,
+                });
+            }
+            walk(&doc.roots, &mut |block| {
+                for (ordinal, (key, value)) in block.properties().into_iter().enumerate() {
+                    rows.push(registry::OwnerRow {
+                        owner_type: registry::OwnerType::Block,
+                        owner_id: format!("b:{page_id}#{}", block.uuid),
+                        page_id: page_id.clone(),
+                        source_name: key.clone(),
+                        normalized_name: property_key_norm(&key),
+                        ordinal: ordinal as u32,
+                        value,
+                    });
+                }
+            });
+        }
+    });
+    (rows, pages)
 }
 
 /// Distinct property keys (each with its sorted distinct values) used across the
@@ -5005,6 +5346,7 @@ pub fn export_query_subtrees(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn export_application_query_subtrees(
     pages: &[ApplicationQueryPage],
     specs: &[QueryExportSpec],
@@ -5012,9 +5354,15 @@ pub(crate) fn export_application_query_subtrees(
     max_roots: usize,
     max_nodes: usize,
     max_bytes: usize,
+    config: crate::config::ParseConfig,
+    registry: std::sync::Arc<registry::Registry>,
 ) -> QueryExportBatch {
     export_query_subtrees_over(
-        &ApplicationQueryPages(pages),
+        &ApplicationQueryPages {
+            pages,
+            config,
+            registry,
+        },
         specs,
         max_queries,
         max_roots,
@@ -5378,6 +5726,8 @@ mod tests {
     impl TestEval for Filter {
         fn eval(&self, block: &DocBlock, place: &Place) -> bool {
             let compiled = eval::CompiledLeaves::for_query(self);
+            let config = crate::config::ParseConfig::default();
+            let registry = registry::Registry::empty(&config);
             let ctx = EvalCtx {
                 journal: place.journal,
                 is_journal: place.is_journal,
@@ -5385,6 +5735,10 @@ mod tests {
                 page_props: &place.page_props,
                 today: TODAY,
                 compiled: &compiled,
+                format: crate::query::atom::AtomFormat::Markdown,
+                config: &config,
+                registry: &registry,
+                mode: atom::CompareMode::Both,
             };
             eval::eval_block(self, block, &PathRefCounts::new(), &ctx)
         }
@@ -7145,21 +7499,29 @@ mod tests {
                 .iter()
                 .find(|(entry, _)| entry.name == "Inherited Only")
                 .expect("inherited-only fixture page");
+            let config = crate::config::ParseConfig::default();
+            let registry = registry::Registry::empty(&config);
             assert!(page_affects_query(
                 "(and (task TODO) [[Target]])",
                 entry,
-                doc
+                doc,
+                &config,
+                &registry
             ));
             assert!(!page_affects_query(
                 "(and (task TODO) (page \"Target\"))",
                 entry,
-                doc
+                doc,
+                &config,
+                &registry
             ));
             assert!(page_affects_advanced_query(
                 r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "Target"))]"#,
                 None,
                 entry,
                 doc,
+                &config,
+                &registry,
             ));
         });
 
@@ -8173,13 +8535,23 @@ mod tests {
             ("(task TODO)", 1, usize::MAX),
             ("(task TODO)", usize::MAX, 1),
         ] {
-            let page_result =
-                run_application_query_pages_bounded(&pages, query, max_rows, max_bytes);
+            let config = crate::config::ParseConfig::default();
+            let registry = std::sync::Arc::new(registry::Registry::empty(&config));
+            let page_result = run_application_query_pages_bounded(
+                &pages,
+                query,
+                max_rows,
+                max_bytes,
+                config.clone(),
+                std::sync::Arc::clone(&registry),
+            );
             let sparse_result = run_application_sparse_task_query_bounded(
                 &candidates,
                 query,
                 max_rows,
                 max_bytes,
+                &config,
+                &registry,
             )
             .expect("eligible fixture query");
             assert_eq!(
@@ -8204,12 +8576,16 @@ mod tests {
             sparse_test_candidate("same", "TODO one", &page, None, &["a"]),
             sparse_test_candidate("same", "TODO two", &page, None, &["b"]),
         ];
+        let config = crate::config::ParseConfig::default();
+        let registry = registry::Registry::empty(&config);
         assert!(matches!(
             run_application_sparse_task_query_bounded(
                 &duplicate,
                 "(task TODO)",
                 usize::MAX,
                 usize::MAX,
+                &config,
+                &registry,
             ),
             Err(ApplicationSparseQueryError::DuplicateIdentity)
         ));
@@ -8220,6 +8596,8 @@ mod tests {
                 "(task TODO)",
                 usize::MAX,
                 usize::MAX,
+                &config,
+                &registry,
             ),
             Err(ApplicationSparseQueryError::MissingIdentity)
         ));

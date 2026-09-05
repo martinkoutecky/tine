@@ -339,8 +339,9 @@ fn read_string(src: &str, at: usize) -> (String, usize) {
 /// OG additionally *types* `"true"`/`"false"`/`^\d+$` here
 /// (`text/parse-non-string-property-value`, `text.cljs:87-96`). Tine keeps the
 /// text form in the IR because a property atom is typed by the registry's
-/// effective type (§6), not by the query's spelling — the registry lands in
-/// Wave B, so every property atom compares as `text` until then.
+/// **effective type** (§6.3) at evaluation, not by the query's spelling: the
+/// same `(property size 5)` compares as a number under a number key and as
+/// text under a text key.
 pub(crate) fn parse_property_value(value: &str) -> String {
     let value = value.trim();
     if let Some(rest) = value.strip_prefix('#') {

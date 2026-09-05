@@ -42,6 +42,31 @@ const NOT_CALLED_FROM_BACKEND_TS: &[(&str, &str)] = &[
         "a diagnostics-only probe read straight from the app shell rather than \
          through the Backend interface (src/App.tsx, `invoke(\"watcher_latency_recent\")`)",
     ),
+
+    (
+        "query_explain_empty",
+        "the SPEC §7.1 query command surface, landed by P0-rust ahead of the frontend that calls it: P0-ts replaces `parseQuery`/`toDsl` and wires these six through `src/backend.ts`. Registered now so the Rust half ships and is testable; each entry goes away as P0-ts adds its wrapper",
+    ),
+    (
+        "query_og_expressible",
+        "the SPEC §7.1 query command surface, landed by P0-rust ahead of the frontend that calls it: P0-ts replaces `parseQuery`/`toDsl` and wires these six through `src/backend.ts`. Registered now so the Rust half ships and is testable; each entry goes away as P0-ts adds its wrapper",
+    ),
+    (
+        "query_parse",
+        "the SPEC §7.1 query command surface, landed by P0-rust ahead of the frontend that calls it: P0-ts replaces `parseQuery`/`toDsl` and wires these six through `src/backend.ts`. Registered now so the Rust half ships and is testable; each entry goes away as P0-ts adds its wrapper",
+    ),
+    (
+        "query_print",
+        "the SPEC §7.1 query command surface, landed by P0-rust ahead of the frontend that calls it: P0-ts replaces `parseQuery`/`toDsl` and wires these six through `src/backend.ts`. Registered now so the Rust half ships and is testable; each entry goes away as P0-ts adds its wrapper",
+    ),
+    (
+        "query_registry",
+        "the SPEC §7.1 query command surface, landed by P0-rust ahead of the frontend that calls it: P0-ts replaces `parseQuery`/`toDsl` and wires these six through `src/backend.ts`. Registered now so the Rust half ships and is testable; each entry goes away as P0-ts adds its wrapper",
+    ),
+    (
+        "query_run",
+        "the SPEC §7.1 query command surface, landed by P0-rust ahead of the frontend that calls it: P0-ts replaces `parseQuery`/`toDsl` and wires these six through `src/backend.ts`. Registered now so the Rust half ships and is testable; each entry goes away as P0-ts adds its wrapper",
+    ),
 ];
 
 /// `this.call` / `this.invoke` sites in `src/backend.ts` whose command name is
@@ -415,6 +440,10 @@ mod tests {
         "get_backup_keep",
         "get_capture_enter_files",
         "get_link_first_match",
+        // SPEC §7.1: a total predicate over the IR it is handed. There is no
+        // failure mode to report -- the OG DSL either can say this query or
+        // cannot, and saying so is the whole point of the command.
+        "query_og_expressible",
         "get_smooth_scroll",
         "get_watch_mode",
         "gpu_env",

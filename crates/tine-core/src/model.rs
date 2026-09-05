@@ -2853,6 +2853,17 @@ pub struct Graph {
     /// Memoized advanced-query results. Kept separate from `derived_cache` because
     /// advanced queries return clause metadata as well as groups.
     advanced_cache: RwLock<Option<AdvancedCache>>,
+    /// The graph's observed property registry (SPEC §6.1–§6.4): a **disposable,
+    /// in-memory, graph-scoped** cache, one per open graph, next to the query
+    /// caches above. Nothing is persisted and nothing is authoritative — the
+    /// property lines in the Markdown/Org tree are (D-3).
+    ///
+    /// It is built under ONE snapshot and swapped atomically, refreshed
+    /// (debounced ~250 ms) when the page-cache generation changes, when a page
+    /// whose name IS a property key is saved, and **unconditionally** when
+    /// `ParseConfig::digest()` differs from the digest the snapshot was built
+    /// under (G7). It is never rebuilt per query.
+    property_registry: RwLock<Option<PropertyRegistryState>>,
     /// Disposable SQLite facts for Direct Files. Markdown/Org and the parsed
     /// page cache remain authoritative; indexed reads are admitted only when
     /// this worker has published the exact current `cache_gen`.
@@ -3957,6 +3968,18 @@ fn is_date_stem_entry(entry: &PageEntry) -> bool {
 struct DerivedCache {
     gen: u64,
     today: i64,
+    /// **C6, unconditional.** `ParseConfig::digest()` is part of every Rust
+    /// query-cache identity: `journal_page_title_format` also decides
+    /// `PageEntry.kind`/`date_key`, so a `page.journal` / `page.day` / OG
+    /// `(between …)` query is config-sensitive without carrying any `props`
+    /// leaf (E6). A mismatch drops the whole cache.
+    config_digest: tine_storage::ContentDigest,
+    /// **C6, `props`-only.** The registry generation the `props`-sensitive
+    /// entries were computed at. When it advances, every key in `props_keys` is
+    /// evicted: per-page retention evaluates a query against ONE saved page and
+    /// cannot see a graph-wide effective-type change.
+    registry_gen: u64,
+    props_keys: std::collections::HashSet<String>,
     // `Arc<Vec<RefGroup>>` so serving a memoized result (every dataRev re-render)
     // is a refcount bump, not a deep clone of every matched block (see derived_memo).
     results: std::collections::HashMap<String, (BoundedRefGroups, usize)>,
@@ -3964,9 +3987,86 @@ struct DerivedCache {
     bytes: usize,
 }
 
+/// One published registry snapshot plus what it was built from, so the refresh
+/// rule can decide cheaply whether it is still current.
+struct PropertyRegistryState {
+    registry: Arc<crate::query::registry::Registry>,
+    /// The `cache_gen` the rows were read at.
+    source_generation: u64,
+    /// When the snapshot was published, for the ~250 ms debounce (§6.4).
+    built_at: std::time::Instant,
+    /// Set when a page whose name is a property key was saved, so the next read
+    /// rebuilds even at an unchanged generation.
+    declarations_dirty: bool,
+}
+
+/// The registry refresh debounce (§6.4): a burst of saves rebuilds once.
+const PROPERTY_REGISTRY_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Which half of the C6 cache identity an entry needs.
+///
+/// The config digest is part of EVERY entry's identity (E6); the registry
+/// generation is only part of a `props`-carrying query's, so a `tine.type::`
+/// edit does not evict backlinks and full-text results that cannot depend on it.
+#[derive(Clone, Copy)]
+enum CacheSensitivity {
+    /// A derived-cache key of the shape `<tag>\0…`; the query key shapes carry
+    /// the query source and are parsed once, at insert.
+    Plain,
+    /// An advanced-query key: `<tag>\0<page-key>\0<bounds>\0<source>`.
+    Advanced,
+}
+
+impl CacheSensitivity {
+    /// Whether the entry's query source carries a `props` leaf. Evaluated ONLY
+    /// at insert (never on a cache hit), so a hit costs no parse.
+    fn is_props_sensitive(self, key: &str) -> bool {
+        let source = match self {
+            CacheSensitivity::Plain => match key.split_once('\0') {
+                Some(("q" | "sq", source)) => Some(source),
+                Some(("Q" | "SQ", rest)) => rest.splitn(3, '\0').nth(2),
+                _ => None,
+            },
+            CacheSensitivity::Advanced => key.split('\0').next_back(),
+        };
+        source.is_some_and(crate::query::query_source_has_props_leaf)
+    }
+}
+
+/// C6's retention rule: when the registry generation advances, every cached
+/// `props` query is evicted, because per-page retention (`page_affects_query`)
+/// evaluates a query against ONE saved page and cannot see a graph-wide
+/// effective-type change.
+fn evict_props_entries_on_registry_advance<T>(
+    results: &mut std::collections::HashMap<String, (T, usize)>,
+    lru: &mut std::collections::VecDeque<String>,
+    bytes: &mut usize,
+    props_keys: &mut std::collections::HashSet<String>,
+    cached_generation: &mut u64,
+    current_generation: u64,
+) {
+    if *cached_generation == current_generation {
+        return;
+    }
+    *cached_generation = current_generation;
+    if props_keys.is_empty() {
+        return;
+    }
+    for key in props_keys.drain() {
+        if let Some((_, entry_bytes)) = results.remove(&key) {
+            *bytes = bytes.saturating_sub(entry_bytes);
+        }
+    }
+    lru.retain(|key| results.contains_key(key));
+}
+
 struct AdvancedCache {
     gen: u64,
     today: i64,
+    /// C6, as in [`DerivedCache`].
+    config_digest: tine_storage::ContentDigest,
+    registry_gen: u64,
+    props_keys: std::collections::HashSet<String>,
     results: std::collections::HashMap<String, (CachedAdvancedResult, usize)>,
     lru: std::collections::VecDeque<String>,
     bytes: usize,
@@ -5909,6 +6009,7 @@ impl Graph {
             cache_index: RwLock::new(None),
             effective_identity_index: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
+            property_registry: RwLock::new(None),
             external_observation_epoch: std::sync::atomic::AtomicU64::new(0),
             external_reconciled_epoch: std::sync::atomic::AtomicU64::new(0),
             external_observation_instance: NEXT_EXTERNAL_OBSERVATION_INSTANCE
@@ -6075,6 +6176,7 @@ impl Graph {
             .as_ref()
             .map(Arc::clone)?;
         let pages = self.cache.read().unwrap().as_ref().map(Arc::clone)?;
+        let registry = self.property_registry();
         let result = projection.sparse_task_query(
             &self.root,
             &self.journal_format,
@@ -6083,6 +6185,8 @@ impl Graph {
             query_src,
             max_rows,
             max_bytes,
+            &self.config.parse_config(),
+            &registry,
         )?;
         (self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == generation).then_some(result)
     }
@@ -6135,7 +6239,12 @@ impl Graph {
             })
             .collect::<Option<Vec<_>>>()?;
         let result = crate::query::run_application_query_pages_bounded(
-            &pages, query_src, max_rows, max_bytes,
+            &pages,
+            query_src,
+            max_rows,
+            max_bytes,
+            self.config.parse_config(),
+            self.property_registry(),
         );
         (self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == generation).then_some(result)
     }
@@ -15069,6 +15178,14 @@ impl Graph {
             (Vec::new(), crate::query::RealPageNames::new())
         };
         let today = crate::date::JournalDate::today().ordinal_key();
+        // A save of a page whose name IS a property key can change the registry's
+        // declarations without changing any property row, so it marks the
+        // snapshot for rebuild before the retention rule reads it (§6.2, C6).
+        self.note_property_key_page_saved(&entry.name);
+        // The registry snapshot and parse config the retention rule evaluates
+        // against — resolved BEFORE the derived lock, like the alias inputs above.
+        let parse_config = self.config.parse_config();
+        let registry = self.property_registry();
         // Hold the derived write lock across the WHOLE prune+re-tag. This is
         // deliberately atomic: the keep/evict test (page_affects_*) is re-evaluated
         // against whatever entry is CURRENTLY in the map, so a result a concurrent
@@ -15124,9 +15241,13 @@ impl Graph {
                     Some(("br", uuid)) => {
                         crate::query::page_affects_block_referrers(uuid, candidate)
                     }
-                    Some(("q", source)) => {
-                        crate::query::page_affects_query(source, entry, candidate)
-                    }
+                    Some(("q", source)) => crate::query::page_affects_query(
+                        source,
+                        entry,
+                        candidate,
+                        &parse_config,
+                        &registry,
+                    ),
                     Some(("B", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
                         crate::query::page_affects_backlinks(
                             &real_pages,
@@ -15146,7 +15267,13 @@ impl Graph {
                         )
                     }),
                     Some(("Q", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|source| {
-                        crate::query::page_affects_query(source, entry, candidate)
+                        crate::query::page_affects_query(
+                            source,
+                            entry,
+                            candidate,
+                            &parse_config,
+                            &registry,
+                        )
                     }),
                     Some(("R", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|uuid| {
                         crate::query::page_affects_block_referrers(uuid, candidate)
@@ -15175,6 +15302,8 @@ impl Graph {
         scoped: bool,
         today: i64,
     ) {
+        let parse_config = self.config.parse_config();
+        let registry = self.property_registry();
         let mut cache = self.advanced_cache.write().unwrap();
         let Some(advanced) = cache.as_mut() else {
             return;
@@ -15216,6 +15345,8 @@ impl Graph {
                         current_page,
                         entry,
                         candidate,
+                        &parse_config,
+                        &registry,
                     )
                 })
             };
@@ -15359,18 +15490,150 @@ impl Graph {
     /// `key`. On a tag mismatch the whole cache is dropped, so a hit is always
     /// consistent with the current graph. `compute` runs with NO lock held (it
     /// takes the cache read lock itself), so it can't deadlock against `with_pages`.
+    /// ONE coherent property-registry snapshot (§6.2). Every reader — the walk's
+    /// coercion, the TQL diagnostics, `query_registry` — takes this `Arc`, so a
+    /// query sees one generation end to end.
+    ///
+    /// Refresh rule: rebuild when the page-cache generation changed, when a
+    /// property-key page was saved, or **unconditionally** when the
+    /// `ParseConfig` digest differs from the one the snapshot was built under
+    /// (G7 — a `journal_page_title_format` edit can re-type an ambiguous value
+    /// while leaving every row and declaration unchanged). The first two are
+    /// debounced; the digest check is not, because a stale digest means the
+    /// snapshot answers a question the user has already changed.
+    pub fn property_registry(&self) -> Arc<crate::query::registry::Registry> {
+        let config = self.config.parse_config();
+        let digest = config.digest();
+        let source_generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        {
+            let guard = self.property_registry.read().unwrap();
+            if let Some(state) = guard.as_ref() {
+                let digest_current = state.registry.config_digest() == digest;
+                let rows_current =
+                    state.source_generation == source_generation && !state.declarations_dirty;
+                if digest_current
+                    && (rows_current || state.built_at.elapsed() < PROPERTY_REGISTRY_DEBOUNCE)
+                {
+                    return Arc::clone(&state.registry);
+                }
+            }
+        }
+        self.rebuild_property_registry(&config, source_generation)
+    }
+
+    /// The current registry generation — the term the `props` half of the query
+    /// cache key carries (C6).
+    pub fn property_registry_generation(&self) -> u64 {
+        self.property_registry().generation()
+    }
+
+    /// A page was saved. When its name IS a property key, the registry's
+    /// declarations may have changed even though no row did, so mark the
+    /// snapshot for rebuild; a non-key save changes nothing here (the page-cache
+    /// generation bump already covers its rows).
+    pub(crate) fn note_property_key_page_saved(&self, page_name: &str) {
+        let key = crate::refs::page_key(page_name);
+        let is_key_page = {
+            let guard = self.property_registry.read().unwrap();
+            guard.as_ref().is_some_and(|state| {
+                state
+                    .registry
+                    .rows()
+                    .iter()
+                    .any(|row| crate::refs::page_key(&row.normalized_name) == key)
+            })
+        };
+        if !is_key_page {
+            return;
+        }
+        if let Some(state) = self.property_registry.write().unwrap().as_mut() {
+            state.declarations_dirty = true;
+        }
+    }
+
+    /// Build a registry under one snapshot and publish it atomically. The
+    /// generation advances when the rows or declarations differ, and
+    /// **unconditionally** when the config digest differs (G7).
+    fn rebuild_property_registry(
+        &self,
+        config: &crate::config::ParseConfig,
+        source_generation: u64,
+    ) -> Arc<crate::query::registry::Registry> {
+        let (rows, pages) = crate::query::property_owner_rows(self);
+        let built = crate::query::registry::build_registry(
+            rows.into_iter(),
+            &|page_id: &str| pages.get(page_id).cloned(),
+            config,
+        );
+        let mut guard = self.property_registry.write().unwrap();
+        let previous = guard.as_ref();
+        let previous_generation = previous.map_or(0, |state| state.registry.generation());
+        let built = match built {
+            Ok(built) => built,
+            // A snapshot-consistency defect (a row naming an absent page) is not
+            // a reason to answer with a half-built table: keep the last good
+            // snapshot and try again at the next generation.
+            Err(_) => {
+                if let Some(state) = previous {
+                    return Arc::clone(&state.registry);
+                }
+                crate::query::registry::Registry::empty(config)
+            }
+        };
+        let digest_changed = previous
+            .map(|state| state.registry.config_digest() != built.config_digest())
+            .unwrap_or(true);
+        let rows_changed = previous
+            .map(|state| !state.registry.rows_equal(&built))
+            .unwrap_or(true);
+        let generation = if digest_changed || rows_changed {
+            previous_generation.saturating_add(1)
+        } else {
+            previous_generation
+        };
+        let registry = Arc::new(built.with_generation(generation));
+        *guard = Some(PropertyRegistryState {
+            registry: Arc::clone(&registry),
+            source_generation,
+            built_at: std::time::Instant::now(),
+            declarations_dirty: false,
+        });
+        registry
+    }
+
     fn derived_memo_bounded(
         &self,
         key: String,
         compute: impl FnOnce() -> crate::query::BoundedGroups,
     ) -> BoundedRefGroups {
+        self.derived_memo_bounded_typed(key, CacheSensitivity::Plain, compute)
+    }
+
+    /// The C6 cache identity: `(cache_gen, today, ParseConfig::digest(),
+    /// registry generation iff the entry is `props`-sensitive)`.
+    fn derived_memo_bounded_typed(
+        &self,
+        key: String,
+        sensitivity: CacheSensitivity,
+        compute: impl FnOnce() -> crate::query::BoundedGroups,
+    ) -> BoundedRefGroups {
         use std::sync::atomic::Ordering;
         let gen = self.cache_gen.load(Ordering::Acquire);
         let today = crate::date::JournalDate::today().ordinal_key();
+        let config_digest = self.config.parse_config().digest();
+        let registry_gen = self.property_registry().generation();
         {
             let mut g = self.derived_cache.write().unwrap();
             if let Some(dc) = g.as_mut() {
-                if dc.gen == gen && dc.today == today {
+                evict_props_entries_on_registry_advance(
+                    &mut dc.results,
+                    &mut dc.lru,
+                    &mut dc.bytes,
+                    &mut dc.props_keys,
+                    &mut dc.registry_gen,
+                    registry_gen,
+                );
+                if dc.gen == gen && dc.today == today && dc.config_digest == config_digest {
                     if let Some((r, _)) = dc.results.get(&key) {
                         let result = r.clone();
                         touch_lru(&mut dc.lru, &key);
@@ -15390,9 +15653,10 @@ impl Graph {
         if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
             return result;
         }
+        let props = sensitivity.is_props_sensitive(&key);
         let mut g = self.derived_cache.write().unwrap();
         match g.as_mut() {
-            Some(dc) if dc.gen == gen && dc.today == today => {
+            Some(dc) if dc.gen == gen && dc.today == today && dc.config_digest == config_digest => {
                 if let Some((_, old_bytes)) = dc
                     .results
                     .insert(key.clone(), (result.clone(), result_bytes))
@@ -15400,15 +15664,26 @@ impl Graph {
                     dc.bytes = dc.bytes.saturating_sub(old_bytes);
                 }
                 dc.bytes = dc.bytes.saturating_add(result_bytes);
+                if props {
+                    dc.props_keys.insert(key.clone());
+                }
                 touch_lru(&mut dc.lru, &key);
                 prune_result_cache(&mut dc.results, &mut dc.lru, &mut dc.bytes);
+                dc.props_keys.retain(|key| dc.results.contains_key(key));
             }
             _ => {
                 let mut results = std::collections::HashMap::new();
                 results.insert(key.clone(), (result.clone(), result_bytes));
+                let mut props_keys = std::collections::HashSet::new();
+                if props {
+                    props_keys.insert(key.clone());
+                }
                 *g = Some(DerivedCache {
                     gen,
                     today,
+                    config_digest,
+                    registry_gen,
+                    props_keys,
                     results,
                     lru: std::collections::VecDeque::from([key]),
                     bytes: result_bytes,
@@ -15443,10 +15718,20 @@ impl Graph {
         use std::sync::atomic::Ordering;
         let gen = self.cache_gen.load(Ordering::Acquire);
         let today = crate::date::JournalDate::today().ordinal_key();
+        let config_digest = self.config.parse_config().digest();
+        let registry_gen = self.property_registry().generation();
         {
             let mut g = self.advanced_cache.write().unwrap();
             if let Some(dc) = g.as_mut() {
-                if dc.gen == gen && dc.today == today {
+                evict_props_entries_on_registry_advance(
+                    &mut dc.results,
+                    &mut dc.lru,
+                    &mut dc.bytes,
+                    &mut dc.props_keys,
+                    &mut dc.registry_gen,
+                    registry_gen,
+                );
+                if dc.gen == gen && dc.today == today && dc.config_digest == config_digest {
                     if let Some((r, _)) = dc.results.get(&key) {
                         let result = r.clone();
                         touch_lru(&mut dc.lru, &key);
@@ -15468,9 +15753,10 @@ impl Graph {
         if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
             return result;
         }
+        let props = CacheSensitivity::Advanced.is_props_sensitive(&key);
         let mut g = self.advanced_cache.write().unwrap();
         match g.as_mut() {
-            Some(dc) if dc.gen == gen && dc.today == today => {
+            Some(dc) if dc.gen == gen && dc.today == today && dc.config_digest == config_digest => {
                 if let Some((_, old_bytes)) = dc
                     .results
                     .insert(key.clone(), (result.clone(), result_bytes))
@@ -15478,15 +15764,26 @@ impl Graph {
                     dc.bytes = dc.bytes.saturating_sub(old_bytes);
                 }
                 dc.bytes = dc.bytes.saturating_add(result_bytes);
+                if props {
+                    dc.props_keys.insert(key.clone());
+                }
                 touch_lru(&mut dc.lru, &key);
                 prune_result_cache(&mut dc.results, &mut dc.lru, &mut dc.bytes);
+                dc.props_keys.retain(|key| dc.results.contains_key(key));
             }
             _ => {
                 let mut results = std::collections::HashMap::new();
                 results.insert(key.clone(), (result.clone(), result_bytes));
+                let mut props_keys = std::collections::HashSet::new();
+                if props {
+                    props_keys.insert(key.clone());
+                }
                 *g = Some(AdvancedCache {
                     gen,
                     today,
+                    config_digest,
+                    registry_gen,
+                    props_keys,
                     results,
                     lru: std::collections::VecDeque::from([key]),
                     bytes: result_bytes,

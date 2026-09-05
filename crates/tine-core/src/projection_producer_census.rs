@@ -1677,9 +1677,15 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     // `model.rs`, `query.rs`) against `d1f98c61`, and that single count is the
     // only difference. No new write crossing: the write-boundary table above is
     // byte-identical, and the change is an error mapping, not a publication.
+    // Re-pinned 2026-09-05 (query engine P0-rust wave B): `ParseConfig::digest()`
+    // in `config.rs` adds exactly ONE read-only token to this surface,
+    // `tine_storage::ContentDigest::of(`. The digest is the parse-config stamp
+    // of SPEC §5.8 H6; it reuses the existing content-digest type rather than
+    // introducing a second SHA-256 (D-14) and crosses no write boundary — the
+    // write-crossing table above is byte-identical.
     assert_eq!(
         inventory_digest(&dependency_surface),
-        "e976185b39e6b1addedf04fe418ce60750f4cf19f5b6580fded17bc19e626e08",
+        "499986ea42ae3ce018f78fe845af36ba9d7aab3c521f89cb11489e2675e201f9",
         "the complete tine-storage import/direct-call surface changed: {dependency_surface:#?}"
     );
 }
