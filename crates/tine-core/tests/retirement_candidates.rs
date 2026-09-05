@@ -28,10 +28,20 @@ const MARKER: &str = "// RETIREMENT-CANDIDATE:";
 
 /// The exact `(file, first line of the marker)` set. Adding or removing a row
 /// is the deliberate act this guard exists to force.
-const PINNED: &[(&str, &str)] = &[(
-    "crates/tine-core/src/direct_projection.rs",
-    "// RETIREMENT-CANDIDATE: the candidate-count escape hatch below, together",
-)];
+const PINNED: &[(&str, &str)] = &[
+    (
+        "crates/tine-core/src/direct_projection.rs",
+        "// RETIREMENT-CANDIDATE: the candidate-count escape hatch below, together",
+    ),
+    (
+        "crates/tine-core/src/query.rs",
+        "// RETIREMENT-CANDIDATE: the pre-SQL candidate planner for the walk.",
+    ),
+    (
+        "crates/tine-core/src/query.rs",
+        "// RETIREMENT-CANDIDATE: the in-memory query walk.",
+    ),
+];
 
 fn markers() -> BTreeSet<(String, String)> {
     let root = repo_root();

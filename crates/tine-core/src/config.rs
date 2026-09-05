@@ -41,6 +41,12 @@ pub struct Config {
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
     pub block_hidden_properties: Vec<String>,
+    /// `:property/separated-by-commas #{:a :b}` — extra property keys whose plain
+    /// value OG splits on commas. One of the five inputs to [`ParseConfig`].
+    pub separated_by_commas: Vec<String>,
+    /// `:ignored-page-references-keywords #{:a :b}` — property keys whose value OG
+    /// keeps as one unparsed string. One of the five inputs to [`ParseConfig`].
+    pub ignored_page_references_keywords: Vec<String>,
     /// `:ref/linked-references-collapsed-threshold` — a page's Linked References
     /// section starts collapsed once the TOTAL backlink count reaches this,
     /// which is OG's `(>= total threshold)` in `components/reference.cljs`
@@ -161,6 +167,8 @@ impl Default for Config {
             all_pages_public: false,
             start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
+            separated_by_commas: Vec::new(),
+            ignored_page_references_keywords: Vec::new(),
             linked_references_collapsed_threshold: 100, // OG default — see field doc
             property_pages_enabled: true,
             property_pages_excludelist: Vec::new(),
@@ -224,6 +232,9 @@ impl Config {
             }
         }
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
+        cfg.separated_by_commas = parse_keyword_set(edn, ":property/separated-by-commas");
+        cfg.ignored_page_references_keywords =
+            parse_keyword_set(edn, ":ignored-page-references-keywords");
         if let Some(n) = int_value(edn, ":ref/linked-references-collapsed-threshold") {
             cfg.linked_references_collapsed_threshold = n;
         }
@@ -1654,6 +1665,93 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
         }
     }
     map
+}
+
+/// The five graph-config facts that decide **projected page facts and property
+/// atomization** (SPEC §5.8 M21, C3).
+///
+/// Why exactly these five and why they travel together: `JournalFormat::new(
+/// file_name_format, title_format)` and `decode_page_name(stem, file_name_format)`
+/// decide every page's name, kind and `date_key`, and the atomizer's comma-split
+/// and unparsed-key rules read the two keyword sets. Direct reconciliation
+/// compares only source revisions, so an omitted field would leave unchanged
+/// files with stale `pages` rows after a config edit — which is why the digest
+/// over these five (Wave B, §5.8 H6) is what forces a projection rebuild.
+///
+/// This is a read-only projection of [`Config`], never a second source of truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseConfig {
+    pub separated_by_commas: Vec<String>,
+    pub ignored_page_references_keywords: Vec<String>,
+    pub journal_page_title_format: Option<String>,
+    pub journal_file_name_format: Option<String>,
+    pub file_name_format: FileNameFormat,
+}
+
+impl Default for ParseConfig {
+    fn default() -> Self {
+        Config::default().parse_config()
+    }
+}
+
+impl Config {
+    /// The parse-relevant slice of this config (SPEC §5.8). `ParseConfig::digest()`
+    /// — the on-disk stamp that forces a rebuild — is Wave B of P0-rust; it needs
+    /// tine-storage's `ContentDigest` and the atom-key normalization, neither of
+    /// which exists on this path yet.
+    pub fn parse_config(&self) -> ParseConfig {
+        ParseConfig {
+            separated_by_commas: self.separated_by_commas.clone(),
+            ignored_page_references_keywords: self.ignored_page_references_keywords.clone(),
+            journal_page_title_format: self.journal_page_title_format.clone(),
+            journal_file_name_format: self.journal_file_name_format.clone(),
+            file_name_format: self.file_name_format,
+        }
+    }
+}
+
+#[cfg(test)]
+mod parse_config_tests {
+    use super::*;
+
+    #[test]
+    fn both_new_keyword_sets_are_read_from_config_edn() {
+        let cfg = Config::parse(
+            "{:property/separated-by-commas #{:tags :authors}\n :ignored-page-references-keywords #{:url :source}}",
+        );
+        assert_eq!(cfg.separated_by_commas, vec!["tags", "authors"]);
+        assert_eq!(cfg.ignored_page_references_keywords, vec!["url", "source"]);
+        let parse = cfg.parse_config();
+        assert_eq!(parse.separated_by_commas, vec!["tags", "authors"]);
+        assert_eq!(
+            parse.ignored_page_references_keywords,
+            vec!["url", "source"]
+        );
+    }
+
+    #[test]
+    fn absent_keyword_sets_are_empty_never_defaulted() {
+        let cfg = Config::parse("{:journals-directory \"journals\"}");
+        assert!(cfg.separated_by_commas.is_empty());
+        assert!(cfg.ignored_page_references_keywords.is_empty());
+    }
+
+    #[test]
+    fn parse_config_carries_all_five_projected_fact_inputs() {
+        let cfg = Config::parse(
+            "{:journal/page-title-format \"yyyy-MM-dd\"\n :journal/file-name-format \"yyyy_MM_dd\"\n :file/name-format :triple-lowbar}",
+        );
+        let parse = cfg.parse_config();
+        assert_eq!(
+            parse.journal_page_title_format.as_deref(),
+            Some("yyyy-MM-dd")
+        );
+        assert_eq!(
+            parse.journal_file_name_format.as_deref(),
+            Some("yyyy_MM_dd")
+        );
+        assert_eq!(parse.file_name_format, FileNameFormat::TripleLowbar);
+    }
 }
 
 #[cfg(test)]

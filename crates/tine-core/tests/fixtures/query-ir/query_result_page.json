@@ -1,0 +1,33 @@
+{
+  "anchor": "page",
+  "pages": [
+    {
+      "name": "Home",
+      "kind": "page"
+    },
+    {
+      "name": "Jul 29th, 2026",
+      "kind": "journal",
+      "journal_day": 20260729
+    }
+  ],
+  "diagnostics": [
+    {
+      "message": "`(all-page-tags)` takes no arguments",
+      "suggestions": [],
+      "disabled": false,
+      "kind": "syntax"
+    }
+  ],
+  "report": {
+    "ran": [
+      "page-tags"
+    ],
+    "ignored": [
+      "sample"
+    ],
+    "supported": true
+  },
+  "total": 2,
+  "exceeded": true
+}

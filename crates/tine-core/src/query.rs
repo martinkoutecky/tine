@@ -3,6 +3,19 @@
 //! task markers, and property filters. Advanced datalog (`[:find ...]`) is
 //! detected and reported as unsupported rather than crashed.
 
+#[cfg(test)]
+mod conformance;
+pub(crate) mod eval;
+pub mod ir;
+pub(crate) mod og;
+pub mod print;
+pub(crate) mod tql;
+
+use eval::EvalCtx;
+use ir::{
+    Anchor, Attr, CmpOp, Filter, Leaf, Quant, Query, Rel, SortDir, Source, Value, ViewSettings,
+};
+
 use crate::date::JournalDate;
 use crate::doc::{property_key_norm, DocBlock, Document};
 use crate::model::{
@@ -12,14 +25,13 @@ use crate::model::{
     ReferenceKind, TemplateDto,
 };
 use crate::refs;
-use crate::search_query::Matcher;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Query source crosses several boundaries (live macros, native IPC, static
 /// publication, and export). Keep one shared ceiling so no caller can make the
 /// parser or its cache key proportional to an unbounded graph-authored string.
 pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
-const QUERY_NESTING_MAX: usize = 64;
+pub(crate) const QUERY_NESTING_MAX: usize = 64;
 
 pub fn query_source_within_limit(source: &str) -> bool {
     source.len() <= QUERY_SOURCE_MAX_BYTES
@@ -1620,6 +1632,79 @@ pub fn run_query_bounded(
     run_query_bounded_over(&GraphQueryPages(graph), query_src, max_rows, max_bytes)
 }
 
+/// Which surface syntax a query's text is written in (SPEC §4).
+///
+/// The macro name chooses it when the block is saved (Q3): `{{query …}}` is the
+/// OG DSL, `{{tine-query …}}` is TQL. Both are the same IR afterwards — the
+/// dialect is a property of the TEXT, never of the query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryDialect {
+    Og,
+    Tql,
+}
+
+/// The ONE text → IR entry, for either dialect: the I-22 source limits, then
+/// the dialect's parser (§4.1, §4.2). A source that is refused, or is datalog
+/// rather than a simple query, comes back as a query carrying its diagnostic —
+/// never as a silently empty one.
+pub fn parse_query_text(
+    query_src: &str,
+    dialect: QueryDialect,
+    today: JournalDate,
+) -> (Query, ViewSettings) {
+    match dialect {
+        QueryDialect::Og => parse_query_source(query_src, today),
+        QueryDialect::Tql => {
+            use ir::{Diagnostic, DiagnosticKind};
+            if !query_source_within_limit(query_src) {
+                let mut query = Query::new(
+                    Anchor::Block,
+                    Filter::False,
+                    Source::Tql {
+                        original: query_src.to_string(),
+                    },
+                );
+                query.diagnostics.push(Diagnostic::new(
+                    DiagnosticKind::Size,
+                    "the query source is too large",
+                ));
+                return (query, ViewSettings::default());
+            }
+            tql::parse_tql(query_src)
+        }
+    }
+}
+
+/// The OG `{{query}}` half of [`parse_query_text`].
+pub(crate) fn parse_query_source(query_src: &str, today: JournalDate) -> (Query, ViewSettings) {
+    use ir::{Diagnostic, DiagnosticKind};
+    let refuse = |kind, message: &str| {
+        let mut query = Query::new(
+            Anchor::Block,
+            Filter::False,
+            Source::Og {
+                original: query_src.to_string(),
+                og_options: String::new(),
+            },
+        );
+        query.diagnostics.push(Diagnostic::new(kind, message));
+        (query, ViewSettings::default())
+    };
+    if !query_source_within_limit(query_src) {
+        return refuse(DiagnosticKind::Size, "the query source is too large");
+    }
+    if !query_nesting_within_limit(query_src) {
+        return refuse(DiagnosticKind::Depth, "the query nests too deeply");
+    }
+    if is_advanced(query_src) {
+        return refuse(
+            DiagnosticKind::Syntax,
+            "this is an advanced (datalog) query, not the simple DSL",
+        );
+    }
+    og::parse_og(query_src, today)
+}
+
 /// The ONE simple-query entry: source limits, parse, options, evaluation.
 fn run_query_bounded_over(
     source: &dyn QueryPageSource,
@@ -1627,24 +1712,9 @@ fn run_query_bounded_over(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    if !query_source_within_limit(query_src) || !query_nesting_within_limit(query_src) {
-        return BoundedGroups {
-            groups: Vec::new(),
-            total: 0,
-            exceeded: false,
-        };
-    }
     let today = JournalDate::today();
-    let Some(pred) = Pred::parse(query_src, today) else {
-        return BoundedGroups {
-            groups: Vec::new(),
-            total: 0,
-            exceeded: false,
-        };
-    };
-    let mut opts = QueryOpts::default();
-    pred.collect_opts(&mut opts);
-    run_pred_bounded_over(source, &pred, &opts, max_rows, max_bytes)
+    let (query, view) = parse_query_source(query_src, today);
+    run_pred_bounded_over(source, &query, &view, max_rows, max_bytes)
 }
 
 /// One page as the shared query drivers see it, borrowed from whichever backend
@@ -1775,12 +1845,122 @@ impl QueryPageSource for ApplicationQueryPages<'_> {
 
 fn run_pred_bounded(
     graph: &Graph,
-    pred: &Pred,
-    opts: &QueryOpts,
+    query: &Query,
+    view: &ViewSettings,
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    run_pred_bounded_over(&GraphQueryPages(graph), pred, opts, max_rows, max_bytes)
+    run_pred_bounded_over(&GraphQueryPages(graph), query, view, max_rows, max_bytes)
+}
+
+// RETIREMENT-CANDIDATE: the in-memory query walk.
+//
+// WHAT MAY BE DELETED: `run_pred_bounded_over` together with the whole
+// page-scanning evaluator it drives (`crate::query::eval`, `collect_og_query_roots`'s
+// query use, the per-mode `QueryPageSource` implementations that exist only to
+// feed it) and the `ApplicationProjectionCache` that keeps its managed input
+// warm. The IR, the parsers, the printers and `finish_query_groups` stay: they
+// are shared with the SQL route.
+//
+// CONDITION FOR DELETION: the private queue card `PVTI_lAHOAAbLVc4BhPsyzg5gS_0`
+// ("Retire the query walk: bounded projection-readiness wait + pending render"),
+// which SPEC §5.9 makes concrete — one shipped release of the SQL lowering with
+// oracle gates §8.1–8.3 green and the field fallback counter observed only in
+// the two windows §5.9 names, plus the bounded wait on the projection's
+// `changed` condvar for `ready_at(gen)` and the "indexing…" pending render that
+// replace today's silent walk fallback.
+//
+// WHAT CURRENTLY BLOCKS DELETION: the walk is still the ONLY answer in three
+// live situations — a Direct Files projection that is not ready (open
+// reconciliation, full rebuild, and the milliseconds after every save while the
+// delta applies), a Direct Files projection whose read failed (D-3 recovery),
+// and Managed Storage's unaccepted local overlay, whose pages have no
+// materialized rows at all. It is also the differential oracle the SQL lowering
+// is proven against in gate 1 (SPEC §8.1), so it cannot go before that lowering
+// has shipped and been observed. Deleting it earlier would turn each of those
+// windows into "no results" rather than "slower results".
+//
+/// The page-anchored half of the walk (§7.1, K16): `@page` rows as PAGE rows.
+///
+/// A `@page` query selects pages, so this reads the page index — name, kind,
+/// journal day and the page's own `key:: value` preamble — and never descends
+/// into a document. `@block` delegates to [`run_pred_bounded_over`], whose
+/// block groups are the shipped shape.
+pub(crate) fn run_query_result_over(
+    source: &dyn QueryPageSource,
+    query: &Query,
+    view: &ViewSettings,
+    bounds: ir::Bounds,
+) -> ir::QueryResult {
+    let report = ir::QueryReport {
+        ran: Vec::new(),
+        ignored: Vec::new(),
+        supported: true,
+    };
+    let mut result = ir::QueryResult {
+        rows: ir::QueryRows::Page { pages: Vec::new() },
+        diagnostics: query.diagnostics.clone(),
+        report,
+        total: 0,
+        exceeded: false,
+    };
+    if query.anchor == Anchor::Block {
+        let bounded = run_pred_bounded_over(source, query, view, bounds.max_rows, bounds.max_bytes);
+        result.rows = ir::QueryRows::Block {
+            groups: bounded.groups,
+        };
+        result.total = bounded.total;
+        result.exceeded = bounded.exceeded;
+        return result;
+    }
+    if query.is_invalid() {
+        return result;
+    }
+    let filter = query.evaluable_filter();
+    let today = JournalDate::today();
+    let compiled = eval::CompiledLeaves::for_query(&filter);
+    let mut pages: Vec<ir::PageRow> = Vec::new();
+    let mut exceeded = false;
+    source.for_each_page(&mut |page| {
+        let (page_props, _tags) = page_facets(page.pre_block);
+        if !eval::page_row_matches(
+            &filter,
+            page.name,
+            page.kind,
+            page.journal,
+            &page_props,
+            today,
+            &compiled,
+        ) {
+            return std::ops::ControlFlow::Continue(());
+        }
+        if pages.len() >= bounds.max_rows {
+            exceeded = true;
+            return std::ops::ControlFlow::Break(());
+        }
+        pages.push(ir::PageRow {
+            name: page.name.to_string(),
+            kind: page.kind,
+            journal_day: page.journal,
+        });
+        std::ops::ControlFlow::Continue(())
+    });
+    result.total = pages.len();
+    result.exceeded = exceeded;
+    result.rows = ir::QueryRows::Page { pages };
+    result
+}
+
+/// The public page-or-block entry over a Direct Files graph. The dialect is the
+/// caller's: it comes from the macro name the text was read out of (Q3).
+pub fn run_query_result(
+    graph: &Graph,
+    query_src: &str,
+    dialect: QueryDialect,
+    bounds: ir::Bounds,
+) -> ir::QueryResult {
+    let (query, view) = parse_query_text(query_src, dialect, JournalDate::today());
+    run_query_result_over(&GraphQueryPages(graph), &query, &view, bounds)
 }
 
 /// The ONE simple-query evaluator. Both storage modes reach it through
@@ -1788,13 +1968,36 @@ fn run_pred_bounded(
 /// the OG top-level-root filter, the sample cap or the recency axis.
 fn run_pred_bounded_over(
     source: &dyn QueryPageSource,
-    pred: &Pred,
-    opts: &QueryOpts,
+    query: &Query,
+    view: &ViewSettings,
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
     #[cfg(test)]
     source.note_predicate_evaluation();
+    // An invalid query (an unknown head, a syntax refusal, a depth/size refusal)
+    // returns zero results plus its diagnostics — never a truncated answer
+    // (§3.5).
+    if query.is_invalid() {
+        return BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
+    }
+    let opts = QueryOpts::from_view(view);
+    let opts = &opts;
+    // The legacy block-group adapter evaluates a `@page`-anchored filter
+    // BLOCK-anchored — page attributes and relations read through `block.page` —
+    // because that is today's semantics verbatim (`(page-property …)`,
+    // `(page-tags …)` and `(namespace …)` have always returned blocks). The
+    // page-anchored result rows live behind `run_query_result_over`.
+    let filter = match query.anchor {
+        Anchor::Block => query.evaluable_filter(),
+        Anchor::Page => og::rebase_to_block(&query.evaluable_filter()),
+    };
+    let today = JournalDate::today();
+    let compiled = eval::CompiledLeaves::for_query(&filter);
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
     // An unsorted `(sample N)` semantically needs only the first N matches in
     // deterministic traversal order. Do not construct or classify the rest as
@@ -1809,18 +2012,19 @@ fn run_pred_bounded_over(
     let mut recency_by_page: std::collections::HashMap<String, i64> =
         std::collections::HashMap::new();
     source.for_each_page(&mut |page| {
-        let (page_props, page_tags) = page_facets(page.pre_block);
+        let (page_props, _page_tags) = page_facets(page.pre_block);
         let ctx = EvalCtx {
             journal: page.journal,
             is_journal: page.kind == PageKind::Journal,
             page_name: page.name,
             page_props: &page_props,
-            page_tags: &page_tags,
+            today,
+            compiled: &compiled,
         };
         let mut matched: Vec<BlockDto> = Vec::new();
         let mut path = Vec::new();
         let mut path_refs = PathRefCounts::new();
-        let track_path_refs = pred.uses_path_refs();
+        let track_path_refs = eval::uses_path_refs(&filter);
         collect_og_query_roots(
             page.roots,
             &mut path,
@@ -1828,8 +2032,7 @@ fn run_pred_bounded_over(
             track_path_refs,
             false,
             &mut |block, _, ancestor_refs| {
-                pred.eval_with_path_refs(block, ancestor_refs, &ctx)
-                    .then_some(())
+                eval::eval_block(&filter, block, ancestor_refs, &ctx).then_some(())
             },
             &mut |block, _, ()| {
                 if sample_admission_cap.is_some_and(|cap| budget.rows >= cap) {
@@ -1997,6 +2200,32 @@ pub(crate) struct ApplicationQueryPage {
     pub(crate) recency: i64,
 }
 
+// RETIREMENT-CANDIDATE: the pre-SQL candidate planner for the walk.
+//
+// WHAT MAY BE DELETED: `SimpleQueryCandidateSource`, `SimpleQueryCandidatePlan`,
+// `simple_query_candidate_plan`, `SparseTaskQueryEligibility` and
+// `sparse_task_query_eligibility`, together with the two consumers that exist
+// only to feed them — `direct_projection`'s `simple_query_candidate_paths` and
+// managed storage's candidate-page selection. Nothing else reads them: they are
+// a page PRE-FILTER for the walk, never an answer.
+//
+// CONDITION FOR DELETION: the same card as the walk itself,
+// `PVTI_lAHOAAbLVc4BhPsyzg5gS_0`, one step earlier. A planner that narrows which
+// pages the walk visits has no purpose once the SQL lowering (SPEC §5) answers
+// the query directly from indices — the lowering's own plan supersedes it, and
+// keeping both means two independent opinions about which rows can match, which
+// is exactly the second interpretation I-12 forbids. Concretely: when
+// `run_query_result` reaches SQL for a query shape, that shape's candidate plan
+// is dead code.
+//
+// WHAT CURRENTLY BLOCKS DELETION: the walk is still the answer (see the marker
+// on `run_pred_bounded_over`), and on a large graph the walk without this
+// planner reads every page of the graph for every keystroke in a query block.
+// The planner is what keeps `(task TODO)` and `[[Page]]` — the two shapes almost
+// every real query uses — off the full-graph path. Deleting it before the
+// lowering ships would not remove a code path; it would make the shipped
+// product visibly slower on exactly the queries people write.
+//
 /// One reconstructible, page-complete candidate source for a managed simple
 /// query. These facts only choose pages; the exact current parser DTO remains
 /// authoritative for block membership and result shape.
@@ -2074,12 +2303,12 @@ fn sparse_query_source_is_complete(query_src: &str) -> bool {
         return false;
     }
 
-    let tokens = tokenize(query_src);
+    let tokens = og::tokens_only(query_src);
     let mut depth = 0usize;
     for token in &tokens {
         match token {
-            Tok::LParen => depth = depth.saturating_add(1),
-            Tok::RParen => match depth.checked_sub(1) {
+            og::Tok::LParen => depth = depth.saturating_add(1),
+            og::Tok::RParen => match depth.checked_sub(1) {
                 Some(next) => depth = next,
                 None => return false,
             },
@@ -2089,9 +2318,13 @@ fn sparse_query_source_is_complete(query_src: &str) -> bool {
     if depth != 0 {
         return false;
     }
-    let mut position = 0;
-    parse_expr(&tokens, &mut position, JournalDate::today(), 0).is_some()
-        && position == tokens.len()
+    // One balanced expression that consumes the whole source, and a parse that
+    // raised no diagnostic: the sparse path may not narrow a query whose filter
+    // the shared parser only half understood.
+    og::is_single_expression(&tokens)
+        && !parse_query_source(query_src, JournalDate::today())
+            .0
+            .is_invalid()
 }
 
 /// The shared parser deliberately supplies recoverable defaults for malformed
@@ -2101,11 +2334,10 @@ fn sparse_query_source_is_complete(query_src: &str) -> bool {
 /// whose parsed forms the sparse path accepts; the parser itself remains the
 /// sole evaluator and Direct Files keeps its existing recovery behavior.
 fn sparse_task_directive_shapes_are_strict(query_src: &str) -> bool {
+    use og::Tok;
     fn name(token: &Tok) -> Option<&str> {
         match token {
-            Tok::Word(value) | Tok::Str(value) | Tok::PageRef(value) | Tok::Tag(value) => {
-                Some(value)
-            }
+            Tok::Word(value) | Tok::Str(value) | Tok::PageRef(value) => Some(value),
             Tok::LParen | Tok::RParen => None,
         }
     }
@@ -2215,7 +2447,7 @@ fn sparse_task_directive_shapes_are_strict(query_src: &str) -> bool {
         }
     }
 
-    let tokens = tokenize(query_src);
+    let tokens = og::tokens_only(query_src);
     let mut position = 0;
     expression(&tokens, &mut position, JournalDate::today()) && position == tokens.len()
 }
@@ -2254,42 +2486,66 @@ pub(crate) fn sparse_task_query_eligibility(query_src: &str) -> Option<SparseTas
         return None;
     }
 
-    let pred = Pred::parse(query_src, JournalDate::today())?;
+    let (query, view) = parse_query_source(query_src, JournalDate::today());
+    if query.is_invalid() {
+        return None;
+    }
     let mut task_marker_sets = Vec::<BTreeSet<String>>::new();
     let mut saw_priority = false;
 
     fn accepted_shape(
-        pred: &Pred,
+        filter: &Filter,
         task_marker_sets: &mut Vec<BTreeSet<String>>,
         saw_priority: &mut bool,
     ) -> bool {
-        match pred {
-            Pred::Task(markers) => {
-                let markers = markers
+        match filter {
+            Filter::Leaf {
+                leaf:
+                    Leaf::Attr {
+                        attr: Attr::Task,
+                        op: CmpOp::In,
+                        value: Value::List { items },
+                    },
+            } => {
+                let markers = items
                     .iter()
-                    .map(|marker| marker.to_ascii_uppercase())
+                    .filter_map(|item| match item {
+                        Value::Text { text } => Some(text.to_ascii_uppercase()),
+                        _ => None,
+                    })
                     .collect::<BTreeSet<_>>();
-                if markers.is_empty() {
+                if markers.is_empty() || markers.len() != items.len() {
                     return false;
                 }
                 task_marker_sets.push(markers);
                 true
             }
-            Pred::Priority(_) => {
+            Filter::Leaf {
+                leaf:
+                    Leaf::Attr {
+                        attr: Attr::Priority,
+                        ..
+                    },
+            } => {
                 if *saw_priority {
                     return false;
                 }
                 *saw_priority = true;
                 true
             }
-            Pred::Scheduled
-            | Pred::Deadline
-            | Pred::Between(BetweenField::Scheduled | BetweenField::Deadline, _, _)
-            | Pred::Sample(_)
-            | Pred::SortBy(..)
-            | Pred::Aggregate(_)
-            | Pred::GroupBy(_) => true,
-            Pred::And(children) if !children.is_empty() => children
+            // Planning presence and planning ranges stay enumerable by the
+            // marker index; a journal range does not (it selects pages).
+            Filter::Leaf {
+                leaf:
+                    Leaf::Attr {
+                        attr: Attr::Scheduled | Attr::Deadline,
+                        ..
+                    },
+            } => true,
+            // The four lifted view directives are no longer filter nodes at all;
+            // they contribute `True`, which is neutral for the marker index.
+            Filter::True => true,
+            Filter::And { items } if !items.is_empty() => items
                 .iter()
                 .all(|child| accepted_shape(child, task_marker_sets, saw_priority)),
             // OR, NOT, page/ref/property/tag/journal/content/search/regex and
@@ -2298,7 +2554,11 @@ pub(crate) fn sparse_task_query_eligibility(query_src: &str) -> Option<SparseTas
         }
     }
 
-    if !accepted_shape(&pred, &mut task_marker_sets, &mut saw_priority) {
+    if !accepted_shape(
+        &query.evaluable_filter(),
+        &mut task_marker_sets,
+        &mut saw_priority,
+    ) {
         return None;
     }
     let markers = task_marker_sets
@@ -2315,8 +2575,7 @@ pub(crate) fn sparse_task_query_eligibility(query_src: &str) -> Option<SparseTas
     if markers.is_empty() || !markers.is_subset(&planned_markers) {
         return None;
     }
-    let mut opts = QueryOpts::default();
-    pred.collect_opts(&mut opts);
+    let opts = QueryOpts::from_view(&view);
     Some(SparseTaskQueryEligibility {
         markers: markers.into_iter().collect(),
         uses_recency: matches!(&opts.sort, Some((field, _)) if is_recency_field(field)),
@@ -2329,60 +2588,123 @@ pub(crate) fn sparse_task_query_eligibility(query_src: &str) -> Option<SparseTas
 /// may union only when every branch is complete. Valid shapes that cannot be
 /// narrowed use the explicit all-page plan; invalid shapes need no page reads.
 pub(crate) fn simple_query_candidate_plan(query_src: &str) -> SimpleQueryCandidatePlan {
-    fn sources(pred: &Pred) -> Option<std::collections::BTreeSet<SimpleQueryCandidateSource>> {
-        match pred {
-            Pred::Task(markers) => Some(
-                markers
-                    .iter()
-                    .map(|marker| SimpleQueryCandidateSource::Task(marker.to_ascii_uppercase()))
-                    .collect(),
-            ),
-            Pred::PageRef(name) => Some(
-                std::iter::once(SimpleQueryCandidateSource::PageRef(refs::page_key(name)))
-                    .collect(),
-            ),
-            Pred::Property(key, _) => Some(
-                std::iter::once(SimpleQueryCandidateSource::BlockProperty(
-                    property_key_norm(key),
-                ))
-                .collect(),
-            ),
-            Pred::PageProperty(key, _) => Some(
-                std::iter::once(SimpleQueryCandidateSource::PageProperty(property_key_norm(
-                    key,
+    type Sources = std::collections::BTreeSet<SimpleQueryCandidateSource>;
+    fn one(source: SimpleQueryCandidateSource) -> Option<Sources> {
+        Some(std::iter::once(source).collect())
+    }
+    /// The page-row leaves, reached through a `page` hop on a block row or
+    /// directly at the `@page` anchor.
+    fn page_sources(filter: &Filter) -> Option<Sources> {
+        match filter {
+            Filter::Leaf {
+                leaf: Leaf::Attr { attr, op, value },
+            } => match (attr, op, value) {
+                (Attr::Name, CmpOp::Eq, Value::Text { text }) => {
+                    one(SimpleQueryCandidateSource::Page(refs::page_key(text)))
+                }
+                (Attr::Name, CmpOp::StartsWith, Value::Text { text }) => {
+                    one(SimpleQueryCandidateSource::Namespace(refs::page_key(
+                        text.trim_end_matches('/'),
+                    )))
+                }
+                (Attr::Journal, CmpOp::Eq, Value::Bool { value: true }) => {
+                    one(SimpleQueryCandidateSource::Journal)
+                }
+                (Attr::Day, _, _) => one(SimpleQueryCandidateSource::Journal),
+                _ => None,
+            },
+            Filter::Leaf {
+                leaf:
+                    Leaf::Rel {
+                        rel: Rel::Props,
+                        quant: Quant::Any,
+                        pred,
+                    },
+            } => pred.props_key().and_then(|key| {
+                one(SimpleQueryCandidateSource::PageProperty(property_key_norm(
+                    &key,
                 )))
-                .collect(),
-            ),
-            Pred::PageTags(_) => Some(
-                std::iter::once(SimpleQueryCandidateSource::PageProperty("tags".into())).collect(),
-            ),
-            Pred::Page(name) => Some(
-                std::iter::once(SimpleQueryCandidateSource::Page(refs::page_key(name))).collect(),
-            ),
-            Pred::Namespace(name) => Some(
-                std::iter::once(SimpleQueryCandidateSource::Namespace(refs::page_key(name)))
-                    .collect(),
-            ),
-            Pred::Journal | Pred::Between(BetweenField::Journal, _, _) => {
-                Some(std::iter::once(SimpleQueryCandidateSource::Journal).collect())
-            }
-            Pred::And(children) => children.iter().find_map(sources),
-            Pred::Or(children) => {
-                let mut union = std::collections::BTreeSet::new();
-                for child in children {
-                    union.extend(sources(child)?);
+            }),
+            Filter::And { items } => items.iter().find_map(page_sources),
+            Filter::Or { items } => {
+                let mut union = Sources::new();
+                for item in items {
+                    union.extend(page_sources(item)?);
                 }
                 Some(union)
             }
-            Pred::Not(_) => None,
+            _ => None,
+        }
+    }
+    fn sources(filter: &Filter) -> Option<Sources> {
+        match filter {
+            Filter::Leaf {
+                leaf:
+                    Leaf::Attr {
+                        attr: Attr::Task,
+                        op: CmpOp::In,
+                        value: Value::List { items },
+                    },
+            } => items
+                .iter()
+                .map(|item| match item {
+                    Value::Text { text } => {
+                        Some(SimpleQueryCandidateSource::Task(text.to_ascii_uppercase()))
+                    }
+                    _ => None,
+                })
+                .collect::<Option<Sources>>(),
+            Filter::Leaf {
+                leaf:
+                    Leaf::Rel {
+                        rel: Rel::Refs,
+                        quant: Quant::Any,
+                        pred,
+                    },
+            } => pred
+                .ref_name()
+                .and_then(|name| one(SimpleQueryCandidateSource::PageRef(refs::page_key(&name)))),
+            Filter::Leaf {
+                leaf:
+                    Leaf::Rel {
+                        rel: Rel::Props,
+                        quant: Quant::Any,
+                        pred,
+                    },
+            } => pred.props_key().and_then(|key| {
+                one(SimpleQueryCandidateSource::BlockProperty(
+                    property_key_norm(&key),
+                ))
+            }),
+            Filter::Leaf {
+                leaf:
+                    Leaf::Rel {
+                        rel: Rel::Page,
+                        quant: Quant::Any,
+                        pred,
+                    },
+            } => page_sources(pred),
+            Filter::And { items } => items.iter().find_map(sources),
+            Filter::Or { items } => {
+                let mut union = Sources::new();
+                for item in items {
+                    union.extend(sources(item)?);
+                }
+                Some(union)
+            }
             _ => None,
         }
     }
 
-    let Some(pred) = Pred::parse(query_src, JournalDate::today()) else {
+    let (query, _view) = parse_query_source(query_src, JournalDate::today());
+    if query.is_invalid() {
         return SimpleQueryCandidatePlan::Empty;
+    }
+    let filter = match query.anchor {
+        Anchor::Block => query.evaluable_filter(),
+        Anchor::Page => og::rebase_to_block(&query.evaluable_filter()),
     };
-    match sources(&pred) {
+    match sources(&filter) {
         Some(sources) => SimpleQueryCandidatePlan::Indexed(sources.into_iter().collect()),
         None => SimpleQueryCandidatePlan::All,
     }
@@ -2719,10 +3041,17 @@ pub(crate) fn run_parser_sparse_task_query_bounded(
     if sparse_task_query_eligibility(query_src).is_none() {
         return Err(ApplicationSparseQueryError::Ineligible);
     }
-    let pred = Pred::parse(query_src, JournalDate::today())
-        .ok_or(ApplicationSparseQueryError::Ineligible)?;
-    let mut opts = QueryOpts::default();
-    pred.collect_opts(&mut opts);
+    let today = JournalDate::today();
+    let (query, view) = parse_query_source(query_src, today);
+    if query.is_invalid() {
+        return Err(ApplicationSparseQueryError::Ineligible);
+    }
+    let filter = match query.anchor {
+        Anchor::Block => query.evaluable_filter(),
+        Anchor::Page => og::rebase_to_block(&query.evaluable_filter()),
+    };
+    let compiled = eval::CompiledLeaves::for_query(&filter);
+    let opts = QueryOpts::from_view(&view);
 
     let mut ordered = candidates.iter().collect::<Vec<_>>();
     ordered.sort_by(|left, right| left.dfs_order.cmp(right.dfs_order));
@@ -2745,7 +3074,6 @@ pub(crate) fn run_parser_sparse_task_query_bounded(
     let mut evaluated = Vec::with_capacity(ordered.len());
     for candidate in ordered {
         let empty_props = Vec::new();
-        let empty_tags = Vec::new();
         let ctx = EvalCtx {
             journal: (candidate.page.kind == PageKind::Journal)
                 .then(|| journal_ordinal(&candidate.page.name))
@@ -2753,9 +3081,10 @@ pub(crate) fn run_parser_sparse_task_query_bounded(
             is_journal: candidate.page.kind == PageKind::Journal,
             page_name: &candidate.page.name,
             page_props: &empty_props,
-            page_tags: &empty_tags,
+            today,
+            compiled: &compiled,
         };
-        let matched = pred.eval_with_path_refs(candidate.block, &PathRefCounts::new(), &ctx);
+        let matched = eval::eval_block(&filter, candidate.block, &PathRefCounts::new(), &ctx);
         evaluated.push(EvaluatedCandidate { candidate, matched });
     }
     let matched_ids = evaluated
@@ -2846,25 +3175,44 @@ pub(crate) fn run_parser_sparse_task_query_bounded(
 /// Whether page (entry, doc) contributes any block to query `src`.
 pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -> bool {
     let today = JournalDate::today();
-    let Some(pred) = Pred::parse(src, today) else {
+    let (query, _view) = parse_query_source(src, today);
+    if query.is_invalid() {
         return false;
+    }
+    let filter = match query.anchor {
+        Anchor::Block => query.evaluable_filter(),
+        Anchor::Page => og::rebase_to_block(&query.evaluable_filter()),
     };
-    let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
+    page_contributes_to_filter(&filter, entry, doc, today)
+}
+
+/// "Could an edit to this page change the derived result of `filter`?" — the
+/// SAME parse and the SAME evaluator the real matcher uses, so a keep/evict
+/// decision can never drift from what a full recompute would give.
+fn page_contributes_to_filter(
+    filter: &Filter,
+    entry: &PageEntry,
+    doc: &Document,
+    today: JournalDate,
+) -> bool {
+    let (page_props, _page_tags) = page_facets(doc.pre_block.as_deref());
+    let compiled = eval::CompiledLeaves::for_query(filter);
     let ctx = EvalCtx {
         journal: entry.date_key,
         is_journal: entry.kind == PageKind::Journal,
         page_name: &entry.name,
         page_props: &page_props,
-        page_tags: &page_tags,
+        today,
+        compiled: &compiled,
     };
     let mut hit = false;
     let mut path_refs = PathRefCounts::new();
     walk_path_refs(
         &doc.roots,
         &mut path_refs,
-        pred.uses_path_refs(),
+        eval::uses_path_refs(filter),
         &mut |block, ancestor_refs| {
-            if !hit && pred.eval_with_path_refs(block, ancestor_refs, &ctx) {
+            if !hit && eval::eval_block(filter, block, ancestor_refs, &ctx) {
                 hit = true;
             }
         },
@@ -2988,30 +3336,10 @@ pub(crate) fn page_affects_advanced_query(
     doc: &Document,
 ) -> bool {
     let today = JournalDate::today();
-    let (Some(pred), _, _) = advanced_pred(query_src, current_page, today) else {
+    let (Some(query), _, _) = advanced_pred(query_src, current_page, today) else {
         return false;
     };
-    let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
-    let ctx = EvalCtx {
-        journal: entry.date_key,
-        is_journal: entry.kind == PageKind::Journal,
-        page_name: &entry.name,
-        page_props: &page_props,
-        page_tags: &page_tags,
-    };
-    let mut hit = false;
-    let mut path_refs = PathRefCounts::new();
-    walk_path_refs(
-        &doc.roots,
-        &mut path_refs,
-        pred.uses_path_refs(),
-        &mut |block, ancestor_refs| {
-            if !hit && pred.eval_with_path_refs(block, ancestor_refs, &ctx) {
-                hit = true;
-            }
-        },
-    );
-    hit
+    page_contributes_to_filter(&query.evaluable_filter(), entry, doc, today)
 }
 
 /// Result of an advanced (datalog) query: matched groups + which clause heads
@@ -3098,8 +3426,8 @@ fn run_advanced_query_bounded_over(
         return (rejected_advanced_query("query-nesting-too-deep"), false, 0);
     }
     let today = JournalDate::today();
-    let (pred, ran, ignored) = advanced_pred(query_src, current_page, today);
-    let Some(pred) = pred else {
+    let (query, ran, ignored) = advanced_pred(query_src, current_page, today);
+    let Some(query) = query else {
         return (
             AdvancedResult {
                 groups: Vec::new(),
@@ -3111,9 +3439,13 @@ fn run_advanced_query_bounded_over(
             0,
         );
     };
-    let mut opts = QueryOpts::default();
-    pred.collect_opts(&mut opts);
-    let bounded = run_pred_bounded_over(source, &pred, &opts, max_rows, max_bytes);
+    let bounded = run_pred_bounded_over(
+        source,
+        &query,
+        &ViewSettings::default(),
+        max_rows,
+        max_bytes,
+    );
     (
         AdvancedResult {
             groups: bounded.groups,
@@ -3130,7 +3462,7 @@ fn advanced_pred(
     query_src: &str,
     current_page: Option<&str>,
     today: JournalDate,
-) -> (Option<Pred>, Vec<String>, Vec<String>) {
+) -> (Option<Query>, Vec<String>, Vec<String>) {
     // Both limits live here, not only at the two `run_advanced_*` entry points,
     // because `page_affects_advanced_query` reaches this function directly. It
     // used to skip the byte ceiling entirely, which made scoped invalidation the
@@ -3153,7 +3485,7 @@ fn advanced_pred(
         .into_iter()
         .chain(current_page_patterns)
         .collect::<std::collections::HashSet<_>>();
-    let preds: Vec<Pred> = groups
+    let preds: Vec<Filter> = groups
         .iter()
         .enumerate()
         .filter_map(|(index, group)| {
@@ -3177,12 +3509,22 @@ fn advanced_pred(
     if preds.is_empty() {
         return (None, ran, ignored);
     }
-    let pred = if preds.len() == 1 {
-        preds.into_iter().next().unwrap()
+    let filter = if preds.len() == 1 {
+        preds.into_iter().next().expect("one")
     } else {
-        Pred::And(preds)
+        Filter::and(preds)
     };
-    (Some(pred), ran, ignored)
+    // The advanced context and report survive verbatim (M5): `current_page` is
+    // already folded into the lowered clauses above, and the caller keeps
+    // `ran`/`ignored`/`supported`.
+    let query = Query::new(
+        Anchor::Block,
+        filter,
+        Source::Advanced {
+            original: query_src.to_string(),
+        },
+    );
+    (Some(query), ran, ignored)
 }
 
 /// Lower the exact DataScript relationship Logseq uses to connect the typed
@@ -3193,7 +3535,7 @@ fn lower_current_page_patterns(
     groups: &[String],
     inputs: &std::collections::HashMap<String, AdvancedInput>,
 ) -> (
-    std::collections::HashMap<usize, (Pred, &'static str)>,
+    std::collections::HashMap<usize, (Filter, &'static str)>,
     std::collections::HashSet<usize>,
 ) {
     let triples = groups
@@ -3222,8 +3564,15 @@ fn lower_current_page_patterns(
                 continue;
             }
             let lowered = match relation[1] {
-                ":block/refs" => Some((Pred::PageRef(page.clone()), "current-page-ref")),
-                ":block/page" => Some((Pred::Page(page.clone()), "current-page")),
+                ":block/refs" => Some((Filter::page_ref(page.clone()), "current-page-ref")),
+                ":block/page" => Some((
+                    Filter::rel(
+                        Rel::Page,
+                        Quant::Any,
+                        Filter::attr(Attr::Name, CmpOp::Eq, Value::text(page.clone())),
+                    ),
+                    "current-page",
+                )),
                 _ => None,
             };
             if let Some(lowered) = lowered {
@@ -3248,7 +3597,7 @@ fn lower_current_page_patterns(
 fn lower_page_property_patterns(
     groups: &[String],
 ) -> (
-    std::collections::HashMap<usize, Pred>,
+    std::collections::HashMap<usize, Filter>,
     std::collections::HashSet<usize>,
 ) {
     let relations = groups
@@ -3294,7 +3643,14 @@ fn lower_page_property_patterns(
         {
             continue;
         }
-        lowered.insert(index, Pred::PageProperty(key.to_string(), None));
+        lowered.insert(
+            index,
+            Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                og::property_leaf(og::normalize_prop_key(key), None),
+            ),
+        );
         consumed.insert(relations[0]);
     }
     (lowered, consumed)
@@ -3377,7 +3733,7 @@ fn parse_adv_group(
     ran: &mut Vec<String>,
     ignored: &mut Vec<String>,
     depth: usize,
-) -> Option<Pred> {
+) -> Option<Filter> {
     if depth > QUERY_NESTING_MAX {
         ignored.push("query-nesting-too-deep".into());
         return None;
@@ -3395,31 +3751,39 @@ fn parse_adv_group(
         .to_ascii_lowercase();
     match head.as_str() {
         "and" | "or" | "not" => {
-            let kids: Vec<Pred> = scan_groups(inner)
+            let kids: Vec<Filter> = scan_groups(inner)
                 .iter()
                 .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, depth + 1))
                 .collect();
             if kids.is_empty() {
                 None
             } else if head == "not" {
-                Some(Pred::Not(Box::new(kids.into_iter().next().unwrap())))
+                Some(Filter::not(kids.into_iter().next().expect("one")))
             } else if head == "or" {
-                Some(Pred::Or(kids))
+                Some(Filter::or(kids))
             } else {
-                Some(Pred::And(kids))
+                Some(Filter::and(kids))
             }
         }
         "task" | "todo" => {
             ran.push("task".into());
-            Some(Pred::Task(adv_strings(inner)))
+            Some(Filter::attr(
+                Attr::Task,
+                CmpOp::In,
+                adv_text_list(adv_strings(inner)),
+            ))
         }
         "priority" => {
             ran.push("priority".into());
-            Some(Pred::Priority(adv_strings(inner)))
+            Some(Filter::attr(
+                Attr::Priority,
+                CmpOp::In,
+                adv_text_list(adv_strings(inner)),
+            ))
         }
         "page-ref" => adv_strings(inner).into_iter().next().map(|n| {
             ran.push("page-ref".into());
-            Pred::PageRef(n)
+            Filter::page_ref(n)
         }),
         "property" | "page-property" => inner
             .split_whitespace()
@@ -3429,19 +3793,28 @@ fn parse_adv_group(
             .map(|k| {
                 let val = adv_strings(inner).into_iter().next();
                 ran.push(head.clone());
+                let leaf = og::property_leaf(og::normalize_prop_key(&k), val);
                 if head == "property" {
-                    Pred::Property(k, val)
+                    leaf
                 } else {
-                    Pred::PageProperty(k, val)
+                    Filter::rel(Rel::Page, Quant::Any, leaf)
                 }
             }),
         "page" => adv_strings(inner).into_iter().next().map(|n| {
             ran.push("page".into());
-            Pred::Page(n)
+            Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                Filter::attr(Attr::Name, CmpOp::Eq, Value::text(n)),
+            )
         }),
         "namespace" => adv_strings(inner).into_iter().next().map(|n| {
             ran.push("namespace".into());
-            Pred::Namespace(n)
+            Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                Filter::attr(Attr::Name, CmpOp::StartsWith, Value::text(format!("{n}/"))),
+            )
         }),
         "page-tags" | "tags" => {
             let ts = adv_strings(inner);
@@ -3450,20 +3823,35 @@ fn parse_adv_group(
                 None
             } else {
                 ran.push("page-tags".into());
-                Some(Pred::PageTags(ts))
+                Some(Filter::rel(
+                    Rel::Page,
+                    Quant::Any,
+                    Filter::rel(
+                        Rel::Props,
+                        Quant::Any,
+                        Filter::and(vec![
+                            Filter::attr(Attr::Key, CmpOp::Eq, Value::text("tags")),
+                            Filter::attr(Attr::Value, CmpOp::In, adv_text_list(ts)),
+                        ]),
+                    ),
+                ))
             }
         }
         "scheduled" => {
             ran.push("scheduled".into());
-            Some(Pred::Scheduled)
+            Some(Filter::attr(Attr::Scheduled, CmpOp::IsSet, Value::None))
         }
         "deadline" => {
             ran.push("deadline".into());
-            Some(Pred::Deadline)
+            Some(Filter::attr(Attr::Deadline, CmpOp::IsSet, Value::None))
         }
         "journal" => {
             ran.push("journal".into());
-            Some(Pred::Journal)
+            Some(Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true }),
+            ))
         }
         "between" => {
             // (between [FIELD] ?b ?start ?end): the last two args are always the
@@ -3475,27 +3863,34 @@ fn parse_adv_group(
                 ignored.push("between".into());
                 return None;
             }
-            let field = args
+            let attr = args
                 .iter()
                 .take(args.len() - 2)
                 .find_map(
                     |a| match a.trim_start_matches(':').to_ascii_lowercase().as_str() {
-                        "scheduled" => Some(BetweenField::Scheduled),
-                        "deadline" => Some(BetweenField::Deadline),
-                        "journal" => Some(BetweenField::Journal),
+                        "scheduled" => Some(Attr::Scheduled),
+                        "deadline" => Some(Attr::Deadline),
+                        "journal" => Some(Attr::Day),
                         _ => None,
                     },
                 )
-                .unwrap_or(BetweenField::Journal);
+                .unwrap_or(Attr::Day);
             let lo = adv_bound(args[args.len() - 2], inputs, today);
             let hi = adv_bound(args[args.len() - 1], inputs, today);
             if lo.is_none() && hi.is_none() {
                 ignored.push("between".into());
                 return None;
             }
-            let (lo, hi) = ordered_bounds(lo, hi);
             ran.push("between".into());
-            Some(Pred::Between(field, lo, hi))
+            // The advanced dialect resolves its bounds eagerly: `:inputs` may
+            // bind a bound to an already-resolved ordinal, and an advanced query
+            // is never re-printed as OG DSL, so the IR carries the ordinals.
+            let range = adv_range(attr, lo, hi);
+            Some(if attr == Attr::Day {
+                Filter::rel(Rel::Page, Quant::Any, range)
+            } else {
+                range
+            })
         }
         other => {
             if !other.is_empty() {
@@ -4800,344 +5195,59 @@ pub fn is_advanced(query_src: &str) -> bool {
     s.starts_with("[:find") || s.contains(":where") || s.contains(":find")
 }
 
-// ---------------------------------------------------------------------------
-// Query predicate AST + parser + evaluator
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq)]
-enum Pred {
-    PageRef(String),
-    Task(Vec<String>),
-    Priority(Vec<String>),
-    Property(String, Option<String>),
-    Scheduled,
-    Deadline,
-    /// Block lives on a journal page.
-    Journal,
-    /// Date range (inclusive) over a chosen date field. Bounds are `yyyymmdd`
-    /// ordinals; `None` = open.
-    Between(BetweenField, Option<i64>, Option<i64>),
-    /// Blocks on a specific page (by name).
-    Page(String),
-    /// Pages whose name is under a namespace (`ns/…`).
-    Namespace(String),
-    /// A page-level property (on the page's pre-block).
-    PageProperty(String, Option<String>),
-    /// Page has any of these `tags::`.
-    PageTags(Vec<String>),
-    /// Full-text match on the block's visible content.
-    Content(String),
-    /// The friendly Ctrl-K search language, explicitly embedded in the durable
-    /// query DSL. The decoded source is retained exactly and compiled once when
-    /// the surrounding query is parsed.
-    Search(FriendlySearch),
-    /// A case-sensitive Rust regex over the block's projected visible content.
-    /// Invalid patterns are retained but deliberately match nothing.
-    ContentRegex(ContentRegex),
-    And(Vec<Pred>),
-    Or(Vec<Pred>),
-    Not(Box<Pred>),
-    /// Result-level options (always pass as filters; collected as `QueryOpts`).
-    Sample(usize),
-    SortBy(String, bool),
-    /// Result-level aggregation, computed in the FRONTEND from the returned block
-    /// list (D1). Parsed-but-ignored here (eval → true) so `run_query` succeeds and
-    /// the builder DSL round-trips; the frontend re-parses the same DSL to render it.
-    Aggregate(AggKind),
-    /// Result-level grouping (`(group-by page|<prop>)`), also frontend-computed.
-    GroupBy(String),
-}
-
-/// Compiled `(search "...")` predicate. Equality intentionally compares the
-/// lossless decoded source rather than the matcher's internal representation;
-/// this keeps parser tests useful without making the shared matcher API expose
-/// implementation details.
-#[derive(Clone)]
-struct FriendlySearch {
-    source: String,
-    matcher: Matcher,
-}
-
-impl FriendlySearch {
-    fn new(source: String) -> Self {
-        let matcher = Matcher::parse(&source);
-        Self { source, matcher }
-    }
-
-    fn matches(&self, block: &DocBlock) -> bool {
-        let projection = block.projection();
-        self.matcher
-            .matches(&projection.visible_lower, &projection.visible)
-    }
-}
-
-impl std::fmt::Debug for FriendlySearch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("FriendlySearch").field(&self.source).finish()
-    }
-}
-
-impl PartialEq for FriendlySearch {
-    fn eq(&self, other: &Self) -> bool {
-        self.source == other.source
-    }
-}
-
-/// Compiled `(content-regex "...")` predicate. Keeping an invalid pattern as
-/// `None` makes its behavior deterministic (no panic, no accidental match-all)
-/// while retaining the original source for diagnostics and round-tripping.
-#[derive(Clone)]
-struct ContentRegex {
-    source: String,
-    compiled: Option<regex::Regex>,
-}
-
-impl ContentRegex {
-    fn new(source: String) -> Self {
-        let compiled = regex::Regex::new(&source).ok();
-        Self { source, compiled }
-    }
-
-    fn matches(&self, block: &DocBlock) -> bool {
-        self.compiled
-            .as_ref()
-            .is_some_and(|regex| regex.is_match(&block.projection().visible))
-    }
-}
-
-impl std::fmt::Debug for ContentRegex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ContentRegex")
-            .field("source", &self.source)
-            .field("valid", &self.compiled.is_some())
-            .finish()
-    }
-}
-
-impl PartialEq for ContentRegex {
-    fn eq(&self, other: &Self) -> bool {
-        self.source == other.source
-    }
-}
-
-/// A result aggregation directive. `Sum`/`Avg` carry the property whose numeric
-/// values are combined; `Count` needs no field.
-#[derive(Debug, Clone, PartialEq)]
-enum AggKind {
-    Count,
-    Sum(String),
-    Avg(String),
-}
-
-/// Which date a `between` range is tested against.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum BetweenField {
-    /// Journal date OR scheduled OR deadline. This is a Tine extension and is
-    /// requested explicitly as `(between any …)`; OG's fieldless form is
-    /// journal-only.
-    Any,
-    /// The page's journal date only — implies journal pages, matching OG's
-    /// `:between` rule (`:block/journal? true`).
-    Journal,
-    Scheduled,
-    Deadline,
-}
-
-/// Result-level options extracted from the query (sample, sort-by).
+/// Result-level options extracted from the query's VIEW settings. The walk still
+/// consumes this shape in `finish_query_groups`; `ViewSettings` is the truth
+/// (Q15) and this is the one adapter between them (it replaced `collect_opts`,
+/// which read sort/sample back out of the filter tree).
 #[derive(Debug, Default, Clone)]
 struct QueryOpts {
     sample: Option<usize>,
     sort: Option<(String, bool)>, // (field, ascending)
 }
 
-/// Per-block evaluation context (the page it lives on).
-struct EvalCtx<'a> {
-    /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
-    journal: Option<i64>,
-    /// Whether the block lives on a journal page (drives `(journal)`).
-    is_journal: bool,
-    page_name: &'a str,
-    page_props: &'a [(String, String)],
-    page_tags: &'a [String],
-}
-
-fn date_ordinal(y: i64, m: i64, d: i64) -> i64 {
-    y * 10000 + m * 100 + d
-}
-
-/// Parse an org timestamp body like `<2026-06-15 Mon>` to a `yyyymmdd` ordinal.
-fn parse_angle_date(s: &str) -> Option<i64> {
-    let s = s.trim().strip_prefix('<')?;
-    let end = s.find([' ', '>']).unwrap_or(s.len());
-    let mut it = s[..end].split('-');
-    let y: i64 = it.next()?.parse().ok()?;
-    let m: i64 = it.next()?.parse().ok()?;
-    let d: i64 = it.next()?.parse().ok()?;
-    Some(date_ordinal(y, m, d))
-}
-
-/// Ordinals from a block's SCHEDULED:/DEADLINE: lines. `only` restricts to one
-/// marker (`"SCHEDULED:"` / `"DEADLINE:"`); `None` returns both.
-fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
-    // Match the planning marker ANYWHERE on a line (not just at line start), so an
-    // inline `TODO SCHEDULED: <…> do the thing` is found too — consistent with the
-    // lenient render (block.ts) and `Pred::Scheduled`'s `raw.contains`. The angle
-    // date is parsed from just after the marker; trailing text is ignored.
-    let want_sched = !matches!(only, Some("DEADLINE:"));
-    let want_dead = !matches!(only, Some("SCHEDULED:"));
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        if want_sched {
-            if let Some(i) = line.find("SCHEDULED:") {
-                if let Some(o) = parse_angle_date(&line[i + "SCHEDULED:".len()..]) {
-                    out.push(o);
-                }
-            }
-        }
-        if want_dead {
-            if let Some(i) = line.find("DEADLINE:") {
-                if let Some(o) = parse_angle_date(&line[i + "DEADLINE:".len()..]) {
-                    out.push(o);
-                }
-            }
-        }
-    }
-    out
-}
-
-impl Pred {
-    fn parse(src: &str, today: JournalDate) -> Option<Pred> {
-        if is_advanced(src) || !query_source_within_limit(src) || !query_nesting_within_limit(src) {
-            return None;
-        }
-        let tokens = tokenize(src);
-        let mut pos = 0;
-        let p = parse_expr(&tokens, &mut pos, today, 0)?;
-        Some(p)
-    }
-
-    /// Pull result-level options (sample / sort-by) out of the tree.
-    fn collect_opts(&self, opts: &mut QueryOpts) {
-        match self {
-            Pred::Sample(n) => opts.sample = Some(*n),
-            Pred::SortBy(f, asc) => opts.sort = Some((f.clone(), *asc)),
-            Pred::And(ps) | Pred::Or(ps) => ps.iter().for_each(|p| p.collect_opts(opts)),
-            Pred::Not(p) => p.collect_opts(opts),
-            _ => {}
-        }
-    }
-
-    fn uses_path_refs(&self) -> bool {
-        match self {
-            Pred::PageRef(_) => true,
-            Pred::And(ps) | Pred::Or(ps) => ps.iter().any(Pred::uses_path_refs),
-            Pred::Not(p) => p.uses_path_refs(),
-            _ => false,
-        }
-    }
-
-    #[cfg(test)]
-    fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
-        self.eval_with_path_refs(block, &PathRefCounts::new(), ctx)
-    }
-
-    fn eval_with_path_refs(
-        &self,
-        block: &DocBlock,
-        ancestor_refs: &PathRefCounts,
-        ctx: &EvalCtx,
-    ) -> bool {
-        match self {
-            // OG's `:page-ref` query rule reads `:block/path-refs`, which is the
-            // union of this block's explicit refs, every ancestor's refs, and
-            // the page a block physically belongs to. `(page …)` below
-            // deliberately remains membership-only.
-            Pred::PageRef(name) => {
-                let normalized = refs::normalize(name);
-                block.projection().refs_contains_norm(&normalized)
-                    || ancestor_refs.contains_key(&normalized)
-                    || refs::normalize(ctx.page_name) == normalized
-            }
-            Pred::Task(markers) => block
-                .marker()
-                .map(|m| markers.iter().any(|x| x.eq_ignore_ascii_case(m)))
-                .unwrap_or(false),
-            Pred::Priority(ps) => block
-                .priority()
-                .map(|p| ps.iter().any(|x| x.eq_ignore_ascii_case(p)))
-                .unwrap_or(false),
-            Pred::Property(key, val) => {
-                let key = property_key_norm(key);
-                block
-                    .properties()
-                    .iter()
-                    .any(|(k, v)| property_key_norm(k) == key && value_matches(v, val.as_deref()))
-            }
-            Pred::Scheduled => block.raw.contains("SCHEDULED:"),
-            Pred::Deadline => block.raw.contains("DEADLINE:"),
-            Pred::Journal => ctx.is_journal,
-            Pred::Between(field, lo, hi) => {
-                let in_range = |c: i64| lo.map_or(true, |l| c >= l) && hi.map_or(true, |h| c <= h);
-                match field {
-                    BetweenField::Any => {
-                        ctx.journal.is_some_and(in_range)
-                            || block_date_ordinals(&block.raw, None)
-                                .into_iter()
-                                .any(in_range)
-                    }
-                    BetweenField::Journal => ctx.journal.is_some_and(in_range),
-                    BetweenField::Scheduled => block_date_ordinals(&block.raw, Some("SCHEDULED:"))
-                        .into_iter()
-                        .any(in_range),
-                    BetweenField::Deadline => block_date_ordinals(&block.raw, Some("DEADLINE:"))
-                        .into_iter()
-                        .any(in_range),
-                }
-            }
-            Pred::Page(name) => refs::normalize(ctx.page_name) == refs::normalize(name),
-            Pred::Namespace(ns) => {
-                let p = refs::normalize(ctx.page_name);
-                let n = refs::normalize(ns);
-                p.starts_with(&format!("{n}/"))
-            }
-            Pred::PageProperty(key, val) => {
-                let key = property_key_norm(key);
-                ctx.page_props
-                    .iter()
-                    .any(|(k, v)| property_key_norm(k) == key && value_matches(v, val.as_deref()))
-            }
-            Pred::PageTags(tags) => tags
-                .iter()
-                .any(|t| ctx.page_tags.iter().any(|pt| pt.eq_ignore_ascii_case(t))),
-            // `s` is already lowercased at parse time; `visible_lower` is the
-            // block's lowercased visible text — a direct substring test.
-            Pred::Content(s) => block.projection().visible_lower.contains(s.as_str()),
-            Pred::Search(search) => search.matches(block),
-            Pred::ContentRegex(regex) => regex.matches(block),
-            Pred::And(ps) => ps
-                .iter()
-                .all(|p| p.eval_with_path_refs(block, ancestor_refs, ctx)),
-            Pred::Or(ps) => ps
-                .iter()
-                .any(|p| p.eval_with_path_refs(block, ancestor_refs, ctx)),
-            Pred::Not(p) => !p.eval_with_path_refs(block, ancestor_refs, ctx),
-            // Options and frontend-computed directives are not filters.
-            Pred::Sample(_) | Pred::SortBy(..) | Pred::Aggregate(_) | Pred::GroupBy(_) => true,
+impl QueryOpts {
+    fn from_view(view: &ViewSettings) -> QueryOpts {
+        QueryOpts {
+            sample: view.sample.map(|n| n as usize),
+            sort: view
+                .sort
+                .first()
+                .map(|(field, dir)| (field.0.clone(), *dir == SortDir::Asc)),
         }
     }
 }
 
-/// Match a stored property value against a query value. Handles multi-value
-/// (comma-separated) and page-ref / tag wrapping, case-insensitively. A `None`
-/// query value matches any present value.
-fn value_matches(stored: &str, query: Option<&str>) -> bool {
-    let Some(q) = query else { return true };
-    let q = strip_ref(q).to_lowercase();
-    stored
-        .split(',')
-        .map(|p| strip_ref(p.trim()).to_lowercase())
-        .any(|v| v == q)
+/// A `(between …)` range whose bounds the advanced dialect already resolved to
+/// `yyyymmdd` ordinals.
+fn adv_range(attr: Attr, low: Option<i64>, high: Option<i64>) -> Filter {
+    let number = |value: i64| Value::Number {
+        number: value as f64,
+    };
+    match (low, high) {
+        (Some(low), Some(high)) => {
+            // OG's `build-between-two-arg` sorts its two bounds, so
+            // `(between END START)` is the same inclusive interval.
+            let (low, high) = if low > high { (high, low) } else { (low, high) };
+            Filter::attr(
+                attr,
+                CmpOp::Between,
+                Value::List {
+                    items: vec![number(low), number(high)],
+                },
+            )
+        }
+        (Some(low), None) => Filter::attr(attr, CmpOp::Ge, number(low)),
+        (None, Some(high)) => Filter::attr(attr, CmpOp::Le, number(high)),
+        (None, None) => Filter::attr(attr, CmpOp::IsSet, Value::None),
+    }
 }
+
+fn adv_text_list(values: Vec<String>) -> Value {
+    Value::List {
+        items: values.into_iter().map(Value::text).collect(),
+    }
+}
+
 fn strip_ref(s: &str) -> String {
     let t = s.trim();
     let t = t.strip_prefix('#').unwrap_or(t).trim();
@@ -5167,16 +5277,6 @@ fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
     journal_ordinal(t)
 }
 
-/// OG's `build-between-two-arg` orders its two resolved bounds before building
-/// the predicate, so `(between END START)` has the same inclusive interval as
-/// `(between START END)`. Preserve open bounds used by Tine's advanced subset.
-fn ordered_bounds(lo: Option<i64>, hi: Option<i64>) -> (Option<i64>, Option<i64>) {
-    match (lo, hi) {
-        (Some(lo), Some(hi)) if lo > hi => (Some(hi), Some(lo)),
-        pair => pair,
-    }
-}
-
 /// Parse a signed relative duration like `-7d`, `+2w`, `3m`, `-1y` off `today`.
 fn parse_relative(t: &str, today: JournalDate) -> Option<JournalDate> {
     let bytes = t.as_bytes();
@@ -5203,338 +5303,6 @@ fn parse_relative(t: &str, today: JournalDate) -> Option<JournalDate> {
     })
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum Tok {
-    LParen,
-    RParen,
-    PageRef(String), // [[...]]
-    Tag(String),     // #...
-    Word(String),
-    Str(String),
-}
-
-fn tokenize(src: &str) -> Vec<Tok> {
-    let mut toks = Vec::new();
-    let mut i = 0;
-    let chars: Vec<char> = src.chars().collect();
-    while i < chars.len() {
-        let c = chars[i];
-        if c.is_whitespace() {
-            i += 1;
-        } else if c == '(' {
-            toks.push(Tok::LParen);
-            i += 1;
-        } else if c == ')' {
-            toks.push(Tok::RParen);
-            i += 1;
-        } else if c == '[' && i + 1 < chars.len() && chars[i + 1] == '[' {
-            // [[ ... ]]
-            let mut j = i + 2;
-            let mut name = String::new();
-            while j + 1 < chars.len() && !(chars[j] == ']' && chars[j + 1] == ']') {
-                name.push(chars[j]);
-                j += 1;
-            }
-            toks.push(Tok::PageRef(name));
-            i = j + 2;
-        } else if c == '#' {
-            if i + 2 < chars.len() && chars[i + 1] == '[' && chars[i + 2] == '[' {
-                let mut j = i + 3;
-                let mut name = String::new();
-                while j + 1 < chars.len() && !(chars[j] == ']' && chars[j + 1] == ']') {
-                    name.push(chars[j]);
-                    j += 1;
-                }
-                toks.push(Tok::Tag(name));
-                i = j + 2;
-            } else {
-                let mut j = i + 1;
-                let mut name = String::new();
-                while j < chars.len()
-                    && (chars[j].is_alphanumeric() || matches!(chars[j], '-' | '_' | '/' | '.'))
-                {
-                    name.push(chars[j]);
-                    j += 1;
-                }
-                toks.push(Tok::Tag(name));
-                i = j;
-            }
-        } else if c == '"' {
-            let mut j = i + 1;
-            let mut s = String::new();
-            // Escape-aware: ONLY `\"` and `\\` are escapes (→ literal quote/
-            // backslash), so a quote inside the value doesn't end the string
-            // early. A backslash before any other char is kept literally, so a
-            // hand-authored path like `"C:\tmp"` round-trips unchanged (mirrors
-            // the frontend query-builder tokenizer + serializer's quoteStr).
-            while j < chars.len() && chars[j] != '"' {
-                if chars[j] == '\\' && matches!(chars.get(j + 1), Some('"') | Some('\\')) {
-                    s.push(chars[j + 1]);
-                    j += 2;
-                } else {
-                    s.push(chars[j]);
-                    j += 1;
-                }
-            }
-            toks.push(Tok::Str(s));
-            i = j + 1;
-        } else {
-            let mut j = i;
-            let mut w = String::new();
-            while j < chars.len() && !chars[j].is_whitespace() && !matches!(chars[j], '(' | ')') {
-                w.push(chars[j]);
-                j += 1;
-            }
-            toks.push(Tok::Word(w));
-            i = j;
-        }
-    }
-    toks
-}
-
-fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate, depth: usize) -> Option<Pred> {
-    if depth > QUERY_NESTING_MAX {
-        return None;
-    }
-    let t = toks.get(*pos)?.clone();
-    match t {
-        Tok::PageRef(name) | Tok::Tag(name) => {
-            *pos += 1;
-            Some(Pred::PageRef(name))
-        }
-        // A bare quoted string is a full-text content filter. Fold to lowercase
-        // ONCE here (the match is case-insensitive) so the per-block evaluator
-        // compares against an already-lowered term instead of re-lowering the
-        // constant query string for every candidate block (perf Codex#7).
-        Tok::Str(s) => {
-            *pos += 1;
-            Some(Pred::Content(crate::search_query::canonical_fold(&s)))
-        }
-        // Logseq's simple-query macros substitute parser-decoded arguments into
-        // the query template. A quoted invocation argument can therefore arrive
-        // here as a bare word. It is still a block-content term, not syntax to
-        // silently discard.
-        Tok::Word(s) => {
-            *pos += 1;
-            Some(Pred::Content(crate::search_query::canonical_fold(&s)))
-        }
-        Tok::LParen => {
-            *pos += 1; // consume (
-            let head = match toks.get(*pos)? {
-                Tok::Word(w) => w.to_lowercase(),
-                _ => return None,
-            };
-            *pos += 1;
-            let pred = match head.as_str() {
-                "and" => Pred::And(parse_list(toks, pos, today, depth + 1)),
-                "or" => Pred::Or(parse_list(toks, pos, today, depth + 1)),
-                "not" => Pred::Not(Box::new(parse_expr(toks, pos, today, depth + 1)?)),
-                "task" | "todo" => {
-                    let markers = parse_words(toks, pos);
-                    // `(todo)` with no args means any open task.
-                    if markers.is_empty() {
-                        Pred::Task(vec![
-                            "TODO".into(),
-                            "DOING".into(),
-                            "NOW".into(),
-                            "LATER".into(),
-                        ])
-                    } else {
-                        Pred::Task(markers)
-                    }
-                }
-                "priority" => {
-                    let ps = parse_words(toks, pos);
-                    if ps.is_empty() {
-                        Pred::Priority(vec!["A".into(), "B".into(), "C".into()])
-                    } else {
-                        Pred::Priority(ps)
-                    }
-                }
-                "page-ref" | "tag" => {
-                    let name = parse_name(toks, pos)?;
-                    Pred::PageRef(name)
-                }
-                "page" => {
-                    let name = parse_name(toks, pos)?;
-                    Pred::Page(name)
-                }
-                "namespace" => {
-                    let name = parse_name(toks, pos)?;
-                    Pred::Namespace(name)
-                }
-                "property" => {
-                    let key = normalize_prop_key(&parse_name(toks, pos)?);
-                    let val = parse_opt_value(toks, pos);
-                    Pred::Property(key, val)
-                }
-                "page-property" => {
-                    let key = normalize_prop_key(&parse_name(toks, pos)?);
-                    let val = parse_opt_value(toks, pos);
-                    Pred::PageProperty(key, val)
-                }
-                "page-tags" | "tags" => Pred::PageTags(parse_words(toks, pos)),
-                "search" => Pred::Search(FriendlySearch::new(parse_name(toks, pos)?)),
-                "content-regex" => Pred::ContentRegex(ContentRegex::new(parse_name(toks, pos)?)),
-                "scheduled" => Pred::Scheduled,
-                "deadline" => Pred::Deadline,
-                "journal" => Pred::Journal,
-                "between" => {
-                    // (between [FIELD] START END): optional leading field keyword
-                    // journal|scheduled|deadline|any (default Journal, matching
-                    // OG; `any` retains Tine's journal-or-planning extension);
-                    // bounds are journal titles,
-                    // `today`/`yesterday`/`tomorrow`, signed durations `±N[dwmy]`,
-                    // or `yyyy-MM-dd`.
-                    let field = match toks.get(*pos) {
-                        Some(Tok::Word(w)) => match w.to_ascii_lowercase().as_str() {
-                            "journal" => {
-                                *pos += 1;
-                                BetweenField::Journal
-                            }
-                            "scheduled" => {
-                                *pos += 1;
-                                BetweenField::Scheduled
-                            }
-                            "deadline" => {
-                                *pos += 1;
-                                BetweenField::Deadline
-                            }
-                            "any" => {
-                                *pos += 1;
-                                BetweenField::Any
-                            }
-                            _ => BetweenField::Journal,
-                        },
-                        _ => BetweenField::Journal,
-                    };
-                    let lo = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
-                    let hi = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
-                    let (lo, hi) = ordered_bounds(lo, hi);
-                    Pred::Between(field, lo, hi)
-                }
-                "sample" => {
-                    let n = parse_name(toks, pos)
-                        .and_then(|s| s.parse::<usize>().ok())
-                        .unwrap_or(0);
-                    Pred::Sample(n)
-                }
-                "sort-by" => {
-                    let field = parse_name(toks, pos).unwrap_or_default();
-                    let dir = parse_opt_name(toks, pos).unwrap_or_else(|| "asc".into());
-                    Pred::SortBy(field, !dir.eq_ignore_ascii_case("desc"))
-                }
-                // Frontend-computed result directives (D1/D2): parse-but-ignore so
-                // run_query succeeds and the builder round-trips the DSL text.
-                "aggregate" => {
-                    let kind = match parse_name(toks, pos) {
-                        Some(k) => match k.to_ascii_lowercase().as_str() {
-                            "sum" => AggKind::Sum(parse_name(toks, pos).unwrap_or_default()),
-                            "avg" | "average" => {
-                                AggKind::Avg(parse_name(toks, pos).unwrap_or_default())
-                            }
-                            _ => AggKind::Count,
-                        },
-                        None => AggKind::Count,
-                    };
-                    Pred::Aggregate(kind)
-                }
-                "group-by" => Pred::GroupBy(parse_name(toks, pos).unwrap_or_else(|| "page".into())),
-                _ => return None,
-            };
-            // consume closing )
-            if let Some(Tok::RParen) = toks.get(*pos) {
-                *pos += 1;
-            }
-            Some(pred)
-        }
-        _ => None,
-    }
-}
-
-fn parse_list(toks: &[Tok], pos: &mut usize, today: JournalDate, depth: usize) -> Vec<Pred> {
-    let mut out = Vec::new();
-    while let Some(t) = toks.get(*pos) {
-        if *t == Tok::RParen {
-            break;
-        }
-        match parse_expr(toks, pos, today, depth) {
-            Some(p) => out.push(p),
-            None => break,
-        }
-    }
-    out
-}
-
-fn parse_words(toks: &[Tok], pos: &mut usize) -> Vec<String> {
-    let mut out = Vec::new();
-    while let Some(t) = toks.get(*pos) {
-        match t {
-            Tok::Word(w) => {
-                out.push(w.clone());
-                *pos += 1;
-            }
-            Tok::Str(s) => {
-                out.push(s.clone());
-                *pos += 1;
-            }
-            Tok::Tag(s) | Tok::PageRef(s) => {
-                out.push(s.clone());
-                *pos += 1;
-            }
-            _ => break,
-        }
-    }
-    out
-}
-
-fn parse_name(toks: &[Tok], pos: &mut usize) -> Option<String> {
-    match toks.get(*pos)?.clone() {
-        Tok::Word(w) => {
-            *pos += 1;
-            Some(w)
-        }
-        Tok::Str(s) => {
-            *pos += 1;
-            Some(s)
-        }
-        Tok::PageRef(s) | Tok::Tag(s) => {
-            *pos += 1;
-            Some(s)
-        }
-        _ => None,
-    }
-}
-
-fn parse_opt_name(toks: &[Tok], pos: &mut usize) -> Option<String> {
-    match toks.get(*pos) {
-        Some(Tok::Word(_)) | Some(Tok::Str(_)) => parse_name(toks, pos),
-        _ => None,
-    }
-}
-
-/// A property KEY normalized the way Logseq's query DSL does: drop a leading `:`,
-/// lowercase, and map spaces/underscores to dashes. Thus keyword and symbol forms
-/// share the same effective key as the stored-property comparison.
-fn normalize_prop_key(k: &str) -> String {
-    property_key_norm(k.trim_start_matches(':'))
-}
-
-/// Optional property VALUE: like `parse_opt_name`, but also accepts a `[[page]]`
-/// or `#tag` token (Logseq's parse-property-value extracts the page name and
-/// strips a leading `#`; `value_matches` does the ref/tag stripping on both
-/// sides). WITHOUT this, `(property k [[Page]])` / `(property k #tag)` dropped the
-/// value AND leaked the ref token, which was then mis-parsed as a stray page-ref
-/// clause — the second reported failure mode.
-fn parse_opt_value(toks: &[Tok], pos: &mut usize) -> Option<String> {
-    match toks.get(*pos) {
-        Some(Tok::Word(_)) | Some(Tok::Str(_)) | Some(Tok::PageRef(_)) | Some(Tok::Tag(_)) => {
-            parse_name(toks, pos)
-        }
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5546,8 +5314,117 @@ mod tests {
         day: 16,
     };
 
-    fn pred(src: &str) -> Pred {
-        Pred::parse(src, TODAY).expect("parse")
+    /// The block-anchored evaluable filter of an OG `{{query}}` source — what
+    /// the legacy `run_query` path evaluates.
+    fn pred(src: &str) -> Filter {
+        let (query, _view) = parse_query_source(src, TODAY);
+        assert!(
+            !query.is_invalid(),
+            "{src} parsed with diagnostics: {:?}",
+            query.diagnostics
+        );
+        match query.anchor {
+            Anchor::Block => query.evaluable_filter(),
+            Anchor::Page => og::rebase_to_block(&query.evaluable_filter()),
+        }
+    }
+
+    fn view_of(src: &str) -> ViewSettings {
+        parse_query_source(src, TODAY).1
+    }
+
+    /// Where a block sits, for the leaf tests. `EvalCtx` borrows its
+    /// compiled-pattern table, which is per FILTER rather than per page, so the
+    /// two are assembled together in [`TestEval::eval`].
+    struct Place {
+        journal: Option<i64>,
+        is_journal: bool,
+        page_name: String,
+        page_props: Vec<(String, String)>,
+    }
+
+    fn ctx_named<'a>() -> Place {
+        Place {
+            journal: None,
+            is_journal: false,
+            page_name: "Test".into(),
+            page_props: Vec::new(),
+        }
+    }
+    fn ctx_journal<'a>(key: i64) -> Place {
+        Place {
+            journal: Some(key),
+            is_journal: true,
+            page_name: "Journal".into(),
+            page_props: Vec::new(),
+        }
+    }
+    fn ctx_page(name: &str, props: &[(&str, &str)]) -> Place {
+        Place {
+            journal: None,
+            is_journal: false,
+            page_name: name.into(),
+            page_props: props
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+        }
+    }
+
+    trait TestEval {
+        fn eval(&self, block: &DocBlock, place: &Place) -> bool;
+    }
+
+    impl TestEval for Filter {
+        fn eval(&self, block: &DocBlock, place: &Place) -> bool {
+            let compiled = eval::CompiledLeaves::for_query(self);
+            let ctx = EvalCtx {
+                journal: place.journal,
+                is_journal: place.is_journal,
+                page_name: &place.page_name,
+                page_props: &place.page_props,
+                today: TODAY,
+                compiled: &compiled,
+            };
+            eval::eval_block(self, block, &PathRefCounts::new(), &ctx)
+        }
+    }
+
+    // Expected-value constructors, so the assertions below read like the DSL
+    // they parse rather than like the IR's constructors.
+    fn e_page_ref(name: &str) -> Filter {
+        Filter::page_ref(name)
+    }
+    fn e_task(markers: &[&str]) -> Filter {
+        Filter::attr(
+            Attr::Task,
+            CmpOp::In,
+            Value::List {
+                items: markers.iter().map(|m| Value::text(*m)).collect(),
+            },
+        )
+    }
+    fn e_property(key: &str, value: Option<&str>) -> Filter {
+        og::property_leaf(key.to_string(), value.map(str::to_string))
+    }
+    fn e_page_property(key: &str, value: Option<&str>) -> Filter {
+        Filter::rel(Rel::Page, Quant::Any, e_property(key, value))
+    }
+    fn e_content(text: &str) -> Filter {
+        og::content_like(text)
+    }
+    fn e_journal_between(low: &str, high: &str) -> Filter {
+        Filter::rel(
+            Rel::Page,
+            Quant::Any,
+            Filter::attr(
+                Attr::Day,
+                CmpOp::Between,
+                Value::List {
+                    items: vec![Value::date(low), Value::date(high)],
+                },
+            ),
+        )
     }
 
     fn projection_cache_page(path: &str, format: Format, raws: &[&str]) -> PageDto {
@@ -5677,9 +5554,9 @@ mod tests {
     #[test]
     fn query_parsers_fail_closed_past_the_shared_depth_and_size_limits() {
         let simple_at_limit = nested_boolean("and", QUERY_NESTING_MAX - 1, "(task TODO)");
-        assert!(Pred::parse(&simple_at_limit, TODAY).is_some());
+        assert!(!parse_query_source(&simple_at_limit, TODAY).0.is_invalid());
         let simple_too_deep = nested_boolean("and", QUERY_NESTING_MAX, "(task TODO)");
-        assert!(Pred::parse(&simple_too_deep, TODAY).is_none());
+        assert!(parse_query_source(&simple_too_deep, TODAY).0.is_invalid());
 
         let advanced_at_limit = format!(
             "[:find (pull ?b [*]) :where {}]",
@@ -5701,7 +5578,7 @@ mod tests {
 
         let oversized = "x".repeat(QUERY_SOURCE_MAX_BYTES + 1);
         assert!(!query_source_within_limit(&oversized));
-        assert!(Pred::parse(&oversized, TODAY).is_none());
+        assert!(parse_query_source(&oversized, TODAY).0.is_invalid());
 
         // The advanced parser must fail closed on size too, at `advanced_pred`
         // itself. `page_affects_advanced_query` calls it directly, so a ceiling
@@ -5858,59 +5735,30 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A minimal eval context for a block on a named (non-journal) page.
-    fn ctx_named<'a>() -> EvalCtx<'a> {
-        EvalCtx {
-            journal: None,
-            is_journal: false,
-            page_name: "Test",
-            page_props: &[],
-            page_tags: &[],
-        }
-    }
-    fn ctx_journal<'a>(key: i64) -> EvalCtx<'a> {
-        EvalCtx {
-            journal: Some(key),
-            is_journal: true,
-            page_name: "Journal",
-            page_props: &[],
-            page_tags: &[],
-        }
-    }
-
     #[test]
     fn parse_pageref_and_tag() {
-        assert_eq!(pred("[[Foo]]"), Pred::PageRef("Foo".into()));
-        assert_eq!(pred("#bar"), Pred::PageRef("bar".into()));
-        assert_eq!(pred("(tag Foo)"), Pred::PageRef("Foo".into()));
+        assert_eq!(pred("[[Foo]]"), e_page_ref("Foo"));
+        assert_eq!(pred("#bar"), e_page_ref("bar"));
+        assert_eq!(pred("(tag Foo)"), e_page_ref("Foo"));
     }
 
     #[test]
     fn parse_boolean() {
         assert_eq!(
             pred("(and [[A]] [[B]])"),
-            Pred::And(vec![Pred::PageRef("A".into()), Pred::PageRef("B".into())])
+            Filter::and(vec![e_page_ref("A"), e_page_ref("B")])
         );
-        assert_eq!(
-            pred("(not [[A]])"),
-            Pred::Not(Box::new(Pred::PageRef("A".into())))
-        );
+        assert_eq!(pred("(not [[A]])"), Filter::not(e_page_ref("A")));
     }
 
     #[test]
     fn parse_task_and_property() {
-        assert_eq!(
-            pred("(task TODO DOING)"),
-            Pred::Task(vec!["TODO".into(), "DOING".into()])
-        );
+        assert_eq!(pred("(task TODO DOING)"), e_task(&["TODO", "DOING"]));
         assert_eq!(
             pred("(property type book)"),
-            Pred::Property("type".into(), Some("book".into()))
+            e_property("type", Some("book"))
         );
-        assert_eq!(
-            pred("(property public)"),
-            Pred::Property("public".into(), None)
-        );
+        assert_eq!(pred("(property public)"), e_property("public", None));
     }
 
     #[test]
@@ -5918,27 +5766,24 @@ mod tests {
         // Leading `:` on the key is stripped (keyword form == symbol form).
         assert_eq!(
             pred("(property :type book)"),
-            Pred::Property("type".into(), Some("book".into()))
+            e_property("type", Some("book"))
         );
         // `_` → `-` (Logseq stores `my_key` as `my-key`).
-        assert_eq!(
-            pred("(property my_key v)"),
-            Pred::Property("my-key".into(), Some("v".into()))
-        );
+        assert_eq!(pred("(property my_key v)"), e_property("my-key", Some("v")));
         // A `[[page]]` value is captured (was dropped, leaking a stray page-ref).
         assert_eq!(
             pred("(property :fach [[Foo Bar]])"),
-            Pred::Property("fach".into(), Some("Foo Bar".into()))
+            e_property("fach", Some("Foo Bar"))
         );
         // A `#tag` value is captured.
         assert_eq!(
             pred("(property :type #assignment)"),
-            Pred::Property("type".into(), Some("assignment".into()))
+            e_property("type", Some("assignment"))
         );
         // page-property mirrors the same normalization + value capture.
         assert_eq!(
             pred("(page-property :fach [[Foo]])"),
-            Pred::PageProperty("fach".into(), Some("Foo".into()))
+            e_page_property("fach", Some("Foo"))
         );
     }
 
@@ -5952,12 +5797,11 @@ mod tests {
         );
         assert_eq!(
             p,
-            Pred::And(vec![
-                Pred::Property(
-                    "fach".into(),
-                    Some("Management der digitalen Transformation".into())
-                ),
-                Pred::Property("type".into(), Some("#assignment".into())),
+            Filter::and(vec![
+                e_property("fach", Some("Management der digitalen Transformation")),
+                // OG's `parse-property-value` strips the leading `#` of a tag
+                // spelling, quoted or not.
+                e_property("type", Some("assignment")),
             ])
         );
     }
@@ -5984,16 +5828,15 @@ mod tests {
         // `\"`/`\\` inside a quoted full-text term are unescaped (mirrors the
         // query-builder serializer's quoteStr), so a quote in the term doesn't
         // end the string early and silently truncate the query.
-        assert_eq!(
-            pred("\"foo \\\"bar\\\"\""),
-            Pred::Content("foo \"bar\"".into())
-        );
-        assert_eq!(pred("\"a\\\\b\""), Pred::Content("a\\b".into()));
+        assert_eq!(pred("\"foo \\\"bar\\\"\""), e_content("foo \"bar\""));
+        assert_eq!(pred("\"a\\\\b\""), e_content("a\\b"));
         // Only `\"`/`\\` are escapes: a hand-authored backslash before another
         // char is literal, so `"C:\tmp"` stays `C:\tmp` (not `C:tmp`). The term
         // is case-folded at parse time (the content match is case-insensitive).
-        assert_eq!(pred("\"a\\q\""), Pred::Content("a\\q".into()));
-        assert_eq!(pred("\"C:\\tmp\""), Pred::Content("c:\\tmp".into()));
+        assert_eq!(pred("\"a\\q\""), e_content("a\\q"));
+        // The IR keeps the user's spelling; the case fold happens at evaluation
+        // so the printer can re-emit the term byte-for-byte.
+        assert_eq!(pred("\"C:\\tmp\""), e_content("C:\\tmp"));
         // End-to-end: the term still matches a block whose text contains the quote.
         let none = ctx_named();
         let b = DocBlock::new("note: foo \"bar\" baz");
@@ -6005,9 +5848,11 @@ mod tests {
         let parsed = pred(r#"(search "foo \"exact phrase\" -draft OR C:\\tmp")"#);
         assert_eq!(
             parsed,
-            Pred::Search(FriendlySearch::new(
-                r#"foo "exact phrase" -draft OR C:\tmp"#.into()
-            ))
+            Filter::attr(
+                Attr::Content,
+                CmpOp::Match,
+                Value::text(r#"foo "exact phrase" -draft OR C:\tmp"#)
+            )
         );
 
         let none = ctx_named();
@@ -6028,7 +5873,11 @@ mod tests {
         let parsed = pred(r#"(content-regex "ID:\\s+[A-Z]{3}\\d+\\s+\"quoted\"")"#);
         assert_eq!(
             parsed,
-            Pred::ContentRegex(ContentRegex::new(r#"ID:\s+[A-Z]{3}\d+\s+"quoted""#.into()))
+            Filter::attr(
+                Attr::Content,
+                CmpOp::Regex,
+                Value::text(r#"ID:\s+[A-Z]{3}\d+\s+"quoted""#)
+            )
         );
 
         let none = ctx_named();
@@ -6037,7 +5886,15 @@ mod tests {
         assert!(!parsed.eval(&DocBlock::new(r#"prefix ID: abc42 "quoted" suffix"#), &none));
 
         let invalid = pred(r#"(content-regex "[unclosed")"#);
-        assert!(matches!(invalid, Pred::ContentRegex(_)));
+        assert!(matches!(
+            invalid,
+            Filter::Leaf {
+                leaf: Leaf::Attr {
+                    op: CmpOp::Regex,
+                    ..
+                }
+            }
+        ));
         assert!(!invalid.eval(&DocBlock::new("[unclosed"), &none));
     }
 
@@ -6045,17 +5902,30 @@ mod tests {
     fn aggregate_and_group_by_parse_as_noop_filters() {
         // 1a: the aggregation/grouping directives ride in the DSL (D2) so the
         // builder round-trips and run_query succeeds; they never filter (eval→true).
-        assert_eq!(pred("(aggregate count)"), Pred::Aggregate(AggKind::Count));
+        use ir::{AggFn, Field};
+        // D2: the four directives are LIFTED out of the filter into the view;
+        // what stays in the tree is the neutral `True`.
+        assert_eq!(pred("(aggregate count)"), Filter::True);
         assert_eq!(
-            pred("(aggregate sum hours)"),
-            Pred::Aggregate(AggKind::Sum("hours".into()))
+            view_of("(aggregate count)").aggregates,
+            vec![(Field::new(""), AggFn::Count)]
         );
         assert_eq!(
-            pred("(aggregate avg score)"),
-            Pred::Aggregate(AggKind::Avg("score".into()))
+            view_of("(aggregate sum hours)").aggregates,
+            vec![(Field::new("hours"), AggFn::Sum)]
         );
-        assert_eq!(pred("(group-by page)"), Pred::GroupBy("page".into()));
-        assert_eq!(pred("(group-by status)"), Pred::GroupBy("status".into()));
+        assert_eq!(
+            view_of("(aggregate avg score)").aggregates,
+            vec![(Field::new("score"), AggFn::Avg)]
+        );
+        assert_eq!(
+            view_of("(group-by page)").group_by,
+            Some(Field::new("page"))
+        );
+        assert_eq!(
+            view_of("(group-by status)").group_by,
+            Some(Field::new("status"))
+        );
 
         // No-op filter: a block passes regardless.
         let none = ctx_named();
@@ -6073,7 +5943,9 @@ mod tests {
         assert!(is_advanced(
             "[:find (pull ?b [*]) :where [?b :block/marker]]"
         ));
-        assert!(Pred::parse("[:find ?b :where ...]", TODAY).is_none());
+        assert!(parse_query_source("[:find ?b :where ...]", TODAY)
+            .0
+            .is_invalid());
     }
 
     #[test]
@@ -6084,7 +5956,10 @@ mod tests {
                          [(get ?props :class)]]"#;
         let (lowered, ran, ignored) = advanced_pred(source, None, TODAY);
 
-        assert_eq!(lowered, Some(pred("(page-property :class)")));
+        assert_eq!(
+            lowered.map(|query| query.filter),
+            Some(pred("(page-property :class)"))
+        );
         assert_eq!(ran, vec!["page-property"]);
         assert!(ignored.is_empty());
     }
@@ -6102,13 +5977,23 @@ mod tests {
                       :inputs [:current-page]}"#;
         let (lowered, ran, ignored) = advanced_pred(refs, Some("Focus A"), TODAY);
 
-        assert_eq!(lowered, Some(Pred::PageRef("focus a".into())));
+        assert_eq!(
+            lowered.map(|query| query.filter),
+            Some(e_page_ref("focus a"))
+        );
         assert_eq!(ran, vec!["current-page-ref"]);
         assert!(ignored.is_empty());
 
         let physical = refs.replace(":block/refs", ":block/page");
         let (lowered, ran, ignored) = advanced_pred(&physical, Some("Focus A"), TODAY);
-        assert_eq!(lowered, Some(Pred::Page("focus a".into())));
+        assert_eq!(
+            lowered.map(|query| query.filter),
+            Some(Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                Filter::attr(Attr::Name, CmpOp::Eq, Value::text("focus a"))
+            ))
+        );
         assert_eq!(ran, vec!["current-page"]);
         assert!(ignored.is_empty());
     }
@@ -6122,11 +6007,11 @@ mod tests {
         let (lowered, ran, ignored) = advanced_pred(source, Some("Not a date"), TODAY);
 
         assert_eq!(
-            lowered,
-            Some(Pred::Between(
-                BetweenField::Journal,
-                Some(20260601),
-                Some(20260630)
+            lowered.map(|query| query.filter),
+            Some(Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                adv_range(Attr::Day, Some(20260601), Some(20260630))
             ))
         );
         assert_eq!(ran, vec!["between"]);
@@ -6141,7 +6026,7 @@ mod tests {
                          [(get ?name :class)]]"#;
         let (lowered, ran, ignored) = advanced_pred(source, None, TODAY);
 
-        assert_eq!(lowered, None);
+        assert!(lowered.is_none());
         assert!(ran.is_empty());
         assert_eq!(ignored, vec!["pattern", "pattern"]);
     }
@@ -6256,10 +6141,8 @@ mod tests {
     fn eval_between_relative_dates() {
         // TODAY = 2026-06-16. (between -7d +7d) => [2026-06-09, 2026-06-23].
         let q = pred("(between -7d +7d)");
-        assert_eq!(
-            q,
-            Pred::Between(BetweenField::Journal, Some(20260609), Some(20260623))
-        );
+        // The IR keeps the bounds UNRESOLVED; `today` is applied at evaluation.
+        assert_eq!(q, e_journal_between("-7d", "+7d"));
         let b = DocBlock::new("x");
         assert!(q.eval(&b, &ctx_journal(20260616)));
         assert!(q.eval(&b, &ctx_journal(20260609)));
@@ -6267,12 +6150,14 @@ mod tests {
         // keyword bounds + month/year units
         assert_eq!(
             pred("(between today tomorrow)"),
-            Pred::Between(BetweenField::Journal, Some(20260616), Some(20260617))
+            e_journal_between("today", "tomorrow")
         );
-        assert_eq!(
-            pred("(between -1m +1y)"),
-            Pred::Between(BetweenField::Journal, Some(20260516), Some(20270616))
-        );
+        let b = DocBlock::new("x");
+        assert!(pred("(between today tomorrow)").eval(&b, &ctx_journal(20260617)));
+        assert!(!pred("(between today tomorrow)").eval(&b, &ctx_journal(20260618)));
+        assert_eq!(pred("(between -1m +1y)"), e_journal_between("-1m", "+1y"));
+        assert!(pred("(between -1m +1y)").eval(&b, &ctx_journal(20260516)));
+        assert!(!pred("(between -1m +1y)").eval(&b, &ctx_journal(20260515)));
     }
 
     #[test]
@@ -6280,11 +6165,17 @@ mod tests {
         // Field keyword parses into the right variant.
         assert_eq!(
             pred("(between journal -30d today)"),
-            Pred::Between(BetweenField::Journal, Some(20260517), Some(20260616))
+            e_journal_between("-30d", "today")
         );
         assert_eq!(
             pred("(between scheduled -7d +7d)"),
-            Pred::Between(BetweenField::Scheduled, Some(20260609), Some(20260623))
+            Filter::attr(
+                Attr::Scheduled,
+                CmpOp::Between,
+                Value::List {
+                    items: vec![Value::date("-7d"), Value::date("+7d")]
+                }
+            )
         );
 
         // `between journal` restricts to journal pages: a block with an in-range
@@ -6335,7 +6226,14 @@ mod tests {
     #[test]
     fn journal_predicate_and_target_query() {
         let b = DocBlock::new("TODO buy milk");
-        assert_eq!(pred("(journal)"), Pred::Journal);
+        assert_eq!(
+            pred("(journal)"),
+            Filter::rel(
+                Rel::Page,
+                Quant::Any,
+                Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true })
+            )
+        );
         assert!(pred("(journal)").eval(&b, &ctx_journal(20260616)));
         assert!(!pred("(journal)").eval(&b, &ctx_named()));
 
@@ -6350,13 +6248,7 @@ mod tests {
     #[test]
     fn eval_page_and_namespace() {
         let b = DocBlock::new("hi");
-        let ctx = EvalCtx {
-            journal: None,
-            is_journal: false,
-            page_name: "Project/Alpha",
-            page_props: &[],
-            page_tags: &[],
-        };
+        let ctx = ctx_page("Project/Alpha", &[]);
         assert!(pred("(page Project/Alpha)").eval(&b, &ctx));
         assert!(!pred("(page Project/Beta)").eval(&b, &ctx));
         assert!(pred("(namespace Project)").eval(&b, &ctx));
@@ -6366,15 +6258,7 @@ mod tests {
     #[test]
     fn eval_page_property_and_tags() {
         let b = DocBlock::new("hi");
-        let props = vec![("type".to_string(), "project".to_string())];
-        let tags = vec!["research".to_string(), "active".to_string()];
-        let ctx = EvalCtx {
-            journal: None,
-            is_journal: false,
-            page_name: "P",
-            page_props: &props,
-            page_tags: &tags,
-        };
+        let ctx = ctx_page("P", &[("type", "project"), ("tags", "research, active")]);
         assert!(pred("(page-property type project)").eval(&b, &ctx));
         assert!(pred("(page-property type)").eval(&b, &ctx));
         assert!(!pred("(page-property type book)").eval(&b, &ctx));
@@ -6725,39 +6609,33 @@ mod tests {
 
     #[test]
     fn parse_extracts_options() {
-        let mut opts = QueryOpts::default();
-        pred("(and (task TODO) (sample 5) (sort-by priority desc))").collect_opts(&mut opts);
+        // The directives no longer ride in the filter: they are lifted into the
+        // view on parse and the walk reads them through the one adapter.
+        let view = view_of("(and (task TODO) (sample 5) (sort-by priority desc))");
+        let opts = QueryOpts::from_view(&view);
         assert_eq!(opts.sample, Some(5));
         assert_eq!(opts.sort, Some(("priority".to_string(), false)));
     }
 
     #[test]
-    fn block_date_ordinals_finds_planning_markers_anywhere() {
-        let ord = date_ordinal(2026, 7, 6);
-        // own line (after trim)
-        assert_eq!(
-            block_date_ordinals("TODO x\nSCHEDULED: <2026-07-06 Mon>", Some("SCHEDULED:")),
-            vec![ord]
-        );
-        // inline on the marker line (the regressed case)
-        assert_eq!(
-            block_date_ordinals("TODO SCHEDULED: <2026-07-06 Mon> do it", Some("SCHEDULED:")),
-            vec![ord]
-        );
-        // with trailing text after the timestamp
-        assert_eq!(
-            block_date_ordinals(
-                " SCHEDULED: <2026-07-06 Mon> #email students",
-                Some("SCHEDULED:")
-            ),
-            vec![ord]
-        );
-        // DEADLINE restricted; SCHEDULED-only query ignores it
-        assert!(block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("SCHEDULED:")).is_empty());
-        assert_eq!(
-            block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("DEADLINE:")),
-            vec![ord]
-        );
+    /// The walk's planning leaves now read the PROJECTED timestamp rather than
+    /// rescanning raw text (SPEC §3.2 G2). The `SCHEDULED:`-only query still
+    /// ignores a `DEADLINE:` line and vice versa.
+    fn planning_leaves_read_the_projected_timestamp_not_raw_text() {
+        let none = ctx_named();
+        let scheduled = pred("(between scheduled [[Jul 6th, 2026]] [[Jul 6th, 2026]])");
+        let deadline = pred("(between deadline [[Jul 6th, 2026]] [[Jul 6th, 2026]])");
+
+        let own_line = DocBlock::new("TODO x\nSCHEDULED: <2026-07-06 Mon>");
+        assert!(scheduled.eval(&own_line, &none));
+        assert!(!deadline.eval(&own_line, &none));
+
+        let trailing = DocBlock::new(" SCHEDULED: <2026-07-06 Mon> #email students");
+        assert!(scheduled.eval(&trailing, &none));
+
+        let dead = DocBlock::new("DEADLINE: <2026-07-06 Mon>");
+        assert!(!scheduled.eval(&dead, &none));
+        assert!(deadline.eval(&dead, &none));
     }
 
     fn quick_switch_fingerprint(entries: Vec<PageEntry>) -> Vec<(String, PageKind, String)> {
@@ -7296,10 +7174,7 @@ mod tests {
         let parsed = pred("(and (task DONE) changelog)");
         assert_eq!(
             parsed,
-            Pred::And(vec![
-                Pred::Task(vec!["DONE".into()]),
-                Pred::Content("changelog".into())
-            ])
+            Filter::and(vec![e_task(&["DONE"]), e_content("changelog")])
         );
         assert!(parsed.eval(
             &DocBlock::new("DONE Write changelog for v0.0.9"),

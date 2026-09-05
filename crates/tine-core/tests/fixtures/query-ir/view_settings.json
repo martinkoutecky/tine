@@ -1,0 +1,33 @@
+{
+  "view": "table",
+  "sort": [
+    [
+      "status",
+      "asc"
+    ],
+    [
+      "modified",
+      "desc"
+    ]
+  ],
+  "group_by": "page",
+  "columns": [
+    "page",
+    "status"
+  ],
+  "aggregates": [
+    [
+      "",
+      "count"
+    ],
+    [
+      "size",
+      "sum"
+    ],
+    [
+      "size",
+      "avg"
+    ]
+  ],
+  "sample": 25
+}

@@ -1,0 +1,56 @@
+{
+  "rows": [
+    {
+      "normalized_name": "status",
+      "cardinality": "one",
+      "observed_type": "text",
+      "count_blocks": 42,
+      "count_pages": 3,
+      "histogram": [
+        [
+          "text",
+          42
+        ],
+        [
+          "number",
+          0
+        ]
+      ],
+      "mismatch_count": 0,
+      "top_values": [
+        [
+          "active",
+          30
+        ],
+        [
+          "done",
+          12
+        ]
+      ]
+    },
+    {
+      "normalized_name": "size",
+      "cardinality": "many",
+      "observed_type": "number",
+      "count_blocks": 9,
+      "count_pages": 0,
+      "histogram": [
+        [
+          "number",
+          8
+        ],
+        [
+          "text",
+          1
+        ]
+      ],
+      "mismatch_count": 1,
+      "declared": [
+        "number",
+        "many"
+      ],
+      "top_values": []
+    }
+  ],
+  "generation": 7
+}

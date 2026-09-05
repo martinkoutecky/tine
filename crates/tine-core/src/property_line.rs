@@ -60,16 +60,36 @@ pub fn parse_property_line(line: &str) -> Option<(&str, &str)> {
         let value = skip_mldoc_spaces(value);
         return Some((key, trim_property_value(value)));
     }
+    // The empty value must still BORROW from `line`. A `""` literal here points
+    // into static memory, and the callers that recover source offsets by
+    // pointer arithmetic (`reference_evidence`'s property sources) subtract the
+    // line's base from it — which underflows and panics on a bare `key::`.
     value
         .as_bytes()
         .iter()
         .all(|&b| mldoc_space(b))
-        .then_some((key, ""))
+        .then(|| (key, &value[value.len()..]))
 }
 
 #[cfg(test)]
 mod tests {
     use super::parse_property_line;
+
+    /// Both returned slices must point INTO the argument: callers recover the
+    /// key's and value's source offsets by subtracting the line's base pointer,
+    /// so a slice borrowed from anywhere else underflows.
+    #[test]
+    fn both_halves_are_borrowed_from_the_line_even_when_the_value_is_empty() {
+        for line in ["k:: v", "k:: ", "k::", "\tk::  spaced  "] {
+            let (key, value) = parse_property_line(line).expect(line);
+            let base = line.as_ptr() as usize;
+            let end = base + line.len();
+            for part in [key, value] {
+                let at = part.as_ptr() as usize;
+                assert!(at >= base && at + part.len() <= end, "{line:?} / {part:?}");
+            }
+        }
+    }
 
     #[test]
     fn matches_lsdoc_property_boundaries() {
@@ -82,6 +102,7 @@ mod tests {
             Some(("unicode.klíč", "hodnota"))
         );
         assert_eq!(parse_property_line("empty:: \t"), Some(("empty", "")));
+        assert_eq!(parse_property_line("empty::"), Some(("empty", "")));
         assert_eq!(parse_property_line("key::value"), None);
         assert_eq!(parse_property_line("a b:: value"), None);
     }

@@ -1,0 +1,20 @@
+{
+  "anchor": "page",
+  "filter": {
+    "kind": "leaf",
+    "leaf": {
+      "kind": "attr",
+      "attr": "journal",
+      "op": "eq",
+      "value": {
+        "kind": "bool",
+        "bool": true
+      }
+    }
+  },
+  "diagnostics": [],
+  "source": {
+    "kind": "tql",
+    "original": "@page and journal = true"
+  }
+}

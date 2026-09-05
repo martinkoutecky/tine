@@ -6371,6 +6371,62 @@
       "failBefore": "c7b-managed-journal-ordinal-fail-before.log at 61327be99fbd002f6837b43c027068c24279f10c"
     },
     "notes": "Direct Files derives a journal page's ordinal from the graph's configured JournalFormat, the producer that fills PageEntry::date_key. The managed query adapters derived it instead from query.rs journal_ordinal, which called JournalDate::from_title and so hardcoded the DEFAULT title format. On any graph whose :journal/page-title-format differs from the default the managed ordinal was None, so every predicate reading a journal day -- (between START END) and the other journal-day forms -- excluded every journal page and the managed query answered empty while Direct answered normally. ApplicationQueryPage now carries the day from the configured format, so one producer serves both backends. The sparse task-candidate path still reads the default format, but symmetrically for both backends (its ApplicationSparseQueryPage is also built in direct_projection.rs), so it cannot diverge; giving it the configured format is a follow-up."
+  },
+  {
+   "id": "REG-P0-QUERY-UNKNOWN-HEAD-001",
+   "title": "An unrecognised query head silently truncated the query instead of refusing it",
+   "family": "query-engine",
+   "sources": {"issues": [], "commits": [], "internal": "2026-09 query-engine campaign, packet P0-rust Wave A; SPEC 4.1; invariants I-12, I-22"},
+   "platforms": ["all"],
+   "layer": "rust-core-query-parser",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/query/og.rs::tests::an_unknown_head_keeps_the_rest_of_the_query_and_reports_itself",
+     "crates/tine-core/src/query/og.rs::tests::an_unknown_head_alone_is_raw_and_spanned",
+     "crates/tine-core/src/query/conformance.rs::an_unknown_head_returns_nothing_rather_than_a_shorter_query"
+    ],
+    "scenario": "query-engine.unknown-head-refuses-instead-of-narrowing",
+    "failBefore": "unknown-head-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
+   },
+   "notes": "OG's build-query returns nil for an unrecognised head, and Tine's parser propagated that as \"the parse failed from here\": (and (task TODO) (frobnicate x)) ran as (task TODO) and returned rows for a query the author never wrote. Blocking for core operation -- the answer was wrong rather than missing, and nothing on screen said so. The unknown head is now a Filter::Raw leaf carrying its source span plus an UnknownHead diagnostic; the rest of the tree still parses, the query is invalid, and it returns no rows."
+  },
+  {
+   "id": "REG-P0-QUERY-ALL-PAGE-TAGS-001",
+   "title": "(all-page-tags) was not a head Tine knew, so a graph using it returned nothing",
+   "family": "query-engine",
+   "sources": {"issues": [], "commits": [], "internal": "2026-09 query-engine campaign, packet P0-rust Wave A; SPEC 4.1 and 3.2; decision D-9"},
+   "platforms": ["all"],
+   "layer": "rust-core-query-parser",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/query/og.rs::tests::all_page_tags_is_the_pages_tags_property_with_at_least_one_atom",
+     "crates/tine-core/src/query/og.rs::tests::all_page_tags_takes_no_arguments",
+     "crates/tine-core/src/query/conformance.rs::all_page_tags_selects_every_page_carrying_a_tag"
+    ],
+    "scenario": "query-engine.all-page-tags-selects-tagged-pages",
+    "failBefore": "all-page-tags-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
+   },
+   "notes": "Interoperability: (all-page-tags) is in OG's build-query head set (build-all-page-tags), so a graph authored in Logseq can carry it. Tine treated it as an unknown head, which -- before REG-P0-QUERY-UNKNOWN-HEAD-001 -- also truncated whatever it was conjoined with. Transcribed from OG as the page's tags property with at least one atom."
+  },
+  {
+   "id": "REG-P0-EMPTY-PROPERTY-VALUE-BORROW-001",
+   "title": "A bare key:: line panicked the reference-evidence reader with a subtraction overflow",
+   "family": "parser-integration",
+   "sources": {"issues": [], "commits": [], "internal": "2026-09 query-engine campaign, packet P0-rust Wave A; found while building the SPEC 3.4 conformance fixture"},
+   "platforms": ["all"],
+   "layer": "rust-core-parser-recognizer",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/property_line.rs::tests::both_halves_are_borrowed_from_the_line_even_when_the_value_is_empty",
+     "crates/tine-core/src/query/conformance.rs::property_leaves_are_two_valued_over_atoms"
+    ],
+    "scenario": "parser.empty-property-value-borrows-from-its-line",
+    "failBefore": "empty-property-value-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
+   },
+   "notes": "parse_property_line documents that it returns borrowed slices, and reference_evidence recovers each half's source offset by subtracting the line's base pointer. For a bare key:: with no trailing space the empty value was the static \"\" literal instead, so the subtraction underflowed and panicked in debug builds. A size:: line with no value is legal Logseq and is exactly the SPEC 3.3 \"present key, zero atoms\" case, so the crash was reachable from an ordinary graph. The empty value now borrows the tail of its own line."
   }
  ]
 }

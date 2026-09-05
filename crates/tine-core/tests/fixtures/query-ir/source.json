@@ -1,0 +1,18 @@
+[
+  {
+    "kind": "og",
+    "original": "(task TODO) {:title \"T\"}",
+    "og_options": "{:title \"T\"}"
+  },
+  {
+    "kind": "tql",
+    "original": "task = 'TODO'"
+  },
+  {
+    "kind": "advanced",
+    "original": "[:find (pull ?b [*]) :where (task ?b \"TODO\")]"
+  },
+  {
+    "kind": "builder"
+  }
+]

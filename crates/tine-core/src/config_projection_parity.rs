@@ -72,6 +72,18 @@ const CONFIG_FIELDS_NOT_PROJECTED: &[(&str, &str)] = &[
         "flattened rather than dropped: `LogbookSettings` is projected as the \
          three scalar `logbook_*` fields below, which the parity test checks",
     ),
+    (
+        "separated_by_commas",
+        "`:property/separated-by-commas` is a parser input: it reaches the query \
+         engine as part of `ParseConfig` and decides how a property VALUE splits \
+         into atoms. The frontend reads the already-split atoms, never the rule",
+    ),
+    (
+        "ignored_page_references_keywords",
+        "`:ignored-page-references-keywords` is the same kind of parser input — \
+         it suppresses reference extraction for the named property keys inside \
+         `ParseConfig`, before anything the frontend can see exists",
+    ),
 ];
 
 /// The `logbook` sub-settings, flattened onto `GraphMeta`. Named here so the

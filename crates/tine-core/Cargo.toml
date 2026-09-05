@@ -29,6 +29,7 @@ fs2 = "0.4.3"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 unicode-normalization = "=0.1.25"
 unicode-segmentation = "1"
+sqlparser = { workspace = true }
 tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.12.2" }
 
 [target.'cfg(windows)'.dependencies]

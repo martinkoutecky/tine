@@ -31,6 +31,9 @@ codegen-units = 1
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
+# TQL is SQLite expression syntax (SPEC §4.2): one parser, not a hand-rolled
+# grammar (D-14). `visitor` gives the AST whitelist walk the guards need (I-22).
+sqlparser = { version = "0.62", features = ["visitor"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 

@@ -8,7 +8,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **`{{query (all-page-tags)}}` works.** Logseq has this filter — every page
+  that carries at least one `tags::` value — and Tine did not know it, so a
+  graph written in Logseq that used it showed nothing. It now selects the same
+  pages Logseq selects.
+
 ### Fixed
+
+- **A query with a filter Tine does not understand now says so instead of
+  quietly answering a shorter question.** `{{query (and (task TODO)
+  (frobnicate x))}}` used to drop everything from the unknown filter onwards
+  and run as `(task TODO)` — a list that looked right and was not. The unknown
+  filter is now reported, the rest of the query is still shown, and no results
+  are returned until it is fixed.
+
+- **A property line with no value no longer crashes the reference reader.** A
+  block whose last line is a bare `size::` — a property you have written the
+  name of but not the value — could panic while Tine gathered the evidence
+  behind a linked reference.
 
 - **Clicking a link to the PDF you are already reading keeps your place.**
   Opening a PDF link with no page or highlight attached — a plain `![](…​.pdf)`

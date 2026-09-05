@@ -1,0 +1,340 @@
+{
+  "anchor": "block",
+  "filter": {
+    "kind": "and",
+    "items": [
+      {
+        "kind": "true"
+      },
+      {
+        "kind": "false"
+      },
+      {
+        "kind": "not",
+        "inner": {
+          "kind": "leaf",
+          "leaf": {
+            "kind": "rel",
+            "rel": "refs",
+            "quant": "any",
+            "pred": {
+              "kind": "leaf",
+              "leaf": {
+                "kind": "attr",
+                "attr": "name",
+                "op": "eq",
+                "value": {
+                  "kind": "text",
+                  "text": "alpha"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "off",
+        "inner": {
+          "kind": "leaf",
+          "leaf": {
+            "kind": "attr",
+            "attr": "task",
+            "op": "in",
+            "value": {
+              "kind": "list",
+              "items": [
+                {
+                  "kind": "text",
+                  "text": "TODO"
+                },
+                {
+                  "kind": "text",
+                  "text": "DOING"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "or",
+        "items": [
+          {
+            "kind": "leaf",
+            "leaf": {
+              "kind": "attr",
+              "attr": "content",
+              "op": "like",
+              "value": {
+                "kind": "text",
+                "text": "%foo%"
+              }
+            }
+          },
+          {
+            "kind": "leaf",
+            "leaf": {
+              "kind": "attr",
+              "attr": "content",
+              "op": "match",
+              "value": {
+                "kind": "text",
+                "text": "foo"
+              }
+            }
+          },
+          {
+            "kind": "leaf",
+            "leaf": {
+              "kind": "attr",
+              "attr": "content",
+              "op": "regex",
+              "value": {
+                "kind": "text",
+                "text": "^foo"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "attr",
+          "attr": "priority",
+          "op": "is_set",
+          "value": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "attr",
+          "attr": "scheduled",
+          "op": "is_not_set",
+          "value": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "attr",
+          "attr": "deadline",
+          "op": "between",
+          "value": {
+            "kind": "list",
+            "items": [
+              {
+                "kind": "date",
+                "literal": "today"
+              },
+              {
+                "kind": "date",
+                "literal": "+7d"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
+          "rel": "page",
+          "quant": "any",
+          "pred": {
+            "kind": "and",
+            "items": [
+              {
+                "kind": "leaf",
+                "leaf": {
+                  "kind": "attr",
+                  "attr": "name",
+                  "op": "starts_with",
+                  "value": {
+                    "kind": "text",
+                    "text": "proj/"
+                  }
+                }
+              },
+              {
+                "kind": "leaf",
+                "leaf": {
+                  "kind": "attr",
+                  "attr": "namespace",
+                  "op": "not_eq",
+                  "value": {
+                    "kind": "text",
+                    "text": "archive"
+                  }
+                }
+              },
+              {
+                "kind": "leaf",
+                "leaf": {
+                  "kind": "attr",
+                  "attr": "journal",
+                  "op": "eq",
+                  "value": {
+                    "kind": "bool",
+                    "bool": true
+                  }
+                }
+              },
+              {
+                "kind": "leaf",
+                "leaf": {
+                  "kind": "attr",
+                  "attr": "day",
+                  "op": "ge",
+                  "value": {
+                    "kind": "date",
+                    "literal": "2026-01-01"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
+          "rel": "tags",
+          "quant": "none",
+          "pred": {
+            "kind": "leaf",
+            "leaf": {
+              "kind": "attr",
+              "attr": "name",
+              "op": "not_in",
+              "value": {
+                "kind": "list",
+                "items": []
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
+          "rel": "props",
+          "quant": "every",
+          "pred": {
+            "kind": "and",
+            "items": [
+              {
+                "kind": "leaf",
+                "leaf": {
+                  "kind": "attr",
+                  "attr": "key",
+                  "op": "eq",
+                  "value": {
+                    "kind": "text",
+                    "text": "size"
+                  }
+                }
+              },
+              {
+                "kind": "leaf",
+                "leaf": {
+                  "kind": "attr",
+                  "attr": "value",
+                  "op": "gt",
+                  "value": {
+                    "kind": "number",
+                    "number": 3.0
+                  }
+                }
+              },
+              {
+                "kind": "leaf",
+                "leaf": {
+                  "kind": "attr",
+                  "attr": "atom_count",
+                  "op": "lt",
+                  "value": {
+                    "kind": "number",
+                    "number": 5.0
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
+          "rel": "children",
+          "quant": "any",
+          "pred": {
+            "kind": "leaf",
+            "leaf": {
+              "kind": "attr",
+              "attr": "task",
+              "op": "le",
+              "value": {
+                "kind": "text",
+                "text": "z"
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
+          "rel": "blocks",
+          "quant": "every",
+          "pred": {
+            "kind": "leaf",
+            "leaf": {
+              "kind": "attr",
+              "attr": "content",
+              "op": "eq",
+              "value": {
+                "kind": "text",
+                "text": "x"
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "raw",
+        "text": "(frobnicate x)",
+        "span": {
+          "start": 16,
+          "end": 30
+        }
+      }
+    ]
+  },
+  "diagnostics": [
+    {
+      "span": {
+        "start": 16,
+        "end": 30
+      },
+      "message": "`frobnicate` is not a query filter",
+      "suggestions": [],
+      "disabled": false,
+      "kind": "unknown_head"
+    }
+  ],
+  "source": {
+    "kind": "og",
+    "original": "(and (task TODO) (frobnicate x))",
+    "og_options": ""
+  }
+}

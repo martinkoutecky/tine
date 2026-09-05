@@ -31492,7 +31492,7 @@ fn c7b_query_driver_producers_share_one_page_source() {
         "with_hydration_pages(",
         "select_export_queries(",
         "QUERY_EXPORT_CONSTRUCTION_ROWS",
-        "Pred::parse(",
+        "parse_query_source(",
     ];
     // The subset the shared drivers themselves must still contain; the rest
     // (hydration-page construction) lives in a driver-private helper.
@@ -31502,7 +31502,7 @@ fn c7b_query_driver_producers_share_one_page_source() {
         "for_each_page(",
         "select_export_queries(",
         "QUERY_EXPORT_CONSTRUCTION_ROWS",
-        "Pred::parse(",
+        "parse_query_source(",
     ];
 
     for (producer, driver) in pairs {
