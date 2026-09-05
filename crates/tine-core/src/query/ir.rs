@@ -295,8 +295,20 @@ pub enum Filter {
         inner: Box<Filter>,
     },
     /// An unparsed or unknown span. ALWAYS paired with a diagnostic.
+    ///
+    /// **Lossless by contract (§4.3.2, R4).** `text` is the exact UTF-8 payload
+    /// the author wrote and `kind` is the diagnostic that rejected it; both
+    /// survive every save, reopen and neighbouring edit, serialized as the
+    /// `raw_hex('<kind>', '<hex>')` capsule. The `span` is presentation
+    /// metadata and may be regenerated, and the disabled state is derived from
+    /// the CURRENT tree (whether an `Off` encloses this node), never stored.
     Raw {
         text: String,
+        /// The retained diagnostic kind. **Named `diagnostic_kind` on the wire**
+        /// because `kind` is already this enum's internal tag (`"kind": "raw"`),
+        /// which §3.1 fixes and a lane may not change.
+        #[serde(rename = "diagnostic_kind")]
+        kind: DiagnosticKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         span: Option<Span>,
     },
@@ -323,6 +335,15 @@ impl Filter {
     }
     pub fn leaf(leaf: Leaf) -> Filter {
         Filter::Leaf { leaf }
+    }
+    /// A preservation capsule: the exact payload plus the kind that rejected it
+    /// (§4.3.2). Spans are attached separately because they are presentation.
+    pub fn raw(text: impl Into<String>, kind: DiagnosticKind) -> Filter {
+        Filter::Raw {
+            text: text.into(),
+            kind,
+            span: None,
+        }
     }
     pub fn attr(attr: Attr, op: CmpOp, value: Value) -> Filter {
         Filter::leaf(Leaf::Attr { attr, op, value })
@@ -352,6 +373,11 @@ impl Filter {
     pub fn without_off(&self) -> Option<Filter> {
         match self {
             Filter::Off { .. } => None,
+            // An ORIGINALLY EMPTY group is an active constant, not a group
+            // emptied by disabling its children (§3.5). `or()` is false and
+            // stays false; removing it would make a false query answer `True`.
+            Filter::And { items } if items.is_empty() => Some(Filter::True),
+            Filter::Or { items } if items.is_empty() => Some(Filter::False),
             Filter::And { items } => {
                 let kept: Vec<Filter> = items.iter().filter_map(Filter::without_off).collect();
                 (!kept.is_empty()).then(|| Filter::And { items: kept })
@@ -460,20 +486,40 @@ impl Filter {
         }
     }
 
-    /// `normalized()`'s tree rule: flatten nested `And`/`Or` of the same kind,
-    /// remove identity elements, collapse `off(off(x))`, keep child order.
+    /// `normalized()`'s tree rule (§3.5, R2). **Omission-safe by construction.**
+    ///
+    /// In order: an ORIGINALLY EMPTY `And([])` / `Or([])` becomes `True` /
+    /// `False` — including inside a relation predicate, because those are active
+    /// constants and are exactly what a group emptied by disabling its children
+    /// is not; then same-kind groups flatten, singleton groups collapse and
+    /// `Off(Off(x))` collapses to one `Off`. Child order is preserved.
+    ///
+    /// **No boolean identity removal, absorption, De Morgan rewriting or
+    /// constant folding happens here.** This is the stored, editable form: an
+    /// operand the author wrote must still be there when the tree is printed
+    /// back, and `Off` is structural omission rather than a truth value, so
+    /// dropping a `True` next to an `Off` sibling silently changes the query's
+    /// answer. `Or(False, Off(True))` stays false and `Not(And(True, Off(True)))`
+    /// stays false; under the old identity-dropping rule both normalized to a
+    /// fully disabled root, which evaluates as `True` (§3.5). Ordinary boolean
+    /// reduction is legal only on the executable tree, AFTER
+    /// [`Filter::without_off`].
     fn normalize_tree(&self) -> Filter {
         match self {
+            // Originally empty: an active constant, before anything else.
+            Filter::And { items } if items.is_empty() => Filter::True,
+            Filter::Or { items } if items.is_empty() => Filter::False,
             Filter::And { items } => {
                 let mut out: Vec<Filter> = Vec::new();
                 for item in items {
                     match item.normalize_tree() {
                         Filter::And { items } => out.extend(items),
-                        Filter::True => {}
                         other => out.push(other),
                     }
                 }
                 match out.len() {
+                    // Unreachable: a nonempty group's children each normalize to
+                    // at least one operand, because nothing is dropped.
                     0 => Filter::True,
                     1 => out.into_iter().next().expect("one"),
                     _ => Filter::And { items: out },
@@ -484,7 +530,6 @@ impl Filter {
                 for item in items {
                     match item.normalize_tree() {
                         Filter::Or { items } => out.extend(items),
-                        Filter::False => {}
                         other => out.push(other),
                     }
                 }
@@ -503,8 +548,11 @@ impl Filter {
             Filter::Leaf {
                 leaf: Leaf::Rel { rel, quant, pred },
             } => Filter::rel(*rel, *quant, pred.normalize_tree()),
-            Filter::Raw { text, .. } => Filter::Raw {
+            // The payload and its kind are the preserved value; only the span is
+            // presentation metadata (§4.3.2).
+            Filter::Raw { text, kind, .. } => Filter::Raw {
                 text: text.clone(),
+                kind: *kind,
                 span: None,
             },
             other => other.clone(),
@@ -513,24 +561,64 @@ impl Filter {
 }
 
 /// Where a `Query` came from, and the bytes needed to re-emit it unchanged.
+///
+/// **Every macro-carried source has the same two fields** (§3.1, X4/W2): a
+/// trailing options map is a property of being written inside a `{{…}}` macro,
+/// not of the OG DSL, so TQL and advanced forms carry one too. `original` is the
+/// exact form slice WITHOUT that map, and `og_options` is the map INCLUDING its
+/// braces, verbatim and opaque — EDN comments and unknown keys and all. The map
+/// has exactly ONE owner, the Rust parser: after this wave nothing outside
+/// `query_parse` splits a query argument, and every macro printer re-appends it
+/// once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Source {
-    /// `original` is the exact macro argument text — everything between
-    /// `{{query` + one space and the closing `}}`, untrimmed — and `og_options`
-    /// is its trailing balanced `{…}` map INCLUDING the braces, re-emitted
-    /// verbatim by the OG printer.
+    /// The OG DSL, from a `{{query …}}` macro.
     Og {
         original: String,
+        #[serde(default)]
         og_options: String,
     },
+    /// TQL, from a `{{tine-query …}}` macro or the text pane.
     Tql {
         original: String,
+        #[serde(default)]
+        og_options: String,
     },
+    /// Datalog. `original` is the COMPLETE authored advanced form, including
+    /// `:query` / `:inputs` when present (§4.4) — a whole `{:query …}` map is
+    /// the FORM, and only a map that FOLLOWS it is options.
     Advanced {
         original: String,
+        #[serde(default)]
+        og_options: String,
     },
+    /// Built in the UI: no authored text to preserve.
     Builder,
+}
+
+impl Source {
+    /// The opaque trailing options map, or `""` for [`Source::Builder`]. The ONE
+    /// reader every macro printer uses, so the map cannot be re-derived
+    /// per-dialect (I-12).
+    pub fn og_options(&self) -> &str {
+        match self {
+            Source::Og { og_options, .. }
+            | Source::Tql { og_options, .. }
+            | Source::Advanced { og_options, .. } => og_options,
+            Source::Builder => "",
+        }
+    }
+
+    /// The exact authored form slice, without the trailing options map.
+    pub fn original(&self) -> Option<&str> {
+        match self {
+            Source::Og { original, .. }
+            | Source::Tql { original, .. }
+            | Source::Advanced { original, .. } => Some(original),
+            Source::Builder => None,
+        }
+    }
 }
 
 /// Why a query is (partly) not understood. Every kind names an in-scope
@@ -544,6 +632,95 @@ pub enum DiagnosticKind {
     NotApplicable,
     Depth,
     Size,
+}
+
+impl DiagnosticKind {
+    /// The `raw_hex('<kind>', …)` spelling of this kind (§4.3.2). The mapping is
+    /// exact and total in both directions: a capsule that survives a save must
+    /// come back as the same kind, never as a nearest guess.
+    pub fn capsule_name(self) -> &'static str {
+        match self {
+            DiagnosticKind::UnknownHead => "unknown_head",
+            DiagnosticKind::Syntax => "syntax",
+            DiagnosticKind::UnknownIdent => "unknown_ident",
+            DiagnosticKind::NotApplicable => "not_applicable",
+            DiagnosticKind::Depth => "depth",
+            DiagnosticKind::Size => "size",
+        }
+    }
+
+    /// The inverse of [`DiagnosticKind::capsule_name`]. An unrecognised name is
+    /// `None`, and the caller degrades the capsule to `Syntax` rather than
+    /// inventing a kind or executing the payload.
+    pub fn from_capsule_name(name: &str) -> Option<DiagnosticKind> {
+        Some(match name {
+            "unknown_head" => DiagnosticKind::UnknownHead,
+            "syntax" => DiagnosticKind::Syntax,
+            "unknown_ident" => DiagnosticKind::UnknownIdent,
+            "not_applicable" => DiagnosticKind::NotApplicable,
+            "depth" => DiagnosticKind::Depth,
+            "size" => DiagnosticKind::Size,
+            _ => return None,
+        })
+    }
+}
+
+/// Encode a [`Filter::Raw`] payload as the lowercase hexadecimal UTF-8 bytes the
+/// `raw_hex('<kind>', '<hex>')` capsule carries (§4.3.2).
+///
+/// Hex is an INTERNAL preservation form: it never appears in the vocabulary
+/// picker and the error renderer shows the decoded original text, never this.
+pub fn encode_raw_hex(payload: &str) -> String {
+    let mut out = String::with_capacity(payload.len() * 2);
+    for byte in payload.as_bytes() {
+        out.push(char::from_digit((byte >> 4) as u32, 16).expect("nibble"));
+        out.push(char::from_digit((byte & 0x0f) as u32, 16).expect("nibble"));
+    }
+    out
+}
+
+/// Why a `raw_hex` capsule could not be decoded. Every one of these produces a
+/// `Syntax` diagnostic and a preserved payload — never an executable predicate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapsuleError {
+    /// The `<kind>` argument is not one of the six names.
+    UnknownKind,
+    /// Odd length, or a character that is not a hexadecimal digit.
+    NotHex,
+    /// The decoded bytes are not valid UTF-8.
+    NotUtf8,
+    /// The payload would exceed the source-size limit. Checked BEFORE allocating.
+    TooLarge,
+}
+
+/// Decode a `raw_hex` capsule **strictly** (§4.3.2).
+///
+/// Even-length valid hexadecimal, valid UTF-8, and the source-size limit applied
+/// **before** the payload is allocated — a hostile or corrupt capsule may not
+/// make the decoder allocate proportionally to what it claims (I-22). Decoded
+/// source is never evaluated or reparsed during execution.
+pub fn decode_raw_hex(
+    kind: &str,
+    hex: &str,
+    max_bytes: usize,
+) -> Result<(DiagnosticKind, String), CapsuleError> {
+    let kind = DiagnosticKind::from_capsule_name(kind).ok_or(CapsuleError::UnknownKind)?;
+    if hex.len() % 2 != 0 {
+        return Err(CapsuleError::NotHex);
+    }
+    // Size first: the byte count is `hex.len() / 2` before a single byte exists.
+    if hex.len() / 2 > max_bytes {
+        return Err(CapsuleError::TooLarge);
+    }
+    let digits = hex.as_bytes();
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for pair in digits.chunks_exact(2) {
+        let high = (pair[0] as char).to_digit(16).ok_or(CapsuleError::NotHex)?;
+        let low = (pair[1] as char).to_digit(16).ok_or(CapsuleError::NotHex)?;
+        bytes.push((high * 16 + low) as u8);
+    }
+    let text = String::from_utf8(bytes).map_err(|_| CapsuleError::NotUtf8)?;
+    Ok((kind, text))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -826,8 +1003,11 @@ mod tests {
         );
     }
 
+    /// **R2.** Flattening is structural and stays; identity removal is gone.
+    /// Both constants below are operands the author can see and disable, so
+    /// erasing them would change what a disabled sibling means (§3.5).
     #[test]
-    fn normalized_flattens_same_kind_and_drops_identity_elements() {
+    fn normalized_flattens_same_kind_groups_and_keeps_active_constants() {
         let query = Query::new(
             Anchor::Block,
             Filter::and(vec![
@@ -838,7 +1018,11 @@ mod tests {
         );
         assert_eq!(
             query.normalized().filter,
-            Filter::and(vec![leaf_a(), leaf_b()])
+            Filter::and(vec![
+                leaf_a(),
+                Filter::True,
+                Filter::or(vec![Filter::False, leaf_b()]),
+            ])
         );
     }
 
@@ -848,6 +1032,25 @@ mod tests {
         assert_eq!(and.normalized().filter, Filter::True);
         let or = Query::new(Anchor::Block, Filter::or(vec![]), Source::Builder);
         assert_eq!(or.normalized().filter, Filter::False);
+    }
+
+    /// §3.5: an originally empty group is an ACTIVE CONSTANT, including inside
+    /// a relation predicate — distinct from a group emptied by disabling its
+    /// children, which `without_off` removes entirely.
+    #[test]
+    fn an_originally_empty_group_inside_a_relation_is_an_active_constant() {
+        let query = Query::new(
+            Anchor::Block,
+            Filter::rel(Rel::Children, Quant::Any, Filter::or(vec![])),
+            Source::Builder,
+        );
+        assert_eq!(
+            query.normalized().filter,
+            Filter::rel(Rel::Children, Quant::Any, Filter::False)
+        );
+        // The disabled-children case is the contrast: removed, not `Any(True)`.
+        let disabled = Filter::rel(Rel::Children, Quant::Any, Filter::off(leaf_a()));
+        assert_eq!(disabled.without_off(), None);
     }
 
     #[test]
@@ -866,6 +1069,7 @@ mod tests {
             Anchor::Block,
             Filter::Raw {
                 text: "(frobnicate x)".into(),
+                kind: DiagnosticKind::UnknownHead,
                 span: Some(Span { start: 1, end: 5 }),
             },
             Source::Og {
@@ -880,10 +1084,7 @@ mod tests {
         assert_eq!(normalized.source, Source::Builder);
         assert_eq!(
             normalized.filter,
-            Filter::Raw {
-                text: "(frobnicate x)".into(),
-                span: None
-            }
+            Filter::raw("(frobnicate x)", DiagnosticKind::UnknownHead)
         );
         assert_eq!(normalized.diagnostics[0].message, "");
         assert_eq!(normalized.diagnostics[0].kind, DiagnosticKind::UnknownHead);
@@ -942,10 +1143,7 @@ mod tests {
 
     #[test]
     fn off_of_raw_is_removed_so_a_disabled_broken_row_still_returns_results() {
-        let filter = Filter::off(Filter::Raw {
-            text: "(frobnicate x)".into(),
-            span: None,
-        });
+        let filter = Filter::off(Filter::raw("(frobnicate x)", DiagnosticKind::UnknownHead));
         assert_eq!(filter.without_off(), None);
     }
 

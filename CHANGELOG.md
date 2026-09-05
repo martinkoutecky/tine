@@ -23,6 +23,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   dropped if you bind Redo to something of your own. Not on macOS, where Ctrl+Y
   is the system's yank inside every text field (GH #491).
 
+### Fixed
+
+- **A saved query can no longer be written as text Tine will not read back.**
+  A query whose conditions produced a comma next to a `[[page]]`, or that
+  started with a page reference and carried a title or a sort order, was written
+  to the file as bytes the document reader does not see as a query at all: the
+  block turned into literal text and the query was gone, with no way to get it
+  back by reopening. Saving now proves the result is readable — with the same
+  parser that renders your page, in both Markdown and Org. A query that starts
+  with a page reference is written in an equivalent spelling Logseq reads
+  identically; anything still unreadable is refused with a message instead of
+  being written, so the query you had stays exactly as it was.
+
+- **Turning a row off no longer changes what the rest of the query answers.**
+  Disabling one condition in a group could make a query that matched nothing
+  suddenly match everything, because a disabled row and a leftover `true`
+  cancelled each other out in a way the query never asked for. A disabled row
+  now removes exactly itself.
+
+- **A broken or unusual condition survives editing another row.** A commented
+  out condition with an unfinished quote used to be replaced with `false` — the
+  text you wrote was gone after one save, and the unfinished quote could swallow
+  the working row underneath it. Old `content-regex` conditions had no way to be
+  written down at all, so editing any other row in the same query erased them.
+  Both are now preserved exactly, shown with their original text and error, and
+  left alone when you edit a neighbour.
+
 ### Changed
 
 - **`{{query (property …)}}` now matches the way you read the page, not the way

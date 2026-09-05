@@ -6387,7 +6387,7 @@
      "crates/tine-core/src/query/conformance.rs::an_unknown_head_returns_nothing_rather_than_a_shorter_query"
     ],
     "scenario": "query-engine.unknown-head-refuses-instead-of-narrowing",
-    "failBefore": "tine-agents/evidence/qe-p0-rust/wave-b/unknown-head-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
+    "failBefore": "tine-agents/evidence/qe/p0-rust/wave-b/unknown-head-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
    },
    "notes": "OG's build-query returns nil for an unrecognised head, and Tine's parser propagated that as \"the parse failed from here\": (and (task TODO) (frobnicate x)) ran as (task TODO) and returned rows for a query the author never wrote. Blocking for core operation -- the answer was wrong rather than missing, and nothing on screen said so. The unknown head is now a Filter::Raw leaf carrying its source span plus an UnknownHead diagnostic; the rest of the tree still parses, the query is invalid, and it returns no rows."
   },
@@ -6406,7 +6406,7 @@
      "crates/tine-core/src/query/conformance.rs::all_page_tags_selects_every_page_carrying_a_tag"
     ],
     "scenario": "query-engine.all-page-tags-selects-tagged-pages",
-    "failBefore": "tine-agents/evidence/qe-p0-rust/wave-b/all-page-tags-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
+    "failBefore": "tine-agents/evidence/qe/p0-rust/wave-b/all-page-tags-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
    },
    "notes": "Interoperability: (all-page-tags) is in OG's build-query head set (build-all-page-tags), so a graph authored in Logseq can carry it. Tine treated it as an unknown head, which -- before REG-P0-QUERY-UNKNOWN-HEAD-001 -- also truncated whatever it was conjoined with. Transcribed from OG as the page's tags property with at least one atom."
   },
@@ -6424,7 +6424,7 @@
      "crates/tine-core/src/query/conformance.rs::property_leaves_are_two_valued_over_atoms"
     ],
     "scenario": "parser.empty-property-value-borrows-from-its-line",
-    "failBefore": "tine-agents/evidence/qe-p0-rust/wave-b/empty-property-value-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
+    "failBefore": "tine-agents/evidence/qe/p0-rust/wave-b/empty-property-value-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
    },
    "notes": "parse_property_line documents that it returns borrowed slices, and reference_evidence recovers each half's source offset by subtracting the line's base pointer. For a bare key:: with no trailing space the empty value was the static \"\" literal instead, so the subtraction underflowed and panicked in debug builds. A size:: line with no value is legal Logseq and is exactly the SPEC 3.3 \"present key, zero atoms\" case, so the crash was reachable from an ordinary graph. The empty value now borrows the tail of its own line."
   },
@@ -6442,6 +6442,69 @@
     "failBefore": "cargo test -p tine-core --lib concord_ledger::tests::prune_reclaims with the two new match arms reverted: dangling_entries_removed 0, expected 3"
    },
    "notes": "prune() collected the hash named by each index and pin file and deleted only blobs nothing referenced, plus files that failed to parse. An entry whose blob had been removed from outside the ledger -- antivirus quarantine (the GH #411 reporter's case), a disk cleaner, a partial restore -- still parsed, so it was kept and its hash was even added to the referenced set. Every lookup through it already answered None, because base() verifies the blob's content hash, so no user-visible behaviour was wrong; the entry was simply dead metadata that accumulated and was re-read by every later prune. prune() now also removes index and pin files naming an absent blob. This is hygiene only: the ledger is disposable state that may never warn, refuse, or report a missing blob, so no diagnostic was added."
+  },
+  {
+   "id": "REG-P0-QUERY-MACRO-UNREADABLE-001",
+   "title": "A saved query could be written as text the document parser will not read back",
+   "family": "query-engine",
+   "sources": {"issues": [], "commits": [], "internal": "2026-09 query-engine campaign, packet P0-rust Wave C; SPEC 4.3.1 and 4.3 (R1); invariants I-4, I-12"},
+   "platforms": ["all"],
+   "layer": "rust-core-query-printer",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/query/macro_text.rs::tests::recognition_rejects_a_comma_that_exposes_a_reference_and_keeps_the_plain_one",
+     "crates/tine-core/src/query/macro_text.rs::tests::recognition_rejects_a_leading_page_reference_and_accepts_the_anchored_form",
+     "crates/tine-core/src/query/conformance.rs::an_unsafe_argument_is_refused_and_the_original_bytes_are_untouched",
+     "crates/tine-core/src/query/conformance.rs::a_quantifier_over_a_page_ref_round_trips_in_the_pane_and_is_refused_as_a_macro"
+    ],
+    "scenario": "query-engine.macro-print-refuses-what-the-document-parser-cannot-read",
+    "failBefore": "c6-recognition-fail-before.log at 3014c3b80d20fd9e76b18460f356de36112b66e7"
+   },
+   "notes": "The user edits a query and saves. The printer emitted bytes that satisfied every lexical check but that mldoc/lsdoc does not parse as a Macro at all -- a leading page reference followed by anything else, or a comma that exposes a reference at a later argument boundary. The block then renders as literal text and the query is gone; reopening cannot recover a query the reader no longer sees. Blocking for core operation. Every macro print now runs the already pinned inline parser in BOTH Markdown and Org modes and requires the intended Macro node plus exact raw recovery of form and options; a failure is a located refusal that writes nothing, so the authored bytes stay byte-identical."
+  },
+  {
+   "id": "REG-P0-QUERY-DISABLED-ROW-MEANING-001",
+   "title": "Disabling a row could change the query's answer instead of removing that row",
+   "family": "query-engine",
+   "sources": {"issues": [], "commits": [], "internal": "2026-09 query-engine campaign, packet P0-rust Wave C; SPEC 3.5 (R2); invariant I-12"},
+   "platforms": ["all"],
+   "layer": "rust-core-query-ir",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/query/ir.rs::tests::normalized_flattens_same_kind_groups_and_keeps_active_constants",
+     "crates/tine-core/src/query/ir.rs::tests::an_originally_empty_group_inside_a_relation_is_an_active_constant",
+     "crates/tine-core/src/query/conformance.rs::normalization_preserves_truth_over_constants_off_not_and_relations",
+     "crates/tine-core/src/query/conformance.rs::normalization_never_conflates_two_trees_that_differ_in_truth",
+     "crates/tine-core/src/query/conformance.rs::both_print_forms_round_trip_semantically"
+    ],
+    "scenario": "query-engine.normalization-preserves-truth-across-off",
+    "failBefore": "c8-normalization-fail-before.log at 3014c3b80d20fd9e76b18460f356de36112b66e7"
+   },
+   "notes": "The user turns one row off in a group that also holds a constant. Normalization dropped boolean identity elements, so a group whose only remaining sibling was disabled became a fully disabled node -- and a fully disabled root evaluates as 'match everything'. A query that answered nothing suddenly answered every row, and because the same normalization is the cache key, two trees that differ in truth shared one entry. Normalization now flattens and collapses but removes nothing: identity removal is legal only on the executable tree, after Off omission. An originally empty group stays the active constant it is, both in the tree and in without_off."
+  },
+  {
+   "id": "REG-P0-QUERY-LOSSLESS-LEAF-001",
+   "title": "An unreadable or legacy-regex condition was lost when an unrelated row was edited",
+   "family": "query-engine",
+   "sources": {"issues": [], "commits": [], "internal": "2026-09 query-engine campaign, packet P0-rust Wave C; SPEC 4.3.2 and 4.2.1 (R4); invariants I-4, I-22"},
+   "platforms": ["all"],
+   "layer": "rust-core-query-parser",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/query/conformance.rs::a_broken_disabled_row_survives_a_save_and_reopen_beside_an_active_row",
+     "crates/tine-core/src/query/conformance.rs::a_capsule_preserves_line_breaks_quotes_braces_and_unicode",
+     "crates/tine-core/src/query/conformance.rs::every_diagnostic_kind_round_trips_through_its_capsule",
+     "crates/tine-core/src/query/conformance.rs::a_bad_capsule_is_syntax_and_never_an_executable_predicate",
+     "crates/tine-core/src/query/conformance.rs::the_legacy_regex_head_and_the_tql_regexp_spelling_are_the_same_leaf",
+     "crates/tine-core/src/query/conformance.rs::an_invalid_regex_pattern_is_retained_and_matches_false"
+    ],
+    "scenario": "query-engine.invalid-and-legacy-leaves-survive-a-neighbouring-edit",
+    "failBefore": "c9-lossless-leaf-fail-before.log at 3014c3b80d20fd9e76b18460f356de36112b66e7"
+   },
+   "notes": "Two ways to lose a condition. A malformed disabled row (`-- task = '` with an unmatched quote) was replaced by off(false) -- the author's text was gone after one save, and worse, the unmatched quote was scanned as part of the surrounding text and swallowed the next ACTIVE row. And a legacy (content-regex ...) condition had no TQL spelling at all, so editing any other row in the query serialized it away. Malformed disabled operands are now captured before the surrounding parse as a lossless raw_hex capsule carrying the exact payload and its diagnostic kind; content regexp '...' is the TQL spelling of the legacy head and parses back to the same leaf, with today's semantics preserved exactly (an invalid pattern is retained and matches false, so negating it matches true)."
   }
  ]
 }

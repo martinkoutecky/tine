@@ -517,6 +517,7 @@ impl<'a> OgParse<'a> {
                         self.skip_to_close();
                         return Some(Filter::Raw {
                             text: String::new(),
+                            kind: DiagnosticKind::Syntax,
                             span,
                         });
                     }
@@ -534,8 +535,8 @@ impl<'a> OgParse<'a> {
 
     fn head(&mut self, head: &str, open: usize, depth: usize) -> Option<Filter> {
         let filter = match head {
-            "and" => Filter::and(self.list(depth + 1)),
-            "or" => Filter::or(self.list(depth + 1)),
+            "and" => Filter::and(lift_directives(self.list(depth + 1))),
+            "or" => Filter::or(lift_directives(self.list(depth + 1))),
             "not" => Filter::not(self.expr(depth + 1)?),
             "task" | "todo" => {
                 self.blocks = true;
@@ -715,6 +716,7 @@ impl<'a> OgParse<'a> {
                 );
                 Filter::Raw {
                     text: self.src[start..end.min(self.src.len())].to_string(),
+                    kind: DiagnosticKind::UnknownHead,
                     span,
                 }
             }
@@ -868,11 +870,13 @@ pub(crate) fn plain_like_substring(pattern: &str) -> Option<String> {
 
 /// Parse one OG `{{query …}}` macro argument into the IR and its view settings.
 ///
-/// `text` is the EXACT macro argument — everything between `{{query` plus one
-/// space and the closing `}}`, untrimmed — because `Source::Og.original` must
-/// re-emit it byte-for-byte (D6). The trailing OG options map is split off here
-/// by a transcription of the frontend's `splitTrailingMap`
-/// (`src/editor/edn.ts:89`) and preserved verbatim.
+/// `text` is the macro argument (or, from the `macro_query` dispatch, the form
+/// slice it already split). The trailing OG options map is split off by the one
+/// shared `split_trailing_map` (§4.3.1 W3) and preserved verbatim in
+/// `Source::Og.og_options`; `Source::Og.original` is the exact FORM slice
+/// without it (§3.1), so a caller re-emits the pair rather than re-deriving the
+/// boundary. Splitting a form that has no trailing map is a no-op, so the
+/// dispatch may split first and still call in here.
 pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings) {
     let (form, og_options) = split_trailing_map(text);
     let mut parse = OgParse {
@@ -908,6 +912,7 @@ pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings)
             }
         }
     }
+    let items = lift_directives(items);
     let filter = match items.len() {
         0 => Filter::True,
         1 => items.into_iter().next().expect("one"),
@@ -927,7 +932,7 @@ pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings)
         filter,
         diagnostics: parse.diagnostics,
         source: Source::Og {
-            original: text.to_string(),
+            original: form.clone(),
             og_options,
         },
     };
@@ -935,56 +940,27 @@ pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings)
     (query, view)
 }
 
-/// Split a query argument into its form and a trailing balanced `{…}` options
-/// map (`src/editor/edn.ts:89`). Brace- and string-aware, so a `:title "a {b}"`
-/// does not break it; `opts` INCLUDES its braces and both parts are trimmed.
+/// **A view directive contributes no filter operand** (§3.5). `sort-by`,
+/// `sample`, `aggregate` and `group-by` are lifted into [`ViewSettings`]; the
+/// head handler returns `Filter::True` as its "nothing here" value, and this
+/// removes it from the group it appeared in. The OG DSL has no boolean literal,
+/// so every `True` an OG parse produces IS a lifted directive — which is why
+/// this belongs here and not in `normalized()`, where dropping a constant would
+/// change what a disabled sibling means (R2).
+fn lift_directives(items: Vec<Filter>) -> Vec<Filter> {
+    items
+        .into_iter()
+        .filter(|item| *item != Filter::True)
+        .collect()
+}
+
+/// The OG half of the ONE `split_trailing_map` (§4.3.1 W3).
+///
+/// The scan itself moved to [`crate::query::macro_text`] when TQL and advanced
+/// forms gained a trailing options map too: one splitter, parameterized by the
+/// language family, rather than a second copy per grammar (I-12, D-14).
 pub(crate) fn split_trailing_map(arg: &str) -> (String, String) {
-    let trimmed = arg.trim_end();
-    if !trimmed.ends_with('}') {
-        return (arg.trim().to_string(), String::new());
-    }
-    let bytes = trimmed.as_bytes();
-    let mut depth = 0i32;
-    let mut start: Option<usize> = None;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => {
-                i = read_string(trimmed, i).1;
-                continue;
-            }
-            b'[' if trimmed[i..].starts_with("[[") => {
-                i = read_page_ref(trimmed, i).1;
-                continue;
-            }
-            b';' => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            b'{' => {
-                if depth == 0 {
-                    start = Some(i);
-                }
-                depth += 1;
-            }
-            b'}' => {
-                depth -= 1;
-                if depth == 0 && i == bytes.len() - 1 {
-                    if let Some(start) = start {
-                        return (
-                            trimmed[..start].trim().to_string(),
-                            trimmed[start..].trim().to_string(),
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    (arg.trim().to_string(), String::new())
+    crate::query::macro_text::split_trailing_map(arg, crate::query::macro_text::FormFamily::Edn)
 }
 
 /// The inverse of [`rebase_to_page`]: put every page-row leaf of a
@@ -1110,11 +1086,16 @@ mod tests {
     #[test]
     fn an_unknown_head_alone_is_raw_and_spanned() {
         let query = parse("(frobnicate x)");
-        let Filter::Raw { text, span } = &query.filter else {
+        let Filter::Raw { text, span, kind } = &query.filter else {
             panic!("{:?}", query.filter);
         };
         assert_eq!(text, "(frobnicate x)");
         assert!(span.is_some(), "the raw node carries its source span");
+        assert_eq!(
+            *kind,
+            DiagnosticKind::UnknownHead,
+            "the capsule retains the kind that rejected it (§4.3.2)"
+        );
     }
 
     /// REG-P0-QUERY-ALL-PAGE-TAGS-001. OG has `(all-page-tags)`; Tine did not,

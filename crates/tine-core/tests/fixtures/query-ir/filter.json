@@ -311,6 +311,7 @@
     {
       "kind": "raw",
       "text": "(frobnicate x)",
+      "diagnostic_kind": "unknown_head",
       "span": {
         "start": 16,
         "end": 30

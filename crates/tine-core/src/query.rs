@@ -8,6 +8,7 @@ pub mod atom;
 mod conformance;
 pub(crate) mod eval;
 pub mod ir;
+pub mod macro_text;
 pub(crate) mod og;
 pub mod print;
 pub mod registry;
@@ -1678,6 +1679,7 @@ pub fn parse_query_text_with_registry(
                     Filter::False,
                     Source::Tql {
                         original: query_src.to_string(),
+                        og_options: String::new(),
                     },
                 );
                 query.diagnostics.push(Diagnostic::new(
@@ -1689,6 +1691,156 @@ pub fn parse_query_text_with_registry(
             tql::parse_tql(query_src, registry)
         }
     }
+}
+
+/// **The macro-input dispatch (§7.1, C3).** Which INPUT a caller has, which is
+/// not the same question as which grammar the text is written in.
+///
+/// `Og`, `Tql` and `Advanced` are explicit FORM inputs: the caller already knows
+/// the grammar (the TQL pane, the `#+BEGIN_QUERY` container extractor). The two
+/// `Macro*` inputs take the COMPLETE raw macro argument, without the outer
+/// `{{`/`}}`, and are the only place a query argument is ever split — after this
+/// wave nothing outside `query_parse` splits one (§4.3, Y2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryInput {
+    /// An OG DSL form.
+    Og,
+    /// A TQL form: filter and anchor only, never options (§4.3.1).
+    Tql,
+    /// A datalog form, including a whole `{:query … :inputs …}` map (§4.4).
+    Advanced,
+    /// The complete argument of a `{{query …}}` macro: OG or advanced.
+    MacroQuery,
+    /// The complete argument of a `{{tine-query …}}` macro: TQL.
+    MacroTql,
+}
+
+/// Whether a `{{query …}}` form is datalog rather than the OG DSL.
+///
+/// **The ONE discriminator** (§7.1): the existing `Macro.tsx` / `ExportModal.tsx`
+/// regexes are deleted in P0-ts and every caller asks this instead, so the two
+/// cannot disagree about which source variant a block holds. A `:find` or
+/// `:where` token inside an OG string or a page ref is text, not datalog — which
+/// is exactly the case the TypeScript regexes got wrong — so the scan protects
+/// both. There is **no speculative parse-and-fallback**: the token decides.
+fn advanced_form(form: &str) -> bool {
+    let bytes = form.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                // An OG double-quoted string, backslash-escaped.
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'[' if form[i..].starts_with("[[") => {
+                i = match form[i + 2..].find("]]") {
+                    Some(offset) => i + 2 + offset + 2,
+                    None => form.len(),
+                };
+            }
+            b':' => {
+                let rest = &form[i..];
+                if rest.starts_with(":find") || rest.starts_with(":where") {
+                    return true;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
+
+/// The ONE text → IR entry for every input shape (§7.1, C3).
+///
+/// The macro inputs split their argument once, here, with the one
+/// [`macro_text::split_trailing_map`]; the source variant records the grammar,
+/// `source.original` holds the exact form slice and `source.og_options` the
+/// opaque map or the empty string. The §4.1 precedence merge of the host
+/// block's `tine.*` properties happens above this, in the command.
+pub fn parse_query_input(
+    text: &str,
+    input: QueryInput,
+    today: JournalDate,
+    registry: &registry::Registry,
+) -> (Query, ViewSettings) {
+    match input {
+        QueryInput::Og => parse_query_source(text, today),
+        QueryInput::Advanced => advanced_source_query(text, String::new()),
+        QueryInput::Tql => parse_query_text_with_registry(text, QueryDialect::Tql, today, registry),
+        QueryInput::MacroTql => {
+            let (form, og_options) =
+                macro_text::split_trailing_map(text, macro_text::FormFamily::Tql);
+            if !query_source_within_limit(&form) {
+                return refuse_tql_source(&form, og_options);
+            }
+            tql::parse_tql_with_options(&form, og_options, registry)
+        }
+        QueryInput::MacroQuery => {
+            let (form, og_options) =
+                macro_text::split_trailing_map(text, macro_text::FormFamily::Edn);
+            // A whole advanced map is the FORM, never options: the splitter
+            // already refused to split a map with nothing before it (§4.4).
+            if advanced_form(&form) {
+                return advanced_source_query(&form, og_options);
+            }
+            let (mut query, view) = parse_query_source(&form, today);
+            if let Source::Og {
+                og_options: slot, ..
+            } = &mut query.source
+            {
+                *slot = og_options;
+            }
+            (query, view)
+        }
+    }
+}
+
+/// A datalog form, retained as [`Source::Advanced`] with its complete authored
+/// text (§4.4, C2).
+///
+/// The SIMPLE engine still refuses to run it — that is unchanged, and §4.4's
+/// shared `resolve_for_execution` boundary is Wave D. What changes here is that
+/// the source survives as the advanced variant, so a title-only edit can print
+/// it back through the source-preserving path instead of being told the OG
+/// printer cannot express it. `original` is the whole form, `:query`/`:inputs`
+/// map and all; only a map that FOLLOWS it is options.
+fn advanced_source_query(form: &str, og_options: String) -> (Query, ViewSettings) {
+    use ir::{Diagnostic, DiagnosticKind};
+    let mut query = Query::new(
+        Anchor::Block,
+        Filter::False,
+        Source::Advanced {
+            original: form.to_string(),
+            og_options,
+        },
+    );
+    query.diagnostics.push(Diagnostic::new(
+        DiagnosticKind::Syntax,
+        "this is an advanced (datalog) query, not the simple DSL",
+    ));
+    (query, ViewSettings::default())
+}
+
+fn refuse_tql_source(form: &str, og_options: String) -> (Query, ViewSettings) {
+    use ir::{Diagnostic, DiagnosticKind};
+    let mut query = Query::new(
+        Anchor::Block,
+        Filter::False,
+        Source::Tql {
+            original: form.to_string(),
+            og_options,
+        },
+    );
+    query.diagnostics.push(Diagnostic::new(
+        DiagnosticKind::Size,
+        "the query source is too large",
+    ));
+    (query, ViewSettings::default())
 }
 
 /// The OG `{{query}}` half of [`parse_query_text`].
@@ -1719,6 +1871,11 @@ pub(crate) fn parse_query_source(query_src: &str, today: JournalDate) -> (Query,
         );
     }
     og::parse_og(query_src, today)
+    // NOTE: the advanced refusal above is the SIMPLE-query engine's answer and
+    // is unchanged. `query_parse`'s advanced inspection (§4.4) is Wave D's
+    // `resolve_for_execution` boundary; `advanced_form` above is only the
+    // §7.1 discriminator, and this wave routes both to the OG parser exactly as
+    // Wave B did, so no behaviour depends on it yet.
 }
 
 /// The ONE simple-query entry: source limits, parse, options, evaluation.
@@ -3756,6 +3913,7 @@ fn advanced_pred(
         filter,
         Source::Advanced {
             original: query_src.to_string(),
+            og_options: String::new(),
         },
     );
     (Some(query), ran, ignored)

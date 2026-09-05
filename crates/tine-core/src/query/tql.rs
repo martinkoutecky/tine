@@ -25,8 +25,8 @@ use sqlparser::parser::Parser;
 use sqlparser::tokenizer::Token;
 
 use crate::query::ir::{
-    Anchor, Attr, CmpOp, Diagnostic, DiagnosticKind, Filter, Quant, Query, Rel, Source, Span,
-    Value, ValueType, ViewSettings,
+    decode_raw_hex, encode_raw_hex, Anchor, Attr, CapsuleError, CmpOp, Diagnostic, DiagnosticKind,
+    Filter, Quant, Query, Rel, Source, Span, Value, ValueType, ViewSettings,
 };
 
 /// SPEC §4.2.2 guard 3. Deep enough for any authored query, shallow enough that
@@ -43,6 +43,21 @@ pub(crate) fn parse_tql(
     text: &str,
     registry: &crate::query::registry::Registry,
 ) -> (Query, ViewSettings) {
+    parse_tql_with_options(text, String::new(), registry)
+}
+
+/// [`parse_tql`] carrying an opaque trailing options map the macro dispatch
+/// already split off (§4.3.1, X4).
+///
+/// The pane never supplies one — pane text is filter/anchor only and an
+/// appended map there is a diagnostic, not a silent option edit — so this exists
+/// for the `macro_tql` input, where the map is part of the persisted bytes and
+/// must survive verbatim into `Source::Tql.og_options`.
+pub(crate) fn parse_tql_with_options(
+    text: &str,
+    og_options: String,
+    registry: &crate::query::registry::Registry,
+) -> (Query, ViewSettings) {
     let mut diagnostics = Vec::new();
     let pre = pre_pass(text, &mut diagnostics);
     let filter = match parse_expr_guarded(&pre.sql) {
@@ -56,6 +71,7 @@ pub(crate) fn parse_tql(
                     anchor: pre.anchor,
                     diagnostics: &mut diagnostics,
                     registry,
+                    disabled_depth: 0,
                 };
                 let scope = match pre.anchor {
                     Anchor::Block => Scope::Block,
@@ -75,6 +91,7 @@ pub(crate) fn parse_tql(
         diagnostics,
         source: Source::Tql {
             original: text.to_string(),
+            og_options,
         },
     };
     (query, ViewSettings::default())
@@ -142,8 +159,13 @@ fn pre_pass(text: &str, diagnostics: &mut Vec<Diagnostic>) -> PrePass {
             empty: true,
         };
     }
-    let sugared = desugar(&rest, diagnostics);
-    let sql = lift_disabled_runs(&sugared, diagnostics);
+    // **Disabled runs are isolated FIRST (§4.2.1, §4.3.2 R4).** A run's payload
+    // may be malformed — an unmatched quote or bracket — and scanning it as
+    // part of the surrounding text lets it swallow the next ACTIVE row, which
+    // is exactly the defect `-- task = '` followed by a valid row exposes.
+    // Each run's payload is desugared in isolation with this same scanner.
+    let lifted = lift_disabled_runs(&rest, diagnostics);
+    let sql = desugar(&lifted, diagnostics);
     PrePass {
         sql,
         anchor,
@@ -476,20 +498,37 @@ fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) -> String {
 
     for run in &runs {
         let (connector, rest) = split_connector(&run.payload);
-        let replacement = if parse_expr_guarded(rest).is_ok() {
-            format!("{}{connector}off({rest})", run.indent)
+        // The isolated operand gets the same sugar treatment as active text,
+        // from the same scanner (§4.2.1) — a disabled `[[a]]` is still a ref.
+        // Its diagnostics are disabled: a broken row a user turned off must not
+        // invalidate the query (§3.5).
+        let mut inner_diagnostics = Vec::new();
+        let sugared = desugar(rest, &mut inner_diagnostics);
+        let parses = parse_expr_guarded(&sugared).is_ok();
+        if parses {
+            for diagnostic in inner_diagnostics {
+                diagnostics.push(Diagnostic {
+                    disabled: true,
+                    ..diagnostic
+                });
+            }
+        }
+        let replacement = if parses {
+            format!("{}{connector}off({sugared})", run.indent)
         } else {
-            diagnostics.push(Diagnostic {
-                disabled: true,
-                ..Diagnostic::new(
-                    DiagnosticKind::Syntax,
-                    "a disabled span must be a whole condition",
-                )
-            });
-            // The run is dropped, but its shape in the surrounding expression is
-            // not: a placeholder operand keeps the ENABLED part of the query
-            // parseable, which is the whole point of `Off` being structural.
-            format!("{}{connector}off(false)", run.indent)
+            // **Captured before the surrounding parse, never substituted with
+            // `off(false)` (§4.2.1, R4).** `off(false)` is a lie the author
+            // never wrote and it destroys the payload; the capsule keeps the
+            // exact bytes, so a save and reopen returns the same broken row and
+            // the renderer can show what the author typed. The disabled
+            // diagnostic that goes with it is derived at lowering, from the
+            // `off(…)` this replacement puts around it.
+            format!(
+                "{}{connector}off(raw_hex('{}', '{}'))",
+                run.indent,
+                DiagnosticKind::Syntax.capsule_name(),
+                encode_raw_hex(rest)
+            )
         };
         lines[run.first_line] = replacement;
         for line in run.first_line + 1..=run.last_line {
@@ -597,12 +636,27 @@ struct Lower<'a> {
     /// Never consulted for anything else: the vocabulary is the whitelist in
     /// this file, not whatever keys a graph happens to hold.
     registry: &'a crate::query::registry::Registry,
+    /// How many `off(…)` calls enclose the node being lowered. A diagnostic
+    /// raised inside one is `disabled` — the row renders greyed with its
+    /// message and does NOT invalidate the query (§3.5). Disabled state is
+    /// DERIVED from the current tree, never stored on the node (§4.3.2).
+    disabled_depth: usize,
 }
 
 impl Lower<'_> {
     fn reject(&mut self, kind: DiagnosticKind, message: impl Into<String>) -> Filter {
-        self.diagnostics.push(Diagnostic::new(kind, message));
+        self.diagnose(Diagnostic::new(kind, message));
         Filter::False
+    }
+
+    /// Record a diagnostic, marking it `disabled` when it was raised inside an
+    /// `off(…)` (§3.5). Every diagnostic this lowering produces goes through
+    /// here, so the derivation has exactly one implementation.
+    fn diagnose(&mut self, diagnostic: Diagnostic) {
+        self.diagnostics.push(Diagnostic {
+            disabled: self.disabled_depth > 0,
+            ..diagnostic
+        });
     }
 
     fn filter(&mut self, expr: &Expr, scope: Scope) -> Filter {
@@ -619,6 +673,7 @@ impl Lower<'_> {
                 BinaryOperator::Or => {
                     Filter::or(vec![self.filter(left, scope), self.filter(right, scope)])
                 }
+                BinaryOperator::Regexp => self.regexp(left, right, scope),
                 _ => match binary_cmp(op) {
                     Some(op) => self.compare(left, op, right, scope),
                     None => self.reject(
@@ -655,6 +710,23 @@ impl Lower<'_> {
                 escape_char: _,
             } => {
                 let filter = self.like(expr, pattern, scope);
+                if *negated {
+                    Filter::not(filter)
+                } else {
+                    filter
+                }
+            }
+            // Measured on sqlparser 0.62.0: plain `x regexp 'p'` arrives as
+            // `BinaryOp { op: Regexp }` and only the NEGATED form arrives as
+            // `RLike { regexp: true }`. The `RLIKE` alias is `regexp: false` and
+            // is deliberately NOT admitted (§4.3.2): one spelling, one operator.
+            Expr::RLike {
+                negated,
+                expr,
+                pattern,
+                regexp: true,
+            } => {
+                let filter = self.regexp(expr, pattern, scope);
                 if *negated {
                     Filter::not(filter)
                 } else {
@@ -746,6 +818,27 @@ impl Lower<'_> {
             },
             ty,
         )
+    }
+
+    /// `content regexp '<pattern>'` (§4.2.3, §4.3.2). Content-only, text pattern.
+    ///
+    /// This SERIALIZES an operation Tine already performs — the OG
+    /// `(content-regex "…")` head — so the semantics are exactly today's
+    /// `regex::Regex` over the block's ORIGINAL visible text, case and inline
+    /// flags included. It is not a second regex engine and not an opening for
+    /// arbitrary functions. `op_applies` refuses it on every other row and type
+    /// in the §4.2.3 matrix.
+    fn regexp(&mut self, left: &Expr, pattern: &Expr, scope: Scope) -> Filter {
+        let Some(target) = self.target(left, scope) else {
+            return Filter::False;
+        };
+        let Some(Value::Text { text }) = self.value(pattern, ValueType::Text) else {
+            return self.reject(
+                DiagnosticKind::Syntax,
+                "a `regexp` pattern is a quoted string",
+            );
+        };
+        self.build(target, CmpOp::Regex, Value::text(text), ValueType::Text)
     }
 
     fn like(&mut self, left: &Expr, pattern: &Expr, scope: Scope) -> Filter {
@@ -1049,7 +1142,13 @@ impl Lower<'_> {
                 }
                 None => Filter::False,
             },
-            ("off", 1) => Filter::off(self.filter(args[0], scope)),
+            ("off", 1) => {
+                self.disabled_depth += 1;
+                let inner = self.filter(args[0], scope);
+                self.disabled_depth -= 1;
+                Filter::off(inner)
+            }
+            ("raw_hex", 2) => self.raw_hex(args[0], args[1]),
             ("any", 2) => self.quantified(Quant::Any, args[0], args[1], scope),
             ("every", 2) => self.quantified(Quant::Every, args[0], args[1], scope),
             ("none", 2) => self.quantified(Quant::None, args[0], args[1], scope),
@@ -1057,6 +1156,40 @@ impl Lower<'_> {
                 &name,
                 format!("`{name}` is not a function of the query language"),
             ),
+        }
+    }
+
+    /// `raw_hex('<kind>', '<hex>')` — the preservation capsule (§4.3.2, R4).
+    ///
+    /// Literal arguments only, decoded strictly, and **never evaluated or
+    /// reparsed**: the result is a `Raw` node carrying the exact original
+    /// payload and the kind that rejected it, plus that kind's diagnostic. A
+    /// capsule that will not decode degrades to `Syntax` with the undecodable
+    /// text retained — a corrupt capsule must not become an executable
+    /// predicate, and it must not silently lose the author's bytes either.
+    fn raw_hex(&mut self, kind_arg: &Expr, hex_arg: &Expr) -> Filter {
+        let (Some(kind_name), Some(hex)) = (self.string_arg(kind_arg), self.string_arg(hex_arg))
+        else {
+            return Filter::False;
+        };
+        match decode_raw_hex(&kind_name, &hex, crate::query::QUERY_SOURCE_MAX_BYTES) {
+            Ok((kind, text)) => {
+                self.diagnose(Diagnostic::new(kind, retained_message(kind, &text)));
+                Filter::raw(text, kind)
+            }
+            Err(error) => {
+                let why = match error {
+                    CapsuleError::UnknownKind => "an unknown kind",
+                    CapsuleError::NotHex => "invalid hexadecimal",
+                    CapsuleError::NotUtf8 => "bytes that are not text",
+                    CapsuleError::TooLarge => "more text than a query may hold",
+                };
+                self.diagnose(Diagnostic::new(
+                    DiagnosticKind::Syntax,
+                    format!("this preserved condition carries {why} and cannot be read back"),
+                ));
+                Filter::raw(hex, DiagnosticKind::Syntax)
+            }
         }
     }
 
@@ -1111,6 +1244,21 @@ impl Lower<'_> {
 // Vocabulary tables
 // ---------------------------------------------------------------------------
 
+/// The prose a retained capsule shows. Diagnostic PROSE may be regenerated;
+/// the payload and its kind may not be lost (§4.3.2). The renderer shows the
+/// decoded original text, never the hexadecimal.
+fn retained_message(kind: DiagnosticKind, text: &str) -> String {
+    let what = match kind {
+        DiagnosticKind::UnknownHead => "is not a query filter",
+        DiagnosticKind::UnknownIdent => "is not part of the query language",
+        DiagnosticKind::NotApplicable => "does not apply to this row",
+        DiagnosticKind::Depth => "is nested too deeply",
+        DiagnosticKind::Size => "is too large",
+        DiagnosticKind::Syntax => "does not parse",
+    };
+    format!("`{text}` {what}")
+}
+
 fn block_attr(name: &str) -> Option<(Attr, ValueType)> {
     Some(match name {
         "content" => (Attr::Content, ValueType::Text),
@@ -1163,7 +1311,7 @@ fn op_label(op: CmpOp) -> &'static str {
         CmpOp::Like => "like",
         CmpOp::StartsWith => "like",
         CmpOp::Match => "match",
-        CmpOp::Regex => "regex",
+        CmpOp::Regex => "regexp",
         CmpOp::IsSet => "is not null",
         CmpOp::IsNotSet => "is null",
         CmpOp::IsBlank => "= ''",
@@ -1201,9 +1349,18 @@ fn op_applies(target: &Target, op: CmpOp, ty: ValueType) -> bool {
                 ..
             }
         ),
-        // `Regex` is the OG-only `(content-regex …)` head; TQL v1 has no
-        // spelling for it, so it can never arrive here.
-        CmpOp::Regex => false,
+        // `regexp` is permitted only on `content` with a text pattern, and is
+        // forbidden on every other row and type in the §4.2.3 matrix.
+        CmpOp::Regex => {
+            ty == ValueType::Text
+                && matches!(
+                    target,
+                    Target::Attr {
+                        attr: Attr::Content,
+                        ..
+                    }
+                )
+        }
         CmpOp::IsSet | CmpOp::IsNotSet => {
             on_property
                 || matches!(

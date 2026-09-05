@@ -24,20 +24,154 @@ use crate::query::ir::{
     AggFn, Anchor, Attr, CmpOp, Diagnostic, DiagnosticKind, Field, Filter, Leaf, Quant, Query, Rel,
     SortDir, Source, Value, ViewSettings,
 };
-use crate::query::QueryDialect;
+use crate::query::macro_text::{self, FormFamily};
 
-/// Print a query in the requested dialect. `view` is explicit because the view
-/// directives (`sort-by`, `sample`, `aggregate`, `group-by`) live outside the
-/// filter and are re-emitted into the OG text when expressible (M15).
+/// The four printed forms of a query (§4.3, §7.1).
+///
+/// Three of them are MACRO dialects — they produce the bytes that go inside a
+/// `{{…}}` in a document — and every one of those validates its final argument
+/// before returning (§4.3.1). `Tql` is the text PANE's rendering: the editing
+/// form, multi-line, never options, never checked for macro safety because it
+/// is never written to a document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintDialect {
+    /// The OG DSL, for `{{query …}}`. Partial: defined only where
+    /// [`og_expressible`] holds.
+    Og,
+    /// The text pane's layout (K10): one root operand per line,
+    /// connector-leading, disabled operands as `-- ` lines.
+    Tql,
+    /// The persisted TQL macro form (X1): one line, always anchored,
+    /// every `Off` inline as `off(…)`, options appended once.
+    TqlMacro,
+    /// A `{{query [:find …]}}` advanced macro, printed from its authored source
+    /// rather than regenerated from the IR.
+    AdvancedMacro,
+}
+
+impl PrintDialect {
+    /// The macro name this dialect writes, or `None` for the pane.
+    fn macro_name(self) -> Option<&'static str> {
+        match self {
+            PrintDialect::Og | PrintDialect::AdvancedMacro => Some("query"),
+            PrintDialect::TqlMacro => Some("tine-query"),
+            PrintDialect::Tql => None,
+        }
+    }
+}
+
+/// Print a query in the requested dialect (§4.3, §7.1).
+///
+/// `view` is explicit because the view directives (`sort-by`, `sample`,
+/// `aggregate`, `group-by`) live outside the filter and are re-emitted into the
+/// OG text when expressible (M15).
+///
+/// `preserve_form` is the **source-preserving** path: a title-only edit must not
+/// convert the author's filter. It re-emits `source.original` plus the changed
+/// options map once, without re-lowering the IR and without consulting
+/// `og_expressible`, so an unsupported authored query can still have its title
+/// edited. It requires a source-backed query whose macro dialect matches the
+/// source variant; a `Builder` query is refused, because there is no authored
+/// form to preserve. `advanced_macro` is source-preserving whether or not the
+/// flag is set — Q13 keeps advanced filters read-only.
+///
+/// Every macro dialect validates its final argument before returning: the
+/// lexical rule ([`macro_text::macro_safe`]) and then the real document parser
+/// ([`macro_text::recognizable_macro`]). A refusal is a located diagnostic and
+/// nothing is written (I-4).
 pub fn query_print(
     query: &Query,
     view: &ViewSettings,
-    dialect: QueryDialect,
+    dialect: PrintDialect,
+    preserve_form: bool,
 ) -> Result<String, Diagnostic> {
-    match dialect {
-        QueryDialect::Tql => Ok(print_tql(query)),
-        QueryDialect::Og => print_og(query, view),
+    if dialect == PrintDialect::Tql {
+        if preserve_form {
+            return Err(Diagnostic::new(
+                DiagnosticKind::NotApplicable,
+                "the text pane has no authored form to preserve",
+            ));
+        }
+        // The pane is not a document: no options, no view directives, no
+        // macro-safety check.
+        return Ok(print_tql(query));
     }
+    let argument = if preserve_form || dialect == PrintDialect::AdvancedMacro {
+        preserved_form(query, dialect)?
+    } else {
+        match dialect {
+            PrintDialect::Og => {
+                let options = query.source.og_options();
+                with_options(print_og(query, view, !options.is_empty())?, options)
+            }
+            PrintDialect::TqlMacro => {
+                with_options(print_tql_macro(query), query.source.og_options())
+            }
+            PrintDialect::Tql | PrintDialect::AdvancedMacro => unreachable!("handled above"),
+        }
+    };
+    if let Some(name) = dialect.macro_name() {
+        macro_text::macro_safe(&argument, FormFamily::for_macro_name(name))?;
+        macro_text::recognizable_macro(name, &argument)?;
+    }
+    Ok(argument)
+}
+
+/// The source-preserving argument: `source.original` plus the changed options
+/// map, once. It deliberately does not consult `og_expressible` and does not
+/// re-lower the IR — title editing is not a filter conversion (§4.3.1).
+fn preserved_form(query: &Query, dialect: PrintDialect) -> Result<String, Diagnostic> {
+    let matches = matches!(
+        (&query.source, dialect),
+        (Source::Og { .. }, PrintDialect::Og)
+            | (Source::Tql { .. }, PrintDialect::TqlMacro)
+            | (Source::Advanced { .. }, PrintDialect::AdvancedMacro)
+    );
+    if !matches {
+        return Err(Diagnostic::new(
+            DiagnosticKind::NotApplicable,
+            "preserving the authored form needs a query read from that macro dialect",
+        ));
+    }
+    let original = query.source.original().expect("matched a source variant");
+    Ok(with_options(
+        original.to_string(),
+        query.source.og_options(),
+    ))
+}
+
+/// Append the opaque options map ONCE, verbatim (§4.3, Y2). It is the author's
+/// text, not something a printer re-derives (I-4).
+fn with_options(form: String, options: &str) -> String {
+    if options.is_empty() {
+        return form;
+    }
+    if form.is_empty() {
+        return options.to_string();
+    }
+    format!("{form} {options}")
+}
+
+/// **The persisted TQL macro form (X1).** One line, because the document parser
+/// does not carry a macro across a line break — measured, not assumed.
+///
+/// It ALWAYS starts with `@block` or `@page`. That is not decoration: a macro
+/// argument beginning with a page reference takes the document parser's other
+/// argument alternative, so `{{tine-query [[a]] and task = 'TODO'}}` is not a
+/// macro at all while the anchored form is (§4.3.1, measured in both Markdown
+/// and Org). ` and <filter>` follows unless the filter is exactly `True`, when
+/// the anchor alone says the same thing. Every `Off` prints inline as `off(…)`;
+/// the `-- ` layout is the pane's, not the document's.
+fn print_tql_macro(query: &Query) -> String {
+    let query = query.normalized();
+    let anchor = match query.anchor {
+        Anchor::Block => "@block",
+        Anchor::Page => "@page",
+    };
+    if query.filter == Filter::True {
+        return anchor.to_string();
+    }
+    format!("{anchor} and {}", tql_expr(&query.filter, Prec::Or))
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +273,14 @@ fn tql_expr(filter: &Filter, context: Prec) -> String {
     match filter {
         Filter::True => "true".to_string(),
         Filter::False => "false".to_string(),
-        Filter::Raw { text, .. } => format!("raw({})", sql_string(text)),
+        // The lossless preservation capsule (§4.3.2). Hex is an INTERNAL form:
+        // it is excluded from the vocabulary picker and the error renderer shows
+        // the decoded original text, never this.
+        Filter::Raw { text, kind, .. } => format!(
+            "raw_hex({}, {})",
+            sql_string(kind.capsule_name()),
+            sql_string(&crate::query::ir::encode_raw_hex(text))
+        ),
         // Below the root every `Off` prints inline as the function form, which
         // is legal TQL (§4.2.3) and is what the parser reads back.
         Filter::Off { inner } => format!("off({})", tql_expr(inner, Prec::Or)),
@@ -374,9 +515,9 @@ fn tql_comparison(subject: &str, op: CmpOp, value: &Value) -> String {
         },
         CmpOp::Like => format!("{subject} like {}", tql_value(value)),
         CmpOp::Match => format!("{subject} match {}", tql_value(value)),
-        // `Regex` is the OG-only `(content-regex …)` head; TQL v1 has no
-        // spelling, so the printed form names it rather than pretending.
-        CmpOp::Regex => format!("{subject} regex {}", tql_value(value)),
+        // `content regexp '…'` (§4.2.3): the TQL spelling of the legacy
+        // `(content-regex …)` head, which parses back to the same leaf.
+        CmpOp::Regex => format!("{subject} regexp {}", tql_value(value)),
         CmpOp::Eq => format!("{subject} = {}", tql_value(value)),
         CmpOp::NotEq => format!("{subject} != {}", tql_value(value)),
         CmpOp::Lt => format!("{subject} < {}", tql_value(value)),
@@ -436,7 +577,7 @@ pub fn og_expressible(query: &Query, view: &ViewSettings) -> bool {
     og_form(query).is_some() && og_view(view).is_some()
 }
 
-fn print_og(query: &Query, view: &ViewSettings) -> Result<String, Diagnostic> {
+fn print_og(query: &Query, view: &ViewSettings, has_options: bool) -> Result<String, Diagnostic> {
     let not_applicable = |what: &str| {
         Err(Diagnostic::new(
             DiagnosticKind::NotApplicable,
@@ -450,22 +591,28 @@ fn print_og(query: &Query, view: &ViewSettings) -> Result<String, Diagnostic> {
         return not_applicable("this view");
     };
     let mut out = form;
+    // mldoc's macro grammar takes a leading-page-reference argument alternative,
+    // so an argument that STARTS with `[[` and carries ANYTHING after it comes
+    // back as plain text rather than a `Macro` node — a view directive is enough,
+    // an options map is not required. Measured on mldoc 1.5.7 and lsdoc, in both
+    // Markdown and Org. A single-child `and` is the same query (OG's own
+    // `simplify-query` collapses it) and IS read back, so wrap rather than refuse:
+    // `recognizable_macro` would otherwise reject a form the author may write.
+    // Only when something follows — a bare `[[a]]` is already a macro, and
+    // rewriting it would churn every such block on its next save. `#tag` takes a
+    // different alternative and is unaffected.
+    if out.starts_with("[[") && (has_options || !directives.is_empty()) {
+        out = format!("(and {out})");
+    }
     for directive in directives {
         if !out.is_empty() {
             out.push(' ');
         }
         out.push_str(&directive);
     }
-    // The trailing options map is re-emitted verbatim: it is the author's text,
-    // not something the printer re-derives (I-4).
-    if let Source::Og { og_options, .. } = &query.source {
-        if !og_options.is_empty() {
-            if !out.is_empty() {
-                out.push(' ');
-            }
-            out.push_str(og_options);
-        }
-    }
+    // The options map is NOT appended here: `with_options` in `query_print` is
+    // the one appender for every macro dialect (§4.3, Y2), so a map cannot be
+    // emitted twice by two printers that each thought they owned it.
     Ok(out)
 }
 
@@ -758,8 +905,19 @@ mod tests {
     fn og(source: &str) -> (Query, ViewSettings) {
         parse_query_text(
             source,
-            QueryDialect::Og,
+            crate::query::QueryDialect::Og,
             JournalDate::from_ordinal(20260904),
+        )
+    }
+
+    /// The complete argument of a `{{query …}}` macro, so the trailing options
+    /// map lands in `source.og_options()` the way a real document supplies it.
+    fn macro_query(source: &str) -> (Query, ViewSettings) {
+        crate::query::parse_query_input(
+            source,
+            crate::query::QueryInput::MacroQuery,
+            JournalDate::from_ordinal(20260904),
+            &crate::query::registry::Registry::none(),
         )
     }
 
@@ -947,7 +1105,7 @@ mod tests {
             "{source} did not parse: {:?}",
             query.diagnostics
         );
-        let printed = query_print(&query, &view, QueryDialect::Og)
+        let printed = query_print(&query, &view, PrintDialect::Og, false)
             .unwrap_or_else(|d| panic!("{source} is not OG-printable: {d:?}"));
         let (again, again_view) = og(&printed);
         assert_eq!(
@@ -999,7 +1157,7 @@ mod tests {
                 !og_expressible(&query, &view),
                 "{source} must not be OG-expressible"
             );
-            let printed = query_print(&query, &view, QueryDialect::Og);
+            let printed = query_print(&query, &view, PrintDialect::Og, false);
             assert!(
                 matches!(&printed, Err(d) if d.kind == DiagnosticKind::NotApplicable),
                 "{source} printed as {printed:?}"
@@ -1007,17 +1165,55 @@ mod tests {
         }
     }
 
+    /// mldoc's macro grammar has a leading-page-reference argument alternative:
+    /// an argument that STARTS with `[[` and carries anything after it is read
+    /// back as plain text, not a macro. Measured on mldoc 1.5.7 and lsdoc, in
+    /// Markdown and Org: `{{query [[a]]}}` is a macro, `{{query [[a]] X}}` is
+    /// not, for a view directive and an options map alike.
+    ///
+    /// So the printer wraps such a form in a single-child `and`, which OG's own
+    /// `simplify-query` collapses — the same query, and readable. Refusing here
+    /// instead would take away a form the author can legitimately write.
+    #[test]
+    fn a_page_ref_form_stays_readable_when_anything_follows_it() {
+        for source in [
+            "[[a]] (sort-by page asc)",
+            "[[a]] {:title \"T\"}",
+            "[[a]] (sort-by page asc) {:title \"T\"}",
+        ] {
+            let (query, view) = macro_query(source);
+            let printed = query_print(&query, &view, PrintDialect::Og, false)
+                .unwrap_or_else(|d| panic!("{source} refused: {d:?}"));
+            assert!(
+                printed.starts_with("(and [[a]])"),
+                "{source} printed as {printed}"
+            );
+            let (again, _) = macro_query(&printed);
+            assert_eq!(again.normalized(), query.normalized(), "{source}");
+        }
+    }
+
+    /// The wrap is NOT applied when nothing follows the reference: a bare
+    /// `{{query [[a]]}}` is already a macro, and widening the rewrite would
+    /// churn every such block on its next save.
+    #[test]
+    fn a_bare_page_ref_form_is_left_exactly_as_og_writes_it() {
+        let (query, view) = macro_query("[[a]]");
+        let printed = query_print(&query, &view, PrintDialect::Og, false).expect("printable");
+        assert_eq!(printed, "[[a]]");
+    }
+
     #[test]
     fn the_og_printer_re_emits_the_view_and_the_options_map_verbatim() {
         let (query, view) = og("(task TODO) (sort-by page asc) {:title \"T\"}");
-        let printed = query_print(&query, &view, QueryDialect::Og).expect("printable");
+        let printed = query_print(&query, &view, PrintDialect::Og, false).expect("printable");
         assert_eq!(printed, "(task TODO) (sort-by page asc) {:title \"T\"}");
     }
 
     #[test]
     fn a_quoted_value_survives_the_og_escaping() {
         let (query, view) = og("(property note \"a \\\"b\\\" c\")");
-        let printed = query_print(&query, &view, QueryDialect::Og).expect("printable");
+        let printed = query_print(&query, &view, PrintDialect::Og, false).expect("printable");
         let (again, _) = og(&printed);
         assert_eq!(again.normalized(), query.normalized());
     }

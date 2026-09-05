@@ -2123,7 +2123,13 @@ pub(crate) async fn run_advanced_query(
 // `run_advanced_query` / `query_facets` / `export_query_subtrees` commands stay
 // and keep working: P0-ts moves the frontend, and their deletion is a P1 item.
 
-/// The dialect a query TEXT is written in, on the wire.
+/// The INPUT a `query_parse` caller has, on the wire (SPEC §7.1).
+///
+/// `og`, `tql` and `advanced` are explicit FORM inputs. `macro_query` and
+/// `macro_tql` take the COMPLETE raw macro argument, without the outer
+/// delimiters, and are the only inputs that split a trailing options map — one
+/// splitter, in Rust, so the frontend's own splitters can be deleted in P0-ts
+/// (X4, W2).
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum QueryTextDialect {
@@ -2131,6 +2137,24 @@ pub(crate) enum QueryTextDialect {
     Tql,
     /// `{{query #+BEGIN_QUERY …}}` — datalog, parsed as the advanced form.
     Advanced,
+    /// The complete argument of a `{{query …}}` macro: OG or advanced, decided
+    /// here by the one Rust discriminator rather than by a frontend regex.
+    MacroQuery,
+    /// The complete argument of a `{{tine-query …}}` macro: TQL.
+    MacroTql,
+}
+
+/// The printed form a `query_print` caller wants (SPEC §4.3, §7.1).
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum QueryPrintDialect {
+    Og,
+    /// The text pane's multi-line editing layout.
+    Tql,
+    /// The persisted single-line `{{tine-query …}}` form.
+    TqlMacro,
+    /// A `{{query [:find …]}}` advanced macro, printed from its authored source.
+    AdvancedMacro,
 }
 
 /// The `{query, view}` pair every parse returns (SPEC §7.1).
@@ -2140,13 +2164,27 @@ pub(crate) struct ParsedQuery {
     pub(crate) view: tine_core::query::ir::ViewSettings,
 }
 
-/// The core dialect a wire dialect parses and prints as. `Advanced` is OG's
+/// The core input a wire dialect parses as. `Advanced` is OG's
 /// `{{query #+BEGIN_QUERY …}}` form, which the OG parser already detects and
 /// reports (M5); it is not a third parser.
-fn core_query_dialect(dialect: QueryTextDialect) -> tine_core::query::QueryDialect {
+fn core_query_input(dialect: QueryTextDialect) -> tine_core::query::QueryInput {
+    use tine_core::query::QueryInput;
     match dialect {
-        QueryTextDialect::Og | QueryTextDialect::Advanced => tine_core::query::QueryDialect::Og,
-        QueryTextDialect::Tql => tine_core::query::QueryDialect::Tql,
+        QueryTextDialect::Og => QueryInput::Og,
+        QueryTextDialect::Advanced => QueryInput::Advanced,
+        QueryTextDialect::Tql => QueryInput::Tql,
+        QueryTextDialect::MacroQuery => QueryInput::MacroQuery,
+        QueryTextDialect::MacroTql => QueryInput::MacroTql,
+    }
+}
+
+fn core_print_dialect(dialect: QueryPrintDialect) -> tine_core::query::print::PrintDialect {
+    use tine_core::query::print::PrintDialect;
+    match dialect {
+        QueryPrintDialect::Og => PrintDialect::Og,
+        QueryPrintDialect::Tql => PrintDialect::Tql,
+        QueryPrintDialect::TqlMacro => PrintDialect::TqlMacro,
+        QueryPrintDialect::AdvancedMacro => PrintDialect::AdvancedMacro,
     }
 }
 
@@ -2158,9 +2196,9 @@ fn parse_query_pair(
     block_properties: &[(String, String)],
     registry: &tine_core::query::registry::Registry,
 ) -> ParsedQuery {
-    let (query, parsed_view) = tine_core::query::parse_query_text_with_registry(
+    let (query, parsed_view) = tine_core::query::parse_query_input(
         text,
-        core_query_dialect(dialect),
+        core_query_input(dialect),
         tine_core::date::JournalDate::today(),
         registry,
     );
@@ -2175,10 +2213,11 @@ fn parse_query_pair(
 fn print_query_text(
     query: &tine_core::query::ir::Query,
     view: &tine_core::query::ir::ViewSettings,
-    dialect: QueryTextDialect,
+    dialect: QueryPrintDialect,
+    preserve_form: bool,
 ) -> Result<String, CommandError> {
-    tine_core::query::print::query_print(query, view, core_query_dialect(dialect)).map_err(
-        |diagnostic| {
+    tine_core::query::print::query_print(query, view, core_print_dialect(dialect), preserve_form)
+        .map_err(|diagnostic| {
             let reason_code = match diagnostic.kind {
                 tine_core::query::ir::DiagnosticKind::NotApplicable => "not_applicable",
                 _ => "syntax",
@@ -2188,8 +2227,7 @@ fn print_query_text(
                 Some(reason_code),
                 Some(serde_json::to_value(&diagnostic).unwrap_or(serde_json::Value::Null)),
             )
-        },
-    )
+        })
 }
 
 /// A result the WebView cannot be handed is a refusal, not a truncation: the
@@ -2281,9 +2319,10 @@ pub(crate) async fn query_parse(
 pub(crate) async fn query_print(
     query: tine_core::query::ir::Query,
     view: tine_core::query::ir::ViewSettings,
-    dialect: QueryTextDialect,
+    dialect: QueryPrintDialect,
+    preserve_form: Option<bool>,
 ) -> Result<String, CommandError> {
-    print_query_text(&query, &view, dialect)
+    print_query_text(&query, &view, dialect, preserve_form.unwrap_or(false))
 }
 
 /// SPEC §7.1 `query_og_expressible`: whether the OG DSL can say this query, so
@@ -5917,10 +5956,10 @@ mod query_command_surface_tests {
     #[test]
     fn query_print_prints_tql_for_every_ir_and_og_where_it_can() {
         let parsed = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
-        let tql = print_query_text(&parsed.query, &parsed.view, QueryTextDialect::Tql)
+        let tql = print_query_text(&parsed.query, &parsed.view, QueryPrintDialect::Tql, false)
             .expect("TQL is total");
         assert!(tql.contains("[[Project]]"), "{tql}");
-        let og = print_query_text(&parsed.query, &parsed.view, QueryTextDialect::Og)
+        let og = print_query_text(&parsed.query, &parsed.view, QueryPrintDialect::Og, false)
             .expect("this filter is OG-expressible");
         assert!(og.starts_with('('), "{og}");
     }
@@ -5935,7 +5974,7 @@ mod query_command_surface_tests {
             !tine_core::query::print::og_expressible(&parsed.query, &parsed.view),
             "the fixture must be a filter the OG DSL cannot say"
         );
-        let error = print_query_text(&parsed.query, &parsed.view, QueryTextDialect::Og)
+        let error = print_query_text(&parsed.query, &parsed.view, QueryPrintDialect::Og, false)
             .expect_err("the OG printer is partial");
         let wire = serde_json::to_string(&error).expect("the rejection serializes");
         assert!(wire.contains("query-print-refused"), "{wire}");

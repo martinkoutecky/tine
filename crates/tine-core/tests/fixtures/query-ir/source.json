@@ -6,11 +6,13 @@
   },
   {
     "kind": "tql",
-    "original": "task = 'TODO'"
+    "original": "task = 'TODO'",
+    "og_options": ""
   },
   {
     "kind": "advanced",
-    "original": "[:find (pull ?b [*]) :where (task ?b \"TODO\")]"
+    "original": "[:find (pull ?b [*]) :where (task ?b \"TODO\")]",
+    "og_options": ""
   },
   {
     "kind": "builder"

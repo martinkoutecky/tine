@@ -133,6 +133,7 @@ fn every_filter_variant() -> Filter {
         ),
         Filter::Raw {
             text: "(frobnicate x)".to_string(),
+            kind: DiagnosticKind::UnknownHead,
             span: Some(Span { start: 16, end: 30 }),
         },
     ])
@@ -172,9 +173,11 @@ fn the_source_wire_format_names_all_four_origins() {
                 og_options: "{:title \"T\"}".to_string(),
             },
             Source::Tql {
+                og_options: String::new(),
                 original: "task = 'TODO'".to_string(),
             },
             Source::Advanced {
+                og_options: String::new(),
                 original: "[:find (pull ?b [*]) :where (task ?b \"TODO\")]".to_string(),
             },
             Source::Builder,
@@ -258,6 +261,7 @@ fn the_query_wire_format_is_stable() {
             filter: Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true }),
             diagnostics: vec![],
             source: Source::Tql {
+                og_options: String::new(),
                 original: "@page and journal = true".to_string(),
             },
         },

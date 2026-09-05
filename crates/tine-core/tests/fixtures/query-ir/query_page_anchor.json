@@ -15,6 +15,7 @@
   "diagnostics": [],
   "source": {
     "kind": "tql",
-    "original": "@page and journal = true"
+    "original": "@page and journal = true",
+    "og_options": ""
   }
 }
