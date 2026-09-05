@@ -21,6 +21,13 @@
 // `tauriCapabilities`. The blessed exemplar is
 // `scripts/e2e-page-properties.mjs`; `scripts/e2e-og-parity-references.mjs`
 // shows the same shape when the journey also has to restart the app.
+//
+// selection-actions was itself quarantined from the Windows suite the same day
+// after two further failures, so it is no longer one of the entries this guard
+// checks. The rule it produced still binds every journey that IS listed, and
+// the sentinels above are permanent Windows journeys rather than the one that
+// prompted the guard - a sentinel naming the motivating case goes stale exactly
+// when that case is withdrawn.
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -47,9 +54,9 @@ describe("every windows-smoke journey can open a WebView2 session", () => {
   // The scan is only as good as its input: if the suite table is renamed or
   // reshaped, this test must fail loudly rather than pass over an empty list.
   it("reads a non-empty windows-smoke suite out of run-e2e.mjs", () => {
-    expect(windowsSuite.length).toBeGreaterThanOrEqual(9);
+    expect(windowsSuite.length).toBeGreaterThanOrEqual(8);
     expect(windowsSuite.map((entry) => entry.name)).toContain("windows-core");
-    expect(windowsSuite.map((entry) => entry.name)).toContain("selection-actions");
+    expect(windowsSuite.map((entry) => entry.name)).toContain("page-properties");
   });
 
   it.each(windowsSuite)("$name starts the app in WebView2 attach mode", ({ name, script }) => {

@@ -115,6 +115,11 @@ let driver = spawn(DRIVER_BIN, DRIVER_ARGS, {
   stdio: ["ignore", driverLog, driverLog],
   detached: process.platform !== "win32",
 });
+// msedgedriver does not bind its port instantly, and webdriverio treats the
+// resulting ECONNREFUSED as a dead server rather than retrying it: run
+// 33960379224 gave up 4.5s in. The restart path below already waits; the
+// initial spawn must too. Same constant as scripts/e2e-page-properties.mjs.
+await sleep(2500);
 
 function killDriverTree() {
   try {

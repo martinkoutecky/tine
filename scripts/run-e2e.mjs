@@ -221,14 +221,31 @@ const suites = {
     ["page-properties", "scripts/e2e-page-properties.mjs", {}],
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["print-security", "scripts/e2e-print-security.mjs", {}],
-    // GH #240 was proved on Linux and re-reported on Windows 0.6.98, which is
-    // exactly the gap an advisory Windows suite exists to close: the journey's
-    // *assertions* are platform-neutral (it reaches its page through a rendered
-    // link, not the Quick Switcher). Its session startup was not: listing it
-    // here on 2026-09-05 was not sufficient, and run 33959023127 died in
-    // EdgeDriver launch mode. It now starts the app in WebView2 attach mode
-    // like every other entry, which src/e2eWindowsSuiteSession.test.ts pins.
-    ["selection-actions", "scripts/e2e-selection-actions.mjs", {}],
+    // selection-actions (GH #240) is QUARANTINED from Windows, 2026-09-05, with
+    // the §2b E2E stop-loss exhausted after three dispatches. It stays a live,
+    // stable, blocking journey on Linux; only Windows membership is withdrawn,
+    // because e2e-contracts.json carries one stability per journey and
+    // quarantining there would disable the only #240 evidence we have.
+    //
+    // What the three runs bought, so the next attempt does not re-buy it:
+    //   33959023127 - EdgeDriver launch mode, "DevToolsActivePort file doesn't
+    //     exist". Fixed in 94ffcfec: the journey now starts the app through
+    //     startWebdriverApplication and attaches.
+    //   33960379224 - ECONNREFUSED after 4.5s; msedgedriver had not bound its
+    //     port and webdriverio does not retry a refused connection. Fixed in
+    //     cb5307e2 by the same 2500ms wait e2e-page-properties.mjs uses.
+    //   33961433495 - reached 20.0s, exactly openSession's 20s wait for
+    //     ".page-title, .ls-block". The app is FINE: its tine-debug.log shows
+    //     Direct Files publish succeeding at 3683ms on the seeded graph. So the
+    //     remaining defect is between a healthy WebView2 attach and the first
+    //     DOM query - a wrong DevTools target, or a first-run surface Linux
+    //     does not show. That is where attempt four should start.
+    //
+    // Harness debt: the journey writes its rich failure capsule (step, expected,
+    // observed roots, screenshot, webview errors) into its own TMP, which on
+    // Windows is under the runner profile and is NOT uploaded - the workflow only
+    // collects test-results/. Three runs produced no journey-level diagnostics.
+    // Fixing that is a precondition for attempt four being cheaper than these.
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],
     ["windows-direct-large-open", "scripts/e2e-windows-direct-large-open.mjs", {}],
     ["windows-managed-storage", "scripts/e2e-windows-managed-storage.mjs", {}],
