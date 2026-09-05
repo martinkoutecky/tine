@@ -220,13 +220,28 @@ Exemplar to imitate: `android_media::call`.
 
 ### `Prose` census
 
-The phase-A syntactic census remains 113 production sites (92 in `commands.rs`,
+The phase-A syntactic census is 116 production sites (95 in `commands.rs`,
 21 in `state.rs`; test fixtures excluded). `CommandError::prose` is an identity
 adapter when a phase-B helper already returns `CommandError`, so those retained
 E2 call sites do not erase the typed variant. Phase B adds the placement rows
 below. Other rows have no typed source: they are literal state assertions,
-bounded domain wording, or wrong-reply/deferred outcomes. The census only
-shrinks.
+bounded domain wording, or wrong-reply/deferred outcomes.
+
+**The census only shrinks for a fixed managed-command surface.** It is a
+retirement ratchet on untyped *legacy* wording, not a cap on how many managed
+commands may exist. Every command routed through `sparse_navigation` must match
+its own reply variant and reject the others, so each new managed command adds
+exactly one wrong-reply arm — the category this table already records as having
+no typed source. Typing those arms would need a new error family, which
+CLOSURE §4 of the 2026-09 query campaign explicitly rejects; the twenty-plus
+existing arms are the idiom they follow.
+
+113 → 116 (2026-09-05, P0-rust Wave B, `08da2595`): `query_registry`,
+`query_run` and `query_explain_empty` each gained one
+`"managed navigation returned the wrong reply"` arm. No legacy prose site was
+retained, reintroduced, or converted back from a typed variant; the retirement
+owners below are unchanged. A future growth entry belongs in this paragraph with
+the same three facts: which commands, which arms, and what did *not* regress.
 
 | File | Enclosing symbols | Legacy template | Why no typed source exists | Retirement owner |
 | --- | --- | --- | --- | --- |

@@ -305,7 +305,7 @@ describe("I-9/I-11 typed backend error boundary", () => {
     expect(commands).not.toMatch(/map_err\(\|\w+\| \w+\.to_string\(\)\)/);
     expect(state).not.toMatch(/map_err\(\|\w+\| \w+\.to_string\(\)\)/);
     expect(contract).toContain("## `CommandError` boundary");
-    expect(contract).toContain("The phase-A syntactic census remains 113 production sites");
+    expect(contract).toContain("The phase-A syntactic census is 116 production sites");
 
     const quitFixtures = commands.slice(
       commands.indexOf("mod prepare_tine_quit_tests"),
@@ -314,7 +314,11 @@ describe("I-9/I-11 typed backend error boundary", () => {
     const proseSites = (commands.match(/CommandError::prose/g) ?? []).length
       - (quitFixtures.match(/CommandError::prose/g) ?? []).length
       + (state.match(/CommandError::prose/g) ?? []).length;
-    expect(proseSites).toBe(113);
+    // 116, not 113: P0-rust's three new managed query commands each add one
+    // wrong-reply arm, the category the contract's Prose census already records
+    // as having no typed source. The ratchet retires legacy untyped WORDING; it
+    // is not a cap on the managed-command surface. See docs/contracts/typed-errors.md.
+    expect(proseSites).toBe(116);
 
     const phaseB = parity.slice(
       parity.indexOf("const PHASE_B_COMMANDS"),
