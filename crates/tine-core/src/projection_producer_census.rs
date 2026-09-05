@@ -911,10 +911,13 @@ fn g_a_mutation_primitive_counts_are_pinned_per_file() {
             "fs.create_dir_all",
             1,
         ),
+        // 4 → 5: `8eb922d8` ("prune reclaims ledger entries whose blob is gone")
+        // added the deliberate unlink in `prune` and did not re-pin, leaving this
+        // guard red on master. The delta is intended; the pin was stale.
         (
             "crates/tine-core/src/concord_ledger.rs",
             "fs.remove_file",
-            4,
+            5,
         ),
         ("crates/tine-core/src/concord_ledger.rs", "fs.rename", 1),
         ("crates/tine-core/src/concord_ledger.rs", "fs.write", 1),
