@@ -1878,6 +1878,152 @@ pub(crate) fn parse_query_source(query_src: &str, today: JournalDate) -> (Query,
     // Wave B did, so no behaviour depends on it yet.
 }
 
+// ---------------------------------------------------------------------------
+// SPEC §4.4 (R5): execution-time binding
+// ---------------------------------------------------------------------------
+
+/// The provisional diagnostic `query_parse(advanced)` attaches to an advanced
+/// form it has only INSPECTED (§4.4).
+///
+/// It is not a syntax verdict — the form may be perfectly well formed — it says
+/// "the simple engine cannot answer this as it stands". §4.4 calls this a
+/// *provisional inspection diagnostic* and requires the bound lowering's own
+/// diagnostics to REPLACE it at execution time, which
+/// [`resolve_for_execution`] does by matching this exact message. Every other
+/// parse diagnostic (an I-22 size or depth refusal) is STATIC and survives.
+pub(crate) const ADVANCED_UNRESOLVED_MESSAGE: &str =
+    "this is an advanced (datalog) query, not the simple DSL";
+
+/// The message a resolution that could not bind the query reports (§4.4). The
+/// strict no-results behaviour is unchanged: a partially recognized tree is
+/// never run.
+pub(crate) const ADVANCED_UNSUPPORTED_MESSAGE: &str =
+    "this advanced query's clauses are not supported, so it returns no results";
+
+/// A query BOUND to one execution (SPEC §4.4, R5).
+///
+/// **The type is the guarantee.** Every evaluator, every explain-empty
+/// decomposition and every result cache below takes a `ResolvedQuery`, and the
+/// only way to obtain one is [`resolve_for_execution`], which consumes an
+/// unresolved [`Query`]. A resolved query therefore cannot be resolved again —
+/// not by convention, but because there is no function that accepts one and
+/// returns another.
+///
+/// It carries its own `today`, the ONE execution-day snapshot: taken once here
+/// rather than by each evaluator, so a rollover cannot land between the
+/// page-anchored and block-anchored halves of a single answer, nor between a
+/// result and the explanation of why it was empty.
+#[derive(Debug, Clone)]
+pub struct ResolvedQuery {
+    query: Query,
+    report: ir::QueryReport,
+    today: JournalDate,
+}
+
+impl ResolvedQuery {
+    /// The bound IR — an advanced form's lowered filter, or the OG/TQL IR
+    /// unchanged.
+    pub fn query(&self) -> &Query {
+        &self.query
+    }
+
+    /// The support report this binding produced (M5). OG and TQL report an
+    /// empty `ignored` and `supported = true`.
+    pub fn report(&self) -> &ir::QueryReport {
+        &self.report
+    }
+
+    /// The one execution-day snapshot every leaf in this execution reads.
+    pub fn today(&self) -> JournalDate {
+        self.today
+    }
+
+    /// Whether this binding produced executable IR at all. A refused advanced
+    /// resolution is `false`: it has diagnostics and a report, and no counts.
+    pub fn is_executable(&self) -> bool {
+        self.report.supported && !self.query.is_invalid()
+    }
+}
+
+/// **The ONE execution-time binding boundary** (SPEC §4.4, R5).
+///
+/// It runs BEFORE the invalidity check, before normalization and cache lookup,
+/// before SQL/walk dispatch, and before explain-empty decomposition — so that
+/// every one of those sees the same bound tree, and none of them can be handed
+/// an advanced placeholder to interpret on its own.
+///
+/// For [`Source::Advanced`] it calls the ONE existing lowerer,
+/// [`advanced_pred`], with the AUTHORED source (`Source::Advanced.original`,
+/// `:query`/`:inputs` and all), the caller's current page, and this execution's
+/// day. The lowering's `ran`/`ignored`/`supported` report is carried through
+/// verbatim, its diagnostics replace the provisional inspection one, and static
+/// (size/depth) diagnostics survive. Missing required inputs or unsupported
+/// clauses keep today's strict no-results behaviour: the filter is
+/// [`Filter::False`] and nothing partial runs.
+///
+/// For every other source the IR is already the query; only the execution-day
+/// snapshot is added, which is what makes an OG `(between -7d today)` and a TQL
+/// `day > -7d` read the same clock as an advanced `?today`.
+pub fn resolve_for_execution(
+    query: &Query,
+    context: &ir::ExecutionContext,
+    today: JournalDate,
+) -> ResolvedQuery {
+    use ir::{Diagnostic, DiagnosticKind};
+
+    let Source::Advanced { original, .. } = &query.source else {
+        return ResolvedQuery {
+            query: query.clone(),
+            report: ir::QueryReport {
+                ran: Vec::new(),
+                ignored: Vec::new(),
+                supported: true,
+            },
+            today,
+        };
+    };
+
+    // Static diagnostics survive the binding; the provisional inspection one
+    // does not (§4.4).
+    let static_diagnostics: Vec<Diagnostic> = query
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            !(diagnostic.kind == DiagnosticKind::Syntax
+                && diagnostic.message == ADVANCED_UNRESOLVED_MESSAGE)
+        })
+        .cloned()
+        .collect();
+
+    let (lowered, ran, ignored) = advanced_pred(original, context.current_page.as_deref(), today);
+    let mut bound = Query {
+        anchor: query.anchor,
+        filter: lowered
+            .as_ref()
+            .map_or(Filter::False, |query| query.filter.clone()),
+        diagnostics: static_diagnostics,
+        // The immutable source stays available for printing (§4.4). It is never
+        // re-read as a filter after this point.
+        source: query.source.clone(),
+    };
+    let supported = lowered.is_some();
+    if !supported {
+        bound.diagnostics.push(Diagnostic::new(
+            DiagnosticKind::Syntax,
+            ADVANCED_UNSUPPORTED_MESSAGE,
+        ));
+    }
+    ResolvedQuery {
+        query: bound,
+        report: ir::QueryReport {
+            ran,
+            ignored,
+            supported,
+        },
+        today,
+    }
+}
+
 /// The ONE simple-query entry: source limits, parse, options, evaluation.
 fn run_query_bounded_over(
     source: &dyn QueryPageSource,
@@ -1887,7 +2033,7 @@ fn run_query_bounded_over(
 ) -> BoundedGroups {
     let today = JournalDate::today();
     let (query, view) = parse_query_source(query_src, today);
-    run_pred_bounded_over(source, &query, &view, max_rows, max_bytes)
+    run_pred_bounded_over(source, &query, &view, today, max_rows, max_bytes)
 }
 
 /// One page as the shared query drivers see it, borrowed from whichever backend
@@ -2107,10 +2253,18 @@ fn run_pred_bounded(
     graph: &Graph,
     query: &Query,
     view: &ViewSettings,
+    today: JournalDate,
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    run_pred_bounded_over(&GraphQueryPages(graph), query, view, max_rows, max_bytes)
+    run_pred_bounded_over(
+        &GraphQueryPages(graph),
+        query,
+        view,
+        today,
+        max_rows,
+        max_bytes,
+    )
 }
 
 // RETIREMENT-CANDIDATE: the in-memory query walk.
@@ -2146,10 +2300,17 @@ fn run_pred_bounded(
 /// journal day and the page's own `key:: value` preamble — and never descends
 /// into a document. `@block` delegates to [`run_pred_bounded_over`], whose
 /// block groups are the shipped shape.
+///
+/// **Post-resolution only** (§4.4): `query` is the BOUND tree
+/// [`ResolvedQuery::query`] carries and `today` its one execution-day snapshot.
+/// `run_resolved_query_result_over` is the entry that establishes both; this
+/// function is also the probe evaluator explain-empty reuses per conjunct,
+/// which is why it takes the pieces rather than the `ResolvedQuery` itself.
 pub(crate) fn run_query_result_over(
     source: &dyn QueryPageSource,
     query: &Query,
     view: &ViewSettings,
+    today: JournalDate,
     bounds: ir::Bounds,
 ) -> ir::QueryResult {
     let report = ir::QueryReport {
@@ -2165,7 +2326,14 @@ pub(crate) fn run_query_result_over(
         exceeded: false,
     };
     if query.anchor == Anchor::Block {
-        let bounded = run_pred_bounded_over(source, query, view, bounds.max_rows, bounds.max_bytes);
+        let bounded = run_pred_bounded_over(
+            source,
+            query,
+            view,
+            today,
+            bounds.max_rows,
+            bounds.max_bytes,
+        );
         result.rows = ir::QueryRows::Block {
             groups: bounded.groups,
         };
@@ -2177,7 +2345,6 @@ pub(crate) fn run_query_result_over(
         return result;
     }
     let filter = query.evaluable_filter();
-    let today = JournalDate::today();
     let compiled = eval::CompiledLeaves::for_query(&filter);
     let parse_config = source.parse_config();
     let registry = source.registry();
@@ -2224,8 +2391,28 @@ pub fn run_query_result(
     dialect: QueryDialect,
     bounds: ir::Bounds,
 ) -> ir::QueryResult {
-    let (query, view) = parse_query_text(query_src, dialect, JournalDate::today());
-    run_query_result_over(&GraphQueryPages(graph), &query, &view, bounds)
+    let today = JournalDate::today();
+    let (query, view) = parse_query_text(query_src, dialect, today);
+    run_query_result_over(&GraphQueryPages(graph), &query, &view, today, bounds)
+}
+
+/// The ONE post-resolution result driver (§4.4): evaluate the bound tree, then
+/// attach the binding's support report.
+///
+/// The report is attached HERE, after the evaluation (and, for a caching
+/// caller, after the result-cache retrieval), because it is a property of how
+/// this source was bound and not of the rows — which is exactly why the rows may
+/// be shared and the report may not.
+pub(crate) fn run_resolved_query_result_over(
+    source: &dyn QueryPageSource,
+    resolved: &ResolvedQuery,
+    view: &ViewSettings,
+    bounds: ir::Bounds,
+) -> ir::QueryResult {
+    let mut result =
+        run_query_result_over(source, resolved.query(), view, resolved.today(), bounds);
+    result.report = resolved.report().clone();
+    result
 }
 
 /// The ONE simple-query evaluator. Both storage modes reach it through
@@ -2235,6 +2422,11 @@ fn run_pred_bounded_over(
     source: &dyn QueryPageSource,
     query: &Query,
     view: &ViewSettings,
+    // §4.4: the ONE execution-day snapshot, taken by `resolve_for_execution`
+    // (or by the one text entry above) and never re-read from the clock here —
+    // a rollover between two halves of one answer is not a thing that can
+    // happen.
+    today: JournalDate,
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
@@ -2261,7 +2453,6 @@ fn run_pred_bounded_over(
         Anchor::Block => query.evaluable_filter(),
         Anchor::Page => og::rebase_to_block(&query.evaluable_filter()),
     };
-    let today = JournalDate::today();
     let compiled = eval::CompiledLeaves::for_query(&filter);
     let parse_config = source.parse_config();
     let registry = source.registry();
@@ -3235,14 +3426,16 @@ pub(crate) fn run_application_query_result(
     bounds: ir::Bounds,
     config: crate::config::ParseConfig,
     registry: std::sync::Arc<registry::Registry>,
+    context: &ir::ExecutionContext,
 ) -> ir::QueryResult {
-    run_query_result_over(
+    let resolved = resolve_for_execution(query, context, JournalDate::today());
+    run_resolved_query_result_over(
         &ApplicationQueryPages {
             pages,
             config,
             registry,
         },
-        query,
+        &resolved,
         view,
         bounds,
     )
@@ -3256,14 +3449,16 @@ pub(crate) fn explain_application_empty_query(
     bounds: ir::Bounds,
     config: crate::config::ParseConfig,
     registry: std::sync::Arc<registry::Registry>,
-) -> Vec<view::EmptyExplanation> {
+    context: &ir::ExecutionContext,
+) -> ir::ExplainEmptyResult {
+    let resolved = resolve_for_execution(query, context, JournalDate::today());
     view::explain_empty(
         &ApplicationQueryPages {
             pages,
             config,
             registry,
         },
-        query,
+        &resolved,
         view,
         bounds,
     )
@@ -3271,13 +3466,20 @@ pub(crate) fn explain_application_empty_query(
 
 /// The Direct Files twin of [`run_application_query_result`]: `query_run` when
 /// the IR is already parsed (the §7.1 command hands the IR, not text).
+///
+/// §4.4: the IR arriving already parsed is exactly why this resolves. A parse
+/// is context-free, so the `{query, view}` a caller holds may have been parsed
+/// on another page, on another day, or by another window; the binding happens
+/// here, per execution.
 pub fn run_query_result_ir(
     graph: &Graph,
     query: &Query,
     view: &ViewSettings,
     bounds: ir::Bounds,
+    context: &ir::ExecutionContext,
 ) -> ir::QueryResult {
-    run_query_result_over(&GraphQueryPages(graph), query, view, bounds)
+    let resolved = resolve_for_execution(query, context, JournalDate::today());
+    run_resolved_query_result_over(&GraphQueryPages(graph), &resolved, view, bounds)
 }
 
 /// The Direct Files twin of [`explain_application_empty_query`].
@@ -3286,8 +3488,10 @@ pub fn explain_empty_query(
     query: &Query,
     view: &ViewSettings,
     bounds: ir::Bounds,
-) -> Vec<view::EmptyExplanation> {
-    view::explain_empty(&GraphQueryPages(graph), query, view, bounds)
+    context: &ir::ExecutionContext,
+) -> ir::ExplainEmptyResult {
+    let resolved = resolve_for_execution(query, context, JournalDate::today());
+    view::explain_empty(&GraphQueryPages(graph), &resolved, view, bounds)
 }
 
 /// Storage-independent shallow block supplied by the managed sparse reader.
@@ -3749,10 +3953,11 @@ pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
 
 /// Run an advanced `[:find … :where …]` / `{:query … :inputs …}` query by mapping
 /// the common clause subset (task / between / page-ref / property / page-property
-/// / priority + and/or/not) onto the simple-DSL `Pred` engine — the matching
-/// predicates already exist. Unrecognized clauses (custom rules, `[?e ?a ?v]`
-/// joins, `:view`/`:result-transform`) are listed in `ignored` and skipped, never
-/// guessed (a wrong result is worse than "unsupported").
+/// / priority + and/or/not) onto the ONE IR `Filter` the OG DSL and TQL also
+/// lower to — the matching leaves already exist. Unrecognized clauses (custom
+/// rules, `[?e ?a ?v]` joins, `:view`/`:result-transform`) are listed in
+/// `ignored` and skipped, never guessed (a wrong result is worse than
+/// "unsupported").
 pub fn run_advanced_query(
     graph: &Graph,
     query_src: &str,
@@ -3816,9 +4021,22 @@ fn run_advanced_query_bounded_over(
     if !query_nesting_within_limit(query_src) {
         return (rejected_advanced_query("query-nesting-too-deep"), false, 0);
     }
+    // §4.4: the SAME `resolve_for_execution` boundary the §7.1 commands use.
+    // This path used to call `advanced_pred` itself, which is how one lowerer
+    // ended up with two callers that could disagree about what a missing input
+    // means.
     let today = JournalDate::today();
-    let (query, ran, ignored) = advanced_pred(query_src, current_page, today);
-    let Some(query) = query else {
+    let (parsed, _) = advanced_source_query(query_src, String::new());
+    let resolved = resolve_for_execution(
+        &parsed,
+        &ir::ExecutionContext {
+            current_page: current_page.map(str::to_string),
+        },
+        today,
+    );
+    let ran = resolved.report().ran.clone();
+    let ignored = resolved.report().ignored.clone();
+    if !resolved.report().supported {
         return (
             AdvancedResult {
                 groups: Vec::new(),
@@ -3829,11 +4047,12 @@ fn run_advanced_query_bounded_over(
             false,
             0,
         );
-    };
+    }
     let bounded = run_pred_bounded_over(
         source,
-        &query,
+        resolved.query(),
         &ViewSettings::default(),
+        resolved.today(),
         max_rows,
         max_bytes,
     );
@@ -5281,6 +5500,13 @@ pub struct QueryExportSpec {
     pub key: String,
     pub query: String,
     pub advanced: bool,
+    /// The page this macro is written on — the §4.4 execution context, so an
+    /// exported advanced query binds `?current-page` to the SAME page the
+    /// rendered one did. Defaulted rather than required: the frontend caller
+    /// that supplies it is P0-ts, and an absent page is the honest "no binding"
+    /// value, never a guess.
+    #[serde(default)]
+    pub current_page: Option<String>,
 }
 
 /// A single query macro's bounded, hierarchy-preserving export projection.
@@ -5550,7 +5776,7 @@ fn export_query_subtrees_over(
             let (result, exceeded, total) = run_advanced_query_bounded_over(
                 source,
                 &spec.query,
-                None,
+                spec.current_page.as_deref(),
                 QUERY_EXPORT_CONSTRUCTION_ROWS,
                 QUERY_EXPORT_CONSTRUCTION_BYTES,
             );
@@ -8464,11 +8690,13 @@ mod tests {
                     key: "todo".into(),
                     query: "(task TODO)".into(),
                     advanced: false,
+                    current_page: None,
                 },
                 QueryExportSpec {
                     key: "done".into(),
                     query: "(task DONE)".into(),
                     advanced: false,
+                    current_page: None,
                 },
             ],
             64,

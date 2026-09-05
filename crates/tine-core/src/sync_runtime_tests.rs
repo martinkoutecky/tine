@@ -31843,11 +31843,13 @@ fn c7b_query_driver_parity() {
             key: "simple".into(),
             query: "[[Topic]]".into(),
             advanced: false,
+            current_page: None,
         },
         crate::query::QueryExportSpec {
             key: "advanced".into(),
             query: advanced_query.into(),
             advanced: true,
+            current_page: None,
         },
     ];
     let direct_export = c7b_comparable(crate::query::export_query_subtrees(
@@ -32759,4 +32761,276 @@ fn a_registry_generation_advance_evicts_the_managed_memos_props_entries_only() {
         Some(2),
         "a query that reads no property atom cannot depend on an effective type"
     );
+}
+
+// ---------------------------------------------------------------------------
+// SPEC §6.2/§6.4 and MANAGER-FINDINGS F1: what the Managed property registry
+// actually costs while the user is typing.
+// ---------------------------------------------------------------------------
+
+/// The real rule, as a test rather than as a comment (AGENTS §2).
+///
+/// **This corrects Wave B's receipt.** §B3 of it says the Managed registry is
+/// "rebuilt only when the stamp moves and never while local frames are
+/// pending". The code does the opposite:
+/// `application_property_registry_cache_key` returns `Ok(None)` for the whole
+/// time a local suffix is undrained, a `None` key can never match a published
+/// one, so a registry read during an edit rebuilds the entire table — overlay
+/// merge, page scan, property-row scan — on EVERY call.
+///
+/// That is deliberate and it is the same rule the simple-query memo states for
+/// itself: an actor holding a pending local suffix has evidence the accepted
+/// sequence does not cover, so it must not serve a snapshot that predates the
+/// pending edits. What was wrong was the description, not the behaviour.
+///
+/// C6's other half is asserted here too: a query with no `props` leaf never
+/// reads the registry at all, pending or not, so none of this cost exists for
+/// the task and page-ref queries that make up every query in the real corpora.
+#[test]
+fn a_pending_local_suffix_rebuilds_the_managed_property_registry_on_every_read() {
+    let fixture = c7b_parity_fixture("wave-d-registry-pending", 0xd501);
+    let overlay_path = Graph::open(&fixture.graph_root)
+        .list_pages()
+        .into_iter()
+        .next()
+        .expect("the fixture has pages")
+        .rel_path;
+
+    let activation_handle = c7b_activated(&fixture);
+    assert!(matches!(
+        activation_handle.clean_shutdown(),
+        Ok(SyncShutdownOutcome::Safe(_))
+    ));
+    drop(activation_handle);
+
+    let opened = SyncRuntimeHandle::open(reopen_request(&fixture.request));
+    assert_eq!(opened.status, SyncRuntimeOpenStatus::Active);
+    let handle = opened.handle.expect("managed reopen retains its actor");
+    drain_managed_local(&handle);
+    assert_eq!(handle.status().unwrap().managed_local_pending, 0);
+
+    let property_query = "(property status Done)";
+    let run = |query: &str| {
+        // The memo would answer the second call without reading the registry
+        // at all, which is a different measurement; clear it so each call is a
+        // real evaluation.
+        handle.clear_application_simple_query_memo().unwrap();
+        match c7b_navigation(
+            &handle,
+            SyncApplicationNavigationRequest::SimpleQuery {
+                query: query.into(),
+                max_rows: 64,
+                max_bytes: 1 << 20,
+            },
+        ) {
+            SyncApplicationNavigationReply::SimpleQuery(_) => {}
+            other => panic!("unexpected simple-query reply: {other:?}"),
+        }
+    };
+
+    // Drained: one build, then the published snapshot answers.
+    handle
+        .reset_managed_application_query_instrumentation()
+        .unwrap();
+    run(property_query);
+    run(property_query);
+    let drained = handle.managed_application_query_instrumentation().unwrap();
+    assert_eq!(
+        (
+            drained.property_registry_builds,
+            drained.property_registry_cache_hits
+        ),
+        (1, 1),
+        "with nothing pending the second read is a cache hit: {drained:?}"
+    );
+
+    // A committed-undrained local suffix.
+    let (mut page, revision) = load_application_exact(&handle, &overlay_path);
+    page.blocks[0].raw = format!("{} registry-cost-edit", page.blocks[0].raw);
+    let save = handle
+        .save_application_page(SyncApplicationPageSaveRequest {
+            target: SyncApplicationPageSaveTarget::Existing {
+                path: page.path.clone(),
+                revision,
+            },
+            page,
+        })
+        .unwrap();
+    assert!(
+        matches!(save, SyncApplicationPageSaveOutcome::Saved { .. }),
+        "the pending edit must be accepted locally: {save:?}"
+    );
+    assert_eq!(
+        handle.status().unwrap().managed_local_pending,
+        1,
+        "the measurement needs a real, undrained pending suffix"
+    );
+
+    handle
+        .reset_managed_application_query_instrumentation()
+        .unwrap();
+    run(property_query);
+    run(property_query);
+    let pending = handle.managed_application_query_instrumentation().unwrap();
+    assert_eq!(
+        (
+            pending.property_registry_builds,
+            pending.property_registry_cache_hits
+        ),
+        (2, 0),
+        "while a local suffix is pending EVERY property-query read rebuilds the \
+         whole registry — this is the rule Wave B's receipt described backwards: \
+         {pending:?}"
+    );
+
+    // C6: no `props` leaf, no registry, pending or not.
+    handle
+        .reset_managed_application_query_instrumentation()
+        .unwrap();
+    run("(task TODO)");
+    run("(task TODO)");
+    let taskless = handle.managed_application_query_instrumentation().unwrap();
+    assert_eq!(
+        (
+            taskless.property_registry_builds,
+            taskless.property_registry_cache_hits
+        ),
+        (0, 0),
+        "a query with no property leaf never consults an effective type: {taskless:?}"
+    );
+
+    drain_managed_local(&handle);
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
+/// F1's paired A/B, as a receipt line rather than a threshold.
+///
+/// The same property query, on the same actor, in one session, re-run with and
+/// without a pending local suffix — the ONE place the `None` cache key is a
+/// marginal cost (the advanced and export paths already hydrate every query
+/// page before the registry is touched, so a build there is not the margin).
+///
+/// ```text
+/// TINE_MANAGED_ACTIVATION_GRAPH_COPY=<a disposable copy of the graph> \
+///   cargo test --release -p tine-core \
+///   managed_property_registry_cost_while_typing_manual_receipt \
+///   -- --ignored --nocapture --test-threads=1
+/// ```
+///
+/// It prints medians and counters; it asserts only that the two arms did what
+/// they claim (cache hits versus builds), because the ≤ 20 ms §6.4 budget is a
+/// judgement the manager makes against a number, not a threshold that should
+/// fail a build on a loaded machine. The query names no key from the graph, so
+/// no corpus content enters this file: what is being measured is the registry
+/// build, and a property query that matches nothing pays exactly the same one.
+#[test]
+#[ignore = "manual receipt: needs a disposable real graph copy named by TINE_MANAGED_ACTIVATION_GRAPH_COPY"]
+fn managed_property_registry_cost_while_typing_manual_receipt() {
+    assert!(
+        !cfg!(debug_assertions),
+        "release-only; run with --release --ignored --nocapture --test-threads=1"
+    );
+    let source = real_graph_copy_source_from_env("TINE_MANAGED_ACTIVATION_GRAPH_COPY");
+    let fixture = ActivationFixture::copied_graph("wave-d-registry-cost", 0xd502, &source);
+    let overlay_path = Graph::open(&fixture.graph_root)
+        .list_pages()
+        .into_iter()
+        .next()
+        .expect("the graph copy has pages")
+        .rel_path;
+
+    let activation_handle = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+    assert_eq!(activation_handle.status, SyncLocalActivationStatus::Active);
+    let activation_handle = activation_handle.handle.expect("the copy activates");
+    drive_initial_feed_with_turn_budget(&activation_handle, 4096);
+    assert!(matches!(
+        activation_handle.clean_shutdown(),
+        Ok(SyncShutdownOutcome::Safe(_))
+    ));
+    drop(activation_handle);
+
+    let opened = SyncRuntimeHandle::open(reopen_request(&fixture.request));
+    assert_eq!(opened.status, SyncRuntimeOpenStatus::Active);
+    let handle = opened.handle.expect("the copy reopens");
+    drain_managed_local(&handle);
+
+    const ROUNDS: usize = 20;
+    let query = "(property tine-wave-d-absent-key tine-wave-d-absent-value)";
+    let sample = || {
+        handle.clear_application_simple_query_memo().unwrap();
+        let started = Instant::now();
+        match c7b_navigation(
+            &handle,
+            SyncApplicationNavigationRequest::SimpleQuery {
+                query: query.into(),
+                max_rows: 20_000,
+                max_bytes: 32 * 1024 * 1024,
+            },
+        ) {
+            SyncApplicationNavigationReply::SimpleQuery(_) => {}
+            other => panic!("unexpected simple-query reply: {other:?}"),
+        }
+        started.elapsed().as_micros() as u64
+    };
+    let median = |mut samples: Vec<u64>| {
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    };
+
+    // Arm A — nothing pending. One build, then cache hits.
+    let _warm = sample();
+    handle
+        .reset_managed_application_query_instrumentation()
+        .unwrap();
+    let settled = median((0..ROUNDS).map(|_| sample()).collect());
+    let settled_counters = handle.managed_application_query_instrumentation().unwrap();
+    assert_eq!(
+        settled_counters.property_registry_builds, 0,
+        "arm A must be measuring the cache-hit path: {settled_counters:?}"
+    );
+
+    // Arm B — a committed-undrained local suffix, i.e. the user is typing.
+    let (mut page, revision) = load_application_exact(&handle, &overlay_path);
+    page.blocks[0].raw = format!("{} registry-cost-edit", page.blocks[0].raw);
+    let save = handle
+        .save_application_page(SyncApplicationPageSaveRequest {
+            target: SyncApplicationPageSaveTarget::Existing {
+                path: page.path.clone(),
+                revision,
+            },
+            page,
+        })
+        .unwrap();
+    assert!(matches!(save, SyncApplicationPageSaveOutcome::Saved { .. }));
+    assert_eq!(handle.status().unwrap().managed_local_pending, 1);
+
+    handle
+        .reset_managed_application_query_instrumentation()
+        .unwrap();
+    let pending = median((0..ROUNDS).map(|_| sample()).collect());
+    let pending_counters = handle.managed_application_query_instrumentation().unwrap();
+    assert_eq!(
+        pending_counters.property_registry_builds, ROUNDS,
+        "arm B must be rebuilding on every read: {pending_counters:?}"
+    );
+
+    eprintln!(
+        "REGISTRYWHILETYPING\tgraph=<named by env>\trounds={ROUNDS}\t\
+         settled_median_us={settled}\tpending_median_us={pending}\t\
+         delta_us={}\tsettled_builds={}\tsettled_hits={}\tpending_builds={}\tpending_hits={}",
+        pending.saturating_sub(settled),
+        settled_counters.property_registry_builds,
+        settled_counters.property_registry_cache_hits,
+        pending_counters.property_registry_builds,
+        pending_counters.property_registry_cache_hits,
+    );
+
+    drain_managed_local(&handle);
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
 }

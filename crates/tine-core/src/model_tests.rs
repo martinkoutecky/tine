@@ -21291,10 +21291,12 @@ fn concurrent_readers_never_observe_a_half_built_registry() {
     let _ = fs::remove_dir_all(dir);
 }
 
-/// O11: the registry built from the Direct Files document iterator and the one
-/// built from the Managed per-page owner rows are the same table. The two
-/// producers disagree only about opaque owner identity, which the aggregation
-/// deliberately does not carry.
+/// O11, extended in Wave D to §6.2's THIRD source (CLOSURE §4): the registry
+/// built from the Direct Files READY PROJECTION STREAM, the one built from the
+/// Direct Files cold document iterator, and the one built from the Managed
+/// per-page owner rows are one table. The three producers disagree only about
+/// opaque owner identity and page identity, neither of which the aggregation
+/// carries.
 #[test]
 fn every_implemented_row_source_builds_the_same_registry() {
     let dir = registry_graph("registry-source-identity");
@@ -21304,6 +21306,9 @@ fn every_implemented_row_source_builds_the_same_registry() {
     )
     .unwrap();
     let graph = Graph::open(&dir);
+    graph
+        .attach_direct_projection(dir.join(".registry-sources/projection.sqlite"))
+        .unwrap();
     graph.warm_cache();
     let config = graph.config.parse_config();
 
@@ -21357,7 +21362,138 @@ fn every_implemented_row_source_builds_the_same_registry() {
             .any(|row| row.normalized_name == "score"),
         "the fixture's key is actually in the table"
     );
+
+    // The third source: the ready projection's raw stream. It exists so that a
+    // registry read on a ready Direct Files graph does not walk every hydrated
+    // document — an adapter onto the SAME `build_registry`, never a second
+    // registry producer.
+    wait_for_direct_query_projection(&graph);
+    let (stream_rows, stream_pages) = graph
+        .direct_projection_property_owner_rows()
+        .expect("a ready projection answers the registry's row source");
+    let from_projection = crate::query::registry::build_registry(
+        stream_rows.into_iter(),
+        &|page_id| stream_pages.get(page_id).cloned(),
+        &config,
+    )
+    .expect("every projection row names its own page");
+    assert_eq!(
+        from_projection.rows(),
+        from_documents.rows(),
+        "the ready projection stream and the cold document walk build one table"
+    );
+
+    // And the graph's own registry, which now PREFERS the ready stream, is that
+    // same table — the adapter is wired, not merely present. Equal tables alone
+    // cannot show WHICH source answered (that is the point of the guard above),
+    // so the projection's own read counter is the witness: a rebuild that fell
+    // back to the document iterator touches the projection zero times.
+    assert_eq!(graph.property_registry().rows(), from_documents.rows());
+    let reads_before = graph.direct_projection_indexed_reads_test();
+    let source_generation = graph.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+    let rebuilt = graph.rebuild_property_registry(&config, source_generation);
+    assert!(
+        graph.direct_projection_indexed_reads_test() > reads_before,
+        "a registry rebuild on a ready Direct Files graph reads the projection"
+    );
+    assert_eq!(rebuilt.rows(), from_documents.rows());
     let _ = fs::remove_dir_all(dir);
+}
+
+/// §6.2's guard on a REAL graph: the registry built from each of the three row
+/// sources reports identical rows. Wave B proved it between two sources on a
+/// constructed fixture; this proves it across all three on the anonymized
+/// corpus, which is the graph whose property vocabulary the campaign's cost
+/// bound is measured against.
+///
+/// ```text
+/// TINE_REGISTRY_TIMING_GRAPH=~/research/logseq-anonymized \
+///   cargo test --release -p tine-core registry_row_sources_agree_on_a_real_graph \
+///   -- --ignored --nocapture
+/// ```
+///
+/// Ignored by default: it needs a graph this repository does not ship. It
+/// prints counts only, never content.
+#[test]
+#[ignore = "needs a real graph named by TINE_REGISTRY_TIMING_GRAPH"]
+fn registry_row_sources_agree_on_a_real_graph() {
+    let Ok(root) = std::env::var("TINE_REGISTRY_TIMING_GRAPH") else {
+        panic!("set TINE_REGISTRY_TIMING_GRAPH to a graph directory");
+    };
+    let graph = Graph::open(std::path::Path::new(&root));
+    let projection_dir =
+        std::env::temp_dir().join(format!("tine-registry-sources-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&projection_dir);
+    fs::create_dir_all(&projection_dir).unwrap();
+    graph
+        .attach_direct_projection(projection_dir.join("projection.sqlite"))
+        .unwrap();
+    graph.warm_cache();
+    let config = graph.config.parse_config();
+
+    let (document_rows, document_pages) = crate::query::property_owner_rows(&graph);
+    let document_row_count = document_rows.len();
+    let from_documents = crate::query::registry::build_registry(
+        document_rows.into_iter(),
+        &|page_id| document_pages.get(page_id).cloned(),
+        &config,
+    )
+    .expect("every document row names its own page");
+
+    let mut managed_rows = Vec::new();
+    let mut managed_pages = std::collections::HashMap::new();
+    graph.with_pages(|entries| {
+        for (entry, _) in entries {
+            let Some(page) = graph.load_named(&entry.name, entry.kind).unwrap() else {
+                continue;
+            };
+            let page_id = format!("managed:{}", entry.rel_path);
+            managed_pages.insert(
+                page_id.clone(),
+                crate::query::registry::PageMeta {
+                    format: Format::from_path(Path::new(&entry.rel_path)).into(),
+                    name: entry.name.clone(),
+                },
+            );
+            managed_rows.extend(crate::query::application_page_property_owner_rows(
+                &page, &page_id, true,
+            ));
+        }
+    });
+    let from_managed = crate::query::registry::build_registry(
+        managed_rows.into_iter(),
+        &|page_id| managed_pages.get(page_id).cloned(),
+        &config,
+    )
+    .expect("every managed row names its own page");
+
+    wait_for_direct_query_projection(&graph);
+    let (stream_rows, stream_pages) = graph
+        .direct_projection_property_owner_rows()
+        .expect("a ready projection answers the registry's row source");
+    let stream_row_count = stream_rows.len();
+    let from_projection = crate::query::registry::build_registry(
+        stream_rows.into_iter(),
+        &|page_id| stream_pages.get(page_id).cloned(),
+        &config,
+    )
+    .expect("every projection row names its own page");
+
+    println!(
+        "REGISTRYSOURCES	graph=<named by env>	document_rows={document_row_count}	projection_rows={stream_row_count}	keys={}",
+        from_documents.rows().len()
+    );
+    assert_eq!(
+        from_projection.rows(),
+        from_documents.rows(),
+        "ready projection stream vs cold document walk"
+    );
+    assert_eq!(
+        from_managed.rows(),
+        from_documents.rows(),
+        "managed overlay iterator vs cold document walk"
+    );
+    let _ = fs::remove_dir_all(&projection_dir);
 }
 
 /// The registry build is a whole-graph pass, so its cost is reported rather

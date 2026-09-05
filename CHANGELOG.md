@@ -156,6 +156,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **A `{{query (property …)}}` on a Direct Files graph no longer re-reads every
+  page to work out what its values mean.** Deciding whether `rank:: 007` is a
+  number or a word is a whole-graph question, and Tine answered it by walking
+  every loaded document each time it needed an answer, even though the same
+  facts already sit in the projection it keeps beside the graph. Once that
+  projection is ready the answer is read straight out of it; while it is still
+  being built — the first open, or the moment after a save — the old walk still
+  answers, so nothing waits on it. The values a query matches are unchanged, and
+  proved so: all three sources now build a byte-identical table on the same
+  graph.
+
 - **Managed and Direct reference and query reads now share one evaluator per
   question, and a Managed navigation request loads its pending overlay at most
   once.** Backlinks, unlinked references, block referrers, simple and advanced

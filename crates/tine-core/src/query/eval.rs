@@ -68,13 +68,25 @@ pub(crate) struct CompiledLeaves {
 }
 
 impl CompiledLeaves {
+    /// Parse every compiled leaf of one query, ONCE (SPEC §5.10, R3).
+    ///
+    /// **This is the parsed Match payload, and it is the only one.** The walk
+    /// reads `match_program` below; P1's SQL compiler reads the same map, over
+    /// the same `Filter::match_sources` keys, and lowers the SAME
+    /// `search_query::Matcher::Boolean` groups it finds there into `instr`
+    /// predicates. A second `Matcher::parse` anywhere in the query engine — in
+    /// the compiler, in a plan, in a cache — is the fork this campaign exists
+    /// to prevent (I-12): `content match` and legacy `(search …)` would stop
+    /// meaning the same thing the moment the two parses disagreed.
     pub(crate) fn for_query(filter: &Filter) -> CompiledLeaves {
         let mut compiled = CompiledLeaves::default();
         collect_compiled(filter, &mut compiled);
         compiled
     }
 
-    fn matcher(&self, source: &str) -> Option<&Matcher> {
+    /// The parsed Match payload for one `content match <text>` leaf — the
+    /// value both engines consume, never a re-parsed string.
+    pub(crate) fn match_program(&self, source: &str) -> Option<&Matcher> {
         self.matchers.get(source)
     }
     fn regex(&self, source: &str) -> Option<&regex::Regex> {
@@ -89,6 +101,13 @@ impl CompiledLeaves {
 }
 
 fn collect_compiled(filter: &Filter, out: &mut CompiledLeaves) {
+    // The Match half goes through the IR's own recognizer, so "which leaves
+    // carry a search query" has one answer for the walk and for the lowering.
+    for source in filter.match_sources() {
+        out.matchers
+            .entry(source.to_string())
+            .or_insert_with(|| Matcher::parse(source));
+    }
     filter.any_leaf(&mut |leaf| {
         if let Leaf::Attr {
             attr: Attr::Content,
@@ -97,11 +116,6 @@ fn collect_compiled(filter: &Filter, out: &mut CompiledLeaves) {
         } = leaf
         {
             match op {
-                CmpOp::Match => {
-                    out.matchers
-                        .entry(text.clone())
-                        .or_insert_with(|| Matcher::parse(text));
-                }
                 CmpOp::Regex => {
                     out.regexes
                         .entry(text.clone())
@@ -525,21 +539,49 @@ fn eval_atom_value(
     }
 }
 
-/// OG's own property comparison (SPEC §8.1, v13 Y3), for the four non-`both`
-/// modes.
+/// OG's own property comparison (SPEC §8.1, v13 Y3; SPEC §8's v16 evidence
+/// correction), for the four non-`both` modes.
 ///
-/// OG's rule, transcribed from what it actually does rather than from what it
-/// looks like it does:
+/// OG's rule is `deps/db/src/logseq/db/rules.cljc:129-138`, verbatim:
 ///
-/// * both the stored value and the query's value pass through
+/// ```clojure
+/// [(get ?prop ?key) ?v]
+/// [(str ?val) ?str-val]
+/// (or [(= ?v ?val)]
+///     [(contains? ?v ?val)]
+///     ;; For integer pages that aren't strings
+///     [(contains? ?v ?str-val)])
+/// ```
+///
+/// Transcribed from what it actually does rather than from what it looks like
+/// it does — each clause measured against the pinned OG tree with
+/// `og-query-oracle/shapes.cljs`:
+///
+/// * `(= ?v ?val)`: both the stored value and the query's value pass through
 ///   `text/parse-non-string-property-value`, so a value matching `^\d+$` — and
 ///   ONLY that — becomes an integer on both sides (`01` is the integer 1, which
-///   is why `k:: 01` answers `(property k 1)`);
-/// * everything else compares as text, **case-sensitively**, refs included:
-///   OG stores a ref as the page name AS WRITTEN, and `[[Book]]` and `[[book]]`
-///   are two different strings in that set even though they are one page
-///   (measured, `case.cljs`). Case-insensitive page identity belongs to the
-///   `[[x]]` page-ref leaf, not to `(property k v)`.
+///   is why `k:: 01` answers `(property k 1)`). Everything else compares as
+///   text, **case-sensitively**, refs included: OG stores a ref as the page name
+///   AS WRITTEN, and `[[Book]]` and `[[book]]` are two different strings in that
+///   set even though they are one page (measured, `case.cljs`).
+///   Case-insensitive page identity belongs to the `[[x]]` page-ref leaf, not to
+///   `(property k v)`.
+/// * `(contains? ?v ?val)` and `(contains? ?v (str ?val))`: `contains?` means
+///   set membership when OG stored a set, is always false when OG stored a
+///   number, and is an **index lookup** when OG stored a string — `get` on a
+///   ClojureScript string tests `(< k (.-length s))`, which JavaScript answers
+///   by coercing `k` to a number. So `score:: 1.50` answers `(property score 2)`
+///   and `(property score 1.5)` and `(property score 0)`, and does not answer
+///   `(property score 4)` or `(property score abc)` (measured, `shapes.cljs`).
+///   The set case is already the per-atom equality above, and the number case
+///   adds nothing, so the only branch left to transcribe here is the string
+///   index — carried as [`Atom::og_string_len`], which is `Some` exactly when
+///   `parse-property` held the value as a bare string.
+///
+/// This is an OG bug the oracle models so gate 1 can ATTRIBUTE the difference,
+/// never a parity requirement: [`CompareMode::Both`] — everything the product
+/// runs — does not reach this function at all (SPEC §8: "Do not add OG's
+/// string-index quirk to production typed matching").
 ///
 /// Q20 and Q21 are already applied — or not — by the atomizer, so this reads
 /// the mode only to decide whether the text comparison folds case.
@@ -567,14 +609,42 @@ fn compare_atom_as_og(
             _ => None,
         }
     };
+    /// JavaScript's `Number(x)` for the decimal-literal grammar, plus its
+    /// empty-string-is-zero rule — the coercion `(< k (.-length s))` performs.
+    /// A spelling JS reads and Rust does not (`0x10`, `0b1`, `0o7`) is not
+    /// transcribed: no value in any corpus or fixture is written that way, and
+    /// guessing is worse than a named gap.
+    fn js_number(text: &str) -> Option<f64> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Some(0.0);
+        }
+        // JS reads `Infinity`, not Rust's `inf`/`nan` spellings; both answer the
+        // bound below the same way (`false`), so no special case is needed.
+        trimmed.parse::<f64>().ok().filter(|n| n.is_finite())
+    }
+
+    /// `(contains? ?v ?val)` where OG stored `?v` as a string of `len` UTF-16
+    /// code units: `get` returns the character at the coerced index whenever
+    /// `0 <= n < len`, and `contains?` reports that as membership.
+    fn og_string_contains(len: u32, needle: &str) -> bool {
+        js_number(needle).is_some_and(|n| n >= 0.0 && n < f64::from(len))
+    }
+
     let equal = |needle: &str| -> bool {
-        match (og_integer(&atom.text), og_integer(needle)) {
+        let same = match (og_integer(&atom.text), og_integer(needle)) {
             (Some(left), Some(right)) => left == right,
             _ => {
                 crate::query::atom::atom_key_in(&atom.text, mode)
                     == crate::query::atom::atom_key_in(needle, mode)
             }
-        }
+        };
+        // `(str ?val)` coerces back to the same number, so the rule's second and
+        // third clauses agree on every string-valued `?v`; the third exists for
+        // OG's SET case, which is the equality above.
+        same || atom
+            .og_string_len
+            .is_some_and(|len| og_string_contains(len, needle))
     };
     match (op, value) {
         (CmpOp::In, Value::List { items }) => items
@@ -692,9 +762,16 @@ fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bo
             .starts_with(&ctx.compiled.fold(text)),
         CmpOp::Eq => projection.visible_lower == ctx.compiled.fold(text),
         CmpOp::NotEq => projection.visible_lower != ctx.compiled.fold(text),
+        // §5.10: an empty or invalid-regex Match is a FALSE leaf, exactly as
+        // today. `Matcher::matches` answers false for `Empty` and
+        // `InvalidRegex`, and `is_some_and` answers false for a leaf whose
+        // payload was never collected — so the leaf is false, and `not` over it
+        // is classically true (§3.4). It is deliberately not an enabled
+        // whole-query diagnostic; the matcher's own error message may be
+        // displayed without changing that truth rule.
         CmpOp::Match => ctx
             .compiled
-            .matcher(text)
+            .match_program(text)
             .is_some_and(|m| m.matches(&projection.visible_lower, &projection.visible)),
         // An invalid regex is retained but deliberately matches nothing.
         CmpOp::Regex => ctx

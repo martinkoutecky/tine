@@ -1686,9 +1686,24 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     // of SPEC §5.8 H6; it reuses the existing content-digest type rather than
     // introducing a second SHA-256 (D-14) and crosses no write boundary — the
     // write-crossing table above is byte-identical.
+    // Re-pinned 2026-09-05 (query engine P0-rust wave D, item D3): SPEC §6.2's
+    // third registry row source — `DirectProjection::property_owner_rows`, the
+    // ready projection's raw stream, which CLOSURE §4 refused to leave deferred
+    // — adds exactly FOUR read-only tokens to this surface, all inside that one
+    // function and all derived by diffing the token multiset of every changed
+    // production file against `f8149fbc`:
+    //   `PhysicalGraphProjectionDatabase::open_read_only(`   13 -> 14
+    //   `import-associated:PhysicalEntityId::Page(`           2 ->  3
+    //   `import-associated:PhysicalEntityId::Block(`          2 ->  3
+    //   `tine_storage::sqlite::MaterializationError::Corrupt(` 2 ->  3
+    // The first is this file's own reader-open idiom (fourteen sites now), the
+    // next two are the owner ids of a property row, and the last is the header
+    // validator rejecting an unknown Direct Files text kind. No new write
+    // crossing: the write-boundary table above is byte-identical, and every one
+    // of the four is a read.
     assert_eq!(
         inventory_digest(&dependency_surface),
-        "499986ea42ae3ce018f78fe845af36ba9d7aab3c521f89cb11489e2675e201f9",
+        "e0045f18c99f6a3988caa1c430452fb6a0f463f731436288a178219991f98d91",
         "the complete tine-storage import/direct-call surface changed: {dependency_surface:#?}"
     );
 }

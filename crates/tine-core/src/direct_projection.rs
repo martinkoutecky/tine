@@ -43,6 +43,23 @@ fn run_before_apply_pending_hook() {
     }
 }
 
+/// The registry's snapshot-scoped page identity on the Direct Files projection
+/// side. The Managed side uses `page:<uuid>` and the cold walk the page's
+/// relative path; all three are opaque to `build_registry`, which only ever
+/// looks a row's page up in the map that came with it.
+fn direct_registry_page_key(page_id: [u8; 16]) -> String {
+    format!("page:{}", hex16(page_id))
+}
+
+fn hex16(id: [u8; 16]) -> String {
+    let mut out = String::with_capacity(32);
+    for byte in id {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
 #[derive(Clone)]
 enum PageDelta {
     Replace(PageEntry, Arc<Document>, String),
@@ -471,6 +488,122 @@ impl DirectProjection {
         #[cfg(test)]
         self.shared.indexed_reads.fetch_add(1, Ordering::Relaxed);
         Some(accumulator.finish())
+    }
+
+    /// The §6.2 registry row source for **Direct Files, projection ready**: the
+    /// ready raw property stream plus the same-snapshot `page_id → (format,
+    /// name)` map, taken under ONE read of the projection database.
+    ///
+    /// **CLOSURE §4 rejects deferring this to the document walk.** The wrapper
+    /// above (`property_facets`) aggregates owner identity away, so it cannot
+    /// serve a registry that reports cardinality and distinct-owner counts; and
+    /// answering a registry read by walking every hydrated document is exactly
+    /// the graph-wide scan the ready projection exists to avoid. This is an
+    /// ADAPTER onto the one `build_registry` aggregator, not a competing
+    /// registry producer: it yields the same [`OwnerRow`] stream the Managed
+    /// materialized read and the cold document iterator yield, and the
+    /// aggregator downstream is byte-for-byte the same function.
+    ///
+    /// `None` means "not ready, or the read refused" — the caller falls back to
+    /// the document iterator, exactly as §5.9's dispatch does for queries.
+    pub(crate) fn property_owner_rows(
+        &self,
+        cache_generation: u64,
+    ) -> Option<(
+        Vec<crate::query::registry::OwnerRow>,
+        HashMap<String, crate::query::registry::PageMeta>,
+    )> {
+        use crate::query::registry::{OwnerRow, OwnerType, PageMeta};
+
+        if !self.ready_at(cache_generation) {
+            return None;
+        }
+        let mut reader = self.shared.reader.lock().unwrap();
+        if reader.is_none() {
+            *reader = PhysicalGraphProjectionDatabase::open_read_only(&self.shared.path).ok();
+        }
+        let read = reader.as_ref()?.read();
+
+        // The page map and the rows are read from the SAME `read`, i.e. the same
+        // snapshot: a row naming a page the map does not have is a
+        // snapshot-consistency defect and fails the build (§6.2), never a
+        // silent fallback to Markdown.
+        let mut pages: HashMap<String, PageMeta> = HashMap::new();
+        drain_after(
+            |cursor: Option<([u8; 16], String)>, batch| {
+                read.navigation_pages_after_with_header_validation(
+                    cursor.as_ref().map(|(_, path)| path.as_str()),
+                    cursor.as_ref().map(|(id, _)| id),
+                    batch,
+                    |_, kind| match kind {
+                        0 | 1 => Ok(()),
+                        _ => Err(tine_storage::sqlite::MaterializationError::Corrupt(
+                            format!("unknown Direct Files text kind {kind}"),
+                        )),
+                    },
+                )
+            },
+            |row| (row.page_id, row.path.clone()),
+            |row| {
+                pages.insert(
+                    direct_registry_page_key(row.page_id),
+                    PageMeta {
+                        // §6.2 E4: `Format::from_path`, case-insensitive —
+                        // never `reference_source_is_org`.
+                        format: Format::from_path(Path::new(&row.path)).into(),
+                        name: row.name,
+                    },
+                );
+                Ok(())
+            },
+            |error, batch| {
+                matches!(
+                    error,
+                    tine_storage::sqlite::MaterializationError::ResourceLimit { .. }
+                )
+                .then(|| (batch / 2).max(1))
+            },
+        )
+        .ok()?;
+
+        let mut rows: Vec<OwnerRow> = Vec::new();
+        drain_after(
+            |cursor, batch| read.property_facet_rows_after(false, cursor, batch),
+            |row| (row.owner, row.source_name.clone(), row.ordinal),
+            |row| {
+                let (owner_type, owner_id) = match row.owner {
+                    PhysicalEntityId::Page(id) => (OwnerType::Page, format!("p:{}", hex16(id))),
+                    PhysicalEntityId::Block(id) => (OwnerType::Block, format!("b:{}", hex16(id))),
+                };
+                rows.push(OwnerRow {
+                    owner_type,
+                    owner_id,
+                    page_id: direct_registry_page_key(row.page_id),
+                    source_name: row.source_name,
+                    normalized_name: row.normalized_name,
+                    ordinal: row.ordinal,
+                    value: row.value,
+                });
+                Ok(())
+            },
+            |error, batch| {
+                matches!(
+                    error,
+                    tine_storage::sqlite::MaterializationError::ResourceLimit { .. }
+                )
+                .then(|| (batch / 2).max(1))
+            },
+        )
+        .ok()?;
+
+        // The generation must still hold AFTER both scans, or the two halves
+        // could straddle a rebuild — the same re-check `property_facets` makes.
+        if !self.ready_at(cache_generation) {
+            return None;
+        }
+        #[cfg(test)]
+        self.shared.indexed_reads.fetch_add(1, Ordering::Relaxed);
+        Some((rows, pages))
     }
 
     pub(crate) fn note_fallback_read(&self) {

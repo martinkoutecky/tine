@@ -6,7 +6,7 @@
 //! query-language behaviour with unit tests, not IPC plumbing (D-4: one
 //! producer). The commands call them and do nothing else.
 
-use crate::query::ir::{AggFn, Field, Query, SortDir, ViewKind, ViewSettings};
+use crate::query::ir::{AggFn, Field, SortDir, ViewKind, ViewSettings};
 
 /// The property namespace §7.6 persists the view under.
 const VIEW_PROPERTY_PREFIX: &str = "tine.";
@@ -148,19 +148,36 @@ pub struct EmptyExplanation {
 /// rest match without it; for any other root, one entry for the whole query
 /// (N19). Every count is the ANCHOR row count of the same evaluator the query
 /// itself ran through — nothing here is a second engine.
+///
+/// **It decomposes the RESOLVED tree** (§4.4). Explain-empty is the one place a
+/// query is taken apart and re-run piece by piece, so a decomposition of the
+/// unbound advanced placeholder would explain a query the user never ran. When
+/// the binding failed there is nothing honest to count: the rows are empty and
+/// the caller gets the diagnostics and the support report instead of a table of
+/// zeroes that reads like a result.
 pub(crate) fn explain_empty(
     source: &dyn crate::query::QueryPageSource,
-    query: &Query,
+    resolved: &crate::query::ResolvedQuery,
     view: &ViewSettings,
     bounds: crate::query::ir::Bounds,
-) -> Vec<EmptyExplanation> {
+) -> crate::query::ir::ExplainEmptyResult {
     use crate::query::ir::Filter;
+
+    let query = resolved.query();
+    let answer = |rows: Vec<EmptyExplanation>| crate::query::ir::ExplainEmptyResult {
+        rows,
+        diagnostics: query.diagnostics.clone(),
+        report: resolved.report().clone(),
+    };
+    if !resolved.is_executable() {
+        return answer(Vec::new());
+    }
 
     let count = |filter: Filter| -> usize {
         let mut probe = query.clone();
         probe.filter = filter;
         probe.diagnostics.clear();
-        crate::query::run_query_result_over(source, &probe, view, bounds).total
+        crate::query::run_query_result_over(source, &probe, view, resolved.today(), bounds).total
     };
     let printed = |filter: &Filter| -> String {
         let mut probe = query.clone();
@@ -170,7 +187,7 @@ pub(crate) fn explain_empty(
 
     let mut evaluable = query.clone();
     evaluable.filter = query.evaluable_filter();
-    match evaluable.normalized().filter {
+    answer(match evaluable.normalized().filter {
         Filter::And { items } if items.len() > 1 => items
             .iter()
             .enumerate()
@@ -193,7 +210,7 @@ pub(crate) fn explain_empty(
             alone: count(whole),
             without: None,
         }],
-    }
+    })
 }
 
 #[cfg(test)]

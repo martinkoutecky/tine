@@ -440,6 +440,13 @@ struct ManagedApplicationQueryInstrumentation {
     /// One complete pass equals the number of committed-undrained paths; a
     /// request that rebuilds the overlay per consumer records a multiple of it.
     navigation_overlay_pending_path_loads: usize,
+    /// How many times the Managed property registry was REBUILT (a full overlay
+    /// merge, page scan and property-row scan) versus served from the published
+    /// snapshot. The distinction has no other observable: both return the same
+    /// table. It exists because a registry read while a local suffix is pending
+    /// has no cache key at all, so it rebuilds on EVERY call (§6.2, F1).
+    property_registry_builds: usize,
+    property_registry_cache_hits: usize,
 }
 
 /// How many distinct simple-query answers one actor retains at a time.
@@ -2765,6 +2772,11 @@ pub enum SyncApplicationNavigationRequest {
     QueryRun {
         query: crate::query::ir::Query,
         view: crate::query::ir::ViewSettings,
+        /// The §4.4 runtime inputs. Carried in the request rather than read on
+        /// the actor side, because the page the query is rendered on is the
+        /// caller's fact, not the runtime's.
+        #[serde(default)]
+        context: crate::query::ir::ExecutionContext,
         max_rows: usize,
         max_bytes: usize,
     },
@@ -2772,6 +2784,8 @@ pub enum SyncApplicationNavigationRequest {
     QueryExplainEmpty {
         query: crate::query::ir::Query,
         view: crate::query::ir::ViewSettings,
+        #[serde(default)]
+        context: crate::query::ir::ExecutionContext,
         max_rows: usize,
         max_bytes: usize,
     },
@@ -2824,7 +2838,7 @@ pub enum SyncApplicationNavigationReply {
     BlockSearch(Vec<RefGroup>),
     PropertyRegistry(crate::query::ir::RegistrySnapshot),
     QueryRun(crate::query::ir::QueryResult),
-    QueryExplainEmpty(Vec<crate::query::view::EmptyExplanation>),
+    QueryExplainEmpty(crate::query::ir::ExplainEmptyResult),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -13695,6 +13709,18 @@ impl RuntimeActor {
     }
 
     #[cfg(test)]
+    fn note_application_property_registry_read(&self, cache_hit: bool) {
+        let mut current = self.managed_application_query_instrumentation.get();
+        if cache_hit {
+            current.property_registry_cache_hits =
+                current.property_registry_cache_hits.saturating_add(1);
+        } else {
+            current.property_registry_builds = current.property_registry_builds.saturating_add(1);
+        }
+        self.managed_application_query_instrumentation.set(current);
+    }
+
+    #[cfg(test)]
     fn note_managed_application_query_fuzzy_narrowing(&self, candidate_pages: usize) {
         let mut current = self.managed_application_query_instrumentation.get();
         current.fuzzy_narrowing_passes = current.fuzzy_narrowing_passes.saturating_add(1);
@@ -14372,18 +14398,22 @@ impl RuntimeActor {
             SyncApplicationNavigationRequest::QueryRun {
                 query,
                 view,
+                context,
                 max_rows,
                 max_bytes,
             } => SyncApplicationNavigationReply::QueryRun(
-                self.application_query_run_ready(&query, &view, max_rows, max_bytes)?,
+                self.application_query_run_ready(&query, &view, &context, max_rows, max_bytes)?,
             ),
             SyncApplicationNavigationRequest::QueryExplainEmpty {
                 query,
                 view,
+                context,
                 max_rows,
                 max_bytes,
             } => SyncApplicationNavigationReply::QueryExplainEmpty(
-                self.application_query_explain_empty_ready(&query, &view, max_rows, max_bytes)?,
+                self.application_query_explain_empty_ready(
+                    &query, &view, &context, max_rows, max_bytes,
+                )?,
             ),
             SyncApplicationNavigationRequest::AdvancedQuery {
                 query,
@@ -15485,10 +15515,19 @@ impl RuntimeActor {
         if let Some(key) = cache_key.as_ref() {
             if let Some(state) = self.application_property_registry.borrow().as_ref() {
                 if state.key.as_ref() == Some(key) {
+                    #[cfg(test)]
+                    self.note_application_property_registry_read(true);
                     return Ok(std::sync::Arc::clone(&state.registry));
                 }
             }
         }
+        // Past this point the whole table is rebuilt. `cache_key` is `None`
+        // exactly while this runtime holds a pending local suffix, and a `None`
+        // key can never match a published one, so every read during an edit
+        // lands here — measured, not assumed (F1, and the receipt line in
+        // `managed_property_registry_cost_while_typing_manual_receipt`).
+        #[cfg(test)]
+        self.note_application_property_registry_read(false);
         let overlay = self.application_navigation_overlay_ready()?;
         let read = self.application_materialized_read_ready()?;
 
@@ -16257,6 +16296,7 @@ impl RuntimeActor {
         &self,
         query: &crate::query::ir::Query,
         view: &crate::query::ir::ViewSettings,
+        context: &crate::query::ir::ExecutionContext,
         max_rows: usize,
         max_bytes: usize,
     ) -> Result<crate::query::ir::QueryResult, SyncApplicationPageRequestError> {
@@ -16271,6 +16311,7 @@ impl RuntimeActor {
             },
             self.graph.config.parse_config(),
             self.application_property_registry(),
+            context,
         ))
     }
 
@@ -16279,9 +16320,10 @@ impl RuntimeActor {
         &self,
         query: &crate::query::ir::Query,
         view: &crate::query::ir::ViewSettings,
+        context: &crate::query::ir::ExecutionContext,
         max_rows: usize,
         max_bytes: usize,
-    ) -> Result<Vec<crate::query::view::EmptyExplanation>, SyncApplicationPageRequestError> {
+    ) -> Result<crate::query::ir::ExplainEmptyResult, SyncApplicationPageRequestError> {
         let pages = self.application_all_query_pages_ready()?;
         Ok(crate::query::explain_application_empty_query(
             &pages,
@@ -16293,6 +16335,7 @@ impl RuntimeActor {
             },
             self.graph.config.parse_config(),
             self.application_property_registry(),
+            context,
         ))
     }
 

@@ -6505,6 +6505,52 @@
     "failBefore": "c9-lossless-leaf-fail-before.log at 3014c3b80d20fd9e76b18460f356de36112b66e7"
    },
    "notes": "Two ways to lose a condition. A malformed disabled row (`-- task = '` with an unmatched quote) was replaced by off(false) -- the author's text was gone after one save, and worse, the unmatched quote was scanned as part of the surrounding text and swallowed the next ACTIVE row. And a legacy (content-regex ...) condition had no TQL spelling at all, so editing any other row in the query serialized it away. Malformed disabled operands are now captured before the surrounding parse as a lossless raw_hex capsule carrying the exact payload and its diagnostic kind; content regexp '...' is the TQL spelling of the legacy head and parses back to the same leaf, with today's semantics preserved exactly (an invalid pattern is retained and matches false, so negating it matches true)."
+  },
+  {
+   "id": "REG-P0-QUERY-ADVANCED-RUNTIME-INPUT-001",
+   "title": "An advanced query answered for the wrong page, or for the day it was parsed on",
+   "family": "query-engine",
+   "sources": {"issues": [], "commits": [], "internal": "2026-09 query-engine campaign, packet P0-rust Wave D; SPEC 4.4 (R5), CLOSURE 2; invariants I-12, I-22"},
+   "platforms": ["all"],
+   "layer": "rust-core-query-parser",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/query/conformance.rs::one_parse_answers_differently_on_two_current_pages",
+     "crates/tine-core/src/query/conformance.rs::a_relative_date_query_answers_for_the_execution_day_across_a_rollover",
+     "crates/tine-core/src/query/conformance.rs::a_missing_runtime_input_is_strict_no_results_with_a_report",
+     "crates/tine-core/src/query/conformance.rs::run_explain_and_export_agree_on_results_and_report",
+     "crates/tine-core/src/query/conformance.rs::explain_empty_reports_a_failed_resolution_without_misleading_counts",
+     "crates/tine-core/src/query/conformance.rs::resolution_replaces_the_provisional_inspection_diagnostic",
+     "crates/tine-core/src/query/conformance.rs::og_and_tql_resolve_to_themselves_with_an_empty_report"
+    ],
+    "scenario": "query-engine.advanced-runtime-inputs-bind-at-execution",
+    "failBefore": "tine-agents/evidence/qe/p0-rust/wave-d/d1-fail-before.log (base f8149fbc)"
+   },
+   "notes": "An advanced (datalog) query whose inputs are :current-page or a relative date has no answer until it is executed: the same authored text means different things on two pages and on two days. Binding those inputs anywhere but at execution -- in the parse, or once per cache fill -- shows the reader another page's linked references, or yesterday's journal window, with no sign anything is stale. One resolver now runs before invalidity checks, normalization, cache lookup and the explain-empty decomposition: query_parse stays context-free and retains the complete authored form, and resolve_for_execution(query, context, today) lowers it through the ONE existing advanced_pred, returning the bound query plus the ran/ignored/supported report. A resolution that cannot bind an input answers with strict no results and says so in the report rather than answering with a plausible wrong set, and run, explain and export all go through the same resolver, so they cannot disagree."
+  },
+  {
+   "id": "REG-P0-QUERY-CONTENT-MATCH-ENGINE-001",
+   "title": "A content match answer depended on which engine ran it",
+   "family": "query-engine",
+   "sources": {"issues": [], "commits": [], "internal": "2026-09 query-engine campaign, packet P0-rust Wave D; SPEC 5.10 (R3), CLOSURE 4; invariants I-12, I-13"},
+   "platforms": ["all"],
+   "layer": "rust-core-query-parser",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/query/conformance.rs::match_is_a_substring_search_not_a_word_token_search",
+     "crates/tine-core/src/query/conformance.rs::match_carries_the_whole_search_grammar_onto_the_leaf",
+     "crates/tine-core/src/query/conformance.rs::an_empty_or_invalid_match_is_a_false_leaf_including_under_not",
+     "crates/tine-core/src/query/conformance.rs::match_is_legal_only_on_content",
+     "crates/tine-core/src/query/conformance.rs::the_legacy_search_head_and_content_match_are_the_same_leaf",
+     "crates/tine-core/src/query/conformance.rs::one_parse_of_the_match_payload_serves_every_engine",
+     "crates/tine-core/src/query/conformance.rs::every_displayed_search_example_holds_for_content_match"
+    ],
+    "scenario": "query-engine.content-match-is-one-semantic-contract",
+    "failBefore": "tine-agents/evidence/qe/p0-rust/wave-d/d2-fail-before.log (base f8149fbc)"
+   },
+   "notes": "`content match` promises the graph search box's semantics: substring terms (so `foobar` answers `foo`, `oob` and `oo`), quoted phrases with their internal whitespace, OR arms, negated terms and an exclusion-only query. A standard word-token FTS index gets the first three wrong, so the walk and a token-index route would answer the same query differently and the user would watch results appear and disappear by route rather than by content. The leaf now carries the payload parsed ONCE by the search box's own search_query::Matcher, reached through Filter::match_sources and CompiledLeaves::match_program, so any future engine inherits that parse instead of re-deriving it; an empty or invalid-regex Match is a false leaf, including under `not`; and Match is legal only on `content`. The named fixture list -- foobar/foo/oob/oo, phrases with leading, repeated and tab or newline whitespace, whitespace-only terms, OR arms mixing short and long, negatives, exclusion-only, invalid regex, Unicode, escaped quotes -- plus every example the search help text displays is the corpus the future SQL route must reproduce row for row."
   }
  ]
 }

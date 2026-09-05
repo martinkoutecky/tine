@@ -273,6 +273,26 @@ pub enum Leaf {
     },
 }
 
+impl Leaf {
+    /// This leaf's `content match` payload, or `None` (SPEC §5.10, §3.3).
+    ///
+    /// `Match` is legal on `content` and on nothing else — §4.2.3's matrix says
+    /// so and `tql::op_applies` enforces it at parse time — so this recognizer
+    /// is deliberately exact rather than "any leaf whose op is Match": a Match
+    /// on another attribute is not a search query with a different subject, it
+    /// is a leaf that should not exist.
+    pub fn match_source(&self) -> Option<&str> {
+        match self {
+            Leaf::Attr {
+                attr: Attr::Content,
+                op: CmpOp::Match,
+                value: Value::Text { text },
+            } => Some(text),
+            _ => None,
+        }
+    }
+}
+
 /// The boolean tree. Identity elements are explicit: `And([])` is [`Filter::True`]
 /// and `Or([])` is [`Filter::False`] after [`Query::normalized`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -427,6 +447,45 @@ impl Filter {
             }
             Filter::Not { inner } | Filter::Off { inner } => inner.any_leaf(test),
             Filter::Raw { .. } | Filter::True | Filter::False => false,
+        }
+    }
+
+    /// Every `content match` payload in this tree, in depth-first order
+    /// (SPEC §5.10, R3).
+    ///
+    /// **The Match leaf's payload is the SEARCH QUERY, and it is parsed exactly
+    /// once per execution.** This is the one place the tree is asked which of
+    /// its leaves carry one; the walk (`eval::CompiledLeaves::for_query`) and
+    /// P1's SQL compiler both read it and both consume the SAME parsed
+    /// `search_query::Matcher` that the parse produces, so neither can end up
+    /// with its own idea of what `foo -draft OR "a b"` means (I-12). Raw FTS
+    /// token syntax is NOT this language.
+    pub fn match_sources(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        self.for_each_leaf(&mut |leaf| {
+            if let Some(text) = leaf.match_source() {
+                out.push(text);
+            }
+        });
+        out
+    }
+
+    /// Depth-first visit of every leaf of the tree.
+    pub fn for_each_leaf<'a>(&'a self, visit: &mut impl FnMut(&'a Leaf)) {
+        match self {
+            Filter::Leaf { leaf } => {
+                visit(leaf);
+                if let Leaf::Rel { pred, .. } = leaf {
+                    pred.for_each_leaf(visit);
+                }
+            }
+            Filter::And { items } | Filter::Or { items } => {
+                for item in items {
+                    item.for_each_leaf(visit);
+                }
+            }
+            Filter::Not { inner } | Filter::Off { inner } => inner.for_each_leaf(visit),
+            Filter::Raw { .. } | Filter::True | Filter::False => {}
         }
     }
 
@@ -925,6 +984,56 @@ pub struct QueryResult {
     pub report: QueryReport,
     pub total: usize,
     pub exceeded: bool,
+}
+
+/// The runtime inputs an execution binds against (SPEC §4.4, §7.1, R5).
+///
+/// It exists because an advanced query's answer is a function of WHERE and WHEN
+/// it runs, not only of its text: `?current-page` resolves against the page the
+/// macro is rendered on, and `:today` / relative-date inputs against the day the
+/// execution happens on. Both used to be folded in at parse time, which froze
+/// one page's and one day's answer into a value the caller could then reuse
+/// anywhere. `query_run` and `query_explain_empty` therefore take this, and
+/// `crate::query::resolve_for_execution` is the ONE place it is consumed.
+///
+/// The execution DAY is deliberately not a field: it is a single snapshot taken
+/// per execution by the resolver, so that a rollover between the page-anchored
+/// and block-anchored halves of one answer is impossible.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionContext {
+    /// The page the query is being rendered on, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_page: Option<String>,
+}
+
+impl ExecutionContext {
+    /// The context of an execution with no owning page — an export, a test, a
+    /// command whose caller did not supply one. It is NOT "the current page is
+    /// unknown, guess": `?current-page` simply has no binding and the clause
+    /// that needs it stays unsupported (§4.4).
+    pub fn none() -> ExecutionContext {
+        ExecutionContext::default()
+    }
+
+    pub fn on_page(page: impl Into<String>) -> ExecutionContext {
+        ExecutionContext {
+            current_page: Some(page.into()),
+        }
+    }
+}
+
+/// `query_explain_empty`'s complete answer (SPEC §7.1, §4.4).
+///
+/// The rows alone were not enough: when execution-time resolution fails there
+/// are no honest counts to report, and returning an empty row list without the
+/// diagnostics and the support report would read as "every conjunct matches
+/// nothing" instead of "this query was never bound".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplainEmptyResult {
+    pub rows: Vec<crate::query::view::EmptyExplanation>,
+    #[serde(default)]
+    pub diagnostics: Vec<Diagnostic>,
+    pub report: QueryReport,
 }
 
 // ---------------------------------------------------------------------------

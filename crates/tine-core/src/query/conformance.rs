@@ -298,6 +298,7 @@ fn the_page_anchor_returns_page_rows_and_reads_no_document() {
         &crate::query::GraphQueryPages(&graph),
         &query,
         &view,
+        JournalDate::today(),
         Bounds::unbounded(),
     );
     let QueryRows::Page { pages } = &result.rows else {
@@ -316,6 +317,7 @@ fn the_page_anchor_returns_page_rows_and_reads_no_document() {
         &crate::query::GraphQueryPages(&graph),
         &parent,
         &view,
+        JournalDate::today(),
         Bounds::unbounded(),
     );
     let QueryRows::Page { pages } = &result.rows else {
@@ -337,6 +339,7 @@ fn the_journal_page_attribute_is_a_page_row_leaf() {
         &crate::query::GraphQueryPages(&graph),
         &query,
         &view,
+        JournalDate::today(),
         Bounds::unbounded(),
     );
     let QueryRows::Page { pages } = &result.rows else {
@@ -368,6 +371,7 @@ fn the_two_dialects_agree_row_for_row() {
                 &crate::query::GraphQueryPages(&graph),
                 &query,
                 &view,
+                JournalDate::today(),
                 Bounds::unbounded(),
             );
             let QueryRows::Block { groups } = result.rows else {
@@ -405,6 +409,7 @@ fn all_page_tags_selects_every_page_carrying_a_tag() {
         &crate::query::GraphQueryPages(&graph),
         &query,
         &view,
+        JournalDate::today(),
         Bounds::unbounded(),
     );
     let QueryRows::Page { pages } = &result.rows else {
@@ -853,20 +858,46 @@ fn each_mode_changes_only_the_answers_its_decision_owns() {
 /// `type-attributed` from the other labels — and the distinguishing row is the
 /// TEXT value `high`, which `both` refuses on a number key while every untyped
 /// mode compares as text.
+///
+/// **Corrected in Wave D** (SPEC §8's v16 evidence correction: "`^\d+$` alone
+/// is not the complete OG comparator"). This test used to assert that all five
+/// modes answer `(property score 1)` with `block I` alone. OG answers it with
+/// BOTH blocks — measured on this exact graph:
+///
+/// ```text
+/// $ ./q.sh probe.cljs <this graph> '(property score 1)' '(property score high)'
+/// "(property score 1)"    => ("block I" "block J")
+/// "(property score high)" => ("block J")
+/// ```
+///
+/// because its `:property` rule ends in `(contains? ?v ?val)` and `1` is a
+/// valid index into the four characters of `high`. The old expectation was a
+/// derivation from an incomplete rule; this one is a measurement.
 #[test]
 fn the_typed_case_separates_both_untyped_from_both() {
     let (graph, dir) = case_graph("typed");
 
-    // OG's own integer rule holds in all four non-`both` modes (v13 §8.1, Y3),
-    // and `both` agrees because the declared type is `number`.
-    for mode in CompareMode::all() {
+    // OG's integer rule AND its string-index clause hold in all four non-`both`
+    // modes (v13 §8.1 Y3, plus §8's v16 correction). `both` coerces instead, so
+    // `block J` — whose `high` is no number — drops out: `type-attributed`.
+    for mode in [
+        CompareMode::Og,
+        CompareMode::Q20Only,
+        CompareMode::Q21Only,
+        CompareMode::BothUntyped,
+    ] {
         assert_eq!(
             matched_in(&graph, "(property score 1)", mode),
-            vec!["block I".to_string()],
-            "`01` is the integer 1 under {}",
+            vec!["block I".to_string(), "block J".to_string()],
+            "`01` is the integer 1, and `1` indexes into `high`, under {}",
             mode.label()
         );
     }
+    assert_eq!(
+        matched_in(&graph, "(property score 1)", CompareMode::Both),
+        vec!["block I".to_string()],
+        "the declared number type coerces `01` and refuses `high`"
+    );
 
     // The text value on a number key: text under every untyped mode, refused
     // under `both`. This is the ONLY row in the matrix where `both-untyped`
@@ -998,6 +1029,7 @@ fn tql_rows(graph: &Graph, source: &str) -> Vec<String> {
         &crate::query::GraphQueryPages(graph),
         &query,
         &view,
+        JournalDate::today(),
         usize::MAX,
         usize::MAX,
     );
@@ -1692,4 +1724,773 @@ fn a_tql_macro_title_edit_preserves_the_form_and_writes_the_new_map_once() {
     assert_eq!(printed, "@block and [[a]] {:title \"New\"}");
     let raw = format!("{{{{tine-query {printed}}}}}");
     assert_eq!(query_macro_extent(&raw).expect("a macro").argument, printed);
+}
+
+// ---------------------------------------------------------------------------
+// SPEC §4.4 (R5): execution-time binding
+// ---------------------------------------------------------------------------
+
+/// A two-page graph whose blocks reference each other, so an advanced query
+/// bound to `?current-page` has a different, non-empty answer on each page.
+fn binding_graph(label: &str) -> (Graph, PathBuf) {
+    let dir =
+        std::env::temp_dir().join(format!("tine-query-binding-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("pages")).expect("pages");
+    fs::create_dir_all(dir.join("journals")).expect("journals");
+    // Neither subject page references the other: a block's own page counts as a
+    // reference to it (`:block/path-refs` includes the page, `eval_refs`), so a
+    // graph where Alpha and Beta point at each other would give BOTH pages the
+    // same three-block answer and prove nothing.
+    fs::write(dir.join("pages/Alpha.md"), "- alpha body\n").expect("page");
+    fs::write(dir.join("pages/Beta.md"), "- beta body\n").expect("page");
+    fs::write(
+        dir.join("pages/Links.md"),
+        "- links to [[Alpha]]\n- links to [[Beta]] and more\n",
+    )
+    .expect("page");
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+    (graph, dir)
+}
+
+/// The `?current-page` advanced form: every block referencing the page the
+/// query is rendered on. `:inputs [:current-page]` is exactly the shape
+/// Logseq's own "linked references" template uses.
+const CURRENT_PAGE_QUERY: &str = "{:query [:find (pull ?b [*]) \
+:in $ ?p :where [?page :block/name ?p] [?b :block/refs ?page]] \
+:inputs [:current-page]}";
+
+fn advanced_query(source: &str) -> crate::query::ir::Query {
+    crate::query::parse_query_input(
+        source,
+        QueryInput::Advanced,
+        JournalDate::today(),
+        crate::query::registry::Registry::none(),
+    )
+    .0
+}
+
+fn block_lines(result: &crate::query::ir::QueryResult) -> Vec<String> {
+    let QueryRows::Block { groups } = &result.rows else {
+        panic!("a block-anchored query returns block groups");
+    };
+    let mut out: Vec<String> = groups
+        .iter()
+        .flat_map(|group| group.blocks.iter())
+        .map(|block| {
+            block
+                .raw
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .trim_start_matches("- ")
+                .to_string()
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// §4.4 acceptance: parse ONCE, then execute with current page A and with
+/// current page B. The two answers must differ, which is only possible if the
+/// binding happens at execution and not in the parse the two executions share.
+#[test]
+fn one_parse_answers_differently_on_two_current_pages() {
+    let (graph, dir) = binding_graph("two-pages");
+    let query = advanced_query(CURRENT_PAGE_QUERY);
+    // The parse is context-free: it retained the complete authored form and
+    // froze no answer into the IR (§4.4).
+    let Source::Advanced { original, .. } = &query.source else {
+        panic!("{:?}", query.source);
+    };
+    assert_eq!(original, CURRENT_PAGE_QUERY);
+
+    let view = ViewSettings::default();
+    let bounds = Bounds::unbounded();
+    let on_alpha = crate::query::run_query_result_ir(
+        &graph,
+        &query,
+        &view,
+        bounds,
+        &crate::query::ir::ExecutionContext::on_page("Alpha"),
+    );
+    let on_beta = crate::query::run_query_result_ir(
+        &graph,
+        &query,
+        &view,
+        bounds,
+        &crate::query::ir::ExecutionContext::on_page("Beta"),
+    );
+
+    assert_eq!(
+        block_lines(&on_beta),
+        vec!["beta body", "links to [[Beta]] and more"]
+    );
+    assert_eq!(
+        block_lines(&on_alpha),
+        vec!["alpha body", "links to [[Alpha]]"]
+    );
+    assert!(
+        on_alpha.report.supported && on_beta.report.supported,
+        "a bound advanced query is supported: {:?} / {:?}",
+        on_alpha.report,
+        on_beta.report
+    );
+    assert!(on_alpha
+        .report
+        .ran
+        .contains(&"current-page-ref".to_string()));
+
+    // Re-executing on Alpha after Beta answers for Alpha again: no binding of
+    // one page survives into the next execution.
+    let again = crate::query::run_query_result_ir(
+        &graph,
+        &query,
+        &view,
+        bounds,
+        &crate::query::ir::ExecutionContext::on_page("Alpha"),
+    );
+    assert_eq!(block_lines(&again), block_lines(&on_alpha));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §4.4: an absent current page is not a guess and not a frozen answer — the
+/// clause stays unsupported, the query returns nothing, and the report says so.
+#[test]
+fn a_missing_runtime_input_is_strict_no_results_with_a_report() {
+    let (graph, dir) = binding_graph("no-page");
+    let query = advanced_query(CURRENT_PAGE_QUERY);
+    let result = crate::query::run_query_result_ir(
+        &graph,
+        &query,
+        &ViewSettings::default(),
+        Bounds::unbounded(),
+        &crate::query::ir::ExecutionContext::none(),
+    );
+    assert!(block_lines(&result).is_empty(), "{:?}", result.rows);
+    assert!(
+        !result.report.supported,
+        "a clause whose required input is missing is not supported: {:?}",
+        result.report
+    );
+    // Strict: the recognized half of the tree is not run on its own.
+    assert_eq!(result.total, 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §4.4: ONE execution-day snapshot. `resolve_for_execution` is handed the day,
+/// so a relative-date advanced query answers for the day it was executed on and
+/// a rollover produces a different answer from the SAME parsed IR — never a
+/// mixture of two days inside one answer.
+#[test]
+fn a_relative_date_query_answers_for_the_execution_day_across_a_rollover() {
+    let dir = std::env::temp_dir().join(format!("tine-query-rollover-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("pages")).expect("pages");
+    fs::create_dir_all(dir.join("journals")).expect("journals");
+    fs::write(dir.join("journals/2026_09_04.md"), "- thursday entry\n").expect("journal");
+    fs::write(dir.join("journals/2026_09_05.md"), "- friday entry\n").expect("journal");
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+
+    // `(between ?b -7d today)` is the shape the advanced lowerer recognizes, and
+    // both of its bounds are relative to the execution day.
+    let source = "[:find (pull ?b [*]) :where (between ?b -7d today)]";
+    let query = advanced_query(source);
+    let context = crate::query::ir::ExecutionContext::none();
+
+    let thursday = JournalDate {
+        year: 2026,
+        month: 9,
+        day: 4,
+    };
+    let friday = JournalDate {
+        year: 2026,
+        month: 9,
+        day: 5,
+    };
+    // The lowering reads the execution day the resolver was handed, so the two
+    // resolutions of ONE parsed query differ by exactly one day.
+    let before = crate::query::resolve_for_execution(&query, &context, thursday);
+    let after = crate::query::resolve_for_execution(&query, &context, friday);
+    assert_eq!(before.today(), thursday);
+    assert_eq!(after.today(), friday);
+    assert_ne!(
+        before.query().filter,
+        after.query().filter,
+        "a relative-date advanced query resolves against the execution day"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §4.4: run, explain-empty and export agree — same rows, same support report,
+/// on the same current page.
+#[test]
+fn run_explain_and_export_agree_on_results_and_report() {
+    let (graph, dir) = binding_graph("agree");
+    let query = advanced_query(CURRENT_PAGE_QUERY);
+    let view = ViewSettings::default();
+    let bounds = Bounds::unbounded();
+    let context = crate::query::ir::ExecutionContext::on_page("Beta");
+
+    let run = crate::query::run_query_result_ir(&graph, &query, &view, bounds, &context);
+    let explained = crate::query::explain_empty_query(&graph, &query, &view, bounds, &context);
+    let exported = crate::query::export_query_subtrees(
+        &graph,
+        &[crate::query::QueryExportSpec {
+            key: "k".into(),
+            query: CURRENT_PAGE_QUERY.into(),
+            advanced: true,
+            current_page: Some("Beta".into()),
+        }],
+        64,
+        64,
+        1024,
+        1 << 20,
+    );
+
+    assert_eq!(run.report, explained.report, "run and explain report alike");
+    assert_eq!(run.total, 2, "{:?}", run.rows);
+    assert_eq!(
+        block_lines(&run),
+        vec!["beta body", "links to [[Beta]] and more"]
+    );
+    assert_eq!(
+        exported.results[0].total, run.total,
+        "the export binds the same current page as the run"
+    );
+    // The explanation counts the BOUND tree, not the advanced placeholder: a
+    // placeholder would have reported a single `false` conjunct matching zero.
+    assert_eq!(explained.rows.len(), 1, "{:?}", explained.rows);
+    assert_eq!(explained.rows[0].alone, run.total);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §4.4: when resolution fails, explain-empty returns the diagnostics and the
+/// support report and NO counts — a table of zeroes would read as "every
+/// conjunct matches nothing", which is a different and false claim.
+#[test]
+fn explain_empty_reports_a_failed_resolution_without_misleading_counts() {
+    let (graph, dir) = binding_graph("explain-unresolved");
+    let query = advanced_query(CURRENT_PAGE_QUERY);
+    let explained = crate::query::explain_empty_query(
+        &graph,
+        &query,
+        &ViewSettings::default(),
+        Bounds::unbounded(),
+        &crate::query::ir::ExecutionContext::none(),
+    );
+    assert!(explained.rows.is_empty(), "{:?}", explained.rows);
+    assert!(!explained.report.supported);
+    assert!(
+        !explained.diagnostics.is_empty(),
+        "a refused binding still says why"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §4.4: the parse's provisional inspection diagnostic is REPLACED by the bound
+/// lowering's verdict — a successfully bound query carries no "this is datalog"
+/// syntax error, and therefore is not treated as invalid.
+#[test]
+fn resolution_replaces_the_provisional_inspection_diagnostic() {
+    let query = advanced_query(CURRENT_PAGE_QUERY);
+    assert!(
+        query.is_invalid(),
+        "the unresolved preview is not executable IR (§4.4)"
+    );
+    let resolved = crate::query::resolve_for_execution(
+        &query,
+        &crate::query::ir::ExecutionContext::on_page("Beta"),
+        JournalDate::today(),
+    );
+    assert!(
+        resolved.query().diagnostics.is_empty(),
+        "a bound query carries the lowering's verdict, not the inspection's: {:?}",
+        resolved.query().diagnostics
+    );
+    assert!(resolved.is_executable());
+    // The immutable source survives the binding, so printing still round-trips.
+    assert_eq!(
+        resolved.query().source.original(),
+        Some(CURRENT_PAGE_QUERY),
+        "the authored form stays available for printing (§4.4)"
+    );
+}
+
+/// §4.4: an OG or TQL query resolves to itself with an empty `ignored` and
+/// `supported = true` — the resolver is one boundary for every source, not an
+/// advanced-only detour.
+#[test]
+fn og_and_tql_resolve_to_themselves_with_an_empty_report() {
+    for (text, dialect) in [
+        ("(task TODO)", QueryDialect::Og),
+        ("@block and task = 'TODO'", QueryDialect::Tql),
+    ] {
+        let (query, _) = parse_query_text(text, dialect, JournalDate::today());
+        let resolved = crate::query::resolve_for_execution(
+            &query,
+            &crate::query::ir::ExecutionContext::on_page("Anywhere"),
+            JournalDate::today(),
+        );
+        assert_eq!(resolved.query().filter, query.filter, "{text}");
+        assert!(resolved.report().ignored.is_empty(), "{text}");
+        assert!(resolved.report().ran.is_empty(), "{text}");
+        assert!(resolved.report().supported, "{text}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SPEC §5.10 (R3): `content match` is ONE semantic contract
+// ---------------------------------------------------------------------------
+
+/// The Match fixture graph. Every block is one case of §5.10's acceptance list,
+/// written as ordinary Markdown so the fixture is readable as a graph (I-4).
+fn match_graph(label: &str) -> (Graph, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("tine-query-match-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("pages")).expect("pages");
+    fs::create_dir_all(dir.join("journals")).expect("journals");
+    fs::write(
+        dir.join("pages/Match.md"),
+        // A substring case, a phrase with repeated internal spaces, a phrase
+        // spanning a line break and a tab, a Unicode case, a quote case and a
+        // negative case.
+        "- foobar\n\
+         - a  double  spaced phrase\n\
+         - leading and trailing\n\
+         - wrapped phrase across\n\ta line break\n\
+         - über café résumé\n\
+         - he said \"hello there\" loudly\n\
+         - foo draft\n\
+         - ABC uppercase run\n",
+    )
+    .expect("page");
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+    (graph, dir)
+}
+
+/// The first line of every block a TQL query returns, sorted.
+fn match_rows(graph: &Graph, tql: &str) -> Vec<String> {
+    let (query, view) = parse_query_text(tql, QueryDialect::Tql, JournalDate::today());
+    assert!(
+        !query.is_invalid(),
+        "{tql} did not parse: {:?}",
+        query.diagnostics
+    );
+    let result = crate::query::run_query_result_ir(
+        graph,
+        &query,
+        &view,
+        Bounds::unbounded(),
+        &crate::query::ir::ExecutionContext::none(),
+    );
+    block_lines(&result)
+}
+
+/// §5.10: substring terms, not word tokens. `foobar` answers `foo`, `oob` and
+/// `oo` — the three cases an FTS word-token index would get wrong, which is
+/// exactly why `search_fts` is not a substitute for this leaf.
+#[test]
+fn match_is_a_substring_search_not_a_word_token_search() {
+    let (graph, dir) = match_graph("substring");
+    for needle in ["foo", "oob", "oo", "bar", "foobar"] {
+        let rows = match_rows(&graph, &format!("@block and content match '{needle}'"));
+        assert!(
+            rows.iter().any(|line| line == "foobar"),
+            "`{needle}` is a substring of `foobar`: {rows:?}"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §5.10: the whole grammar, on the leaf. Quoted phrases keep their internal
+/// whitespace verbatim (including repeated spaces and a line break), negatives
+/// exclude, OR arms may mix short and long terms, and an exclusion-only input
+/// is discarded so the query matches nothing.
+#[test]
+fn match_carries_the_whole_search_grammar_onto_the_leaf() {
+    let (graph, dir) = match_graph("grammar");
+
+    // A quoted phrase is contiguous: the doubled space is part of the needle.
+    assert_eq!(
+        match_rows(&graph, "@block and content match '\"a  double\"'"),
+        vec!["a  double  spaced phrase"]
+    );
+    assert!(
+        match_rows(&graph, "@block and content match '\"a double\"'").is_empty(),
+        "a single space is not the doubled one"
+    );
+    // A phrase with a leading space still matches — the needle is the text
+    // between the quotes, whitespace and all.
+    assert_eq!(
+        match_rows(&graph, "@block and content match '\" spaced\"'"),
+        vec!["a  double  spaced phrase"]
+    );
+    // A phrase spanning the block's line break and its leading tab.
+    assert_eq!(
+        match_rows(&graph, "@block and content match '\"across\"'"),
+        vec!["wrapped phrase across"]
+    );
+
+    // Whitespace-only term: nothing is left to search for.
+    assert!(match_rows(&graph, "@block and content match '\"   \"'").is_empty());
+
+    // AND of two terms, order-independent.
+    assert_eq!(
+        match_rows(&graph, "@block and content match 'phrase spaced'"),
+        vec!["a  double  spaced phrase"]
+    );
+
+    // OR of a short and a long arm.
+    let mixed = match_rows(&graph, "@block and content match 'oo OR uppercase'");
+    assert!(
+        mixed.contains(&"foobar".to_string()) && mixed.contains(&"ABC uppercase run".to_string())
+    );
+
+    // Negative term excludes.
+    let positives = match_rows(&graph, "@block and content match 'foo'");
+    assert!(positives.contains(&"foo draft".to_string()));
+    let excluded = match_rows(&graph, "@block and content match 'foo -draft'");
+    assert!(
+        !excluded.contains(&"foo draft".to_string()) && excluded.contains(&"foobar".to_string()),
+        "{excluded:?}"
+    );
+
+    // Exclusion-only input: the group has no positive term, is discarded, and
+    // the whole query is Empty — which is a FALSE leaf, not "everything".
+    assert!(match_rows(&graph, "@block and content match '-draft'").is_empty());
+
+    // Unicode: folding is lowercase-then-NFC, so a composed and a decomposed
+    // spelling of the same accent are the same needle, and accents are NOT
+    // stripped.
+    assert_eq!(
+        match_rows(&graph, "@block and content match 'CAFE\u{301}'"),
+        vec!["über café résumé"]
+    );
+    assert!(
+        match_rows(&graph, "@block and content match 'cafe'").is_empty(),
+        "NFC folding does not strip accents"
+    );
+
+    // A regex tests the ORIGINAL visible text, so it is case-sensitive.
+    assert_eq!(
+        match_rows(&graph, "@block and content match '/[A-Z]{3}/'"),
+        vec!["ABC uppercase run"]
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §5.10: an empty or invalid-regex Match is a FALSE leaf — including under
+/// `not`, where classical negation therefore makes it true. It is never an
+/// enabled whole-query diagnostic that would refuse the surrounding query.
+#[test]
+fn an_empty_or_invalid_match_is_a_false_leaf_including_under_not() {
+    let (graph, dir) = match_graph("false-leaf");
+    let all = match_rows(&graph, "@block and content like '%'");
+    assert!(all.len() >= 8, "{all:?}");
+
+    for source in ["''", "'   '", "'-only'", "'/[unclosed/'"] {
+        let tql = format!("@block and content match {source}");
+        let (query, _) = parse_query_text(&tql, QueryDialect::Tql, JournalDate::today());
+        assert!(
+            !query.is_invalid(),
+            "{tql} is a false leaf, not a refused query: {:?}",
+            query.diagnostics
+        );
+        assert!(match_rows(&graph, &tql).is_empty(), "{tql}");
+        assert_eq!(
+            match_rows(&graph, &format!("@block and not (content match {source})")),
+            all,
+            "negating a false leaf is true for every row: {tql}"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §5.10, §3.3, §4.2.3: `Match` is legal on `content` and on nothing else, and
+/// the IR's own recognizer says so.
+#[test]
+fn match_is_legal_only_on_content() {
+    use crate::query::ir::{Attr, CmpOp, Filter, Value};
+    for (tql, ok) in [
+        ("@block and content match 'x'", true),
+        ("@block and task match 'x'", false),
+        ("@block and priority match 'x'", false),
+        (
+            "@block and any(props, key = 'k' and value match 'x')",
+            false,
+        ),
+        ("@page and name match 'x'", false),
+    ] {
+        let (query, _) = parse_query_text(tql, QueryDialect::Tql, JournalDate::today());
+        assert_eq!(!query.is_invalid(), ok, "{tql}: {:?}", query.diagnostics);
+    }
+    // The recognizer is exact: a Match on another attribute is not a search
+    // query with a different subject.
+    assert_eq!(
+        Filter::attr(Attr::Content, CmpOp::Match, Value::text("foo")).match_sources(),
+        vec!["foo"]
+    );
+    assert!(Filter::attr(Attr::Task, CmpOp::Match, Value::text("foo"))
+        .match_sources()
+        .is_empty());
+    assert!(Filter::attr(Attr::Content, CmpOp::Like, Value::text("foo"))
+        .match_sources()
+        .is_empty());
+}
+
+/// §5.10: legacy `(search …)` and `content match …` are the SAME leaf, with the
+/// same parsed payload — so an OG-authored query and a TQL-authored one cannot
+/// answer differently.
+#[test]
+fn the_legacy_search_head_and_content_match_are_the_same_leaf() {
+    let (graph, dir) = match_graph("same-leaf");
+    let (og, _) = parse_query_text(
+        "(search \"foo -draft\")",
+        QueryDialect::Og,
+        JournalDate::today(),
+    );
+    let (tql, _) = parse_query_text(
+        "@block and content match 'foo -draft'",
+        QueryDialect::Tql,
+        JournalDate::today(),
+    );
+    assert_eq!(og.normalized().filter, tql.normalized().filter);
+    assert_eq!(og.filter.match_sources(), vec!["foo -draft"]);
+
+    let bounds = Bounds::unbounded();
+    let context = crate::query::ir::ExecutionContext::none();
+    let view = ViewSettings::default();
+    assert_eq!(
+        block_lines(&crate::query::run_query_result_ir(
+            &graph, &og, &view, bounds, &context
+        )),
+        block_lines(&crate::query::run_query_result_ir(
+            &graph, &tql, &view, bounds, &context
+        )),
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// §5.10: the payload is parsed ONCE per execution and both engines read the
+/// same parsed value. This pins the shared boundary P1's SQL compiler consumes:
+/// the walk's compiled leaves and the IR's own recognizer agree, term for term.
+#[test]
+fn one_parse_of_the_match_payload_serves_every_engine() {
+    let (query, _) = parse_query_text(
+        "@block and ((content match 'foo -draft OR \"a b\"') or (content match 'other'))",
+        QueryDialect::Tql,
+        JournalDate::today(),
+    );
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+    let filter = query.evaluable_filter();
+    let sources = filter.match_sources();
+    assert_eq!(sources, vec!["foo -draft OR \"a b\"", "other"]);
+
+    let compiled = crate::query::eval::CompiledLeaves::for_query(&filter);
+    let program = compiled
+        .match_program(sources[0])
+        .expect("the walk's parsed payload");
+    let crate::search_query::Matcher::Boolean(groups) = program else {
+        panic!("{program:?}");
+    };
+    // The Term groups P1 lowers to `instr` predicates, exactly as parsed.
+    assert_eq!(groups.len(), 2, "{groups:?}");
+    assert_eq!(groups[0][0].text, "foo");
+    assert!(!groups[0][0].negated);
+    assert_eq!(groups[0][1].text, "draft");
+    assert!(groups[0][1].negated);
+    assert_eq!(groups[1][0].text, "a b");
+    assert!(groups[1][0].quoted);
+
+    // Emptiness is a property of the parsed Term, not of the stored string —
+    // §5.10 requires the SQL side to test it there and not with SQLite
+    // `length`, which stops at NUL.
+    let (empty, _) = parse_query_text(
+        "@block and content match '\"\"'",
+        QueryDialect::Tql,
+        JournalDate::today(),
+    );
+    let empty_filter = empty.evaluable_filter();
+    let compiled = crate::query::eval::CompiledLeaves::for_query(&empty_filter);
+    assert!(matches!(
+        compiled.match_program(empty_filter.match_sources()[0]),
+        Some(crate::search_query::Matcher::Empty)
+    ));
+}
+
+/// The help text Ctrl-K shows IS this leaf's grammar: every row of
+/// `SEARCH_SYNTAX_EXAMPLES` is executed through `content match`, so visible help
+/// can never describe syntax the query leaf does not implement.
+#[test]
+fn every_displayed_search_example_holds_for_content_match() {
+    let dir = std::env::temp_dir().join(format!("tine-query-match-help-{}", std::process::id()));
+    for (index, (query, matching, non_matching)) in crate::search_query::SEARCH_SYNTAX_EXAMPLES
+        .iter()
+        .enumerate()
+    {
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).expect("pages");
+        fs::create_dir_all(dir.join("journals")).expect("journals");
+        fs::write(
+            dir.join("pages/Help.md"),
+            format!("- yes {matching}\n- no {non_matching}\n"),
+        )
+        .expect("page");
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let escaped = query.replace('\'', "''");
+        let rows = match_rows(&graph, &format!("@block and content match '{escaped}'"));
+        assert_eq!(
+            rows,
+            vec![format!("yes {matching}")],
+            "example {index} (`{query}`) must match `{matching}` and not `{non_matching}`"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// --- SPEC §8/§8.1: OG's own `:property` rule, and the line production does not
+// cross -------------------------------------------------------------------
+
+/// The `score:: 1.50` fixture SPEC §8's v16 evidence correction requires, as a
+/// graph rather than as a comment. It is the same three blocks
+/// `og-query-oracle/fixture-gate1-graph` carries, so the assertions below and
+/// gate 1 are measuring one thing.
+fn og_rule_graph(label: &str) -> (Graph, PathBuf) {
+    let dir =
+        std::env::temp_dir().join(format!("tine-query-ogrule-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("pages")).expect("pages");
+    fs::create_dir_all(dir.join("journals")).expect("journals");
+    fs::write(
+        dir.join("pages/Props.md"),
+        "- zeta\n  score:: 1.50\n- eta\n  score:: 2\n",
+    )
+    .expect("page");
+    let graph = Graph::open(&dir);
+    graph.warm_cache();
+    (graph, dir)
+}
+
+/// The four counterfactual modes reproduce OG's `:property` rule
+/// (`rules.cljc:129-138`) — including its third clause, `contains?` on a
+/// string, which in ClojureScript is an INDEX lookup.
+///
+/// Every expectation here is a MEASURED OG answer, not a derivation:
+///
+/// ```text
+/// $ ./q.sh probe.cljs fixture-gate1-graph '(property score 2)' …
+/// "(property score 2)"   => ("eta" "zeta")
+/// "(property score 1.5)" => ("zeta")
+/// "(property score 0)"   => ("zeta")
+/// "(property score 4)"   => ()
+/// "(property score abc)" => ()
+/// ```
+///
+/// `2`, `1.5` and `0` are all valid indices into the four characters of
+/// `1.50`; `4` is not (`(< k (.-length s))` is strict) and `abc` coerces to
+/// NaN. Wave B's harness waived this row as `agree-og-artifact` instead of
+/// modelling it; CLOSURE §2 rejects that waiver.
+#[test]
+fn the_og_modes_reproduce_ogs_measured_string_index_property_rule() {
+    let (graph, dir) = og_rule_graph("string-index");
+    let measured: &[(&str, &[&str])] = &[
+        ("(property score 2)", &["eta", "zeta"]),
+        ("(property score 1.5)", &["zeta"]),
+        ("(property score 0)", &["zeta"]),
+        ("(property score 4)", &[]),
+        ("(property score abc)", &[]),
+    ];
+    for (query_src, expected) in measured {
+        // The index rule is a property of what OG STORED, so it survives Q20's
+        // case folding and Q21's split: all four untyped modes answer alike.
+        for mode in [
+            CompareMode::Og,
+            CompareMode::Q20Only,
+            CompareMode::Q21Only,
+            CompareMode::BothUntyped,
+        ] {
+            assert_eq!(
+                matched_in(&graph, query_src, mode),
+                *expected,
+                "{query_src} under mode {}",
+                mode.label()
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The line the campaign does NOT cross: OG's string-index rule is an OG bug
+/// the oracle models so gate 1 can attribute a difference, never a parity
+/// requirement (SPEC §8: "Do not add OG's string-index quirk to production
+/// typed matching").
+///
+/// `run_query_bounded` is the production entry — [`CompareMode::Both`] — and it
+/// answers `(property score 2)` with the block whose score IS two. The
+/// remaining difference is what gate 1 labels `type-attributed`, through the
+/// ordinary five-mode vector and not through a waiver.
+#[test]
+fn production_typed_matching_has_no_string_index_rule() {
+    let (graph, dir) = og_rule_graph("no-index-in-production");
+    for (query_src, expected) in [
+        ("(property score 2)", vec!["eta".to_string()]),
+        ("(property score 0)", Vec::new()),
+        ("(property score 1.5)", vec!["zeta".to_string()]),
+    ] {
+        let bounded = run_query_bounded(&graph, query_src, 1000, 1 << 20);
+        let mut lines: Vec<String> = bounded
+            .groups
+            .iter()
+            .flat_map(|group| group.blocks.iter())
+            .map(|block| {
+                block
+                    .raw
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
+            .collect();
+        lines.sort();
+        assert_eq!(lines, expected, "{query_src} in production");
+        assert_eq!(
+            lines,
+            matched_in(&graph, query_src, CompareMode::Both),
+            "production IS mode `both` ({query_src})"
+        );
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The same difference under NEGATION, which flips its direction: OG finds
+/// nothing (measured — `"(and (property score) (not (property score 2)))" =>
+/// ()`, because the string-index rule matched both blocks inside the `not`),
+/// while Tine finds `zeta`. SPEC §8 asks the `score:: 1.50` fixture to cover
+/// negation for exactly this reason: an attribution that only ever adds blocks
+/// would not prove the vector reads both directions.
+#[test]
+fn the_string_index_difference_flips_direction_under_negation() {
+    let (graph, dir) = og_rule_graph("negation");
+    let query_src = "(and (property score) (not (property score 2)))";
+    assert!(
+        matched_in(&graph, query_src, CompareMode::Og).is_empty(),
+        "mode OG reproduces OG's empty answer"
+    );
+    assert_eq!(
+        matched_in(&graph, query_src, CompareMode::BothUntyped),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        matched_in(&graph, query_src, CompareMode::Both),
+        vec!["zeta".to_string()],
+        "Tine's typed comparison never matched zeta, so negating it keeps zeta"
+    );
+    let _ = fs::remove_dir_all(dir);
 }

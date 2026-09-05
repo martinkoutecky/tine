@@ -6272,6 +6272,30 @@ impl Graph {
         (self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == generation).then_some(result)
     }
 
+    /// The §6.2 registry row source when the Direct Files projection is READY
+    /// (CLOSURE §4): the shared raw property stream and its same-snapshot page
+    /// map, or `None` when the projection is not ready or the read refused.
+    ///
+    /// The generation is re-checked after the read for the same reason every
+    /// other projection reader re-checks it: a snapshot that straddles a
+    /// rebuild is not a snapshot.
+    fn direct_projection_property_owner_rows(
+        &self,
+    ) -> Option<(
+        Vec<crate::query::registry::OwnerRow>,
+        std::collections::HashMap<String, crate::query::registry::PageMeta>,
+    )> {
+        let generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        let projection = self
+            .direct_projection
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(Arc::clone)?;
+        let result = projection.property_owner_rows(generation)?;
+        (self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == generation).then_some(result)
+    }
+
     fn direct_projection_note_fallback_read(&self) {
         if let Some(projection) = self
             .direct_projection
@@ -15559,7 +15583,18 @@ impl Graph {
         config: &crate::config::ParseConfig,
         source_generation: u64,
     ) -> Arc<crate::query::registry::Registry> {
-        let (rows, pages) = crate::query::property_owner_rows(self);
+        // §6.2's three row sources, two of which are Direct Files' (CLOSURE §4).
+        // Projection ready → the shared ready raw stream, so a registry read
+        // does not walk every hydrated document. Not ready (open
+        // reconciliation, full rebuild, the milliseconds after a save while the
+        // delta applies) → the cold document iterator over the same page cache
+        // the walk reads. They are ADAPTERS onto one aggregator: `build_registry`
+        // below is the same call either way, and the guard in
+        // `query::registry` asserts both report identical rows.
+        let (rows, pages) = match self.direct_projection_property_owner_rows() {
+            Some(ready) => ready,
+            None => crate::query::property_owner_rows(self),
+        };
         let built = crate::query::registry::build_registry(
             rows.into_iter(),
             &|page_id: &str| pages.get(page_id).cloned(),

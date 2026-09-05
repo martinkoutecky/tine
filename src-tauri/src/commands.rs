@@ -2358,9 +2358,11 @@ pub(crate) async fn query_registry(
 pub(crate) async fn query_run(
     query: tine_core::query::ir::Query,
     view: tine_core::query::ir::ViewSettings,
+    context: Option<tine_core::query::ir::ExecutionContext>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::ir::QueryResult, CommandError> {
     let (app, label, binding_generation) = owned_graph_context(state)?;
+    let context = context.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
@@ -2374,6 +2376,7 @@ pub(crate) async fn query_run(
                 SyncApplicationNavigationRequest::QueryRun {
                     query,
                     view,
+                    context,
                     max_rows: bounds.max_rows,
                     max_bytes: bounds.max_bytes,
                 },
@@ -2387,7 +2390,7 @@ pub(crate) async fn query_run(
             },
             None => {
                 let graph = slot.legacy_graph()?;
-                tine_core::query::run_query_result_ir(&graph, &query, &view, bounds)
+                tine_core::query::run_query_result_ir(&graph, &query, &view, bounds, &context)
             }
         };
         query_result_or_error(result)
@@ -2401,9 +2404,11 @@ pub(crate) async fn query_run(
 pub(crate) async fn query_explain_empty(
     query: tine_core::query::ir::Query,
     view: tine_core::query::ir::ViewSettings,
+    context: Option<tine_core::query::ir::ExecutionContext>,
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::query::view::EmptyExplanation>, CommandError> {
+) -> Result<tine_core::query::ir::ExplainEmptyResult, CommandError> {
     let (app, label, binding_generation) = owned_graph_context(state)?;
+    let context = context.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let slot = slot_for_bound_window(&state, &label, Some(binding_generation))?;
@@ -2417,11 +2422,12 @@ pub(crate) async fn query_explain_empty(
                 SyncApplicationNavigationRequest::QueryExplainEmpty {
                     query,
                     view,
+                    context,
                     max_rows: bounds.max_rows,
                     max_bytes: bounds.max_bytes,
                 },
             )? {
-                SyncApplicationNavigationReply::QueryExplainEmpty(lines) => Ok(lines),
+                SyncApplicationNavigationReply::QueryExplainEmpty(explained) => Ok(explained),
                 _ => Err(CommandError::prose(
                     "managed navigation returned the wrong reply",
                 )),
@@ -2429,7 +2435,7 @@ pub(crate) async fn query_explain_empty(
             None => {
                 let graph = slot.legacy_graph()?;
                 Ok(tine_core::query::explain_empty_query(
-                    &graph, &query, &view, bounds,
+                    &graph, &query, &view, bounds, &context,
                 ))
             }
         }
@@ -6087,12 +6093,15 @@ mod query_command_surface_tests {
         let bounds = tine_core::query::ir::Bounds::unbounded();
 
         let conjunction = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
-        let lines = tine_core::query::explain_empty_query(
+        let context = tine_core::query::ir::ExecutionContext::none();
+        let explained = tine_core::query::explain_empty_query(
             &graph,
             &conjunction.query,
             &conjunction.view,
             bounds,
+            &context,
         );
+        let lines = &explained.rows;
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(
             lines.iter().all(|line| line.without.is_some()),
@@ -6102,10 +6111,21 @@ mod query_command_surface_tests {
             lines.iter().any(|line| line.alone == 1),
             "each conjunct matches a row on its own: {lines:?}"
         );
+        assert!(
+            explained.report.supported && explained.report.ignored.is_empty(),
+            "an OG source reports supported with nothing ignored (§4.4): {:?}",
+            explained.report
+        );
 
         let single = parsed("(task TODO)", QueryTextDialect::Og);
-        let lines =
-            tine_core::query::explain_empty_query(&graph, &single.query, &single.view, bounds);
+        let explained = tine_core::query::explain_empty_query(
+            &graph,
+            &single.query,
+            &single.view,
+            bounds,
+            &context,
+        );
+        let lines = &explained.rows;
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert_eq!(lines[0].without, None, "there is no `other` to be without");
         assert_eq!(lines[0].alone, 1);
@@ -6120,6 +6140,7 @@ mod query_command_surface_tests {
             &parsed.query,
             &parsed.view,
             tine_core::query::ir::Bounds::unbounded(),
+            &tine_core::query::ir::ExecutionContext::none(),
         );
         match result.rows {
             tine_core::query::ir::QueryRows::Page { pages } => {

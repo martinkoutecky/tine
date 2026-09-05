@@ -91,6 +91,19 @@ pub struct Atom {
     /// Position within the key's flattened atom list, renumbered `0..n` by the
     /// registry producer (§5.8); the atomizer numbers within one value.
     pub ordinal: u32,
+    /// The UTF-16 length of OG's stored value for the `key:: value` line this
+    /// atom came from, when OG's `text/parse-property` holds that value as a
+    /// bare **string**; `None` when OG holds a set (refs, or a comma-separated
+    /// key) or a parsed number/boolean.
+    ///
+    /// It exists because OG's `:property` rule ends in `(contains? ?v ?val)`,
+    /// and `contains?` on a ClojureScript string is an INDEX lookup, so the
+    /// only thing the rule needs from the stored string is its length
+    /// (`rules.cljc:129-138`; measured, `shapes.cljs`). Read ONLY by the four
+    /// counterfactual §8.1 modes — never by production matching, which is
+    /// [`CompareMode::Both`] (SPEC §8 v16 evidence correction: "Do not add OG's
+    /// string-index quirk to production typed matching").
+    pub og_string_len: Option<u32>,
 }
 
 /// The comparison form of an atom's text: **NFC-lowercased trimmed** (Q20).
@@ -173,6 +186,22 @@ fn reference_parsing_suppressed(key: &str, config: &ParseConfig) -> bool {
 /// ending with `"`.
 fn wrapped_by_quotes(value: &str) -> bool {
     value.len() > 1 && value.starts_with('"') && value.ends_with('"')
+}
+
+/// OG `text/parse-non-string-property-value` (`text.cljs:87-98`): `"true"` and
+/// `"false"` become booleans, an unsigned run of ASCII digits becomes an
+/// integer, everything else stays the string it was written as.
+fn og_parses_as_non_string(value: &str) -> bool {
+    value == "true"
+        || value == "false"
+        || (!value.is_empty() && value.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// The [`Atom::og_string_len`] of a value OG holds as a bare string: its length
+/// in UTF-16 code units, because that is what ClojureScript's `(.-length s)`
+/// counts and what the `contains?` index bound compares against.
+fn og_string_len(value: &str) -> Option<u32> {
+    Some(value.encode_utf16().count() as u32)
 }
 
 /// OG `sep-by-comma` (`text.cljs:132-139`): split on one `,` or `，`, trim, drop
@@ -363,6 +392,14 @@ pub fn property_atoms_in(
         return Vec::new();
     }
 
+    // OG's `text/parse-property` decides the SHAPE of the stored value, and its
+    // shape is what the `:property` rule's `contains?` branch means: set
+    // membership on a set, an index lookup on a string, always false on a
+    // number. Steps 1 and 2 below return the raw string; step 3 is OG's set;
+    // step 4 is OG's `parse-non-string-property-value` or the string. Recorded
+    // per atom as `og_string_len`, and read only by the §8.1 modes.
+    let suppressed = reference_parsing_suppressed(&key_norm, config);
+
     // Step 2 — a quoted value is one atom, quotes included (K19). OG checks this
     // after the unparsed-key branch and so do we; for a step-1 key OG returns the
     // same raw string either way.
@@ -373,6 +410,8 @@ pub fn property_atoms_in(
             0,
             config,
             mode,
+            // Both branches hand `v'` back unparsed, so OG holds the string.
+            og_string_len(trimmed),
         )];
     }
 
@@ -381,7 +420,7 @@ pub fn property_atoms_in(
 
     // Step 3 — refs, plus comma segments for a comma-configured key. Skipped
     // entirely for a step-1 key (A1).
-    if !reference_parsing_suppressed(&key_norm, config) {
+    if !suppressed {
         let nodes = lsdoc::inline(trimmed, format.lsdoc_name());
         let mut refs: Vec<String> = Vec::new();
         for node in &nodes {
@@ -397,11 +436,30 @@ pub fn property_atoms_in(
                 }
             }
         }
+        // OG's step 3 returns a SET (`(if (seq refs) refs …)`), and `contains?`
+        // on a set is real membership — no index lookup — so these atoms carry
+        // no `og_string_len`.
         for text in refs {
-            push_atom(&mut atoms, &mut seen, text, AtomOrigin::Ref, config, mode);
+            push_atom(
+                &mut atoms,
+                &mut seen,
+                text,
+                AtomOrigin::Ref,
+                config,
+                mode,
+                None,
+            );
         }
         for text in segments {
-            push_atom(&mut atoms, &mut seen, text, AtomOrigin::Plain, config, mode);
+            push_atom(
+                &mut atoms,
+                &mut seen,
+                text,
+                AtomOrigin::Plain,
+                config,
+                mode,
+                None,
+            );
         }
         if !atoms.is_empty() {
             return atoms;
@@ -420,6 +478,14 @@ pub fn property_atoms_in(
     } else {
         vec![trimmed.to_string()]
     };
+    // OG's own value here is the WHOLE trimmed line — `v'`, never a segment —
+    // held as a string unless `parse-non-string-property-value` claimed it, or
+    // unconditionally as a string for a step-1 key (that branch returns before
+    // the number parse). Q21's split changes which ATOMS exist; it does not
+    // change what OG stored, so the same length rides on every segment.
+    let stored = (suppressed || !og_parses_as_non_string(trimmed))
+        .then(|| og_string_len(trimmed))
+        .flatten();
     for segment in segments {
         push_atom(
             &mut atoms,
@@ -428,11 +494,13 @@ pub fn property_atoms_in(
             AtomOrigin::Plain,
             config,
             mode,
+            stored,
         );
     }
     atoms
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_atom(
     atoms: &mut Vec<Atom>,
     seen: &mut Vec<String>,
@@ -440,6 +508,7 @@ fn push_atom(
     origin: AtomOrigin,
     config: &ParseConfig,
     mode: CompareMode,
+    og_string_len: Option<u32>,
 ) {
     let key = atom_key_in(&text, mode);
     if key.is_empty() || seen.iter().any(|existing| existing == &key) {
@@ -447,7 +516,14 @@ fn push_atom(
     }
     seen.push(key);
     let ordinal = atoms.len() as u32;
-    atoms.push(make_atom(text, origin, ordinal, config, mode));
+    atoms.push(make_atom(
+        text,
+        origin,
+        ordinal,
+        config,
+        mode,
+        og_string_len,
+    ));
 }
 
 fn make_atom(
@@ -456,6 +532,7 @@ fn make_atom(
     ordinal: u32,
     config: &ParseConfig,
     mode: CompareMode,
+    og_string_len: Option<u32>,
 ) -> Atom {
     let key = atom_key_in(&text, mode);
     let class = classify_text(&text, origin, config);
@@ -470,6 +547,7 @@ fn make_atom(
         key,
         origin,
         ordinal,
+        og_string_len,
     }
 }
 
@@ -590,6 +668,7 @@ mod tests {
                 num: None,
                 day: None,
                 ordinal: 0,
+                og_string_len: Some(3),
             }]
         );
     }
