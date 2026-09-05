@@ -188,10 +188,15 @@ fn hand_written_cursor_drains_are_pinned() {
             "I-12: {DIRECT}::{symbol} retains caller-owned cursor advancement, termination, or adaptive retry; call drain_after"
         );
     }
+    // 10 → 12: P0-rust Wave D's `property_owner_rows` (§6.2's Direct Files
+    // registry row source) drains the page map and the property rows. Both
+    // DELEGATE to `drain_after` — which is what this guard is for — so the pin
+    // moves; it would be a violation only if the new consumer owned its own
+    // `loop {}`, which the per-symbol assertions above still forbid.
     assert_eq!(
         direct.matches("drain_after(").count(),
-        10,
-        "I-12: the ten owned Direct cursor consumers must each delegate to drain_after"
+        12,
+        "I-12: the twelve owned Direct cursor consumers must each delegate to drain_after"
     );
 
     for allowed in NON_OWNED_DRAINS {
@@ -281,6 +286,26 @@ fn classify(file: &str, symbol: &str, family: &str) -> (&'static str, &'static s
             "application_navigation_pages_ready",
             "navigation_pages_after",
         ) => ("other-question", "managed navigation pages"),
+        // The §6.2 registry row source (P0-rust Wave D, `18f4265c`): the page map
+        // and the property rows, read under ONE projection snapshot so a row
+        // naming a page the map lacks is a consistency defect rather than a
+        // silent Markdown fallback.
+        (DIRECT, "property_owner_rows", "navigation_pages_after_with_header_validation") => {
+            ("other-question", "Direct registry snapshot page map")
+        }
+        (DIRECT, "property_owner_rows", "property_facet_rows_after") => {
+            ("other-question", "Direct registry snapshot property rows")
+        }
+        (
+            "crates/tine-core/src/sync_runtime.rs",
+            "application_property_registry_ready",
+            "property_facet_rows_after",
+        ) => ("other-question", "managed registry snapshot property rows"),
+        (
+            "crates/tine-core/src/sync_runtime.rs",
+            "application_property_registry_ready",
+            "navigation_pages_after",
+        ) => ("other-question", "managed registry snapshot page map"),
         _ => panic!("unclassified SQL read-family call: {file}::{symbol} {family}"),
     }
 }
@@ -395,6 +420,35 @@ fn expected_census() -> BTreeSet<CensusRecord> {
             DIRECT,
             "real_page_names",
             "Direct real page ownership",
+        ),
+        // The §6.2 registry row source (P0-rust Wave D, `18f4265c`). It reads the
+        // page map and the property rows under ONE projection snapshot, so it is
+        // two classified reads in one symbol, not a new read family. CLOSURE §4
+        // rejected answering this from the document walk: the walk aggregates
+        // owner identity away, so it cannot report cardinality or distinct owners.
+        (
+            "navigation_pages_after_with_header_validation",
+            DIRECT,
+            "property_owner_rows",
+            "Direct registry snapshot page map",
+        ),
+        (
+            "property_facet_rows_after",
+            DIRECT,
+            "property_owner_rows",
+            "Direct registry snapshot property rows",
+        ),
+        (
+            "property_facet_rows_after",
+            "crates/tine-core/src/sync_runtime.rs",
+            "application_property_registry_ready",
+            "managed registry snapshot property rows",
+        ),
+        (
+            "navigation_pages_after",
+            "crates/tine-core/src/sync_runtime.rs",
+            "application_property_registry_ready",
+            "managed registry snapshot page map",
         ),
         (
             "page_referrer_candidates_after",

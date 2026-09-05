@@ -13052,6 +13052,20 @@ struct RuntimeActor {
     _not_send_or_sync: PhantomData<Rc<()>>,
 }
 
+/// The registry's snapshot-scoped page identity on the Managed side. The
+/// overlay uses its path instead, because a pending page may have no accepted
+/// `PageId` yet.
+///
+/// Module level, not nested inside its caller, and deliberately so: the SQL
+/// read-family census attributes a call to the nearest preceding `fn`, so a
+/// helper nested inside a reader makes the census name the HELPER as the
+/// enclosing symbol and the classification then records a location that does
+/// not exist. Its Direct Files twin `direct_registry_page_key` is module level
+/// for the same reason.
+fn managed_registry_page_key(page_id: PageId) -> String {
+    format!("page:{}", page_id.as_uuid())
+}
+
 impl RuntimeActor {
     fn active_engine(&self) -> Result<&ShardedHotEngine, SyncRuntimeRequestError> {
         if let Some(clean) = self.clean.as_ref() {
@@ -15500,13 +15514,6 @@ impl RuntimeActor {
         &self,
     ) -> Result<std::sync::Arc<crate::query::registry::Registry>, SyncApplicationPageRequestError>
     {
-        /// The registry's snapshot-scoped page identity on the Managed side.
-        /// The overlay uses its path instead, because a pending page may have
-        /// no accepted `PageId` yet.
-        fn managed_registry_page_key(page_id: PageId) -> String {
-            format!("page:{}", page_id.as_uuid())
-        }
-
         let config = self.graph.config.parse_config();
         // Before any evidence is touched: a snapshot built from the same
         // frontier under the same parse rules is the same table, and rebuilding
