@@ -150,6 +150,15 @@ interface CommandDef {
    *  matched by Block.tsx inside the textarea handler. */
   scope: "global" | "editor";
   run?: () => void;
+  /** A SECOND default chord that runs the same command. It exists for a
+   *  platform convention a user will certainly try and that Logseq does not
+   *  bind, so the key reaches the command it obviously means without
+   *  displacing Logseq's own binding or taking a second row in Settings.
+   *  An alias is a default, not an override: the moment the user binds the
+   *  command themselves, their chord is the only one, because an alias they
+   *  can neither see in the recorder nor reset must not outlive their choice.
+   *  Global scope only, and it loses every collision with a primary binding. */
+  alias?: string;
   /** When false (default), a global command does not fire while typing in an
    *  editor unless its chord includes a modifier. */
   global?: boolean;
@@ -406,7 +415,17 @@ const COMMANDS: CommandDef[] = [
   { id: "task/carry-365", binding: "", label: "Carry unfinished tasks: last 365 days", scope: "global", run: () => void carryDaysBack(365) },
   { id: "task/carry-n", binding: "", label: "Carry unfinished tasks: last N days (Settings)", scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
-  { id: "editor/redo", binding: "mod+shift+z", label: "Redo", scope: "global", run: redo, global: true },
+  // Logseq binds redo to mod+shift+z alone, and that stays the binding Settings
+  // shows and remaps. Ctrl+Y is the Windows convention for redo and Logseq
+  // leaves it unbound, so a Windows user who presses it gets silence rather
+  // than a conflict (GH #491). It rides along as an alias instead of a second
+  // command so the shortcuts list keeps one Redo row.
+  //
+  // Not on macOS: there Ctrl+Y is already taken by the system's Emacs-style
+  // text bindings (yank from the kill ring) inside every text field, and redo
+  // is Cmd+Shift+Z anyway. Claiming it would break an existing gesture to add
+  // a convention that platform does not have.
+  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "" : "ctrl+y", label: "Redo", scope: "global", run: redo, global: true },
   // Palette-only, matching OG's empty binding and mode report at
   // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
   // `src/main/frontend/modules/editor/undo_redo.cljs:232-237`
@@ -802,8 +821,8 @@ export function currentShortcuts(): { id: string; label: string; binding: string
 /** Built-in command defaults (id + label + default binding) for the Settings
  *  remap UI, which computes the effective binding reactively from these plus
  *  config.edn and the user's local overrides. */
-export function commandDefaults(): { id: string; label: string; binding: string; scope: ShortcutScope }[] {
-  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({ id: c.id, label: c.label, binding: c.binding, scope: shortcutScope(c) }));
+export function commandDefaults(): { id: string; label: string; binding: string; alias?: string; scope: ShortcutScope }[] {
+  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({ id: c.id, label: c.label, binding: c.binding, alias: c.alias, scope: shortcutScope(c) }));
 }
 
 /** Turn a keyboard event into a binding string like "mod+shift+down". Returns
@@ -916,10 +935,16 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     if (b !== "false") bindings[c.id] = parseBinding(b);
   }
 
-  // Global dispatch list (sequences + global chords).
-  const commands = allCommands.filter((c) => c.scope === "global" && c.run)
+  // Global dispatch list (sequences + global chords). Aliases come last, so a
+  // primary binding always wins a collision, and are dropped for any command
+  // the user has bound themselves.
+  const primary = allCommands.filter((c) => c.scope === "global" && c.run)
     .map((c) => ({ ...c, chords: bindings[c.id] }))
     .filter((c) => c.chords);
+  const aliased = allCommands
+    .filter((c) => c.scope === "global" && c.run && c.alias && !(c.id in overrides))
+    .map((c) => ({ ...c, chords: parseBinding(c.alias!) }));
+  const commands = [...primary, ...aliased];
 
   let seq: Chord[] = [];
   let seqTimer: ReturnType<typeof setTimeout> | null = null;

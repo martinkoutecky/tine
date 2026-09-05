@@ -23,6 +23,8 @@ import {
   markConflict,
   openContextMenu,
   openPageContextMenu,
+  setToasts,
+  toasts,
 } from "../ui";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { backend } from "../backend";
@@ -559,6 +561,77 @@ describe("BlockMenu — insert a block above (GH #480)", () => {
     openContextMenu(10, 10, "code");
     const labels = [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
     expect(labels).not.toContain("Insert block above");
+    dispose();
+  });
+});
+
+describe("page file actions on a conflicted page (GH #490)", () => {
+  beforeAll(async () => {
+    await initParser();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearConflict("P");
+    closeContextMenu();
+    clearTransientLayersForTest();
+    document.body.innerHTML = "";
+  });
+
+  function mount(node: () => JSX.Element): () => void {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    return render(node, root);
+  }
+  function loadPage() {
+    resetStore();
+    setDoc({
+      byId: { only: { id: "only", raw: "Body", collapsed: false, parent: null, page: "P", children: [] } },
+      pages: [{ name: "P", kind: "page", title: "P", preBlock: null, roots: ["only"], format: "md", readOnly: false, guide: false }],
+      feed: ["P"],
+      loaded: true,
+    });
+  }
+  const clickItem = (label: string) => {
+    const item = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((e) => e.textContent?.trim() === label);
+    if (!item) throw new Error(`menu item not found: ${label}`);
+    item.click();
+  };
+
+  // A page whose conflict view will not load is the reporter's worst case: the
+  // ONLY remaining way to see the text is to open the file outside Tine, and
+  // Tine used to refuse exactly that. Opening the file changes nothing on disk,
+  // so there was nothing for the refusal to protect.
+  it("still opens the file on disk, and says the draft is not in it", async () => {
+    loadPage();
+    markConflict("P");
+    const open = vi.spyOn(backend(), "openPageFile").mockResolvedValue(undefined as never);
+    setToasts([]);
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+
+    clickItem("Open with default app");
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(open.mock.calls[0][3]).toBe(false);
+    await vi.waitFor(() =>
+      expect(toasts().some((toast) => toast.kind === "info" && toast.message.includes("as it stands on disk"))).toBe(true),
+    );
+    expect(toasts().every((toast) => toast.kind !== "error")).toBe(true);
+    dispose();
+  });
+
+  it("still reveals the file in the folder", async () => {
+    loadPage();
+    markConflict("P");
+    const open = vi.spyOn(backend(), "openPageFile").mockResolvedValue(undefined as never);
+    setToasts([]);
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+
+    clickItem("Show in folder");
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(open.mock.calls[0][3]).toBe(true);
+    expect(toasts().every((toast) => toast.kind !== "error")).toBe(true);
     dispose();
   });
 });

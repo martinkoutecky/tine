@@ -960,3 +960,62 @@ describe("the conflict dock", () => {
     });
   });
 });
+
+// GH #490. A rejected diff must become a message, never a permanently stuck
+// panel. Reading an errored Solid resource THROWS (solid.js read()), and there
+// is no ErrorBoundary anywhere in src/, so the throw reaches runUpdates' catch,
+// which nulls the pending Effects queue before rehandling. The effect that would
+// have swapped the fallback text off "Reading both versions…" is in that queue,
+// and so is every other DOM effect batched with it -- which is why the reporter
+// saw a frozen panel AND a blank page body at the same time.
+describe("a conflict diff that fails (GH #490)", () => {
+  const failingCopy: ConflictObject = {
+    id: "copy:pages/Stuck.sync-conflict-20260905-101010-ABCDEFG.md",
+    source: "sync-copy",
+    page_name: "Stuck",
+    page_path: "pages/Stuck.md",
+    kind: "page",
+    sides: [
+      { role: "mine", label: "This device", path: "pages/Stuck.md" },
+      {
+        role: "theirs",
+        label: "sync-conflict-20260905-101010-ABCDEFG",
+        path: "pages/Stuck.sync-conflict-20260905-101010-ABCDEFG.md",
+      },
+    ],
+    block_conflicts: 1,
+  };
+
+  it("says it could not be read instead of staying on “Reading both versions…”", async () => {
+    stubBackend({
+      syncConflictDiff: (async () => {
+        throw new Error("the conflict copy could not be read");
+      }) as unknown as Backend["syncConflictDiff"],
+    });
+    const { host, dispose } = mount(failingCopy);
+    await flush();
+    await flush();
+
+    const empty = host.querySelector(".page-conflict-empty")?.textContent ?? "";
+    expect(empty).not.toContain("Reading both versions");
+    expect(empty).toContain("Couldn’t read this conflict");
+    dispose();
+  });
+
+  // "Couldn't read this conflict." on its own tells the user nothing they can
+  // act on or report. The reason the backend gave belongs on screen.
+  it("names the reason the backend gave", async () => {
+    stubBackend({
+      syncConflictDiff: (async () => {
+        throw new Error("the conflict copy could not be read");
+      }) as unknown as Backend["syncConflictDiff"],
+    });
+    const { host, dispose } = mount(failingCopy);
+    await flush();
+    await flush();
+
+    expect(host.querySelector(".page-conflict-empty")?.textContent)
+      .toContain("the conflict copy could not be read");
+    dispose();
+  });
+});

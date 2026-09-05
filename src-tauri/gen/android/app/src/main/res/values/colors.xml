@@ -8,4 +8,14 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="tine_window_background">#FFFFFFFF</color>
+    <!-- The strips behind the status and navigation bars, painted by the WINDOW
+         since the system-bar insets began bounding the WebView. These two are
+         deliberately NOT night-qualified: the strip must follow TINE's own
+         light/dark choice, which is what SystemBarAppearance already uses for
+         the bar ICONS. Resolving it by the Android night setting instead put
+         white icons on a white strip whenever the two disagreed (GH #467).
+         tine_system_bar_dark must equal the values-night tine_window_background,
+         which is only the pre-restore initial paint. -->
+    <color name="tine_system_bar_light">#FFFFFFFF</color>
+    <color name="tine_system_bar_dark">#FF1A1B1E</color>
 </resources>

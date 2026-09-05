@@ -65,4 +65,30 @@ describe("Android system-bar theme synchronization", () => {
     expect(lightColors).toContain('<color name="tine_window_background">#FFFFFFFF</color>');
     expect(darkColors).toContain('<color name="tine_window_background">#FF1A1B1E</color>');
   });
+
+  // GH #467. The window background above is only the pre-restore initial paint,
+  // and it is resolved by the ANDROID night setting. Once the system-bar insets
+  // began padding the content root, that same window background became the strip
+  // behind the status bar -- while the bar ICONS follow TINE's theme. When the
+  // two disagreed the strip went white under white icons. The strip colour is
+  // now set from the same `dark` flag, through resources that carry no
+  // values-night variant so the resolver cannot reintroduce the device setting.
+  it("paints the system-bar strip from Tine's theme, not the device night setting", () => {
+    const root = path.resolve(import.meta.dirname, "..");
+    const values = path.join(root, "src-tauri/gen/android/app/src/main/res/values");
+    const night = path.join(root, "src-tauri/gen/android/app/src/main/res/values-night");
+    const lightColors = fs.readFileSync(path.join(values, "colors.xml"), "utf8");
+    const nightColors = fs.readFileSync(path.join(night, "colors.xml"), "utf8");
+    const plugin = fs.readFileSync(path.join(root,
+      "src-tauri/gen/android/app/src/main/java/page/tine/app/SystemBarsPlugin.kt"), "utf8");
+
+    expect(lightColors).toContain('<color name="tine_system_bar_light">#FFFFFFFF</color>');
+    expect(lightColors).toContain('<color name="tine_system_bar_dark">#FF1A1B1E</color>');
+    // A values-night override would put the device setting back in charge.
+    expect(nightColors).not.toContain("tine_system_bar_light");
+    expect(nightColors).not.toContain("tine_system_bar_dark");
+    // One authority: the same `dark` that chooses the icon appearance.
+    expect(plugin).toContain("if (dark) R.color.tine_system_bar_dark else R.color.tine_system_bar_light");
+    expect(plugin).toContain("activity.window.setBackgroundDrawable(");
+  });
 });

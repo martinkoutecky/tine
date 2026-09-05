@@ -183,3 +183,31 @@ export function caretAtLastRow(ta: HTMLTextAreaElement, offset: number): boolean
   const rows = measureRows(ta, [offset, ta.value.length]);
   return rows ? rows[0] === rows[1] : true;
 }
+
+/** The x, in content coordinates, of `offset` in a NO-WRAP textarea (a code
+ *  card's editor). Used to reveal the caret horizontally; returns null where
+ *  there is no layout (jsdom), so callers simply leave the scroll alone.
+ *
+ *  The shared mirror wraps at the textarea's width, which is exactly wrong
+ *  here — a `wrap="off"` textarea puts the whole logical line on one visual
+ *  row — so this builds its own with `white-space: pre` and no width. */
+export function textareaCaretLeft(ta: HTMLTextAreaElement, offset: number): number | null {
+  if (typeof document === "undefined") return null;
+  const div = buildMirror(ta);
+  div.style.whiteSpace = "pre";
+  div.style.wordWrap = "normal";
+  div.style.overflowWrap = "normal";
+  div.style.width = "auto";
+  document.body.appendChild(div);
+  try {
+    div.textContent = "";
+    div.appendChild(document.createTextNode(ta.value.slice(0, offset)));
+    const marker = document.createElement("span");
+    marker.textContent = "​";
+    div.appendChild(marker);
+    if (!div.offsetHeight) return null; // no layout (tests)
+    return marker.offsetLeft;
+  } finally {
+    document.body.removeChild(div);
+  }
+}

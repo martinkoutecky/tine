@@ -8,6 +8,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **`{{query (all-page-tags)}}` works.** Logseq has this filter — every page
+  that carries at least one `tags::` value — and Tine did not know it, so a
+  graph written in Logseq that used it showed nothing. It now selects the same
+  pages Logseq selects.
+
+- **Ctrl+Y also redoes, on Windows and Linux.** Ctrl+Z undid and Ctrl+Y did
+  nothing, because Logseq binds redo to Ctrl/Cmd+Shift+Z and leaves Ctrl+Y
+  unbound — so the key most editors on those platforms use for redo reached no
+  command at all. Ctrl+Shift+Z is still the binding the shortcuts list shows and
+  remaps; Ctrl+Y rides along as a second default, keeps one Redo row, and is
+  dropped if you bind Redo to something of your own. Not on macOS, where Ctrl+Y
+  is the system's yank inside every text field (GH #491).
+
 ### Changed
 
 - **`{{query (property …)}}` now matches the way you read the page, not the way
@@ -22,12 +37,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Logseq may well find what you meant here. Page names (`[[…]]`, `tags::`,
   `alias::`) were already matched case-insensitively and still are.
 
-### Added
-
-- **`{{query (all-page-tags)}}` works.** Logseq has this filter — every page
-  that carries at least one `tags::` value — and Tine did not know it, so a
-  graph written in Logseq that used it showed nothing. It now selects the same
-  pages Logseq selects.
+- **The Concord base ledger now reclaims entries whose stored text has been
+  removed from underneath it.** Its prune already dropped unreferenced blobs and
+  unreadable records; an index or conflict pin naming a blob that an antivirus
+  quarantine, a disk cleaner or a partial restore had deleted was kept forever
+  as dead metadata. Conflict diffs were never affected — a missing blob has
+  always degraded to the ordinary two-column diff — and the ledger still never
+  warns about one.
 
 ### Fixed
 
@@ -42,6 +58,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   block whose last line is a bare `size::` — a property you have written the
   name of but not the value — could panic while Tine gathered the evidence
   behind a linked reference.
+
+- **On Android, dark mode no longer blanks the notification bar.** Since 0.6.981
+  the strip behind the status bar has been painted by the app window rather than
+  the page, and it followed the phone's light/dark setting while the clock and
+  icons followed Tine's own — so running Tine in dark mode on a phone still in
+  light mode put white icons on a white strip. One setting now decides both
+  (GH #467).
+
+- **A conflict Tine cannot read no longer freezes the page.** When the
+  comparison failed, the panel stayed on "Reading both versions…" forever and
+  the page body went blank, so the page could not be used at all. The failure is
+  now shown, with the reason, and the rest of the page keeps working (GH #490).
+
+- **A page with an unresolved save conflict can be opened on disk again.**
+  "Open with default app" and "Show in folder" both refused while a conflict was
+  pending, which left a page whose conflict view would not load with no way to
+  read it at all. Both now open the file as it stands on disk and say so; your
+  unsaved changes stay in Tine until you resolve the conflict (GH #490).
+
+- **Clicking inside a code block now puts the cursor where you clicked.** In a
+  code block of any size, clicking anywhere in it opened an editor that looked
+  blank: the cursor jumped to the very end of the block, and the editor was
+  scrolled to the far right of its longest line, so none of the code you clicked
+  was on screen. Both halves are fixed — a click maps to the character under it,
+  and the editor opens showing that character (GH #489).
 
 - **Clicking a link to the PDF you are already reading keeps your place.**
   Opening a PDF link with no page or highlight attached — a plain `![](…​.pdf)`

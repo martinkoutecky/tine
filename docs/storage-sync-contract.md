@@ -3005,3 +3005,12 @@ background work off the save critical path; they may not block or fail an
 open, save, or reload. It attaches only to Direct Files graphs; a managed
 binding never attaches one (the oplog owns managed merge confidence,
 invariant 8 stays intact).
+
+A prune runs at graph open and reclaims everything that can no longer answer:
+blobs referenced by no index entry and no pin, index and pin files that do not
+parse, and index and pin entries naming a blob that is absent. `record` writes
+a blob before the entry that names it, so an entry without its blob means the
+blob was removed from outside the ledger — antivirus quarantine, a disk
+cleaner, a partial restore. Such an entry is dead metadata whose lookups
+already answer `None`; reclaiming it is hygiene, and the ledger never warns,
+refuses, or reports a missing blob to the user.

@@ -214,7 +214,7 @@
         "macos"
       ],
       "layer": "render",
-      "status": "released",
+      "status": "reported",
       "coverage": {
         "tests": [
           "src/components/ContextMenu.test.tsx",
@@ -225,8 +225,7 @@
         "scenario": "block-selection.heading-and-drag-own-active-selection",
         "failBefore": "proven"
       },
-      "notes": "GH #240. Fail-before on exact base d1ad0f2c38120de8c88247f7d6062edf8a6ac812: writable pointer changed C and left selected A raw as 'A' instead of '## A'; read-only pointer hid Heading 2 entirely; dragging A's bullet with B+C selected produced B,C,D,E,A instead of A,D,E,B,C. Covered by component ownership tests plus store atomicity, writability, normalization, subtree, undo/redo, cross-page persistence-barrier, and ordered-inheritance tests. Native Linux confirmation on 2026-08-11 used three green runs after the final master rebase of unchanged staged artifact 55e4840eb0bfe2926e2085d5c6079347a96b0ea6: a fresh named page was reached through a rendered journal link, keyboard-selected B+C received H2 from A's rendered context menu and one undo, then a real WebDriver bullet drag from A moved B+C together after E; A,D,E,B,C survived durable relaunch. Scope is heading and pointer bullet drag only; adjacent context actions remain pointer-owned."
-    },
+      "notes": "REOPENED 2026-09-05 by the reporter's negative follow-up: the behaviour is back in the Windows build of v0.6.98, so this row's released evidence is revoked for Windows under the negative-follow-up rule. What still stands, unchanged and re-run on 2026-09-05: the render-layer ownership assertions pass on the current base, so the shared frontend logic is intact -- an active selection still owns the heading command when the pointer is on another block. What was never evidence for Windows: the 2026-08-11 native confirmation ran on Linux only, and `e2e-selection-actions.mjs` was registered in the Linux suites alone, so no Windows run has ever exercised this journey. It is now registered in `windows-smoke` too. Original fail-before on exact base d1ad0f2c38120de8c88247f7d6062edf8a6ac812: writable pointer changed C and left selected A raw as 'A' instead of '## A'; read-only pointer hid Heading 2 entirely; dragging A's bullet with B+C selected produced B,C,D,E,A instead of A,D,E,B,C. Scope is heading and pointer bullet drag only; adjacent context actions remain pointer-owned."    },
     {
       "id": "UI-MANAGED-ANDROID-ROOT-SHUTDOWN-001",
       "title": "Android root Back verifies every managed runtime can stop before activity exit and preserves the safe transition if exit must retry",
@@ -9568,7 +9567,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "src/render/spans.test.ts",
+          "src/render/clickSpans.test.tsx",
           "src/render/clickSpans.test.tsx",
           "scripts/e2e-clickcaret-repro.mjs"
         ],
@@ -10338,6 +10337,119 @@
         "failBefore": "proven"
       },
       "notes": "User outcome: in a PDF reader pane 520px wide or narrower - a split pane, a companion pane, a phone - five reader tools could not be reached by any pointer. Classification: blocking core operation; the controls were absent from the interface entirely, not merely awkward. Root cause is a CSS cascade-order bug, not a container-query bug: `@container pdfviewer (max-width: 520px)` set `.pdf-settings-overflow { display: grid }`, but the plain `.pdf-settings-overflow { display: none }` default was written LATER in app.css at equal specificity (0,1,0), so the default won at every width. Below 520px the toolbar copies were correctly hidden by the same query and the More-settings copies were hidden too, leaving nowhere to click. Fix: move the container-query block after the base declarations; nothing else changed. This is the answer to two quarantines that had recorded it as a contradictory harness visibility probe - pdf-logseq could not reach Outline, pdf-routes could not reach Notes, and both concluded the two probes disagreed about pane width. They did not disagree: the inline probe was right that the toolbar copy was hidden, and the overflow probe's 0x0 rect was a child of a display:none parent, whose computed `display: inline-block` said nothing about the parent because a bare <button> computes that anyway. Evidence at the browser layer because container queries and hit-testing are CSS layout, which jsdom does not apply; the guard walks nine widths across the 520px boundary and asserts each tool is hit-testable in one place or the other. Necessity gate: 25 unreachable tool/width combinations before the fix (5 tools x 5 widths at or below 520px), 0 after."
+    },
+    {
+      "id": "UI-REDO-CTRL-Y-UNBOUND-491",
+      "title": "Ctrl+Y redoes on Windows and Linux, beside the primary Ctrl+Shift+Z",
+      "family": "keyboard-shortcuts",
+      "sources": {
+        "issues": [491],
+        "commits": []
+      },
+      "platforms": [
+        "windows",
+        "linux"
+      ],
+      "layer": "unit",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src/keybindings.test.ts::secondary default chords (aliases)"
+        ],
+        "scenario": "keybindings.redo-alias-ctrl-y",
+        "failBefore": "proven"
+      },
+      "notes": "User outcome: Ctrl+Z undid an edit and Ctrl+Y did nothing, so the redo key most Windows editors use reached no command at all. Classification: blocking stateful UX -- an ordinary editing gesture with no effect, not a presentation detail. Logseq binds redo to mod+shift+z and leaves Ctrl+Y unbound, so this is a deliberate divergence from OG, approved by Martin on 2026-09-05; the exact chord is the accepted requirement on Windows and Linux, and mod+shift+z remains the binding Settings shows and remaps. Implemented as a CommandDef `alias`, a second default chord that runs the same command: it keeps one Redo row in the shortcuts list and the palette, loses every collision with a primary binding because aliases are dispatched last, and is dropped entirely once the user binds Redo themselves, since an alias they can neither see in the recorder nor reset must not outlive their choice. Not registered on macOS, where Ctrl+Y is the system Emacs-style yank inside every text field and redo is Cmd+Shift+Z. Evidence at the unit layer driving the real store through the dispatcher -- undo an edit, press the chord, assert the text came back -- because `run: redo` captures its function reference when COMMANDS is built, so a module spy would assert about nothing."
+    },
+    {
+      "id": "UI-CODE-BLOCK-CLICK-CARET-489",
+      "title": "Clicking inside a large fenced code block opens its editor at the clicked line, on screen",
+      "family": "click-caret",
+      "sources": {
+        "issues": [489],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "browser",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "scripts/check-code-block-edit-scroll.mjs",
+          "src/render/spans.test.ts"
+        ],
+        "scenario": "click-caret.code-card-click",
+        "failBefore": "proven"
+      },
+      "notes": "User outcome: clicking anywhere in a rendered code block opened an editor whose visible area was blank -- the caret sat at the very end of the block, hundreds of lines below the click, and the no-wrap textarea was scrolled to the far right of the longest line, so none of the clicked code was on screen. Classification: blocking core operation; editing a code block by clicking into it is how the block is edited at all. Two independent defects share the one symptom. First, a code card renders as highlight.js markup carrying none of the lsdoc span data the general rendered-face mapper reads, so the mapper always declined and the caret fell back to end-of-block; `codeCardOffsetFromRange` maps a caret range inside `pre.code-block > code` by rendered text position instead, and the card branch is taken BEFORE the past-the-end rule, because a click to the right of a SHORT line inside a tall card means that line's end, not the block's. Offsets leave in the block's own visible-raw coordinates like every other numeric caret target, and `focusNow` maps them through the fence wrapper as it already did. Second, a `wrap=off` textarea mounts with its whole value assigned, which parks the browser selection at the end; focusing reveals that end and the later setSelectionRange does not scroll back, so even a correct caret opened the box scrolled right -- `revealCaretColumn` measures the caret column in one mirror pass and reveals it, and runs only for an editor that can scroll horizontally at all. Evidence at the browser layer because both halves are hit-testing and scroll geometry, which jsdom does not apply. Necessity gate: against pre-fix source the same probe reports the caret at 18798 of 18798 and scrollLeft 4481 of a 5153px content box; after, offset 2 and scrollLeft 5."
+    },
+    {
+      "id": "UI-CONFLICTED-PAGE-FILE-ACTIONS-490",
+      "title": "A page with an unresolved save conflict can still be opened or revealed on disk",
+      "family": "external-change-conflict-resolution",
+      "sources": {
+        "issues": [490],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "render",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src/components/ContextMenu.test.tsx::page file actions on a conflicted page (GH #490)"
+        ],
+        "scenario": "conflict.file-actions-not-refused",
+        "failBefore": "proven"
+      },
+      "notes": "User outcome: a page whose conflict view would not finish loading could not be inspected at all -- Open with default app and Show in folder both refused with `Resolve the save conflict ... before opening its file`, so the one remaining way to read the text was closed too. Classification: blocking core operation; the refusal removed the recovery path from a page that was already unusable. The refusal named no in-scope threat: opening or revealing a file changes nothing on disk, and the conflicted draft is not written either way, so it defended nothing and cost the user the file. It is replaced by the recovery behaviour the storage rules prefer -- the conflicted page skips the flush (an unsavable draft is exactly what the conflict IS, so flushing could only fail again) and the file is opened as it stands, with an info toast saying the unsaved changes stay in Tine until the conflict is resolved. This addresses the SECOND half of GH #490 only; the reporter also saw the conflict panel itself hang on `Reading both versions...`, which is a separate defect and is not claimed fixed here. Evidence at the render layer driving the real page-actions menu with the page marked conflicted. Necessity gate: both assertions fail against pre-fix ContextMenu.tsx with openPageFile never called."
+    },
+    {
+      "id": "UI-ANDROID-SYSTEM-BAR-STRIP-THEME-467",
+      "title": "The Android status and navigation bar strips follow Tine's own light/dark choice",
+      "family": "mobile-editing",
+      "sources": {
+        "issues": [467],
+        "commits": []
+      },
+      "platforms": [
+        "android"
+      ],
+      "layer": "native",
+      "status": "fixing",
+      "coverage": {
+        "tests": [
+          "src/systemBars.test.ts",
+          "src-tauri/gen/android/app/src/androidTest/java/page/tine/app/AndroidUiRuntimeTest.kt::systemBarStripAndIconsAgreeWithTinesOwnThemeNotTheDeviceNightSetting"
+        ],
+        "scenario": "mobile.system-bar-strip-follows-tine-theme",
+        "failBefore": "proven"
+      },
+      "notes": "User outcome: with Tine in dark mode the Android notification bar went blank -- no clock, no icons -- while light mode was fine. Classification: blocking stateful UX; the OS status bar became unreadable for as long as the app was open. Introduced in 0.6.981, which began padding the Activity content root with the system-bar and display-cutout insets so the WebView sits inside them. That moved the strip behind the status bar from the PAGE to the WINDOW, and the window background resolves through values/ versus values-night -- the ANDROID night setting -- while SystemBarAppearance sets the bar ICON appearance from TINE's own persisted theme. When the two disagreed, which is ordinary for a user who runs Tine dark on a phone still in light mode, the white light-mode icons landed on the white light-mode strip. Fix: SystemBarAppearance paints the window background from the same `dark` flag that chooses the icon appearance, reading two colours that deliberately have no values-night variant so the resolver cannot put the device setting back in charge. Evidence: the instrumented Android test asserts the PAIR -- strip colour and icon appearance together, plus the white-on-white cross-check -- because either half alone was already correct before the fix; the source guard pins the one-authority rule and the absence of a night override. Not yet observed on a real device or emulator run, so confidence stays moderate until the Android UI runtime job has run this test."
+    },
+    {
+      "id": "UI-CONFLICT-DIFF-FAILURE-STUCK-PANEL-490",
+      "title": "A conflict whose diff cannot be read says so, instead of freezing the panel and blanking the page",
+      "family": "external-change-conflict-resolution",
+      "sources": {
+        "issues": [490],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "render",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src/components/ConflictResolution.test.tsx::a conflict diff that fails (GH #490)"
+        ],
+        "scenario": "conflict.diff-failure-is-a-message",
+        "failBefore": "proven"
+      },
+      "notes": "User outcome: a page showed the conflict banner, its panel stayed on `Reading both versions...` forever, and the page body stayed blank -- the page could not be used at all. Classification: blocking core operation. One mechanism produces both symptoms, and all three of its steps are verified in this worktree's own solid-js build rather than inferred: reading an errored Solid resource THROWS (`read()`, solid.js:318-322); `grep -rn 'ErrorBoundary|catchError' src/` excluding tests returns zero hits, so Tine registers no boundary anywhere; and `runUpdates`' catch (solid.js:819-823) sets `Effects = null` before rehandling. So when the diff resource rejected, `<Show when={diff()}>` threw inside the batch the resource's own completion started, and the discarded Effects queue contained BOTH the effect that swaps this panel's fallback text off `Reading both versions...` AND the page body's `<For each={rootsToRender()}>`. The `Couldn't read this conflict.` branch was dead code for every rejection. Fix: all six reads of the resource go through `diffValue()`, which consults `diff.error` first and never calls the throwing accessor -- including the two `createMemo`s that would otherwise have thrown on recompute -- and the fallback now names the backend's reason instead of a bare apology. NOT fixed here: which rejection the reporter hit. The likely trigger is a restored Direct capsule with no `disk_rev` replaying a session-scoped observation epoch that died with the previous process (`src-tauri/src/commands.rs:4243-4258`, refused at `crates/tine-core/src/model.rs:12864-12869`); the analysis, and why the obvious frontend guard for it is wrong for Managed, are in `tine-agents/specs/notes/2026-09-05-gh490-conflict-hang.md`. Necessity gate: both assertions fail against pre-fix ConflictResolution.tsx, the panel still reading `Reading both versions...` after the rejection."
     }
   ]
 }

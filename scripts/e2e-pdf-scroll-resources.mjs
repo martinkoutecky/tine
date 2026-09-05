@@ -78,6 +78,18 @@ const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}.md`;
 fs.writeFileSync(path.join(GRAPH, "journals", journal), "- ![Long PDF](../assets/long.pdf)\n");
 
+// Provision the display BEFORE snapshotting process.env. `env` is what the app
+// is launched with, so calling ensureDisplay() after this object is built hands
+// the app an environment with no DISPLAY: it dies inside the driver with
+// "Failed to initialize gtk backend!" and the journey only ever sees
+// UND_ERR_HEADERS_TIMEOUT from the WebDriver session POST -- which reads as a
+// hang, and is the exact misdiagnosis scripts/lib/e2e-display.mjs was written
+// to prevent. It was invisible under scripts/run-e2e.mjs, which wraps every
+// native Linux scenario in `xvfb-run -a` so DISPLAY is already set; only a
+// direct run of this file hit it. Every sibling journey calls ensureDisplay at
+// the top for this reason.
+await ensureDisplay({ geometry: "1600x1100x24" });
+
 const env = {
   ...process.env,
   TINE_GRAPH: GRAPH,
@@ -193,7 +205,6 @@ async function wheel(browser, deltaY, id) {
   }
 }
 
-await ensureDisplay({ geometry: "1600x1100x24" });
 const driverLog = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
 let webviewTarget;
 let driver;

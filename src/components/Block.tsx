@@ -136,7 +136,7 @@ import type { Format } from "../render/ast";
 import type { Node as StoreNode } from "../store";
 import { AstBody } from "../render/body";
 import { InlineText, CopyButton } from "../render/inline";
-import { clickBeyondRenderedEnd, editorOffsetFromRenderedRange } from "../render/spans";
+import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import {
   assetMarkdown,
   assetFileName,
@@ -172,6 +172,7 @@ import {
   caretAtLastRow,
   caretColumnOnVisualRow,
   caretOffsetOnLastRow,
+  textareaCaretLeft,
   textareaCaretPoints,
 } from "../editor/caretRows";
 import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim, type PropFormat } from "../editor/properties";
@@ -884,6 +885,29 @@ function Rendered(props: {
   const editableEnd = (): number => splitProps(node().raw, isBuiltinHidden, pageFormat()).visible.length;
   const clickOffset = (e: MouseEvent): number | null => {
     if (!contentRef) return null;
+    const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+    // A whole-block code card is answered first and on its own terms. It is
+    // highlight.js markup with no span data, so the general mapper below always
+    // declined and the caret went to the end of the block — hundreds of lines
+    // from the click in a large block, and, when a long line sits near the end,
+    // scrolled to that line's far right in the no-wrap editor, which is what
+    // makes a clicked code block look blank (GH #489). The past-the-end rule
+    // must not run for it either: a click right of a SHORT line inside a tall
+    // card means that line's end, not the end of the whole block.
+    //
+    // Offsets leave here in the block's own (visible-raw) coordinates, like
+    // every other numeric caret target; `focusNow` maps them through the
+    // wrapper for the body-only code editor.
+    const codeProjection = codeBodyProjection(
+      splitProps(node().raw, isBuiltinHidden, pageFormat()).visible,
+      pageFormat(),
+    );
+    if (codeProjection) {
+      const codeRange = d.caretRangeFromPoint?.(e.clientX, e.clientY);
+      const offset = codeRange ? codeCardOffsetFromRange(contentRef, codeRange) : null;
+      if (offset === null) return null;
+      return codeProjection.open.length + Math.min(offset, codeProjection.body.length);
+    }
     // GH #465: a click in the empty run-out past the last glyph means "the end",
     // whatever the block ends with. Answered from the click's position before
     // consulting the span map, because a trailing construct with an invisible
@@ -891,7 +915,6 @@ function Rendered(props: {
     // interior offset just before the delimiter, so nothing downstream can tell
     // it apart from a deliberate click there.
     if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return editableEnd();
-    const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
     const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
     if (!range) return null;
     return editorOffsetFromRenderedRange(contentRef, range, node().raw, isBuiltinHidden, pageFormat());
@@ -2504,6 +2527,23 @@ export function Editor(props: { id: string }): JSX.Element {
     });
   };
 
+  // A `wrap="off"` editor (a code card) mounts with its whole value assigned,
+  // which parks the browser's selection at the very end; focusing then reveals
+  // that end and leaves the box scrolled to the right of the longest line, and
+  // the setSelectionRange that follows does not scroll back. On a code block
+  // containing one long line, clicking anywhere opened an editor showing blank
+  // space hundreds of columns past the code (GH #489). Put the horizontal view
+  // where the caret actually is. Costs one mirror measure, and only for an
+  // editor that can scroll horizontally at all — never for ordinary blocks.
+  const revealCaretColumn = (offset: number) => {
+    if (!ref || ref.scrollWidth <= ref.clientWidth) return;
+    const x = textareaCaretLeft(ref, offset);
+    if (x === null) return;
+    const margin = 24;
+    if (x < ref.scrollLeft + margin) ref.scrollLeft = Math.max(0, x - margin);
+    else if (x > ref.scrollLeft + ref.clientWidth - margin) ref.scrollLeft = x - ref.clientWidth + margin;
+  };
+
   const focusNow = () => {
     const historySelection = takeHistoryEditorSelectionFor(props.id, surfaceKey);
     const want = takeCaretFor(props.id);
@@ -2513,6 +2553,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const end = Math.min(historySelection.end, v.length);
       const start = Math.min(historySelection.start, end);
       ref.setSelectionRange(start, end);
+      revealCaretColumn(start);
       return;
     }
     let offset: number;
@@ -2544,6 +2585,7 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     const o = Math.min(offset, v.length);
     ref.setSelectionRange(o, o);
+    revealCaretColumn(o);
   };
   onMount(() => {
     const unregisterHistoryTarget = registerHistoryEditorTarget({

@@ -36,7 +36,7 @@ const CONSOLE_ALLOWLIST: readonly (ConsoleSite & { bucket: ConsoleBucket; class:
   { file: "App.tsx", line: 1071, method: "warn", bucket: "d", class: "local-error", why: "SafeBack listener registration failed; a Tauri plugin-setup error names no graph object" },
   { file: "capture.tsx", line: 173, method: "log", bucket: "d", class: "numeric-shape", why: "capture-window sizing measurements contain only numbers" },
   { file: "capture.tsx", line: 600, method: "error", bucket: "d", class: "local-error", why: "wasm module init failure; the parser is handed no document at bootstrap" },
-  { file: "components/Block.tsx", line: 1510, method: "warn", bucket: "d", class: "scrubbed-error", why: "failureShape() — the facet query carries the property prefix being typed" },
+  { file: "components/Block.tsx", line: 1533, method: "warn", bucket: "d", class: "scrubbed-error", why: "failureShape() — the facet query carries the property prefix being typed" },
   { file: "logbook.ts", line: 43, method: "error", bucket: "d", class: "scrubbed-error", why: "failureShape() — the marker transition runs over the block's own text" },
   { file: "main.tsx", line: 62, method: "error", bucket: "d", class: "local-error", why: "window reveal failure is a native window-manager error, not a graph operation" },
   { file: "main.tsx", line: 70, method: "error", bucket: "d", class: "local-error", why: "wasm module init failure; the parser is handed no document at bootstrap" },

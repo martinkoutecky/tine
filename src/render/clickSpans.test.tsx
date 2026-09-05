@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { isBuiltinHidden } from "../editor/properties";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
-import { clickBeyondRenderedEnd, editorOffsetFromRenderedRange } from "./spans";
+import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "./spans";
 import { PaneContext, focusPane, paneRouter, resetPaneLayoutToSingle, splitPane } from "../panes";
 
 beforeAll(async () => {
@@ -271,6 +271,35 @@ describe("split-pane link navigation", () => {
       dispose();
       host.remove();
       resetPaneLayoutToSingle();
+    }
+  });
+});
+
+describe("code-card click-to-caret mapping (GH #489)", () => {
+  // A whole-block code fence renders as highlight.js markup, which carries none
+  // of the lsdoc span attributes the general mapper reads. Its own mapper has
+  // to answer from rendered text position instead, and must decline anything
+  // outside the card so ordinary blocks keep using the general path.
+  const raw = ["```js", "const a = 1;", "const b = 2;", "```"].join("\n");
+
+  it("maps a click inside the highlighted body to its offset in the code", () => {
+    const { root, dispose } = mountedBody(raw);
+    try {
+      expect(root.querySelector("pre.code-block > code")).toBeTruthy();
+      const body = "const a = 1;\nconst b = 2;";
+      expect(codeCardOffsetFromRange(root, textRange(root, "const a", 3))).toBe(3);
+      expect(codeCardOffsetFromRange(root, textRange(root, "const b", 5))).toBe(body.indexOf("const b") + 5);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("declines a range that is not inside a code card", () => {
+    const { root, dispose } = mountedBody("plain **text** here");
+    try {
+      expect(codeCardOffsetFromRange(root, textRange(root, "text", 2))).toBeNull();
+    } finally {
+      dispose();
     }
   });
 });

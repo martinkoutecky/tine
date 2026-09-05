@@ -5,7 +5,7 @@ import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setGraphMeta, set
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
-import { clearSelection, doc, hasSelection, loadSingle, moveSelection, resetStore, selectBlock, selectedIds, setDoc } from "./store";
+import { clearSelection, doc, hasSelection, loadSingle, moveSelection, resetStore, selectBlock, selectedIds, setDoc, setRaw, undo } from "./store";
 import { endEdit, startEditing } from "./editorController";
 import { pluginManager } from "./plugins/manager";
 import * as router from "./router";
@@ -847,5 +847,97 @@ describe("pane-select Esc cascade", () => {
     expect(tabs[0].history[tabs[0].pos]).toMatchObject({ kind: "page", name: "Source" });
     expect(focusedPaneId()).toBe(newPane);
     dispose();
+  });
+});
+
+describe("secondary default chords (aliases)", () => {
+  // GH #491: Ctrl+Z undid, Ctrl+Y did nothing. Logseq binds redo to
+  // mod+shift+z and leaves Ctrl+Y unbound, so on Windows the key every other
+  // editor treats as redo reached no command at all.
+  //
+  // These drive the real store rather than a spy: `run: redo` captures the
+  // function reference when COMMANDS is built, so a module spy installed later
+  // would never be the thing the dispatcher calls, and the test would pass on
+  // an assertion about nothing.
+  function seedUndoneEdit(): string {
+    resetStore();
+    loadSingle({
+      name: "Redo", kind: "page", title: "Redo", pre_block: null, format: "md", path: "pages/redo.md",
+      blocks: [{ id: "b1", raw: "Body", collapsed: false, children: [] }],
+    });
+    setRaw("b1", "Body edited");
+    expect(doc.byId.b1.raw).toBe("Body edited");
+    undo();
+    expect(doc.byId.b1.raw).toBe("Body");
+    return "b1";
+  }
+
+  it("Ctrl+Y redoes, and does not displace the primary Ctrl+Shift+Z", () => {
+    seedUndoneEdit();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    const alias = trackedKeyEvent({ key: "y", code: "KeyY", ctrlKey: true });
+    fake.dispatchCaptureKeydown(alias.event);
+    expect(doc.byId.b1.raw).toBe("Body edited");
+    expect(alias.prevented()).toBe(true);
+
+    // The binding Logseq ships still works, and Settings still owns it.
+    undo();
+    expect(doc.byId.b1.raw).toBe("Body");
+    const primary = trackedKeyEvent({ key: "z", code: "KeyZ", ctrlKey: true, shiftKey: true });
+    fake.dispatchCaptureKeydown(primary.event);
+    expect(doc.byId.b1.raw).toBe("Body edited");
+    expect(primary.prevented()).toBe(true);
+
+    dispose();
+    resetStore();
+  });
+
+  it("the alias fires while a block is being edited, like the binding it shadows", () => {
+    seedUndoneEdit();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({
+      key: "y",
+      code: "KeyY",
+      ctrlKey: true,
+      target: { tagName: "TEXTAREA" } as unknown as EventTarget,
+    }).event);
+    expect(doc.byId.b1.raw).toBe("Body edited");
+
+    dispose();
+    resetStore();
+  });
+
+  it("a user who rebinds Redo takes the alias with it", () => {
+    // An alias is a default, not an extra binding layered over the user's
+    // choice. It is not shown in the recorder and cannot be reset there, so
+    // leaving it live after a remap would be an invisible binding.
+    seedUndoneEdit();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "editor/redo": "mod+alt+r" });
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "y", code: "KeyY", ctrlKey: true }).event);
+    expect(doc.byId.b1.raw).toBe("Body");
+
+    fake.dispatchCaptureKeydown(
+      trackedKeyEvent({ key: "r", code: "KeyR", ctrlKey: true, altKey: true }).event,
+    );
+    expect(doc.byId.b1.raw).toBe("Body edited");
+
+    dispose();
+    resetStore();
+  });
+
+  it("Settings can show the alias: it travels with the command's defaults", () => {
+    const row = commandDefaults().find((c) => c.id === "editor/redo");
+    expect(row).toBeDefined();
+    expect(row!.binding).toBe("mod+shift+z");
+    expect(row!.alias).toBe("ctrl+y");
+    // Exactly one Redo row — an alias must not become a second command.
+    expect(commandDefaults().filter((c) => c.label === "Redo")).toHaveLength(1);
+    expect(paletteCommands().filter((c) => c.id === "editor/redo")).toHaveLength(1);
   });
 });

@@ -36,6 +36,7 @@ icon:: ⌨️
 	- Wide mode fills the available pane by default. To tune either layout on this device, open Settings → **Appearance** → **Advanced**: set the standard page width in pixels, or give Wide mode a custom maximum.
 - ## A few more worth knowing
 	- In Settings → **Keyboard Shortcuts**, use the settings search field to filter commands by name, command ID, or current binding before recording a replacement. A shortcut you record works while you are editing a block too, including one whose only modifier is Alt.
+	- **Undo is Ctrl/Cmd+Z and redo is Ctrl/Cmd+Shift+Z.** On Windows and Linux **Ctrl+Y** also redoes, because that is the key most editors there use; the shortcuts list shows it beside the binding. It is a second default rather than a second command, so remapping Redo replaces both.
 	- Use the **…** beside an ordinary page title for its complete actions menu: open the source file, copy/export, inspect properties, rename, carry tasks, or delete. It is the same menu as right-click and works from the keyboard and touch.
 	- **Carry unfinished tasks** forward into today (from the command palette) — the last 7 / 30 / 365 days, optionally with their context.
 	- Select several task bullets and press **Ctrl/Cmd+Enter** to advance each one through your workflow in a single Undo step. The selection toolbar can also wrap selected text as a page link or inline code.

@@ -40,7 +40,7 @@ struct AllowedSite {
 // output and are outside the application diagnostics contract.
 const RUST_PRINT_SITE_COUNT: usize = 74;
 const ALLOWLIST: &[AllowedSite] = &[
-    AllowedSite { file: "crates/tine-core/src/concord_ledger.rs", lines: &[234], macro_name: "eprintln", bucket: "d", class: "content-free-error", why: "best-effort ledger update failure carries only a std::io::Error, whose Display never includes the path", gate: "always-on reviewed failure" },
+    AllowedSite { file: "crates/tine-core/src/concord_ledger.rs", lines: &[238], macro_name: "eprintln", bucket: "d", class: "content-free-error", why: "best-effort ledger update failure carries only a std::io::Error, whose Display never includes the path", gate: "always-on reviewed failure" },
     AllowedSite { file: "crates/tine-core/src/direct_projection.rs", lines: &[857], macro_name: "eprintln", bucket: "d", class: "fixed-family-report", why: "report_projection_failure's always-on line is the fixed failure family and no error value", gate: "always-on reviewed failure" },
     AllowedSite { file: "crates/tine-core/src/direct_projection.rs", lines: &[859], macro_name: "eprintln", bucket: "b", class: "directed-core-detail", why: "report_projection_failure's detail line repeats the family with the raw error, for a directed investigation", gate: "runtime_debug_diagnostics_enabled" },
     AllowedSite { file: "crates/tine-core/src/direct_projection.rs", lines: &[870], macro_name: "eprintln", bucket: "d", class: "content-free-error", why: "projection directory creation carries only a std::io::Error, whose Display never includes the path", gate: "always-on reviewed failure" },

@@ -3,6 +3,7 @@ package page.tine.app
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -14,6 +15,8 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebView
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -392,6 +395,65 @@ class AndroidUiRuntimeTest {
       assertEquals("solo mobile layout must expose exactly one route surface", 1, opened.optInt("soloRouteSurfaces"))
       assertEquals("the PDF route must replace, not accompany, the page surface", 0, opened.optInt("pageSurfaces"))
       assertEquals("final Hardware Back must return to the exact source page", sourceRoute, returned.optString("pageTitle"))
+    }
+  }
+
+  /**
+   * GH #467. The system-bar and cutout insets pad the Activity content root, so
+   * the strip behind the status bar is painted by the window. Its colour and the
+   * bar ICON colour must come from the same authority -- Tine's own light/dark
+   * choice -- or the two disagree and the notification bar goes blank: light
+   * icons are white, and so is the light strip.
+   *
+   * This asserts the pair, not either half, because either half alone was
+   * already correct before the fix.
+   */
+  @Test
+  fun systemBarStripAndIconsAgreeWithTinesOwnThemeNotTheDeviceNightSetting() {
+    val scenario = ActivityScenario.launch(MainActivity::class.java)
+    try {
+      for (dark in listOf(true, false, true)) {
+        scenario.onActivity { activity ->
+          SystemBarAppearance.apply(activity, dark)
+
+          val expected = ContextCompat.getColor(
+            activity,
+            if (dark) R.color.tine_system_bar_dark else R.color.tine_system_bar_light,
+          )
+          val background = activity.window.decorView.background
+          assertTrue(
+            "the window background behind the system bars must be a flat colour, was $background",
+            background is ColorDrawable,
+          )
+          assertEquals(
+            "strip colour for dark=$dark",
+            expected,
+            (background as ColorDrawable).color,
+          )
+
+          val controller =
+            WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+          assertEquals(
+            "status-bar icons for dark=$dark",
+            !dark,
+            controller.isAppearanceLightStatusBars,
+          )
+          assertEquals(
+            "navigation-bar icons for dark=$dark",
+            !dark,
+            controller.isAppearanceLightNavigationBars,
+          )
+          // The failure this test exists for: white-on-white. Light icons are
+          // only legible on a light strip, and vice versa.
+          assertTrue(
+            "dark=$dark put ${if (controller.isAppearanceLightStatusBars) "dark" else "light"} " +
+              "icons on a ${if (dark) "dark" else "light"} strip",
+            controller.isAppearanceLightStatusBars != dark,
+          )
+        }
+      }
+    } finally {
+      scenario.close()
     }
   }
 

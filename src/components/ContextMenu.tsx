@@ -850,24 +850,32 @@ function PageMenu(props: {
       pushToast("This page target changed; reopen the page actions menu.", "error");
       return;
     }
-    if (isConflicted(name)) {
-      pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
-      return;
-    }
-    if (!page!.readOnly && !(await flushPage(name))) {
+    // A conflicted page is never flushed here — an unsavable draft is exactly
+    // what the conflict IS — but opening or revealing the file on disk is not
+    // refused either. It is the recovery path a stuck conflict needs, and
+    // refusing it defended nothing: the file is untouched whether or not Tine
+    // shows it, and blocking the only way to inspect it turned one stuck page
+    // into an inaccessible one (GH #490). The user is told what they are
+    // looking at instead.
+    let conflicted = isConflicted(name);
+    if (!conflicted && !page!.readOnly && !(await flushPage(name))) {
       pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
       return;
     }
-    if (isConflicted(name)) {
-      pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
-      return;
-    }
+    conflicted = conflicted || isConflicted(name);
     try {
       if (!pageTargetMatchesLoaded(captured, pageByName(name))) {
         pushToast("This page target changed; reopen the page actions menu.", "error");
         return;
       }
       await backend().openPageFile(name, kind, captured.path ?? page!.path, reveal);
+      if (conflicted) {
+        pushToast(
+          `“${name}” has an unresolved save conflict — this is the file as it stands on disk. ` +
+            `Your unsaved changes stay in Tine until you resolve it.`,
+          "info",
+        );
+      }
     } catch (error) {
       const message = page!.path
         ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`

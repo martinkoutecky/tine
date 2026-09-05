@@ -109,6 +109,10 @@ export interface ShortcutSettingRow {
   id: string;
   label: string;
   binding: string;
+  /** A second built-in chord that runs the same command. Shown beside the
+   *  binding so it is discoverable, but not remappable and not its own row:
+   *  it disappears the moment the user binds the command themselves. */
+  alias?: string;
   effective: string;
   overridden: boolean;
   scope: ShortcutScope;
@@ -320,14 +324,21 @@ function ShortcutRow(props: {
   return (
     <div class="help-shortcut-row">
       <span class="help-shortcut-label">{props.row.label}</span>
-      <button
-        class="help-keycap help-keycap-button"
-        classList={{ recording: recording(), overridden: props.row.overridden, disabled: props.row.effective === "false" }}
-        onClick={() => props.onRecord(props.row.id)}
-        title="Click to remap"
-      >
-        {recording() ? "Press keys..." : displayBinding(props.row.effective)}
-      </button>
+      <span class="help-shortcut-keys">
+        <button
+          class="help-keycap help-keycap-button"
+          classList={{ recording: recording(), overridden: props.row.overridden, disabled: props.row.effective === "false" }}
+          onClick={() => props.onRecord(props.row.id)}
+          title="Click to remap"
+        >
+          {recording() ? "Press keys..." : displayBinding(props.row.effective)}
+        </button>
+        <Show when={props.row.alias && !props.row.overridden}>
+          <span class="help-shortcut-alias">
+            or <span class="help-keycap help-keycap-static">{displayBinding(props.row.alias!)}</span>
+          </span>
+        </Show>
+      </span>
       <span class="help-shortcut-tail">
         <Show when={props.row.overridden}>
           <button

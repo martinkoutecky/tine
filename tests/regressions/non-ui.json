@@ -6427,6 +6427,21 @@
     "failBefore": "empty-property-value-fail-before.log at 2e41f52e89d93dacd7310130b65e96daed869e32"
    },
    "notes": "parse_property_line documents that it returns borrowed slices, and reference_evidence recovers each half's source offset by subtracting the line's base pointer. For a bare key:: with no trailing space the empty value was the static \"\" literal instead, so the subtraction underflowed and panicked in debug builds. A size:: line with no value is legal Logseq and is exactly the SPEC 3.3 \"present key, zero atoms\" case, so the crash was reachable from an ordinary graph. The empty value now borrows the tail of its own line."
+  },
+  {
+   "id": "REG-CONCORD-LEDGER-DANGLING-ENTRY-001",
+   "title": "A concord-ledger index or pin entry survived every prune once its blob was removed from outside the ledger",
+   "family": "concord-base-ledger",
+   "sources": {"issues": [], "commits": [], "internal": "GH #411 residue, response sweep 2026-09-05"},
+   "platforms": ["all"],
+   "layer": "tine-core-concord-ledger",
+   "status": "covered",
+   "coverage": {
+    "tests": ["crates/tine-core/src/concord_ledger.rs::prune_reclaims_index_and_pin_entries_whose_blob_vanished"],
+    "scenario": "concord-ledger.prune-reclaims-dangling-entries",
+    "failBefore": "cargo test -p tine-core --lib concord_ledger::tests::prune_reclaims with the two new match arms reverted: dangling_entries_removed 0, expected 3"
+   },
+   "notes": "prune() collected the hash named by each index and pin file and deleted only blobs nothing referenced, plus files that failed to parse. An entry whose blob had been removed from outside the ledger -- antivirus quarantine (the GH #411 reporter's case), a disk cleaner, a partial restore -- still parsed, so it was kept and its hash was even added to the referenced set. Every lookup through it already answered None, because base() verifies the blob's content hash, so no user-visible behaviour was wrong; the entry was simply dead metadata that accumulated and was re-read by every later prune. prune() now also removes index and pin files naming an absent blob. This is hygiene only: the ledger is disposable state that may never warn, refuse, or report a missing blob, so no diagnostic was added."
   }
  ]
 }

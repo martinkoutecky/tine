@@ -46,6 +46,7 @@
     "e2e:theme-presentation": "node scripts/e2e-theme-presentation.mjs",
     "e2e:editor-interactions": "node scripts/e2e-editor-interactions.mjs",
     "check:block-spacing": "node scripts/check-block-spacing.mjs",
+    "check:code-block-edit-scroll": "node scripts/check-code-block-edit-scroll.mjs",
     "e2e:external-assets": "node scripts/e2e-external-assets.mjs",
     "e2e:outline-guide": "node scripts/e2e-outline-guide.mjs",
     "e2e:linux:smoke": "node scripts/run-e2e.mjs linux-smoke",

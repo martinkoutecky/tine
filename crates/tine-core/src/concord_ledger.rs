@@ -71,6 +71,10 @@ pub struct PruneStats {
     pub blobs_removed: usize,
     pub blobs_kept: usize,
     pub corrupt_entries_removed: usize,
+    /// Index/pin entries whose blob is gone (antivirus quarantine, a disk
+    /// cleaner, a partial restore). Their lookups already answer `None`
+    /// forever, so the entry is dead metadata; prune reclaims it.
+    pub dangling_entries_removed: usize,
 }
 
 enum Job {
@@ -340,8 +344,12 @@ impl LedgerStore {
         }
     }
 
-    /// Delete blobs referenced by no index entry and no pin, and drop
-    /// unparseable index/pin files (their lookups already answer `None`).
+    /// Delete blobs referenced by no index entry and no pin, and drop index and
+    /// pin files that can no longer answer: unparseable ones, and ones naming a
+    /// blob that is absent. `record` writes a blob before the index entry that
+    /// names it, so an entry without its blob means the blob was removed from
+    /// outside the ledger; the entry is dead and every lookup through it
+    /// already answers `None`.
     fn prune(&self) -> io::Result<PruneStats> {
         let mut stats = PruneStats::default();
         let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -368,8 +376,12 @@ impl LedgerStore {
                     }
                 });
                 match hash {
-                    Some(hash) => {
+                    Some(hash) if self.blobs_dir().join(&hash).exists() => {
                         referenced.insert(hash);
+                    }
+                    Some(_) => {
+                        stats.dangling_entries_removed += 1;
+                        let _ = std::fs::remove_file(&path);
                     }
                     None => {
                         stats.corrupt_entries_removed += 1;
@@ -420,6 +432,8 @@ mod tests {
         assert!(contract.contains("It is never an authority"));
         assert!(contract.contains("safe to delete wholesale at any time"));
         assert!(contract.contains("a managed\nbinding never attaches one"));
+        assert!(contract.contains("index and pin entries naming a blob that is absent"));
+        assert!(contract.contains("never warns,\nrefuses, or reports a missing blob to the user"));
     }
 
     #[test]
@@ -489,6 +503,49 @@ mod tests {
             Some("- version 1\n"),
             "the pinned ancestor must survive the newer record and the prune"
         );
+        std::fs::remove_dir_all(ledger.dir()).ok();
+    }
+
+    #[test]
+    fn prune_reclaims_index_and_pin_entries_whose_blob_vanished() {
+        // GH #411 residue: antivirus quarantine (or a disk cleaner, or a partial
+        // restore) removes blobs from under the ledger. Lookups already degrade
+        // to `None`, but the entries naming those blobs used to survive every
+        // prune as dead metadata.
+        let ledger = ConcordLedger::new(scratch("prune-dangling"));
+        ledger.record_now("pages/A.md", "- version 1\n").unwrap();
+        ledger
+            .pin_conflict_base_now("pages/A.sync-conflict-x.md", "pages/A.md")
+            .unwrap();
+        ledger.record_now("pages/B.md", "- b\n").unwrap();
+
+        // Remove every blob, exactly as an external cleaner would.
+        for entry in std::fs::read_dir(ledger.dir().join("blobs"))
+            .unwrap()
+            .flatten()
+        {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+        assert_eq!(ledger.base("pages/A.md"), None, "lookup already degrades");
+
+        let index_dir = ledger.dir().join("index");
+        let pins_dir = ledger.dir().join("pins");
+        let count = |dir: &std::path::Path| std::fs::read_dir(dir).unwrap().count();
+        assert_eq!(count(&index_dir), 2, "two index entries before the prune");
+        assert_eq!(count(&pins_dir), 1, "one pin before the prune");
+
+        let stats = ledger.prune_now().unwrap();
+        assert_eq!(stats.dangling_entries_removed, 3, "{stats:?}");
+        assert_eq!(stats.corrupt_entries_removed, 0, "{stats:?}");
+        assert_eq!(count(&index_dir), 0, "dangling index entries are reclaimed");
+        assert_eq!(count(&pins_dir), 0, "dangling pins are reclaimed");
+
+        // Recording again after the cleanup still works and still answers.
+        ledger.record_now("pages/A.md", "- version 2\n").unwrap();
+        assert_eq!(ledger.base("pages/A.md").as_deref(), Some("- version 2\n"));
+        let stats = ledger.prune_now().unwrap();
+        assert_eq!(stats.dangling_entries_removed, 0, "{stats:?}");
+        assert_eq!(stats.blobs_kept, 1, "{stats:?}");
         std::fs::remove_dir_all(ledger.dir()).ok();
     }
 

@@ -341,6 +341,33 @@ function collectInFlowRects(node: Node, view: Window | null, range: Range, out: 
   for (let i = 0; i < rects.length; i++) out.push(rects[i]);
 }
 
+/** The offset inside a whole-block CODE CARD's own text for a click that landed
+ *  in it, or null when the click was not inside one.
+ *
+ *  A code card is highlight.js `innerHTML`, so it carries no lsdoc span data:
+ *  {@link editorOffsetFromRenderedRange} declines and every click inside one
+ *  used to fall through to "the end of the block". In a three-line fence nobody
+ *  noticed. In a thousand-line one the caret lands hundreds of lines from the
+ *  click, and when a long line sits at the end the no-wrap code editor scrolls
+ *  to that line's far right — so the block shows blank space and is hard to
+ *  scroll back (GH #489).
+ *
+ *  The card's text is exactly what the editor will hold for such a block (the
+ *  editor shows the fenced body, not the wrapper), so the offset is simply
+ *  counted. The caller owns the "is this block one code card" question and
+ *  clamps the result to the body it is about to edit. */
+export function codeCardOffsetFromRange(
+  root: Element,
+  range: Pick<Range, "startContainer" | "startOffset">,
+): number | null {
+  const code = root.querySelector("pre.code-block > code");
+  if (!code) return null;
+  const container = range.startContainer;
+  if (code !== container && !code.contains(container)) return null;
+  const { caret } = renderedTextCaret(code, container, range.startOffset);
+  return caret;
+}
+
 export function editorOffsetFromRenderedRange(
   root: Element,
   range: Pick<Range, "startContainer" | "startOffset">,
