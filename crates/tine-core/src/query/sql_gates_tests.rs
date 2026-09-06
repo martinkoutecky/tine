@@ -973,8 +973,14 @@ const PLAN_SHAPES: &[(&str, QueryDialect)] = &[
     // The bound must come from the other leaf and the regex must not cost the
     // anchor its index probe: that is precisely what a plan gate can see and an
     // identity gate cannot.
-    ("(and (task TODO) (content-regex \"needle\"))", QueryDialect::Og),
-    ("ref('Project') and content regexp 'needle'", QueryDialect::Tql),
+    (
+        "(and (task TODO) (content-regex \"needle\"))",
+        QueryDialect::Og,
+    ),
+    (
+        "ref('Project') and content regexp 'needle'",
+        QueryDialect::Tql,
+    ),
 ];
 
 /// §5.10's plan classes and the shape that produces each. They are recorded
@@ -1004,8 +1010,16 @@ const CONTENT_PLAN_SHAPES: &[(&str, QueryDialect, ContentPlan)] = &[
     // pattern validities lower to a statement, and all four are the same
     // unindexed class: a valid pattern is not a better plan than an invalid one,
     // it just answers instead of being false.
-    ("content regexp 'needle'", QueryDialect::Tql, ContentPlan::Regex),
-    ("content match '/needle/'", QueryDialect::Tql, ContentPlan::Regex),
+    (
+        "content regexp 'needle'",
+        QueryDialect::Tql,
+        ContentPlan::Regex,
+    ),
+    (
+        "content match '/needle/'",
+        QueryDialect::Tql,
+        ContentPlan::Regex,
+    ),
     ("content regexp '['", QueryDialect::Tql, ContentPlan::Regex),
     ("content match '/[/'", QueryDialect::Tql, ContentPlan::Regex),
 ];
@@ -1511,7 +1525,11 @@ fn a_regex_predicate_reads_the_exact_visible_text_through_a_statement_scoped_tab
     );
     // A regex nested under a `children` quantifier, and one composed with a
     // nested `refs` leaf — the two features of this packet in one statement.
-    assert!(!here("any(children, content regexp 'nested regex')", QueryDialect::Tql).is_empty());
+    assert!(!here(
+        "any(children, content regexp 'nested regex')",
+        QueryDialect::Tql
+    )
+    .is_empty());
     for source in [
         "any(children, ref('regex') and content regexp 'nested regex')",
         "not content regexp 'needle'",
@@ -1539,7 +1557,8 @@ fn a_regex_predicate_reads_the_exact_visible_text_through_a_statement_scoped_tab
     // cannot outlive its statement. Install one statement's program, then the
     // EMPTY program a regex-free statement installs, and the first statement's
     // ID no longer answers — it FAILS the read rather than matching nothing.
-    let (_anchor, statement) = corpus.lower("content regexp 'SHOUTING'", QueryDialect::Tql, true, &[]);
+    let (_anchor, statement) =
+        corpus.lower("content regexp 'SHOUTING'", QueryDialect::Tql, true, &[]);
     assert_eq!(statement.regexes.bindings.len(), 1);
     corpus.bind_regexes(&statement.regexes);
     assert_eq!(
@@ -1645,7 +1664,8 @@ fn a_nested_refs_child_predicate_cannot_bound_its_anchor() {
     write_fast_corpus(&root);
     let corpus = Corpus::open(root, true);
 
-    let (plan, bounded, nothing) = corpus.explain("any(children, ref('Project'))", QueryDialect::Tql);
+    let (plan, bounded, nothing) =
+        corpus.explain("any(children, ref('Project'))", QueryDialect::Tql);
     assert!(!nothing, "the fixture must make this shape satisfiable");
     assert!(
         !bounded,
@@ -1655,7 +1675,8 @@ fn a_nested_refs_child_predicate_cannot_bound_its_anchor() {
     // The reason, not just the verdict: the anchor is enumerated and the child
     // subquery is re-run per anchor row.
     assert!(
-        plan.iter().any(|step| step == "SCAN b" || step.starts_with("SCAN b ")),
+        plan.iter()
+            .any(|step| step == "SCAN b" || step.starts_with("SCAN b ")),
         "the anchor must be the thing being enumerated here: {}",
         plan.join(" | ")
     );
@@ -1676,7 +1697,8 @@ fn a_nested_refs_child_predicate_cannot_bound_its_anchor() {
 
     // Control: the same relation and quantifier over a predicate that IS a
     // property of the child alone stays bounded.
-    let (control, bounded, nothing) = corpus.explain("any(children, task = 'DONE')", QueryDialect::Tql);
+    let (control, bounded, nothing) =
+        corpus.explain("any(children, task = 'DONE')", QueryDialect::Tql);
     assert!(!nothing);
     assert!(
         bounded,
@@ -2448,7 +2470,12 @@ fn a_block_query_selects_three_columns_and_never_decorates_its_candidates() {
 
     // `@page` output is untouched by this packet: four columns, name and kind
     // included, because the page result construction reads them.
-    let (anchor, page) = corpus.lower("@page and journal = true", QueryDialect::Tql, fts_ready, &[]);
+    let (anchor, page) = corpus.lower(
+        "@page and journal = true",
+        QueryDialect::Tql,
+        fts_ready,
+        &[],
+    );
     assert_eq!(anchor, Anchor::Page);
     assert!(
         page.sql

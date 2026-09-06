@@ -1842,9 +1842,35 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     // inventory variant; live deltas retain the original call. Both remain
     // within the existing disposable page transaction. No authority crossing
     // was added. The dependency assertion above also catches up to DB2's pin.
+    // R2 (regex lowering + nested `refs`): the surface moves by exactly THREE
+    // entries, all in `query/sql.rs`, and the delta was DERIVED by dumping this
+    // inventory at the base commit and after the packet and diffing the two —
+    // not by copying the digest the failure printed:
+    //     `usetine_storage::sqlite::PhysicalQueryValue;`
+    //         -> `usetine_storage::sqlite::{MaterializationError,
+    //             PhysicalQueryValue};`                              (rewritten)
+    //     `import-associated:MaterializationError::InvalidQuery(`         1 (new)
+    //     `import-associated:PhysicalQueryValue::Integer(`            7 -> 8
+    // Nothing else in the whole surface moves: no new file appears, no
+    // `storage-receiver:` entry is added or removed, and `direct_projection.rs`
+    // is byte-identical here even though the packet edits it — installing the
+    // regex predicate goes through the seam handle this census already counts.
+    // The two additions are the SAME two facts, seen from the two sides:
+    //   * `PhysicalQueryValue::Integer` is how a compiled-regex ID reaches the
+    //     statement. It is a BOUND parameter, which is the point (I-22, D-15):
+    //     the ID is bindable, the pattern never is, and no pattern text can
+    //     reach the SQL string because there is no variant that would carry it.
+    //   * `MaterializationError::InvalidQuery` is how an ID the installed table
+    //     does not name FAILS the read instead of quietly matching nothing.
+    //     `MaterializationError` is the seam's own error type, already imported
+    //     by `direct_projection.rs`; it is not write-capable and adding it does
+    //     not widen what this crate can do to a projection.
+    // MANAGER: this re-pin is derived and explained, but it is still a census
+    // hash outside R2's owned files — reconcile it against the R1 gates before
+    // integration rather than inheriting it.
     assert_eq!(
         inventory_digest(&dependency_surface),
-        "fffe25d2bab8df89f2343391fa658edba2366e89412c314142442ec1c4e99160",
+        "44fe73b81b209c4bbc4ba27809b24e50ecc1cd4d27095396753f6f1f7ec64412",
         "the complete tine-storage import/direct-call surface changed: {dependency_surface:#?}"
     );
 }

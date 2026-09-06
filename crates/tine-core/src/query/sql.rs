@@ -1194,7 +1194,8 @@ impl Compiler<'_> {
             // `(block_id, normalized_name)` primary key.
             let own = compiler.alias("or");
             let owner = format!("{}.block_id", scope.alias);
-            let predicate = compiler.name_element(pred, &format!("{own}.normalized_name"), refs::normalize);
+            let predicate =
+                compiler.name_element(pred, &format!("{own}.normalized_name"), refs::normalize);
             if let Some(sub) = compiler.exists_subquery(
                 &format!("{own}.block_id"),
                 &format!("block_own_refs {own}"),
@@ -1210,8 +1211,11 @@ impl Compiler<'_> {
             // two-valued under `NOT`.
             let ancestors = compiler.alias("ar");
             let parent = format!("{}.parent_block_id", scope.anchor);
-            let predicate =
-                compiler.name_element(pred, &format!("{ancestors}.normalized_name"), refs::normalize);
+            let predicate = compiler.name_element(
+                pred,
+                &format!("{ancestors}.normalized_name"),
+                refs::normalize,
+            );
             if let Some(sub) = compiler.exists_subquery(
                 &format!("{ancestors}.block_id"),
                 &format!("block_path_refs {ancestors}"),
@@ -1227,7 +1231,8 @@ impl Compiler<'_> {
             // CHECK constraints and `pages` does not.
             let page = compiler.alias("pr");
             let page_owner = format!("{}.page_id", scope.anchor);
-            let predicate = compiler.name_element(pred, &format!("{page}.name_key"), refs::normalize);
+            let predicate =
+                compiler.name_element(pred, &format!("{page}.name_key"), refs::normalize);
             if let Some(sub) = compiler.exists_subquery(
                 &format!("{page}.page_id"),
                 &format!("pages {page}"),
@@ -3008,10 +3013,18 @@ mod tests {
                 statement.sql
             );
             // The pattern is a table row keyed by a bound ID, not SQL text.
-            assert!(!statement.sql.contains("[a-z]"), "{source}: {}", statement.sql);
+            assert!(
+                !statement.sql.contains("[a-z]"),
+                "{source}: {}",
+                statement.sql
+            );
             assert_eq!(statement.params, vec![PhysicalQueryValue::Integer(1)]);
             assert_eq!(statement.regexes.bindings.len(), 1, "{source}");
-            assert_eq!(statement.content_plans, vec![ContentPlan::Regex], "{source}");
+            assert_eq!(
+                statement.content_plans,
+                vec![ContentPlan::Regex],
+                "{source}"
+            );
             // Explicitly unindexed (§4.3.2): a regex never bounds the anchor.
             assert!(!statement.positively_bounded, "{source}");
             assert!(!statement.matches_nothing, "{source}");
@@ -3062,7 +3075,10 @@ mod tests {
             for id in 1..=2u64 {
                 assert!(predicate(id, "alpha beta").is_ok(), "{rule:?} id {id}");
             }
-            assert!(predicate(3, "alpha").is_err(), "{rule:?}: an unbound id fails");
+            assert!(
+                predicate(3, "alpha").is_err(),
+                "{rule:?}: an unbound id fails"
+            );
         }
     }
 
@@ -3076,7 +3092,10 @@ mod tests {
         let first = lower_with(filter.clone(), Anchor::Block, true);
         let second = lower_with(filter, Anchor::Block, true);
         assert_eq!(first, second, "two lowerings of one filter are equal");
-        assert_eq!(format!("{:?}", first.regexes), "QueryRegexProgram { bindings: 1 }");
+        assert_eq!(
+            format!("{:?}", first.regexes),
+            "QueryRegexProgram { bindings: 1 }"
+        );
         assert!(
             !format!("{first:?}").contains("secret-"),
             "the pattern text never reaches a Debug line"
@@ -3110,25 +3129,29 @@ mod tests {
         // The ancestor context is the ANCHOR's parent's closure, and it is the
         // anchor `b` that is named there — never the child `c1`.
         assert!(
-            statement
-                .sql
-                .contains("(b.parent_block_id IS NOT NULL AND b.parent_block_id IN \
+            statement.sql.contains(
+                "(b.parent_block_id IS NOT NULL AND b.parent_block_id IN \
                  (SELECT ar3.block_id FROM block_path_refs ar3 \
-                 WHERE (ar3.block_id = b.parent_block_id AND ar3.normalized_name = ?2)))"),
+                 WHERE (ar3.block_id = b.parent_block_id AND ar3.normalized_name = ?2)))"
+            ),
             "{}",
             statement.sql
         );
         // The page is named separately, because a ROOT anchor has no parent row
         // to carry it.
         assert!(
-            statement.sql.contains("b.page_id IN (SELECT pr4.page_id FROM pages pr4 \
-             WHERE (pr4.page_id = b.page_id AND pr4.name_key <> '' AND pr4.name_key = ?3))"),
+            statement.sql.contains(
+                "b.page_id IN (SELECT pr4.page_id FROM pages pr4 \
+             WHERE (pr4.page_id = b.page_id AND pr4.name_key <> '' AND pr4.name_key = ?3))"
+            ),
             "{}",
             statement.sql
         );
         // Nothing reads the nested row's own materialized closure.
         assert!(
-            !statement.sql.contains("block_path_refs ar3 WHERE (ar3.block_id = c1"),
+            !statement
+                .sql
+                .contains("block_path_refs ar3 WHERE (ar3.block_id = c1"),
             "{}",
             statement.sql
         );
@@ -3186,7 +3209,11 @@ mod tests {
         let nested = |quant: Quant, pred: Filter| {
             let query = Query::new(
                 Anchor::Block,
-                Filter::rel(Rel::Children, Quant::Any, Filter::rel(Rel::Refs, quant, pred)),
+                Filter::rel(
+                    Rel::Children,
+                    Quant::Any,
+                    Filter::rel(Rel::Refs, quant, pred),
+                ),
                 Source::Builder,
             );
             lower_query(&query, &inputs(&registry)).sql
@@ -3197,7 +3224,10 @@ mod tests {
         // `None` is that same existence, negated.
         assert!(nested(Quant::None, name()).contains("(NOT ("));
         // A general `Every` negates the ELEMENT predicate instead.
-        let general = Filter::or(vec![name(), Filter::attr(Attr::Name, CmpOp::Eq, Value::text("Other"))]);
+        let general = Filter::or(vec![
+            name(),
+            Filter::attr(Attr::Name, CmpOp::Eq, Value::text("Other")),
+        ]);
         let every = nested(Quant::Every, general.clone());
         assert!(
             every.contains("(NOT (or") || every.contains("NOT ("),

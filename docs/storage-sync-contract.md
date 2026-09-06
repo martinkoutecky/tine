@@ -620,8 +620,24 @@ answered by the tree walk over the same query IR, with nothing scheduled,
 because the worker is already on its way and asking for a whole-graph snapshot
 on every keystroke after a save is the unrequested whole-graph work this route
 exists to remove. A read that was ATTEMPTED and did not answer is the
-failed-read shape below. A query the compiler does not lower is answered by the
-walk with nothing counted and nothing scheduled: nothing failed.
+failed-read shape below.
+
+**There is no fourth shape for "the compiler would not lower this."** The
+lowering is TOTAL by type: it returns a statement for every query the IR can
+represent, so no evaluable shape is routed to the walk by the compiler's own
+choice. The two families that used to be excepted here — a valid `content
+regexp` pattern (both the `content regexp <p>` spelling and a whole-query
+`/pattern/`), and a `refs` nested inside a `children` quantifier — now lower like
+any other predicate. Regex matches through a bound compiled-pattern ID that the
+statement installs on the read-only seam and the seam evaluates against the
+block's exact visible text; the pattern itself is never part of the SQL and never
+logged. A pattern that does not compile stays a FALSE leaf, negation included,
+exactly as the walk answers it — that is an answer, not a decline. Regex remains
+deliberately UNINDEXED (there is no content index to bind it to), so it never
+bounds an anchor by itself; a nested `refs` reads the ANCHOR's ancestor context
+and so cannot bound its anchor either. Both facts are recorded as plan classes
+rather than as exemptions, because an unbounded plan that is measured is
+information and an unbounded plan that is excused is not.
 
 **What one dispatched query reads.** One statement, plus one `Document` load per
 page the RESULT names — never a candidate superset and never a page the answer

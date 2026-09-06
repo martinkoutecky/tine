@@ -603,11 +603,11 @@ impl Filter {
     /// classification pass.
     pub fn page_locality(&self) -> PageLocality {
         match self {
-            Filter::And { items } | Filter::Or { items } => items
-                .iter()
-                .fold(PageLocality::Local, |acc, item| {
+            Filter::And { items } | Filter::Or { items } => {
+                items.iter().fold(PageLocality::Local, |acc, item| {
                     acc.and(item.page_locality())
-                }),
+                })
+            }
             Filter::Not { inner } | Filter::Off { inner } => inner.page_locality(),
             // A constant and an unsatisfiable `Raw` span read no row at all.
             Filter::True | Filter::False | Filter::Raw { .. } => PageLocality::Local,
@@ -1479,7 +1479,11 @@ mod tests {
             Quant::Any,
             Filter::and(vec![
                 Filter::rel(Rel::Refs, Quant::Any, leaf_a()),
-                Filter::not(Filter::off(Filter::rel(Rel::Page, Quant::Any, Filter::True))),
+                Filter::not(Filter::off(Filter::rel(
+                    Rel::Page,
+                    Quant::Any,
+                    Filter::True,
+                ))),
             ]),
         );
         let query = Query::new(Anchor::Block, nested, Source::Builder);
