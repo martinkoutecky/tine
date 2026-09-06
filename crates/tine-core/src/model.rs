@@ -6524,8 +6524,10 @@ impl Graph {
     }
 
     /// §5.3's block hydration (M8). The statement answered `(block_id, page_id,
-    /// name, text_kind, path)` rows; group them by page, load exactly those
-    /// pages' already-parsed documents, and collect the named blocks.
+    /// path)` rows; group them by page, load exactly those pages' already-parsed
+    /// documents, and collect the named blocks. The page's name and kind come
+    /// from the entry this hydration loads, never from a column the candidate
+    /// stage carried along for them.
     ///
     /// **Cost is O(result pages), never a candidate superset**, and the guard
     /// below says so in a way that can fail: a hydration that loaded more pages
@@ -6549,8 +6551,16 @@ impl Graph {
         let mut by_path: std::collections::HashMap<PathBuf, std::collections::HashSet<String>> =
             std::collections::HashMap::new();
         for row in rows {
+            // §5.3's row contract, pinned here rather than assumed: exactly
+            // three columns, the block identity first and the routing path
+            // last. The arity is checked because a row that still carried the
+            // retired `(name, text_kind)` decoration would otherwise decode a
+            // page NAME as a path and hydrate the wrong pages.
+            if row.len() != 3 {
+                return DispatchedQuery::FailedRead;
+            }
             let (Some(PhysicalQueryValue::Blob(block_id)), Some(PhysicalQueryValue::Text(path))) =
-                (row.first(), row.get(4))
+                (row.first(), row.get(2))
             else {
                 // The row shape is the lowering's own select list. A row that
                 // does not have it means the statement and this reader disagree

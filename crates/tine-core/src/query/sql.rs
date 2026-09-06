@@ -204,10 +204,8 @@ pub(crate) enum ResultSetRule {
 ///    against is 2.3 ms. Adopting is therefore a recorded LANE DECISION, and
 ///    `RESULT_SET_RULE` is the single line that reverts it.
 /// 2. Even with the win, that shape measures walk 435 µs vs SQL 2935 µs. It is
-///    recorded, not routed around (§5.9 has no fourth route). The next thing to
-///    try is an index that lets the `children` subquery seek by
-///    `(parent_block_id, block_id)` instead of probing per candidate row — a
-///    projection addition, not a second engine.
+///    recorded, not routed around (§5.9 has no fourth route), and no remedy is
+///    named here that has not been measured.
 /// 3. The plain `MatchSetCte` variant is kept ALIVE rather than deleted,
 ///    because it is what makes claim (1) checkable: it is the spelling that
 ///    shows the inlining, and a gate that could only compare two options could
@@ -276,9 +274,17 @@ pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered
         query.evaluable_filter()
     };
     let (row, select, from) = match query.anchor {
+        // §5.3's block row is `(block_id, page_id, path)` and nothing else.
+        // `block_id` is the answer, `page_id` is the routing identity Managed
+        // Storage's overlay route will address a page by, and `path` is the key
+        // Direct hydration loads a `Document` under TODAY
+        // (`direct_projection_pages_for_paths_ordered`). `pages.name` and
+        // `pages.text_kind` were decoration: no consumer of these rows ever
+        // decoded either, and the hydration reads both from the page entry it
+        // loads anyway.
         Anchor::Block => (
             Row::Block("b"),
-            "SELECT b.block_id, b.page_id, p.name, p.text_kind, p.path",
+            "SELECT b.block_id, b.page_id, p.path",
             "FROM blocks b JOIN pages p ON p.page_id = b.page_id",
         ),
         Anchor::Page => (
@@ -330,10 +336,22 @@ pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered
                 } else {
                     ""
                 };
+                //
+                // The match set is a BLOCKS question: `FROM blocks b`, with no
+                // join to `pages`. Every page predicate carries its own
+                // `pages` subquery keyed by `page_id`
+                // ([`Compiler::page_relation`] and the nested page relations it
+                // compiles), so no fragment of the filter reads an outer `p`,
+                // and `blocks.page_id` is a NOT NULL foreign key into
+                // `pages(page_id)` — the join could neither add nor drop a
+                // candidate. What it did do was probe the pages primary-key
+                // index once per candidate row to carry columns the match does
+                // not use. Routing to `pages.path` happens ONCE, on the answer,
+                // in the outer select below.
                 cte = Some(format!(
                     "WITH m(block_id, page_id, parent_block_id) AS{hint} \
                      (SELECT {alias}.block_id, {alias}.page_id, {alias}.parent_block_id \
-                     {from} WHERE {where_})"
+                     FROM blocks {alias} WHERE {where_})"
                 ));
                 where_ = "(m.parent_block_id IS NULL OR m.parent_block_id NOT IN \
                      (SELECT block_id FROM m))"
@@ -354,7 +372,7 @@ pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered
         // same page, so masking inside `m` would be unobservable either way, and
         // staying outside keeps the masked statement the same predicate.
         (Row::Block(_), Some(_)) => (
-            "SELECT m.block_id, m.page_id, p.name, p.text_kind, p.path",
+            "SELECT m.block_id, m.page_id, p.path",
             "FROM m JOIN pages p ON p.page_id = m.page_id",
             "m.page_id".to_string(),
         ),

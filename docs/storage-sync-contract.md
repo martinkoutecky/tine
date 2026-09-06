@@ -606,7 +606,27 @@ walk with nothing counted and nothing scheduled: nothing failed.
 page the RESULT names — never a candidate superset and never a page the answer
 does not contain. Pages loaded equals result pages, and a hydration that loaded
 more refuses that read rather than serving a result it cannot account for.
-`@page`-shaped results load no document at all. Base order and within-page order
+`@page`-shaped results load no document at all.
+
+**A block statement answers `(block_id, page_id, path)` and nothing else, and
+its match set reads `blocks` alone.** The block identity is the answer, the page
+id is the stable routing identity a managed overlay addresses a page by, and the
+path is the key the Direct Files hydration loads a `Document` under; the page's
+name and kind come from the page entry that load returns, never from a column
+carried alongside every candidate row. The materialized production spelling joins `pages` for result routing
+only on the ANSWER — after matching and after the
+result-set rule has dropped a match whose immediate parent also matched — because
+a page predicate carries its own `pages` subquery keyed by `page_id` and
+`blocks.page_id` is a NOT NULL foreign key, so joining during candidate
+selection could neither add nor drop a match. Both halves are load-bearing:
+carrying two unread columns and probing the pages primary key once per candidate
+is the unrequested work the projection exists to remove, and it measured 0.81 –
+0.98× of the previous statement across broad and selective nonempty shapes on
+the anonymized corpus, with controls recorded in `RECEIPT-db1.md` (under 1% for shapes above
+25 microseconds). Page-anchored
+statements are unaffected and still answer `(page_id, name, text_kind,
+journal_day)`. A row that does not have the block shape is a failed read, never
+an empty answer. Base order and within-page order
 are the caller's and are reproduced in the result construction, because the tree
 walk's base order is its page source's enumeration order and no projection
 column reproduces it; the statement therefore carries no `ORDER BY`, and the

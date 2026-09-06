@@ -1616,3 +1616,426 @@ fn measure_shape(
         sql.as_micros()
     );
 }
+
+// ---------------------------------------------------------------------------
+// DB1: the before/after statement measurement
+// ---------------------------------------------------------------------------
+
+/// The shapes the before/after measurement times. Chosen so the comparison is
+/// not made on empty results alone: broad shapes (most of the graph matches),
+/// selective ones (a handful of rows), one page-anchored shape whose statement
+/// this packet does not touch at all, and one that is empty on most corpora.
+const MEASURE_SHAPES: &[(&str, QueryDialect)] = &[
+    // broad — the candidate stage is where the removed page decoration cost
+    // whatever it cost, so a shape with many candidates has to be in the list.
+    ("(task TODO)", QueryDialect::Og),
+    ("task is not null", QueryDialect::Tql),
+    ("(journal)", QueryDialect::Og),
+    ("content match 'the'", QueryDialect::Tql),
+    // selective
+    ("[[Project]]", QueryDialect::Og),
+    ("(priority A)", QueryDialect::Og),
+    ("scheduled is not null", QueryDialect::Tql),
+    ("(property status open)", QueryDialect::Og),
+    ("any(children, task = 'DONE')", QueryDialect::Tql),
+    // the control shape of the packet: `@page` output is unchanged, so this one
+    // must measure as noise and its two statements must be byte-identical.
+    ("@page and day >= '2026-01-01'", QueryDialect::Tql),
+    // typically empty
+    ("prop('k') = 'a'", QueryDialect::Tql),
+];
+
+/// Where the captured baseline statements live. The measurement reads it; the
+/// dump below writes it.
+fn baseline_statements_path() -> Option<PathBuf> {
+    std::env::var_os("TINE_QUERY_STATEMENT_BASELINE").map(PathBuf::from)
+}
+
+/// **Capture the statements this compiler emits today**, so a later build can
+/// be timed against them without keeping a second production compiler alive
+/// merely to benchmark it (the artifact is the "before", not a code path).
+///
+/// Run this at the base commit, then edit, then run the measurement below.
+#[test]
+#[ignore = "capture a measurement baseline: set TINE_QUERY_IDENTITY_GRAPH and TINE_QUERY_STATEMENT_BASELINE"]
+fn dump_the_lowered_statements_as_a_measurement_baseline() {
+    let _serial = serialize();
+    let (Some(root), Some(out)) = (
+        std::env::var_os("TINE_QUERY_IDENTITY_GRAPH"),
+        baseline_statements_path(),
+    ) else {
+        eprintln!("skipped: set TINE_QUERY_IDENTITY_GRAPH and TINE_QUERY_STATEMENT_BASELINE");
+        return;
+    };
+    let corpus = Corpus::open(PathBuf::from(&root), false);
+    let fts_ready = corpus.fts_ready();
+    let mut captured: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for (source, dialect) in MEASURE_SHAPES {
+        let (_anchor, statement) = corpus
+            .lower(source, *dialect, fts_ready, &[])
+            .unwrap_or_else(|reason| panic!("{source} must lower to be measured: {reason}"));
+        captured.insert((*source).to_string(), statement.sql);
+    }
+    std::fs::write(
+        &out,
+        serde_json::to_string_pretty(&captured).expect("the capture serializes"),
+    )
+    .expect("the baseline artifact is writable");
+    eprintln!(
+        "statement_baseline shapes={} path={}",
+        captured.len(),
+        out.display()
+    );
+}
+
+/// One arm's samples for one shape.
+struct Arm {
+    label: &'static str,
+    sql: String,
+    samples: Vec<u128>,
+    identities: BTreeSet<String>,
+    columns: usize,
+}
+
+/// **The before/after measurement (DB1).** The captured baseline statement and
+/// the statement this build emits are run on the SAME projection, in ONE
+/// process, alternating which goes first across the rounds, with a third arm
+/// that is the baseline statement AGAIN — the control. The control's distance
+/// from the baseline is the noise floor this machine can resolve; a
+/// before/after difference inside it is reported as inconclusive rather than as
+/// a win.
+///
+/// Identity is compared per shape (the anchor column of every returned row), so
+/// a statement that got faster by answering a different question fails here.
+#[test]
+#[ignore = "before/after statement measurement: set TINE_QUERY_IDENTITY_GRAPH and TINE_QUERY_STATEMENT_BASELINE"]
+fn the_baseline_and_current_statements_are_measured_against_each_other() {
+    let _serial = serialize();
+    let (Some(root), Some(baseline_path)) = (
+        std::env::var_os("TINE_QUERY_IDENTITY_GRAPH"),
+        baseline_statements_path(),
+    ) else {
+        eprintln!("skipped: set TINE_QUERY_IDENTITY_GRAPH and TINE_QUERY_STATEMENT_BASELINE");
+        return;
+    };
+    let baseline: std::collections::BTreeMap<String, String> = serde_json::from_str(
+        &std::fs::read_to_string(&baseline_path).expect("the baseline artifact is readable"),
+    )
+    .expect("the baseline artifact parses");
+    let corpus = Corpus::open(PathBuf::from(&root), false);
+    let fts_ready = corpus.fts_ready();
+    // Nine is the floor the packet sets; more rounds cost milliseconds here and
+    // narrow the control spread, which is the only thing that decides whether a
+    // difference is reportable at all.
+    let rounds: u32 = std::env::var("TINE_STATEMENT_MEASURE_ROUNDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(21)
+        .max(9);
+    // Each sample runs the statement this many times, so a sub-timer-resolution
+    // shape is still measured rather than rounded to zero.
+    let inner: u32 = std::env::var("TINE_STATEMENT_MEASURE_INNER")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(5)
+        .max(1);
+    eprintln!("statement_measure corpus=real rounds={rounds} inner={inner}");
+    let mut disagreements = Vec::new();
+    for (source, dialect) in MEASURE_SHAPES {
+        let Some(before_sql) = baseline.get(*source) else {
+            disagreements.push(format!("{source}: absent from the captured baseline"));
+            continue;
+        };
+        let (anchor, statement) = corpus
+            .lower(source, *dialect, fts_ready, &[])
+            .unwrap_or_else(|reason| panic!("{source} must lower to be measured: {reason}"));
+        // The two statements bind the SAME values in the SAME order — this
+        // packet changes projection lists and one join, never a bound value —
+        // and this check is what makes reusing today's parameters for the
+        // captured statement safe rather than assumed.
+        assert_eq!(
+            highest_placeholder(before_sql),
+            statement.params.len(),
+            "{source}: the captured statement binds a different number of values"
+        );
+        let params = statement.params.clone();
+        let mut arms = [
+            Arm {
+                label: "before",
+                sql: before_sql.clone(),
+                samples: Vec::new(),
+                identities: BTreeSet::new(),
+                columns: 0,
+            },
+            Arm {
+                label: "after",
+                sql: statement.sql.clone(),
+                samples: Vec::new(),
+                identities: BTreeSet::new(),
+                columns: 0,
+            },
+            Arm {
+                label: "control",
+                sql: before_sql.clone(),
+                samples: Vec::new(),
+                identities: BTreeSet::new(),
+                columns: 0,
+            },
+        ];
+        // Warm every arm once so none of them pays another's first-touch cost.
+        for arm in arms.iter_mut() {
+            let (identities, columns) = run_arm(&corpus, &arm.sql, &params, anchor);
+            arm.identities = identities;
+            arm.columns = columns;
+        }
+        for round in 0..rounds {
+            // Alternate the order every round: three arms, rotated, so no arm
+            // sits permanently in the warmest or the coldest slot.
+            let order: [usize; 3] = match round % 3 {
+                0 => [0, 1, 2],
+                1 => [1, 2, 0],
+                _ => [2, 0, 1],
+            };
+            for index in order {
+                let start = Instant::now();
+                for _ in 0..inner {
+                    let rows = corpus
+                        .reader
+                        .run_projection_query(&arms[index].sql, &params)
+                        .expect("the measured statement runs");
+                    std::hint::black_box(rows.len());
+                }
+                arms[index]
+                    .samples
+                    .push((start.elapsed() / inner).as_micros());
+            }
+        }
+        for arm in arms.iter_mut() {
+            arm.samples.sort_unstable();
+        }
+        let before = median(&arms[0].samples);
+        let after = median(&arms[1].samples);
+        let control = median(&arms[2].samples);
+        if arms[0].identities != arms[1].identities {
+            disagreements.push(format!(
+                "{source}: before returned {} rows and after {}",
+                arms[0].identities.len(),
+                arms[1].identities.len()
+            ));
+        }
+        // The control is the same bytes as `before`, so its distance from
+        // `before` is what this machine cannot tell apart. One microsecond is
+        // added for the timer itself.
+        let noise = control.abs_diff(before).max(1);
+        let delta = after.abs_diff(before);
+        let verdict = if delta <= noise {
+            "inconclusive"
+        } else if after < before {
+            "faster"
+        } else {
+            "SLOWER"
+        };
+        eprintln!(
+            "statement_measure shape={source:?} rows={} cols_before={} cols_after={} \
+             before_us={before} after_us={after} control_us={control} \
+             after/before={:.3} control/before={:.3} verdict={verdict}",
+            arms[1].identities.len(),
+            arms[0].columns,
+            arms[1].columns,
+            after as f64 / before.max(1) as f64,
+            control as f64 / before.max(1) as f64,
+        );
+    }
+    assert!(
+        disagreements.is_empty(),
+        "the captured and the current statement must answer identically:\n{}",
+        disagreements.join("\n")
+    );
+}
+
+/// The anchor identities one statement returns, and how many columns its rows
+/// carry. No corpus text reaches the caller: block ids are UUIDs and a page's
+/// identity is taken as its normalized key.
+fn run_arm(
+    corpus: &Corpus,
+    sql: &str,
+    params: &[PhysicalQueryValue],
+    anchor: Anchor,
+) -> (BTreeSet<String>, usize) {
+    let rows = corpus
+        .reader
+        .run_projection_query(sql, params)
+        .unwrap_or_else(|error| panic!("the measured statement must run: {error}\n{sql}"));
+    let columns = rows.first().map_or(0, Vec::len);
+    let identities = rows
+        .into_iter()
+        .map(|row| match (anchor, row.first()) {
+            (Anchor::Block, Some(PhysicalQueryValue::Blob(id))) => Uuid::from_slice(id)
+                .expect("a 16-byte block id")
+                .to_string(),
+            (Anchor::Page, Some(PhysicalQueryValue::Blob(id))) => {
+                Uuid::from_slice(id).expect("a 16-byte page id").to_string()
+            }
+            (_, other) => panic!("the anchor column is an identity, got {other:?}"),
+        })
+        .collect();
+    (identities, columns)
+}
+
+/// The largest `?n` in a statement — the number of values it binds.
+fn highest_placeholder(sql: &str) -> usize {
+    let mut highest = 0usize;
+    let mut rest = sql;
+    while let Some(at) = rest.find('?') {
+        rest = &rest[at + 1..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        if let Ok(index) = rest[..end].parse::<usize>() {
+            highest = highest.max(index);
+        }
+        rest = &rest[end..];
+    }
+    highest
+}
+
+fn median(sorted: &[u128]) -> u128 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    sorted[sorted.len() / 2]
+}
+
+/// **DB1's guard: an ordinary block query decorates nothing.**
+///
+/// Two obligations, both of which the previous compiler failed:
+///
+/// * the block row is `(block_id, page_id, path)` — three columns. The retired
+///   `pages.name` and `pages.text_kind` were carried to no consumer at all;
+/// * the match set is populated `FROM blocks b`, with no unconditional join to
+///   `pages`. That join probed the pages primary key once per CANDIDATE row —
+///   before matching and before parent suppression — to fetch columns the match
+///   never reads. The one remaining `JOIN pages` routes the ANSWER to its path.
+///
+/// This is not a statement-style assertion: it pins the exact unnecessary work,
+/// and the executed rows are read back through the seam so the shape is proven
+/// on real rows and not only in the emitted text.
+#[test]
+fn a_block_query_selects_three_columns_and_never_decorates_its_candidates() {
+    let _serial = serialize();
+    let root = scratch("no-candidate-decoration");
+    write_fast_corpus(&root);
+    let corpus = Corpus::open(root, true);
+    let fts_ready = corpus.fts_ready();
+
+    // A shape with a page predicate is deliberately included: its `pages`
+    // access must be its OWN scoped subquery, so removing the candidate-stage
+    // join cannot have moved a page predicate's table access anywhere.
+    for source in ["(task TODO)", "(journal)", "[[Project]]"] {
+        let (anchor, statement) = corpus
+            .lower(source, QueryDialect::Og, fts_ready, &[])
+            .expect("the guard's shapes lower");
+        assert_eq!(anchor, Anchor::Block, "{source}");
+        assert!(
+            statement.sql.starts_with(
+                "WITH m(block_id, page_id, parent_block_id) AS MATERIALIZED \
+                 (SELECT b.block_id, b.page_id, b.parent_block_id FROM blocks b WHERE "
+            ),
+            "the match set reads blocks alone: {}",
+            statement.sql
+        );
+        assert!(
+            statement.sql.contains(
+                "SELECT m.block_id, m.page_id, p.path \
+                 FROM m JOIN pages p ON p.page_id = m.page_id WHERE "
+            ),
+            "the answer is routed to its path once, and carries nothing else: {}",
+            statement.sql
+        );
+        assert_eq!(
+            statement.sql.matches("JOIN pages").count(),
+            1,
+            "exactly one join to pages, and it is the routing one: {}",
+            statement.sql
+        );
+        assert!(
+            !statement.sql.contains("p.name") && !statement.sql.contains("p.text_kind"),
+            "no page decoration survives in a block statement: {}",
+            statement.sql
+        );
+
+        // The rows themselves, through the seam.
+        let rows = corpus
+            .reader
+            .run_projection_query(&statement.sql, &statement.params)
+            .expect("the guarded statement runs");
+        assert!(!rows.is_empty(), "{source} must match rows to be a guard");
+        for row in &rows {
+            assert_eq!(row.len(), 3, "{source}: {row:?}");
+            match (&row[0], &row[1], &row[2]) {
+                (
+                    PhysicalQueryValue::Blob(block_id),
+                    PhysicalQueryValue::Blob(page_id),
+                    PhysicalQueryValue::Text(path),
+                ) => {
+                    assert_eq!(block_id.len(), 16, "{source}");
+                    assert_eq!(page_id.len(), 16, "{source}");
+                    assert!(path.ends_with(".md"), "{source}");
+                }
+                other => panic!("{source}: the row contract is (blob, blob, text): {other:?}"),
+            }
+        }
+    }
+
+    // The correlated spelling keeps the same three columns — the packet removed
+    // the unused fields from the OUTPUT, which is not a property of one
+    // result-set spelling.
+    let (_anchor, probe) = corpus
+        .lower_as(
+            "(task TODO)",
+            QueryDialect::Og,
+            fts_ready,
+            &[],
+            ResultSetRule::CorrelatedProbe,
+        )
+        .expect("the correlated spelling lowers");
+    assert!(
+        probe
+            .sql
+            .starts_with("SELECT b.block_id, b.page_id, p.path FROM blocks b JOIN pages p "),
+        "{}",
+        probe.sql
+    );
+    assert!(
+        !probe.sql.contains("p.name") && !probe.sql.contains("p.text_kind"),
+        "{}",
+        probe.sql
+    );
+
+    // `@page` output is untouched by this packet: four columns, name and kind
+    // included, because the page result construction reads them.
+    let (anchor, page) = corpus
+        .lower(
+            "@page and journal = true",
+            QueryDialect::Tql,
+            fts_ready,
+            &[],
+        )
+        .expect("the page anchor lowers");
+    assert_eq!(anchor, Anchor::Page);
+    assert!(
+        page.sql
+            .starts_with("SELECT p.page_id, p.name, p.text_kind, p.journal_day FROM pages p "),
+        "{}",
+        page.sql
+    );
+    let page_rows = corpus
+        .reader
+        .run_projection_query(&page.sql, &page.params)
+        .expect("the page statement runs");
+    assert!(!page_rows.is_empty());
+    for row in &page_rows {
+        assert_eq!(row.len(), 4, "the page row shape is unchanged: {row:?}");
+    }
+}
