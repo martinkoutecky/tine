@@ -104,6 +104,28 @@ pub enum Attr {
     AtomCount,
 }
 
+impl Attr {
+    /// Which side of [`PageLocality`] this attribute is on. **Exhaustive by
+    /// construction:** every attribute compares a value carried by the row it
+    /// sits on, so a new one must be classified before the crate compiles.
+    pub fn page_locality(self) -> PageLocality {
+        match self {
+            Attr::Content
+            | Attr::Task
+            | Attr::Priority
+            | Attr::Scheduled
+            | Attr::Deadline
+            | Attr::Name
+            | Attr::Journal
+            | Attr::Day
+            | Attr::Namespace
+            | Attr::Key
+            | Attr::Value
+            | Attr::AtomCount => PageLocality::Local,
+        }
+    }
+}
+
 /// The declared type of what a leaf compares (SPEC §4.2.3 operator × type matrix).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueType {
@@ -183,6 +205,25 @@ pub enum Rel {
 }
 
 impl Rel {
+    /// Which side of [`PageLocality`] this relation is on. **Exhaustive by
+    /// construction:** no wildcard arm, so a new relation must be classified
+    /// before the crate compiles.
+    pub fn page_locality(self) -> PageLocality {
+        match self {
+            // Stored NAMES: the block's own normalized refs, its ancestors'
+            // (a parent chain never leaves a page) and its page's own name.
+            // Not a traversal of the reference graph — `ref('X')` reads the
+            // name `x`, never page `X`'s rows.
+            Rel::Refs => PageLocality::Local,
+            // The owner's own inline tags and its own property rows.
+            Rel::Tags | Rel::Props => PageLocality::Local,
+            // Direct children (A1). A block's children are on its page.
+            Rel::Children => PageLocality::Local,
+            // Every block of the row's OWN page, and the block's OWN page.
+            Rel::Blocks | Rel::Page => PageLocality::Local,
+        }
+    }
+
     pub fn tql_name(self) -> &'static str {
         match self {
             Rel::Refs => "refs",
@@ -308,6 +349,15 @@ impl Leaf {
                 value: Value::Text { text },
             } => Some(text),
             _ => None,
+        }
+    }
+
+    /// This leaf's [`PageLocality`]. A relation leaf is local when the relation
+    /// is AND its nested predicate is.
+    pub fn page_locality(&self) -> PageLocality {
+        match self {
+            Leaf::Attr { attr, .. } => attr.page_locality(),
+            Leaf::Rel { rel, pred, .. } => rel.page_locality().and(pred.page_locality()),
         }
     }
 }
@@ -545,6 +595,23 @@ impl Filter {
             }
             other if other.props_key().is_some() => None,
             other => Some(other.clone()),
+        }
+    }
+
+    /// This filter's [`PageLocality`] — the fold of its leaves', with `Off`
+    /// included, because a disabled subtree can be re-enabled without a second
+    /// classification pass.
+    pub fn page_locality(&self) -> PageLocality {
+        match self {
+            Filter::And { items } | Filter::Or { items } => items
+                .iter()
+                .fold(PageLocality::Local, |acc, item| {
+                    acc.and(item.page_locality())
+                }),
+            Filter::Not { inner } | Filter::Off { inner } => inner.page_locality(),
+            // A constant and an unsatisfiable `Raw` span read no row at all.
+            Filter::True | Filter::False | Filter::Raw { .. } => PageLocality::Local,
+            Filter::Leaf { leaf } => leaf.page_locality(),
         }
     }
 
@@ -964,6 +1031,55 @@ impl Query {
     pub fn evaluable_filter(&self) -> Filter {
         self.filter.without_off().unwrap_or(Filter::True)
     }
+
+    /// Whether this query can be answered from ONE page's rows at a time
+    /// ([`PageLocality`]). The anchor does not change the answer — every row of
+    /// either anchor belongs to exactly one page — so it is the filter that
+    /// decides.
+    pub fn page_locality(&self) -> PageLocality {
+        self.evaluable_filter().page_locality()
+    }
+}
+
+/// Whether a filter can be answered from the rows of ONE page.
+///
+/// **Why this exists.** The pending-edit route splits an execution in two: the
+/// accepted projection answers for the pages an overlay does not cover, and a
+/// second evaluation answers for the pending ones. That split is only sound
+/// when every relation the filter traverses stays INSIDE one page — otherwise a
+/// pending page could contribute a row that the accepted half was supposed to
+/// see, or vice versa, and the two halves would silently disagree.
+///
+/// Today every supported IR variant is [`PageLocality::Local`], and the
+/// classification below says so by ENUMERATING them rather than by defaulting:
+/// each `match` here is exhaustive with no wildcard, so a new [`Rel`] or
+/// [`Attr`] variant does not compile until someone decides which side it is on.
+/// A future cross-page relation therefore cannot enter split execution by being
+/// forgotten — it has to be classified, and then deliberately supported.
+///
+/// **`refs` is local, and that is a fact about the data model, not an
+/// oversight.** `:block/path-refs` compares STORED NAMES — a block's own
+/// normalized refs, its ancestors' (all on the same page, since a parent chain
+/// never leaves a page) and its page's name. It does not traverse the reference
+/// GRAPH: `ref('X')` never reads page `X`'s rows, only the name `x`. If that
+/// ever changes, this classification is the thing that has to change with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageLocality {
+    /// Every relation stays inside the row's own page.
+    Local,
+    /// At least one relation reaches rows on another page.
+    CrossPage,
+}
+
+impl PageLocality {
+    /// The weaker of two classifications: a filter is local only when every
+    /// part of it is.
+    fn and(self, other: PageLocality) -> PageLocality {
+        match (self, other) {
+            (PageLocality::Local, PageLocality::Local) => PageLocality::Local,
+            _ => PageLocality::CrossPage,
+        }
+    }
 }
 
 /// One `@page` result row. Needs no document load (K16).
@@ -1307,5 +1423,82 @@ mod tests {
         ));
         assert!(filter.has_props_leaf());
         assert!(!Filter::off(leaf_a()).has_props_leaf());
+    }
+
+    /// The page-locality classification is EXHAUSTIVE over the IR, and every
+    /// variant supported today is `Local`.
+    ///
+    /// The exhaustiveness is enforced by the compiler — `Rel::page_locality`
+    /// and `Attr::page_locality` have no wildcard arm, so a new variant does not
+    /// build until it is classified — and this test is what makes the CURRENT
+    /// answer a recorded fact rather than a default: a later relation that
+    /// reaches another page's rows changes a line here, visibly, instead of
+    /// slipping into split execution unnoticed.
+    #[test]
+    fn every_supported_relation_and_attribute_is_page_local() {
+        for rel in [
+            Rel::Refs,
+            Rel::Tags,
+            Rel::Props,
+            Rel::Children,
+            Rel::Blocks,
+            Rel::Page,
+        ] {
+            assert_eq!(
+                rel.page_locality(),
+                PageLocality::Local,
+                "{}",
+                rel.tql_name()
+            );
+        }
+        for attr in [
+            Attr::Content,
+            Attr::Task,
+            Attr::Priority,
+            Attr::Scheduled,
+            Attr::Deadline,
+            Attr::Name,
+            Attr::Journal,
+            Attr::Day,
+            Attr::Namespace,
+            Attr::Key,
+            Attr::Value,
+            Attr::AtomCount,
+        ] {
+            assert_eq!(attr.page_locality(), PageLocality::Local, "{attr:?}");
+        }
+    }
+
+    /// A composite filter is local only when EVERY part of it is, `Off` and
+    /// nested relation predicates included — which is what makes the fold able
+    /// to reject a future cross-page relation wherever it appears.
+    #[test]
+    fn page_locality_folds_over_the_whole_tree_including_off_and_nested_predicates() {
+        let nested = Filter::rel(
+            Rel::Children,
+            Quant::Any,
+            Filter::and(vec![
+                Filter::rel(Rel::Refs, Quant::Any, leaf_a()),
+                Filter::not(Filter::off(Filter::rel(Rel::Page, Quant::Any, Filter::True))),
+            ]),
+        );
+        let query = Query::new(Anchor::Block, nested, Source::Builder);
+        assert_eq!(query.page_locality(), PageLocality::Local);
+        assert_eq!(
+            Query::new(Anchor::Page, Filter::True, Source::Builder).page_locality(),
+            PageLocality::Local
+        );
+        // The fold itself, exercised on both sides so the `and` is not vacuous.
+        assert_eq!(
+            PageLocality::Local.and(PageLocality::Local),
+            PageLocality::Local
+        );
+        for pair in [
+            (PageLocality::Local, PageLocality::CrossPage),
+            (PageLocality::CrossPage, PageLocality::Local),
+            (PageLocality::CrossPage, PageLocality::CrossPage),
+        ] {
+            assert_eq!(pair.0.and(pair.1), PageLocality::CrossPage);
+        }
     }
 }

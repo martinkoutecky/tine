@@ -2,6 +2,7 @@ use crate::config::ParseConfig;
 use crate::doc::{property_key_norm, DocBlock, Document};
 use crate::model::{Format, PageEntry, PageKind, ReferenceKind};
 use crate::oplog::query_lowering::drain_after;
+use crate::query::sql::QueryRegexProgram;
 use crate::query::{
     run_parser_sparse_task_query_bounded, sparse_task_query_eligibility,
     ApplicationSparseQueryPage, BoundedGroups, ParserSparseQueryCandidate,
@@ -776,6 +777,7 @@ impl DirectProjection {
         cache_generation: u64,
         sql: &str,
         parameters: &[PhysicalQueryValue],
+        regexes: &QueryRegexProgram,
     ) -> StatementRead {
         // The injection lives here and not in `seam_read`, so it fails the
         // DISPATCHED statement and not whichever readiness probe happened to
@@ -788,7 +790,7 @@ impl DirectProjection {
         {
             return StatementRead::Failed;
         }
-        let read = self.seam_read(cache_generation, sql, parameters);
+        let read = self.seam_read(cache_generation, sql, parameters, Some(regexes));
         #[cfg(test)]
         if matches!(read, StatementRead::Rows(_)) {
             self.shared.statement_reads.fetch_add(1, Ordering::Relaxed);
@@ -797,13 +799,21 @@ impl DirectProjection {
     }
 
     /// One read through the D-15 seam. [`DirectProjection::run_statement`] is
-    /// this plus §5.9's dispatched-statement census; [`DirectProjection::fts_ready`]
-    /// is this without it, because a readiness probe is not an answer.
+    /// this plus §5.9's dispatched-statement census and §4.3.2's regex
+    /// registration; [`DirectProjection::fts_ready`] is this without either,
+    /// because a readiness probe is not an answer and binds no pattern.
+    ///
+    /// `regexes` is `Some` for exactly the dispatched statements, and it is
+    /// installed INSIDE the seam lock together with the read it belongs to:
+    /// this connection is pooled and reused, so a statement's compiled-regex
+    /// table has to REPLACE the previous statement's rather than be added to
+    /// it, and no other execution may run between the two.
     fn seam_read(
         &self,
         cache_generation: u64,
         sql: &str,
         parameters: &[PhysicalQueryValue],
+        regexes: Option<&QueryRegexProgram>,
     ) -> StatementRead {
         if !self.ready_at(cache_generation) {
             return StatementRead::NotReady;
@@ -817,6 +827,15 @@ impl DirectProjection {
         let Some(seam) = seam.as_ref() else {
             return StatementRead::Failed;
         };
+        // Unconditional for a dispatched statement, including the empty table:
+        // installing nothing would leave the PREVIOUS execution's IDs bound on
+        // a reused connection, and a stale ID that answered would be a wrong
+        // result rather than a failed read.
+        if let Some(regexes) = regexes {
+            if seam.set_query_regex_predicate(regexes.predicate()).is_err() {
+                return StatementRead::Failed;
+            }
+        }
         let Ok(rows) = seam.run_projection_query(sql, parameters) else {
             return StatementRead::Failed;
         };
@@ -861,6 +880,7 @@ impl DirectProjection {
                 cache_generation,
                 "SELECT phase FROM search_fts_build WHERE singleton = 1",
                 &[],
+                None,
             ),
             StatementRead::Rows(rows)
                 if matches!(

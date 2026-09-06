@@ -37,7 +37,8 @@ use crate::date::JournalDate;
 use crate::model::Graph;
 use crate::query::ir::{Anchor, Bounds, QueryRows};
 use crate::query::sql::{
-    lower_query, ContentPlan, Lowered, LoweringInputs, ResultSetRule, SqlQuery, RESULT_SET_RULE,
+    lower_query, ContentPlan, LoweringInputs, QueryRegexProgram, ResultSetRule, SqlQuery,
+    RESULT_SET_RULE,
 };
 use crate::query::QueryDialect;
 
@@ -182,6 +183,39 @@ impl Corpus {
         }
     }
 
+    /// The block on one FIXTURE page whose source text contains `needle`, in the
+    /// same spelling `sql` returns.
+    ///
+    /// Only ever called with `write_fast_corpus`'s own lines: it names a block
+    /// by text so a nested-`refs` expectation can be READ, and no real-corpus
+    /// content reaches an assertion through it.
+    fn block_id_containing(&self, page: &str, needle: &str) -> String {
+        let rows = self
+            .reader
+            .run_projection_query(
+                "SELECT b.block_id FROM blocks b \
+                 JOIN pages p ON p.page_id = b.page_id \
+                 JOIN block_text t ON t.block_id = b.block_id \
+                 WHERE p.name = ?1 AND instr(t.content, ?2) > 0",
+                &[
+                    PhysicalQueryValue::Text(page.to_string()),
+                    PhysicalQueryValue::Text(needle.to_string()),
+                ],
+            )
+            .expect("the fixture block is readable through the seam");
+        assert_eq!(
+            rows.len(),
+            1,
+            "{page}/{needle:?} must name exactly one fixture block"
+        );
+        match rows[0].first() {
+            Some(PhysicalQueryValue::Blob(id)) => Uuid::from_slice(id)
+                .expect("a 16-byte block id")
+                .to_string(),
+            other => panic!("a block row selects its id, got {other:?}"),
+        }
+    }
+
     /// One page's id, read through the seam — the value §5.9's overlay masking
     /// binds.
     fn page_id(&self, name: &str) -> [u8; 16] {
@@ -228,7 +262,7 @@ impl Corpus {
         dialect: QueryDialect,
         fts_ready: bool,
         masked_pages: &[[u8; 16]],
-    ) -> Result<(Anchor, SqlQuery), &'static str> {
+    ) -> (Anchor, SqlQuery) {
         self.lower_as(source, dialect, fts_ready, masked_pages, RESULT_SET_RULE)
     }
 
@@ -241,7 +275,7 @@ impl Corpus {
         fts_ready: bool,
         masked_pages: &[[u8; 16]],
         result_set_rule: ResultSetRule,
-    ) -> Result<(Anchor, SqlQuery), &'static str> {
+    ) -> (Anchor, SqlQuery) {
         let today = self.today();
         let (query, _view) = crate::query::parse_query_text(source, dialect, today);
         let registry = self.graph.property_registry();
@@ -255,14 +289,23 @@ impl Corpus {
             fts_ready,
             result_set_rule,
         };
-        match lower_query(&query, &inputs) {
-            Lowered::Statement(statement) => Ok((query.anchor, statement)),
-            Lowered::Unsupported(reason) => Err(reason),
-        }
+        (query.anchor, lower_query(&query, &inputs))
+    }
+
+    /// Install §4.3.2's compiled-regex table for the statement about to run.
+    ///
+    /// Unconditional, exactly as §5.9's dispatch does it: this reader is REUSED
+    /// by every shape in a gate, so a statement's table must REPLACE the
+    /// previous one's rather than be added to it. Installing the empty program
+    /// is what proves a later statement cannot answer through a stale ID.
+    fn bind_regexes(&self, regexes: &QueryRegexProgram) {
+        self.reader
+            .set_query_regex_predicate(regexes.predicate())
+            .expect("the regex predicate installs on the read-only seam");
     }
 
     /// The lowering's answer over the same graph, through the D-15 seam.
-    fn sql(&self, source: &str, dialect: QueryDialect) -> Result<BTreeSet<String>, &'static str> {
+    fn sql(&self, source: &str, dialect: QueryDialect) -> BTreeSet<String> {
         self.sql_with(source, dialect, self.fts_ready(), &[])
     }
 
@@ -272,7 +315,7 @@ impl Corpus {
         dialect: QueryDialect,
         fts_ready: bool,
         masked_pages: &[[u8; 16]],
-    ) -> Result<BTreeSet<String>, &'static str> {
+    ) -> BTreeSet<String> {
         self.sql_as(source, dialect, fts_ready, masked_pages, RESULT_SET_RULE)
     }
 
@@ -283,17 +326,17 @@ impl Corpus {
         fts_ready: bool,
         masked_pages: &[[u8; 16]],
         result_set_rule: ResultSetRule,
-    ) -> Result<BTreeSet<String>, &'static str> {
+    ) -> BTreeSet<String> {
         let (anchor, statement) =
-            self.lower_as(source, dialect, fts_ready, masked_pages, result_set_rule)?;
+            self.lower_as(source, dialect, fts_ready, masked_pages, result_set_rule);
+        self.bind_regexes(&statement.regexes);
         let rows = self
             .reader
             .run_projection_query(&statement.sql, &statement.params)
             .unwrap_or_else(|error| {
                 panic!("the lowered statement must run: {error}\n{}", statement.sql)
             });
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|row| match (anchor, row.first()) {
                 (Anchor::Block, Some(PhysicalQueryValue::Blob(id))) => Uuid::from_slice(id)
                     .expect("a 16-byte block id")
@@ -304,12 +347,13 @@ impl Corpus {
                 },
                 (_, other) => panic!("a block row selects its id, got {other:?}"),
             })
-            .collect())
+            .collect()
     }
 
     /// `(plan, positively_bounded, matches_nothing)`.
-    fn explain(&self, source: &str, dialect: QueryDialect) -> Option<(Vec<String>, bool, bool)> {
-        let (_anchor, statement) = self.lower(source, dialect, self.fts_ready(), &[]).ok()?;
+    fn explain(&self, source: &str, dialect: QueryDialect) -> (Vec<String>, bool, bool) {
+        let (_anchor, statement) = self.lower(source, dialect, self.fts_ready(), &[]);
+        self.bind_regexes(&statement.regexes);
         // The parameters are bound for the EXPLAIN too: with `sqlite_stat4`
         // present the planner may choose differently for a bound value than for
         // an unbound one, and an explain that left them out would measure a
@@ -318,11 +362,11 @@ impl Corpus {
             .reader
             .explain_query_plan(&statement.sql, &statement.params)
             .expect("the plan is available");
-        Some((
+        (
             plan,
             statement.positively_bounded,
             statement.matches_nothing,
-        ))
+        )
     }
 }
 
@@ -447,6 +491,61 @@ fn write_fast_corpus(root: &Path) {
          \t\t- TODO nested inner\n",
     )
     .expect("nesting page");
+
+    // §3.2's nested-`refs` context, spelled so every rule of it is DECIDABLE
+    // here rather than only on a real graph. `eval_block_leaf` passes the
+    // ANCHOR's ancestor multiset through each `children` quantifier unchanged,
+    // so a nested block's `refs` closure is its OWN refs, the ANCHOR's
+    // ancestors' refs, and the page — never the nested block's own materialized
+    // `block_path_refs` closure, and never that closure with the parent's names
+    // subtracted. Each group below makes one of those differences visible:
+    //
+    // * `alpha root` owns `[[Project]]` and its children do NOT see it (the
+    //   anchor is a root, so the ancestor context is empty). A lowering that
+    //   read `block_path_refs(child)` would answer the opposite.
+    // * `middle names [[Shared]]` owns `shared` AND inherits `shared` from its
+    //   root, so its child still sees `shared` through the GRANDPARENT. A
+    //   lowering that subtracted the parent's own names would lose it.
+    // * the two-level `root → middle → deep` chain is where the context must
+    //   stay the ANCHOR's: at depth two `deep` still sees only its own refs and
+    //   the page, so `any(children, any(children, ref('Shared')))` is FALSE.
+    // * `#nested-tag` is an own ref that arrives as a tag, and the page name
+    //   `nested-refs` is in every block's closure at every depth.
+    std::fs::write(
+        root.join("pages/nested-refs.md"),
+        "- alpha root [[Project]]\n\
+         \t- child names [[Other]]\n\
+         \t\t- grandchild names [[Project]]\n\
+         \t- second child with no refs\n\
+         - bare root with no refs of its own\n\
+         \t- lone child names [[Project]]\n\
+         - shared root names [[Shared]]\n\
+         \t- middle names [[Shared]]\n\
+         \t\t- deep child with no refs\n\
+         - tagged root\n\
+         \t- child #nested-tag here\n",
+    )
+    .expect("nested refs page");
+
+    // §4.3.2's regex predicate, over the EXACT visible text. Every line here
+    // exists to separate `block_text.query_visible` from the two columns beside
+    // it: `blocks.query_visible_folded` is lower-cased and NFC-folded, and
+    // `searchable_text` collapses runs of whitespace and line breaks. A regex
+    // answered from either of those would disagree with the walk, which reads
+    // `BlockProjection::visible`.
+    std::fs::write(
+        root.join("pages/regex.md"),
+        "- SHOUTING case survives here\n\
+         - lowercase only line\n\
+         - digits 12345 inline\n\
+         - spaced   out   words\n\
+         - anchored start of a line\n\
+         - Uppercase\u{c9}clair accented\n\
+         - regex needle alpha here\n\
+         - regex needle beta here\n\
+         \t- nested regex needle here\n",
+    )
+    .expect("regex page");
 
     // Journals: one that parses, and one whose stem does not.
     std::fs::write(
@@ -639,6 +738,111 @@ const IDENTITY_SHAPES: &[(&str, QueryDialect)] = &[
     ),
     ("(and (task TODO) (not [[Project]]))", QueryDialect::Og),
     ("(or [[Project]] (task DOING))", QueryDialect::Og),
+    // §3.2's nested `refs`: the ancestor context a `children` quantifier passes
+    // down is the ANCHOR's, unchanged, at every depth. See `write_fast_corpus`'s
+    // `nested-refs` page for which line makes which rule decidable.
+    ("any(children, ref('Project'))", QueryDialect::Tql),
+    ("none(children, ref('Project'))", QueryDialect::Tql),
+    ("every(children, ref('Project'))", QueryDialect::Tql),
+    ("not any(children, ref('Project'))", QueryDialect::Tql),
+    ("any(children, not ref('Project'))", QueryDialect::Tql),
+    ("any(children, ref('Other'))", QueryDialect::Tql),
+    ("any(children, ref('Shared'))", QueryDialect::Tql),
+    ("none(children, ref('Shared'))", QueryDialect::Tql),
+    ("every(children, ref('Shared'))", QueryDialect::Tql),
+    // Two levels down, where the context must still be the ANCHOR's.
+    (
+        "any(children, any(children, ref('Shared')))",
+        QueryDialect::Tql,
+    ),
+    (
+        "any(children, any(children, ref('Project')))",
+        QueryDialect::Tql,
+    ),
+    (
+        "any(children, none(children, ref('Shared')))",
+        QueryDialect::Tql,
+    ),
+    // The page name is in every closure, at every depth.
+    ("any(children, ref('nested-refs'))", QueryDialect::Tql),
+    ("every(children, ref('nested-refs'))", QueryDialect::Tql),
+    ("none(children, ref('nested-refs'))", QueryDialect::Tql),
+    (
+        "any(children, any(children, ref('nested-refs')))",
+        QueryDialect::Tql,
+    ),
+    // An own ref that arrives as a tag, and the tag relation beside it.
+    ("any(children, ref('nested-tag'))", QueryDialect::Tql),
+    ("any(children, tag('nested-tag'))", QueryDialect::Tql),
+    // A nested `refs` composed with another leaf and with a page relation.
+    (
+        "any(children, ref('Project') and content like '%grandchild%')",
+        QueryDialect::Tql,
+    ),
+    (
+        "any(children, ref('Project') or task = 'TODO')",
+        QueryDialect::Tql,
+    ),
+    (
+        "any(children, page.name = 'nested-refs' and ref('Shared'))",
+        QueryDialect::Tql,
+    ),
+    // `blocks` is a page relation the walk answers false for, nested predicate
+    // and all — the lowering reproduces that rather than inventing an answer.
+    ("@page and any(blocks, ref('Project'))", QueryDialect::Tql),
+    (
+        "@page and any(blocks, any(children, ref('Project')))",
+        QueryDialect::Tql,
+    ),
+    // §4.3.2 — a VALID regex, in both spellings, over the EXACT visible text.
+    ("content regexp 'needle'", QueryDialect::Tql),
+    ("(content-regex \"needle\")", QueryDialect::Og),
+    ("content regexp 'SHOUTING'", QueryDialect::Tql),
+    ("content regexp 'shouting'", QueryDialect::Tql),
+    ("content regexp '[A-Z]{3,}'", QueryDialect::Tql),
+    ("content regexp '^anchored'", QueryDialect::Tql),
+    ("content regexp 'anchored$'", QueryDialect::Tql),
+    ("content regexp '[0-9]+'", QueryDialect::Tql),
+    ("content regexp 'spaced\\s{3}out'", QueryDialect::Tql),
+    ("content regexp 'gamma\\s+delta'", QueryDialect::Tql),
+    ("content regexp 'line one\\s+continued'", QueryDialect::Tql),
+    // Unicode, case-sensitively, on text the folded column would have changed.
+    ("content regexp 'Uppercase\u{c9}clair'", QueryDialect::Tql),
+    ("content regexp 'uppercase\u{e9}clair'", QueryDialect::Tql),
+    ("content regexp 'Caf\u{e9}'", QueryDialect::Tql),
+    ("content regexp 'Cafe\u{301}'", QueryDialect::Tql),
+    // The whole-query `/pattern/` form of `content match`, in both dialects.
+    ("content match '/needle/'", QueryDialect::Tql),
+    ("(search \"/needle/\")", QueryDialect::Og),
+    ("content match '/[A-Z]{3,}/'", QueryDialect::Tql),
+    // Nested booleans, several patterns in one statement, both syntaxes
+    // together, and a regex under a `children` quantifier.
+    ("not content regexp 'needle'", QueryDialect::Tql),
+    (
+        "(and (content-regex \"needle\") (content-regex \"alpha\"))",
+        QueryDialect::Og,
+    ),
+    (
+        "(and (content-regex \"needle\") (search \"/beta/\"))",
+        QueryDialect::Og,
+    ),
+    (
+        "(or (content-regex \"needle\") (task TODO))",
+        QueryDialect::Og,
+    ),
+    (
+        "(and (task TODO) (content-regex \"marked\"))",
+        QueryDialect::Og,
+    ),
+    (
+        "(not (and (content-regex \"needle\") (task TODO)))",
+        QueryDialect::Og,
+    ),
+    ("any(children, content regexp 'needle')", QueryDialect::Tql),
+    (
+        "any(children, ref('nested-refs') and content regexp 'needle')",
+        QueryDialect::Tql,
+    ),
 ];
 
 /// The `walk == SQL` acceptance gate, over the permanent fast corpus.
@@ -669,22 +873,13 @@ fn the_walk_and_the_lowering_agree_over_a_real_corpus() {
         return;
     };
     let corpus = Corpus::open(PathBuf::from(&root), false);
-    let mut answered = 0usize;
-    let mut declined = 0usize;
     let mut rows = 0usize;
     for (source, dialect) in IDENTITY_SHAPES {
-        match corpus.sql(source, *dialect) {
-            Ok(sql) => {
-                answered += 1;
-                rows += sql.len();
-            }
-            Err(_) => declined += 1,
-        }
+        rows += corpus.sql(source, *dialect).len();
     }
     let differences = compare_every_shape(&corpus);
     eprintln!(
-        "walk_sql_identity_over_a_real_corpus shapes={} answered={answered} declined={declined} \
-         matched_rows={rows} disagreements={}",
+        "walk_sql_identity_over_a_real_corpus shapes={} matched_rows={rows} disagreements={}",
         IDENTITY_SHAPES.len(),
         differences.len()
     );
@@ -701,9 +896,7 @@ fn the_walk_and_the_lowering_agree_over_a_real_corpus() {
 fn compare_every_shape(corpus: &Corpus) -> Vec<String> {
     let mut differences = Vec::new();
     for (source, dialect) in IDENTITY_SHAPES {
-        let Ok(sql) = corpus.sql(source, *dialect) else {
-            continue;
-        };
+        let sql = corpus.sql(source, *dialect);
         let walk = corpus.walk(source, *dialect);
         if walk != sql {
             differences.push(format!(
@@ -727,18 +920,11 @@ fn the_fast_corpus_answers_every_shape_it_can_and_matches_something() {
     write_fast_corpus(&root);
     let corpus = Corpus::open(root, true);
     let mut nonempty = 0usize;
-    let mut declined: Vec<&str> = Vec::new();
     for (source, dialect) in IDENTITY_SHAPES {
-        match corpus.sql(source, *dialect) {
-            Ok(rows) if !rows.is_empty() => nonempty += 1,
-            Ok(_) => {}
-            Err(_) => declined.push(source),
+        if !corpus.sql(source, *dialect).is_empty() {
+            nonempty += 1;
         }
     }
-    assert!(
-        declined.is_empty(),
-        "no shape in the identity corpus may be declined: {declined:?}"
-    );
     assert!(
         nonempty * 2 >= IDENTITY_SHAPES.len(),
         "only {nonempty} of {} shapes match anything; the corpus is too thin to prove identity",
@@ -776,6 +962,19 @@ const PLAN_SHAPES: &[(&str, QueryDialect)] = &[
     // FTS exception permits a permanent full scan of one.
     ("content match 'alpha'", QueryDialect::Tql),
     ("(search \"needle\")", QueryDialect::Og),
+    // R2's newly-lowered families. A nested `refs` is deliberately ABSENT: it
+    // reads the anchor's own ancestor context, so its subquery is correlated
+    // with the anchor and §5.7 now classifies it unbounded — the measurement
+    // that established that is
+    // [`a_nested_refs_child_predicate_cannot_bound_its_anchor`].
+    //
+    // Regex is explicitly unindexed (§4.3.2), so it never bounds an anchor by
+    // itself — these are the shapes where it rides ALONGSIDE a bounded conjunct.
+    // The bound must come from the other leaf and the regex must not cost the
+    // anchor its index probe: that is precisely what a plan gate can see and an
+    // identity gate cannot.
+    ("(and (task TODO) (content-regex \"needle\"))", QueryDialect::Og),
+    ("ref('Project') and content regexp 'needle'", QueryDialect::Tql),
 ];
 
 /// §5.10's plan classes and the shape that produces each. They are recorded
@@ -801,8 +1000,12 @@ const CONTENT_PLAN_SHAPES: &[(&str, QueryDialect, ContentPlan)] = &[
         QueryDialect::Tql,
         ContentPlan::ShortUnindexable,
     ),
-    // §4.3.2's explicitly unindexed predicate. Only the invalid-pattern form
-    // reaches a statement in this wave — a valid one declines to the walk.
+    // §4.3.2's explicitly unindexed predicate. BOTH regex spellings and BOTH
+    // pattern validities lower to a statement, and all four are the same
+    // unindexed class: a valid pattern is not a better plan than an invalid one,
+    // it just answers instead of being false.
+    ("content regexp 'needle'", QueryDialect::Tql, ContentPlan::Regex),
+    ("content match '/needle/'", QueryDialect::Tql, ContentPlan::Regex),
     ("content regexp '['", QueryDialect::Tql, ContentPlan::Regex),
     ("content match '/[/'", QueryDialect::Tql, ContentPlan::Regex),
 ];
@@ -880,14 +1083,8 @@ fn the_fts_candidate_bound_never_excludes_a_true_match() {
     let mut differences = Vec::new();
     let mut bounded_shapes = 0usize;
     for (source, dialect) in CONTENT_SHAPES {
-        let Ok(bounded) = corpus.sql_with(source, *dialect, true, &[]) else {
-            differences.push(format!("{source}: declined with the index ready"));
-            continue;
-        };
-        let Ok(exact) = corpus.sql_with(source, *dialect, false, &[]) else {
-            differences.push(format!("{source}: declined with the index building"));
-            continue;
-        };
+        let bounded = corpus.sql_with(source, *dialect, true, &[]);
+        let exact = corpus.sql_with(source, *dialect, false, &[]);
         let walk = corpus.walk(source, *dialect);
         if bounded != exact {
             differences.push(format!(
@@ -906,9 +1103,7 @@ fn the_fts_candidate_bound_never_excludes_a_true_match() {
                 walk.difference(&bounded).count()
             ));
         }
-        let (_anchor, statement) = corpus
-            .lower(source, *dialect, true, &[])
-            .expect("the shape lowers");
+        let (_anchor, statement) = corpus.lower(source, *dialect, true, &[]);
         if statement.sql.contains("search_substring_fts") {
             bounded_shapes += 1;
         }
@@ -940,9 +1135,7 @@ fn a_building_fts_index_answers_every_content_shape_from_the_ready_columns() {
     let corpus = Corpus::open(root, true);
     let mut differences = Vec::new();
     for (source, dialect) in CONTENT_SHAPES {
-        let (_anchor, statement) = corpus
-            .lower(source, *dialect, false, &[])
-            .expect("the shape lowers while the index builds");
+        let (_anchor, statement) = corpus.lower(source, *dialect, false, &[]);
         if statement.sql.contains("search_substring_fts")
             || statement.sql.contains("search_fts_owners")
             || statement.sql.contains("MATCH ")
@@ -950,9 +1143,7 @@ fn a_building_fts_index_answers_every_content_shape_from_the_ready_columns() {
             differences.push(format!("{source}: the building path still asks the index"));
             continue;
         }
-        let sql = corpus
-            .sql_with(source, *dialect, false, &[])
-            .expect("the shape lowers while the index builds");
+        let sql = corpus.sql_with(source, *dialect, false, &[]);
         let walk = corpus.walk(source, *dialect);
         if walk != sql {
             differences.push(format!(
@@ -996,12 +1187,8 @@ fn the_content_operators_agree_with_the_walk_over_a_real_corpus() {
     let mut rows = 0usize;
     let mut classes = std::collections::BTreeMap::<String, usize>::new();
     for (source, dialect) in CONTENT_SHAPES {
-        let ready = corpus
-            .sql_with(source, *dialect, true, &[])
-            .expect("a content shape lowers on the real corpus");
-        let building = corpus
-            .sql_with(source, *dialect, false, &[])
-            .expect("a content shape lowers while the index builds");
+        let ready = corpus.sql_with(source, *dialect, true, &[]);
+        let building = corpus.sql_with(source, *dialect, false, &[]);
         let walk = corpus.walk(source, *dialect);
         rows += ready.len();
         for (label, answer) in [("ready", &ready), ("building", &building)] {
@@ -1015,9 +1202,7 @@ fn the_content_operators_agree_with_the_walk_over_a_real_corpus() {
                 ));
             }
         }
-        let (_anchor, statement) = corpus
-            .lower(source, *dialect, true, &[])
-            .expect("a content shape lowers");
+        let (_anchor, statement) = corpus.lower(source, *dialect, true, &[]);
         if statement.positively_bounded {
             bounded += 1;
         }
@@ -1051,12 +1236,8 @@ fn a_masked_overlay_page_leaves_a_content_result() {
     let corpus = Corpus::open(root, true);
     let masked = corpus.page_id("search");
     for (source, dialect) in CONTENT_SHAPES {
-        let all = corpus
-            .sql_with(source, *dialect, true, &[])
-            .expect("the shape lowers");
-        let visible = corpus
-            .sql_with(source, *dialect, true, std::slice::from_ref(&masked))
-            .expect("the shape lowers with a masked page");
+        let all = corpus.sql_with(source, *dialect, true, &[]);
+        let visible = corpus.sql_with(source, *dialect, true, std::slice::from_ref(&masked));
         let on_masked = corpus.block_ids_on_page("search");
         assert!(
             visible.is_subset(&all),
@@ -1081,9 +1262,7 @@ fn the_content_plan_classes_are_recorded_separately_from_the_indexed_case() {
     write_fast_corpus(&root);
     let corpus = Corpus::open(root, true);
     for (source, dialect, expected) in CONTENT_PLAN_SHAPES {
-        let (_anchor, statement) = corpus
-            .lower(source, *dialect, true, &[])
-            .expect("the shape lowers");
+        let (_anchor, statement) = corpus.lower(source, *dialect, true, &[]);
         assert_eq!(
             statement.content_plans,
             vec![*expected],
@@ -1091,9 +1270,7 @@ fn the_content_plan_classes_are_recorded_separately_from_the_indexed_case() {
         );
         // The same leaf, with the index still building, is the transient class
         // on every shape that would otherwise reach it.
-        let (_anchor, building) = corpus
-            .lower(source, *dialect, false, &[])
-            .expect("the shape lowers while the index builds");
+        let (_anchor, building) = corpus.lower(source, *dialect, false, &[]);
         let expected_building = match expected {
             ContentPlan::Regex => ContentPlan::Regex,
             _ => ContentPlan::FtsBuilding,
@@ -1135,24 +1312,17 @@ fn the_two_result_set_spellings_answer_identically() {
             .iter()
             .map(|rule| corpus.sql_as(source, *dialect, fts_ready, &[], *rule))
             .collect();
-        if answers.iter().all(Result::is_err) {
-            continue;
-        }
         compared += 1;
-        for (rule, answer) in SPELLINGS.iter().zip(&answers) {
-            match answer {
-                // The `MATERIALIZED` keyword is SQLite 3.35+. A build whose
-                // bundled SQLite refuses it must fail HERE, loudly, rather than
-                // ship a query path that errors on every block query.
-                Ok(rows) if *rows == walk => {}
-                Ok(rows) => disagreements.push(format!(
+        for (rule, rows) in SPELLINGS.iter().zip(&answers) {
+            // The `MATERIALIZED` keyword is SQLite 3.35+. A build whose bundled
+            // SQLite refuses it must fail HERE, loudly, rather than ship a query
+            // path that errors on every block query.
+            if *rows != walk {
+                disagreements.push(format!(
                     "{source} under {rule:?}: walk={} sql={}",
                     walk.len(),
                     rows.len()
-                )),
-                Err(reason) => disagreements.push(format!(
-                    "{source} under {rule:?}: only this spelling declined ({reason})"
-                )),
+                ));
             }
         }
     }
@@ -1172,6 +1342,227 @@ fn the_two_result_set_spellings_answer_identically() {
          match whose own parent does not match"
     );
     assert!(compared * 2 >= IDENTITY_SHAPES.len());
+}
+
+/// §3.2's nested-`refs` context, on REAL ROWS rather than on emitted text.
+///
+/// The `walk == SQL` gate above already compares both engines on every nested
+/// shape, but two engines can agree by being wrong together, and this fixture's
+/// whole point is that three plausible lowerings answer DIFFERENTLY on it. Each
+/// assertion below is the one a specific wrong lowering fails:
+///
+/// * reading `block_path_refs(<nested row>)` — the child of `alpha root` would
+///   see its parent's `[[Project]]`;
+/// * subtracting the parent's own names from that closure — `middle names
+///   [[Shared]]`'s child would stop seeing `shared`, which reaches it from the
+///   GRANDPARENT as well;
+/// * carrying the immediate parent's context down instead of the ANCHOR's —
+///   the two-level shape would match.
+#[test]
+fn a_nested_refs_leaf_reads_the_anchor_context_and_never_a_subtraction() {
+    let _serial = serialize();
+    let root = scratch("nested-refs");
+    write_fast_corpus(&root);
+    let corpus = Corpus::open(root, true);
+    let page = "nested-refs";
+    let on_page = corpus.block_ids_on_page(page);
+    let block = |needle: &str| corpus.block_id_containing(page, needle);
+    let here = |source: &str| -> BTreeSet<String> {
+        let answer = corpus.sql(source, QueryDialect::Tql);
+        assert_eq!(
+            answer,
+            corpus.walk(source, QueryDialect::Tql),
+            "{source}: walk and SQL must already agree"
+        );
+        answer.intersection(&on_page).cloned().collect()
+    };
+
+    // The anchor's OWN refs are NOT in its children's context: `alpha root`
+    // owns `[[Project]]`, is a root (so the context is empty), and neither of
+    // its children names Project.
+    let projects = here("any(children, ref('Project'))");
+    assert!(
+        !projects.contains(&block("alpha root")),
+        "the anchor's own refs are not visible to its children"
+    );
+    // `child names [[Other]]` DOES match: its own child names Project. And
+    // `bare root` matches through its child's own ref. Both survive §5.3's
+    // suppression because neither parent matched.
+    assert_eq!(
+        projects,
+        BTreeSet::from([block("[[Other]]"), block("bare root")]),
+        "exactly the anchors whose child sees Project"
+    );
+
+    // A name reaching the nested row from the GRANDPARENT survives, even though
+    // the anchor owns the same name. The content conjunct pins the anchor to
+    // `middle`, so §5.3 cannot drop it in favour of its parent.
+    assert_eq!(
+        here("any(children, ref('Shared')) and content like '%middle%'"),
+        BTreeSet::from([block("middle names")]),
+        "the grandparent's name is still in the deep child's context"
+    );
+
+    // Two levels down the context is STILL the anchor's, so nothing matches:
+    // `deep child` owns no ref, and `shared root`'s ancestors are empty.
+    assert!(
+        here("any(children, any(children, ref('Shared')))").is_empty(),
+        "the context does not become the intervening parent's"
+    );
+
+    // The page name is in every closure at every depth — the arm a root anchor
+    // has no parent row to carry.
+    assert_eq!(
+        here("any(children, ref('nested-refs'))"),
+        BTreeSet::from([
+            block("alpha root"),
+            block("bare root"),
+            block("shared root"),
+            block("tagged root"),
+        ]),
+        "every anchor with a child sees its own page name through that child"
+    );
+    assert_eq!(
+        here("any(children, any(children, ref('nested-refs')))"),
+        BTreeSet::from([block("alpha root"), block("shared root")]),
+        "and so does every grandchild"
+    );
+
+    // An own ref that arrives as a tag is an own ref.
+    assert_eq!(
+        here("any(children, ref('nested-tag'))"),
+        BTreeSet::from([block("tagged root")])
+    );
+
+    // The quantifiers, on the same rows: `none` is the complement of `any`
+    // BEFORE suppression, so the two are compared through the walk rather than
+    // by set arithmetic here — what this pins is that all three answer at all
+    // and that `every` over a childless block is vacuously true.
+    for source in [
+        "none(children, ref('Project'))",
+        "every(children, ref('Project'))",
+        "every(children, ref('nested-refs'))",
+        "any(children, not ref('Project'))",
+    ] {
+        assert_eq!(
+            corpus.sql(source, QueryDialect::Tql),
+            corpus.walk(source, QueryDialect::Tql),
+            "{source}"
+        );
+    }
+    assert!(
+        here("every(children, ref('Project'))").contains(&block("deep child")),
+        "a childless block satisfies `every` vacuously (Q5)"
+    );
+}
+
+/// §4.3.2's regex predicate, on REAL ROWS: the text it sees is the EXACT
+/// visible text, and the compiled-regex table is scoped to ONE statement.
+///
+/// The three columns a regex could plausibly read differ on this fixture —
+/// `query_visible` keeps case, accents and whitespace runs; `query_visible_folded`
+/// lower-cases and NFC-folds; `searchable_text` collapses whitespace — so each
+/// assertion here fails for a lowering that read the wrong one.
+#[test]
+fn a_regex_predicate_reads_the_exact_visible_text_through_a_statement_scoped_table() {
+    let _serial = serialize();
+    let root = scratch("regex");
+    write_fast_corpus(&root);
+    let corpus = Corpus::open(root, true);
+    let page = "regex";
+    let on_page = corpus.block_ids_on_page(page);
+    let block = |needle: &str| corpus.block_id_containing(page, needle);
+    let here = |source: &str, dialect: QueryDialect| -> BTreeSet<String> {
+        let answer = corpus.sql(source, dialect);
+        assert_eq!(
+            answer,
+            corpus.walk(source, dialect),
+            "{source}: walk and SQL must already agree"
+        );
+        answer.intersection(&on_page).cloned().collect()
+    };
+
+    // Case is preserved: the folded column would answer these two the other way
+    // round.
+    assert_eq!(
+        here("content regexp 'SHOUTING'", QueryDialect::Tql),
+        BTreeSet::from([block("SHOUTING case")])
+    );
+    assert!(here("content regexp 'shouting'", QueryDialect::Tql).is_empty());
+    // …and so are accents, which `canonical_fold` normalizes.
+    assert_eq!(
+        here("content regexp 'Uppercase\u{c9}clair'", QueryDialect::Tql),
+        BTreeSet::from([block("clair accented")])
+    );
+    assert!(here("content regexp 'uppercase\u{e9}clair'", QueryDialect::Tql).is_empty());
+    // …and whitespace runs, which `searchable_text` collapses.
+    assert_eq!(
+        here("content regexp 'spaced\\s{3}out'", QueryDialect::Tql),
+        BTreeSet::from([block("spaced   out")])
+    );
+    // Both spellings of the same pattern reach the same rows.
+    assert_eq!(
+        here("content regexp 'needle alpha'", QueryDialect::Tql),
+        here("(content-regex \"needle alpha\")", QueryDialect::Og),
+    );
+    assert_eq!(
+        here("content match '/needle alpha/'", QueryDialect::Tql),
+        here("content regexp 'needle alpha'", QueryDialect::Tql),
+    );
+    // A regex nested under a `children` quantifier, and one composed with a
+    // nested `refs` leaf — the two features of this packet in one statement.
+    assert!(!here("any(children, content regexp 'nested regex')", QueryDialect::Tql).is_empty());
+    for source in [
+        "any(children, ref('regex') and content regexp 'nested regex')",
+        "not content regexp 'needle'",
+        "(and (content-regex \"needle\") (search \"/alpha/\"))",
+    ] {
+        let dialect = if source.starts_with('(') {
+            QueryDialect::Og
+        } else {
+            QueryDialect::Tql
+        };
+        assert!(
+            !corpus.sql(source, dialect).is_empty(),
+            "{source} must match something to be a gate"
+        );
+        assert_eq!(
+            corpus.sql(source, dialect),
+            corpus.walk(source, dialect),
+            "{source}"
+        );
+    }
+
+    // **The table is statement-scoped, on a REUSED connection.** Every
+    // assertion above already ran several statements through one reader, which
+    // is the consecutive-execution case; what is left to prove is that a table
+    // cannot outlive its statement. Install one statement's program, then the
+    // EMPTY program a regex-free statement installs, and the first statement's
+    // ID no longer answers — it FAILS the read rather than matching nothing.
+    let (_anchor, statement) = corpus.lower("content regexp 'SHOUTING'", QueryDialect::Tql, true, &[]);
+    assert_eq!(statement.regexes.bindings.len(), 1);
+    corpus.bind_regexes(&statement.regexes);
+    assert_eq!(
+        corpus
+            .reader
+            .run_projection_query(&statement.sql, &statement.params)
+            .expect("the installed program answers")
+            .len(),
+        1
+    );
+    corpus.bind_regexes(&QueryRegexProgram::default());
+    let stale = corpus
+        .reader
+        .run_projection_query(&statement.sql, &statement.params);
+    assert!(
+        stale.is_err(),
+        "an ID the installed table does not name must fail the read, not match nothing"
+    );
+    // And an ordinary statement is unaffected by either installation.
+    assert_eq!(
+        corpus.sql("(task TODO)", QueryDialect::Og),
+        corpus.walk("(task TODO)", QueryDialect::Og)
+    );
 }
 
 /// §5.7's plan gate. **A failing plan gate is information, not an obstacle:**
@@ -1212,16 +1603,15 @@ fn the_plan_gate_holds_over_a_real_corpus() {
     let corpus = Corpus::open(PathBuf::from(&root), false);
     let (failures, vacuous) = measure_plans(&corpus);
     for (source, dialect) in PLAN_SHAPES {
-        if let Some((plan, bounded, nothing)) = corpus.explain(source, *dialect) {
-            let tag = if nothing {
-                "vacuous"
-            } else if bounded {
-                "bounded"
-            } else {
-                "unbounded"
-            };
-            eprintln!("plan[{tag}] {source} :: {}", plan.join(" | "));
-        }
+        let (plan, bounded, nothing) = corpus.explain(source, *dialect);
+        let tag = if nothing {
+            "vacuous"
+        } else if bounded {
+            "bounded"
+        } else {
+            "unbounded"
+        };
+        eprintln!("plan[{tag}] {source} :: {}", plan.join(" | "));
     }
     // A shape whose predicate is unsatisfiable ON THIS CORPUS is reported, not
     // asserted: the key does not exist here with the type the operator needs, so
@@ -1238,15 +1628,69 @@ fn the_plan_gate_holds_over_a_real_corpus() {
     );
 }
 
+/// **§5.7's table, corrected by measurement.** `(BoundRow::Block, Rel::Children)`
+/// used to read "bounded iff the child predicate is", which was true while every
+/// child predicate was a property of the CHILD. A nested `refs` is not: it reads
+/// the ANCHOR's ancestor closure and the ANCHOR's page, so the child subquery is
+/// correlated with the anchor and SQLite has nothing to drive.
+///
+/// This test records BOTH halves of that — the classification and the plan that
+/// forces it — so the entry cannot drift back to a claim the planner refuses.
+/// The self-contained child predicate next to it is the control: same relation,
+/// same quantifier, still bounded, still index-driven.
+#[test]
+fn a_nested_refs_child_predicate_cannot_bound_its_anchor() {
+    let _serial = serialize();
+    let root = scratch("nested-refs-plan");
+    write_fast_corpus(&root);
+    let corpus = Corpus::open(root, true);
+
+    let (plan, bounded, nothing) = corpus.explain("any(children, ref('Project'))", QueryDialect::Tql);
+    assert!(!nothing, "the fixture must make this shape satisfiable");
+    assert!(
+        !bounded,
+        "a child predicate that reads the anchor's context bounds nothing: {}",
+        plan.join(" | ")
+    );
+    // The reason, not just the verdict: the anchor is enumerated and the child
+    // subquery is re-run per anchor row.
+    assert!(
+        plan.iter().any(|step| step == "SCAN b" || step.starts_with("SCAN b ")),
+        "the anchor must be the thing being enumerated here: {}",
+        plan.join(" | ")
+    );
+    assert!(
+        plan.iter().any(|step| step.contains("CORRELATED")),
+        "the child subquery must be correlated with the anchor: {}",
+        plan.join(" | ")
+    );
+    // The three context arms still each reach their own table by key — the
+    // correlation is what costs the anchor its probe, not a missing index.
+    assert!(
+        !plan.iter().any(|step| step.starts_with("SCAN or")
+            || step.starts_with("SCAN ar")
+            || step.starts_with("SCAN pr")),
+        "each ancestor-context arm must still be a keyed probe: {}",
+        plan.join(" | ")
+    );
+
+    // Control: the same relation and quantifier over a predicate that IS a
+    // property of the child alone stays bounded.
+    let (control, bounded, nothing) = corpus.explain("any(children, task = 'DONE')", QueryDialect::Tql);
+    assert!(!nothing);
+    assert!(
+        bounded,
+        "a self-contained child predicate still bounds its anchor: {}",
+        control.join(" | ")
+    );
+}
+
 /// `(failures, shapes that provably read nothing on this corpus)`.
 fn measure_plans(corpus: &Corpus) -> (Vec<String>, Vec<String>) {
     let mut failures = Vec::new();
     let mut vacuous = Vec::new();
     for (source, dialect) in PLAN_SHAPES {
-        let Some((plan, bounded, nothing)) = corpus.explain(source, *dialect) else {
-            failures.push(format!("{source}: the lowering declined a plan-gate shape"));
-            continue;
-        };
+        let (plan, bounded, nothing) = corpus.explain(source, *dialect);
         if nothing {
             vacuous.push(format!(
                 "{source}: unsatisfiable on this corpus (the key's effective type \
@@ -1563,7 +2007,7 @@ fn time_rule(
     repeats: u32,
     rule: ResultSetRule,
 ) -> Option<(usize, u128)> {
-    let first = corpus.sql_as(source, dialect, fts_ready, &[], rule).ok()?;
+    let first = corpus.sql_as(source, dialect, fts_ready, &[], rule);
     let start = Instant::now();
     for _ in 0..repeats {
         let _ = corpus.sql_as(source, dialect, fts_ready, &[], rule);
@@ -1582,9 +2026,7 @@ fn measure_shape(
     fts_ready: bool,
 ) {
     // Warm both sides once so neither pays for the other's first-touch cost.
-    let Ok(first) = corpus.sql_with(source, dialect, fts_ready, &[]) else {
-        return;
-    };
+    let first = corpus.sql_with(source, dialect, fts_ready, &[]);
     let _ = corpus.walk(source, dialect);
     let walk_start = Instant::now();
     for _ in 0..repeats {
@@ -1596,9 +2038,7 @@ fn measure_shape(
         let _ = corpus.sql_with(source, dialect, fts_ready, &[]);
     }
     let sql = sql_start.elapsed() / repeats;
-    let (_anchor, statement) = corpus
-        .lower(source, dialect, fts_ready, &[])
-        .expect("the measured shape lowers");
+    let (_anchor, statement) = corpus.lower(source, dialect, fts_ready, &[]);
     let plan = if statement.content_plans.is_empty() {
         if statement.positively_bounded {
             "indexed".to_string()
@@ -1672,9 +2112,7 @@ fn dump_the_lowered_statements_as_a_measurement_baseline() {
     let mut captured: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     for (source, dialect) in MEASURE_SHAPES {
-        let (_anchor, statement) = corpus
-            .lower(source, *dialect, fts_ready, &[])
-            .unwrap_or_else(|reason| panic!("{source} must lower to be measured: {reason}"));
+        let (_anchor, statement) = corpus.lower(source, *dialect, fts_ready, &[]);
         captured.insert((*source).to_string(), statement.sql);
     }
     std::fs::write(
@@ -1747,9 +2185,8 @@ fn the_baseline_and_current_statements_are_measured_against_each_other() {
             disagreements.push(format!("{source}: absent from the captured baseline"));
             continue;
         };
-        let (anchor, statement) = corpus
-            .lower(source, *dialect, fts_ready, &[])
-            .unwrap_or_else(|reason| panic!("{source} must lower to be measured: {reason}"));
+        let (anchor, statement) = corpus.lower(source, *dialect, fts_ready, &[]);
+        corpus.bind_regexes(&statement.regexes);
         // The two statements bind the SAME values in the SAME order — this
         // packet changes projection lists and one join, never a bound value —
         // and this check is what makes reusing today's parameters for the
@@ -1933,9 +2370,7 @@ fn a_block_query_selects_three_columns_and_never_decorates_its_candidates() {
     // access must be its OWN scoped subquery, so removing the candidate-stage
     // join cannot have moved a page predicate's table access anywhere.
     for source in ["(task TODO)", "(journal)", "[[Project]]"] {
-        let (anchor, statement) = corpus
-            .lower(source, QueryDialect::Og, fts_ready, &[])
-            .expect("the guard's shapes lower");
+        let (anchor, statement) = corpus.lower(source, QueryDialect::Og, fts_ready, &[]);
         assert_eq!(anchor, Anchor::Block, "{source}");
         assert!(
             statement.sql.starts_with(
@@ -1991,15 +2426,13 @@ fn a_block_query_selects_three_columns_and_never_decorates_its_candidates() {
     // The correlated spelling keeps the same three columns — the packet removed
     // the unused fields from the OUTPUT, which is not a property of one
     // result-set spelling.
-    let (_anchor, probe) = corpus
-        .lower_as(
-            "(task TODO)",
-            QueryDialect::Og,
-            fts_ready,
-            &[],
-            ResultSetRule::CorrelatedProbe,
-        )
-        .expect("the correlated spelling lowers");
+    let (_anchor, probe) = corpus.lower_as(
+        "(task TODO)",
+        QueryDialect::Og,
+        fts_ready,
+        &[],
+        ResultSetRule::CorrelatedProbe,
+    );
     assert!(
         probe
             .sql
@@ -2015,14 +2448,7 @@ fn a_block_query_selects_three_columns_and_never_decorates_its_candidates() {
 
     // `@page` output is untouched by this packet: four columns, name and kind
     // included, because the page result construction reads them.
-    let (anchor, page) = corpus
-        .lower(
-            "@page and journal = true",
-            QueryDialect::Tql,
-            fts_ready,
-            &[],
-        )
-        .expect("the page anchor lowers");
+    let (anchor, page) = corpus.lower("@page and journal = true", QueryDialect::Tql, fts_ready, &[]);
     assert_eq!(anchor, Anchor::Page);
     assert!(
         page.sql

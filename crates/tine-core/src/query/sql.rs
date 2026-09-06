@@ -64,18 +64,31 @@
 //! `oo` — the last one through no bound at all, because word-token FTS cannot
 //! answer it.
 //!
-//! **What this wave declines** ([`Lowered::Unsupported`], §5.9's dispatch, NOT a
-//! divergence): a VALID regex — `content regexp <pattern>` and the whole-query
-//! `/pattern/` form of `content match` — because §4.3.2's fixed SQL predicate is
-//! a registered scalar function backed by the same compiled `regex::Regex`, and
-//! `PhysicalProjectionQueryReader` (tine-storage v0.14.0) exposes no way to
-//! register one on its read-only connection. An INVALID pattern needs no engine:
-//! it is a retained leaf that matches false (§4.3.2), so it lowers to the
-//! constant `0` here. Also declined: a `refs` leaf nested inside a `children`
-//! relation predicate — see [`Compiler::leaf_block`] for why that one cannot be
-//! lowered from `block_path_refs` without disagreeing with the walk.
+//! **This compiler declines nothing.** It is total by TYPE — [`lower_query`]
+//! returns a [`SqlQuery`] and there is no "unsupported" answer to return — which
+//! is the enforceable form of §5.9's rule that a ready projection answers every
+//! shape the IR can express. The two families that used to decline are lowered
+//! here:
+//!
+//! * **A valid regex** — `content regexp <pattern>` and the whole-query
+//!   `/pattern/` form of `content match`. §4.3.2's fixed SQL predicate is
+//!   `tine_query_regex(<id>, <exact visible text>)`, a scalar function
+//!   `tine-storage` registers on the read-only connection over a
+//!   caller-owned table of compiled regexes ([`QueryRegexProgram`]). The IDs are
+//!   BOUND VALUES and the regexes are cheap clones of the SAME
+//!   [`CompiledLeaves`] values the walk consumes — never a second compile, a
+//!   second grammar or an interpolated pattern (I-12, D-14, I-22). An INVALID
+//!   pattern still needs no engine: it is a retained leaf that matches false
+//!   (§4.3.2), so it lowers to the constant `0`.
+//! * **A `refs` leaf nested inside a `children` predicate.** The walk evaluates
+//!   it under the ANCHOR's ancestor multiset, carried through every `children`
+//!   quantifier unchanged — see [`Compiler::refs`] for the three stored facts
+//!   that reconstruct exactly that set.
 
-use tine_storage::sqlite::PhysicalQueryValue;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use tine_storage::sqlite::{MaterializationError, PhysicalQueryValue};
 
 // The acceptance gates. `#[path]` keeps the file beside this one so the shared
 // production-source scanner sees a `*_tests.rs` sibling include and blanks it
@@ -125,6 +138,108 @@ pub(crate) struct SqlQuery {
     /// explicitly not index-bounded, and a plan gate that could not name them
     /// would have to choose between failing them and exempting all content.
     pub(crate) content_plans: Vec<ContentPlan>,
+    /// §4.3.2's compiled-regex table for THIS statement — the IDs its
+    /// `tine_query_regex` calls bind, and the regex each one names. Empty for
+    /// the overwhelming majority of statements; the executor installs it on the
+    /// connection before the statement runs (see [`QueryRegexProgram`]).
+    pub(crate) regexes: QueryRegexProgram,
+}
+
+/// §4.3.2's compiled-regex table, owned by ONE lowered statement.
+///
+/// **The seam, once, for every backend.** `tine-storage` exposes the SAME fixed
+/// `set_query_regex_predicate` on the read-only reader Direct Files pools
+/// ([`crate::direct_projection::DirectProjection::run_statement`]) and on the
+/// owned read snapshot R3/R4 will hold, so [`QueryRegexProgram::predicate`] is
+/// the only thing either of them installs — there is no second matcher in a
+/// backend to disagree with this one (D-14, I-12).
+///
+/// **Why an ID table and not the pattern.** The statement binds `?n` = an
+/// integer ID; the pattern text never enters the SQL, is never interpolated and
+/// is never logged. The regex behind an ID is a CLONE of the value
+/// [`CompiledLeaves`] already compiled for this execution — `regex::Regex` is
+/// internally reference-counted, so the clone is cheap and, more importantly,
+/// it is the SAME program the walk runs (I-12).
+///
+/// **Scope.** IDs are meaningful only for the statement that assigned them, so
+/// an executor REPLACES the whole table before each dispatched statement rather
+/// than adding to it, and an ID the table does not name fails the read instead
+/// of matching anything.
+#[derive(Clone, Default)]
+pub(crate) struct QueryRegexProgram {
+    /// Position `i` carries ID `i + 1`. The ID is positional rather than stored
+    /// so the table and the statement cannot drift apart.
+    bindings: Vec<QueryRegexBinding>,
+}
+
+/// One `(id, pattern, compiled)` row of a [`QueryRegexProgram`].
+#[derive(Clone)]
+struct QueryRegexBinding {
+    /// The user's pattern source — the key this compiler de-duplicates on, and
+    /// the ONLY thing that makes two programs comparable. It is never emitted
+    /// into SQL, printed by [`std::fmt::Debug`] or logged.
+    pattern: String,
+    compiled: regex::Regex,
+}
+
+impl QueryRegexProgram {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+
+    /// The predicate `tine_query_regex(<id>, <exact visible text>)` calls.
+    ///
+    /// An ID this program does not name is an ERROR and not `false`: it means
+    /// the statement and the installed table disagree, which is a failed read
+    /// (§5.9's recovery), never a silently smaller result set.
+    pub(crate) fn predicate(
+        &self,
+    ) -> impl Fn(u64, &str) -> Result<bool, MaterializationError> + Send + 'static {
+        let table: Arc<HashMap<u64, regex::Regex>> = Arc::new(
+            self.bindings
+                .iter()
+                .enumerate()
+                .map(|(at, binding)| (at as u64 + 1, binding.compiled.clone()))
+                .collect(),
+        );
+        move |id, text| match table.get(&id) {
+            Some(regex) => Ok(regex.is_match(text)),
+            // The message names the ID and never the pattern or the row's text.
+            None => Err(MaterializationError::InvalidQuery(format!(
+                "query regex id {id} is not bound by this statement"
+            ))),
+        }
+    }
+}
+
+/// Two programs are equal when they bind the same patterns to the same IDs.
+///
+/// `regex::Regex` has no `PartialEq` — and an equality that compared compiled
+/// programs by pointer would make [`SqlQuery`]'s derived `PartialEq` quietly
+/// false for two identical lowerings. The pattern source IS the identity of a
+/// compiled regex here, because [`CompiledLeaves`] keys its cache by exactly
+/// that string.
+impl PartialEq for QueryRegexProgram {
+    fn eq(&self, other: &Self) -> bool {
+        self.bindings.len() == other.bindings.len()
+            && self
+                .bindings
+                .iter()
+                .zip(&other.bindings)
+                .all(|(ours, theirs)| ours.pattern == theirs.pattern)
+    }
+}
+
+/// Deliberately COUNTS the bindings instead of printing them: a `SqlQuery` is
+/// `Debug`-printed by failing assertions and by panics, and §4.3.2's pattern
+/// text is user content that has no business in a log line.
+impl std::fmt::Debug for QueryRegexProgram {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("QueryRegexProgram")
+            .field("bindings", &self.bindings.len())
+            .finish()
+    }
 }
 
 /// How ONE content leaf reaches its rows (SPEC §5.10).
@@ -212,16 +327,6 @@ pub(crate) enum ResultSetRule {
 ///    not have found that the third was the real one.
 pub(crate) const RESULT_SET_RULE: ResultSetRule = ResultSetRule::MatchSetCteMaterialized;
 
-/// The compiler's answer.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Lowered {
-    Statement(SqlQuery),
-    /// A leaf family this wave does not lower. §5.9's dispatch sends the query
-    /// to the walk, which is the SAME answer, not a different one — the reason
-    /// is carried for the receipt and for the fallback counter.
-    Unsupported(&'static str),
-}
-
 /// Everything an execution binds that is not in the IR.
 pub(crate) struct LoweringInputs<'a> {
     /// The ONE execution-day snapshot `resolve_for_execution` took.
@@ -258,12 +363,12 @@ pub(crate) struct LoweringInputs<'a> {
 /// The filter is the EVALUABLE one: `Off` subtrees are removed bottom-up first,
 /// exactly as the walk does (§3.5), so the two engines never see different
 /// trees.
-pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered {
+pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> SqlQuery {
     let mut compiler = Compiler {
         inputs,
         params: Vec::new(),
         next_alias: 0,
-        unsupported: None,
+        regexes: Vec::new(),
     };
     // An invalid query returns zero results plus its diagnostics (§3.5); the
     // caller never reaches the statement, but a `0` predicate keeps this
@@ -283,7 +388,7 @@ pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered
         // decoded either, and the hydration reads both from the page entry it
         // loads anyway.
         Anchor::Block => (
-            Row::Block("b"),
+            Row::Block(BlockScope::anchored("b")),
             "SELECT b.block_id, b.page_id, p.path",
             "FROM blocks b JOIN pages p ON p.page_id = b.page_id",
         ),
@@ -307,11 +412,17 @@ pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered
     // neither the probe nor the CTE can add a row to the empty set. Leaving the
     // statement as the bare `WHERE 0` keeps that case byte-identical across the
     // two spellings, so the identity gate below compares real statements.
-    if let (Row::Block(alias), false) = (row, matches_nothing) {
+    if let (Row::Block(scope), false) = (row, matches_nothing) {
+        let alias = scope.alias;
         match inputs.result_set_rule {
             ResultSetRule::CorrelatedProbe => {
                 let parent = compiler.alias("root");
-                let parent_matches = compiler.filter(&filter, Row::Block(&parent));
+                // The probe asks the same question of the PARENT row, so the
+                // parent is its own anchor: a `refs` leaf nested under it reads
+                // the PARENT's ancestor context, exactly as the walk does when
+                // `collect_og_query_roots` evaluates the filter there.
+                let parent_matches =
+                    compiler.filter(&filter, Row::Block(BlockScope::anchored(&parent)));
                 // A parent that can never match cannot shadow anything, so the
                 // whole probe folds away rather than becoming a correlated
                 // subquery over `0`.
@@ -359,14 +470,11 @@ pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered
             }
         }
     }
-    if let Some(unsupported) = compiler.unsupported {
-        return Lowered::Unsupported(unsupported);
-    }
     // The anchor of the statement, once the result-set rule has chosen its
     // shape: `blocks b` for the correlated probe, the materialized match set for
     // the CTE. `@page` has no suppression rule and keeps `pages p`.
     let (select, from, mask_column) = match (row, &cte) {
-        (Row::Block(alias), None) => (select, from, format!("{alias}.page_id")),
+        (Row::Block(scope), None) => (select, from, format!("{}.page_id", scope.alias)),
         // The mask stays on the ANCHOR, outside `m`, exactly as it is outside
         // the correlated probe today: a block and its parent are always on the
         // same page, so masking inside `m` would be unobservable either way, and
@@ -412,7 +520,7 @@ pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered
     // Folding discards fragments that already bound values; positional
     // parameters have to be renumbered around the holes.
     let (sql, params) = compact_parameters(&sql, &compiler.params);
-    Lowered::Statement(SqlQuery {
+    SqlQuery {
         sql,
         params,
         // §5.7 asks for an index only where there are rows to find. A filter
@@ -423,21 +531,72 @@ pub(crate) fn lower_query(query: &Query, inputs: &LoweringInputs<'_>) -> Lowered
         // parent probe compiles the same tree a second time, and a class
         // counted once per compilation pass would double every entry.
         content_plans: content_plans(&filter, inputs),
-    })
+        regexes: QueryRegexProgram {
+            bindings: compiler.regexes,
+        },
+    }
 }
 
 /// Which row a filter is being compiled against, and under which alias.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Row<'a> {
-    Block(&'a str),
+    Block(BlockScope<'a>),
     Page(&'a str),
+}
+
+/// A block row scope: the alias the filter's own columns read, and the alias of
+/// the row whose ANCESTOR-reference context a `refs` leaf inside it sees.
+///
+/// The two differ exactly inside a `children` predicate, and they keep
+/// differing at every further level of nesting, because `eval_block_leaf`'s
+/// `Rel::Children` arm passes `ancestor_refs` DOWN UNCHANGED: a grandchild is
+/// evaluated under the same multiset the anchor was, not under its own parent's
+/// (see [`Compiler::refs`]). Carrying the anchor explicitly is what makes that
+/// rule a property of the compiler rather than of the order its recursion
+/// happens to visit rows in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct BlockScope<'a> {
+    alias: &'a str,
+    anchor: &'a str,
+}
+
+impl<'a> BlockScope<'a> {
+    /// A row that establishes its own ancestor context: the statement's anchor,
+    /// and §5.3's parent probe.
+    fn anchored(alias: &'a str) -> BlockScope<'a> {
+        BlockScope {
+            alias,
+            anchor: alias,
+        }
+    }
+
+    /// A row reached THROUGH a relation from this one, keeping this scope's
+    /// ancestor context.
+    fn nested<'b>(self, alias: &'b str) -> BlockScope<'b>
+    where
+        'a: 'b,
+    {
+        BlockScope {
+            alias,
+            anchor: self.anchor,
+        }
+    }
+
+    /// Whether this row is the one that established the ancestor context.
+    /// Aliases are unique within a statement, so the comparison is exact.
+    fn is_anchor(self) -> bool {
+        self.alias == self.anchor
+    }
 }
 
 struct Compiler<'a> {
     inputs: &'a LoweringInputs<'a>,
     params: Vec<PhysicalQueryValue>,
     next_alias: usize,
-    unsupported: Option<&'static str>,
+    /// §4.3.2's compiled-regex table, in ID order, de-duplicated by pattern
+    /// source so §5.3's second compilation pass reuses the FIRST pass's IDs
+    /// rather than growing a parallel table.
+    regexes: Vec<QueryRegexBinding>,
 }
 
 impl Compiler<'_> {
@@ -447,9 +606,28 @@ impl Compiler<'_> {
         format!("?{}", self.params.len())
     }
 
-    fn decline(&mut self, reason: &'static str) -> String {
-        self.unsupported.get_or_insert(reason);
-        "0".to_string()
+    /// Bind ONE compiled regex and return the placeholder holding its ID.
+    ///
+    /// The regex is a clone of the shared [`CompiledLeaves`] value, keyed by the
+    /// same pattern source that map is keyed by, so the same pattern written
+    /// twice in one query — or compiled twice by §5.3's parent probe — is one
+    /// table row and one ID.
+    fn bind_regex(&mut self, pattern: &str, compiled: &regex::Regex) -> String {
+        let at = match self
+            .regexes
+            .iter()
+            .position(|binding| binding.pattern == pattern)
+        {
+            Some(at) => at,
+            None => {
+                self.regexes.push(QueryRegexBinding {
+                    pattern: pattern.to_owned(),
+                    compiled: compiled.clone(),
+                });
+                self.regexes.len() - 1
+            }
+        };
+        self.bind(PhysicalQueryValue::Integer(at as i64 + 1))
     }
 
     /// A fresh alias for a relation subquery, so nesting cannot shadow.
@@ -488,7 +666,7 @@ impl Compiler<'_> {
                 "1".to_string()
             }
             Filter::Leaf { leaf } => match row {
-                Row::Block(alias) => self.leaf_block(leaf, alias),
+                Row::Block(scope) => self.leaf_block(leaf, scope),
                 Row::Page(alias) => self.leaf_page(leaf, alias),
             },
         }
@@ -581,7 +759,8 @@ impl Compiler<'_> {
     // Block-row leaves
     // -----------------------------------------------------------------------
 
-    fn leaf_block(&mut self, leaf: &Leaf, b: &str) -> String {
+    fn leaf_block(&mut self, leaf: &Leaf, scope: BlockScope<'_>) -> String {
+        let b = scope.alias;
         match leaf {
             Leaf::Attr { attr, op, value } => match attr {
                 Attr::Content => self.content(*op, value, b),
@@ -595,10 +774,10 @@ impl Compiler<'_> {
                 _ => "0".to_string(),
             },
             Leaf::Rel { rel, quant, pred } => match rel {
-                Rel::Refs => self.refs(*quant, pred, b, true),
+                Rel::Refs => self.refs(*quant, pred, scope),
                 Rel::Tags => self.tags(*quant, pred, b, OWNER_BLOCK),
                 Rel::Props => self.props(*quant, pred, b, "block_id", OWNER_BLOCK),
-                Rel::Children => self.children(*quant, pred, b),
+                Rel::Children => self.children(*quant, pred, scope),
                 Rel::Page => self.page_relation(*quant, pred, b),
                 // `blocks` is a page-row relation; the block-anchored walk
                 // answers false for it (`eval_block_leaf`'s `Rel::Blocks` arm),
@@ -639,7 +818,7 @@ impl Compiler<'_> {
                 format!("{column} <> {literal}")
             }
             CmpOp::Match => self.content_match(text, b),
-            CmpOp::Regex => self.content_regex(text),
+            CmpOp::Regex => self.content_regex(text, b),
             _ => "0".to_string(),
         }
     }
@@ -663,8 +842,10 @@ impl Compiler<'_> {
             // diagnostic — so `not (content match '-foo')` is classically true
             // on both engines (§3.4), and the matcher's own error message may
             // still be displayed without changing this truth rule.
-            MatchProgram::AlwaysFalse | MatchProgram::Regex { compiled: false } => "0".to_string(),
-            MatchProgram::Regex { compiled: true } => self.decline(REGEX_DECLINED),
+            MatchProgram::AlwaysFalse | MatchProgram::Regex { compiled: None } => "0".to_string(),
+            MatchProgram::Regex {
+                compiled: Some(regex),
+            } => self.content_regex_predicate(source, &regex, b),
             MatchProgram::Boolean(groups) => {
                 let arms = groups
                     .iter()
@@ -764,15 +945,47 @@ impl Compiler<'_> {
     /// r.is_match(visible))`, and `CompiledLeaves` stores `Regex::new(text).ok()`
     /// — so a pattern that did not compile is a retained leaf matching FALSE,
     /// which needs no regex engine in SQLite and lowers to the constant `0`.
-    /// A pattern that DID compile needs §4.3.2's fixed registered scalar
-    /// predicate over `blocks.query_visible_folded`, which the read-only seam cannot
-    /// host at this tine-storage pin; declining sends the query to the walk,
-    /// which is the SAME answer (§5.9), not a different one.
-    fn content_regex(&mut self, source: &str) -> String {
-        if self.inputs.compiled.regex(source).is_none() {
+    fn content_regex(&mut self, source: &str, b: &str) -> String {
+        let Some(regex) = self.inputs.compiled.regex(source) else {
             return "0".to_string();
+        };
+        let regex = regex.clone();
+        self.content_regex_predicate(source, &regex, b)
+    }
+
+    /// §4.3.2's fixed SQL predicate, shared by both regex spellings.
+    ///
+    /// **The text is `block_text.query_visible`, not `blocks.query_visible_folded`.**
+    /// Both walk arms match against `BlockProjection::visible` — the EXACT
+    /// visible text — and the folded column is lower-cased and NFC-normalized,
+    /// so a case-sensitive or accent-sensitive pattern would answer differently
+    /// there. §5.8's producers write `query_visible` as that same exact string.
+    ///
+    /// The subquery is CORRELATED on `block_text`'s primary key, so the regex
+    /// runs once per candidate row that reaches the leaf — the walk's own cost
+    /// model — instead of once per block in the graph, which an uncorrelated
+    /// `IN (SELECT … WHERE tine_query_regex(…))` would have forced. Regex stays
+    /// explicitly UNINDEXED either way (§4.3.2): no candidate bound may claim
+    /// it, and the textual position of this conjunct promises nothing about the
+    /// order SQLite evaluates the statement in.
+    ///
+    /// A block with no `block_text` row is simply not in the set, which is
+    /// `false` and its classical negation — never a NULL and never a read error.
+    fn content_regex_predicate(&mut self, source: &str, regex: &regex::Regex, b: &str) -> String {
+        let alias = self.alias("bt");
+        let owner = format!("{b}.block_id");
+        let id = self.bind_regex(source, regex);
+        let predicate = format!("tine_query_regex({id}, {alias}.query_visible)");
+        match self.exists_subquery(
+            &format!("{alias}.block_id"),
+            &format!("block_text {alias}"),
+            &[format!("{alias}.block_id = {owner}")],
+            predicate,
+            false,
+        ) {
+            Some(sub) => format!("{owner} IN ({sub})"),
+            None => "0".to_string(),
         }
-        self.decline(REGEX_DECLINED)
     }
 
     /// `task` reads `tasks.marker`. Both producers write the marker
@@ -905,24 +1118,48 @@ impl Compiler<'_> {
         format!("{owner} IN (SELECT {select} FROM {from} WHERE {test})")
     }
 
-    /// `refs` is OG's `:block/path-refs`, materialized as `block_path_refs`
-    /// (§5.8) — the block's own normalized refs, every ancestor's, and its page.
+    /// `refs` is OG's `:block/path-refs`: the row's own normalized refs, the
+    /// refs of every ancestor **of the row that established the evaluation
+    /// context**, and that context's page.
     ///
-    /// `top_level` is `false` inside a `children` predicate. The walk evaluates a
-    /// child under the PARENT's ancestor multiset (`eval_block_leaf`'s
-    /// `Rel::Children` arm passes `ancestor_refs` down unchanged, and
-    /// `dfs_path_refs::enter` fires before the parent's own refs are pushed), so
-    /// the set it tests is the child's closure MINUS the parent's own refs —
-    /// which is not `block_path_refs(child)` and is not expressible from it.
-    /// Lowering it anyway would be a walk/SQL difference, which this wave treats
-    /// as a failure rather than a documented divergence, so the query goes to the
-    /// walk instead and the fork is recorded for the manager.
-    fn refs(&mut self, quant: Quant, pred: &Filter, b: &str, top_level: bool) -> String {
-        if !top_level {
-            return self.decline("refs nested in a children predicate (walk/SQL closure fork)");
-        }
-        let alias = self.alias("r");
-        let owner = format!("{b}.block_id");
+    /// **At the anchor** the context is the row itself, and the set is exactly
+    /// what §5.8 materializes as `block_path_refs` — one table, one probe.
+    ///
+    /// **Inside a `children` predicate it is not.** `eval_block_leaf`'s
+    /// `Rel::Children` arm calls `eval_block(pred, child, ancestor_refs, ctx)`
+    /// with `ancestor_refs` passed DOWN UNCHANGED, and `dfs_path_refs::enter`
+    /// fires BEFORE a node's own refs join the multiset — so the nested row is
+    /// tested against
+    ///
+    /// > `own(nested)` ∪ `ancestors(anchor)` ∪ `{page}`
+    ///
+    /// which is the anchor's context, not the nested row's, at EVERY depth: two
+    /// levels down the multiset is still the anchor's, because each level passed
+    /// the same value on.
+    ///
+    /// That set is not `block_path_refs(nested)` (which also holds the anchor's
+    /// own refs and each intervening parent's), and it must NOT be computed by
+    /// subtracting the parent's own names from anything: the same name may reach
+    /// the nested row from a grandparent, from the page, or from the row itself,
+    /// and subtracting would delete a name the walk still sees. It is instead
+    /// built from three STORED facts, unioned, never differenced:
+    ///
+    /// | Term | Source | Why it is exactly right |
+    /// |---|---|---|
+    /// | `own(nested)` | `block_own_refs` | R1's explicit own-reference facts — `BlockProjection::refs_norm`, the walk's own `own` |
+    /// | `ancestors(anchor)` ∪ `{page}` | `block_path_refs(anchor.parent_block_id)` | the parent's closure IS `ancestors(anchor)` ∪ `{page}` by §5.8's definition, so the ancestor context needs no new table and no subtraction |
+    /// | `{page}` | `pages.name_key` of the anchor's page | the anchor may be a ROOT block, where the middle term is empty and the page is still in the closure |
+    ///
+    /// `pages.name_key` is `refs::page_key`, which IS `refs::normalize` — the
+    /// same fold `eval_refs` applies to `ctx.page_name` — and the empty guard
+    /// reproduces `closure_names`' own `!name.is_empty()` filter, so a page whose
+    /// name normalizes away contributes nothing on either engine.
+    ///
+    /// A block and its ancestors are always on ONE page, which is why this
+    /// relation stays page-local ([`crate::query::ir::PageLocality`]) even
+    /// though it reads three tables: references compare STORED NAMES and never
+    /// traverse the reference graph.
+    fn refs(&mut self, quant: Quant, pred: &Filter, scope: BlockScope<'_>) -> String {
         // The walk's fast path: for the ONE predicate shape v1 accepts, `Every`
         // answers membership exactly as `Any` does (`eval_refs`'s
         // `single_ref_name` arm). Reproduced rather than corrected, because
@@ -931,17 +1168,85 @@ impl Compiler<'_> {
             (Quant::Every, Some(_)) => Quant::Any,
             (quant, _) => quant,
         };
-        self.quantified(&owner, quant, |compiler, invert| {
-            let column = format!("{alias}.normalized_name");
-            let predicate = compiler.name_element(pred, &column, refs::normalize);
-            compiler.exists_subquery(
-                &format!("{alias}.block_id"),
-                &format!("block_path_refs {alias}"),
-                &[],
+        if scope.is_anchor() {
+            let alias = self.alias("r");
+            let owner = format!("{}.block_id", scope.alias);
+            return self.quantified(&owner, quant, |compiler, invert| {
+                let column = format!("{alias}.normalized_name");
+                let predicate = compiler.name_element(pred, &column, refs::normalize);
+                compiler.exists_subquery(
+                    &format!("{alias}.block_id"),
+                    &format!("block_path_refs {alias}"),
+                    &[],
+                    predicate,
+                    invert,
+                )
+            });
+        }
+        // Nested: one `exists` over the union of the three terms. `Any` is that
+        // existence, `None` is its negation, and `Every` is "no element
+        // VIOLATES", i.e. the same existence over the negated predicate —
+        // `quantify`'s three answers, with the empty union giving `Any` false
+        // and `Every` true (Q5) because an empty `OR` folds to `0`.
+        let exists = |compiler: &mut Self, invert: bool| -> String {
+            let mut arms: Vec<String> = Vec::new();
+            // `own(nested)` — R1's explicit own-reference facts, seeked on the
+            // `(block_id, normalized_name)` primary key.
+            let own = compiler.alias("or");
+            let owner = format!("{}.block_id", scope.alias);
+            let predicate = compiler.name_element(pred, &format!("{own}.normalized_name"), refs::normalize);
+            if let Some(sub) = compiler.exists_subquery(
+                &format!("{own}.block_id"),
+                &format!("block_own_refs {own}"),
+                &[format!("{own}.block_id = {owner}")],
                 predicate,
                 invert,
-            )
-        })
+            ) {
+                arms.push(format!("{owner} IN ({sub})"));
+            }
+            // `ancestors(anchor)` ∪ `{page}` — the ANCHOR's parent's own §5.8
+            // closure. J1: `parent_block_id` is nullable, and a root anchor has
+            // no ancestor context at all, so the guard is what keeps this arm
+            // two-valued under `NOT`.
+            let ancestors = compiler.alias("ar");
+            let parent = format!("{}.parent_block_id", scope.anchor);
+            let predicate =
+                compiler.name_element(pred, &format!("{ancestors}.normalized_name"), refs::normalize);
+            if let Some(sub) = compiler.exists_subquery(
+                &format!("{ancestors}.block_id"),
+                &format!("block_path_refs {ancestors}"),
+                &[format!("{ancestors}.block_id = {parent}")],
+                predicate,
+                invert,
+            ) {
+                arms.push(format!("({parent} IS NOT NULL AND {parent} IN ({sub}))"));
+            }
+            // `{page}` — named separately because a ROOT anchor has no parent
+            // row to carry it. `name_key <> ''` reproduces `closure_names`' own
+            // empty-name filter, which the two ref tables get from their column
+            // CHECK constraints and `pages` does not.
+            let page = compiler.alias("pr");
+            let page_owner = format!("{}.page_id", scope.anchor);
+            let predicate = compiler.name_element(pred, &format!("{page}.name_key"), refs::normalize);
+            if let Some(sub) = compiler.exists_subquery(
+                &format!("{page}.page_id"),
+                &format!("pages {page}"),
+                &[
+                    format!("{page}.page_id = {page_owner}"),
+                    format!("{page}.name_key <> ''"),
+                ],
+                predicate,
+                invert,
+            ) {
+                arms.push(format!("{page_owner} IN ({sub})"));
+            }
+            fold_or(arms)
+        };
+        match quant {
+            Quant::Any => exists(self, false),
+            Quant::None => fold_not(exists(self, false)),
+            Quant::Every => fold_not(exists(self, true)),
+        }
     }
 
     /// `tags` is the block's or page's own inline `#tag` / Org headline tags.
@@ -972,57 +1277,23 @@ impl Compiler<'_> {
     /// `SELECT c.parent_block_id FROM blocks c WHERE c.parent_block_id IS NOT
     /// NULL AND <pred(c)>`. The `IS NOT NULL` is J1 — without it `NOT IN` over a
     /// column that holds NULLs is NULL, not false.
-    fn children(&mut self, quant: Quant, pred: &Filter, b: &str) -> String {
+    fn children(&mut self, quant: Quant, pred: &Filter, scope: BlockScope<'_>) -> String {
         let alias = self.alias("c");
-        let owner = format!("{b}.block_id");
+        let owner = format!("{}.block_id", scope.alias);
+        // The child is a fresh block row that KEEPS this scope's ancestor
+        // context, which is the whole content of `eval_block_leaf`'s
+        // "passes `ancestor_refs` down unchanged" (see [`Compiler::refs`]).
+        let child = scope.nested(&alias);
         self.quantified(&owner, quant, |compiler, invert| {
-            // The child is a fresh block row; a `refs` leaf inside it is the
-            // declined case documented on `refs`.
-            let predicate = compiler.child_filter(pred, &alias);
-            compiler.exists_subquery(
+            compiler.relation_subquery(
                 &format!("{alias}.parent_block_id"),
                 &format!("blocks {alias}"),
                 &[format!("{alias}.parent_block_id IS NOT NULL")],
-                predicate,
+                pred,
+                Row::Block(child),
                 invert,
             )
         })
-    }
-
-    /// A block filter evaluated in a nested (child) row scope.
-    fn child_filter(&mut self, pred: &Filter, alias: &str) -> String {
-        match pred {
-            Filter::And { items } if items.is_empty() => "1".to_string(),
-            Filter::Or { items } if items.is_empty() => "0".to_string(),
-            Filter::And { items } => fold_and(
-                items
-                    .iter()
-                    .map(|it| self.child_filter(it, alias))
-                    .collect(),
-            ),
-            Filter::Or { items } => fold_or(
-                items
-                    .iter()
-                    .map(|it| self.child_filter(it, alias))
-                    .collect(),
-            ),
-            Filter::Not { inner } => fold_not(self.child_filter(inner, alias)),
-            Filter::True => "1".to_string(),
-            Filter::False | Filter::Raw { .. } => "0".to_string(),
-            Filter::Off { .. } => {
-                debug_assert!(false, "Off must be removed before lowering (§3.5)");
-                "1".to_string()
-            }
-            Filter::Leaf {
-                leaf:
-                    Leaf::Rel {
-                        rel: Rel::Refs,
-                        quant,
-                        pred,
-                    },
-            } => self.refs(*quant, pred, alias, false),
-            Filter::Leaf { leaf } => self.leaf_block(leaf, alias),
-        }
     }
 
     /// The to-one `page` relation of a block row. All three quantifiers reduce
@@ -1030,16 +1301,14 @@ impl Compiler<'_> {
     fn page_relation(&mut self, quant: Quant, pred: &Filter, b: &str) -> String {
         let alias = self.alias("pg");
         let owner = format!("{b}.page_id");
-        let hit = {
-            let predicate = self.filter(pred, Row::Page(&alias));
-            self.exists_subquery(
-                &format!("{alias}.page_id"),
-                &format!("pages {alias}"),
-                &[],
-                predicate,
-                false,
-            )
-        };
+        let hit = self.relation_subquery(
+            &format!("{alias}.page_id"),
+            &format!("pages {alias}"),
+            &[],
+            pred,
+            Row::Page(&alias),
+            false,
+        );
         match (quant, hit) {
             (Quant::Any | Quant::Every, Some(hit)) => format!("{owner} IN ({hit})"),
             (Quant::None, Some(hit)) => format!("{owner} NOT IN ({hit})"),
@@ -1700,11 +1969,6 @@ impl Compiler<'_> {
 // §5.10 — the shared Match payload, and the candidate needle
 // ---------------------------------------------------------------------------
 
-/// The one reason this wave declines a content leaf (§4.3.2, see the module
-/// header). It names the operator family, not the packet, because the walk
-/// answers it and the dispatch counts it.
-const REGEX_DECLINED: &str = "content regex (§4.3.2 needs a registered SQL regex predicate)";
-
 /// What the compiler does with ONE `content match` payload.
 ///
 /// Owned rather than borrowed so that reading the shared parse does not hold a
@@ -1716,12 +1980,13 @@ enum MatchProgram {
     /// collected. Both are false in `Matcher::matches`.
     AlwaysFalse,
     /// The whole-query `/pattern/` form, already restricted by
-    /// `common_regex_pattern` at parse time. `compiled` is false for a pattern
+    /// `common_regex_pattern` at parse time. `compiled` is `None` for a pattern
     /// the regex engine rejected, which §4.3.2 retains as a leaf matching
     /// false — still a REGEX leaf for §5.10's plan classes, just one that needs
-    /// no engine to answer.
+    /// no engine to answer. When it compiled, this carries a CLONE of the
+    /// walk's own program, never a second `Matcher::parse` or `Regex::new`.
     Regex {
-        compiled: bool,
+        compiled: Option<regex::Regex>,
     },
     Boolean(Vec<AndGroup>),
 }
@@ -1730,8 +1995,10 @@ enum MatchProgram {
 fn match_program(compiled: &CompiledLeaves, source: &str) -> MatchProgram {
     match compiled.match_program(source) {
         None | Some(Matcher::Empty) => MatchProgram::AlwaysFalse,
-        Some(Matcher::InvalidRegex(_)) => MatchProgram::Regex { compiled: false },
-        Some(Matcher::Regex(_)) => MatchProgram::Regex { compiled: true },
+        Some(Matcher::InvalidRegex(_)) => MatchProgram::Regex { compiled: None },
+        Some(Matcher::Regex(regex)) => MatchProgram::Regex {
+            compiled: Some(regex.clone()),
+        },
         Some(Matcher::Boolean(groups)) => MatchProgram::Boolean(groups.clone()),
     }
 }
@@ -1940,11 +2207,48 @@ fn leaf_bounds(leaf: &Leaf, row: BoundRow, inputs: &LoweringInputs<'_>) -> bool 
                 (_, Rel::Props) => {
                     pred.props_key().is_some() && matches!(quant, Quant::Any | Quant::Every)
                 }
-                (BoundRow::Block, Rel::Children) => bounded(pred, false, BoundRow::Block, inputs),
+                // A child predicate bounds the ANCHOR only when it is a
+                // property of the CHILD alone: the subquery then drives
+                // `blocks.parent_block_id` and the anchor is reached by key. A
+                // nested `refs` is not such a property — it reads the anchor's
+                // OWN ancestor context (see [`Compiler::refs`]), so its two
+                // context arms correlate the subquery with the anchor and no
+                // index can drive it. §5.7's table entry was written before
+                // that family lowered; this is what it says now.
+                (BoundRow::Block, Rel::Children) => {
+                    !reads_anchor_context(pred) && bounded(pred, false, BoundRow::Block, inputs)
+                }
                 (BoundRow::Block, Rel::Page) => bounded(pred, false, BoundRow::Page, inputs),
                 _ => false,
             }
         }
+    }
+}
+
+/// Does this predicate, evaluated on a NESTED row, read the anchor's evaluation
+/// context rather than the nested row alone?
+///
+/// Only `refs` does: [`Compiler::refs`]'s nested spelling probes the ANCHOR's
+/// parent closure and the ANCHOR's page, at every depth, because that is what
+/// `eval_block_leaf` passes down unchanged. Every other relation and attribute
+/// is a fact about the row it is applied to. The match is exhaustive on `Rel`
+/// so a future context-reading relation has to answer this question before the
+/// crate compiles.
+fn reads_anchor_context(filter: &Filter) -> bool {
+    match filter {
+        Filter::And { items } | Filter::Or { items } => items.iter().any(reads_anchor_context),
+        Filter::Not { inner } | Filter::Off { inner } => reads_anchor_context(inner),
+        Filter::True | Filter::False | Filter::Raw { .. } => false,
+        Filter::Leaf { leaf } => match leaf {
+            Leaf::Attr { .. } => false,
+            Leaf::Rel { rel, pred, .. } => match rel {
+                Rel::Refs => true,
+                // A deeper `children` is still nested under the SAME anchor, so
+                // a `refs` below it reads the same context.
+                Rel::Children => reads_anchor_context(pred),
+                Rel::Tags | Rel::Props | Rel::Blocks | Rel::Page => false,
+            },
+        },
     }
 }
 
@@ -2096,7 +2400,7 @@ mod tests {
 
     /// The lowering of one filter, with the shared Match parse the walk would
     /// build for it — never a second parse (I-12).
-    fn lower_with(filter: Filter, anchor: Anchor, fts_ready: bool) -> Lowered {
+    fn lower_with(filter: Filter, anchor: Anchor, fts_ready: bool) -> SqlQuery {
         let registry = Registry::none().clone();
         let compiled = CompiledLeaves::for_query(&filter);
         let query = Query::new(anchor, filter, Source::Builder);
@@ -2109,10 +2413,7 @@ mod tests {
     }
 
     fn lower(filter: Filter, anchor: Anchor) -> SqlQuery {
-        match lower_with(filter, anchor, true) {
-            Lowered::Statement(statement) => statement,
-            Lowered::Unsupported(reason) => panic!("unexpectedly declined: {reason}"),
-        }
+        lower_with(filter, anchor, true)
     }
 
     fn og(source: &str) -> (Query, ViewSettings) {
@@ -2298,9 +2599,7 @@ mod tests {
         // `> 5` is the operator/type mismatch §3.4 answers false for.
         let registry = Registry::none().clone();
         let (query, _) = tql("prop('score') > 5");
-        let Lowered::Statement(statement) = lower_query(&query, &inputs(&registry)) else {
-            panic!("statement");
-        };
+        let statement = lower_query(&query, &inputs(&registry));
         assert!(
             statement.matches_nothing,
             "an unsatisfiable comparison makes the whole statement empty: {}",
@@ -2325,9 +2624,7 @@ mod tests {
         // and owner type before the atom test folds: the quantifier becomes the
         // constant true and every one of those placeholders leaves with it.
         let (query, _) = tql("none(prop('k'), value > 5)");
-        let Lowered::Statement(statement) = lower_query(&query, &inputs(&registry)) else {
-            panic!("statement");
-        };
+        let statement = lower_query(&query, &inputs(&registry));
         assert!(
             !statement.sql.contains('?'),
             "no orphan placeholder survives: {}",
@@ -2370,9 +2667,7 @@ mod tests {
         let query = Query::new(Anchor::Block, Filter::True, Source::Builder);
         let mut inputs = inputs(&registry);
         inputs.cutoff = Some(50);
-        let Lowered::Statement(statement) = lower_query(&query, &inputs) else {
-            panic!("statement");
-        };
+        let statement = lower_query(&query, &inputs);
         assert!(statement.sql.contains("LIMIT ?1"), "{}", statement.sql);
         assert_eq!(statement.params, vec![PhysicalQueryValue::Integer(51)]);
     }
@@ -2408,6 +2703,34 @@ mod tests {
                 "{source} must NOT be positively bounded"
             );
         }
+
+        // A child predicate that is a property of the CHILD bounds the anchor;
+        // one that reads the ANCHOR's ancestor context does not, at any depth.
+        // The plan that forces this is measured in
+        // `a_nested_refs_child_predicate_cannot_bound_its_anchor`.
+        let child_task = Filter::rel(
+            Rel::Children,
+            Quant::Any,
+            Filter::attr(Attr::Task, CmpOp::Eq, Value::text("DONE")),
+        );
+        assert!(positively_bounded(&child_task, Anchor::Block, &inputs));
+        let child_refs = Filter::rel(Rel::Children, Quant::Any, Filter::page_ref("project"));
+        assert!(!positively_bounded(&child_refs, Anchor::Block, &inputs));
+        let deep_refs = Filter::rel(
+            Rel::Children,
+            Quant::Any,
+            Filter::and(vec![
+                Filter::attr(Attr::Task, CmpOp::Eq, Value::text("DONE")),
+                Filter::rel(Rel::Children, Quant::Any, Filter::page_ref("project")),
+            ]),
+        );
+        assert!(!positively_bounded(&deep_refs, Anchor::Block, &inputs));
+        // At the ANCHOR the same leaf is still one keyed probe and still bounds.
+        assert!(positively_bounded(
+            &Filter::page_ref("project"),
+            Anchor::Block,
+            &inputs
+        ));
     }
 
     /// §5.7: absence lowers to a complement and enumerates it, so `is null` and
@@ -2436,10 +2759,7 @@ mod tests {
     }
 
     fn match_sql(text: &str, fts_ready: bool) -> SqlQuery {
-        match lower_with(content_match(text), Anchor::Block, fts_ready) {
-            Lowered::Statement(statement) => statement,
-            Lowered::Unsupported(reason) => panic!("unexpectedly declined: {reason}"),
-        }
+        lower_with(content_match(text), Anchor::Block, fts_ready)
     }
 
     /// The one rule that decides this packet: the exact `instr` predicates are
@@ -2527,7 +2847,7 @@ mod tests {
             inputs: &inputs,
             params: Vec::new(),
             next_alias: 0,
-            unsupported: None,
+            regexes: Vec::new(),
         };
         for negated in [false, true] {
             let term = Term {
@@ -2570,11 +2890,7 @@ mod tests {
             let statement = match_sql(source, true);
             assert!(statement.matches_nothing, "{source}: {}", statement.sql);
             assert_eq!(statement.content_plans, plans, "{source}");
-            let negated = match lower_with(Filter::not(content_match(source)), Anchor::Block, true)
-            {
-                Lowered::Statement(statement) => statement,
-                Lowered::Unsupported(reason) => panic!("declined {source}: {reason}"),
-            };
+            let negated = lower_with(Filter::not(content_match(source)), Anchor::Block, true);
             assert!(!negated.matches_nothing, "{source}: {}", negated.sql);
             assert!(!negated.positively_bounded, "{source}");
         }
@@ -2667,47 +2983,227 @@ mod tests {
         assert_eq!(fts_phrase_literal("-x*"), "\"-x*\"");
     }
 
-    /// §5.9's dispatch, not a divergence: a VALID regex declines because
-    /// §4.3.2's predicate is a registered scalar function the read-only seam
-    /// cannot host. An INVALID one needs no engine and is a false leaf.
+    /// §4.3.2's regex predicate, at the compiler. A VALID pattern in EITHER
+    /// spelling reaches a statement as `tine_query_regex(<bound id>, <exact
+    /// visible text>)`; an INVALID one still needs no engine and is a false
+    /// leaf. The pattern itself never appears in the SQL.
     #[test]
-    fn a_valid_regex_declines_and_an_invalid_one_is_a_false_leaf() {
+    fn a_valid_regex_lowers_to_the_bound_predicate_over_the_exact_visible_text() {
         for source in ["content regexp '[a-z]+'", "content match '/[a-z]+/'"] {
             let (query, _) = tql(source);
-            let filter = query.evaluable_filter();
-            assert_eq!(
-                lower_with(filter, Anchor::Block, true),
-                Lowered::Unsupported(REGEX_DECLINED),
-                "{source}"
+            let statement = lower_with(query.evaluable_filter(), Anchor::Block, true);
+            assert!(
+                statement
+                    .sql
+                    .contains("b.block_id IN (SELECT bt1.block_id FROM block_text bt1 \
+                     WHERE (bt1.block_id = b.block_id AND tine_query_regex(?1, bt1.query_visible)))"),
+                "{source}: {}",
+                statement.sql
             );
+            // The EXACT column, never the folded one a case-insensitive
+            // comparison would use.
+            assert!(
+                !statement.sql.contains("query_visible_folded"),
+                "{source}: {}",
+                statement.sql
+            );
+            // The pattern is a table row keyed by a bound ID, not SQL text.
+            assert!(!statement.sql.contains("[a-z]"), "{source}: {}", statement.sql);
+            assert_eq!(statement.params, vec![PhysicalQueryValue::Integer(1)]);
+            assert_eq!(statement.regexes.bindings.len(), 1, "{source}");
+            assert_eq!(statement.content_plans, vec![ContentPlan::Regex], "{source}");
+            // Explicitly unindexed (§4.3.2): a regex never bounds the anchor.
+            assert!(!statement.positively_bounded, "{source}");
+            assert!(!statement.matches_nothing, "{source}");
         }
-        let invalid = match lower_with(
+        let invalid = lower_with(
             Filter::attr(Attr::Content, CmpOp::Regex, Value::text("[unclosed")),
             Anchor::Block,
             true,
-        ) {
-            Lowered::Statement(statement) => statement,
-            Lowered::Unsupported(reason) => panic!("declined: {reason}"),
-        };
+        );
         assert!(invalid.matches_nothing);
         assert_eq!(invalid.content_plans, vec![ContentPlan::Regex]);
+        assert!(invalid.regexes.is_empty(), "a false leaf binds no program");
     }
 
-    /// The walk evaluates a `refs` leaf inside a `children` predicate against
-    /// the PARENT's ancestor multiset, which is not `block_path_refs(child)`.
-    /// Declining is the only answer that keeps `walk == SQL`.
+    /// The compiled-regex table is de-duplicated by PATTERN SOURCE, so the same
+    /// pattern written twice is one ID — and, decisively, §5.3's correlated
+    /// spelling compiling the whole filter a SECOND time in the parent's row
+    /// scope reuses the first pass's IDs instead of growing a parallel table
+    /// whose second half nothing would install.
     #[test]
-    fn refs_inside_a_children_predicate_declines() {
+    fn one_pattern_is_one_binding_however_many_times_it_is_compiled() {
+        let registry = Registry::none().clone();
+        let filter = Filter::and(vec![
+            Filter::attr(Attr::Content, CmpOp::Regex, Value::text("alpha")),
+            Filter::attr(Attr::Content, CmpOp::Regex, Value::text("beta")),
+            Filter::attr(Attr::Content, CmpOp::Regex, Value::text("alpha")),
+        ]);
+        let compiled = CompiledLeaves::for_query(&filter);
+        let query = Query::new(Anchor::Block, filter, Source::Builder);
+        for rule in [
+            ResultSetRule::MatchSetCteMaterialized,
+            ResultSetRule::CorrelatedProbe,
+        ] {
+            let inputs = LoweringInputs {
+                compiled: &compiled,
+                result_set_rule: rule,
+                ..inputs(&registry)
+            };
+            let statement = lower_query(&query, &inputs);
+            assert_eq!(
+                statement.regexes.bindings.len(),
+                2,
+                "{rule:?}: two distinct patterns: {}",
+                statement.sql
+            );
+            // Every ID the statement names is one the program binds.
+            let predicate = statement.regexes.predicate();
+            for id in 1..=2u64 {
+                assert!(predicate(id, "alpha beta").is_ok(), "{rule:?} id {id}");
+            }
+            assert!(predicate(3, "alpha").is_err(), "{rule:?}: an unbound id fails");
+        }
+    }
+
+    /// The program is the WALK's compiled value, and its equality is the
+    /// patterns it binds — not a pointer, which would make two identical
+    /// lowerings compare unequal, and not a `Debug` line carrying user text.
+    #[test]
+    fn the_regex_program_compares_by_pattern_and_never_prints_one() {
+        let (query, _) = tql("content regexp 'secret-\\d+'");
+        let filter = query.evaluable_filter();
+        let first = lower_with(filter.clone(), Anchor::Block, true);
+        let second = lower_with(filter, Anchor::Block, true);
+        assert_eq!(first, second, "two lowerings of one filter are equal");
+        assert_eq!(format!("{:?}", first.regexes), "QueryRegexProgram { bindings: 1 }");
+        assert!(
+            !format!("{first:?}").contains("secret-"),
+            "the pattern text never reaches a Debug line"
+        );
+        // And the program answers with the SAME program the walk runs.
+        let predicate = first.regexes.predicate();
+        assert_eq!(predicate(1, "secret-42").unwrap(), true);
+        assert_eq!(predicate(1, "secret-").unwrap(), false);
+    }
+
+    /// §3.2's nested-`refs` context, at the compiler: the set a nested row is
+    /// tested against is its OWN refs, the ANCHOR's ancestors' and the page —
+    /// three unioned stored facts, never `block_path_refs(<nested row>)` and
+    /// never a subtraction.
+    #[test]
+    fn refs_inside_a_children_predicate_reads_the_anchors_ancestor_context() {
         let registry = Registry::none().clone();
         let query = Query::new(
             Anchor::Block,
             Filter::rel(Rel::Children, Quant::Any, Filter::page_ref("Project")),
             Source::Builder,
         );
-        assert_eq!(
-            lower_query(&query, &inputs(&registry)),
-            Lowered::Unsupported("refs nested in a children predicate (walk/SQL closure fork)")
+        let statement = lower_query(&query, &inputs(&registry));
+        // The nested row contributes ONLY its own refs.
+        assert!(
+            statement.sql.contains("block_own_refs or2")
+                && statement.sql.contains("or2.block_id = c1.block_id"),
+            "{}",
+            statement.sql
         );
+        // The ancestor context is the ANCHOR's parent's closure, and it is the
+        // anchor `b` that is named there — never the child `c1`.
+        assert!(
+            statement
+                .sql
+                .contains("(b.parent_block_id IS NOT NULL AND b.parent_block_id IN \
+                 (SELECT ar3.block_id FROM block_path_refs ar3 \
+                 WHERE (ar3.block_id = b.parent_block_id AND ar3.normalized_name = ?2)))"),
+            "{}",
+            statement.sql
+        );
+        // The page is named separately, because a ROOT anchor has no parent row
+        // to carry it.
+        assert!(
+            statement.sql.contains("b.page_id IN (SELECT pr4.page_id FROM pages pr4 \
+             WHERE (pr4.page_id = b.page_id AND pr4.name_key <> '' AND pr4.name_key = ?3))"),
+            "{}",
+            statement.sql
+        );
+        // Nothing reads the nested row's own materialized closure.
+        assert!(
+            !statement.sql.contains("block_path_refs ar3 WHERE (ar3.block_id = c1"),
+            "{}",
+            statement.sql
+        );
+        // One bound value per arm, and the SAME page-identity fold on all three
+        // — never a literal spelled into the statement.
+        assert_eq!(
+            statement.params,
+            vec![PhysicalQueryValue::Text("project".to_string()); 3]
+        );
+
+        // Two levels down the context is STILL the anchor's: `c2` is the
+        // grandchild, and the ancestor and page arms both name `b`.
+        let deep = Query::new(
+            Anchor::Block,
+            Filter::rel(
+                Rel::Children,
+                Quant::Any,
+                Filter::rel(Rel::Children, Quant::Any, Filter::page_ref("Project")),
+            ),
+            Source::Builder,
+        );
+        let statement = lower_query(&deep, &inputs(&registry));
+        assert!(
+            statement.sql.contains("or3.block_id = c2.block_id")
+                && statement.sql.contains("ar4.block_id = b.parent_block_id")
+                && statement.sql.contains("pr5.page_id = b.page_id"),
+            "the grandchild's context is the anchor's, not its parent's: {}",
+            statement.sql
+        );
+
+        // The anchor's OWN `refs` leaf is unchanged: one probe of the one table
+        // §5.8 materializes for exactly this question.
+        let top = Query::new(Anchor::Block, Filter::page_ref("Project"), Source::Builder);
+        let statement = lower_query(&top, &inputs(&registry));
+        assert!(
+            statement.sql.contains("FROM block_path_refs r1"),
+            "{}",
+            statement.sql
+        );
+        assert!(
+            !statement.sql.contains("block_own_refs"),
+            "the anchor needs no union: {}",
+            statement.sql
+        );
+    }
+
+    /// The three quantifiers of a nested `refs` leaf, which is where an
+    /// existence built from a UNION could quietly stop matching `quantify`:
+    /// `Any` is that existence, `None` its negation, and a general `Every` is
+    /// "no element violates" — while the single-name `Every` is membership, the
+    /// walk's own `single_ref_name` fast path.
+    #[test]
+    fn a_nested_refs_quantifier_is_the_walks_own_three_answers() {
+        let registry = Registry::none().clone();
+        let nested = |quant: Quant, pred: Filter| {
+            let query = Query::new(
+                Anchor::Block,
+                Filter::rel(Rel::Children, Quant::Any, Filter::rel(Rel::Refs, quant, pred)),
+                Source::Builder,
+            );
+            lower_query(&query, &inputs(&registry)).sql
+        };
+        let name = || Filter::attr(Attr::Name, CmpOp::Eq, Value::text("Project"));
+        // Single name: `Every` IS `Any`, so the two lower identically.
+        assert_eq!(nested(Quant::Any, name()), nested(Quant::Every, name()));
+        // `None` is that same existence, negated.
+        assert!(nested(Quant::None, name()).contains("(NOT ("));
+        // A general `Every` negates the ELEMENT predicate instead.
+        let general = Filter::or(vec![name(), Filter::attr(Attr::Name, CmpOp::Eq, Value::text("Other"))]);
+        let every = nested(Quant::Every, general.clone());
+        assert!(
+            every.contains("(NOT (or") || every.contains("NOT ("),
+            "{every}"
+        );
+        assert_ne!(every, nested(Quant::Any, general));
     }
 
     /// §5.9: the overlay-masked page ids leave the statement, so the masked read
@@ -2719,9 +3215,7 @@ mod tests {
         let mut inputs = inputs(&registry);
         inputs.masked_pages = &masked;
         let query = Query::new(Anchor::Block, Filter::page_ref("x"), Source::Builder);
-        let Lowered::Statement(statement) = lower_query(&query, &inputs) else {
-            panic!("statement");
-        };
+        let statement = lower_query(&query, &inputs);
         // The mask sits on the ANCHOR, which under §5.3's CTE spelling is the
         // materialized match set: a block and its parent are always on the same
         // page, so masking inside `m` would be unobservable, and staying outside

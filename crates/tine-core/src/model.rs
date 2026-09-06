@@ -6463,7 +6463,7 @@ impl Graph {
         max_bytes: usize,
         profile: crate::query::ConstructionProfile,
     ) -> DispatchedQuery {
-        use crate::query::sql::{lower_query, Lowered, LoweringInputs, RESULT_SET_RULE};
+        use crate::query::sql::{lower_query, LoweringInputs, RESULT_SET_RULE};
         let generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         let Some(projection) = self
             .direct_projection
@@ -6500,14 +6500,14 @@ impl Graph {
             fts_ready: projection.fts_ready(generation),
             result_set_rule: RESULT_SET_RULE,
         };
-        // §5.9: when the projection is ready and the statement lowers, the
-        // statement answers. `statement.positively_bounded` is deliberately NOT
-        // consulted — it is §5.7's plan-gate concept, and reading it here would
-        // be the fourth route ("ready but unbounded") that §5.9's first line and
-        // §5.10 both forbid.
-        let Lowered::Statement(statement) = lower_query(query, &inputs) else {
-            return DispatchedQuery::Declined;
-        };
+        // §5.9: when the projection is ready, the statement answers. The
+        // compiler is TOTAL — it has no "unsupported" answer to return — so
+        // there is no shape-based route back to the walk left to take, and
+        // `statement.positively_bounded` is deliberately NOT consulted either:
+        // it is §5.7's plan-gate concept, and reading it here would be the
+        // fourth route ("ready but unbounded") that §5.9's first line and §5.10
+        // both forbid.
+        let statement = lower_query(query, &inputs);
         // A filter that folded to false — an invalid query's zero results
         // (§3.5), or a leaf that can never hold — has an answer already. Reading
         // the projection to be told `0 rows` is the same answer at the price of
@@ -6515,7 +6515,16 @@ impl Graph {
         if statement.matches_nothing {
             return DispatchedQuery::Answered(crate::query::PreViewGroups::default());
         }
-        let rows = match projection.run_statement(generation, &statement.sql, &statement.params) {
+        // §4.3.2: the statement's compiled-regex table is installed on the
+        // connection that runs it, and REPLACES whatever the previous statement
+        // left there — the pooled seam is reused across executions, and an ID is
+        // meaningful only for the statement that assigned it.
+        let rows = match projection.run_statement(
+            generation,
+            &statement.sql,
+            &statement.params,
+            &statement.regexes,
+        ) {
             crate::direct_projection::StatementRead::Rows(rows) => rows,
             crate::direct_projection::StatementRead::NotReady => return DispatchedQuery::NotReady,
             crate::direct_projection::StatementRead::Failed => return DispatchedQuery::FailedRead,
