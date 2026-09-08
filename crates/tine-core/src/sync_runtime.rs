@@ -3564,12 +3564,44 @@ enum SimpleQueryTurn {
     Captured(Box<crate::managed_query::ManagedQueryCapture>),
 }
 
-/// What one §7.1 IR-command actor turn produced (RET1), the twin of
+/// The INPUT half of the captured Managed query route: what a public command
+/// hands the shared driver before anything is bound (RET1 IR, RET2 advanced).
+///
+/// The driver behind it — `RuntimeActor::application_captured_query_turn` and
+/// `SyncRuntimeHandle::application_captured_query` — owns readiness, §4.4's
+/// binding, the memo, the capture and the off-actor execution loop for BOTH
+/// public routes. Only the front differs: `Ir` arrives already parsed (§7.1
+/// hands the IR over the wire), `Advanced` arrives as the authored datalog
+/// SOURCE, which `query::resolve_advanced_source` — the ONE advanced
+/// source-limit/parse/bind/report owner — turns into the same binding.
+///
+/// A second front is deliberately NOT a second driver: before RET2 the advanced
+/// route was an actor turn that loaded every page of the graph and walked it
+/// (`application_advanced_query_ready`), which is exactly the shape this enum
+/// exists to make unreachable.
+#[derive(Clone, Debug)]
+enum ManagedQueryTurnInput {
+    /// SPEC §7.1's `query_run` / `query_explain_empty`.
+    Ir {
+        query: crate::query::ir::Query,
+        view: crate::query::ir::ViewSettings,
+        context: crate::query::ir::ExecutionContext,
+        explain: bool,
+    },
+    /// The public advanced (datalog) query command: the authored source and the
+    /// page it is rendered on (§4.4's `?current-page`).
+    Advanced {
+        query: String,
+        current_page: Option<String>,
+    },
+}
+
+/// What one captured-query actor turn produced (RET1), the twin of
 /// [`SimpleQueryTurn`].
 ///
 /// The answered arm carries a whole navigation REPLY rather than a row set,
-/// because one route serves both `query_run` and `query_explain_empty` and the
-/// two reply shapes are what distinguishes them.
+/// because one route serves `query_run`, `query_explain_empty` AND the public
+/// advanced query, and the reply shapes are what distinguishes them.
 enum IrQueryTurn {
     Deferred(SyncEditorDeferred),
     /// The turn answered: a deferred binding with nothing to count, a memo hit,
@@ -3685,6 +3717,49 @@ fn managed_ir_block_result(
         report: report.clone(),
         total: bounded.total,
         exceeded: bounded.exceeded,
+    }
+}
+
+/// The ADVANCED route's answer conversion, at the back of the shared captured
+/// driver (RET2).
+///
+/// The advanced answer IS the `@block` answer: the same groups in the same base
+/// order, the same `total` and `exceeded`, plus §4.4's clause report — which
+/// travels on the binding rather than inside the memoized rows, because two
+/// datalog spellings of one filter share one memo entry and may report
+/// different `ignored` clauses.
+///
+/// A refusal (a source-limit or wholly unsupported clause set) is already an
+/// advanced answer and passes through untouched: it is a SEMANTIC answer, not
+/// an execution error and not a successful scan of nothing.
+///
+/// Any other reply shape means the executor answered a request this route never
+/// captures, which is classified exactly as it is on the IR route rather than
+/// reshaped into an empty answer.
+fn managed_advanced_reply(
+    census: &crate::managed_query::ManagedQueryCensus,
+    reply: SyncApplicationNavigationReply,
+) -> Result<SyncApplicationNavigationReply, SyncApplicationPageRequestError> {
+    match reply {
+        already @ SyncApplicationNavigationReply::AdvancedQuery(_) => Ok(already),
+        SyncApplicationNavigationReply::QueryRun(result) => {
+            let crate::query::ir::QueryRows::Block { groups } = result.rows else {
+                return Err(managed_answer_shape_error(census));
+            };
+            Ok(SyncApplicationNavigationReply::AdvancedQuery(
+                SyncApplicationBoundedAdvancedResult {
+                    result: crate::query::AdvancedResult {
+                        groups,
+                        ran: result.report.ran,
+                        ignored: result.report.ignored,
+                        supported: result.report.supported,
+                    },
+                    total: result.total,
+                    exceeded: result.exceeded,
+                },
+            ))
+        }
+        _ => Err(managed_answer_shape_error(census)),
     }
 }
 
@@ -4612,7 +4687,16 @@ impl SyncRuntimeHandle {
                 max_rows,
                 max_bytes,
             } => {
-                return self.application_ir_query(query, view, context, false, max_rows, max_bytes)
+                return self.application_captured_query(
+                    ManagedQueryTurnInput::Ir {
+                        query,
+                        view,
+                        context,
+                        explain: false,
+                    },
+                    max_rows,
+                    max_bytes,
+                )
             }
             SyncApplicationNavigationRequest::QueryExplainEmpty {
                 query,
@@ -4620,7 +4704,38 @@ impl SyncRuntimeHandle {
                 context,
                 max_rows,
                 max_bytes,
-            } => return self.application_ir_query(query, view, context, true, max_rows, max_bytes),
+            } => {
+                return self.application_captured_query(
+                    ManagedQueryTurnInput::Ir {
+                        query,
+                        view,
+                        context,
+                        explain: true,
+                    },
+                    max_rows,
+                    max_bytes,
+                )
+            }
+            // RET2: the PUBLIC advanced (datalog) query takes the very same
+            // route. It is intercepted here for the same reason the IR commands
+            // are — the actor arm that used to answer it hydrated every page of
+            // the graph first — and it reaches the same SQL compiler, the same
+            // shallow payload constructor and the same memo.
+            SyncApplicationNavigationRequest::AdvancedQuery {
+                query,
+                current_page,
+                max_rows,
+                max_bytes,
+            } => {
+                return self.application_captured_query(
+                    ManagedQueryTurnInput::Advanced {
+                        query,
+                        current_page,
+                    },
+                    max_rows,
+                    max_bytes,
+                )
+            }
             request => request,
         };
         let lane = match &request {
@@ -4737,47 +4852,56 @@ impl SyncRuntimeHandle {
         }
     }
 
-    /// **SPEC §7.1's `query_run` / `query_explain_empty` route** (RET1).
+    /// **The ONE captured Managed query driver**: SPEC §7.1's `query_run` /
+    /// `query_explain_empty` (RET1) and the public advanced datalog query
+    /// (RET2), over one execution loop.
     ///
-    /// The same two phases `application_simple_query` runs, for the commands
-    /// the query macro actually calls. Phase one is a short actor turn that
-    /// binds the IR (§4.4), consults the memo and either answers or CAPTURES;
-    /// phase two runs `crate::managed_query::execute_managed_query` on the
-    /// CALLING thread, after `application_request` released `operation`, so the
-    /// actor keeps serving saves and navigation while the statement runs.
+    /// The same two phases `application_simple_query` runs. Phase one is a
+    /// short actor turn that binds the input (§4.4), consults the memo and
+    /// either answers or CAPTURES; phase two runs
+    /// `crate::managed_query::execute_managed_query` on the CALLING thread,
+    /// after `application_request` released `operation`, so the actor keeps
+    /// serving saves and navigation while the statement runs.
     ///
-    /// Before this packet these two commands were a single serialized actor
-    /// turn that loaded every page of the graph and walked it — on the actor —
-    /// for every rendered query block.
+    /// Before RET1 the two IR commands were a single serialized actor turn that
+    /// loaded every page of the graph and walked it — on the actor — for every
+    /// rendered query block; before RET2 the advanced command still was.
     ///
     /// `Stale`, `Busy`, `Cancelled` and `Failed` are classified exactly as the
     /// simple-query route classifies them (RET2: a typed
     /// `query::QueryExecutionError`, never a walk). Only a `@block` answer is
     /// memoized, under the capture's stamp and only while the memo still stands
     /// at it; `@page` rows and an explanation's counts are not memoized at all,
-    /// and no report is ever stored beside a row set.
-    fn application_ir_query(
+    /// and no report is ever stored beside a row set — which is exactly why the
+    /// advanced route's clause report is reattached by
+    /// [`managed_advanced_reply`] from OUTSIDE the memoized rows.
+    fn application_captured_query(
         &self,
-        query: crate::query::ir::Query,
-        view: crate::query::ir::ViewSettings,
-        context: crate::query::ir::ExecutionContext,
-        explain: bool,
+        input: ManagedQueryTurnInput,
         max_rows: usize,
         max_bytes: usize,
     ) -> Result<SyncApplicationNavigationOutcome, SyncApplicationPageRequestError> {
         use crate::managed_query::{ManagedQueryOutcome, ManagedQueryRequest};
         let shared = &self.inner.managed_query;
+        let advanced = matches!(input, ManagedQueryTurnInput::Advanced { .. });
+        // The back adapter: an advanced request's `@block` answer becomes an
+        // `AdvancedResult`; every other input keeps the reply the driver built.
+        let finish = |reply| {
+            if advanced {
+                managed_advanced_reply(&shared.census, reply)
+            } else {
+                Ok(reply)
+            }
+        };
         let mut recaptures = 0;
         loop {
-            let turn = self.application_request(|reply| ActorRequest::ApplicationIrQueryTurn {
-                query: query.clone(),
-                view: view.clone(),
-                context: context.clone(),
-                explain,
-                max_rows,
-                max_bytes,
-                reply,
-            })?;
+            let turn =
+                self.application_request(|reply| ActorRequest::ApplicationCapturedQueryTurn {
+                    input: Box::new(input.clone()),
+                    max_rows,
+                    max_bytes,
+                    reply,
+                })?;
             let capture = match turn {
                 IrQueryTurn::Deferred(state) => {
                     return Err(SyncApplicationPageRequestError::QueryExecution(
@@ -4785,7 +4909,9 @@ impl SyncRuntimeHandle {
                     ));
                 }
                 IrQueryTurn::Answered(reply) => {
-                    return Ok(SyncApplicationNavigationOutcome::Loaded { reply });
+                    return Ok(SyncApplicationNavigationOutcome::Loaded {
+                        reply: finish(reply)?,
+                    });
                 }
                 IrQueryTurn::Captured(capture) => capture,
             };
@@ -4852,7 +4978,9 @@ impl SyncRuntimeHandle {
                             )
                         }
                     };
-                    return Ok(SyncApplicationNavigationOutcome::Loaded { reply });
+                    return Ok(SyncApplicationNavigationOutcome::Loaded {
+                        reply: finish(reply)?,
+                    });
                 }
                 ManagedQueryOutcome::Stale
                     if recaptures < crate::managed_query::MAX_STALE_RECAPTURES =>
@@ -5376,6 +5504,35 @@ impl SyncRuntimeHandle {
             view: Box::new(view),
             context: Box::new(context),
             explain,
+            max_rows,
+            max_bytes,
+            reply: reply_sender,
+        })?;
+        reply_receiver
+            .recv()
+            .map_err(|_| SyncRuntimeRequestError::ActorUnavailable)?
+            .map_err(|_| SyncRuntimeRequestError::ActorUnavailable)
+    }
+
+    /// [`Self::application_complete_page_ir_query`]'s ADVANCED twin (RET2): the
+    /// walk answer for the public advanced (datalog) query, taken through the
+    /// actor's own resolve and the same shared driver.
+    ///
+    /// It is the ORACLE the captured database route is compared against, and it
+    /// is deliberately not reachable from any wire command.
+    #[cfg(test)]
+    fn application_complete_page_advanced_query(
+        &self,
+        query: &str,
+        current_page: Option<&str>,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> Result<SyncApplicationBoundedAdvancedResult, SyncRuntimeRequestError> {
+        let _operation = self.inner.operation.lock().unwrap();
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.send(ActorRequest::ApplicationCompletePageAdvancedQuery {
+            query: query.to_owned(),
+            current_page: current_page.map(str::to_owned),
             max_rows,
             max_bytes,
             reply: reply_sender,
@@ -8217,7 +8374,7 @@ fn flatten_application_blocks(blocks: &[BlockDto]) -> Vec<ApplicationBlockRef<'_
 
 /// The ONE walk an IR execution can take on the application actor (RET1, I-12).
 ///
-/// **RET2 retired every production caller.** `application_ir_query_turn`'s
+/// **RET2 retired every production caller.** `application_captured_query_turn`'s
 /// no-stamp and non-local branches now return a typed
 /// `query::QueryExecutionError`, and `application_ir_query_walk_ready` — the
 /// busy / repeatedly-stale / cancelled recovery — is deleted outright. What is
@@ -10671,14 +10828,11 @@ enum ActorRequest {
         max_bytes: usize,
         reply: mpsc::Sender<Result<SimpleQueryTurn, SyncApplicationPageRequestError>>,
     },
-    /// The short actor half of §7.1's two IR commands (RET1): readiness, the
-    /// §4.4 binding, the memo, and either an answer or a capture the handle
-    /// executes off the actor.
-    ApplicationIrQueryTurn {
-        query: crate::query::ir::Query,
-        view: crate::query::ir::ViewSettings,
-        context: crate::query::ir::ExecutionContext,
-        explain: bool,
+    /// The short actor half of §7.1's two IR commands (RET1) and of the public
+    /// advanced datalog query (RET2): readiness, the §4.4 binding, the memo,
+    /// and either an answer or a capture the handle executes off the actor.
+    ApplicationCapturedQueryTurn {
+        input: Box<ManagedQueryTurnInput>,
         max_rows: usize,
         max_bytes: usize,
         reply: mpsc::Sender<Result<IrQueryTurn, SyncApplicationPageRequestError>>,
@@ -10818,6 +10972,17 @@ enum ActorRequest {
         #[allow(clippy::type_complexity)]
         reply:
             mpsc::Sender<Result<SyncApplicationNavigationReply, SyncApplicationPageRequestError>>,
+    },
+    #[cfg(test)]
+    ApplicationCompletePageAdvancedQuery {
+        query: String,
+        current_page: Option<String>,
+        max_rows: usize,
+        max_bytes: usize,
+        #[allow(clippy::type_complexity)]
+        reply: mpsc::Sender<
+            Result<SyncApplicationBoundedAdvancedResult, SyncApplicationPageRequestError>,
+        >,
     },
     #[cfg(test)]
     ManagedApplicationQueryInstrumentation {
@@ -10979,18 +11144,13 @@ fn run_actor_loop(
                 let _ = reply.send(result);
                 false
             }
-            ActorRequest::ApplicationIrQueryTurn {
-                query,
-                view,
-                context,
-                explain,
+            ActorRequest::ApplicationCapturedQueryTurn {
+                input,
                 max_rows,
                 max_bytes,
                 reply,
             } => {
-                let result = actor.application_ir_query_turn(
-                    &query, &view, &context, explain, max_rows, max_bytes,
-                );
+                let result = actor.application_captured_query_turn(&input, max_rows, max_bytes);
                 let _ = reply.send(result);
                 false
             }
@@ -11299,6 +11459,22 @@ fn run_actor_loop(
             } => {
                 let _ = reply.send(actor.application_complete_page_ir_query(
                     &query, &view, &context, explain, max_rows, max_bytes,
+                ));
+                false
+            }
+            #[cfg(test)]
+            ActorRequest::ApplicationCompletePageAdvancedQuery {
+                query,
+                current_page,
+                max_rows,
+                max_bytes,
+                reply,
+            } => {
+                let _ = reply.send(actor.application_complete_page_advanced_query(
+                    &query,
+                    current_page.as_deref(),
+                    max_rows,
+                    max_bytes,
                 ));
                 false
             }
@@ -14514,35 +14690,27 @@ impl RuntimeActor {
                     self.application_property_registry_snapshot_ready()?,
                 )
             }
-            // RET1/RET2: §7.1's two IR commands AND `{{query}}`'s SimpleQuery
-            // are the handle's two-phase captured route
-            // (`SyncRuntimeHandle::application_ir_query` /
+            // RET1/RET2: EVERY public Managed query command — §7.1's two IR
+            // commands, `{{query}}`'s SimpleQuery, and the advanced datalog
+            // query — is the handle's two-phase captured route
+            // (`SyncRuntimeHandle::application_captured_query` /
             // `application_simple_query`). They never reach a serialized actor
             // turn that selects rows, so there is no arm here that could
             // quietly walk the parsed page set instead of reading the
             // projection. RET2 removed `SimpleQuery`'s arm for exactly that
             // reason: while it existed, one mis-routed request was a silent
-            // whole-graph traversal that no result assertion would notice.
+            // whole-graph traversal that no result assertion would notice —
+            // and `AdvancedQuery`'s arm, which loaded EVERY page of the graph
+            // through `application_all_query_pages_ready` before evaluating a
+            // single clause, was the last one of that shape.
             SyncApplicationNavigationRequest::SimpleQuery { .. }
             | SyncApplicationNavigationRequest::QueryRun { .. }
-            | SyncApplicationNavigationRequest::QueryExplainEmpty { .. } => {
+            | SyncApplicationNavigationRequest::QueryExplainEmpty { .. }
+            | SyncApplicationNavigationRequest::AdvancedQuery { .. } => {
                 return Err(SyncApplicationPageRequestError::ActorRefusedAt(
                     "application_navigation_query_is_captured",
                 ))
             }
-            SyncApplicationNavigationRequest::AdvancedQuery {
-                query,
-                current_page,
-                max_rows,
-                max_bytes,
-            } => SyncApplicationNavigationReply::AdvancedQuery(
-                self.application_advanced_query_ready(
-                    &query,
-                    current_page.as_deref(),
-                    max_rows,
-                    max_bytes,
-                )?,
-            ),
             SyncApplicationNavigationRequest::ExportQuerySubtrees {
                 specs,
                 max_queries,
@@ -16347,7 +16515,17 @@ impl RuntimeActor {
         Ok(pages)
     }
 
-    fn application_advanced_query_ready(
+    /// The ADVANCED route's walk oracle: the evaluation the actor ran for every
+    /// public advanced (datalog) query before RET2, through the same ONE
+    /// resolve (`query::resolve_advanced_source`) and the same shared driver —
+    /// only never through the database.
+    ///
+    /// This is the receipt's "before", and the independent answer the captured
+    /// route's parity gates compare against (user override Q18: traversal is an
+    /// ORACLE, never a readiness or recovery answer). It is deliberately not
+    /// reachable from any wire command.
+    #[cfg(test)]
+    fn application_complete_page_advanced_query(
         &self,
         query: &str,
         current_page: Option<&str>,
@@ -16406,7 +16584,7 @@ impl RuntimeActor {
     /// under, or the complete answer when a refused binding leaves nothing
     /// honest to count (§Q14/N19).
     ///
-    /// Extracted from [`Self::application_ir_query_turn`] so the `#[cfg(test)]`
+    /// Extracted from [`Self::application_captured_query_turn`] so the `#[cfg(test)]`
     /// walk oracle decomposes a query exactly as the captured route does. An
     /// oracle that picked its own anchor, or its own explain decomposition,
     /// would be comparing two different questions and calling the difference a
@@ -16480,19 +16658,25 @@ impl RuntimeActor {
         ))
     }
 
-    /// Phase one of §7.1's captured IR route (RET1), the twin of
+    /// Phase one of the captured Managed query route (RET1 for §7.1's IR
+    /// commands, RET2 for the public advanced query), the twin of
     /// `application_simple_query_turn`.
     ///
     /// §4.4's binding happens HERE, once, on the actor: `?current-page` and the
     /// execution day are resolved before anything is keyed, lowered, memoized
     /// or captured, and the resulting report travels on the capture so that a
     /// memoized row set is never stored beside one.
-    fn application_ir_query_turn(
+    ///
+    /// The two INPUT shapes differ only in how that one binding is obtained:
+    /// §7.1 hands over already-parsed IR, and an advanced source goes through
+    /// `query::resolve_advanced_source` — the ONE owner of the advanced source
+    /// limits, the parse, the bind and the `ran`/`ignored` clause report. A
+    /// refused advanced source has a SEMANTIC answer (its report, no rows) and
+    /// never reaches an execution at all. Nothing below re-parses raw advanced
+    /// text or re-binds a query that is already resolved.
+    fn application_captured_query_turn(
         &mut self,
-        query: &crate::query::ir::Query,
-        view: &crate::query::ir::ViewSettings,
-        context: &crate::query::ir::ExecutionContext,
-        explain: bool,
+        input: &ManagedQueryTurnInput,
         max_rows: usize,
         max_bytes: usize,
     ) -> Result<IrQueryTurn, SyncApplicationPageRequestError> {
@@ -16500,8 +16684,68 @@ impl RuntimeActor {
         if let EditorTurnReadiness::Deferred(state) = self.prepare_page_read_turn() {
             return Ok(IrQueryTurn::Deferred(state));
         }
-        let today = crate::date::JournalDate::today();
-        let resolved = crate::query::resolve_for_execution(query, context, today);
+        let (resolved, view, explain) = match input {
+            ManagedQueryTurnInput::Ir {
+                query,
+                view,
+                context,
+                explain,
+            } => (
+                crate::query::resolve_for_execution(
+                    query,
+                    context,
+                    crate::date::JournalDate::today(),
+                ),
+                view.clone(),
+                *explain,
+            ),
+            ManagedQueryTurnInput::Advanced {
+                query,
+                current_page,
+            } => match crate::query::resolve_advanced_source(query, current_page.as_deref()) {
+                // A source-limit refusal or a wholly unsupported clause set.
+                // Today's strict no-results behaviour, verbatim: the report and
+                // nothing else, never an execution error and never a scan that
+                // reports success over zero rows.
+                crate::query::ResolvedAdvanced::Refused(result) => {
+                    return Ok(IrQueryTurn::Answered(
+                        SyncApplicationNavigationReply::AdvancedQuery(
+                            SyncApplicationBoundedAdvancedResult {
+                                result,
+                                total: 0,
+                                exceeded: false,
+                            },
+                        ),
+                    ))
+                }
+                // Re-assembling the binding the ONE resolve produced (RET1's
+                // `ResolvedQuery::from_parts` contract) is what keeps the
+                // clause report attached to it; the advanced form carries no
+                // view directives and is never an explanation.
+                crate::query::ResolvedAdvanced::Executable {
+                    query,
+                    today,
+                    ran,
+                    ignored,
+                } => (
+                    crate::query::ResolvedQuery::from_parts(
+                        query,
+                        crate::query::ir::QueryReport {
+                            ran,
+                            ignored,
+                            supported: true,
+                        },
+                        today,
+                    ),
+                    crate::query::ir::ViewSettings::default(),
+                    false,
+                ),
+            },
+        };
+        // §4.4's ONE execution day for this turn, taken by whichever resolve
+        // bound the input and never re-read from the clock below.
+        let today = resolved.today();
+        let view = &view;
         // The selection tree, at the anchor the engines evaluate it at, and the
         // request that decides the row shape. A refused binding has nothing
         // honest to count (§Q14/N19): the rows are empty and the caller gets

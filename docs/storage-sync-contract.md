@@ -825,8 +825,19 @@ cancelled and is not counted as a fallback; a `Failed` read is an error
 (`Unavailable(ReadFailed)`). These routes never traverse the parsed graph.
 The independent traversal oracle is test-only. A pending local suffix is part
 of the stamp (the overlay revision below), and the turn captures a page-local
-query with it exactly as it captures an accepted-only one. IR block/page queries
-and Explain use this same captured execution and error classification. An absent
+query with it exactly as it captures an accepted-only one. IR block/page queries,
+Explain AND the public advanced (datalog) query use this same captured execution
+and error classification: EVERY public Managed query command is now one driver,
+one SQL compiler and one shallow payload constructor, and none of them has an
+actor arm that selects rows. The advanced route reaches that driver through
+`query::resolve_advanced_source` — the one owner of an advanced source's size
+and nesting limits, its parse, its `?current-page` and execution-day binding and
+its `ran`/`ignored` clause report — and its answer is the `@block` answer plus
+that report, reattached from OUTSIDE the memoized rows because two datalog
+spellings of one filter share one memo entry. A refused advanced source (a
+source limit, or a clause set nothing lowers) keeps its existing SEMANTIC
+answer — the report, zero rows, `supported = false` — and never becomes an
+execution error, a fallback or a scan reporting success over nothing. An absent
 pending overlay is `Unavailable(ProjectionUnavailable)`, never endless readiness.
 The projection file is closed in exactly three places — the runtime
 actor dropping, a handle closing, and the shared-join install replacing the

@@ -129,12 +129,17 @@ const PINNED: &[(&str, &str, usize, &str)] = &[
         1,
         "RET3: `{{query}}` ranking over Managed storage",
     ),
-    (
-        "crates/tine-core/src/query.rs",
-        "run_application_advanced_query_pages_bounded",
-        1,
-        "RET3: advanced datalog over Managed storage",
-    ),
+    // (`query.rs::run_application_advanced_query_pages_bounded` was here, on
+    // RET3's list. RET2-Managed-Advanced reached it early: the Managed
+    // advanced datalog query is a PUBLIC query command on the same captured
+    // route as the two IR commands and SimpleQuery, so its walk was retired
+    // with theirs. `sync_runtime.rs::application_advanced_query_ready` — the
+    // actor turn that loaded EVERY page of the graph to answer it — is gone,
+    // the wire request is intercepted by
+    // `SyncRuntimeHandle::application_captured_query`, and the wrapper is now
+    // compiled only under test, as the parity oracle
+    // `RuntimeActor::application_complete_page_advanced_query` reaches. Direct
+    // Files' `run_advanced_query_bounded` is untouched and is still RET3's.)
     (
         "crates/tine-core/src/query.rs",
         "export_query_subtrees",

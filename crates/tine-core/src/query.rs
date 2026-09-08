@@ -3755,7 +3755,7 @@ pub(crate) fn run_application_query_pages_bounded(
 // `explain_application_empty_query`, the two Managed adapters that resolved the
 // IR and then handed `ApplicationQueryPages` to the shared driver. §7.1's two IR
 // commands now bind on the actor turn and execute against the projection off it
-// (`sync_runtime::RuntimeActor::application_ir_query_turn`); the same driver is
+// (`sync_runtime::RuntimeActor::application_captured_query_turn`); the same driver is
 // still reached with the same page source by the RECOVERY walk, which is the one
 // remaining caller and is what RET2 retires.
 
@@ -4191,6 +4191,15 @@ pub fn run_advanced_query_bounded(
     )
 }
 
+/// The Managed advanced walk — **test-only since RET2-Managed-Advanced**.
+///
+/// The public Managed advanced query is a captured off-actor SQL execution
+/// (`sync_runtime::RuntimeActor::application_captured_query_turn`), so this has
+/// no production caller left. It survives as the INDEPENDENT parity oracle the
+/// captured route is compared against (user override Q18: traversal is an
+/// oracle, never a readiness or recovery answer), reached only from
+/// `RuntimeActor::application_complete_page_advanced_query`.
+#[cfg(test)]
 pub(crate) fn run_application_advanced_query_pages_bounded(
     pages: &[ApplicationQueryPage],
     query_src: &str,

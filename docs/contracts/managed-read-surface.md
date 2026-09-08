@@ -18,7 +18,6 @@ adapter call edges.
 | application_page_reference_matches | `crates/tine-core/src/query.rs` | adapter | collect_reference_matches | Matches references over a page's projected forest through the shared reference visitor. |
 | application_page_templates | `crates/tine-core/src/query.rs` | adapter | visit_template_blocks | Walks Managed DTO shape and delegates each result to the canonical template leaf. |
 | application_query_doc_block | `crates/tine-core/src/query.rs` | necessary | — | Rehydrates a complete Managed DTO subtree. |
-| application_advanced_query_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed advanced-query transaction boundary. |
 | application_all_query_pages_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed all-pages query index boundary. |
 | application_backlink_filter_context_ready | `crates/tine-core/src/sync_runtime.rs` | adapter | backlink_filter_entry | Hydrates cached roots and delegates entries to the shared DocBlock producer. |
 | application_backlinks_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed backlink candidate/index boundary. |
@@ -26,6 +25,8 @@ adapter call edges.
 | application_block_children_by_identity | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Locates children in a Managed editor DTO tree. |
 | application_block_reference_counts_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Merges Managed reference-count index and overlay. |
 | application_block_referrers_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Merges Managed referrer index and hydrated pages. |
+| application_captured_query | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Handle-side Managed driver for EVERY captured public query command — SPEC §7.1's two IR commands and the advanced datalog query: captured execution with `operation` released; bounded stale recapture, typed readiness, cancellation and failure, no traversal. |
+| application_captured_query_turn | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Actor half of `query_run`/`query_explain_empty`/advanced datalog: §4.4 binding (IR directly, advanced through the ONE `query::resolve_advanced_source`), readiness, memo hit or a capture for off-actor SQL execution. |
 | application_editor_blocks | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Sole Managed save-request block DTO constructor. |
 | application_editor_blocks_existing | `crates/tine-core/src/sync_runtime.rs` | adapter | application_editor_blocks | Existing-save exposed-key policy delegates to the shared builder. |
 | application_editor_blocks_new | `crates/tine-core/src/sync_runtime.rs` | adapter | application_editor_blocks | New-save generated-key policy delegates to the shared builder. |
@@ -38,8 +39,6 @@ adapter call edges.
 | application_hydration_retained_bytes | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed hydration-cache accounting boundary. |
 | application_inventory_of_kind_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed kind-filtered inventory index. |
 | application_inventory_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed materialized inventory plus overlay. |
-| application_ir_query | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Handle-side Managed driver for SPEC §7.1's two IR commands: captured execution with `operation` released; bounded stale recapture, typed readiness, cancellation and failure, no traversal. |
-| application_ir_query_turn | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Actor half of `query_run`/`query_explain_empty`: binding, readiness, memo hit or a capture for off-actor SQL execution. |
 | application_journal_feed | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed journal-feed state owner. |
 | application_journal_feed_ready | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed journal index plus pending overlay. |
 | application_journal_naming | `crates/tine-core/src/sync_runtime.rs` | necessary | — | Managed graph-config journal naming input. |
@@ -97,13 +96,14 @@ adapter call edges.
 | application_crumb_line | `crates/tine-core/src/sync_runtime.rs` | crumb_line | W4-C7b-1 |
 | application_sparse_task_query_ready | `crates/tine-core/src/sync_runtime.rs` | execute_managed_query | R4a |
 | application_sparse_query_doc_block | `crates/tine-core/src/query.rs` | query::results::read_results | R4a-F3 |
-| application_query_run_ready | `crates/tine-core/src/sync_runtime.rs` | application_ir_query_turn | RET1 |
-| application_query_explain_empty_ready | `crates/tine-core/src/sync_runtime.rs` | application_ir_query_turn | RET1 |
+| application_query_run_ready | `crates/tine-core/src/sync_runtime.rs` | application_captured_query_turn | RET1 |
+| application_query_explain_empty_ready | `crates/tine-core/src/sync_runtime.rs` | application_captured_query_turn | RET1 |
 | run_application_query_result | `crates/tine-core/src/query.rs` | query::results::read_results | RET1 |
 | explain_application_empty_query | `crates/tine-core/src/query.rs` | query::view::explain_empty_plan | RET1 |
 | application_simple_query_ready | `crates/tine-core/src/sync_runtime.rs` | application_simple_query_turn | RET2 |
 | application_simple_query_walk | `crates/tine-core/src/sync_runtime.rs` | application_simple_query_turn | RET2 |
-| application_ir_query_walk_ready | `crates/tine-core/src/sync_runtime.rs` | application_ir_query_turn | RET2 |
+| application_ir_query_walk_ready | `crates/tine-core/src/sync_runtime.rs` | application_captured_query_turn | RET2 |
+| application_advanced_query_ready | `crates/tine-core/src/sync_runtime.rs` | application_captured_query_turn | RET2-Managed-Advanced |
 | application_simple_query_pages_ready | `crates/tine-core/src/sync_runtime.rs` | execute_managed_query | RET2 |
 | application_query_page_journal | `crates/tine-core/src/sync_runtime.rs` | managed_query::execute_managed_query | RET2 |
 

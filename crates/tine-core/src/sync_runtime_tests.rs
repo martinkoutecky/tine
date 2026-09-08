@@ -35652,6 +35652,12 @@ fn ret2_an_answer_of_the_wrong_shape_is_an_invalid_snapshot() {
     assert_query_execution_error("query_run", &ir, expected);
     assert_eq!(r4b_census(&handle), (0, 0, 1, 0));
 
+    r4b_inject(&handle, vec![wrong()]);
+    let advanced = ret2_advanced_navigate(&handle, RET2_ADVANCED_QUERY, None, R4B_ROWS, R4B_BYTES)
+        .unwrap_err();
+    assert_query_execution_error("the advanced route", &advanced, expected);
+    assert_eq!(r4b_census(&handle), (0, 0, 1, 0));
+
     assert!(matches!(
         handle.clean_shutdown().unwrap(),
         SyncShutdownOutcome::Safe(_)
@@ -35700,6 +35706,9 @@ fn ret2_a_pending_suffix_without_an_overlay_is_projection_unavailable() {
             expected,
         );
     }
+    let advanced = ret2_advanced_navigate(&handle, RET2_ADVANCED_QUERY, None, R5A_ROWS, R5A_BYTES)
+        .unwrap_err();
+    assert_query_execution_error("the advanced route without an overlay", &advanced, expected);
     assert_eq!(
         r5a_census(&handle),
         (0, 0, 0, 0, 0),
@@ -35858,9 +35867,789 @@ fn ret2_a_deferred_read_turn_is_typed_readiness_on_every_query_entrypoint() {
             expected,
         );
     }
+    let advanced = ret2_advanced_navigate(&handle, RET2_ADVANCED_QUERY, None, R4B_ROWS, R4B_BYTES)
+        .unwrap_err();
+    assert_query_execution_error("a deferred advanced turn", &advanced, expected);
     assert_eq!(
         r4b_census(&handle),
         (0, 0, 0, 0),
         "a deferred turn reads nothing and walks nothing"
     );
+}
+
+// ===== RET2: the PUBLIC Managed ADVANCED (datalog) query is database-only =====
+//
+// The `ret1_*`/`ret2_*` gates above prove the contract for §7.1's two IR
+// commands and for `{{query}}`'s SimpleQuery. These prove the same contract for
+// the last public Managed query command that still answered by traversal: the
+// advanced datalog route, which used to load EVERY page of the graph on the
+// actor (`application_all_query_pages_ready`) and walk it before evaluating a
+// single clause.
+
+/// One PUBLIC advanced execution that is allowed to FAIL, so a gate can assert
+/// the typed error instead of unwrapping an answer.
+fn ret2_advanced_navigate(
+    handle: &SyncRuntimeHandle,
+    query: &str,
+    current_page: Option<&str>,
+    max_rows: usize,
+    max_bytes: usize,
+) -> Result<SyncApplicationBoundedAdvancedResult, SyncApplicationPageRequestError> {
+    handle
+        .application_navigation(SyncApplicationNavigationRequest::AdvancedQuery {
+            query: query.to_owned(),
+            current_page: current_page.map(str::to_owned),
+            max_rows,
+            max_bytes,
+        })
+        .map(|outcome| match outcome {
+            SyncApplicationNavigationOutcome::Loaded {
+                reply: SyncApplicationNavigationReply::AdvancedQuery(result),
+            } => result,
+            other => panic!("an advanced query returned the wrong outcome: {other:?}"),
+        })
+}
+
+/// How many block rows one advanced answer carries, so a gate can refuse to
+/// pass on an answer that was empty on both sides.
+fn ret2_advanced_rows(result: &SyncApplicationBoundedAdvancedResult) -> usize {
+    result
+        .result
+        .groups
+        .iter()
+        .map(|group| group.blocks.len())
+        .sum()
+}
+
+/// The advanced source every counter/error gate below runs: the flagship task
+/// clause, which the fast corpus answers nonempty.
+const RET2_ADVANCED_QUERY: &str = r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#;
+
+/// **RET2's counter bar for the public advanced route.** Every public advanced
+/// execution is answered by ONE statement read, with no fallback, no failure,
+/// no re-capture, no page DTO loaded and no whole-graph inventory pass. The
+/// second run of the same execution is a memo hit that executes nothing, and a
+/// task-only source never scans global properties.
+///
+/// This is the gate that fails on the pre-RET2 route: the actor arm answered
+/// this exact request by hydrating every page of the graph.
+#[test]
+fn ret2_the_public_advanced_route_reads_statements_and_hydrates_no_page() {
+    let _serial = crate::query::sql::sql_gates_tests::serialize();
+    let fixture = r4a_fast_corpus_fixture("ret2-advanced-census", 0x4a40);
+    let handle = r4a_reopen(&fixture);
+
+    for (label, source, current_page, props) in [
+        ("task", RET2_ADVANCED_QUERY, None, false),
+        (
+            "page-ref",
+            r#"[:find (pull ?b [*]) :where (page-ref ?b "Project")]"#,
+            None,
+            false,
+        ),
+        (
+            "property",
+            r#"[:find (pull ?b [*]) :where (property ?b :status "open")]"#,
+            None,
+            true,
+        ),
+        (
+            "current-page",
+            r#"[:find (pull ?b [*])
+                :in $ ?current-page
+                :where
+                [?p :block/name ?current-page]
+                [?b :block/refs ?p]]
+               :inputs [:current-page]"#,
+            Some("Project"),
+            false,
+        ),
+    ] {
+        handle.clear_application_simple_query_memo().unwrap();
+        handle.reset_managed_query_census();
+        handle
+            .reset_managed_application_query_instrumentation()
+            .unwrap();
+        let answered =
+            ret2_advanced_navigate(&handle, source, current_page, R4B_ROWS, R4B_BYTES).unwrap();
+        assert!(
+            answered.result.supported,
+            "{label}: the fixture source must be supported: {:?}",
+            answered.result.ignored
+        );
+        assert!(
+            ret2_advanced_rows(&answered) > 0,
+            "{label}: the fixture must answer this source nonempty"
+        );
+        let counters = handle.managed_application_query_instrumentation().unwrap();
+        assert_eq!(
+            counters.result_page_hydrations, 0,
+            "{label}: the captured advanced route loads no page DTO: {counters:?}"
+        );
+        assert_eq!(
+            counters.metadata_page_hydrations, 0,
+            "{label}: {counters:?}"
+        );
+        assert_eq!(counters.full_inventory_passes, 0, "{label}: {counters:?}");
+        assert_eq!(counters.inventory_pages, 0, "{label}: {counters:?}");
+        assert_eq!(
+            r4b_census(&handle),
+            (1, 0, 0, 0),
+            "{label}: one statement read, no fallback, no failure, no re-capture"
+        );
+        // C6: only a source with a property LEAF may read the global property
+        // registry at all. An ordinary task/ref execution must not scan it —
+        // before RET2 every advanced execution did, because the actor walk was
+        // handed `application_property_registry()` unconditionally.
+        let registry_reads =
+            counters.property_registry_builds + counters.property_registry_cache_hits;
+        if props {
+            assert!(
+                registry_reads > 0,
+                "{label}: a property source lowers under the accepted registry: {counters:?}"
+            );
+        } else {
+            assert_eq!(
+                registry_reads, 0,
+                "{label}: a property-free advanced source reads no registry at all: {counters:?}"
+            );
+        }
+
+        // The memo is keyed by the RESOLVED IR, so the second run of the same
+        // source answers from it and executes nothing.
+        let memoized =
+            ret2_advanced_navigate(&handle, source, current_page, R4B_ROWS, R4B_BYTES).unwrap();
+        assert_eq!(
+            r4b_census(&handle),
+            (1, 0, 0, 0),
+            "{label}: a memo hit executes nothing"
+        );
+        assert_eq!(
+            serde_json::to_value(&memoized).unwrap(),
+            serde_json::to_value(&answered).unwrap(),
+            "{label}: the memo hit is the same answer"
+        );
+    }
+
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
+/// **RET2's acceptance bar for the public advanced command.**
+///
+/// Every disposition that used to be answered by walking the parsed graph is a
+/// typed `query::QueryExecutionError`:
+///
+/// * an exhausted job owner → `NotReady(Busy)`;
+/// * re-captures spent → `NotReady(PendingEdits)`;
+/// * a drained or closed owner → `Cancelled`;
+/// * a failed read → `Unavailable(ReadFailed)`.
+///
+/// The census is what proves "and never walks": zero statement reads and zero
+/// fallback reads on every leg, plus zero page hydrations. The last leg proves
+/// none of it fabricated an empty answer — the same execution, run for real, is
+/// nonempty.
+#[test]
+fn ret2_the_public_advanced_route_reports_typed_execution_errors_and_never_walks() {
+    use crate::managed_query::ManagedQueryOutcome as Outcome;
+    use crate::query::{QueryExecutionError, QueryReadinessReason, QueryUnavailableReason};
+    let _serial = crate::query::sql::sql_gates_tests::serialize();
+    let fixture = r4a_fast_corpus_fixture("ret2-advanced-errors", 0x4a41);
+    let handle = r4a_reopen(&fixture);
+
+    for (label, outcomes, expected, failures) in [
+        (
+            "an exhausted job owner",
+            vec![Outcome::Busy],
+            QueryExecutionError::NotReady(QueryReadinessReason::Busy),
+            0,
+        ),
+        (
+            "re-captures spent",
+            vec![Outcome::Stale, Outcome::Stale, Outcome::Stale],
+            QueryExecutionError::NotReady(QueryReadinessReason::PendingEdits),
+            0,
+        ),
+        (
+            "a drained owner",
+            vec![Outcome::Cancelled],
+            QueryExecutionError::Cancelled,
+            0,
+        ),
+        (
+            "a failed read",
+            vec![Outcome::Failed("injected")],
+            QueryExecutionError::Unavailable(QueryUnavailableReason::ReadFailed),
+            1,
+        ),
+    ] {
+        let recaptures = outcomes.len().saturating_sub(1);
+        r4b_inject(&handle, outcomes);
+        handle
+            .reset_managed_application_query_instrumentation()
+            .unwrap();
+        let error = ret2_advanced_navigate(&handle, RET2_ADVANCED_QUERY, None, R4B_ROWS, R4B_BYTES)
+            .unwrap_err();
+        assert_query_execution_error(label, &error, expected);
+        assert_eq!(
+            r4b_census(&handle),
+            (0, 0, failures, recaptures),
+            "{label}: no statement read and NO fallback"
+        );
+        let counters = handle.managed_application_query_instrumentation().unwrap();
+        assert_eq!(
+            (
+                counters.result_page_hydrations,
+                counters.metadata_page_hydrations,
+                counters.full_inventory_passes
+            ),
+            (0, 0, 0),
+            "{label}: a refused advanced execution hydrates no page and walks no \
+             inventory: {counters:?}"
+        );
+    }
+
+    // Nothing above poisoned the route or the memo: the same execution, run for
+    // real, reads the database and answers nonempty.
+    r4b_inject(&handle, vec![]);
+    let answered =
+        ret2_advanced_navigate(&handle, RET2_ADVANCED_QUERY, None, R4B_ROWS, R4B_BYTES).unwrap();
+    assert!(
+        ret2_advanced_rows(&answered) > 0,
+        "an empty success is impossible here"
+    );
+    assert_eq!(r4b_census(&handle), (1, 0, 0, 0));
+
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
+/// The advanced corpus: BOTH on-disk formats, block and page properties, page
+/// tags, journals, priorities, planning, and one page every other page refers
+/// to so `?current-page` binds to something.
+fn ret2_advanced_fixture(label: &str, seed: u128) -> ActivationFixture {
+    let fixture = ActivationFixture::empty(label, seed);
+    fs::create_dir_all(fixture.graph_root.join("notes")).unwrap();
+    fs::create_dir_all(fixture.graph_root.join("diary")).unwrap();
+    for (path, body) in [
+        // The page `?current-page` binds to, and every page-ref's target.
+        ("notes/Topic.md", "- the topic page's own block\n"),
+        // Markdown: tasks, a priority, planning, block properties, page
+        // properties and page tags on ONE page, so a property source and a task
+        // source select overlapping rows on it.
+        (
+            "notes/Advanced Tasks.md",
+            "type:: Note\ntags:: Genre, Reference\n\n\
+             - TODO [#A] advanced task on [[Topic]]\n\
+             \t- DONE nested advanced done\n\
+             - DOING advanced doing [[Topic]]\n\
+             - status:: open\n\
+             - score:: 12\n\
+             - planned advanced line\n  SCHEDULED: <2026-06-28 Sun>\n\
+             - plain advanced line with no marker\n",
+        ),
+        // Org: the same task shapes in the OTHER on-disk format.
+        (
+            "notes/Advanced Org.org",
+            "* TODO org advanced task referencing [[Topic]]\n\
+             ** DONE org nested done\n\
+             * DOING org advanced doing\n",
+        ),
+        (
+            "notes/Other.md",
+            "- plain note referencing [[Topic]]\n- TODO other page task\n",
+        ),
+        (
+            "diary/20-07-2026.md",
+            "- TODO journal advanced task [[Topic]]\n",
+        ),
+        ("diary/21-07-2026.md", "- DONE journal advanced done\n"),
+    ] {
+        fs::write(fixture.graph_root.join(path), body).unwrap();
+    }
+    fixture
+}
+
+/// `(label, source, current_page)` — every clause family the advanced lowerer
+/// supports, plus a PARTLY supported source (one clause runs, one is reported)
+/// and a WHOLLY unsupported one (nothing runs; the report is the answer).
+#[allow(clippy::type_complexity)]
+const RET2_ADVANCED_SHAPES: &[(&str, &str, Option<&str>)] = &[
+    (
+        "task",
+        r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#,
+        None,
+    ),
+    (
+        "task set",
+        r#"[:find (pull ?b [*]) :where (task ?b #{"TODO" "DOING" "DONE"})]"#,
+        None,
+    ),
+    (
+        "priority",
+        r#"[:find (pull ?b [*]) :where (priority ?b "A")]"#,
+        None,
+    ),
+    (
+        "page-ref",
+        r#"[:find (pull ?b [*]) :where (page-ref ?b "Topic")]"#,
+        None,
+    ),
+    (
+        "property",
+        r#"[:find (pull ?b [*]) :where (property ?b :status "open")]"#,
+        None,
+    ),
+    (
+        "property numeric",
+        r#"[:find (pull ?b [*]) :where (property ?b :score "12")]"#,
+        None,
+    ),
+    (
+        "page-property",
+        r#"[:find (pull ?b [*]) :where (page-property ?b :type "Note")]"#,
+        None,
+    ),
+    (
+        "page-tags",
+        r#"[:find (pull ?b [*]) :where (page-tags ?b "Genre")]"#,
+        None,
+    ),
+    ("journal", "[:find (pull ?b [*]) :where (journal ?b)]", None),
+    (
+        "scheduled",
+        "[:find (pull ?b [*]) :where (scheduled ?b)]",
+        None,
+    ),
+    (
+        "page",
+        r#"[:find (pull ?b [*]) :where (page ?b "Advanced Tasks")]"#,
+        None,
+    ),
+    (
+        "and",
+        r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "Topic"))]"#,
+        None,
+    ),
+    (
+        "or",
+        r#"[:find (pull ?b [*]) :where (or (task ?b #{"DOING"}) (priority ?b "A"))]"#,
+        None,
+    ),
+    (
+        "not",
+        r#"[:find (pull ?b [*]) :where (not (task ?b #{"DONE"}))]"#,
+        None,
+    ),
+    (
+        "current-page ref",
+        r#"[:find (pull ?b [*])
+            :in $ ?current-page
+            :where
+            [?p :block/name ?current-page]
+            [?b :block/refs ?p]]
+           :inputs [:current-page]"#,
+        Some("Topic"),
+    ),
+    (
+        "current-page ref and task",
+        r#"[:find (pull ?b [*])
+            :in $ ?current-page
+            :where
+            [?p :block/name ?current-page]
+            [?b :block/refs ?p]
+            (task ?b #{"TODO"})]
+           :inputs [:current-page]"#,
+        Some("Topic"),
+    ),
+    // PARTLY supported: `task` runs, `bogus` is reported and skipped — never
+    // guessed. The report has to travel with the rows.
+    (
+        "partly supported",
+        r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"}) (bogus ?b)]"#,
+        None,
+    ),
+    // WHOLLY unsupported: nothing lowers, so the report IS the answer.
+    (
+        "wholly unsupported",
+        r#"[:find ?b :where [?b :block/unknown-attribute "x"]]"#,
+        None,
+    ),
+];
+
+/// The independent actor-side WALK answer for one advanced execution, on a
+/// cleared memo. Q18: this is an ORACLE, never a readiness or recovery answer.
+fn ret2_advanced_oracle(
+    handle: &SyncRuntimeHandle,
+    query: &str,
+    current_page: Option<&str>,
+    max_rows: usize,
+    max_bytes: usize,
+) -> SyncApplicationBoundedAdvancedResult {
+    handle.clear_application_simple_query_memo().unwrap();
+    let answer = handle
+        .application_complete_page_advanced_query(query, current_page, max_rows, max_bytes)
+        .unwrap();
+    handle.clear_application_simple_query_memo().unwrap();
+    answer
+}
+
+/// Every shape at every legal bound, captured route versus the independent
+/// walk. Both sides are Managed, so a difference is a defect.
+fn ret2_advanced_parity_over(
+    handle: &SyncRuntimeHandle,
+    state: &str,
+) -> (usize, usize, usize, usize, Vec<String>) {
+    let mut differences = Vec::new();
+    let (mut rows, mut exceeded, mut reported, mut unsupported) = (0usize, 0usize, 0usize, 0usize);
+    for (label, source, current_page) in RET2_ADVANCED_SHAPES {
+        // The wire refuses a zero row or byte bound outright, so the legal
+        // edges here are the smallest ACCEPTED ones (asserted as refusals in
+        // the gate below). The public validator is unchanged by this packet.
+        for (max_rows, max_bytes) in [(R4B_ROWS, R4B_BYTES), (1, R4B_BYTES), (R4B_ROWS, 1)] {
+            let oracle = ret2_advanced_oracle(handle, source, *current_page, max_rows, max_bytes);
+            handle.clear_application_simple_query_memo().unwrap();
+            handle.reset_managed_query_census();
+            let answered =
+                ret2_advanced_navigate(handle, source, *current_page, max_rows, max_bytes).unwrap();
+            // A SUPPORTED source is exactly one database read; a REFUSED one is
+            // a semantic answer that never reaches an execution. Neither is
+            // ever a fallback, a failure or a re-capture.
+            let (reads, fallbacks, failures, recaptures) = r4b_census(handle);
+            assert_eq!(
+                (reads, fallbacks, failures, recaptures),
+                (usize::from(oracle.result.supported), 0, 0, 0),
+                "{state} shape {label:?} rows={max_rows} bytes={max_bytes}: \
+                 the captured route's own census"
+            );
+            rows += ret2_advanced_rows(&oracle);
+            exceeded += usize::from(oracle.exceeded);
+            reported += usize::from(!oracle.result.ignored.is_empty());
+            unsupported += usize::from(!oracle.result.supported);
+            if serde_json::to_value(&answered).unwrap() != serde_json::to_value(&oracle).unwrap() {
+                differences.push(format!(
+                    "{state} shape {label:?} rows={max_rows} bytes={max_bytes}:\n  \
+                     captured {answered:?}\n  walk     {oracle:?}"
+                ));
+            }
+        }
+    }
+    (rows, exceeded, reported, unsupported, differences)
+}
+
+/// **RET2's acceptance bar for the public advanced command over the ACCEPTED
+/// frontier.** Every clause family, in both on-disk formats, at every legal
+/// bound, answered by the captured database route exactly as the actor-side
+/// walk answers it — rows, order, `total`, `exceeded` and the clause report.
+#[test]
+fn ret2_the_public_advanced_route_answers_every_shape_exactly_as_the_walk() {
+    let fixture = ret2_advanced_fixture("ret2-advanced-parity", 0x4a42);
+    let handle = r4a_reopen(&fixture);
+
+    let (rows, exceeded, reported, unsupported, differences) =
+        ret2_advanced_parity_over(&handle, "accepted");
+    assert!(
+        rows > 0,
+        "the corpus answered nothing; the parity gate proves nothing"
+    );
+    assert!(
+        exceeded > 0,
+        "no bound closed a construction; the row/byte edges prove nothing"
+    );
+    assert!(
+        reported > 0,
+        "no source reported an ignored clause; the report never travelled"
+    );
+    assert!(
+        unsupported > 0,
+        "no source was wholly unsupported; the refusal answer was never exercised"
+    );
+    assert!(
+        differences.is_empty(),
+        "the captured advanced route and the walk disagree:\n{}",
+        differences.join("\n")
+    );
+
+    // The zero edges, at the wire: this packet did not widen the public
+    // validator to make a zero-bound execution reachable.
+    for (max_rows, max_bytes) in [(0, R4B_BYTES), (R4B_ROWS, 0)] {
+        assert!(
+            matches!(
+                ret2_advanced_navigate(&handle, RET2_ADVANCED_QUERY, None, max_rows, max_bytes),
+                Err(SyncApplicationPageRequestError::RequestTooLarge(_))
+            ),
+            "a zero bound (rows={max_rows}, bytes={max_bytes}) must be refused at the wire"
+        );
+    }
+    // The two SOURCE limits are the wire's too, unchanged: an oversized or
+    // over-nested datalog source never reaches an execution at all.
+    let too_deep = format!(
+        "[:find (pull ?b [*]) :where {}(task ?b #{{\"TODO\"}}){}]",
+        "(and ".repeat(1_000),
+        ")".repeat(1_000)
+    );
+    assert!(crate::query::query_source_within_limit(&too_deep));
+    assert!(!crate::query::query_nesting_within_limit(&too_deep));
+    let too_large = format!(
+        "[:find (pull ?b [*]) :where (content-regex ?b \"{}\")]",
+        "x".repeat(crate::query::QUERY_SOURCE_MAX_BYTES)
+    );
+    assert!(!crate::query::query_source_within_limit(&too_large));
+    for (label, source) in [("too deep", &too_deep), ("too large", &too_large)] {
+        assert!(
+            matches!(
+                ret2_advanced_navigate(&handle, source, None, R4B_ROWS, R4B_BYTES),
+                Err(SyncApplicationPageRequestError::RequestTooLarge(_))
+            ),
+            "a {label} advanced source must be refused at the wire"
+        );
+    }
+
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
+/// The same bar with an UNDRAINED local suffix: the captured advanced route is
+/// answered off the actor from BOTH databases and still equals the walk over
+/// the same pending state, with no page document loaded on either side.
+#[test]
+fn ret2_the_public_advanced_route_answers_a_pending_suffix_exactly_as_the_walk() {
+    let fixture = ret2_advanced_fixture("ret2-advanced-pending", 0x4a43);
+    let handle = r4a_reopen(&fixture);
+    let witness_path = Graph::open(&fixture.graph_root)
+        .list_pages()
+        .into_iter()
+        .find(|entry| entry.rel_path.ends_with("Advanced Tasks.md"))
+        .expect("the advanced corpus has its task page")
+        .rel_path;
+    r5a_pending_append(
+        &handle,
+        &witness_path,
+        "TODO [#A] advanced pending witness [[Topic]]",
+    );
+    assert_eq!(handle.status().unwrap().managed_local_pending, 1);
+
+    let (rows, exceeded, reported, unsupported, differences) =
+        ret2_advanced_parity_over(&handle, "pending");
+    assert!(rows > 0, "the pending corpus answered nothing");
+    assert!(exceeded > 0, "no pending bound closed a construction");
+    assert!(reported > 0, "no pending source reported an ignored clause");
+    assert!(unsupported > 0, "no pending source was wholly unsupported");
+    assert!(
+        differences.is_empty(),
+        "the captured advanced route and the walk disagree while pending:\n{}",
+        differences.join("\n")
+    );
+
+    // The counter bar for the pending state: ONE two-source read, no page
+    // document loaded, no whole-graph inventory pass.
+    handle.clear_application_simple_query_memo().unwrap();
+    handle.reset_managed_query_census();
+    handle
+        .reset_managed_application_query_instrumentation()
+        .unwrap();
+    let answered =
+        ret2_advanced_navigate(&handle, RET2_ADVANCED_QUERY, None, R4B_ROWS, R4B_BYTES).unwrap();
+    assert!(ret2_advanced_rows(&answered) > 0);
+    assert_eq!(
+        r5a_census(&handle),
+        (1, 1, 0, 0, 0),
+        "one PENDING statement read, no fallback, no failure, no re-capture"
+    );
+    let counters = handle.managed_application_query_instrumentation().unwrap();
+    assert_eq!(
+        counters.result_page_hydrations, 0,
+        "the off-actor pending advanced read loads no page DTO: {counters:?}"
+    );
+    assert_eq!(counters.metadata_page_hydrations, 0, "{counters:?}");
+    assert_eq!(counters.full_inventory_passes, 0, "{counters:?}");
+
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
+/// **The advanced route's memo, end to end.** Cold execution, warm memo hit,
+/// invalidation by a PENDING edit, invalidation by the accepted batch that edit
+/// becomes, and invalidation of a TYPED source by a `tine.type::` declaration —
+/// all driven by the frontier and the registry generation, never by the caller
+/// remembering to ask.
+#[test]
+fn ret2_the_public_advanced_memo_is_invalidated_by_edits_and_property_declarations() {
+    const PROPERTY: &str = r#"[:find (pull ?b [*]) :where (property ?b :score "12")]"#;
+    let fixture = ret2_advanced_fixture("ret2-advanced-memo", 0x4a44);
+    let handle = r4a_reopen(&fixture);
+    let run = |label: &str, source: &str| {
+        handle.reset_managed_query_census();
+        let answered = ret2_advanced_navigate(&handle, source, None, R4B_ROWS, R4B_BYTES)
+            .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+        (answered, r4b_census(&handle))
+    };
+
+    handle.clear_application_simple_query_memo().unwrap();
+    let (cold, census) = run("cold task", RET2_ADVANCED_QUERY);
+    assert_eq!(
+        census,
+        (1, 0, 0, 0),
+        "the cold execution reads the database"
+    );
+    let cold_rows = ret2_advanced_rows(&cold);
+    assert!(cold_rows > 0, "the memo fixture must answer nonempty");
+    let (warm, census) = run("warm task", RET2_ADVANCED_QUERY);
+    assert_eq!(
+        census,
+        (0, 0, 0, 0),
+        "the second run is a memo hit that executes nothing"
+    );
+    assert_eq!(
+        serde_json::to_value(&warm).unwrap(),
+        serde_json::to_value(&cold).unwrap(),
+        "the memo hit is the same answer"
+    );
+
+    // A PENDING edit that adds a matching block: the capture's stamp carries
+    // the overlay revision, so the accepted-frontier entry cannot answer it.
+    let witness_path = Graph::open(&fixture.graph_root)
+        .list_pages()
+        .into_iter()
+        .find(|entry| entry.rel_path.ends_with("Other.md"))
+        .expect("the advanced corpus has its other page")
+        .rel_path;
+    r5a_pending_append(&handle, &witness_path, "TODO advanced memo witness");
+    assert_eq!(handle.status().unwrap().managed_local_pending, 1);
+    let (pending, census) = run("pending task", RET2_ADVANCED_QUERY);
+    assert_eq!(
+        census,
+        (1, 0, 0, 0),
+        "a pending stamp cannot reuse the accepted entry"
+    );
+    assert_eq!(
+        ret2_advanced_rows(&pending),
+        cold_rows + 1,
+        "a memo that answered the pending turn would still be missing the new row"
+    );
+
+    // The accepted batch moves the stamp again.
+    drain_managed_local(&handle);
+    let (accepted, census) = run("task after the accepted batch", RET2_ADVANCED_QUERY);
+    assert_eq!(
+        census,
+        (1, 0, 0, 0),
+        "the invalidated memo recomputes from the new accepted projection"
+    );
+    assert_eq!(ret2_advanced_rows(&accepted), cold_rows + 1);
+
+    // A TYPED source is memoized under the observed-registry generation too.
+    handle.clear_application_simple_query_memo().unwrap();
+    let (cold_property, census) = run("cold property", PROPERTY);
+    assert_eq!(census, (1, 0, 0, 0));
+    assert!(
+        ret2_advanced_rows(&cold_property) > 0,
+        "the typed source must answer nonempty before the declaration"
+    );
+    let (_, census) = run("warm property", PROPERTY);
+    assert_eq!(census, (0, 0, 0, 0), "the typed entry is memoized");
+
+    // Declaring `score` advances the registry generation, so the entry
+    // memoized under the old one is not served for it.
+    r5c_accept_declaration_page(&handle, "score", "number");
+    let (redeclared, census) = run("property after a `tine.type::` declaration", PROPERTY);
+    assert_eq!(
+        census,
+        (1, 0, 0, 0),
+        "a declaration for the key this source reads must invalidate its entry"
+    );
+    let oracle = ret2_advanced_oracle(&handle, PROPERTY, None, R4B_ROWS, R4B_BYTES);
+    assert_eq!(
+        serde_json::to_value(&redeclared).unwrap(),
+        serde_json::to_value(&oracle).unwrap(),
+        "the re-executed typed answer equals the walk over the declared registry"
+    );
+
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
+/// **RET2's barrier bar for the advanced route.** The captured selection runs
+/// OFF the actor: while it waits for its snapshot, an ordinary editor turn —
+/// loading a page and saving it — completes on the actor, advances the accepted
+/// frontier, and the execution re-captures once and answers at the NEW
+/// frontier. If the advanced query held the actor, the save could not run.
+#[test]
+fn ret2_an_actor_edit_turn_completes_while_a_public_advanced_selection_waits() {
+    let fixture = ret2_advanced_fixture("ret2-advanced-barrier", 0x4a45);
+    let handle = r4a_reopen(&fixture);
+    let before = ret2_advanced_oracle(&handle, RET2_ADVANCED_QUERY, None, R4B_ROWS, R4B_BYTES);
+    let before_rows = ret2_advanced_rows(&before);
+    assert!(
+        before_rows > 0,
+        "the fixture must answer this source nonempty"
+    );
+
+    let witness_path = Graph::open(&fixture.graph_root)
+        .list_pages()
+        .into_iter()
+        .find(|entry| entry.rel_path.ends_with("Other.md"))
+        .expect("the advanced corpus has its other page")
+        .rel_path;
+    let advanced = std::cell::Cell::new(0usize);
+    let handle_for_hook: *const SyncRuntimeHandle = &handle;
+    crate::managed_query::set_before_managed_open_hook(Some(Box::new(move || {
+        if advanced.replace(1) != 0 {
+            return;
+        }
+        // SAFETY: the executor runs on THIS thread, inside this test's own
+        // call, and the handle outlives the hook, which is cleared below.
+        let handle = unsafe { &*handle_for_hook };
+        let (mut page, revision) = load_application_exact(handle, &witness_path);
+        page.blocks
+            .push(application_move_test_root("TODO ret2-advanced-barrier", 0));
+        let save = handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: page.path.clone(),
+                    revision,
+                },
+                page,
+            })
+            .unwrap();
+        assert!(matches!(save, SyncApplicationPageSaveOutcome::Saved { .. }));
+        drain_managed_local(handle);
+    })));
+
+    handle.clear_application_simple_query_memo().unwrap();
+    handle.reset_managed_query_census();
+    let answered =
+        ret2_advanced_navigate(&handle, RET2_ADVANCED_QUERY, None, R4B_ROWS, R4B_BYTES).unwrap();
+    crate::managed_query::set_before_managed_open_hook(None);
+    assert_eq!(
+        r4b_census(&handle),
+        (1, 0, 0, 1),
+        "one Stale re-capture, then one statement read at the new frontier"
+    );
+    let after = ret2_advanced_oracle(&handle, RET2_ADVANCED_QUERY, None, R4B_ROWS, R4B_BYTES);
+    assert_eq!(
+        ret2_advanced_rows(&after),
+        before_rows + 1,
+        "the accepted frontier must have advanced by exactly one match"
+    );
+    assert_eq!(
+        serde_json::to_value(&answered).unwrap(),
+        serde_json::to_value(&after).unwrap(),
+        "the advanced answer is the one at the NEW frontier"
+    );
+
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
 }

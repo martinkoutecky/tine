@@ -2,6 +2,26 @@
  "schemaVersion": 1,
  "entries": [
 {
+ "id": "REG-QE-MANAGED-ADVANCED-CAPTURED-ROUTE",
+ "title": "The public Managed advanced query is captured SQL, not an actor traversal",
+ "family": "query-engine",
+ "sources": { "issues": [], "commits": [], "internal": "RET2-Managed-Advanced dossier; Martin 2026-09-07 no-production-traversal amendment; user override Q18" },
+ "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_reads_statements_and_hydrates_no_page",
+   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_reports_typed_execution_errors_and_never_walks",
+   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_answers_every_shape_exactly_as_the_walk",
+   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_answers_a_pending_suffix_exactly_as_the_walk",
+   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_memo_is_invalidated_by_edits_and_property_declarations",
+   "crates/tine-core/src/sync_runtime_tests.rs::ret2_an_actor_edit_turn_completes_while_a_public_advanced_selection_waits"
+  ],
+  "scenario": "query-engine.managed-advanced-captured-route",
+  "failBefore": "evidence/qe/ret2-managed-advanced/fail-before-advanced-route.log: SyncApplicationNavigationRequest::AdvancedQuery over real matching TODOs reported result_page_hydrations=13 and property_registry_builds=1 for a task-only source, and answered successfully while the captured executor was injected Busy"
+ },
+ "notes": "RET2-Managed-Advanced. `application_advanced_query_ready` and its whole-graph `application_all_query_pages_ready` load are deleted; the wire request is intercepted by SyncRuntimeHandle::application_captured_query and shares RET1's capture/retry/execute/memo loop with query_run/query_explain_empty. query::resolve_advanced_source stays the ONE advanced source-limit/parse/bind/report owner; a refused source keeps its semantic answer. query::run_application_advanced_query_pages_bounded is now #[cfg(test)] and survives only as the parity oracle (Q18). Public validator unchanged; no fallback on the route."
+},
+{
  "id": "REG-QE-OVERLAY-RECLOSE-REPLACEMENT",
  "title": "Repeated teardown of an old overlay cannot delete its replacement",
  "family": "query-engine",
