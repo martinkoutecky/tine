@@ -561,6 +561,22 @@ fn export_core_answers_exactly_what_the_walk_export_answers() {
                     Ok(read) => differences.extend(batch_differences(&label, &walk, &read)),
                     Err(error) => differences.push(format!("{label}: the export failed: {error}")),
                 }
+                if matches!(identity, ResultIdentity::Stored) {
+                    match corpus.graph.export_query_subtrees_sql(
+                        specs,
+                        caps.queries,
+                        caps.roots,
+                        caps.nodes,
+                        caps.bytes,
+                    ) {
+                        Ok(public) => differences.extend(batch_differences(
+                            &format!("public {label}"),
+                            &walk,
+                            &public,
+                        )),
+                        Err(error) => differences.push(format!("public {label}: {error}")),
+                    }
+                }
             }
         }
     }
@@ -622,6 +638,57 @@ fn tql_export_preserves_the_declared_dialect_and_exact_subtree_membership() {
     );
     let differences = batch_differences("TQL walk/read", &tql_walk, &tql_read);
     assert!(differences.is_empty(), "{}", differences.join("\n"));
+
+    reset_result_read_census();
+    let public = corpus
+        .graph
+        .export_query_subtrees_sql(&tql, caps.queries, caps.roots, caps.nodes, caps.bytes)
+        .expect("Direct public SQL export answers");
+    let differences = batch_differences("TQL public/read", &tql_read, &public);
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
+    assert_eq!(result_read_census().payload_block_rows, 1);
+    assert_eq!(result_read_census().export_payload_block_rows, 2);
+}
+
+#[test]
+fn direct_export_refused_capped_queries_need_no_projection() {
+    let _serial = serialize();
+    let root = scratch("ret3-export-refused-without-projection");
+    std::fs::create_dir_all(&root).expect("scratch graph");
+    let graph = Graph::open(&root);
+    let specs = vec![
+        QueryExportSpec {
+            simple_dialect: Some(QueryDialect::Tql),
+            ..spec("invalid", "@block and ???")
+        },
+        QueryExportSpec {
+            advanced: true,
+            ..spec("unsupported", "[:find ?b :where [?b :unknown/whatever ?v]]")
+        },
+        // This valid query would require a projection, but is outside the cap.
+        spec("unprocessed", "(task TODO)"),
+    ];
+    let answer = graph
+        .export_query_subtrees_sql(&specs, 2, 10, 10, 10_000)
+        .expect("semantic refusals do not need a projection");
+    assert_eq!(answer.omitted_queries, 1);
+    assert_eq!(
+        answer
+            .results
+            .iter()
+            .map(|r| r.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["invalid", "unsupported"]
+    );
+    for result in answer.results {
+        assert_eq!(
+            (result.shown, result.total, result.omitted_nodes),
+            (0, 0, 0)
+        );
+        assert!(result.groups.is_empty());
+    }
+    drop(graph);
+    std::fs::remove_dir_all(root).expect("remove scratch graph");
 }
 
 /// Sorted, coalesced and sampled selections reach the same export as the walk's.

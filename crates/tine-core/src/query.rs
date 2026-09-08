@@ -28,24 +28,13 @@ pub(crate) mod sort;
 // guard shares recognises a `*_tests.rs` file included by a SIBLING under
 // `#[cfg(test)]`, and only then does it stop counting the gates' `eprintln!`
 // receipts as production print sites (I-5).
-//
-// §5.9's dispatch — what a release build would call the compiler from — is not
-// wired in this packet, so outside `cfg(test)` the module is dead code and says
-// so once, here, rather than through forty individual suppressions.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod sql;
-// R3's shared database-result constructor. Like `sql`, it is what §5.9's
-// dispatch will call rather than something a release build reaches yet: R3b
-// wires Direct Files' production switch to it and R4 wires Managed Storage, so
-// outside `cfg(test)` the module says "not called yet" once, here.
+// Shared database result construction for Direct and Managed reads.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod results;
-// RET3's database-owned export subtree construction: located selection over the
-// shared result collector, and bounded subtree hydration over the SAME caller
-// owned snapshots. Like `sql` and `results` it is what the public Direct and
-// Managed export adapters will call rather than something a release build
-// reaches yet — that migration is the manager's next packet, and until it lands
-// the module says "not called yet" once, here.
+// Source preparation is separate from the snapshot-only export payload reader.
+pub(crate) mod export_prepare;
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod export_results;
 pub(crate) mod tql;

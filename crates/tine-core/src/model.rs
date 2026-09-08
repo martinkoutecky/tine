@@ -6979,6 +6979,140 @@ impl Graph {
         direct_attempt_from_read(read(&mut job, generation, projection.fts_ready(generation)))
     }
 
+    /// Select and construct a complete Copy/Export batch under one owned read.
+    pub fn export_query_subtrees_sql(
+        &self,
+        specs: &[crate::query::QueryExportSpec],
+        max_queries: usize,
+        max_roots: usize,
+        max_nodes: usize,
+        max_bytes: usize,
+    ) -> Result<crate::query::QueryExportBatch, crate::query::QueryExecutionError> {
+        use crate::query::export_prepare::prepare_export_queries;
+        use crate::query::export_results::{
+            apply_located_view, hydrate_located_export_queries, select_located_export_queries,
+            ExportSubtreeInputs, ExportSubtreeSource,
+        };
+        use crate::query::results::{
+            read_located_results_merged, BackendOrder, ResultIdentity, ResultLocator,
+            ResultReadShared, ResultSource,
+        };
+        use crate::query::sql::{lower_query, LoweringInputs, RESULT_SET_RULE};
+        use crate::query::{
+            ConstructionProfile, ExportSelectionAnswer, QueryExecutionError, QueryExportBatch,
+            QUERY_EXPORT_CONSTRUCTION_BYTES, QUERY_EXPORT_CONSTRUCTION_ROWS,
+        };
+
+        let today = crate::date::JournalDate::today();
+        let prepared = prepare_export_queries(specs, max_queries, today);
+        let empty = || ExportSelectionAnswer::<(BlockDto, ResultLocator)> {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
+        // Refused inputs have semantic empty answers even without an index.
+        if prepared.iter().all(|item| item.query.is_none()) {
+            let (limit, selected) =
+                select_located_export_queries(specs, max_queries, max_roots, |_| {
+                    Ok::<_, QueryExecutionError>(empty())
+                })?;
+            let results = hydrate_located_export_queries(
+                &mut [],
+                selected,
+                &ExportSubtreeInputs {
+                    identity: &ResultIdentity::Stored,
+                    max_nodes,
+                    max_bytes,
+                },
+            )?;
+            return Ok(QueryExportBatch {
+                results,
+                omitted_queries: specs.len().saturating_sub(limit),
+            });
+        }
+        self.dispatch_direct_query(|| {
+            self.direct_projection_query_job(|job, generation, fts_ready| {
+                let props = prepared.iter().any(|item| {
+                    item.query
+                        .as_ref()
+                        .is_some_and(|query| query.filter.has_props_leaf())
+                });
+                let registry = self.direct_lowering_registry(props, generation, job)?;
+                let identity = ResultIdentity::DirectStructural {
+                    session_pages: Arc::clone(&job.session_pages),
+                    all_session: false,
+                };
+                let recency = |page: crate::query::results::RecencyPage<'_>| {
+                    crate::query::page_recency_secs_for(
+                        page.journal_day,
+                        &self.root.join(page.path),
+                    )
+                };
+                let mut queries = prepared.iter();
+                let (limit, selected) =
+                    select_located_export_queries(specs, max_queries, max_roots, |_| {
+                        let item = queries
+                            .next()
+                            .expect("prepared and selected macro caps agree");
+                        let Some(query) = &item.query else {
+                            return Ok(empty());
+                        };
+                        let compiled = crate::query::eval::CompiledLeaves::for_query(
+                            &query.evaluable_filter(),
+                        );
+                        let statement = lower_query(
+                            query,
+                            &LoweringInputs {
+                                today,
+                                registry: &registry,
+                                masked_pages: &[],
+                                cutoff: None,
+                                compiled: &compiled,
+                                fts_ready,
+                                result_set_rule: RESULT_SET_RULE,
+                            },
+                        );
+                        if statement.matches_nothing {
+                            return Ok(empty());
+                        }
+                        let pre = read_located_results_merged(
+                            &mut [ResultSource {
+                                snapshot: &mut job.snapshot,
+                                statement: &statement,
+                            }],
+                            &ResultReadShared {
+                                order: BackendOrder::Direct,
+                                identity: &identity,
+                                max_rows: QUERY_EXPORT_CONSTRUCTION_ROWS,
+                                max_bytes: QUERY_EXPORT_CONSTRUCTION_BYTES,
+                                profile: ConstructionProfile::from_view(&item.view),
+                                recency: &recency,
+                            },
+                        )?;
+                        Ok::<_, QueryExecutionError>(apply_located_view(pre, &item.view))
+                    })?;
+                let results = hydrate_located_export_queries(
+                    &mut [ExportSubtreeSource {
+                        snapshot: &mut job.snapshot,
+                    }],
+                    selected,
+                    &ExportSubtreeInputs {
+                        identity: &identity,
+                        max_nodes,
+                        max_bytes,
+                    },
+                )?;
+                if job.snapshot.cancellation().is_cancelled() {
+                    return Err(QueryExecutionError::Cancelled);
+                }
+                Ok(QueryExportBatch {
+                    results,
+                    omitted_queries: specs.len().saturating_sub(limit),
+                })
+            })
+        })
+    }
+
     /// The §6.2 lowering inputs one Direct execution runs under: ONE registry
     /// snapshot and ONE parse of every `content match` payload, the same values
     /// the oracle reads (I-12). Returned as the owned piece the borrow in
