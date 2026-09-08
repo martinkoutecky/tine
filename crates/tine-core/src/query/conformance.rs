@@ -1947,6 +1947,17 @@ fn a_relative_date_query_answers_for_the_execution_day_across_a_rollover() {
         after.query().filter,
         "a relative-date advanced query resolves against the execution day"
     );
+    // A batch binds original source under that same captured day, even when
+    // wall-clock time has moved on before its later macros are processed.
+    for (day, expected) in [(thursday, &before), (friday, &after)] {
+        let crate::query::ResolvedAdvanced::Executable { query, today, .. } =
+            crate::query::resolve_advanced_source_at(source, None, day)
+        else {
+            panic!("the supported relative-date source must remain executable");
+        };
+        assert_eq!(today, day);
+        assert_eq!(query.filter, expected.query().filter);
+    }
     let _ = fs::remove_dir_all(&dir);
 }
 

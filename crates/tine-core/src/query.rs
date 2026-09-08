@@ -3838,13 +3838,22 @@ pub(crate) fn resolve_advanced_source(
     query_src: &str,
     current_page: Option<&str>,
 ) -> ResolvedAdvanced {
+    resolve_advanced_source_at(query_src, current_page, JournalDate::today())
+}
+
+/// Bind one advanced source under a batch's already captured execution day.
+/// This keeps the source refusal and execution-time binding rules in one place.
+pub(crate) fn resolve_advanced_source_at(
+    query_src: &str,
+    current_page: Option<&str>,
+    today: JournalDate,
+) -> ResolvedAdvanced {
     if !query_source_within_limit(query_src) {
         return ResolvedAdvanced::Refused(rejected_advanced_query("query-too-large"));
     }
     if !query_nesting_within_limit(query_src) {
         return ResolvedAdvanced::Refused(rejected_advanced_query("query-nesting-too-deep"));
     }
-    let today = JournalDate::today();
     let (parsed, _) = advanced_source_query(query_src, String::new());
     let resolved = resolve_for_execution(
         &parsed,
