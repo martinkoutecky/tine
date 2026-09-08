@@ -35,6 +35,9 @@ export interface QueryExportSpec {
   key: string;
   query: string;
   advanced: boolean;
+  /** Surface syntax for a simple query. Missing preserves the legacy OG
+   *  interpretation; advanced queries ignore this field. */
+  simple_dialect?: "og" | "tql";
   /** The page this macro is written on — the §4.4 execution context, so an
    *  exported advanced query binds `?current-page` to the SAME page the rendered
    *  one did. Optional because an export with no owning page (a multi-page

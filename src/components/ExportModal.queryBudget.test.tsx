@@ -21,6 +21,26 @@ afterEach(() => {
 });
 
 describe("query clipboard/export hydration budget", () => {
+  it("emits the authored TQL dialect for tine-query export", async () => {
+    const native = vi.spyOn(backend(), "exportQuerySubtrees")
+      .mockResolvedValue({ results: [], omitted_queries: 1 });
+    const nodes: ExportNode[] = [{
+      raw: "{{tine-query task = 'TODO'}}",
+      format: "md",
+      children: [],
+    }];
+
+    await warmExportResolutions(nodes, new Map());
+
+    expect(native).toHaveBeenCalledTimes(1);
+    expect(native.mock.calls[0][0]).toHaveLength(1);
+    expect(native.mock.calls[0][0][0]).toMatchObject({
+      query: "task = 'TODO'",
+      advanced: false,
+      simple_dialect: "tql",
+    });
+  });
+
   it("retries a pending query export and propagates terminal availability errors", async () => {
     const nodes: ExportNode[] = [{ raw: "{{query (task TODO)}}", format: "md", children: [] }];
     const native = vi.spyOn(backend(), "exportQuerySubtrees")

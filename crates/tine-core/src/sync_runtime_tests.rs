@@ -29514,12 +29514,14 @@ fn c7b_query_driver_parity() {
             key: "simple".into(),
             query: "[[Topic]]".into(),
             advanced: false,
+            simple_dialect: None,
             current_page: None,
         },
         crate::query::QueryExportSpec {
             key: "advanced".into(),
             query: advanced_query.into(),
             advanced: true,
+            simple_dialect: None,
             current_page: None,
         },
     ];

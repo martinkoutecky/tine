@@ -353,6 +353,9 @@ async function warmQueryMacros(
       key: macroKey(macro.name, macro.args),
       query: sourceOriginal(source) ?? "",
       advanced: source.kind === "advanced",
+      // Missing retains the legacy OG interpretation. TQL must be explicit:
+      // the original text is intentionally preserved rather than reprinted.
+      ...(source.kind === "tql" ? { simple_dialect: "tql" as const } : {}),
       // T8 / §4.4: an exported advanced query must bind `?current-page` to the
       // SAME page the rendered one did. Absent is the honest "no binding", never
       // a guess — but a page-scoped export is not absent, and leaving it so

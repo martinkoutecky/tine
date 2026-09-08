@@ -130,6 +130,22 @@ fn write_huge_page_corpus(root: &Path, count: usize) {
     std::fs::write(root.join("pages/Huge.md"), page).expect("Huge page");
 }
 
+/// A nonempty subtree for the dialect gate. Its physical path and structural
+/// order are fixed, so the gate can name its exact runtime ids below rather
+/// than proving only that two evaluators returned the same anonymous rows.
+fn write_dialect_corpus(root: &Path) {
+    std::fs::create_dir_all(root.join("pages")).expect("pages");
+    std::fs::create_dir_all(root.join("journals")).expect("journals");
+    std::fs::write(
+        root.join("pages/Dialect.md"),
+        "- TODO dialect root\n\
+         \t- dialect child\n\
+         \t\t- dialect grandchild\n\
+         - DONE excluded root\n",
+    )
+    .expect("Dialect page");
+}
+
 // ===== the adapter under test =====
 
 /// Every page id in one corpus's projection, read through the seam the gates
@@ -167,6 +183,7 @@ fn spec(key: &str, query: &str) -> QueryExportSpec {
         key: key.to_string(),
         query: query.to_string(),
         advanced: false,
+        simple_dialect: None,
         current_page: None,
     }
 }
@@ -212,9 +229,9 @@ fn export_over(
     let (limit, selected) = {
         let snapshot = &mut *snapshot;
         select_located_export_queries(specs, caps.queries, caps.roots, |spec| {
-            let (_query, view) = crate::query::parse_query_source(&spec.query, today);
-            let (_block_query, statement) =
-                corpus.lower_block_anchored(&spec.query, QueryDialect::Og);
+            let dialect = spec.simple_dialect();
+            let (_query, view) = crate::query::parse_query_text(&spec.query, dialect, today);
+            let (_block_query, statement) = corpus.lower_block_anchored(&spec.query, dialect);
             let shared = ResultReadShared {
                 order: BackendOrder::Direct,
                 identity,
@@ -423,6 +440,18 @@ fn emitted_nodes(batch: &QueryExportBatch) -> usize {
         .sum()
 }
 
+fn preorder_ids(blocks: &[BlockDto]) -> Vec<String> {
+    fn collect(blocks: &[BlockDto], ids: &mut Vec<String>) {
+        for block in blocks {
+            ids.push(block.id.clone());
+            collect(&block.children, ids);
+        }
+    }
+    let mut ids = Vec::new();
+    collect(blocks, &mut ids);
+    ids
+}
+
 // ===== the ordered full-batch parity sweep =====
 
 /// The specs the sweep runs, chosen so that every acceptance shape appears:
@@ -541,6 +570,58 @@ fn export_core_answers_exactly_what_the_walk_export_answers() {
         "the database export differs from the walk export:\n{}",
         differences.join("\n")
     );
+}
+
+#[test]
+fn tql_export_preserves_the_declared_dialect_and_exact_subtree_membership() {
+    let _serial = serialize();
+    let root = scratch("ret3-export-dialect");
+    write_dialect_corpus(&root);
+    let corpus = Corpus::open(root, true);
+    let caps = Caps::default();
+    let og = vec![spec("dialect", "(task TODO)")];
+    let tql = vec![QueryExportSpec {
+        simple_dialect: Some(QueryDialect::Tql),
+        ..spec("dialect", "task = 'TODO'")
+    }];
+
+    let og_walk = walk_export(&corpus.graph, &og, caps);
+    let tql_walk = walk_export(&corpus.graph, &tql, caps);
+    let runtime_id = |order| {
+        crate::model::doc_runtime_id_for_order("pages/Dialect.md", order)
+            .expect("the fixture structural order is valid")
+            .to_string()
+    };
+    let expected = vec![
+        runtime_id("00000000"),
+        runtime_id("00000000/00000000"),
+        runtime_id("00000000/00000000/00000000"),
+    ];
+    assert_eq!(tql_walk.results.len(), 1);
+    assert_eq!(tql_walk.results[0].shown, 1);
+    assert_eq!(tql_walk.results[0].total, 1);
+    assert_eq!(tql_walk.results[0].omitted_nodes, 0);
+    assert_eq!(tql_walk.results[0].groups.len(), 1);
+    assert_eq!(tql_walk.results[0].groups[0].page, "Dialect");
+    assert_eq!(
+        preorder_ids(&tql_walk.results[0].groups[0].blocks),
+        expected
+    );
+    assert!(
+        batch_differences("OG/TQL walk", &og_walk, &tql_walk).is_empty(),
+        "equivalent OG and TQL exports differ"
+    );
+
+    let mut snapshot = corpus.snapshot();
+    let tql_read = export_over(&corpus, &mut snapshot, &tql, caps, &ResultIdentity::Stored)
+        .expect("the declared TQL export answers");
+    snapshot.finish();
+    assert_eq!(
+        preorder_ids(&tql_read.results[0].groups[0].blocks),
+        expected
+    );
+    let differences = batch_differences("TQL walk/read", &tql_walk, &tql_read);
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
 }
 
 /// Sorted, coalesced and sampled selections reach the same export as the walk's.
@@ -1118,19 +1199,14 @@ fn split_source_roots_hydrate_against_their_own_snapshot() {
         let accepted = &mut accepted;
         let (limit, selected) =
             select_located_export_queries(&specs, caps.queries, caps.roots, |spec| {
-                let (_query, view) = crate::query::parse_query_source(&spec.query, today);
+                let dialect = spec.simple_dialect();
+                let (_query, view) = crate::query::parse_query_text(&spec.query, dialect, today);
                 // The overlay sees ONLY its own pages; the accepted source has them
                 // masked out. Two statements, one IR.
-                let (_q, overlay_statement) = corpus.lower_block_anchored_masked(
-                    &spec.query,
-                    QueryDialect::Og,
-                    &accepted_mask,
-                );
-                let (_q, accepted_statement) = corpus.lower_block_anchored_masked(
-                    &spec.query,
-                    QueryDialect::Og,
-                    &pending_pages,
-                );
+                let (_q, overlay_statement) =
+                    corpus.lower_block_anchored_masked(&spec.query, dialect, &accepted_mask);
+                let (_q, accepted_statement) =
+                    corpus.lower_block_anchored_masked(&spec.query, dialect, &pending_pages);
                 let shared = ResultReadShared {
                     order: BackendOrder::Direct,
                     identity: &identity,

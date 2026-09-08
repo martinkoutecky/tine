@@ -1981,6 +1981,9 @@ fn run_explain_and_export_agree_on_results_and_report() {
             key: "k".into(),
             query: CURRENT_PAGE_QUERY.into(),
             advanced: true,
+            // Advanced dispatch takes precedence over a stray simple dialect
+            // and still binds the authored current-page input.
+            simple_dialect: Some(crate::query::QueryDialect::Tql),
             current_page: Some("Beta".into()),
         }],
         64,

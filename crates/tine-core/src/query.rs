@@ -1718,7 +1718,8 @@ pub fn run_query_bounded(
 /// The macro name chooses it when the block is saved (Q3): `{{query …}}` is the
 /// OG DSL, `{{tine-query …}}` is TQL. Both are the same IR afterwards — the
 /// dialect is a property of the TEXT, never of the query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum QueryDialect {
     Og,
     Tql,
@@ -2127,8 +2128,21 @@ fn run_query_bounded_over(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
+    run_query_bounded_over_dialect(source, query_src, QueryDialect::Og, max_rows, max_bytes)
+}
+
+/// The shared bounded simple-query entry when the query text declares its
+/// surface dialect. Export does not expose unknown-identifier suggestions, so
+/// parsing needs no registry read; the evaluator owns its ordinary type read.
+fn run_query_bounded_over_dialect(
+    source: &dyn QueryPageSource,
+    query_src: &str,
+    dialect: QueryDialect,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
     let today = JournalDate::today();
-    let (query, view) = parse_query_source(query_src, today);
+    let (query, view) = parse_query_text(query_src, dialect, today);
     run_pred_bounded_over(source, &query, &view, today, max_rows, max_bytes)
 }
 
@@ -5349,6 +5363,11 @@ pub struct QueryExportSpec {
     pub key: String,
     pub query: String,
     pub advanced: bool,
+    /// The surface syntax of a simple query. Legacy callers omit it and retain
+    /// the original OG behavior; advanced queries ignore it and keep their
+    /// existing binding path.
+    #[serde(default)]
+    pub simple_dialect: Option<QueryDialect>,
     /// The page this macro is written on — the §4.4 execution context, so an
     /// exported advanced query binds `?current-page` to the SAME page the
     /// rendered one did. Defaulted rather than required: the frontend caller
@@ -5356,6 +5375,12 @@ pub struct QueryExportSpec {
     /// value, never a guess.
     #[serde(default)]
     pub current_page: Option<String>,
+}
+
+impl QueryExportSpec {
+    pub(crate) fn simple_dialect(&self) -> QueryDialect {
+        self.simple_dialect.unwrap_or(QueryDialect::Og)
+    }
 }
 
 /// A single query macro's bounded, hierarchy-preserving export projection.
@@ -5703,9 +5728,10 @@ fn export_query_subtrees_over(
                 exceeded,
             }
         } else {
-            run_query_bounded_over(
+            run_query_bounded_over_dialect(
                 source,
                 &spec.query,
+                spec.simple_dialect(),
                 QUERY_EXPORT_CONSTRUCTION_ROWS,
                 QUERY_EXPORT_CONSTRUCTION_BYTES,
             )
@@ -8607,6 +8633,30 @@ mod tests {
     }
 
     #[test]
+    fn query_export_spec_defaults_a_missing_simple_dialect_to_og() {
+        let legacy = r#"{
+            "key": "legacy",
+            "query": "(task TODO)",
+            "advanced": false,
+            "current_page": null
+        }"#;
+        let spec: QueryExportSpec = serde_json::from_str(legacy).expect("legacy export spec");
+        assert_eq!(spec.simple_dialect, None);
+        assert_eq!(spec.simple_dialect(), QueryDialect::Og);
+
+        let declared: QueryExportSpec = serde_json::from_str(
+            r#"{
+                "key": "tql",
+                "query": "task = 'TODO'",
+                "advanced": false,
+                "simple_dialect": "tql"
+            }"#,
+        )
+        .expect("declared TQL export spec");
+        assert_eq!(declared.simple_dialect(), QueryDialect::Tql);
+    }
+
+    #[test]
     fn query_export_hydrates_only_selected_subtrees_under_one_session_budget() {
         use std::fs;
 
@@ -8649,12 +8699,14 @@ mod tests {
                     key: "todo".into(),
                     query: "(task TODO)".into(),
                     advanced: false,
+                    simple_dialect: None,
                     current_page: None,
                 },
                 QueryExportSpec {
                     key: "done".into(),
                     query: "(task DONE)".into(),
                     advanced: false,
+                    simple_dialect: None,
                     current_page: None,
                 },
             ],

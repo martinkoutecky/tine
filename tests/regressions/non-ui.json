@@ -2,6 +2,23 @@
  "schemaVersion": 1,
  "entries": [
 {
+ "id": "REG-QE-EXPORT-EXPLICIT-TQL-DIALECT",
+ "title": "Copy and export preserve the declared TQL dialect and subtree membership",
+ "family": "query-engine",
+ "sources": { "issues": [], "commits": [], "internal": "RET3 export dialect preservation" },
+ "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/query/export_results_tests.rs::tql_export_preserves_the_declared_dialect_and_exact_subtree_membership",
+   "crates/tine-core/src/query.rs::tests::query_export_spec_defaults_a_missing_simple_dialect_to_og",
+   "src/components/ExportModal.queryBudget.test.tsx"
+  ],
+  "scenario": "query-engine.export-explicit-dialect",
+  "failBefore": "Manager frontend58147 restores only old ExportModal production code: new TQL spec assertion fails missing simple_dialect, three other tests pass. Exact candidate restored."
+ },
+ "notes": "Missing simple dialect defaults to OG; a parsed tine-query sends TQL explicitly and retains authored text. Advanced dispatch/current-page binding takes precedence. Gate19760 passes32 export tests with1ignored, including exact root and descendant identities; frontend24179 passes4 plus typecheck. This does not claim production SQL export adapter completion or native delivery."
+},
+{
  "id": "REG-QE-PAGE-BLOCKS-SEMANTICS",
  "title": "Page queries quantify the ordinary blocks physically owned by each page",
  "family": "query-engine",
