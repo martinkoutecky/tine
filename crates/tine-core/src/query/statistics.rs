@@ -13,6 +13,9 @@ use std::collections::HashMap;
 #[path = "statistics_tests.rs"]
 mod tests;
 
+/// One aggregate column's running total. It keeps three numbers and never a
+/// row, which is the whole point: statistics describe the COMPLETE sample, and
+/// the complete sample does not fit in memory for a large graph.
 #[derive(Clone, Default)]
 struct Accumulator {
     sum: f64,
@@ -22,6 +25,9 @@ struct Accumulator {
 
 impl Accumulator {
     fn add(&mut self, value: Option<&str>, op: AggFn) {
+        // `count` counts ROWS, not values, so it never looks at one — including
+        // `state=count`, where the named property is the column label rather
+        // than a filter. That is what `queryAggregate.ts` did with `set.length`.
         if op == AggFn::Count {
             return;
         }
@@ -37,6 +43,11 @@ impl Accumulator {
         }
     }
 
+    /// The wire cell. Every branch that cannot produce an honest number
+    /// produces a MARKER rather than a zero: the frontend used to render
+    /// `avg` over no numeric rows as `0`, which reads as "the average is zero"
+    /// when the truth is "there is no average". `count` is the row count of the
+    /// scope this accumulator belongs to (the whole sample, or one group).
     fn cell(&self, op: AggFn, count: usize) -> Cell {
         if op == AggFn::Count {
             return Cell::Number {
@@ -44,6 +55,10 @@ impl Accumulator {
                 skipped: 0,
             };
         }
+        // Empty and non-numeric are DIFFERENT answers to the user: nothing was
+        // selected, versus rows were selected and none of them held a number.
+        // Testing `count` first is also what makes division by zero
+        // unreachable below.
         let reason = if count == 0 {
             Some(Marker::EmptyGroup)
         } else if self.contributors == 0 {
@@ -57,6 +72,9 @@ impl Accumulator {
                 skipped: self.skipped,
             };
         }
+        // Average divides by the CONTRIBUTORS, not the row count, so a column
+        // where half the rows are prose still reports the average of the half
+        // that are numbers, with the rest counted in `skipped`.
         let value = match op {
             AggFn::Sum => self.sum,
             AggFn::Avg => self.sum / self.contributors as f64,
@@ -76,18 +94,29 @@ impl Accumulator {
     }
 }
 
+/// One grouping key's accumulators. `key: None` is the row that HAS no value
+/// for the grouping field, which stays distinct from a row whose value is
+/// literally the string `(none)`.
 struct Group {
     key: Option<String>,
     count: usize,
     cells: Vec<Accumulator>,
 }
 
+/// The fold itself, driven one row at a time by the result reader as it streams
+/// the ordered sample. Retains accumulators and group keys; never rows.
 pub(crate) struct StatisticsFold {
+    /// The EFFECTIVE view (Board grouping resolved, empty grouping cleared), so
+    /// every later question about what was requested has one answer.
     view: ViewSettings,
     count: usize,
     overall: Vec<Accumulator>,
+    /// First-seen order, which is the order the groups are displayed in.
     groups: Vec<Group>,
     by_key: HashMap<Option<String>, usize>,
+    /// Bytes still available for NEW groups. A query grouped by a
+    /// high-cardinality property is the one shape whose statistics can grow
+    /// without bound, so it is the one shape that gets a budget.
     remaining: usize,
 }
 
@@ -97,9 +126,16 @@ impl StatisticsFold {
         max_bytes: usize,
     ) -> Result<Option<Self>, ResultReadError> {
         let view = super::view::effective_statistics_view(view);
+        // No aggregates requested and no grouping to imply one: the reader skips
+        // the whole fold, and the result carries no statistics at all. Absent
+        // statistics is not a zero, and the frontend renders nothing.
         if view.aggregates.is_empty() {
             return Ok(None);
         }
+        // A rough retained-size model, deliberately generous rather than exact:
+        // a fixed base, plus per-column and per-key allowances big enough to
+        // cover the Vec/HashMap overhead the accumulators actually cost. It
+        // exists to refuse an unbounded fold, not to predict an allocator.
         let overhead = view
             .aggregates
             .iter()
@@ -150,6 +186,9 @@ impl StatisticsFold {
             let at = match self.by_key.get(&key) {
                 Some(at) => *at,
                 None => {
+                    // Charged once, when the key is first seen. Twice the key's
+                    // bytes because it is retained by both the map and the
+                    // group.
                     let bytes = key
                         .as_ref()
                         .map_or(0, String::len)
@@ -184,6 +223,9 @@ impl StatisticsFold {
         Ok(())
     }
 
+    /// Formula grouping is deferred (Martin, 2026-09-09), so a formula key
+    /// suppresses the per-group fold entirely rather than inventing a
+    /// breakdown. The overall cells stay exact and `finish` says why.
     fn unsupported_formula(&self) -> bool {
         self.view
             .group_by
