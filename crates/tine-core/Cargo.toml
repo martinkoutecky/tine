@@ -31,7 +31,7 @@ rusqlite = { version = "0.37.0", features = ["bundled"] }
 unicode-normalization = "=0.1.25"
 unicode-segmentation = "1"
 sqlparser = { workspace = true }
-tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.20.0" }
+tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.21.0" }
 
 [target.'cfg(windows)'.dependencies]
 cap-fs-ext = "=4.0.2"
@@ -51,4 +51,4 @@ tempfile = "=3.27.0"
 pretty_assertions = "1"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2", features = ["full", "visit"] }
-tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.20.0", features = ["test-support"] }
+tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.21.0", features = ["test-support"] }

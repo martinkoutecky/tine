@@ -8619,6 +8619,15 @@ pub enum ProjectionError {
     },
     FrontierRegression,
     BatchCollision(BatchId),
+    /// A batch whose accepted record is covered by a sealed checkpoint
+    /// generation was offered again. Storage cannot decide whether it is
+    /// equivalent to what was accepted: the sealed record carries the batch id,
+    /// manifest fingerprint, event-binding digest, causal dot and canonical
+    /// clock, and not the `semantic_effect` the hot duplicate check compares.
+    /// It therefore refuses by name and leaves the decision here. Carrying the
+    /// id rather than folding this into `Corrupt` keeps that decision open --
+    /// this is not a corruption report, and must not be presented as one.
+    CoveredBatchRedelivery(BatchId),
     Materialization(String),
     Rebuild(String),
     InjectedFailure,
@@ -8694,6 +8703,13 @@ impl fmt::Display for ProjectionError {
                 write!(
                     f,
                     "accepted batch {batch_id} collides with its SQLite record"
+                )
+            }
+            Self::CoveredBatchRedelivery(batch_id) => {
+                write!(
+                    f,
+                    "accepted batch {batch_id} is covered by a sealed checkpoint generation \
+                     and cannot be compared with its original record"
                 )
             }
             Self::Materialization(error) => write!(f, "SQLite materialization failed: {error}"),
@@ -8818,6 +8834,9 @@ impl From<storage_frontier::FrontierError> for ProjectionError {
                     ))
                     .to_string(),
                 )
+            }
+            storage_frontier::FrontierError::CoveredBatchRedelivery(batch_id) => {
+                Self::CoveredBatchRedelivery(BatchId::from_uuid(Uuid::from_bytes(batch_id)))
             }
             storage_frontier::FrontierError::InjectedFailure => Self::InjectedFailure,
         }
