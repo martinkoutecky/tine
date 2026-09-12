@@ -1763,7 +1763,7 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     dependency_surface.sort();
     assert!(fs::read_to_string(repository_root().join("crates/tine-core/Cargo.toml"))
         .unwrap()
-        .contains("tine-storage = { git = \"https://github.com/martinkoutecky/tine-storage\", tag = \"v0.21.0\""));
+        .contains("tine-storage = { git = \"https://github.com/martinkoutecky/tine-storage\", tag = \"v0.22.0\""));
     // Re-pinned 2026-09-12 (rebaselining v2, P4c): v0.21.0 adds the anchored
     // apply path -- applying a tail batch over covered history that has left
     // SQLite -- which is the capability 4c was blocked on. The bump is not a

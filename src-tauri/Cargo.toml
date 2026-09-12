@@ -47,7 +47,7 @@ libc = "0.2"
 dirs = "6"
 fs2 = "0.4"
 tine-core = { path = "../crates/tine-core" }
-tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.21.0" }
+tine-storage = { git = "https://github.com/martinkoutecky/tine-storage", tag = "v0.22.0" }
 
 [dev-dependencies]
 tempfile = "3"
