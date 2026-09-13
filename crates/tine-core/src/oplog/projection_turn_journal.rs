@@ -661,88 +661,70 @@ impl ProjectionTurnJournalState {
         if !self.cleanup_pending {
             return Ok(());
         }
-        self.cleanup_history(self.selector_generation)?;
-        self.cleanup_pending = false;
+        // Retired generations are garbage by construction: the greatest durable
+        // anchor is authoritative whatever older files hold. A removal that
+        // fails (disk error, in scope) therefore costs open time (I-14), never
+        // correctness, so it is retried at the next trigger instead of refusing
+        // the open or the drain (D-3: recovery over refusal).
+        self.cleanup_pending = !self.cleanup_history(self.selector_generation)?;
         Ok(())
     }
 
-    fn cleanup_history(&self, retained_generation: u64) -> Result<(), ProjectionTurnJournalError> {
-        let invalid = ProjectionTurnJournalError::Invalid;
-        let names = directory_names(&self.directory).map_err(invalid)?;
-        for (generation, anchor_name) in names.iter().filter_map(|name| {
-            parse_projection_turn_anchor_name(name, self.checkpoint.endpoint_id())
-                .map(|generation| (generation, name.clone()))
-        }) {
-            if generation >= retained_generation {
-                continue;
-            }
-            let bytes = read_optional_regular(
-                &self.directory,
-                &anchor_name,
-                PROJECTION_TURN_ANCHOR_BYTES as u64,
-                None,
-            )
-            .map_err(|error| {
-                invalid(format!(
-                    "cannot read retired projection turn anchor {anchor_name}: {error}"
-                ))
-            })?
-            .ok_or_else(|| {
-                invalid(format!(
-                    "retired projection turn anchor {anchor_name} disappeared"
-                ))
-            })?;
-            let anchor = ProjectionTurnGenerationAnchor::decode(
-                &bytes,
-                generation,
-                self.checkpoint.endpoint_id(),
-                self.checkpoint.device_id(),
-                self.checkpoint.workspace_id(),
-                self.checkpoint.lineage_digest(),
-            )
-            .map_err(|error| {
-                invalid(format!(
-                    "retired projection turn anchor {anchor_name} is invalid: {error}"
-                ))
-            })?;
-            // Remove the tuple first. If cleanup is interrupted, the old
-            // anchor remains a discoverable retry root while the greater new
-            // anchor stays authoritative.
-            for tuple_name in [
-                anchor.selection().segment_name(),
-                anchor.selection().frontier_name(),
-            ] {
-                if let Err(error) = self.directory.remove_file(tuple_name) {
-                    if error.kind() != std::io::ErrorKind::NotFound {
-                        return Err(invalid(format!(
-                            "cannot retire projection turn tuple {tuple_name}: {error}"
-                        )));
-                    }
-                }
-            }
-            if let Err(error) = self.directory.remove_file(&anchor_name) {
+    /// Retire every file of a selector generation below `retained_generation`
+    /// and every turn checkpoint the current checkpoint already covers.
+    ///
+    /// Retirement is by NAME, never by decoding the retired anchor. Two
+    /// reasons, both in scope: an obsolete anchor that no longer decodes (disk
+    /// error) must not veto the open that exists to delete it, and a tuple
+    /// prepared for a rotation that never committed its anchor has no anchor
+    /// to decode at all. Segment and frontier names embed their generation, so
+    /// the name is sufficient. Tuples go before their anchor so an interrupted
+    /// pass leaves the anchor as a discoverable retry root. Returns whether
+    /// every retirement succeeded; anything that did not is left for the next
+    /// pass rather than reported as a failure of the journal.
+    fn cleanup_history(
+        &self,
+        retained_generation: u64,
+    ) -> Result<bool, ProjectionTurnJournalError> {
+        let names =
+            directory_names(&self.directory).map_err(ProjectionTurnJournalError::Invalid)?;
+        let endpoint_id = self.checkpoint.endpoint_id();
+        let covered_sequence = self.checkpoint.next_sequence();
+        let frontier_suffix = tine_storage::formats::LOCAL_JOURNAL_FRONTIER_SUFFIX;
+        let retired_tuple = |name: &str| {
+            let segment_name = name.strip_suffix(frontier_suffix).unwrap_or(name);
+            parse_projection_turn_segment_name(segment_name, endpoint_id)
+                .is_some_and(|(generation, _)| generation < retained_generation)
+        };
+        let retired_anchor = |name: &str| {
+            parse_projection_turn_anchor_name(name, endpoint_id)
+                .is_some_and(|generation| generation < retained_generation)
+        };
+        let covered_checkpoint = |name: &str| {
+            projection_turn_checkpoint_sequence(name)
+                .is_some_and(|sequence| sequence <= covered_sequence)
+        };
+        let mut complete = true;
+        let mut retire = |name: &str| {
+            if let Err(error) = self.directory.remove_file(name) {
                 if error.kind() != std::io::ErrorKind::NotFound {
-                    return Err(invalid(format!(
-                        "cannot retire projection turn anchor {anchor_name}: {error}"
-                    )));
+                    complete = false;
                 }
             }
+        };
+        for name in names.iter().filter(|name| retired_tuple(name)) {
+            retire(name);
         }
-        for name in names {
-            if projection_turn_checkpoint_sequence(&name)
-                .is_some_and(|sequence| sequence <= self.checkpoint.next_sequence())
-            {
-                if let Err(error) = self.directory.remove_file(&name) {
-                    if error.kind() != std::io::ErrorKind::NotFound {
-                        return Err(invalid(format!(
-                            "cannot retire projection turn checkpoint {name}: {error}"
-                        )));
-                    }
-                }
-            }
+        for name in names.iter().filter(|name| retired_anchor(name)) {
+            retire(name);
         }
-        sync_dir_required(&self.directory)
-            .map_err(|error| invalid(format!("cannot sync projection turn cleanup: {error}")))
+        for name in names.iter().filter(|name| covered_checkpoint(name)) {
+            retire(name);
+        }
+        if sync_dir_required(&self.directory).is_err() {
+            complete = false;
+        }
+        Ok(complete)
     }
 }
 
@@ -1965,5 +1947,57 @@ mod tests {
         assert!(runtime.contains("drain_open_projection_turn_journal"));
         assert!(projection.contains("replay_projection_turn"));
         assert!(coordinator.contains("turns.append(origin, pages)"));
+    }
+
+    /// I-8 / D-3: a retired selector generation is garbage by construction —
+    /// the greatest durable anchor is authoritative whatever older files hold.
+    /// An obsolete anchor that no longer decodes (disk error, in scope) must
+    /// therefore be retired by the open that finds it, never allowed to veto
+    /// that open. Fail-before: cleanup decoded the retired anchor to learn its
+    /// tuple names and refused the whole journal when decoding failed.
+    #[test]
+    fn a_corrupt_retired_anchor_is_retired_not_refused() {
+        let root = TestDir::new("corrupt-retired-anchor");
+        let mut state = open(root.path()).unwrap();
+        for sequence in 0..3 {
+            let expected = turn(sequence, SequenceDomain::ProjectionTurn);
+            state
+                .append(expected.origin.clone(), expected.pages.clone())
+                .unwrap();
+            assert_eq!(state.checkpoint_front().unwrap(), expected);
+        }
+        assert_eq!(state.selector_generation, 1);
+        // Commit generation 2 durably without running cleanup, so the retired
+        // generation-1 anchor and tuple are still present at the next open.
+        let (successor, _) =
+            prepare_projection_turn_journal(&state.directory, state.checkpoint.clone(), 2).unwrap();
+        drop(successor);
+        drop(state);
+        let directory = journal_directory(root.path());
+        let retired_anchor = directory.join(projection_turn_anchor_name(endpoint(), 1));
+        let length = fs::metadata(&retired_anchor).unwrap().len() as usize;
+        fs::write(&retired_anchor, vec![0xA5_u8; length]).unwrap();
+
+        let reopened = open(root.path()).expect("an undecodable retired anchor is not a refusal");
+        assert_eq!(reopened.selector_generation, 2);
+        assert_eq!(reopened.checkpoint.next_sequence(), 3);
+        assert!(reopened.pending.is_empty());
+        assert!(!reopened.cleanup_pending);
+        drop(reopened);
+        let names = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names.len(),
+            3,
+            "only the live anchor, segment and frontier remain: {names:?}"
+        );
+        assert!(
+            names
+                .iter()
+                .all(|name| !name.contains(&format!("-selector-{:020}", 1))),
+            "every generation-1 file was retired by name: {names:?}"
+        );
     }
 }

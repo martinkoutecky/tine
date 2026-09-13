@@ -2788,7 +2788,14 @@ successor anchor be retired. A crash before the new anchor continues to select
 the old complete generation; a crash after it selects the new complete
 generation and retries cleanup. Open also performs this rotation once for a
 pre-rotation fully drained suffix, so an upgraded installation pays its old
-checkpoint-name horizon once rather than on every later open.
+checkpoint-name horizon once rather than on every later open. Retirement is by
+name (segment and frontier names embed their selector generation) and never
+decodes a retired anchor: an obsolete anchor that no longer reads or decodes,
+a tuple whose rotation never committed its anchor, or a removal that fails
+(`MS-REF-DISK-CORRUPT` class media damage on garbage) is left for the next pass
+and never refuses open or drain — the greatest durable anchor is authoritative
+whatever older files hold, so stale retirement costs open time, not
+correctness.
 
 **Projection-domain turns carry authorization and names, not bytes.** Only
 `ManagedLocal`-domain pages may carry precondition/target bytes, because the
