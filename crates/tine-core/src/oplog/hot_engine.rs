@@ -12463,27 +12463,64 @@ impl ShardedHotEngine {
                 .or_else(|| self.lazy_genesis_frontier_document(root, document_id)));
         }
         self.authenticate_accepted_frontier_root(root)?;
-        let mut document = self.lazy_genesis_frontier_document(root, document_id);
-        for sequence in 1..=root.acceptance_sequence() {
-            let (_, evidence) = self.accepted_batch_entry_at(sequence)?.ok_or_else(|| {
-                EngineError::Archive(format!(
-                    "accepted sequence {sequence} is absent during historical frontier replay"
-                ))
-            })?;
-            let evidence = evidence.ok_or_else(|| {
-                EngineError::Archive(format!(
-                    "accepted sequence {sequence} has no retained semantic evidence"
-                ))
-            })?;
-            if let Some(changed) = evidence
-                .affected_documents()
-                .iter()
-                .find(|changed| changed.document_id() == document_id)
+        self.historical_frontier_document(root, document_id)
+    }
+
+    /// A document's dependencies at an authenticated historical root, answered
+    /// by point lookups: the in-memory tail newest-first, then the sealed
+    /// document-change index, then the lazy-genesis binding. Never a replay of
+    /// `1..=root.acceptance_sequence()`.
+    ///
+    /// I-14 on the write path. `AcceptedBatchEvent::with_effective_view` asks
+    /// for every affected document at each accepted batch's *prior* root, and
+    /// by then the engine has advanced past it, so this is on the path of every
+    /// accepted batch. Replaying lifetime history here cost O(H) per batch —
+    /// measured at 4.3 s per single-block edit at H=10k once the covered rows
+    /// lived in the sealed index instead of memory
+    /// (`sync_runtime::tests::generation_tail_authoring_does_not_replay_covered_history`).
+    fn historical_frontier_document(
+        &self,
+        root: &AcceptedFrontierRoot,
+        document_id: DocumentId,
+    ) -> Result<Option<DocumentDependencies>, EngineError> {
+        let through = root.acceptance_sequence();
+        let covered = self
+            .sealed_accepted_history
+            .as_ref()
+            .map_or(0, |history| history.sequence());
+        if through > covered {
+            for (sequence, batch_id) in self
+                .accepted_sequence
+                .range(covered.saturating_add(1)..=through)
+                .rev()
             {
-                document = Some(changed.clone());
+                let Some(ArchiveStatus::Accepted { evidence, .. }) = self.statuses.get(batch_id)
+                else {
+                    return Err(EngineError::Archive(format!(
+                        "accepted sequence {sequence} has no retained semantic evidence"
+                    )));
+                };
+                if let Some(changed) = evidence
+                    .affected_documents()
+                    .iter()
+                    .find(|changed| changed.document_id() == document_id)
+                {
+                    return Ok(Some(changed.clone()));
+                }
             }
         }
-        Ok(document)
+        if let Some(history) = self.sealed_accepted_history.as_ref() {
+            let sealed_through = through.min(history.sequence());
+            if sealed_through >= 1 {
+                if let Some((_, dependencies)) = history
+                    .document_dependencies_at_or_before(document_id, sealed_through)
+                    .map_err(EngineError::Archive)?
+                {
+                    return Ok(Some(dependencies));
+                }
+            }
+        }
+        Ok(self.lazy_genesis_frontier_document(root, document_id))
     }
 
     fn lazy_genesis_frontier_document(
@@ -12509,37 +12546,10 @@ impl ShardedHotEngine {
         }
         if root != &self.accepted_frontier_root {
             self.authenticate_accepted_frontier_root(root)?;
-            let requested = document_ids.iter().copied().collect::<BTreeSet<_>>();
-            let mut documents = document_ids
+            return document_ids
                 .iter()
-                .map(|document_id| {
-                    (
-                        *document_id,
-                        self.lazy_genesis_frontier_document(root, *document_id),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            for sequence in 1..=root.acceptance_sequence() {
-                let (_, evidence) = self.accepted_batch_entry_at(sequence)?.ok_or_else(|| {
-                    EngineError::Archive(format!(
-                        "accepted sequence {sequence} is absent during historical frontier replay"
-                    ))
-                })?;
-                let evidence = evidence.ok_or_else(|| {
-                    EngineError::Archive(format!(
-                        "accepted sequence {sequence} has no retained semantic evidence"
-                    ))
-                })?;
-                for changed in evidence.affected_documents() {
-                    if requested.contains(&changed.document_id()) {
-                        documents.insert(changed.document_id(), Some(changed.clone()));
-                    }
-                }
-            }
-            return Ok(document_ids
-                .iter()
-                .map(|document_id| documents.remove(document_id).flatten())
-                .collect());
+                .map(|document_id| self.historical_frontier_document(root, *document_id))
+                .collect();
         }
         Ok(document_ids
             .iter()

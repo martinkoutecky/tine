@@ -11945,6 +11945,59 @@ fn generation_sqlite_anchor_empty_and_hot_tail() {
     ));
 }
 
+/// I-14 on the write path. Every accepted batch's projection event asks for
+/// its affected documents at the batch's *prior* root
+/// (`AcceptedBatchEvent::with_effective_view`); before the bounded lookup the
+/// engine answered a non-current root by replaying sequence `1..=N-1`, which
+/// after a generation cut meant reading every covered row from the sealed index
+/// for every single edit (4.3 s per batch at H=10k in the release curve).
+/// Authoring over covered history must cost point lookups, not the covered
+/// length per batch.
+#[test]
+fn generation_tail_authoring_does_not_replay_covered_history() {
+    const COVERED_EDITS: usize = 24;
+    const TAIL_EDITS: usize = 4;
+    let fixture = ActivationFixture::nested_unicode("generation-tail-authoring", 0xa178_5a00);
+    let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+    let first = activated.handle.expect("tail authoring fixture activates");
+    drive_initial_feed(&first);
+    for index in 0..COVERED_EDITS {
+        let (page, revision) = load_application_exact(&first, "Root.md");
+        let _ =
+            save_application_block_text(&first, page, revision, &format!("covered edit {index}"));
+        drain_managed_local(&first);
+    }
+    first.force_clean_checkpoint_for_test().unwrap();
+    assert!(matches!(
+        first.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+    drop(first);
+
+    let tail = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+    let before = tail.sealed_sequence_row_reads_for_test().unwrap();
+    for index in 0..TAIL_EDITS {
+        let (page, revision) = load_application_exact(&tail, "Root.md");
+        let _ = save_application_block_text(&tail, page, revision, &format!("tail edit {index}"));
+        drain_managed_local(&tail);
+    }
+    let reads = tail.sealed_sequence_row_reads_for_test().unwrap() - before;
+    eprintln!(
+        "generation_tail_authoring covered_edits={COVERED_EDITS} tail_edits={TAIL_EDITS} sealed_sequence_row_reads={reads}"
+    );
+    assert!(
+        reads <= TAIL_EDITS,
+        "authoring {TAIL_EDITS} edits over at least {COVERED_EDITS} covered batches read {reads} \
+         sealed rows by sequence; a bounded prior-root answer reads at most one per batch"
+    );
+    let (page, _) = load_application_exact(&tail, "Root.md");
+    assert_eq!(page.blocks[0].raw, format!("tail edit {}", TAIL_EDITS - 1));
+    assert!(matches!(
+        tail.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
 /// P4c crash protocol across the generation store and disposable SQLite:
 /// old-generation + committed SQLite tail is reusable, while publication of a
 /// newer generation makes the same resident rows covered and the next open

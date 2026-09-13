@@ -6079,11 +6079,19 @@ impl SqliteFrontier {
             Some(overlay) => overlay.lower_root(event.post_frontier_root())?,
             None => lower_physical_frontier_root(event.post_frontier_root())?,
         };
-        let batch = lower_physical_accepted_batch_with_roots(
-            event,
-            current_physical.clone(),
-            post_physical,
-        )?;
+        // The request names the EVENT's prior root, never the database's
+        // current root. They coincide for a new batch; for an exact
+        // redelivery of an already-applied batch (crash between the physical
+        // commit and its receipt, a replayed journal frame) the current root
+        // is already the post root, and naming it here made
+        // `stored_matches_request` see a different prior root and refuse the
+        // duplicate as a `BatchCollision` instead of reporting `Duplicate`
+        // (`duplicate_apply_is_idempotent_and_collisions_or_regressions_fail_closed`).
+        let prior_physical = match self.checkpoint_overlay.as_ref() {
+            Some(overlay) => overlay.lower_root(event.prior_frontier_root())?,
+            None => lower_physical_frontier_root(event.prior_frontier_root())?,
+        };
+        let batch = lower_physical_accepted_batch_with_roots(event, prior_physical, post_physical)?;
         let physical_materialization = match materialization {
             Some(change) => Some(super::sqlite_materialization::lower_validated_change(
                 change,

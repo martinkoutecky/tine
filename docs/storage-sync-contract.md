@@ -1544,6 +1544,15 @@ hysteresis target, the shortfall/overage cause is diagnostic. Age wins over
 size: recent or uncertain history is never removed to meet a budget, and a
 within-budget document never cuts even after months of device time.
 
+The same three-step point answer is the engine's only way to state a document
+at a non-current accepted root: the newest in-memory tail change at or before
+that root, otherwise one predecessor query against the sealed
+latest-document-change root, otherwise lazy genesis. Every accepted batch's
+projection event asks this of its affected documents at the batch's *prior*
+root, so the answer is on the write path of every edit; replaying
+`1..=root` there costs the covered length per batch (I-14) and is guarded by
+`generation_tail_authoring_does_not_replay_covered_history`.
+
 After cold publication has preserved exact bytes, `current` is replaced and
 only then may covered hot names be retired. The retained hot closure is bounded
 by current document/projection heads, causal peers, and current-action roots

@@ -2207,6 +2207,7 @@ fn floor_candidate_for_document(
                 payload.identity_roots.clone(),
             )),
             sequence_enumerations: AtomicUsize::new(0),
+            sequence_row_reads: AtomicUsize::new(0),
         };
         if let Some(candidate) = history.document_dependencies_at_or_before(
             document,
@@ -3092,6 +3093,7 @@ pub(crate) struct SealedAcceptedHistory {
     document_change_root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
     identity_history: Arc<SealedIdentityHistory>,
     sequence_enumerations: AtomicUsize,
+    sequence_row_reads: AtomicUsize,
 }
 
 #[derive(Clone)]
@@ -3181,11 +3183,19 @@ impl SealedAcceptedHistory {
         self.sequence_enumerations.load(Ordering::Relaxed)
     }
 
+    /// Number of covered rows resolved by sequence. Point answers cost one;
+    /// a caller that walks `1..=sequence` shows up here as the whole covered
+    /// length per call, which is how the write-path I-14 regression is caught.
+    pub(crate) fn sequence_row_reads(&self) -> usize {
+        self.sequence_row_reads.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn row_by_sequence(
         &self,
         sequence: u64,
     ) -> Result<Option<CleanCheckpointAcceptedRow>, String> {
         use tine_storage::sealed_accepted_index::SealedAcceptedIndexReader;
+        self.sequence_row_reads.fetch_add(1, Ordering::Relaxed);
         let reader = SealedAcceptedIndexReader::new(&self.directory);
         let Some(entry) = reader
             .sequence_entry(self.roots.sequence, sequence)
@@ -3601,6 +3611,7 @@ fn open_checkpoint_impl(
             payload.identity_roots.clone(),
         )),
         sequence_enumerations: AtomicUsize::new(0),
+        sequence_row_reads: AtomicUsize::new(0),
     });
     let terminal = if generation.sequence != 0 {
         let terminal = match accepted_history.row_by_sequence(generation.sequence) {

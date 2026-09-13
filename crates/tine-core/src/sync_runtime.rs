@@ -6495,6 +6495,20 @@ impl SyncRuntimeHandle {
             .map_err(|_| SyncRuntimeRequestError::ActorUnavailable)
     }
 
+    /// Covered accepted rows resolved by sequence since this generation was
+    /// opened (`SealedAcceptedHistory::sequence_row_reads`).
+    #[cfg(test)]
+    fn sealed_sequence_row_reads_for_test(&self) -> Result<usize, SyncRuntimeRequestError> {
+        let _operation = self.inner.operation.lock().unwrap();
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.send(ActorRequest::SealedSequenceRowReadsProbe {
+            reply: reply_sender,
+        })?;
+        reply_receiver
+            .recv()
+            .map_err(|_| SyncRuntimeRequestError::ActorUnavailable)
+    }
+
     #[cfg(test)]
     fn redeliver_recovery_input_for_test(&self) -> Result<(), SyncRuntimeRequestError> {
         let _operation = self.inner.operation.lock().unwrap();
@@ -11885,6 +11899,8 @@ enum ActorRequest {
     #[cfg(test)]
     FullHistoryReconstructionProbe { reply: mpsc::Sender<usize> },
     #[cfg(test)]
+    SealedSequenceRowReadsProbe { reply: mpsc::Sender<usize> },
+    #[cfg(test)]
     RedeliverRecoveryInput {
         reply: mpsc::Sender<Result<(), String>>,
     },
@@ -12710,6 +12726,18 @@ fn run_actor_loop(
             #[cfg(test)]
             ActorRequest::FullHistoryReconstructionProbe { reply } => {
                 let _ = reply.send(actor.full_history_reconstructions);
+                false
+            }
+            #[cfg(test)]
+            ActorRequest::SealedSequenceRowReadsProbe { reply } => {
+                let reads = actor.clean.as_ref().map_or(0, |clean| {
+                    clean
+                        .runtime
+                        .engine()
+                        .sealed_accepted_history()
+                        .map_or(0, |history| history.sequence_row_reads())
+                });
+                let _ = reply.send(reads);
                 false
             }
             #[cfg(test)]
