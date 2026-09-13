@@ -35,7 +35,7 @@ use crate::sync_runtime::{
 };
 use tine_storage::sealed_accepted_index::AuthenticatedMapKey;
 
-const CHECKPOINT_SCHEMA_VERSION: u32 = 4;
+const CHECKPOINT_SCHEMA_VERSION: u32 = 5;
 const CHECKPOINT_DIRECTORY: &str = "clean-open-checkpoint-v2";
 const CHECKPOINT_POINTER: &str = "current";
 const CHECKPOINT_PAYLOAD_NAMES: [&str; 2] = ["payload-a", "payload-b"];
@@ -1233,6 +1233,29 @@ struct CheckpointPayloadV2 {
     document_roster: MapRootWire,
     image_work: CheckpointImageWork,
     document_dependencies: Vec<DocumentDependencies>,
+    sqlite_generation: SqliteGenerationBindingV1,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SqliteGenerationBindingV1 {
+    generation_id: [u8; 16],
+    predecessor_generation_id: Option<[u8; 16]>,
+    full_anchor_generation_id: [u8; 16],
+    covered_block_count: u64,
+    covered_semantic_capsules_root_digest: ContentDigest,
+    covered_head_facts_root_digest: ContentDigest,
+    current_projection_payload_pins_root_digest: ContentDigest,
+    nonlinear_state_root_digest: ContentDigest,
+    retention_pins_root_digest: ContentDigest,
+}
+
+/// Exact storage-owned anchor input selected by one qualified generation.
+/// SQLite remains disposable; this value is immutable generation evidence used
+/// to rebuild or validate its generation-relative cache.
+pub(crate) struct CleanCheckpointSqliteAnchor {
+    pub(crate) root: tine_storage::sqlite::PhysicalCheckpointFrontierRoot,
+    pub(crate) anchor: tine_storage::sqlite::PhysicalCheckpointGenerationAnchor,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -1631,6 +1654,9 @@ where
 {
     use tine_storage::sealed_accepted_index::{AcceptedSequenceRootV2, AuthenticatedMapRootV1};
 
+    let predecessor_sqlite_generation = predecessor
+        .as_ref()
+        .map(|(_, payload)| payload.sqlite_generation.clone());
     let document_dependencies = capture
         .documents
         .as_ref()
@@ -1825,6 +1851,38 @@ where
             return Err("final clean checkpoint roster frontier differs".into());
         }
     }
+    let state_root_digest = ContentDigest::of(&capture.state_bytes);
+    let generation_material = encode_canonical(&(
+        capture.workspace_id,
+        capture.lineage_digest,
+        capture.target_sequence,
+        capture.cutoff_state_digest,
+        roots.batch_map.root_digest(),
+        roots.status_map.root_digest(),
+        roots.sequence.root_digest,
+        document_roster.root_digest(),
+        state_root_digest,
+    ))?;
+    let generation_digest = ContentDigest::of(&generation_material);
+    let mut generation_id = [0_u8; 16];
+    generation_id.copy_from_slice(&generation_digest.as_bytes()[..16]);
+    let sqlite_generation = SqliteGenerationBindingV1 {
+        generation_id,
+        predecessor_generation_id: predecessor_sqlite_generation
+            .as_ref()
+            .map(|generation| generation.generation_id),
+        full_anchor_generation_id: predecessor_sqlite_generation
+            .as_ref()
+            .map_or(generation_id, |generation| {
+                generation.full_anchor_generation_id
+            }),
+        covered_block_count: capture.covered_block_count,
+        covered_semantic_capsules_root_digest: document_change_root.root_digest(),
+        covered_head_facts_root_digest: capture.cutoff_state_digest,
+        current_projection_payload_pins_root_digest: state_root_digest,
+        nonlinear_state_root_digest: state_root_digest,
+        retention_pins_root_digest: state_root_digest,
+    };
     let payload = CheckpointPayloadV2 {
         schema_version: CHECKPOINT_SCHEMA_VERSION,
         binding: CheckpointBindingV1 {
@@ -1857,6 +1915,7 @@ where
         document_roster: map_root_to_wire(document_roster),
         image_work,
         document_dependencies,
+        sqlite_generation,
     };
     Ok((sequence, encode_canonical(&payload)?))
 }
@@ -2805,6 +2864,7 @@ pub(crate) struct CleanCheckpointLoaded {
     pub(crate) payload_bytes: usize,
     pub(crate) image_work: CheckpointImageWork,
     pub(crate) documents: Arc<CleanCheckpointDocuments>,
+    pub(crate) sqlite_anchor: Option<Arc<CleanCheckpointSqliteAnchor>>,
     pub(crate) open_work: GenerationOpenWork,
 }
 
@@ -3277,6 +3337,36 @@ impl SealedAcceptedHistory {
     }
 }
 
+impl tine_storage::sealed_accepted_index::SealedAcceptedIndexRead for SealedAcceptedHistory {
+    fn sealed_map_node(
+        &self,
+        link: tine_storage::sealed_accepted_index::AuthenticatedMapLinkV1,
+    ) -> Result<
+        tine_storage::sealed_accepted_index::SealedAuthenticatedMapNodeV2,
+        tine_storage::sealed_accepted_index::SealedAcceptedIndexError,
+    > {
+        tine_storage::sealed_accepted_index::SealedAcceptedIndexRead::sealed_map_node(
+            &tine_storage::sealed_accepted_index::SealedAcceptedIndexReader::new(&self.directory),
+            link,
+        )
+    }
+
+    fn sealed_causal_record(
+        &self,
+        batch_id: [u8; 16],
+        address: ContentDigest,
+    ) -> Result<
+        tine_storage::sealed_accepted_index::SealedAcceptedCausalRecordV2,
+        tine_storage::sealed_accepted_index::SealedAcceptedIndexError,
+    > {
+        tine_storage::sealed_accepted_index::SealedAcceptedIndexRead::sealed_causal_record(
+            &tine_storage::sealed_accepted_index::SealedAcceptedIndexReader::new(&self.directory),
+            batch_id,
+            address,
+        )
+    }
+}
+
 pub(crate) struct CleanCheckpointDocuments {
     roster: SealedDocumentRoster,
     directory: SealedGenerationDirectory,
@@ -3293,6 +3383,39 @@ impl CleanCheckpointLoaded {
             .roster
             .document_reference(&self.documents.directory, document)?
             .ok_or_else(|| format!("checkpoint image roster omits document {document}"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixed_live_curve_metrics_for_test(
+        &self,
+    ) -> Result<(u64, u64, usize, usize, u64, u64, u64), String> {
+        let (documents, blocks, writers, obligations, eligible_through, document_ids) =
+            super::hot_engine::clean_checkpoint_curve_dimensions(&self.state_bytes)
+                .map_err(|error| error.to_string())?;
+        let mut image_bytes = 0_u64;
+        let mut latest_state_bytes = 0_u64;
+        for document in document_ids {
+            let record = self
+                .documents
+                .roster
+                .document_record(&self.documents.directory, document)?
+                .ok_or_else(|| format!("checkpoint image roster omits document {document}"))?;
+            image_bytes = image_bytes
+                .checked_add(record.policy.metrics.image_bytes)
+                .ok_or_else(|| "checkpoint image byte count overflowed".to_owned())?;
+            latest_state_bytes = latest_state_bytes
+                .checked_add(record.policy.metrics.latest_state_bytes)
+                .ok_or_else(|| "checkpoint latest-state byte count overflowed".to_owned())?;
+        }
+        Ok((
+            documents,
+            blocks,
+            writers,
+            obligations,
+            eligible_through,
+            image_bytes,
+            image_bytes.saturating_sub(latest_state_bytes),
+        ))
     }
 }
 
@@ -3430,12 +3553,13 @@ fn open_checkpoint_impl(
     {
         return Ok(invalid(error));
     }
-    if !payload.document_dependencies.is_empty() {
-        let state_binding =
-            match super::hot_engine::clean_checkpoint_state_binding(&payload.state_bytes) {
-                Ok(binding) => binding,
-                Err(error) => return Ok(invalid(error.to_string())),
-            };
+    let state_binding =
+        match super::hot_engine::clean_checkpoint_state_binding(&payload.state_bytes) {
+            Ok(binding) => Some(binding),
+            Err(_) if payload.document_dependencies.is_empty() => None,
+            Err(error) => return Ok(invalid(error.to_string())),
+        };
+    if let Some(state_binding) = state_binding.as_ref() {
         if state_binding.workspace_id != payload.binding.workspace_id
             || state_binding.lineage_digest != payload.binding.lineage_digest
             || state_binding.catalog_document_id != payload.binding.catalog_document_id
@@ -3478,7 +3602,7 @@ fn open_checkpoint_impl(
         )),
         sequence_enumerations: AtomicUsize::new(0),
     });
-    if generation.sequence != 0 {
+    let terminal = if generation.sequence != 0 {
         let terminal = match accepted_history.row_by_sequence(generation.sequence) {
             Ok(Some(row)) => row,
             Ok(None) | Err(_) => {
@@ -3494,7 +3618,98 @@ fn open_checkpoint_impl(
                 "clean checkpoint terminal frontier binding differs",
             ));
         }
-    }
+        Some(terminal)
+    } else {
+        None
+    };
+    let sqlite_anchor = match state_binding
+        .as_ref()
+        .map(|binding| {
+            let fixed_key = |key: Option<AuthenticatedMapKey>| -> Result<Option<[u8; 16]>, String> {
+                key.map(|key| {
+                    key.as_slice()
+                        .try_into()
+                        .map_err(|_| "checkpoint accepted root key is not a batch UUID".to_owned())
+                })
+                .transpose()
+            };
+            let sqlite = &payload.sqlite_generation;
+            let generation = tine_storage::sqlite::PhysicalCheckpointGenerationBinding {
+                generation_id: sqlite.generation_id,
+                predecessor_generation_id: sqlite.predecessor_generation_id,
+                full_anchor_generation_id: sqlite.full_anchor_generation_id,
+                covered_count: roots.sequence.len,
+                covered_document_count: binding.accepted_frontier_root.document_count(),
+                covered_block_count: sqlite.covered_block_count,
+                covered_retained_bytes_total: binding.accepted_frontier_root.retained_bytes_total(),
+                covered_semantic_capsules_root_digest: sqlite.covered_semantic_capsules_root_digest,
+                covered_batch_root_key: fixed_key(roots.batch_map.root.map(|link| link.key))?,
+                covered_batch_root_digest: roots.batch_map.root_digest(),
+                covered_status_root_key: fixed_key(roots.status_map.root.map(|link| link.key))?,
+                covered_status_root_digest: roots.status_map.root_digest(),
+                covered_sequence_root_digest: roots.sequence.root_digest,
+                covered_sequence_height: roots.sequence.height,
+                covered_causal_tip_root_key: None,
+                covered_causal_tip_root_digest: ContentDigest::of(&payload.state_bytes),
+                covered_head_facts_root_digest: sqlite.covered_head_facts_root_digest,
+                current_projection_payload_pins_root_digest: sqlite
+                    .current_projection_payload_pins_root_digest,
+                nonlinear_state_root_digest: sqlite.nonlinear_state_root_digest,
+                retention_pins_root_digest: sqlite.retention_pins_root_digest,
+            };
+            let canonical_bytes = binding
+                .accepted_frontier_root
+                .encode_canonical()
+                .map_err(|error| error.to_string())?;
+            let empty = tine_storage::sealed_accepted_index::AuthenticatedMapRootV1::empty();
+            let root = tine_storage::sqlite::PhysicalCheckpointFrontierRoot {
+                canonical_bytes: canonical_bytes.clone(),
+                acceptance_sequence: roots.sequence.len,
+                document_count: binding.accepted_frontier_root.document_count(),
+                document_overlay_count: 0,
+                retained_bytes_total: binding.accepted_frontier_root.retained_bytes_total(),
+                document_map_root_key: None,
+                document_map_root_digest: empty.root_digest(),
+                batch_map_root_key: generation.covered_batch_root_key,
+                batch_map_root_digest: generation.covered_batch_root_digest,
+                batch_map_count: roots.sequence.len,
+                status_map_root_key: generation.covered_status_root_key,
+                status_map_root_digest: generation.covered_status_root_digest,
+                status_map_count: roots.sequence.len,
+                sequence_root_digest: roots.sequence.root_digest,
+                sequence_height: roots.sequence.height,
+                sequence_count: roots.sequence.len,
+                generation: generation.clone(),
+                state_digest: binding.accepted_frontier_root.state_digest(),
+            };
+            let terminal_batch_id = terminal
+                .as_ref()
+                .map(|row| row.evidence.batch_id().as_uuid().into_bytes());
+            let terminal_evidence_digest = terminal
+                .as_ref()
+                .map(|row| {
+                    row.evidence
+                        .encode_canonical()
+                        .map(|bytes| ContentDigest::of(&bytes))
+                        .map_err(|error| error.to_string())
+                })
+                .transpose()?;
+            Ok::<Arc<CleanCheckpointSqliteAnchor>, String>(Arc::new(CleanCheckpointSqliteAnchor {
+                anchor: tine_storage::sqlite::PhysicalCheckpointGenerationAnchor {
+                    generation,
+                    checkpoint_frontier_root: canonical_bytes,
+                    terminal_batch_id,
+                    terminal_evidence_digest,
+                    materialization_frontier_root_digest: root.digest(),
+                },
+                root,
+            }))
+        })
+        .transpose()
+    {
+        Ok(anchor) => anchor,
+        Err(error) => return Ok(invalid(error)),
+    };
     let hot_pin_batches = if payload.document_dependencies.is_empty() {
         BTreeSet::new()
     } else {
@@ -3591,6 +3806,7 @@ fn open_checkpoint_impl(
             sequence: generation.sequence,
             _reader_pin: reader_pin,
         }),
+        sqlite_anchor,
         open_work,
     }))
 }
@@ -6653,6 +6869,7 @@ mod tests {
             floor_policy: super::super::checkpoint_floor_policy::FloorPolicyConfig::default(),
             base_sequence: 0,
             target_sequence: 1,
+            covered_block_count: 0,
             state_bytes: b"state".to_vec(),
             accepted_rows: vec![CleanCheckpointAcceptedRow {
                 no_op: false,
@@ -6708,6 +6925,7 @@ mod tests {
             floor_policy: super::super::checkpoint_floor_policy::FloorPolicyConfig::default(),
             base_sequence: 0,
             target_sequence: rows.len() as u64,
+            covered_block_count: 0,
             state_bytes: b"bounded generation".to_vec(),
             accepted_rows: rows,
             required_objects: BTreeSet::new(),
@@ -6749,6 +6967,7 @@ mod tests {
             floor_policy: super::super::checkpoint_floor_policy::FloorPolicyConfig::default(),
             base_sequence: 0,
             target_sequence: 1,
+            covered_block_count: 0,
             state_bytes: b"frontier-one".to_vec(),
             accepted_rows: vec![CleanCheckpointAcceptedRow {
                 no_op: false,
@@ -6777,6 +6996,7 @@ mod tests {
             floor_policy: super::super::checkpoint_floor_policy::FloorPolicyConfig::default(),
             base_sequence: 1,
             target_sequence: 2,
+            covered_block_count: 0,
             state_bytes: b"frontier-two".to_vec(),
             accepted_rows: vec![CleanCheckpointAcceptedRow {
                 no_op: false,
@@ -6844,6 +7064,7 @@ mod tests {
             floor_policy: super::super::checkpoint_floor_policy::FloorPolicyConfig::default(),
             base_sequence: 0,
             target_sequence: CLEAN_CHECKPOINT_LAG_MAX + 1,
+            covered_block_count: 0,
             state_bytes: Vec::new(),
             accepted_rows: vec![row; CLEAN_CHECKPOINT_LAG_MAX as usize + 1],
             required_objects: BTreeSet::new(),
@@ -6881,6 +7102,7 @@ mod tests {
             floor_policy: super::super::checkpoint_floor_policy::FloorPolicyConfig::default(),
             base_sequence: 0,
             target_sequence: 0,
+            covered_block_count: 0,
             state_bytes: state.to_vec(),
             accepted_rows: Vec::new(),
             required_objects: BTreeSet::new(),

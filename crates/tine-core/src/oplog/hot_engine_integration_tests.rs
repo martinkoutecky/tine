@@ -8616,10 +8616,10 @@ fn a3_conflict_history_load_samples(history_size: usize) -> (usize, Vec<usize>) 
         evaluation_engine.stage_ready(deleted.clone()).disposition,
         BatchDisposition::Accepted { .. }
     ));
-    // Model the checkpoint-open boundary before the first evaluation. That
-    // once-per-open O(N) rebuild is deliberately visible in the same counter;
-    // the following steady-state samples remain pair-bounded.
-    evaluation_engine.drop_conflict_history_index_for_test();
+    // Model the checkpoint-open boundary before the first evaluation. The
+    // generation seed retains only causal tips and still-owed endpoints; both
+    // this first evaluation and the following samples remain pair-bounded.
+    evaluation_engine.restore_conflict_history_seed_for_test();
     let rebuild_loads = {
         assert!(!evaluation_engine
             .conflict_resolution_intents(deleted.manifest().batch_id())
@@ -8650,15 +8650,15 @@ fn conflict_resolution_history_loads_are_bounded_by_unresolved_pairs() {
     const LOAD_BOUND: usize = 8 * UNRESOLVED_PAIRS + 64;
     let mut medians = Vec::new();
     for history_size in [50_usize, 400, 800] {
-        let (rebuild_loads, mut samples) = a3_conflict_history_load_samples(history_size);
+        let (seed_loads, mut samples) = a3_conflict_history_load_samples(history_size);
         assert!(
-            rebuild_loads >= history_size,
-            "I-15: the once-per-open conflict-index rebuild must remain visible to the A3 counter; imitate conflict_backlog_reseed_does_not_rebuild_the_conflict_history_index"
+            seed_loads <= LOAD_BOUND,
+            "I-14: generation conflict seeding loaded {seed_loads} batches at history {history_size}; bound {LOAD_BOUND}"
         );
         samples.sort_unstable();
         let median = samples[1];
         eprintln!(
-            "A3 history={history_size} unresolved={UNRESOLVED_PAIRS} rebuild_loads={rebuild_loads} steady_samples={samples:?} median={median} bound={LOAD_BOUND}"
+            "A3 history={history_size} unresolved={UNRESOLVED_PAIRS} seed_loads={seed_loads} steady_samples={samples:?} median={median} bound={LOAD_BOUND}"
         );
         medians.push((history_size, median));
     }
@@ -8668,6 +8668,106 @@ fn conflict_resolution_history_loads_are_bounded_by_unresolved_pairs() {
             "I-14: conflict evaluation loaded {median} accepted batches at history {history_size}; bound {LOAD_BOUND}. Evaluation cost must scale with unresolved pairs, not history; imitate oplog/conflict_history.rs"
         );
     }
+}
+
+/// P4c: a generation carries the conflict watermark, causal tips and still
+/// owed pairs. Reopening with fixed live obligations must not replay settled
+/// accepted history merely to make the disposable index current.
+#[test]
+fn generation_conflict_seed_no_history_replay() {
+    const SETTLED_HISTORY: usize = 128;
+    const MAX_SEED_LOADS: usize = 64;
+    let (seed_loads, steady_state_loads) = a3_conflict_history_load_samples(SETTLED_HISTORY);
+    eprintln!(
+        "generation_conflict_seed_work settled={SETTLED_HISTORY} seed_loads={seed_loads} steady_loads={steady_state_loads:?}"
+    );
+    assert!(
+        seed_loads <= MAX_SEED_LOADS,
+        "generation conflict seeding replayed {seed_loads} accepted batches for one owed pair; \
+         settled history is {SETTLED_HISTORY} and the bound is {MAX_SEED_LOADS}"
+    );
+    assert!(
+        steady_state_loads
+            .into_iter()
+            .all(|loads| loads <= MAX_SEED_LOADS),
+        "post-seed conflict evaluation must remain bounded by still-owed work"
+    );
+}
+
+#[test]
+fn generation_conflict_seed_matches_replay_for_a_post_cut_branch() {
+    let ids = Ids::new();
+    let dir = TestDir::new("generation-conflict-post-cut-branch");
+    let archive = store(&dir, ids);
+    let (_, baseline) = seed_engine(ids, &archive);
+    let mut author_engine = ids.engine();
+    author_engine.stage_ready(baseline.clone());
+    let first = author_engine
+        .prepare_fixture_transaction(
+            author(0xa3_f510, 0xa3_f510),
+            &tx(vec![SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: ids.block_a,
+                    home_document_id: ids.home_a,
+                },
+                content: "first pre-cut edit".into(),
+            }]),
+        )
+        .unwrap();
+    let first = ready(&archive, &first);
+    author_engine.stage_ready(first.clone());
+    let second = author_engine
+        .prepare_fixture_transaction(
+            author(0xa3_f511, 0xa3_f511),
+            &tx(vec![SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: ids.block_a,
+                    home_document_id: ids.home_a,
+                },
+                content: "second pre-cut edit".into(),
+            }]),
+        )
+        .unwrap();
+    let second = ready(&archive, &second);
+    let branch = {
+        let mut branch_author = ids.engine();
+        branch_author.stage_ready(baseline.clone());
+        let prepared = branch_author
+            .prepare_fixture_transaction(
+                author(0xa3_f512, 0xa3_f512),
+                &tx(vec![SemanticOperation::DeleteSubtree {
+                    root_block_id: ids.block_a,
+                    page_id: ids.page_a,
+                }]),
+            )
+            .unwrap();
+        ready(&archive, &prepared)
+    };
+    let mut replay = ids.engine();
+    let mut seeded = ids.engine();
+    for engine in [&mut replay, &mut seeded] {
+        engine.stage_ready(baseline.clone());
+        engine.stage_ready(first.clone());
+        engine.stage_ready(second.clone());
+    }
+    seeded.restore_conflict_history_seed_for_test();
+    seeded
+        .rebuild_conflict_history_for_post_cut_branch()
+        .unwrap();
+    replay.stage_ready(branch.clone());
+    seeded.stage_ready(branch.clone());
+    let mut replay_intents = replay
+        .conflict_resolution_intents(branch.manifest().batch_id())
+        .unwrap();
+    let mut seeded_intents = seeded
+        .conflict_resolution_intents(branch.manifest().batch_id())
+        .unwrap();
+    replay_intents.sort_by_key(|intent| format!("{intent:?}"));
+    seeded_intents.sort_by_key(|intent| format!("{intent:?}"));
+    assert_eq!(
+        seeded_intents, replay_intents,
+        "generation conflict seed must preserve full-replay outcomes for a later branch"
+    );
 }
 
 #[test]
@@ -11389,6 +11489,12 @@ fn managed_page_shard_checkpoint_and_full_replay_agree() {
             &loaded.state_bytes,
             Arc::clone(&loaded.accepted_history),
             Arc::clone(&loaded.documents),
+            Arc::clone(
+                loaded
+                    .sqlite_anchor
+                    .as_ref()
+                    .expect("checkpoint sqlite anchor"),
+            ),
         )
         .unwrap();
     assert_eq!(

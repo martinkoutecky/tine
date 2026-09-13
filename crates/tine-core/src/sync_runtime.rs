@@ -114,15 +114,16 @@ use crate::oplog::projection_turn_journal::{
 };
 use crate::oplog::recovery_input_journal::RecoveryInputEnvelopeV1;
 use crate::oplog::recovery_input_journal::RecoveryInputJournal;
+use crate::oplog::sqlite::{
+    projection_open_breakdown, ApplicationRuntimeRoot, LeasedWorkspaceProjection,
+    WorkspaceRuntimeLease,
+};
 #[cfg(test)]
 use crate::oplog::sqlite::{
     reset_full_digest_scan_instrumentation, reset_projection_open_test_observation,
     take_full_digest_scan_instrumentation, take_projection_open_test_observation,
     CleanProjectionRebuildInstrumentation, FullDigestScanInstrumentation,
     ProjectionOpenTestObservation,
-};
-use crate::oplog::sqlite::{
-    ApplicationRuntimeRoot, LeasedWorkspaceProjection, WorkspaceRuntimeLease,
 };
 use crate::oplog::sqlite_materialization::MaterializedNavigationPageRow;
 use crate::oplog::sync_layout::MANAGED_LOCAL_JOURNAL_DIR as MANAGED_LOCAL_JOURNAL_NAMESPACE;
@@ -1830,6 +1831,26 @@ pub struct SyncRuntimeCleanOpenCounters {
     pub checkpoint_opens: usize,
     /// Exactly one when open started from the immutable sequence-zero baseline.
     pub full_replay_opens: usize,
+    /// Existing/rebuilt classification recorded by the SQLite open boundary.
+    pub projection_recovery: &'static str,
+    /// Exact-frontier authentication before the SQLite file is inspected.
+    pub projection_exact_frontier_authentication: Duration,
+    /// Projection sidecar shape validation.
+    pub projection_sidecar_shape: Duration,
+    /// Authenticated SQLite checkpoint read and digest verification.
+    pub projection_checkpoint_authentication: Duration,
+    /// Physical read-only SQLite open.
+    pub projection_read_only_open: Duration,
+    /// Physical schema and workspace-claim validation.
+    pub projection_schema_and_claim: Duration,
+    /// Frontier, row-count, and terminal-row structural validation.
+    pub projection_structural_validation: Duration,
+    /// Materialization-stamp agreement validation.
+    pub projection_materialization_stamp: Duration,
+    /// Forensic preservation before a disposable rebuild.
+    pub projection_forensics_preservation: Duration,
+    /// Disposable SQLite candidate reconstruction and publication.
+    pub projection_rebuild: Duration,
     /// Accepted roster rows authenticated through the sealed index.
     pub checkpoint_roster_entries: usize,
     /// Archive manifest names compared during checkpoint tail discovery.
@@ -1840,6 +1861,10 @@ pub struct SyncRuntimeCleanOpenCounters {
     pub checkpoint_capture_work: u64,
     /// Canonical checkpoint payload bytes opened before the durable tail.
     pub checkpoint_payload_bytes: usize,
+    /// Whole covered-sequence enumerations performed by generation open.
+    /// Healthy open must remain zero; the sealed point reader increments this
+    /// at the two APIs capable of walking `1..=C`.
+    pub covered_sequence_enumerations: usize,
     /// Published frontier minus durable checkpoint frontier after open.
     pub checkpoint_durable_lag: u64,
     /// Sweep chains resident after open: unfinished actions and explicit
@@ -1908,6 +1933,10 @@ pub struct SyncRuntimeCleanOpenCounters {
     pub archive_inspected_manifests: usize,
     /// Immutable objects inspected (decoded) during this open.
     pub archive_inspected_objects: usize,
+    /// Logical manifests resolved from indexed cold packs during this open.
+    pub archive_cold_manifest_reads: usize,
+    /// Logical objects resolved from indexed cold packs during this open.
+    pub archive_cold_object_reads: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -6392,6 +6421,54 @@ impl SyncRuntimeHandle {
     }
 
     #[cfg(test)]
+    fn set_automatic_clean_checkpoint_paused_for_test(
+        &self,
+        paused: bool,
+    ) -> Result<(), SyncRuntimeRequestError> {
+        let _operation = self.inner.operation.lock().unwrap();
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.send(ActorRequest::SetAutomaticCleanCheckpointPaused {
+            paused,
+            reply: reply_sender,
+        })?;
+        reply_receiver
+            .recv()
+            .map_err(|_| SyncRuntimeRequestError::ActorUnavailable)
+    }
+
+    #[cfg(test)]
+    fn diagnose_sqlite_integrity_for_test(&self) -> Result<(), SyncRuntimeRequestError> {
+        let _operation = self.inner.operation.lock().unwrap();
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.send(ActorRequest::DiagnoseSqliteIntegrity {
+            reply: reply_sender,
+        })?;
+        reply_receiver
+            .recv()
+            .map_err(|_| SyncRuntimeRequestError::ActorUnavailable)?
+            .map_err(SyncRuntimeRequestError::ActorRefused)
+    }
+
+    #[cfg(test)]
+    fn set_checkpoint_floor_clock_for_test(
+        &self,
+        utc_ms: i64,
+        monotonic_ms: u64,
+    ) -> Result<(), SyncRuntimeRequestError> {
+        let _operation = self.inner.operation.lock().unwrap();
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.send(ActorRequest::SetCheckpointFloorClock {
+            utc_ms,
+            monotonic_ms,
+            reply: reply_sender,
+        })?;
+        reply_receiver
+            .recv()
+            .map_err(|_| SyncRuntimeRequestError::ActorUnavailable)?
+            .map_err(SyncRuntimeRequestError::ActorRefused)
+    }
+
+    #[cfg(test)]
     fn recovery_input_probe_for_test(
         &self,
     ) -> Result<Vec<RecoveryInputEnvelopeV1>, SyncRuntimeRequestError> {
@@ -8363,6 +8440,12 @@ fn build_full_history_replacement_engine(
                 &loaded.state_bytes,
                 Arc::clone(&loaded.accepted_history),
                 Arc::clone(&loaded.documents),
+                Arc::clone(
+                    loaded
+                        .sqlite_anchor
+                        .as_ref()
+                        .ok_or("recovery checkpoint has no SQLite generation anchor")?,
+                ),
             )
             .map_err(CleanOpenError::from)?;
         engine
@@ -8503,7 +8586,8 @@ local_completion_content_reads={}; local_completion_rebuilt={}; \
 local_completion_entries={}; retired_own_intent_probes={}; \
 retired_own_receipt_artifacts={}; archive_directory_enumerations={}; \
 archive_manifest_reads={}; archive_object_reads={}; \
-archive_inspected_manifests={}; archive_inspected_objects={}",
+archive_inspected_manifests={}; archive_inspected_objects={}; \
+archive_cold_manifest_reads={}; archive_cold_object_reads={}",
                 counters.accepted_batches,
                 counters.committed_tail_replayed,
                 counters.checkpoint_opens,
@@ -8533,6 +8617,8 @@ archive_inspected_manifests={}; archive_inspected_objects={}",
                 counters.archive_object_reads,
                 counters.archive_inspected_manifests,
                 counters.archive_inspected_objects,
+                counters.archive_cold_manifest_reads,
+                counters.archive_cold_object_reads,
             );
         }
     }
@@ -8694,13 +8780,26 @@ fn open_clean_runtime_resources_with_progress(
             counters.checkpoint_required_object_names = 0;
             counters.checkpoint_capture_work = loaded.capture_work;
             counters.checkpoint_payload_bytes = loaded.payload_bytes;
+            counters.covered_sequence_enumerations = loaded.open_work.covered_sequence_enumerations;
             let durable_sequence = loaded.accepted_sequence;
             let tail = loaded.tail.clone();
-            match engine.restore_clean_checkpoint(
-                &loaded.state_bytes,
-                Arc::clone(&loaded.accepted_history),
-                Arc::clone(&loaded.documents),
-            ) {
+            let restore = loaded
+                .sqlite_anchor
+                .as_ref()
+                .ok_or_else(|| {
+                    crate::oplog::EngineError::Archive(
+                        "clean checkpoint has no SQLite generation anchor".into(),
+                    )
+                })
+                .and_then(|anchor| {
+                    engine.restore_clean_checkpoint(
+                        &loaded.state_bytes,
+                        Arc::clone(&loaded.accepted_history),
+                        Arc::clone(&loaded.documents),
+                        Arc::clone(anchor),
+                    )
+                });
+            match restore {
                 Ok(()) => {
                     engine
                         .reset_clean_checkpoint_publisher(durable_sequence)
@@ -8801,6 +8900,18 @@ fn open_clean_runtime_resources_with_progress(
         .map(|(projection, ())| projection)
         .map_err(|(_, error)| CleanOpenError::from(error))?
     };
+    let projection_breakdown = projection_open_breakdown();
+    counters.projection_recovery = projection_breakdown.recovery;
+    counters.projection_exact_frontier_authentication =
+        projection_breakdown.exact_frontier_authentication;
+    counters.projection_sidecar_shape = projection_breakdown.sidecar_shape;
+    counters.projection_checkpoint_authentication = projection_breakdown.checkpoint_authentication;
+    counters.projection_read_only_open = projection_breakdown.read_only_open;
+    counters.projection_schema_and_claim = projection_breakdown.schema_and_claim;
+    counters.projection_structural_validation = projection_breakdown.structural_validation;
+    counters.projection_materialization_stamp = projection_breakdown.materialization_stamp;
+    counters.projection_forensics_preservation = projection_breakdown.forensics_preservation;
+    counters.projection_rebuild = projection_breakdown.rebuild;
     trace.phase(SyncRuntimeCleanOpenStage::ProjectionOpen, stage_progress);
     engine
         .attach_clean_projection_endpoint(&graph, &receipts)
@@ -8992,6 +9103,8 @@ fn open_clean_runtime_resources_with_progress(
     counters.archive_object_reads = archive.accepted_object_reads;
     counters.archive_inspected_manifests = archive.inspected_manifest_operations;
     counters.archive_inspected_objects = archive.inspected_object_operations;
+    counters.archive_cold_manifest_reads = archive.cold_manifest_reads;
+    counters.archive_cold_object_reads = archive.cold_object_reads;
     trace.report_counters(&counters, counters_progress);
     Ok(Some(CleanRuntimeResources {
         graph,
@@ -11751,6 +11864,21 @@ enum ActorRequest {
         reply: mpsc::Sender<Result<(), String>>,
     },
     #[cfg(test)]
+    SetAutomaticCleanCheckpointPaused {
+        paused: bool,
+        reply: mpsc::Sender<()>,
+    },
+    #[cfg(test)]
+    DiagnoseSqliteIntegrity {
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    #[cfg(test)]
+    SetCheckpointFloorClock {
+        utc_ms: i64,
+        monotonic_ms: u64,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
+    #[cfg(test)]
     RecoveryInputProbe {
         reply: mpsc::Sender<Vec<RecoveryInputEnvelopeV1>>,
     },
@@ -12518,6 +12646,53 @@ fn run_actor_loop(
                         engine.schedule_clean_checkpoint_bootstrap();
                         engine
                             .wait_for_clean_checkpoint()
+                            .map_err(|error| error.to_string())
+                    });
+                let _ = reply.send(result);
+                false
+            }
+            #[cfg(test)]
+            ActorRequest::SetAutomaticCleanCheckpointPaused { paused, reply } => {
+                if let Some(clean) = actor.clean.as_mut() {
+                    clean
+                        .runtime
+                        .engine_mut()
+                        .set_automatic_clean_checkpoint_paused_for_test(paused);
+                }
+                let _ = reply.send(());
+                false
+            }
+            #[cfg(test)]
+            ActorRequest::DiagnoseSqliteIntegrity { reply } => {
+                let result = actor
+                    .clean
+                    .as_ref()
+                    .ok_or_else(|| "clean actor is unavailable".to_owned())
+                    .and_then(|clean| {
+                        clean
+                            .runtime
+                            .database()
+                            .diagnose_full_integrity()
+                            .map_err(|error| error.to_string())
+                    });
+                let _ = reply.send(result);
+                false
+            }
+            #[cfg(test)]
+            ActorRequest::SetCheckpointFloorClock {
+                utc_ms,
+                monotonic_ms,
+                reply,
+            } => {
+                let result = actor
+                    .clean
+                    .as_mut()
+                    .ok_or_else(|| "clean actor is unavailable".to_owned())
+                    .and_then(|clean| {
+                        clean
+                            .runtime
+                            .engine_mut()
+                            .set_checkpoint_floor_clock_for_test(utc_ms, monotonic_ms)
                             .map_err(|error| error.to_string())
                     });
                 let _ = reply.send(result);

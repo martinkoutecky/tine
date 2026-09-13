@@ -940,7 +940,7 @@ pub(crate) struct AuthenticatedEffectiveSemanticView {
 /// save O(all prior saves/pages). This run-local tree changes only the search
 /// path, while producing byte-identical root keys and digests.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
-struct RunLocalAuthenticatedMap {
+pub(crate) struct RunLocalAuthenticatedMap {
     root: Option<Arc<RunLocalAuthenticatedMapNode>>,
     count: u64,
 }
@@ -1060,7 +1060,7 @@ impl RunLocalAuthenticatedMap {
         }
     }
 
-    fn upsert(&mut self, key: AuthenticatedMapKey, value_digest: ContentDigest) {
+    pub(crate) fn upsert(&mut self, key: AuthenticatedMapKey, value_digest: ContentDigest) {
         let (root, inserted) = Self::upsert_node(&self.root, key, value_digest);
         self.root = Some(root);
         if inserted {
@@ -1068,7 +1068,7 @@ impl RunLocalAuthenticatedMap {
         }
     }
 
-    fn with_upserts(
+    pub(crate) fn with_upserts(
         &self,
         entries: impl IntoIterator<Item = (AuthenticatedMapKey, ContentDigest)>,
     ) -> Self {
@@ -1079,11 +1079,11 @@ impl RunLocalAuthenticatedMap {
         next
     }
 
-    fn root_key(&self) -> Option<AuthenticatedMapKey> {
+    pub(crate) fn root_key(&self) -> Option<AuthenticatedMapKey> {
         self.root.as_ref().map(|root| root.key)
     }
 
-    fn root_digest(&self) -> ContentDigest {
+    pub(crate) fn root_digest(&self) -> ContentDigest {
         self.root
             .as_ref()
             .map_or_else(authenticated_map_empty_digest, |root| root.digest)
@@ -4087,6 +4087,30 @@ impl AcceptedRootMaterializer<'_> {
                 return Ok(Some(key));
             }
         }
+        // An anchored SQLite candidate seeds live rows from the generation's
+        // terminal images. Reconstructing this exact current root through the
+        // historical ancestry resolver defeats that contract as soon as the
+        // covered originals have moved cold. The image loader authenticates
+        // its selected image and applies only a post-image suffix; verify its
+        // resulting causal vector against the already-authenticated root
+        // value before retaining it in this event-local cache.
+        if self.root == self.engine.accepted_frontier_root {
+            if let Some(document) = self.engine.checkpoint_document_at_current(document_id)? {
+                if canonical_peer_counters(&document.oplog_vv())? != dependencies.peer_counters() {
+                    return Err(EngineError::FrontierVectorMismatch(document_id));
+                }
+                if is_catalog {
+                    validate_catalog_document(self.engine.catalog_document_id, &document)?;
+                    self.catalog_shape_proven = true;
+                    self.exact_catalog_loads = self.exact_catalog_loads.saturating_add(1);
+                    self.exact_catalog_decodes = self.exact_catalog_decodes.saturating_add(1);
+                }
+                self.documents.insert(key, document);
+                self.document_keys.insert(document_id, key);
+                self.exact_document_loads = self.exact_document_loads.saturating_add(1);
+                return Ok(Some(key));
+            }
+        }
         let frontier = FrontierV2::new(vec![dependencies.clone()]).map_err(EngineError::from)?;
         let mut reconstructed = self.engine.reconstruct_projection_frontier(&frontier)?;
         let document = reconstructed
@@ -6812,7 +6836,9 @@ pub(crate) struct DeferredAbsenceObservation {
 // v5 replaced inline resident-document bytes with qualified immutable image
 // references. Exactly one schema has an implementation (D-1): a checkpoint
 // written by any other version is discarded and rebuilt from accepted history.
-const CLEAN_CHECKPOINT_STATE_SCHEMA_VERSION: u32 = 8;
+// v9 adds the bounded conflict seed and nonlinearity scan watermark. The
+// disposable format remains blank-slate: older private checkpoints rebuild.
+const CLEAN_CHECKPOINT_STATE_SCHEMA_VERSION: u32 = 9;
 const CHECKPOINT_SOFT_TAIL_BATCHES: u64 = 128;
 const CHECKPOINT_HARD_TAIL_BATCHES: u64 = 512;
 
@@ -6924,6 +6950,7 @@ pub(crate) struct CleanCheckpointCapture {
     pub(crate) required_objects: BTreeSet<ContentDigest>,
     pub(crate) identity_changes: Vec<super::checkpoint_generation::CheckpointIdentityChange>,
     pub(crate) capture_work: u64,
+    pub(crate) covered_block_count: u64,
     /// `None` is reserved for sequence-zero publication primitive tests. Every
     /// live engine capture supplies a complete document epoch.
     pub(crate) documents: Option<CleanCheckpointDocumentCapture>,
@@ -7048,6 +7075,10 @@ struct CleanCheckpointState {
     /// One terminal tip per participating writer incarnation.  This is P-sized
     /// admission state, not a retained row per accepted batch.
     causal_chain: BTreeMap<CausalPeerId, CausalChainTip>,
+    conflict_history_seed: super::conflict_history::ConflictHistorySeed,
+    nonlinear_watermark: u64,
+    linearity_scanned_sequence: u64,
+    live_block_count: u64,
     logseq_claim_root: LogseqClaimIndexRoot,
     portable_path_root: PortablePathIndexRoot,
     page_name_root: PageNameOwnershipRootV1,
@@ -7076,6 +7107,7 @@ pub(crate) struct CleanCheckpointStateBinding {
     pub(crate) accepted_sequence: u64,
     pub(crate) accepted_state_digest: ContentDigest,
     pub(crate) eligible_through: u64,
+    pub(crate) accepted_frontier_root: AcceptedFrontierRoot,
 }
 
 /// Decode only the canonical identity/frontier binding needed by the worker's
@@ -7108,7 +7140,39 @@ pub(crate) fn clean_checkpoint_state_binding(
         )
         .map_err(|error| EngineError::Archive(error.to_string()))?
         .eligible_through(),
+        accepted_frontier_root: state.accepted_frontier_root,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn clean_checkpoint_curve_dimensions(
+    bytes: &[u8],
+) -> Result<(u64, u64, usize, usize, u64, Vec<DocumentId>), EngineError> {
+    let (state, trailing): (CleanCheckpointState, &[u8]) = postcard::take_from_bytes(bytes)
+        .map_err(|error| EngineError::Archive(error.to_string()))?;
+    if !trailing.is_empty()
+        || state.schema_version != CLEAN_CHECKPOINT_STATE_SCHEMA_VERSION
+        || postcard::to_allocvec(&state).map_err(|error| EngineError::Archive(error.to_string()))?
+            != bytes
+    {
+        return Err(EngineError::Archive(
+            "clean checkpoint state is not current canonical data".into(),
+        ));
+    }
+    let eligible_through = super::checkpoint_floor_policy::AcceptanceAgePolicy::decode_current(
+        &state.acceptance_age_policy,
+        i64::MAX,
+    )
+    .map_err(|error| EngineError::Archive(error.to_string()))?
+    .eligible_through();
+    Ok((
+        state.accepted_frontier_root.document_count(),
+        state.live_block_count,
+        state.causal_peer_owners.len(),
+        state.current_action_hot_pin_batches.len(),
+        eligible_through,
+        state.accepted_frontier.keys().copied().collect(),
+    ))
 }
 
 pub(crate) fn clean_checkpoint_hot_pin_batches(
@@ -7169,6 +7233,8 @@ pub struct ShardedHotEngine {
     /// status/sequence/causal maps below.
     sealed_accepted_history: Option<Arc<super::checkpoint_generation::SealedAcceptedHistory>>,
     sealed_identity_history: Option<Arc<super::checkpoint_generation::SealedIdentityHistory>>,
+    clean_checkpoint_sqlite_anchor:
+        Option<Arc<super::checkpoint_generation::CleanCheckpointSqliteAnchor>>,
     clean_checkpoint_identity_installed_sequence: u64,
     /// Sweep roots are installed by the runtime owner. Until the receiver
     /// summary opens, restored action pins remain a conservative bridge.
@@ -7177,6 +7243,8 @@ pub struct ShardedHotEngine {
     restored_action_hot_pin_batches: RefCell<BTreeSet<BatchId>>,
     clean_checkpoint_capture_skip: Cell<Option<CleanCheckpointCaptureSkip>>,
     checkpoint_soft_pending: Cell<bool>,
+    #[cfg(test)]
+    automatic_clean_checkpoint_paused: bool,
     /// Device-local own-endpoint projection completion evidence. The archive
     /// chain is durable; this engine-owned value also owns the coalescing
     /// buffer from cold repair through actor shutdown.
@@ -7304,8 +7372,12 @@ pub struct ShardedHotEngine {
     /// Run-local, acceptance-sequence-stamped conflict candidates. Immutable
     /// accepted batches are authority; this is rebuilt after checkpoint open.
     conflict_history_index: RefCell<ConflictHistoryIndex>,
+    /// False after restoring the bounded generation seed. It becomes true only
+    /// if an explicit post-cut branch forces historical conflict derivation.
+    conflict_history_complete: Cell<bool>,
     conflict_resolution_history_loads: Cell<usize>,
     conflict_resolution_evaluation_active: Cell<bool>,
+    live_block_count: u64,
     /// Accepted ownership of every CRDT writer lane this engine has admitted.
     /// Bounded by writer incarnations, never by batches: one entry per
     /// (device, role) lane that has actually authored something.
@@ -7457,12 +7529,15 @@ impl ShardedHotEngine {
             checkpoint_documents: None,
             sealed_accepted_history: None,
             sealed_identity_history: None,
+            clean_checkpoint_sqlite_anchor: None,
             clean_checkpoint_identity_installed_sequence: 0,
             checkpoint_sweep_hot_pin_batches: RefCell::new(BTreeSet::new()),
             checkpoint_durable_action_hot_pin_batches: RefCell::new(BTreeSet::new()),
             restored_action_hot_pin_batches: RefCell::new(BTreeSet::new()),
             clean_checkpoint_capture_skip: Cell::new(None),
             checkpoint_soft_pending: Cell::new(false),
+            #[cfg(test)]
+            automatic_clean_checkpoint_paused: false,
             local_completion_index: None,
             receiver_absence_summary: RefCell::new(None),
             receiver_absence_summary_open_stats: RefCell::new(None),
@@ -7512,8 +7587,10 @@ impl ShardedHotEngine {
             retained_catalog_enabled: Cell::new(true),
             history_work: Cell::new(HistoryWorkStats::default()),
             conflict_history_index: RefCell::new(ConflictHistoryIndex::default()),
+            conflict_history_complete: Cell::new(true),
             conflict_resolution_history_loads: Cell::new(0),
             conflict_resolution_evaluation_active: Cell::new(false),
+            live_block_count: 0,
             accepted_frontier: BTreeMap::new(),
             accepted_tip_refcounts: BTreeMap::new(),
             ephemeral_causal_clocks: BTreeMap::new(),
@@ -7612,6 +7689,10 @@ impl ShardedHotEngine {
             .map(|document| (document.document_id(), document))
             .collect();
         self.accepted_frontier_root = accepted_frontier_root.clone();
+        self.live_block_count = candidate
+            .frontier_binding()
+            .map_err(|error| EngineError::Archive(error.to_string()))?
+            .block_count();
         self.current_path_catalog = CurrentPathCatalog {
             rows: current_path_rows.into(),
             available: true,
@@ -8104,6 +8185,10 @@ impl ShardedHotEngine {
     }
 
     fn schedule_clean_checkpoint(&mut self) {
+        #[cfg(test)]
+        if self.automatic_clean_checkpoint_paused {
+            return;
+        }
         let Some(publisher) = self.clean_checkpoint_publisher.as_ref() else {
             return;
         };
@@ -8118,6 +8203,10 @@ impl ShardedHotEngine {
     }
 
     pub(crate) fn schedule_clean_checkpoint_idle(&mut self) -> bool {
+        #[cfg(test)]
+        if self.automatic_clean_checkpoint_paused {
+            return false;
+        }
         if self.adopt_published_identity_generation().is_err() {
             self.clean_checkpoint_capture_skip
                 .set(Some(CleanCheckpointCaptureSkip::CaptureFailed));
@@ -8131,6 +8220,14 @@ impl ShardedHotEngine {
     /// ordinary accepted saves keep using the same scheduler below.
     pub(crate) fn schedule_clean_checkpoint_bootstrap(&mut self) {
         self.schedule_clean_checkpoint_now();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_automatic_clean_checkpoint_paused_for_test(&mut self, paused: bool) {
+        self.automatic_clean_checkpoint_paused = paused;
+        if !paused {
+            self.checkpoint_soft_pending.set(false);
+        }
     }
 
     /// The single eligibility predicate for a disposable clean-checkpoint
@@ -9709,6 +9806,18 @@ impl ShardedHotEngine {
             crdt_lane_owners: self.crdt_lane_owners.clone(),
             causal_peer_owners: self.causal_peer_owners.clone(),
             causal_chain: self.ephemeral_causal_chain.borrow().clone(),
+            conflict_history_seed: self
+                .conflict_history_index
+                .borrow()
+                .checkpoint_seed(self.next_acceptance_sequence)
+                .map_err(EngineError::Archive)?,
+            nonlinear_watermark: self
+                .nonlinear_watermark
+                .load(std::sync::atomic::Ordering::Relaxed),
+            linearity_scanned_sequence: self
+                .linearity_scanned_sequence
+                .load(std::sync::atomic::Ordering::Relaxed),
+            live_block_count: self.live_block_count,
             logseq_claim_root: self.logseq_claim_root,
             portable_path_root: self.portable_path_root,
             page_name_root: self.page_name_root.clone(),
@@ -9754,6 +9863,7 @@ impl ShardedHotEngine {
             state.crdt_lane_owners.len(),
             state.causal_peer_owners.len(),
             state.causal_chain.len(),
+            state.conflict_history_seed.batch_count(),
             state.visible_documents.len(),
             state.spare_documents.len(),
             state.visible_document_heads.len(),
@@ -9788,6 +9898,7 @@ impl ShardedHotEngine {
             required_objects,
             identity_changes,
             capture_work,
+            covered_block_count: self.live_block_count,
             documents: Some(CleanCheckpointDocumentCapture {
                 cutoff_state_digest: self.accepted_frontier_root.state_digest(),
                 catalog_document_id: self.catalog_document_id,
@@ -9805,6 +9916,7 @@ impl ShardedHotEngine {
         state_bytes: &[u8],
         accepted_history: Arc<super::checkpoint_generation::SealedAcceptedHistory>,
         checkpoint_documents: Arc<super::checkpoint_generation::CleanCheckpointDocuments>,
+        sqlite_anchor: Arc<super::checkpoint_generation::CleanCheckpointSqliteAnchor>,
     ) -> Result<(), EngineError> {
         if self.lazy_genesis.is_none()
             || self.archive_store.is_none()
@@ -9960,6 +10072,25 @@ impl ShardedHotEngine {
         self.accepted_frontier = state.accepted_frontier;
         self.accepted_tip_refcounts = accepted_tip_refcounts;
         *self.ephemeral_causal_chain.borrow_mut() = state.causal_chain;
+        *self.conflict_history_index.borrow_mut() = ConflictHistoryIndex::from_checkpoint_seed(
+            state.conflict_history_seed,
+            next_acceptance_sequence,
+        )
+        .map_err(EngineError::Archive)?;
+        self.conflict_history_complete.set(false);
+        self.nonlinear_watermark.store(
+            state.nonlinear_watermark,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.linearity_scanned_sequence.store(
+            state.linearity_scanned_sequence,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.linearity_scanned_count.store(
+            next_acceptance_sequence,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.live_block_count = state.live_block_count;
         self.ephemeral_causal_clocks.clear();
         self.clean_checkpoint_causal_dots.clear();
         self.clean_checkpoint_required_objects.clear();
@@ -9970,6 +10101,7 @@ impl ShardedHotEngine {
         self.checkpoint_documents = Some(checkpoint_documents);
         self.sealed_accepted_history = Some(Arc::clone(&accepted_history));
         self.sealed_identity_history = Some(identity_history);
+        self.clean_checkpoint_sqlite_anchor = Some(sqlite_anchor);
         self.ephemeral_accepted_batch_entries.clear();
         self.ephemeral_accepted_document_root = accepted_document_root;
         self.ephemeral_accepted_batch_root = RunLocalAuthenticatedMap::default();
@@ -12254,6 +12386,18 @@ impl ShardedHotEngine {
         Ok(self.next_acceptance_sequence)
     }
 
+    pub(crate) fn clean_checkpoint_sqlite_anchor(
+        &self,
+    ) -> Option<&Arc<super::checkpoint_generation::CleanCheckpointSqliteAnchor>> {
+        self.clean_checkpoint_sqlite_anchor.as_ref()
+    }
+
+    pub(crate) fn sealed_accepted_history(
+        &self,
+    ) -> Option<&Arc<super::checkpoint_generation::SealedAcceptedHistory>> {
+        self.sealed_accepted_history.as_ref()
+    }
+
     pub fn accepted_batch_id_at(&self, sequence: u64) -> Result<Option<BatchId>, EngineError> {
         Ok(self
             .accepted_batch_entry_at(sequence)?
@@ -12430,6 +12574,33 @@ impl ShardedHotEngine {
                 .find_map(|(document_id, dependency)| dependency.is_none().then_some(*document_id))
                 .expect("different dependency count identifies one missing document");
             return Err(EngineError::MissingDocument(missing));
+        }
+        // SQLite's anchored rebuild asks for terminal live documents at this
+        // exact current root. Those documents are already authenticated by
+        // the generation image map; replaying their covered ancestry here
+        // turns an O(G) seed into O(H) cold reads. Historical roots, or a
+        // current document absent from the generation, retain the explicit
+        // reconstruction fallback below.
+        if root == &self.accepted_frontier_root {
+            let mut documents = BTreeMap::new();
+            let mut complete = true;
+            for dependency in dependencies.iter().flatten() {
+                let Some(document) =
+                    self.checkpoint_document_at_current(dependency.document_id())?
+                else {
+                    complete = false;
+                    break;
+                };
+                if canonical_peer_counters(&document.oplog_vv())? != dependency.peer_counters() {
+                    return Err(EngineError::FrontierVectorMismatch(
+                        dependency.document_id(),
+                    ));
+                }
+                documents.insert(dependency.document_id(), (dependency.clone(), document));
+            }
+            if complete {
+                return Ok(documents);
+            }
         }
         let frontier = FrontierV2::new(dependencies.into_iter().flatten().collect())?;
         let documents = self.reconstruct_frontier(&frontier)?;
@@ -19426,6 +19597,9 @@ impl ShardedHotEngine {
     /// history before the first tick (I-14). The index is rebuilt lazily by
     /// the first evaluation or acceptance that needs it.
     pub(crate) fn accepted_nonlinear_batch_ids(&self) -> Result<Vec<BatchId>, EngineError> {
+        if self.sealed_accepted_history.is_some() {
+            return Ok(self.conflict_history_index.borrow().unresolved_batch_ids());
+        }
         let ids: Vec<BatchId> = self
             .status()
             .accepted_batches()?
@@ -19473,6 +19647,37 @@ impl ShardedHotEngine {
             );
         }
         *self.conflict_history_index.borrow_mut() = rebuilt;
+        self.conflict_history_complete.set(true);
+        Ok(())
+    }
+
+    /// A post-generation branch can race settled covered touches which the
+    /// bounded resident seed intentionally omitted. This is the explicit
+    /// historical-conflict path: enumerate exact accepted evidence through the
+    /// sealed resolver only after a genuinely non-linear batch arrives, never
+    /// during healthy open or linear admission.
+    pub(crate) fn rebuild_conflict_history_for_post_cut_branch(&self) -> Result<(), EngineError> {
+        let mut cursor = self.accepted_batch_cursor()?;
+        let mut entries = Vec::new();
+        while let Some((sequence, batch_id, _)) = cursor.next_batch()? {
+            entries.push((sequence, batch_id));
+        }
+        let mut rebuilt = ConflictHistoryIndex::default();
+        for (sequence, batch_id) in entries {
+            let batch = self.load_accepted_validated_batch(batch_id)?;
+            let effect = self.accepted_semantic_effect(&batch)?;
+            let containment = self.batch_causal_containment(
+                batch_id,
+                batch.manifest().causal_dot(),
+                batch.manifest().causal_dependency_heads(),
+            )?;
+            rebuilt.advance(
+                sequence,
+                self.conflict_history_batch(&batch, &effect, containment.clock().to_vec())?,
+            );
+        }
+        *self.conflict_history_index.borrow_mut() = rebuilt;
+        self.conflict_history_complete.set(true);
         Ok(())
     }
 
@@ -23005,13 +23210,39 @@ impl ShardedHotEngine {
                 clock,
             )?
         };
+        let conflict_batch_is_linear =
+            conflict_history_batch.is_causally_linear_at(status_evidence.acceptance_sequence());
         let checkpoint_identity_effect = effective_view
             .as_ref()
             .expect("accepted batch has an effective semantic view")
             .effect()
             .clone();
+        let mut next_live_block_count = self.live_block_count;
+        for delta in checkpoint_identity_effect.blocks() {
+            match (delta.before.is_some(), delta.after.is_some()) {
+                (false, true) => {
+                    next_live_block_count =
+                        next_live_block_count.checked_add(1).ok_or_else(|| {
+                            EngineError::Archive("live block count overflowed".into())
+                        })?;
+                }
+                (true, false) => {
+                    next_live_block_count =
+                        next_live_block_count.checked_sub(1).ok_or_else(|| {
+                            EngineError::Archive("live block count underflowed".into())
+                        })?;
+                }
+                _ => {}
+            }
+        }
         let checkpoint_identity_sequence = status_evidence.acceptance_sequence();
         let checkpoint_projection_paths = tip_transition.clean_projection_paths.clone();
+        if self.sealed_accepted_history.is_some()
+            && !self.conflict_history_complete.get()
+            && !conflict_batch_is_linear
+        {
+            self.rebuild_conflict_history_for_post_cut_branch()?;
+        }
         self.commit_identity_publication(identity);
         self.commit_crdt_lane_ownership(lane_bindings);
         self.commit_logseq_claim_updates(
@@ -23024,6 +23255,21 @@ impl ShardedHotEngine {
             status_evidence.acceptance_sequence(),
             conflict_history_batch,
         );
+        if !conflict_batch_is_linear {
+            self.nonlinear_watermark.fetch_max(
+                status_evidence.acceptance_sequence(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+        self.linearity_scanned_sequence.store(
+            status_evidence.acceptance_sequence(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.linearity_scanned_count.store(
+            status_evidence.acceptance_sequence(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.live_block_count = next_live_block_count;
         self.commit_current_path_catalog_transition(current_path_catalog_transition);
         for (document_id, document) in replacements {
             self.visible_documents
@@ -23936,6 +24182,20 @@ impl ShardedHotEngine {
     #[cfg(test)]
     pub(crate) fn drop_conflict_history_index_for_test(&self) {
         *self.conflict_history_index.borrow_mut() = ConflictHistoryIndex::default();
+        self.conflict_history_complete.set(false);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn restore_conflict_history_seed_for_test(&self) {
+        let sequence = self.next_acceptance_sequence;
+        let seed = self
+            .conflict_history_index
+            .borrow()
+            .checkpoint_seed(sequence)
+            .unwrap();
+        *self.conflict_history_index.borrow_mut() =
+            ConflictHistoryIndex::from_checkpoint_seed(seed, sequence).unwrap();
+        self.conflict_history_complete.set(false);
     }
 
     #[cfg(test)]
@@ -32146,6 +32406,13 @@ pub(crate) mod validation_tests {
             0,
             "a zero-tail recurring cut captured identity rows"
         );
+        let checkpoint_state: CleanCheckpointState =
+            postcard::from_bytes(&capture.state_bytes).unwrap();
+        assert!(
+            checkpoint_state.conflict_history_seed.batch_count()
+                <= usize::try_from(capture.covered_block_count).unwrap_or(usize::MAX) + 2,
+            "long-session checkpoint retained settled conflict touches beyond live blocks and current projection-create tips"
+        );
 
         let source = include_str!("hot_engine.rs");
         let state = &source[source.find("struct CleanCheckpointState {").unwrap()
@@ -36725,14 +36992,15 @@ pub(crate) mod validation_tests {
         // references moved it to 5. Device-local acceptance-age metadata moved
         // it to 6. Current-action hot retention moved it to 7. Sealed identity
         // roots removed the whole identity maps and current-path roster from
-        // this actor-captured section at 8, so none of the older shapes can
-        // decode as this.
+        // this actor-captured section at 8. Generation-owned conflict seed,
+        // non-linearity watermarks and the exact live block count moved it to
+        // 9, so none of the older shapes can decode as this.
         assert_eq!(
-            CLEAN_CHECKPOINT_STATE_SCHEMA_VERSION, 8,
+            CLEAN_CHECKPOINT_STATE_SCHEMA_VERSION, 9,
             "changing the checkpoint state representation changes its schema"
         );
         // The type carries NO version suffix, deliberately. It was named
-        // `CleanCheckpointState` while the constant above said 7 and then 8:
+        // `CleanCheckpointState` while the constant above said 7, 8, then 9:
         // a name that restates a number drifts from it, and the stale name is
         // what the next reader believes. D-1 gives Managed Storage exactly one
         // current format, so there is never a second state type to tell apart
@@ -36922,6 +37190,15 @@ pub(crate) mod validation_tests {
         assert!(
             bootstrap_constructor.contains("retain_accepted_document("),
             "activation/rebuild must seed the retained catalog instead of making the first ordinary derivative decode it again"
+        );
+        let bulk_documents = function(
+            "load_documents_at_authenticated_root_many",
+            "authenticate_accepted_frontier_root",
+        );
+        assert!(
+            bulk_documents.contains("root == &self.accepted_frontier_root")
+                && bulk_documents.contains("checkpoint_document_at_current("),
+            "terminal SQLite seeding must load exact-current generation images before historical reconstruction"
         );
         let local_predecessor = function(
             "managed_local_projection_predecessor",

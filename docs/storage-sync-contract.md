@@ -1485,6 +1485,32 @@ empty tail is not evidence of genesis. Open counters distinguish checkpoint
 and full-replay paths and report roster/name work, checkpoint capture work and
 payload bytes, the actual tail replayed, and durable lag.
 
+The marker-selected checkpoint is also the generation anchor for disposable
+SQLite. A fresh candidate installs C with zero `applied_batches`, zero
+`materialization_batches`, and an empty generation-relative document map, then
+replays only C+1 through terminal. Its canonical logical frontier still names
+the complete document/block/byte totals and sequence C+T; physical row and
+overlay counts name only T and documents changed after C. The sealed accepted
+reader supplies covered parent map and clock nodes during tail applies. Healthy
+integrity checks `resident accepted rows = terminal − C` and
+`frontier document rows = overlay count`.
+
+Generation selection orders the SQLite crash protocol. If SQLite commits a tail
+before a new generation is published, the old marker plus that tail is a valid
+pair and reopen may reuse it. If the generation marker becomes durable first,
+any resident rows newly covered by C identify an old cache; open preserves
+applicable evidence and rebuilds it from generation plus tail. Missing, behind,
+divergent, damaged, or differently anchored SQLite never vetoes graph open. A
+new candidate has no authority before publication, and no old query handle is
+served after the marker-selected engine/projection pair is installed.
+
+Checkpoint state also carries a bounded conflict seed: causal tips,
+non-linearity scan/watermark state and endpoints/ancestry for still-owed pairs.
+Settled conflict touches remain historical evidence and are not replayed during
+healthy open. Covered redelivery at the physical duplicate seam is an internal
+caller-bug assertion—production drains first prove exact equality with the
+event's prior frontier—not an external sync or storage-corruption refusal.
+
 Snapshot capture is coherent on the owning actor and is attempted after every
 accepted managed save. The actor captures canonical semantic metadata plus only
 the accepted rows and required-object additions after the publisher's durable
@@ -2752,6 +2778,17 @@ than locally authored semantic work. Projection-turn **anchors are keyed by endp
 `endpoint-{endpoint}-selector-{generation:020}.anchor-v2`), from store creation:
 one grammar, no dual format, because a pre-(c) private store never reaches
 journal selection — the receipt-store claim precheck refuses it first.
+
+A fully drained projection-turn suffix rotates after 64 frames (four under the
+real-file test profile). The successor segment is prepared at the drained
+checkpoint's `next_sequence`; its greater endpoint-scoped anchor is published
+last and is therefore the authority switch. Only then may the older
+segment/frontier tuple, its anchor, and checkpoint files already covered by the
+successor anchor be retired. A crash before the new anchor continues to select
+the old complete generation; a crash after it selects the new complete
+generation and retries cleanup. Open also performs this rotation once for a
+pre-rotation fully drained suffix, so an upgraded installation pays its old
+checkpoint-name horizon once rather than on every later open.
 
 **Projection-domain turns carry authorization and names, not bytes.** Only
 `ManagedLocal`-domain pages may carry precondition/target bytes, because the

@@ -338,6 +338,10 @@ impl LazyGenesisFrontierBindingV1 {
     pub(crate) const fn document_count(self) -> u64 {
         self.document_count
     }
+
+    pub(crate) const fn block_count(self) -> u64 {
+        self.block_count
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

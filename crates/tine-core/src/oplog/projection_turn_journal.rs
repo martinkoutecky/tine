@@ -47,7 +47,9 @@ use uuid::Uuid;
 use super::local_journal_drain::{
     classify_local_journal_open_error, decode_projection_turn_frame, LocalJournalOpenRefusal,
 };
-use super::object_store::{ensure_directory_nofollow, open_dir_nofollow, read_optional_regular};
+use super::object_store::{
+    ensure_directory_nofollow, open_dir_nofollow, read_optional_regular, sync_dir_required,
+};
 use super::sync_layout::MANAGED_LOCAL_JOURNAL_DIR;
 use super::{
     ProjectionEndpointId, ProjectionTurn, ProjectionTurnPayloadKind, SequenceDomain, TurnOrigin,
@@ -68,6 +70,11 @@ const CHECKSUM_BYTES: usize = 32;
 const CHECKSUM_OFFSET: usize = PROJECTION_TURN_ANCHOR_BYTES - CHECKSUM_BYTES;
 const CHECKPOINT_CAPACITY: usize = 256;
 const SEGMENT_NAME_CAPACITY: usize = 160;
+
+#[cfg(not(test))]
+const PROJECTION_TURN_COMPACTION_FRAME_THRESHOLD: u64 = 64;
+#[cfg(test)]
+const PROJECTION_TURN_COMPACTION_FRAME_THRESHOLD: u64 = 4;
 
 const SCHEMA_OFFSET: usize = 8;
 const PROTOCOL_OFFSET: usize = 12;
@@ -593,10 +600,149 @@ impl ProjectionTurnJournalState {
         let checkpoint = self.checkpoint.advanced_to(turn.sequence.saturating_add(1));
         persist_projection_turn_checkpoint(&self.directory, &checkpoint)?;
         self.checkpoint = checkpoint;
-        Ok(self
+        let completed = self
             .pending
             .pop_front()
-            .expect("checked projection turn front"))
+            .expect("checked projection turn front");
+        self.compact_if_needed()
+            .map_err(|error| error.to_string())?;
+        Ok(completed)
+    }
+
+    /// Replace a completely drained suffix with a new anchor whose embedded
+    /// checkpoint names the same next sequence. The new segment and its
+    /// marker-last anchor are durable before any predecessor evidence is
+    /// retired, so every crash prefix selects either the old complete chain or
+    /// the new complete chain. Checkpoint files covered by the new anchor are
+    /// then redundant rather than lifetime open inputs.
+    fn compact_if_needed(&mut self) -> Result<bool, ProjectionTurnJournalError> {
+        if self.cleanup_pending {
+            self.retry_history_cleanup()?;
+        }
+        if !self.pending.is_empty() {
+            return Ok(false);
+        }
+        if self.checkpoint.next_sequence() != self.journal.next_sequence() {
+            return Err(ProjectionTurnJournalError::Invalid(
+                "projection turn compaction checkpoint is not current".into(),
+            ));
+        }
+        let suffix_frames = self
+            .journal
+            .next_sequence()
+            .checked_sub(self.journal.selection().base_sequence())
+            .ok_or_else(|| {
+                ProjectionTurnJournalError::Invalid(
+                    "projection turn journal sequence is before its base".into(),
+                )
+            })?;
+        if suffix_frames < PROJECTION_TURN_COMPACTION_FRAME_THRESHOLD {
+            return Ok(false);
+        }
+        let successor_generation = self.selector_generation.checked_add(1).ok_or_else(|| {
+            ProjectionTurnJournalError::Invalid(
+                "projection turn selector generation overflow".into(),
+            )
+        })?;
+        let (successor, _) = prepare_projection_turn_journal(
+            &self.directory,
+            self.checkpoint.clone(),
+            successor_generation,
+        )?;
+        let predecessor = std::mem::replace(&mut self.journal, successor);
+        self.selector_generation = successor_generation;
+        drop(predecessor);
+        self.cleanup_pending = true;
+        self.retry_history_cleanup()?;
+        Ok(true)
+    }
+
+    fn retry_history_cleanup(&mut self) -> Result<(), ProjectionTurnJournalError> {
+        if !self.cleanup_pending {
+            return Ok(());
+        }
+        self.cleanup_history(self.selector_generation)?;
+        self.cleanup_pending = false;
+        Ok(())
+    }
+
+    fn cleanup_history(&self, retained_generation: u64) -> Result<(), ProjectionTurnJournalError> {
+        let invalid = ProjectionTurnJournalError::Invalid;
+        let names = directory_names(&self.directory).map_err(invalid)?;
+        for (generation, anchor_name) in names.iter().filter_map(|name| {
+            parse_projection_turn_anchor_name(name, self.checkpoint.endpoint_id())
+                .map(|generation| (generation, name.clone()))
+        }) {
+            if generation >= retained_generation {
+                continue;
+            }
+            let bytes = read_optional_regular(
+                &self.directory,
+                &anchor_name,
+                PROJECTION_TURN_ANCHOR_BYTES as u64,
+                None,
+            )
+            .map_err(|error| {
+                invalid(format!(
+                    "cannot read retired projection turn anchor {anchor_name}: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                invalid(format!(
+                    "retired projection turn anchor {anchor_name} disappeared"
+                ))
+            })?;
+            let anchor = ProjectionTurnGenerationAnchor::decode(
+                &bytes,
+                generation,
+                self.checkpoint.endpoint_id(),
+                self.checkpoint.device_id(),
+                self.checkpoint.workspace_id(),
+                self.checkpoint.lineage_digest(),
+            )
+            .map_err(|error| {
+                invalid(format!(
+                    "retired projection turn anchor {anchor_name} is invalid: {error}"
+                ))
+            })?;
+            // Remove the tuple first. If cleanup is interrupted, the old
+            // anchor remains a discoverable retry root while the greater new
+            // anchor stays authoritative.
+            for tuple_name in [
+                anchor.selection().segment_name(),
+                anchor.selection().frontier_name(),
+            ] {
+                if let Err(error) = self.directory.remove_file(tuple_name) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        return Err(invalid(format!(
+                            "cannot retire projection turn tuple {tuple_name}: {error}"
+                        )));
+                    }
+                }
+            }
+            if let Err(error) = self.directory.remove_file(&anchor_name) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(invalid(format!(
+                        "cannot retire projection turn anchor {anchor_name}: {error}"
+                    )));
+                }
+            }
+        }
+        for name in names {
+            if projection_turn_checkpoint_sequence(&name)
+                .is_some_and(|sequence| sequence <= self.checkpoint.next_sequence())
+            {
+                if let Err(error) = self.directory.remove_file(&name) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        return Err(invalid(format!(
+                            "cannot retire projection turn checkpoint {name}: {error}"
+                        )));
+                    }
+                }
+            }
+        }
+        sync_dir_required(&self.directory)
+            .map_err(|error| invalid(format!("cannot sync projection turn cleanup: {error}")))
     }
 }
 
@@ -768,14 +914,20 @@ pub(crate) fn open_projection_turn_journal(
         })
         .collect::<Result<VecDeque<_>, _>>()?;
 
-    Ok(ProjectionTurnJournalState {
+    let mut state = ProjectionTurnJournalState {
         directory,
         selector_generation,
         journal,
         checkpoint,
         pending,
         cleanup_pending: !anchors.is_empty(),
-    })
+    };
+    // Upgrade/self-heal: an installation created before bounded generations
+    // may already have a fully drained lifetime suffix. Its first new-code open
+    // authenticates that suffix once, then rotates it so every later open is
+    // bounded by the live generation.
+    state.compact_if_needed()?;
+    Ok(state)
 }
 
 fn prepare_projection_turn_journal(
@@ -1355,6 +1507,115 @@ mod tests {
         let state = open(root.path()).unwrap();
         assert_eq!(state.checkpoint.next_sequence(), 1);
         assert_eq!(state.undrained_turns().unwrap(), vec![second]);
+    }
+
+    #[test]
+    fn drained_turn_journal_rotates_and_retires_covered_checkpoint_names() {
+        let root = TestDir::new("drained-compaction");
+        let mut state = open(root.path()).unwrap();
+        for sequence in 0..5 {
+            let expected = turn(sequence, SequenceDomain::ProjectionTurn);
+            state
+                .append(expected.origin.clone(), expected.pages.clone())
+                .unwrap();
+            assert_eq!(state.checkpoint_front().unwrap(), expected);
+        }
+        assert_eq!(state.selector_generation, 2);
+        assert_eq!(state.journal.selection().base_sequence(), 4);
+        assert_eq!(state.journal.next_sequence(), 5);
+        assert_eq!(state.checkpoint.next_sequence(), 5);
+        assert!(state.pending.is_empty());
+        drop(state);
+
+        let names = fs::read_dir(journal_directory(root.path()))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            names.len(),
+            4,
+            "the live anchor, segment, frontier, and one post-rotation checkpoint are sufficient"
+        );
+        let reopened = open(root.path()).unwrap();
+        assert_eq!(reopened.selector_generation, 2);
+        assert_eq!(reopened.journal.selection().base_sequence(), 4);
+        assert_eq!(reopened.journal.next_sequence(), 5);
+        assert_eq!(reopened.checkpoint.next_sequence(), 5);
+        assert!(reopened.pending.is_empty());
+    }
+
+    #[test]
+    fn turn_journal_rotation_crash_prefixes_select_a_complete_generation() {
+        let seed_drained = |root: &Path| {
+            let mut state = open(root).unwrap();
+            for sequence in 0..3 {
+                let expected = turn(sequence, SequenceDomain::ProjectionTurn);
+                state
+                    .append(expected.origin.clone(), expected.pages.clone())
+                    .unwrap();
+                assert_eq!(state.checkpoint_front().unwrap(), expected);
+            }
+            state
+        };
+
+        // Before the marker, a prepared successor tuple is not authority.
+        let before_marker = TestDir::new("rotation-before-marker");
+        let state = seed_drained(before_marker.path());
+        let uncommitted = ProjectionTurnGenerationAnchor::new(
+            2,
+            state.checkpoint.clone(),
+            Uuid::from_u128(0x7017_1001),
+        )
+        .unwrap();
+        LocalJournalSegmentV2::<ProjectionTurnPayloadKind>::prepare_single_writer(
+            &state.directory,
+            uncommitted.selection(),
+        )
+        .unwrap();
+        drop(state);
+        let reopened = open(before_marker.path()).unwrap();
+        assert_eq!(reopened.selector_generation, 1);
+        assert_eq!(reopened.checkpoint.next_sequence(), 3);
+        assert!(reopened.pending.is_empty());
+
+        // Once the new anchor is durable, it is authoritative even while the
+        // predecessor tuple and covered checkpoints are still present.
+        let after_marker = TestDir::new("rotation-after-marker");
+        let state = seed_drained(after_marker.path());
+        let (successor, _) =
+            prepare_projection_turn_journal(&state.directory, state.checkpoint.clone(), 2).unwrap();
+        drop(successor);
+        drop(state);
+        let reopened = open(after_marker.path()).unwrap();
+        assert_eq!(reopened.selector_generation, 2);
+        assert_eq!(reopened.journal.selection().base_sequence(), 3);
+        assert_eq!(reopened.checkpoint.next_sequence(), 3);
+        assert!(reopened.pending.is_empty());
+        assert_eq!(
+            fs::read_dir(journal_directory(after_marker.path()))
+                .unwrap()
+                .count(),
+            3
+        );
+
+        // Cleanup is resumable when the obsolete tuple disappeared but its
+        // anchor still names the retry root.
+        let during_cleanup = TestDir::new("rotation-during-cleanup");
+        let state = seed_drained(during_cleanup.path());
+        let predecessor_segment = state.journal.selection().segment_name().to_owned();
+        let predecessor_frontier = state.journal.selection().frontier_name().to_owned();
+        let (successor, _) =
+            prepare_projection_turn_journal(&state.directory, state.checkpoint.clone(), 2).unwrap();
+        drop(successor);
+        drop(state);
+        let directory = journal_directory(during_cleanup.path());
+        fs::remove_file(directory.join(predecessor_segment)).unwrap();
+        fs::remove_file(directory.join(predecessor_frontier)).unwrap();
+        let reopened = open(during_cleanup.path()).unwrap();
+        assert_eq!(reopened.selector_generation, 2);
+        assert_eq!(reopened.checkpoint.next_sequence(), 3);
+        assert!(reopened.pending.is_empty());
+        assert_eq!(fs::read_dir(directory).unwrap().count(), 3);
     }
 
     /// §3.6: the two counters never meet. The turn journal's own sequence is

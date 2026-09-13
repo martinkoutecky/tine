@@ -6,6 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
+
 use super::{
     BatchCausalDot, BatchId, BatchOrigin, BlockDelta, BlockId, BlockState, CausalPeerId,
     ContentDigest, ManagedPath, PageId,
@@ -23,7 +25,7 @@ pub(crate) fn causal_clock_contains_dot(
         .is_some_and(|index| clock[index].1 >= dot.counter())
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub(crate) struct ProjectionCreateKey {
     page_id: PageId,
     path: ManagedPath,
@@ -40,7 +42,7 @@ impl ProjectionCreateKey {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct ConflictHistoryBatch {
     batch_id: BatchId,
     causal_dot: BatchCausalDot,
@@ -93,9 +95,18 @@ impl ConflictHistoryBatch {
             )
         )
     }
+
+    pub(crate) fn is_causally_linear_at(&self, acceptance_sequence: u64) -> bool {
+        let causal_count = self
+            .causal_clock
+            .iter()
+            .map(|(_, counter)| *counter)
+            .sum::<u64>();
+        causal_count == acceptance_sequence
+    }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 struct ConflictBlockHistory {
     touches: BTreeSet<BatchId>,
     causal_tips: BTreeSet<BatchId>,
@@ -106,19 +117,34 @@ struct ConflictBlockHistory {
     settlement_ancestors: BTreeMap<BatchId, BTreeSet<BatchId>>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 struct ProjectionCreateHistory {
     touches: BTreeSet<BatchId>,
     causal_tips: BTreeSet<BatchId>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 pub(crate) struct ConflictHistoryIndex {
     acceptance_sequence: u64,
     batches: BTreeMap<BatchId, ConflictHistoryBatch>,
     batch_sequences: BTreeMap<BatchId, u64>,
     blocks: BTreeMap<BlockId, ConflictBlockHistory>,
     projection_creates: BTreeMap<ProjectionCreateKey, ProjectionCreateHistory>,
+}
+
+/// Generation-owned seed for the disposable conflict index. It retains only
+/// maximal causal tips and the endpoints/ancestry of pairs whose deterministic
+/// resolution is still owed. Settled touches are immutable history and are
+/// intentionally absent; an explicit historical derivation may load them.
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct ConflictHistorySeed {
+    index: ConflictHistoryIndex,
+}
+
+impl ConflictHistorySeed {
+    pub(crate) fn batch_count(&self) -> usize {
+        self.index.batches.len()
+    }
 }
 
 impl ConflictHistoryIndex {
@@ -185,8 +211,9 @@ impl ConflictHistoryIndex {
                 .unwrap_or_default();
             // The common linear case compares only causal tips. If any tip is
             // concurrent, every concurrent touch is a distinct unresolved
-            // pair under the existing semantics, so enumerating touches is
-            // proportional to the new C rather than hidden lifetime work.
+            // pair under the existing semantics. A checkpoint-restored engine
+            // explicitly reconstructs those settled touches before admitting
+            // such a post-cut branch; healthy linear admission stays seeded.
             let concurrent = if has_concurrent_tip {
                 self.blocks
                     .get(&block_id)
@@ -283,6 +310,157 @@ impl ConflictHistoryIndex {
             }
         }
         self.acceptance_sequence = acceptance_sequence;
+    }
+
+    pub(crate) fn checkpoint_seed(
+        &self,
+        acceptance_sequence: u64,
+    ) -> Result<ConflictHistorySeed, String> {
+        if self.acceptance_sequence != acceptance_sequence {
+            return Err("conflict index is not current at checkpoint capture".into());
+        }
+        let mut retained = BTreeSet::new();
+        let mut blocks = self.blocks.clone();
+        for history in blocks.values_mut() {
+            let unresolved = history
+                .unresolved_pairs
+                .iter()
+                .flat_map(|(left, right)| [*left, *right])
+                .collect::<BTreeSet<_>>();
+            history
+                .touches
+                .retain(|batch| history.causal_tips.contains(batch) || unresolved.contains(batch));
+            history
+                .settlement_ancestors
+                .retain(|batch, _| unresolved.contains(batch));
+        }
+        blocks.retain(|block_id, history| {
+            !history.unresolved_pairs.is_empty()
+                || history.causal_tips.iter().any(|tip| {
+                    self.batches
+                        .get(tip)
+                        .and_then(|batch| batch.block_post_states.get(block_id))
+                        .is_some_and(Option::is_some)
+                })
+        });
+        for history in blocks.values() {
+            retained.extend(history.causal_tips.iter().copied());
+            retained.extend(
+                history
+                    .unresolved_pairs
+                    .iter()
+                    .flat_map(|(left, right)| [*left, *right]),
+            );
+            retained.extend(
+                history
+                    .settlement_ancestors
+                    .values()
+                    .flat_map(|ancestors| ancestors.iter().copied()),
+            );
+        }
+        let mut projection_creates = self.projection_creates.clone();
+        for history in projection_creates.values_mut() {
+            history.touches = history.causal_tips.clone();
+            retained.extend(history.causal_tips.iter().copied());
+        }
+        let batches = retained
+            .iter()
+            .map(|batch| {
+                self.batches
+                    .get(batch)
+                    .cloned()
+                    .map(|record| (*batch, record))
+                    .ok_or_else(|| "conflict seed references a missing batch".to_owned())
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let batch_sequences = retained
+            .iter()
+            .map(|batch| {
+                self.batch_sequences
+                    .get(batch)
+                    .copied()
+                    .map(|sequence| (*batch, sequence))
+                    .ok_or_else(|| "conflict seed references a missing batch sequence".to_owned())
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        Ok(ConflictHistorySeed {
+            index: Self {
+                acceptance_sequence,
+                batches,
+                batch_sequences,
+                blocks,
+                projection_creates,
+            },
+        })
+    }
+
+    pub(crate) fn from_checkpoint_seed(
+        seed: ConflictHistorySeed,
+        acceptance_sequence: u64,
+    ) -> Result<Self, String> {
+        if seed.index.acceptance_sequence != acceptance_sequence
+            || seed.index.batches.iter().any(|(batch_id, batch)| {
+                batch.batch_id != *batch_id
+                    || batch
+                        .causal_clock
+                        .windows(2)
+                        .any(|pair| pair[0].0 >= pair[1].0)
+            })
+            || seed.index.batch_sequences.len() != seed.index.batches.len()
+            || seed
+                .index
+                .batches
+                .keys()
+                .any(|batch| !seed.index.batch_sequences.contains_key(batch))
+            || seed
+                .index
+                .batch_sequences
+                .values()
+                .any(|sequence| *sequence == 0 || *sequence > acceptance_sequence)
+            || seed
+                .index
+                .blocks
+                .values()
+                .flat_map(|history| {
+                    history
+                        .causal_tips
+                        .iter()
+                        .chain(history.touches.iter())
+                        .chain(
+                            history
+                                .unresolved_pairs
+                                .iter()
+                                .flat_map(|(left, right)| [left, right]),
+                        )
+                        .chain(history.settlement_ancestors.keys())
+                        .chain(
+                            history
+                                .settlement_ancestors
+                                .values()
+                                .flat_map(|ancestors| ancestors.iter()),
+                        )
+                })
+                .any(|batch| !seed.index.batches.contains_key(batch))
+            || seed
+                .index
+                .projection_creates
+                .values()
+                .flat_map(|history| history.causal_tips.iter().chain(history.touches.iter()))
+                .any(|batch| !seed.index.batches.contains_key(batch))
+        {
+            return Err("conflict generation seed is stale or incomplete".into());
+        }
+        Ok(seed.index)
+    }
+
+    pub(crate) fn unresolved_batch_ids(&self) -> Vec<BatchId> {
+        self.blocks
+            .values()
+            .flat_map(|history| history.unresolved_pairs.iter())
+            .flat_map(|(left, right)| [*left, *right])
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     pub(crate) fn candidates(&self, batch_id: BatchId) -> Vec<BatchId> {

@@ -1764,14 +1764,13 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     assert!(fs::read_to_string(repository_root().join("crates/tine-core/Cargo.toml"))
         .unwrap()
         .contains("tine-storage = { git = \"https://github.com/martinkoutecky/tine-storage\", tag = \"v0.22.0\""));
-    // Re-pinned 2026-09-12 (rebaselining v2, P4c): v0.21.0 adds the anchored
-    // apply path -- applying a tail batch over covered history that has left
-    // SQLite -- which is the capability 4c was blocked on. The bump is not a
-    // pure pin change: `FrontierError` gained `CoveredBatchRedelivery`, and the
-    // exhaustive `From<FrontierError> for ProjectionError` in `oplog/sqlite.rs`
-    // had to gain an arm, so the tree did not compile until it did. That is the
-    // failure mode a reference grep cannot see, and the reason this literal pin
-    // is worth its maintenance: it makes a dependency bump a deliberate act.
+    // Re-pinned 2026-09-12 (rebaselining v2, P4c): v0.22.0 adds construction
+    // and candidate/live apply for a generation-anchored SQLite projection --
+    // the complete capability 4c's first two attempts were blocked on. The
+    // bump is not a pure pin change: `FrontierError` gained
+    // `CoveredBatchRedelivery`, and the exhaustive conversion in
+    // `oplog/sqlite.rs` had to gain an arm, so the tree did not compile until
+    // it did. That failure mode is why this literal pin remains deliberate.
     // The write-crossing table above is unchanged -- no new write boundary.
     // Re-pinned 2026-09-02 (wave-3 packet B4): B4 added read-only
     // `open_read_only`, `property_facet_rows_after`, and `PhysicalEntityId`

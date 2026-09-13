@@ -4903,6 +4903,20 @@ impl ActivationFixture {
         copy_provider_tree(source, &fixture.graph_root);
         fixture
     }
+
+    fn copied_graph_at(root: PathBuf, seed: u128, source: &Path) -> Self {
+        let source_type = fs::symlink_metadata(source)
+            .expect("graph-copy source metadata must be readable")
+            .file_type();
+        assert!(
+            source_type.is_dir(),
+            "graph-copy source must be a real directory, not a symlink or other entry"
+        );
+        let fixture = Self::nested_unicode_at(root, seed);
+        fs::remove_dir_all(&fixture.graph_root).unwrap();
+        copy_provider_tree(source, &fixture.graph_root);
+        fixture
+    }
 }
 
 #[test]
@@ -11312,6 +11326,700 @@ fn second_clean_cold_open_restores_checkpoint_instead_of_full_replay() {
     ));
 }
 
+fn p4c_curve_process_rss_kib() -> usize {
+    fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("VmRSS:")
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|value| value.parse().ok())
+        })
+        .expect("/proc/self/status reports VmRSS")
+}
+
+#[test]
+#[ignore = "child process for the P4c release-only fixed-live-history curve"]
+fn generation_fixed_live_history_curve_child() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let root = PathBuf::from(
+        std::env::var("TINE_P4C_CURVE_CHILD_ROOT").expect("curve child root is supplied"),
+    );
+    let seed = std::env::var("TINE_P4C_CURVE_CHILD_SEED")
+        .expect("curve child seed is supplied")
+        .parse::<u128>()
+        .unwrap();
+    let fixture = ActivationFixture::reopen_at(root, seed);
+    let request = reopen_request(&fixture.request);
+    // The parent owns this shared measurement tree. ActivationFixture's Drop
+    // removes its root, so a child must deliberately surrender that ownership
+    // before exiting or sample zero destroys the input for sample one.
+    std::mem::forget(fixture);
+    let peak = Arc::new(AtomicUsize::new(p4c_curve_process_rss_kib()));
+    let stop = Arc::new(AtomicBool::new(false));
+    let sampler_peak = Arc::clone(&peak);
+    let sampler_stop = Arc::clone(&stop);
+    let sampler = std::thread::spawn(move || {
+        while !sampler_stop.load(Ordering::Relaxed) {
+            sampler_peak.fetch_max(p4c_curve_process_rss_kib(), Ordering::Relaxed);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        sampler_peak.fetch_max(p4c_curve_process_rss_kib(), Ordering::Relaxed);
+    });
+    let mut counters = None;
+    let mut stages = Vec::new();
+    let started = std::time::Instant::now();
+    let opened = SyncRuntimeHandle::open_with_progress(request, |event| match event {
+        SyncRuntimeOpenProgress::CleanOpenCounters { counters: observed } => {
+            counters = Some(observed);
+        }
+        SyncRuntimeOpenProgress::RecoveryStage { stage, elapsed } => {
+            stages.push((stage, elapsed));
+        }
+        _ => {}
+    });
+    let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    assert_eq!(opened.status, SyncRuntimeOpenStatus::Active);
+    let handle = opened.handle.expect("curve child opens the checkpoint");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let settled_rss_kib = p4c_curve_process_rss_kib();
+    peak.fetch_max(settled_rss_kib, Ordering::Relaxed);
+    stop.store(true, Ordering::Relaxed);
+    sampler.join().unwrap();
+    let peak_rss_kib = peak.load(Ordering::Relaxed);
+    let counters = counters.expect("curve child reports complete open counters");
+    let stage_elapsed_ns = |target| {
+        stages
+            .iter()
+            .find(|(stage, _)| *stage == target)
+            .map(|(_, elapsed)| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX))
+            .expect("curve child reports every clean-open stage")
+    };
+    eprintln!("P4C_CURVE_STAGES {stages:?}");
+    eprintln!("P4C_CURVE_COUNTERS {counters:#?}");
+    assert_eq!(counters.checkpoint_opens, 1);
+    assert_eq!(counters.full_replay_opens, 0);
+    assert_eq!(counters.committed_tail_replayed, 0);
+    assert_eq!(counters.covered_sequence_enumerations, 0);
+    assert_eq!(counters.archive_cold_manifest_reads, 0);
+    assert_eq!(counters.archive_cold_object_reads, 0);
+    assert_eq!(counters.receipt_evidence_names, 0);
+    assert_eq!(counters.receipt_full_catalog_passes, 0);
+    assert_eq!(counters.sweep_record_names, 0);
+    println!(
+        "P4C_CURVE_SAMPLE elapsed_ns={elapsed_ns} settled_rss_kib={settled_rss_kib} \
+         peak_rss_kib={peak_rss_kib} accepted_batches={} checkpoint_manifest_names={} \
+         checkpoint_required_object_names={} archive_directory_enumerations={} \
+         sweep_chain_objects_read={} receipt_content_reads={} \
+         local_completion_names={} local_completion_content_reads={} \
+         local_completion_entries={} retired_own_intent_probes={} \
+         archive_manifest_point_reads={} archive_object_point_reads={} \
+         archive_manifest_hot_decodes={} archive_object_hot_decodes={} \
+         object_store_end_ns={} checkpoint_open_end_ns={} tail_discovery_end_ns={} \
+         projection_open_end_ns={} indexes_sweeps_end_ns={} completion_flush_end_ns={} \
+         projection_exact_auth_ns={} projection_structural_validation_ns={} \
+         projection_rebuild_ns={}",
+        counters.accepted_batches,
+        counters.checkpoint_manifest_names,
+        counters.checkpoint_required_object_names,
+        counters.archive_directory_enumerations,
+        counters.sweep_chain_objects_read,
+        counters.receipt_content_reads,
+        counters.local_completion_names,
+        counters.local_completion_content_reads,
+        counters.local_completion_entries,
+        counters.retired_own_intent_probes,
+        counters.archive_manifest_reads,
+        counters.archive_object_reads,
+        counters.archive_inspected_manifests,
+        counters.archive_inspected_objects,
+        stage_elapsed_ns(SyncRuntimeCleanOpenStage::ObjectStoreRepairAndValidation),
+        stage_elapsed_ns(SyncRuntimeCleanOpenStage::CleanCheckpointOpen),
+        stage_elapsed_ns(SyncRuntimeCleanOpenStage::CleanCheckpointTailDiscovery),
+        stage_elapsed_ns(SyncRuntimeCleanOpenStage::ProjectionOpen),
+        stage_elapsed_ns(SyncRuntimeCleanOpenStage::EngineIndexesAndSweepsOpen),
+        stage_elapsed_ns(SyncRuntimeCleanOpenStage::CompletionFlush),
+        u64::try_from(counters.projection_exact_frontier_authentication.as_nanos())
+            .unwrap_or(u64::MAX),
+        u64::try_from(counters.projection_structural_validation.as_nanos()).unwrap_or(u64::MAX),
+        u64::try_from(counters.projection_rebuild.as_nanos()).unwrap_or(u64::MAX),
+    );
+    // Every sample must reopen the identical durable candidate. A Safe
+    // shutdown intentionally advances retained discovery state, which would
+    // make later samples measure a different on-disk input; process exit after
+    // dropping the actor is the fresh-process protocol this curve qualifies.
+    drop(handle);
+}
+
+#[derive(Clone, Copy, Debug)]
+struct P4cCurveSample {
+    elapsed_ns: u64,
+    settled_rss_kib: u64,
+    peak_rss_kib: u64,
+    archive_manifest_point_reads: u64,
+    archive_object_point_reads: u64,
+    archive_manifest_hot_decodes: u64,
+    archive_object_hot_decodes: u64,
+    local_completion_names: u64,
+    local_completion_content_reads: u64,
+    local_completion_entries: u64,
+    retired_own_intent_probes: u64,
+    object_store_end_ns: u64,
+    checkpoint_open_end_ns: u64,
+    tail_discovery_end_ns: u64,
+    projection_open_end_ns: u64,
+    indexes_sweeps_end_ns: u64,
+    completion_flush_end_ns: u64,
+    projection_exact_auth_ns: u64,
+    projection_structural_validation_ns: u64,
+    projection_rebuild_ns: u64,
+}
+
+fn p4c_curve_samples(root: &Path, seed: u128, expected_batches: usize) -> Vec<P4cCurveSample> {
+    let mut samples = Vec::new();
+    for trial in 0..11 {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "sync_runtime::tests::generation_fixed_live_history_curve_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("TINE_P4C_CURVE_CHILD_ROOT", root)
+            .env("TINE_P4C_CURVE_CHILD_SEED", seed.to_string())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "curve child {trial} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let line = stdout
+            .lines()
+            .find_map(|line| line.find("P4C_CURVE_SAMPLE ").map(|offset| &line[offset..]))
+            .unwrap_or_else(|| panic!("curve child {trial} omitted its sample: {stdout}"));
+        let values = line
+            .split_whitespace()
+            .skip(1)
+            .map(|field| field.split_once('=').unwrap())
+            .collect::<BTreeMap<_, _>>();
+        let value = |name: &str| values[name].parse::<u64>().unwrap();
+        assert_eq!(value("accepted_batches"), expected_batches as u64);
+        if trial != 0 {
+            samples.push(P4cCurveSample {
+                elapsed_ns: value("elapsed_ns"),
+                settled_rss_kib: value("settled_rss_kib"),
+                peak_rss_kib: value("peak_rss_kib"),
+                archive_manifest_point_reads: value("archive_manifest_point_reads"),
+                archive_object_point_reads: value("archive_object_point_reads"),
+                archive_manifest_hot_decodes: value("archive_manifest_hot_decodes"),
+                archive_object_hot_decodes: value("archive_object_hot_decodes"),
+                local_completion_names: value("local_completion_names"),
+                local_completion_content_reads: value("local_completion_content_reads"),
+                local_completion_entries: value("local_completion_entries"),
+                retired_own_intent_probes: value("retired_own_intent_probes"),
+                object_store_end_ns: value("object_store_end_ns"),
+                checkpoint_open_end_ns: value("checkpoint_open_end_ns"),
+                tail_discovery_end_ns: value("tail_discovery_end_ns"),
+                projection_open_end_ns: value("projection_open_end_ns"),
+                indexes_sweeps_end_ns: value("indexes_sweeps_end_ns"),
+                completion_flush_end_ns: value("completion_flush_end_ns"),
+                projection_exact_auth_ns: value("projection_exact_auth_ns"),
+                projection_structural_validation_ns: value("projection_structural_validation_ns"),
+                projection_rebuild_ns: value("projection_rebuild_ns"),
+            });
+        }
+    }
+    assert_eq!(samples.len(), 10);
+    samples
+}
+
+fn p4c_curve_percentiles(mut values: Vec<u64>) -> (u64, u64) {
+    values.sort_unstable();
+    (values[values.len() / 2], values[values.len() - 1])
+}
+
+fn p4c_curve_submit_batch(
+    handle: &SyncRuntimeHandle,
+    sequence: usize,
+    page: PageId,
+    home: DocumentId,
+    main_block: BlockId,
+) {
+    let transient = |cycle: usize| BlockId::from_uuid(Uuid::from_u128(0xa178_6000 + cycle as u128));
+    let is_registered_recent_window = [1_000_usize, 10_000, 50_000]
+        .into_iter()
+        .any(|target| sequence > target - 32 && sequence <= target);
+    let operations = if sequence == 1 {
+        vec![
+            SemanticOperation::CreatePage {
+                page_id: page,
+                home_document_id: home,
+                name: LogicalPageName::parse("P4c Curve 000000000000").unwrap(),
+                path: ManagedPath::parse("pages/p4c-curve-000000000000.md").unwrap(),
+                kind: ManagedTextKind::Page,
+            },
+            SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: main_block,
+                    home_document_id: home,
+                },
+                page_id: page,
+                parent: None,
+                order: "curve-main".into(),
+                content: "p4c fixed-live main block".into(),
+            },
+        ]
+    } else if !is_registered_recent_window {
+        // H is real accepted edit history, but the expensive graph-wide
+        // operations belong to the fixed recent-workload window rather than
+        // scaling their frequency with lifetime. Every registered point
+        // therefore ends in the same 32-batch edit/rename/create/delete mix.
+        vec![SemanticOperation::EditBlockContent {
+            block: BlockLocation {
+                block_id: main_block,
+                home_document_id: home,
+            },
+            content: format!("p4c curve edit {sequence:012}"),
+        }]
+    } else {
+        match sequence % 4 {
+            1 => vec![SemanticOperation::EditBlockContent {
+                block: BlockLocation {
+                    block_id: main_block,
+                    home_document_id: home,
+                },
+                content: format!("p4c curve edit {sequence:012}"),
+            }],
+            2 => vec![SemanticOperation::RenamePagesAndRewriteReferrers {
+                page_changes: vec![PageRename {
+                    page_id: page,
+                    new_name: LogicalPageName::parse(&format!("P4c Curve {sequence:012}")).unwrap(),
+                    new_path: ManagedPath::parse(&format!("pages/p4c-curve-{sequence:012}.md"))
+                        .unwrap(),
+                }],
+                block_rewrites: Vec::new(),
+                page_preamble_rewrites: Vec::new(),
+            }],
+            3 => vec![SemanticOperation::CreateBlock {
+                block: BlockLocation {
+                    block_id: transient(sequence / 4),
+                    home_document_id: home,
+                },
+                page_id: page,
+                parent: None,
+                order: format!("curve-transient-{:012}", sequence / 4),
+                content: format!("p4c transient payload {:012}", sequence / 4),
+            }],
+            0 => vec![SemanticOperation::DeleteSubtree {
+                root_block_id: transient((sequence - 1) / 4),
+                page_id: page,
+            }],
+            _ => unreachable!(),
+        }
+    };
+    submit_durable(handle, operations);
+}
+
+#[test]
+#[ignore = "release-only: copies the sanctioned corpus and authors 50k durable batches"]
+fn generation_fixed_live_history_curve() {
+    use crate::oplog::checkpoint_generation::{open_checkpoint, CleanCheckpointOpen};
+
+    const SEED: u128 = 0xa178_5c00;
+    const RETAINED_HISTORY_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+    const RECENT_TAIL: usize = 32;
+    let source = PathBuf::from(
+        std::env::var("TINE_P4C_CURVE_SOURCE")
+            .expect("set TINE_P4C_CURVE_SOURCE to the sanctioned anonymized corpus copy source"),
+    );
+    let root = PathBuf::from(
+        std::env::var("TINE_P4C_CURVE_ROOT")
+            .expect("set TINE_P4C_CURVE_ROOT to an unused directory inside this worktree"),
+    );
+    let project = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    assert!(
+        root.starts_with(&project),
+        "the controlled curve may write only inside this project tree"
+    );
+    assert!(
+        !root.exists(),
+        "curve root must be unused: {}",
+        root.display()
+    );
+    let fixture = ActivationFixture::copied_graph_at(root.clone(), SEED, &source);
+    let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+    assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+    let mut handle = activated.handle.expect("curve corpus activates");
+    drive_initial_feed_with_turn_budget(&handle, 4096);
+    // Start every measured interval from an ordinary restored generation.
+    // Otherwise the 1k point alone still carries bootstrap-era action pins,
+    // while later points start from a restored bounded pin set and the curve
+    // compares different live dimensions.
+    drain_managed_local(&handle);
+    handle.force_clean_checkpoint_for_test().unwrap();
+    drop(handle);
+    handle = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+    // Construct H with real archived/accepted batches but without publishing
+    // dozens of intermediate graph images. Those generations are not curve
+    // points and previously produced hundreds of thousands of disposable
+    // artifacts. Each registered point below resumes the ordinary scheduler
+    // and waits for one complete, real generation before any reopen sample.
+    handle
+        .set_automatic_clean_checkpoint_paused_for_test(true)
+        .unwrap();
+
+    let page = PageId::from_uuid(Uuid::from_u128(SEED + 0x100));
+    let home = DocumentId::from_uuid(Uuid::from_u128(SEED + 0x101));
+    let main_block = BlockId::from_uuid(Uuid::from_u128(SEED + 0x102));
+    let mut completed = 0_usize;
+    let mut epoch_utc_ms = 1_700_000_000_000_i64;
+    let mut epoch_monotonic_ms = 1_000_000_u64;
+    let mut observations = Vec::new();
+    let targets = if std::env::var_os("TINE_P4C_CURVE_1K_ONLY").is_some() {
+        vec![1_000_usize]
+    } else {
+        vec![1_000_usize, 10_000, 50_000]
+    };
+    for target in targets {
+        handle
+            .set_checkpoint_floor_clock_for_test(epoch_utc_ms, epoch_monotonic_ms)
+            .unwrap();
+        while completed < target - RECENT_TAIL {
+            completed += 1;
+            p4c_curve_submit_batch(&handle, completed, page, home, main_block);
+            if completed % 10_000 == 0 {
+                drain_managed_local(&handle);
+                handle
+                    .set_automatic_clean_checkpoint_paused_for_test(false)
+                    .unwrap();
+                handle.force_clean_checkpoint_for_test().unwrap();
+                drop(handle);
+                handle = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+                handle
+                    .set_automatic_clean_checkpoint_paused_for_test(true)
+                    .unwrap();
+            }
+        }
+        epoch_utc_ms += RETAINED_HISTORY_MS + 24 * 60 * 60 * 1_000;
+        epoch_monotonic_ms += (RETAINED_HISTORY_MS + 24 * 60 * 60 * 1_000) as u64;
+        handle
+            .set_checkpoint_floor_clock_for_test(epoch_utc_ms, epoch_monotonic_ms)
+            .unwrap();
+        while completed < target {
+            completed += 1;
+            p4c_curve_submit_batch(&handle, completed, page, home, main_block);
+        }
+        drain_managed_local(&handle);
+        handle
+            .set_automatic_clean_checkpoint_paused_for_test(false)
+            .unwrap();
+        handle.force_clean_checkpoint_for_test().unwrap();
+        let checkpoint_store = ObjectStore::open_structural(
+            &clean_operation_archive_directory(&fixture.request.archive_root),
+            fixture.request.identities.workspace_id,
+        )
+        .unwrap();
+        let loaded = match open_checkpoint(&checkpoint_store).unwrap() {
+            CleanCheckpointOpen::Loaded(loaded) => loaded,
+            CleanCheckpointOpen::Absent => panic!("curve point {target} has no checkpoint"),
+            CleanCheckpointOpen::Invalid(error) => {
+                panic!("curve point {target} has an invalid checkpoint: {error}")
+            }
+        };
+        assert_eq!(loaded.accepted_sequence, target as u64);
+        assert!(loaded.tail.is_empty());
+        let (documents, blocks, writers, obligations, eligible, image_bytes, residual_bytes) =
+            loaded.fixed_live_curve_metrics_for_test().unwrap();
+        assert_eq!(eligible, (target - RECENT_TAIL) as u64);
+        drop(loaded);
+        drop(checkpoint_store);
+        drop(handle);
+
+        let samples = p4c_curve_samples(&root, SEED, target);
+        assert!(samples.iter().all(|sample| {
+            sample.archive_manifest_point_reads == samples[0].archive_manifest_point_reads
+                && sample.archive_object_point_reads == samples[0].archive_object_point_reads
+                && sample.archive_manifest_hot_decodes == samples[0].archive_manifest_hot_decodes
+                && sample.archive_object_hot_decodes == samples[0].archive_object_hot_decodes
+                && sample.local_completion_names == samples[0].local_completion_names
+                && sample.local_completion_content_reads
+                    == samples[0].local_completion_content_reads
+                && sample.local_completion_entries == samples[0].local_completion_entries
+                && sample.retired_own_intent_probes == samples[0].retired_own_intent_probes
+        }));
+        let archive_manifest_point_reads = samples[0].archive_manifest_point_reads;
+        let archive_object_point_reads = samples[0].archive_object_point_reads;
+        let archive_manifest_hot_decodes = samples[0].archive_manifest_hot_decodes;
+        let archive_object_hot_decodes = samples[0].archive_object_hot_decodes;
+        let hot_decode_bound = u64::try_from(writers + obligations).unwrap();
+        assert!(archive_manifest_hot_decodes <= hot_decode_bound);
+        assert!(archive_object_hot_decodes <= hot_decode_bound);
+        let completion_entry_bound = u64::max(256, documents.saturating_mul(2));
+        assert!(samples[0].local_completion_names <= 771);
+        assert!(samples[0].local_completion_content_reads <= 257);
+        assert!(samples[0].local_completion_entries <= completion_entry_bound);
+        assert_eq!(
+            samples[0].retired_own_intent_probes,
+            samples[0].local_completion_entries
+        );
+        let (median_ns, p95_ns) =
+            p4c_curve_percentiles(samples.iter().map(|sample| sample.elapsed_ns).collect());
+        let (median_settled_kib, p95_settled_kib) = p4c_curve_percentiles(
+            samples
+                .iter()
+                .map(|sample| sample.settled_rss_kib)
+                .collect(),
+        );
+        let (median_peak_kib, p95_peak_kib) =
+            p4c_curve_percentiles(samples.iter().map(|sample| sample.peak_rss_kib).collect());
+        let median_stage = |read: fn(&P4cCurveSample) -> u64| {
+            p4c_curve_percentiles(samples.iter().map(read).collect()).0
+        };
+        let object_store_end_ns = median_stage(|sample| sample.object_store_end_ns);
+        let checkpoint_open_end_ns = median_stage(|sample| sample.checkpoint_open_end_ns);
+        let tail_discovery_end_ns = median_stage(|sample| sample.tail_discovery_end_ns);
+        let projection_open_end_ns = median_stage(|sample| sample.projection_open_end_ns);
+        let indexes_sweeps_end_ns = median_stage(|sample| sample.indexes_sweeps_end_ns);
+        let completion_flush_end_ns = median_stage(|sample| sample.completion_flush_end_ns);
+        let projection_exact_auth_ns = median_stage(|sample| sample.projection_exact_auth_ns);
+        let projection_structural_validation_ns =
+            median_stage(|sample| sample.projection_structural_validation_ns);
+        let projection_rebuild_ns = median_stage(|sample| sample.projection_rebuild_ns);
+        eprintln!(
+            "generation_fixed_live_history_curve H={target} G_documents={documents} \
+             G_blocks={blocks} T=0 P={writers} O={obligations} F_lag={RECENT_TAIL} \
+             image_bytes={image_bytes} residual_tombstone_bytes={residual_bytes} \
+             archive_manifest_point_reads={archive_manifest_point_reads} \
+             archive_object_point_reads={archive_object_point_reads} \
+             archive_manifest_hot_decodes={archive_manifest_hot_decodes} \
+             archive_object_hot_decodes={archive_object_hot_decodes} \
+             local_completion_names={} local_completion_content_reads={} \
+             local_completion_entries={} retired_own_intent_probes={} \
+             reopen_median_ns={median_ns} reopen_p95_ns={p95_ns} \
+             settled_rss_median_kib={median_settled_kib} \
+             settled_rss_p95_kib={p95_settled_kib} peak_rss_median_kib={median_peak_kib} \
+             peak_rss_p95_kib={p95_peak_kib} object_store_end_ns={object_store_end_ns} \
+             checkpoint_open_end_ns={checkpoint_open_end_ns} \
+             tail_discovery_end_ns={tail_discovery_end_ns} \
+             projection_open_end_ns={projection_open_end_ns} \
+             indexes_sweeps_end_ns={indexes_sweeps_end_ns} \
+             completion_flush_end_ns={completion_flush_end_ns} \
+             projection_exact_auth_ns={projection_exact_auth_ns} \
+             projection_structural_validation_ns={projection_structural_validation_ns} \
+             projection_rebuild_ns={projection_rebuild_ns} samples=10",
+            samples[0].local_completion_names,
+            samples[0].local_completion_content_reads,
+            samples[0].local_completion_entries,
+            samples[0].retired_own_intent_probes,
+        );
+        observations.push((
+            target,
+            documents,
+            blocks,
+            writers,
+            obligations,
+            archive_manifest_point_reads,
+            archive_object_point_reads,
+            archive_manifest_hot_decodes,
+            archive_object_hot_decodes,
+            median_ns,
+            p95_ns,
+            median_settled_kib,
+            p95_settled_kib,
+            median_peak_kib,
+            p95_peak_kib,
+        ));
+        handle = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+        handle
+            .set_automatic_clean_checkpoint_paused_for_test(true)
+            .unwrap();
+    }
+    handle
+        .set_automatic_clean_checkpoint_paused_for_test(false)
+        .unwrap();
+    drop(handle);
+    if observations.len() == 1 {
+        return;
+    }
+    let base = observations[0];
+    for point in &observations[1..] {
+        assert_eq!(
+            (point.1, point.2, point.3, point.5, point.6, point.7, point.8,),
+            (base.1, base.2, base.3, base.5, base.6, base.7, base.8,)
+        );
+        assert!(
+            point.4 <= base.4,
+            "current obligations must not grow with H: H={} O={} baseline_O={}",
+            point.0,
+            point.4,
+            base.4
+        );
+        for (label, measured, baseline) in [
+            ("median reopen", point.9, base.9),
+            ("p95 reopen", point.10, base.10),
+            ("median settled RSS", point.11, base.11),
+            ("p95 settled RSS", point.12, base.12),
+            ("median peak RSS", point.13, base.13),
+            ("p95 peak RSS", point.14, base.14),
+        ] {
+            assert!(
+                measured.saturating_mul(10) <= baseline.saturating_mul(11),
+                "{label} at H={} exceeds 1.1x H=1000: measured={measured} baseline={baseline}",
+                point.0
+            );
+        }
+    }
+}
+
+/// P4c: the generation is SQLite's accepted-history anchor. Covered accepted
+/// rows must not survive in the disposable projection, while an uncovered
+/// post-generation tail remains represented one row per accepted event.
+#[test]
+fn generation_sqlite_anchor_empty_and_hot_tail() {
+    let fixture = ActivationFixture::nested_unicode("generation-sqlite-anchor", 0xa178_5800);
+    let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+    assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+    let first = activated.handle.expect("anchor fixture activates");
+    drive_initial_feed(&first);
+    for text in ["covered sqlite row one", "covered sqlite row two"] {
+        let (page, revision) = load_application_exact(&first, "Root.md");
+        let _ = save_application_block_text(&first, page, revision, text);
+        drain_managed_local(&first);
+    }
+    first.force_clean_checkpoint_for_test().unwrap();
+    assert!(matches!(
+        first.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+    drop(first);
+
+    let covered = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+    let physical = tine_storage::sqlite::PhysicalSqliteDatabase::open_read_only(
+        &fixture.request.database_path,
+    )
+    .unwrap();
+    let (covered_rows, _) = physical.diagnostic_row_counts().unwrap();
+    assert_eq!(
+        covered_rows, 0,
+        "an empty generation tail must retain zero covered applied_batches rows"
+    );
+    drop(physical);
+    covered
+        .diagnose_sqlite_integrity_for_test()
+        .expect("anchored integrity accepts an empty generation tail");
+
+    let checkpoint_store = clean_operation_archive_directory(&fixture.request.archive_root);
+    crate::oplog::checkpoint_generation::fail_checkpoint_writes_for_test(&checkpoint_store, true);
+    let (page, revision) = load_application_exact(&covered, "Root.md");
+    let _ = save_application_block_text(&covered, page, revision, "one uncovered sqlite row");
+    drain_managed_local(&covered);
+    drop(covered);
+    crate::oplog::checkpoint_generation::fail_checkpoint_writes_for_test(&checkpoint_store, false);
+
+    let tail = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+    let physical = tine_storage::sqlite::PhysicalSqliteDatabase::open_read_only(
+        &fixture.request.database_path,
+    )
+    .unwrap();
+    let (tail_rows, _) = physical.diagnostic_row_counts().unwrap();
+    assert_eq!(
+        tail_rows, 1,
+        "SQLite must retain exactly the post-generation accepted tail"
+    );
+    drop(physical);
+    tail.diagnose_sqlite_integrity_for_test()
+        .expect("anchored integrity authenticates the generation plus hot tail");
+    let (page, _) = load_application_exact(&tail, "Root.md");
+    assert_eq!(page.blocks[0].raw, "one uncovered sqlite row");
+    assert!(matches!(
+        tail.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
+/// P4c crash protocol across the generation store and disposable SQLite:
+/// old-generation + committed SQLite tail is reusable, while publication of a
+/// newer generation makes the same resident rows covered and the next open
+/// rebuilds them away. The generation store is authoritative in both cuts.
+#[test]
+fn generation_cutover_crash_matrix() {
+    let fixture = ActivationFixture::nested_unicode("generation-cutover-crash", 0xa178_5900);
+    let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+    let first = activated.handle.expect("crash fixture activates");
+    drive_initial_feed(&first);
+    first.force_clean_checkpoint_for_test().unwrap();
+    drop(first);
+
+    let checkpoint_store = clean_operation_archive_directory(&fixture.request.archive_root);
+    crate::oplog::checkpoint_generation::fail_checkpoint_writes_for_test(&checkpoint_store, true);
+    let before_generation_publish =
+        active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+    let (page, revision) = load_application_exact(&before_generation_publish, "Root.md");
+    let _ = save_application_block_text(
+        &before_generation_publish,
+        page,
+        revision,
+        "sqlite committed before generation publication",
+    );
+    drain_managed_local(&before_generation_publish);
+    drop(before_generation_publish);
+
+    let old_generation = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+    let physical = tine_storage::sqlite::PhysicalSqliteDatabase::open_read_only(
+        &fixture.request.database_path,
+    )
+    .unwrap();
+    assert_eq!(
+        physical.diagnostic_row_counts().unwrap().0,
+        1,
+        "old generation plus its committed SQLite tail must reopen without losing the tail"
+    );
+    drop(physical);
+
+    crate::oplog::checkpoint_generation::fail_checkpoint_writes_for_test(&checkpoint_store, false);
+    old_generation.force_clean_checkpoint_for_test().unwrap();
+    let physical = tine_storage::sqlite::PhysicalSqliteDatabase::open_read_only(
+        &fixture.request.database_path,
+    )
+    .unwrap();
+    assert_eq!(
+        physical.diagnostic_row_counts().unwrap().0,
+        1,
+        "generation publication does not mutate the separately committed SQLite file"
+    );
+    drop(physical);
+    drop(old_generation);
+
+    let new_generation = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+    let physical = tine_storage::sqlite::PhysicalSqliteDatabase::open_read_only(
+        &fixture.request.database_path,
+    )
+    .unwrap();
+    assert_eq!(
+        physical.diagnostic_row_counts().unwrap().0,
+        0,
+        "new generation authority must rebuild away SQLite rows it now covers"
+    );
+    drop(physical);
+    let (page, _) = load_application_exact(&new_generation, "Root.md");
+    assert_eq!(
+        page.blocks[0].raw,
+        "sqlite committed before generation publication"
+    );
+    assert!(matches!(
+        new_generation.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
 #[test]
 fn checkpoint_open_matches_sequence_zero_replay_over_generated_crash_histories() {
     for (case, mutation_count) in [1_usize, 2, 4].into_iter().enumerate() {
@@ -11888,16 +12596,34 @@ fn checkpoint_roots_resolve_a_retired_hot_object_from_cold_history() {
     let (page, revision) = load_application_exact(&handle, "Root.md");
     let _ = save_application_block_text(&handle, page, revision, "object roster authority");
     drain_managed_local(&handle);
+    handle.force_clean_checkpoint_for_test().unwrap();
     drop(handle);
 
-    let objects = clean_operation_archive_directory(&fixture.request.archive_root).join("objects");
-    let object = fs::read_dir(&objects)
+    let operations = clean_operation_archive_directory(&fixture.request.archive_root);
+    let objects = operations.join("objects");
+    let store =
+        crate::oplog::ObjectStore::open(&operations, fixture.request.identities.workspace_id)
+            .unwrap();
+    let loaded =
+        match crate::oplog::checkpoint_generation::open_checkpoint_with_cold_history(&store)
+            .unwrap()
+        {
+            crate::oplog::checkpoint_generation::CleanCheckpointOpen::Loaded(loaded) => loaded,
+            _ => panic!("forced checkpoint was not available"),
+        };
+    let object = store
+        .committed_manifest_names_with_cold_history()
         .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.is_file() && !path.file_name().unwrap().to_string_lossy().starts_with('.')
+        .into_iter()
+        .filter_map(|batch_id| store.resolve_logical_manifest(batch_id).unwrap())
+        .flat_map(|manifest| manifest.required_objects().to_vec())
+        .find_map(|descriptor| {
+            let digest = descriptor.content_digest();
+            let path = objects.join(format!("{digest}.object"));
+            (path.is_file() && loaded.accepted_history.contains_object(digest).unwrap())
+                .then_some(path)
         })
-        .expect("accepted archive has an object");
+        .expect("accepted archive has a hot object explicitly covered by cold history");
     fs::remove_file(object).unwrap();
 
     let reopened = SyncRuntimeHandle::open(reopen_request(&fixture.request));

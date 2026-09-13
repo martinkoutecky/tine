@@ -355,10 +355,33 @@ impl LocalCompletionIndex {
         let delta_bytes = encode_object(&delta)?;
         let delta_name = object_name(delta_generation, LocalCompletionObjectKind::Delta);
 
-        let threshold = usize::max(256, pages_at_compaction.saturating_mul(2)) as u64;
+        // I-14: bound both dimensions independently. Counting only immutable
+        // deltas lets one coalesced delta retain arbitrarily many lifetime
+        // completions, while scaling the delta threshold with page count lets
+        // the name chain grow by G deltas each containing O(G) entries. The
+        // next open reconstructs both, so either pressure is sufficient to
+        // compact; neither is a proxy for the other.
+        let delta_threshold = 256_u64;
+        // A completion entry embeds its exact post-frontier, so the projecting
+        // turn cap is not a memory bound: retaining 2 * cap entries can retain
+        // 2 * cap copies of a G-document frontier.  Compaction pruning keeps at
+        // most the evidence required by current page/path state; trigger from
+        // that live dimension itself, with one as the empty-graph floor.
+        let entry_threshold = usize::max(1, pages_at_compaction.saturating_mul(2));
         #[cfg(test)]
-        let threshold = self.compaction_threshold_override.unwrap_or(threshold);
-        let compact = self.deltas_since_compaction.saturating_add(1) >= threshold;
+        let (delta_threshold, entry_threshold) = self
+            .compaction_threshold_override
+            .map_or((delta_threshold, entry_threshold), |threshold| {
+                (threshold, usize::try_from(threshold).unwrap_or(usize::MAX))
+            });
+        let prospective_entry_count = self.entries.len().saturating_add(
+            delta_entries
+                .iter()
+                .filter(|entry| !self.entries.contains_key(&entry.intent_id))
+                .count(),
+        );
+        let compact = self.deltas_since_compaction.saturating_add(1) >= delta_threshold
+            || prospective_entry_count > entry_threshold;
         let mut artifacts = vec![(
             delta_name.as_str(),
             delta_bytes.as_slice(),
@@ -1242,6 +1265,28 @@ mod tests {
         assert!(recreate_curve.iter().all(|count| *count == 5));
         eprintln!(
             "local_completion_growth rename={rename_curve:?} delete_recreate={recreate_curve:?}"
+        );
+    }
+
+    #[test]
+    fn one_large_delta_compacts_at_the_live_graph_entry_bound() {
+        let (_root, _store, mut index) = fixture("large-delta-entry-bound");
+        let page = 0xc2_1700;
+        let mut newest = None;
+        for ordinal in 0..3_u64 {
+            let completion = intent(page, &format!("large-delta-{ordinal}.md"), ordinal);
+            index.stage_completed(&completion).unwrap();
+            newest = Some(completion);
+        }
+        let newest = newest.unwrap();
+
+        index.flush(1, &live(&[&newest])).unwrap();
+
+        assert_eq!(index.flush_stats().compactions, 1);
+        assert_eq!(
+            index.entry_count_for_test(),
+            1,
+            "one coalesced delta must not bypass the live-graph compaction bound"
         );
     }
 }

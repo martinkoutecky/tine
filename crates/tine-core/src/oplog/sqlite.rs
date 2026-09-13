@@ -53,7 +53,7 @@ use cap_std::{ambient_authority, fs::Dir as CapDir};
 use fs2::FileExt as _;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tine_storage::sealed_accepted_index::AuthenticatedMapKey;
+use tine_storage::sealed_accepted_index::{AuthenticatedMapKey, SealedAcceptedIndexRead};
 use tine_storage::sqlite::{
     self as storage_frontier, PhysicalFileCheckpoint, PhysicalSqliteDatabase, SqliteFileSet,
     SqliteFileSetError,
@@ -985,11 +985,102 @@ fn lower_physical_frontier_root(
     })
 }
 
+#[derive(Clone)]
+struct CheckpointOverlayState {
+    anchor: Arc<super::checkpoint_generation::CleanCheckpointSqliteAnchor>,
+    sealed: Arc<super::checkpoint_generation::SealedAcceptedHistory>,
+    documents: BTreeMap<DocumentId, DocumentDependencies>,
+    document_root: super::hot_engine::RunLocalAuthenticatedMap,
+}
+
+impl CheckpointOverlayState {
+    fn new(
+        anchor: Arc<super::checkpoint_generation::CleanCheckpointSqliteAnchor>,
+        sealed: Arc<super::checkpoint_generation::SealedAcceptedHistory>,
+    ) -> Self {
+        Self {
+            anchor,
+            sealed,
+            documents: BTreeMap::new(),
+            document_root: super::hot_engine::RunLocalAuthenticatedMap::default(),
+        }
+    }
+
+    fn advance(&self, event: &AcceptedBatchEvent) -> Result<Self, ProjectionError> {
+        let mut next = self.clone();
+        for document in event.affected_documents() {
+            let bytes = encode_frontier_document(document)?;
+            next.document_root.upsert(
+                document.document_id().authenticated_map_key(),
+                ContentDigest::of(&bytes),
+            );
+            next.documents
+                .insert(document.document_id(), document.clone());
+        }
+        Ok(next)
+    }
+
+    fn lower_root(
+        &self,
+        logical: &AcceptedFrontierRoot,
+    ) -> Result<storage_frontier::PhysicalFrontierRoot, ProjectionError> {
+        let mut physical = lower_physical_frontier_root(logical)?;
+        physical.document_map_root_key = self.document_root.root_key();
+        physical.document_map_root_digest = self.document_root.root_digest();
+        Ok(physical)
+    }
+
+    fn checkpoint_root(
+        &self,
+        logical: &AcceptedFrontierRoot,
+    ) -> Result<storage_frontier::PhysicalCheckpointFrontierRoot, ProjectionError> {
+        let mut root = self.anchor.root.clone();
+        root.canonical_bytes = canonical_frontier_root_bytes(logical)?;
+        root.acceptance_sequence = logical.acceptance_sequence();
+        root.document_count = logical.document_count();
+        root.document_overlay_count = u64::try_from(self.documents.len()).map_err(|_| {
+            ProjectionError::InvalidFrontier("checkpoint document overlay exceeds u64".into())
+        })?;
+        root.retained_bytes_total = logical.retained_bytes_total();
+        root.document_map_root_key = self.document_root.root_key();
+        root.document_map_root_digest = self.document_root.root_digest();
+        root.batch_map_root_key = logical.batch_map_root_key();
+        root.batch_map_root_digest = logical.batch_map_root_digest();
+        root.batch_map_count = logical.acceptance_sequence();
+        // The sealed anchor owns the covered status/sequence roots. Their
+        // composite hot tails are maintained transactionally by tine-storage;
+        // the checkpoint batch point reader below does not inspect either
+        // tree, but it still validates the terminal root's count shape before
+        // descending the batch map. Advance those counts with the logical
+        // frontier so a legitimate post-C apply remains diagnosable on the
+        // next open. Leaving the anchor counts frozen at C made every nonempty
+        // tail fail that shape check before authentication even began.
+        root.status_map_count = logical.acceptance_sequence();
+        root.sequence_count = logical.acceptance_sequence();
+        root.state_digest = logical.state_digest();
+        Ok(root)
+    }
+
+    fn covered_count(&self) -> u64 {
+        self.anchor.anchor.generation.covered_count
+    }
+}
+
 fn lower_physical_accepted_batch(
     event: &AcceptedBatchEvent,
 ) -> Result<storage_frontier::PhysicalAcceptedBatch, ProjectionError> {
-    let prior_frontier_root = lower_physical_frontier_root(&event.prior_frontier_root)?;
-    let post_frontier_root = lower_physical_frontier_root(&event.post_frontier_root)?;
+    lower_physical_accepted_batch_with_roots(
+        event,
+        lower_physical_frontier_root(&event.prior_frontier_root)?,
+        lower_physical_frontier_root(&event.post_frontier_root)?,
+    )
+}
+
+fn lower_physical_accepted_batch_with_roots(
+    event: &AcceptedBatchEvent,
+    prior_frontier_root: storage_frontier::PhysicalFrontierRoot,
+    post_frontier_root: storage_frontier::PhysicalFrontierRoot,
+) -> Result<storage_frontier::PhysicalAcceptedBatch, ProjectionError> {
     let affected_documents_bytes = canonical_affected_documents_bytes(&event.affected_documents)?;
     let causal_dependency_heads_bytes = encode_batch_ids(&event.causal_dependency_heads)?;
     // The persisted point-index key is the exact full writer-incarnation
@@ -1257,6 +1348,22 @@ impl<'a> RebuildSource<'a> {
             }
             return Ok(None);
         }
+        if let Some(anchor) = self.engine.clean_checkpoint_sqlite_anchor() {
+            let exact_bytes = canonical_frontier_root_bytes(&self.exact_frontier_root)?;
+            if anchor.anchor.generation.covered_count == self.accepted_batch_count
+                && anchor.root.acceptance_sequence == self.accepted_batch_count
+                && anchor.root.canonical_bytes == exact_bytes
+                && anchor.anchor.checkpoint_frontier_root == exact_bytes
+            {
+                // The marker-selected generation already authenticated these
+                // exact frontier bytes together with its sealed accepted
+                // roots and terminal evidence. Reconstructing the covered
+                // terminal event here asks conflict/effective-view code to
+                // recover its historical prior document, turning a healthy
+                // T=0 SQLite open back into H-shaped work.
+                return Ok(None);
+            }
+        }
         let event = self.accepted_event_at(self.accepted_batch_count)?;
         authenticate_event_for_engine(self.engine, &event)?;
         if event.post_frontier_root() != &self.exact_frontier_root {
@@ -1276,6 +1383,30 @@ impl<'a> RebuildSource<'a> {
                 .map_err(|error| ProjectionError::Rebuild(error.to_string()))?,
         })
     }
+}
+
+fn checkpoint_overlay_at(
+    source: &RebuildSource<'_>,
+    through: u64,
+) -> Result<Option<CheckpointOverlayState>, ProjectionError> {
+    let Some(anchor) = source.engine.clean_checkpoint_sqlite_anchor() else {
+        return Ok(None);
+    };
+    let sealed = source.engine.sealed_accepted_history().ok_or_else(|| {
+        ProjectionError::Corrupt("checkpoint SQLite source lacks sealed accepted history".into())
+    })?;
+    let mut overlay = CheckpointOverlayState::new(Arc::clone(anchor), Arc::clone(sealed));
+    let floor = overlay.covered_count();
+    if through < floor {
+        return Err(ProjectionError::Corrupt(format!(
+            "SQLite frontier sequence {through} precedes checkpoint floor {floor}"
+        )));
+    }
+    for sequence in floor.saturating_add(1)..=through {
+        let event = source.accepted_event_at(sequence)?;
+        overlay = overlay.advance(&event)?;
+    }
+    Ok(Some(overlay))
 }
 
 fn authenticate_event_for_engine(
@@ -2459,6 +2590,7 @@ fn record_projection_rebuild(
 pub struct ProjectionOpenBreakdown {
     pub recovery: &'static str,
     pub reason: String,
+    pub exact_frontier_authentication: std::time::Duration,
     pub sidecar_shape: std::time::Duration,
     pub checkpoint_authentication: std::time::Duration,
     pub read_only_open: std::time::Duration,
@@ -2611,13 +2743,16 @@ pub(crate) fn record_projection_open_test_observation(
 ) {
 }
 
-#[cfg(test)]
 fn reset_projection_open_breakdown() {
     PROJECTION_OPEN_BREAKDOWN.with(|slot| *slot.borrow_mut() = ProjectionOpenBreakdown::default());
 }
 
 fn update_projection_open_breakdown(update: impl FnOnce(&mut ProjectionOpenBreakdown)) {
     PROJECTION_OPEN_BREAKDOWN.with(|slot| update(&mut slot.borrow_mut()));
+}
+
+pub(crate) fn projection_open_breakdown() -> ProjectionOpenBreakdown {
+    PROJECTION_OPEN_BREAKDOWN.with(|slot| slot.borrow().clone())
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -3483,6 +3618,10 @@ pub struct SqliteFrontier {
     /// under (§5.8 M21). It is the config the database's own stamp records, so
     /// a per-event apply can never mix atoms from two configs.
     parse_config: ParseConfig,
+    /// Present only after a clean-generation cutover. The logical frontier is
+    /// still the complete graph root, while SQLite's authenticated document
+    /// map contains only documents changed after the checkpoint floor.
+    checkpoint_overlay: Option<CheckpointOverlayState>,
     // Shared inference state belongs to this disposable database incarnation.
     // No owner or metadata maintenance is needed before a property read.
     query_registry: std::sync::OnceLock<crate::query::registry_cache::SharedRegistryCache>,
@@ -3774,6 +3913,7 @@ impl SqliteFrontier {
                     required_frontier_digest: expected_digest,
                     checkpoint_each_apply: true,
                     parse_config: parse_config,
+                    checkpoint_overlay: None,
                     query_registry: std::sync::OnceLock::new(),
                     _lease: locks,
                 },
@@ -3853,6 +3993,8 @@ impl SqliteFrontier {
             ));
         }
         validate_existing(&path, claim, &source).map_err(ProjectionError::Corrupt)?;
+        let checkpoint_overlay =
+            checkpoint_overlay_at(&source, source.exact_frontier_root.acceptance_sequence())?;
         let physical = PhysicalSqliteDatabase::open_writable(&path)?;
         Ok(LeasedOpenProjection::bind(
             OpenProjection {
@@ -3867,6 +4009,7 @@ impl SqliteFrontier {
                     )?,
                     checkpoint_each_apply: true,
                     parse_config: source.parse_config.clone(),
+                    checkpoint_overlay,
                     query_registry: std::sync::OnceLock::new(),
                     _lease: lease,
                 },
@@ -3884,8 +4027,11 @@ impl SqliteFrontier {
         source: RebuildSource<'_>,
         authorization: &ApplierAuthorization<'_, '_>,
     ) -> Result<OpenProjection, ProjectionError> {
+        reset_projection_open_breakdown();
         validate_source(claim, &source)?;
+        let stage = Instant::now();
         source.authenticate_exact_frontier()?;
+        update_projection_open_breakdown(|b| b.exact_frontier_authentication = stage.elapsed());
         let path = prepare_database_path(path)?;
         let lease = authorization.acquire(source.store, &path, claim.workspace_id)?;
         let mut pending_forensics = resume_pending_forensics(&path)?;
@@ -3967,6 +4113,10 @@ impl SqliteFrontier {
                     });
                 }
                 Ok(ExistingProjection::Current) => {
+                    let checkpoint_overlay = checkpoint_overlay_at(
+                        &source,
+                        source.exact_frontier_root.acceptance_sequence(),
+                    )?;
                     if !pending_forensics.directories.is_empty() {
                         mark_rebuild_complete(&pending_forensics)?;
                         let physical = PhysicalSqliteDatabase::open_writable(&path)?;
@@ -3988,6 +4138,7 @@ impl SqliteFrontier {
                                 )?,
                                 checkpoint_each_apply: true,
                                 parse_config: source.parse_config.clone(),
+                                checkpoint_overlay: checkpoint_overlay.clone(),
                                 query_registry: std::sync::OnceLock::new(),
                                 _lease: lease,
                             },
@@ -4020,6 +4171,7 @@ impl SqliteFrontier {
                             )?,
                             checkpoint_each_apply: true,
                             parse_config: source.parse_config.clone(),
+                            checkpoint_overlay,
                             query_registry: std::sync::OnceLock::new(),
                             _lease: lease,
                         },
@@ -4120,21 +4272,65 @@ impl SqliteFrontier {
         claim: ProjectionClaim,
         lease: Arc<HeldApplierLocks>,
         source: &RebuildSource<'_>,
-    ) -> Result<(SqliteFileSet, RebuildInstrumentation), ProjectionError> {
+    ) -> Result<
+        (
+            SqliteFileSet,
+            RebuildInstrumentation,
+            Option<CheckpointOverlayState>,
+        ),
+        ProjectionError,
+    > {
         let candidate_files = SqliteFileSet::prepare_candidate(path)?;
         let candidate_path = candidate_files.database_path().to_path_buf();
-        let mut candidate = Self::create_new(
-            &candidate_path,
-            claim,
-            lease,
-            source.runtime_authority.clone(),
-            source.parse_config.clone(),
-        )
-        .map_err(|error| {
-            ProjectionError::Rebuild(format!(
-                "fresh SQLite candidate initialization failed: {error}"
-            ))
-        })?;
+        let mut candidate = if let Some(anchor) = source.engine.clean_checkpoint_sqlite_anchor() {
+            let physical = PhysicalSqliteDatabase::open_writable(&candidate_path)?;
+            physical
+                .initialize_checkpoint_candidate_schema(
+                    lower_physical_claim(claim),
+                    &anchor.root,
+                    &anchor.anchor,
+                    source.parse_config.digest(),
+                )
+                .map_err(|error| {
+                    ProjectionError::Rebuild(format!(
+                        "fresh SQLite checkpoint anchor initialization failed: {error}"
+                    ))
+                })?;
+            let checkpoint_root = decode_frontier_root(&anchor.root.canonical_bytes)?;
+            Self {
+                path: candidate_path.clone(),
+                claim,
+                physical,
+                runtime_authority: source.runtime_authority.clone(),
+                required_frontier_digest: canonical_frontier_root_digest(&checkpoint_root)?,
+                required_frontier_root: checkpoint_root,
+                checkpoint_each_apply: false,
+                parse_config: source.parse_config.clone(),
+                checkpoint_overlay: Some(CheckpointOverlayState::new(
+                    Arc::clone(anchor),
+                    Arc::clone(source.engine.sealed_accepted_history().ok_or_else(|| {
+                        ProjectionError::Rebuild(
+                            "checkpoint SQLite candidate lacks sealed accepted history".into(),
+                        )
+                    })?),
+                )),
+                query_registry: std::sync::OnceLock::new(),
+                _lease: lease,
+            }
+        } else {
+            Self::create_new(
+                &candidate_path,
+                claim,
+                lease,
+                source.runtime_authority.clone(),
+                source.parse_config.clone(),
+            )
+            .map_err(|error| {
+                ProjectionError::Rebuild(format!(
+                    "fresh SQLite candidate initialization failed: {error}"
+                ))
+            })?
+        };
         candidate
             .require_frontier(&source.exact_frontier_root)
             .map_err(|error| {
@@ -4164,8 +4360,9 @@ impl SqliteFrontier {
             candidate_files.remove()?;
             return Err(error);
         }
+        let checkpoint_overlay = candidate.checkpoint_overlay.clone();
         drop(candidate);
-        Ok((candidate_files, rebuild))
+        Ok((candidate_files, rebuild, checkpoint_overlay))
     }
 
     fn publish_candidate(
@@ -4173,9 +4370,13 @@ impl SqliteFrontier {
         claim: ProjectionClaim,
         lease: Arc<HeldApplierLocks>,
         source: &RebuildSource<'_>,
-        built: (SqliteFileSet, RebuildInstrumentation),
+        built: (
+            SqliteFileSet,
+            RebuildInstrumentation,
+            Option<CheckpointOverlayState>,
+        ),
     ) -> Result<(Self, RebuildInstrumentation), ProjectionError> {
-        let (candidate_files, rebuild) = built;
+        let (candidate_files, rebuild, checkpoint_overlay) = built;
         candidate_files.publish_candidate(path)?;
         terminal_construction_cut(TerminalConstructionCut::AfterPublicationBeforeCheckpointProof)?;
         let physical = PhysicalSqliteDatabase::open_writable(path)?;
@@ -4193,6 +4394,7 @@ impl SqliteFrontier {
                 )?,
                 checkpoint_each_apply: true,
                 parse_config: source.parse_config.clone(),
+                checkpoint_overlay,
                 query_registry: std::sync::OnceLock::new(),
                 _lease: lease,
             },
@@ -4222,6 +4424,7 @@ impl SqliteFrontier {
             )?,
             checkpoint_each_apply: false,
             parse_config: parse_config,
+            checkpoint_overlay: None,
             query_registry: std::sync::OnceLock::new(),
             _lease: lease,
         })
@@ -4411,6 +4614,17 @@ impl SqliteFrontier {
         current_root: &AcceptedFrontierRoot,
     ) -> Result<(), ProjectionError> {
         self.validate_event_claim(event)?;
+        if self
+            .checkpoint_overlay
+            .as_ref()
+            .is_some_and(|overlay| event.acceptance_sequence() <= overlay.covered_count())
+        {
+            // Caller-bug tripwire, not a delivery- or storage-boundary check:
+            // every production drain proves it is standing at this event's
+            // exact prior frontier before calling apply. Reaching this arm
+            // means such a caller lost its place and re-offered covered work.
+            return Err(ProjectionError::CoveredBatchRedelivery(event.batch_id()));
+        }
         if let Some(existing) = load_batch(&self.physical, event.batch_id)? {
             if !self.physical.authenticate_batch(
                 &lower_physical_frontier_root(current_root)?,
@@ -4492,8 +4706,22 @@ impl SqliteFrontier {
         let (applied_rows, document_rows) = self.physical.diagnostic_row_counts()?;
         let root = read_frontier_root(&self.physical)?;
         let sparse_lazy_genesis = root.genesis().is_some();
-        if applied_rows != root.acceptance_sequence()
-            || if sparse_lazy_genesis {
+        let covered_count = self
+            .checkpoint_overlay
+            .as_ref()
+            .map_or(0, CheckpointOverlayState::covered_count);
+        let expected_applied_rows = root
+            .acceptance_sequence()
+            .checked_sub(covered_count)
+            .ok_or_else(|| {
+                ProjectionError::Corrupt(
+                    "SQLite diagnostic frontier precedes its checkpoint floor".into(),
+                )
+            })?;
+        if applied_rows != expected_applied_rows
+            || if let Some(overlay) = self.checkpoint_overlay.as_ref() {
+                document_rows != u64::try_from(overlay.documents.len()).unwrap_or(u64::MAX)
+            } else if sparse_lazy_genesis {
                 document_rows > root.document_count()
             } else {
                 document_rows != root.document_count()
@@ -4503,20 +4731,39 @@ impl SqliteFrontier {
                 "SQLite diagnostic row counts differ from the authenticated frontier".into(),
             ));
         }
-        let history_baseline = root
-            .genesis()
-            .map(super::hot_engine::accepted_frontier_root_for_lazy_genesis_binding)
-            .transpose()
-            .map_err(|error| ProjectionError::Corrupt(error.to_string()))?
-            .unwrap_or_else(AcceptedFrontierRoot::empty);
-        let (history_root, history_count) =
-            validate_stored_history(&self.physical, history_baseline)?;
-        if history_count != root.acceptance_sequence() || history_root != root {
+        let history_baseline = match self.checkpoint_overlay.as_ref() {
+            Some(overlay) => decode_frontier_root(&overlay.anchor.root.canonical_bytes)?,
+            None => root
+                .genesis()
+                .map(super::hot_engine::accepted_frontier_root_for_lazy_genesis_binding)
+                .transpose()
+                .map_err(|error| ProjectionError::Corrupt(error.to_string()))?
+                .unwrap_or_else(AcceptedFrontierRoot::empty),
+        };
+        let (history_root, history_count) = validate_stored_history(
+            &self.physical,
+            history_baseline,
+            self.checkpoint_overlay.as_ref(),
+        )?;
+        if history_count != expected_applied_rows || history_root != root {
             return Err(ProjectionError::Corrupt(
                 "SQLite diagnostic history scan differs from the authenticated frontier".into(),
             ));
         }
-        let _ = if sparse_lazy_genesis {
+        let _ = if let Some(overlay) = self.checkpoint_overlay.as_ref() {
+            let mut physical_root = overlay.lower_root(&root)?;
+            physical_root.document_count = document_rows;
+            let documents = self
+                .physical
+                .read_frontier_documents(&physical_root)?
+                .into_iter()
+                .map(|document| {
+                    decode_frontier_document(&document.document_key, &document.canonical_bytes)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            FrontierV2::new(documents)
+                .map_err(|error| ProjectionError::Corrupt(error.to_string()))?
+        } else if sparse_lazy_genesis {
             read_frontier_documents_with_expected_count(&self.physical, &root, document_rows)?
         } else {
             read_frontier_documents(&self.physical)?
@@ -4526,12 +4773,18 @@ impl SqliteFrontier {
 
     pub fn contains_batch(&self, batch_id: BatchId) -> Result<bool, ProjectionError> {
         let root = read_frontier_root(&self.physical)?;
-        self.physical
-            .contains_batch(
+        match self.checkpoint_overlay.as_ref() {
+            Some(overlay) => self.physical.contains_checkpoint_batch(
+                &overlay.checkpoint_root(&root)?,
+                overlay.sealed.as_ref(),
+                batch_id.as_uuid().into_bytes(),
+            ),
+            None => self.physical.contains_batch(
                 &lower_physical_frontier_root(&root)?,
                 batch_id.as_uuid().into_bytes(),
-            )
-            .map_err(Into::into)
+            ),
+        }
+        .map_err(Into::into)
     }
 
     #[cfg(test)]
@@ -4813,6 +5066,9 @@ impl SqliteFrontier {
             event,
             ApplyFault::None,
             Some(&materialization),
+            engine
+                .sealed_accepted_history()
+                .map(|history| history.as_ref() as &dyn SealedAcceptedIndexRead),
         )?;
         if let Some(started) = physical_started {
             eprintln!(
@@ -5074,7 +5330,9 @@ impl SqliteFrontier {
         ),
         ProjectionError,
     > {
-        if !matches!(source.loader, RebuildLoader::LazyGenesisAnchored { .. }) {
+        if self.checkpoint_overlay.is_none()
+            && !matches!(source.loader, RebuildLoader::LazyGenesisAnchored { .. })
+        {
             return Err(ProjectionError::Rebuild(
                 "terminal archive replay requires bootstrap-anchored authority".into(),
             ));
@@ -5089,7 +5347,10 @@ impl SqliteFrontier {
         let writes_before = self.physical.write_instrumentation();
         self.physical.begin_candidate_build()?;
         self.physical.begin_terminal_bootstrap_construction()?;
-        if let RebuildLoader::LazyGenesisAnchored { baseline } = &source.loader {
+        if self.checkpoint_overlay.is_none() {
+            let RebuildLoader::LazyGenesisAnchored { baseline } = &source.loader else {
+                unreachable!("terminal replay loader checked above")
+            };
             self.physical
                 .seed_lazy_genesis_frontier(&lower_physical_frontier_root(baseline)?)
                 .map_err(|error| {
@@ -5100,12 +5361,32 @@ impl SqliteFrontier {
         }
         let prefix_started = std::time::Instant::now();
         let mut provenance = Vec::new();
-        let mut cursor = source.cursor()?;
-        while let Some(event) = cursor.next_event().map_err(|error| {
-            ProjectionError::Rebuild(format!(
-                "terminal replay could not reconstruct its next accepted event: {error}"
-            ))
-        })? {
+        let checkpoint_floor = self
+            .checkpoint_overlay
+            .as_ref()
+            .map_or(0, CheckpointOverlayState::covered_count);
+        let mut cursor = self
+            .checkpoint_overlay
+            .is_none()
+            .then(|| source.cursor())
+            .transpose()?;
+        let mut next_checkpoint_sequence = checkpoint_floor.saturating_add(1);
+        loop {
+            let event = if let Some(cursor) = cursor.as_mut() {
+                cursor.next_event()
+            } else if next_checkpoint_sequence <= source.accepted_batch_count {
+                let sequence = next_checkpoint_sequence;
+                next_checkpoint_sequence = next_checkpoint_sequence.saturating_add(1);
+                source.accepted_event_at(sequence).map(Some)
+            } else {
+                Ok(None)
+            }
+            .map_err(|error| {
+                ProjectionError::Rebuild(format!(
+                    "terminal replay could not reconstruct its next accepted event: {error}"
+                ))
+            })?;
+            let Some(event) = event else { break };
             instrumentation.accepted_events_validated += 1;
             instrumentation.max_live_events = instrumentation.max_live_events.max(1);
             instrumentation.max_live_evidence_records =
@@ -5123,7 +5404,13 @@ impl SqliteFrontier {
                     .saturating_add(event.affected_documents().len());
             }
             let (_, apply_stats) = self
-                .apply_terminal_prefix_candidate_with_stats(&event)
+                .apply_terminal_prefix_candidate_with_stats(
+                    &event,
+                    source
+                        .engine
+                        .sealed_accepted_history()
+                        .map(|history| history.as_ref() as &dyn SealedAcceptedIndexRead),
+                )
                 .map_err(|error| {
                     ProjectionError::Rebuild(format!(
                         "lazy/bootstrap terminal replay could not apply accepted batch {} at sequence {}: {error}",
@@ -5148,7 +5435,9 @@ impl SqliteFrontier {
             instrumentation.accepted_events_applied += 1;
             maybe_abort_rebuild_test(instrumentation.accepted_events_applied);
         }
-        let (page_reads, page_bytes, max_page_bytes) = cursor.page_stats();
+        let (page_reads, page_bytes, max_page_bytes) = cursor
+            .as_ref()
+            .map_or((0, 0, 0), |cursor| cursor.page_stats());
         instrumentation.accepted_sequence_page_reads = page_reads;
         instrumentation.accepted_sequence_bytes_read = page_bytes;
         instrumentation.max_accepted_sequence_page_bytes = max_page_bytes;
@@ -5167,7 +5456,10 @@ impl SqliteFrontier {
                 "terminal archive prefix did not reach the authenticated frontier root".into(),
             ));
         }
-        let terminal_physical_root = lower_physical_frontier_root(&reached)?;
+        let terminal_physical_root = match self.checkpoint_overlay.as_ref() {
+            Some(overlay) => overlay.lower_root(&reached)?,
+            None => lower_physical_frontier_root(&reached)?,
+        };
         // A lazy-genesis frontier is sparse by design: immutable baseline
         // documents remain in the baseline pack and this authenticated map
         // contains only current dependencies that differ from the baseline.
@@ -5175,18 +5467,21 @@ impl SqliteFrontier {
         // union of event effects: a later event may restore a document exactly
         // to its baseline state. The derived page/query rows seeded below still
         // cover the complete current graph.
-        let terminal_documents = source
-            .engine
-            .clean_current_frontier_overlay_documents(&reached)
-            .map_err(ProjectionError::materialization_from_engine)?
-            .into_iter()
-            .map(|document| {
-                Ok(storage_frontier::PhysicalFrontierDocument {
-                    document_key: document.document_id().authenticated_map_key(),
-                    canonical_bytes: encode_frontier_document(&document)?,
-                })
+        let terminal_documents = match self.checkpoint_overlay.as_ref() {
+            Some(overlay) => overlay.documents.values().cloned().collect::<Vec<_>>(),
+            None => source
+                .engine
+                .clean_current_frontier_overlay_documents(&reached)
+                .map_err(ProjectionError::materialization_from_engine)?,
+        }
+        .into_iter()
+        .map(|document| {
+            Ok(storage_frontier::PhysicalFrontierDocument {
+                document_key: document.document_id().authenticated_map_key(),
+                canonical_bytes: encode_frontier_document(&document)?,
             })
-            .collect::<Result<Vec<_>, ProjectionError>>()?;
+        })
+        .collect::<Result<Vec<_>, ProjectionError>>()?;
         let expected_terminal_frontier_documents = terminal_documents.len();
         #[cfg(test)]
         {
@@ -5556,6 +5851,7 @@ impl SqliteFrontier {
     fn apply_terminal_prefix_candidate_with_stats(
         &mut self,
         event: &AcceptedBatchEvent,
+        sealed: Option<&dyn SealedAcceptedIndexRead>,
     ) -> Result<
         (
             ApplyDisposition,
@@ -5569,6 +5865,7 @@ impl SqliteFrontier {
             None,
             true,
             true,
+            sealed,
         )
     }
 
@@ -5616,7 +5913,9 @@ impl SqliteFrontier {
                 }
             );
         }
-        if matches!(source.loader, RebuildLoader::LazyGenesisAnchored { .. }) {
+        if self.checkpoint_overlay.is_some()
+            || matches!(source.loader, RebuildLoader::LazyGenesisAnchored { .. })
+        {
             return self.terminal_archive_stream(source, terminal_projection_sink);
         }
         let mut instrumentation = RebuildInstrumentation::default();
@@ -5695,7 +5994,7 @@ impl SqliteFrontier {
         fault: ApplyFault,
         materialization: Option<&super::MaterializationChange>,
     ) -> Result<ApplyDisposition, ProjectionError> {
-        self.apply_internal_with_materialization_and_stats(event, fault, materialization)
+        self.apply_internal_with_materialization_and_stats(event, fault, materialization, None)
             .map(|(disposition, _)| disposition)
     }
 
@@ -5704,6 +6003,7 @@ impl SqliteFrontier {
         event: &AcceptedBatchEvent,
         fault: ApplyFault,
         materialization: Option<&super::MaterializationChange>,
+        sealed: Option<&dyn SealedAcceptedIndexRead>,
     ) -> Result<
         (
             ApplyDisposition,
@@ -5717,6 +6017,7 @@ impl SqliteFrontier {
             materialization,
             false,
             false,
+            sealed,
         )
     }
 
@@ -5738,6 +6039,7 @@ impl SqliteFrontier {
             materialization,
             true,
             false,
+            None,
         )
     }
 
@@ -5748,6 +6050,7 @@ impl SqliteFrontier {
         materialization: Option<&super::MaterializationChange>,
         candidate_build: bool,
         terminal_prefix: bool,
+        sealed: Option<&dyn SealedAcceptedIndexRead>,
     ) -> Result<
         (
             ApplyDisposition,
@@ -5763,8 +6066,24 @@ impl SqliteFrontier {
             .map(|change| change.validate_for_event(event))
             .transpose()?;
         let current_root = read_frontier_root(&self.physical)?;
-        let current_physical = lower_physical_frontier_root(&current_root)?;
-        let batch = lower_physical_accepted_batch(event)?;
+        let next_checkpoint_overlay = self
+            .checkpoint_overlay
+            .as_ref()
+            .map(|overlay| overlay.advance(event))
+            .transpose()?;
+        let current_physical = match self.checkpoint_overlay.as_ref() {
+            Some(overlay) => overlay.lower_root(&current_root)?,
+            None => lower_physical_frontier_root(&current_root)?,
+        };
+        let post_physical = match next_checkpoint_overlay.as_ref() {
+            Some(overlay) => overlay.lower_root(event.post_frontier_root())?,
+            None => lower_physical_frontier_root(event.post_frontier_root())?,
+        };
+        let batch = lower_physical_accepted_batch_with_roots(
+            event,
+            current_physical.clone(),
+            post_physical,
+        )?;
         let physical_materialization = match materialization {
             Some(change) => Some(super::sqlite_materialization::lower_validated_change(
                 change,
@@ -5781,7 +6100,18 @@ impl SqliteFrontier {
             materialization_input_digest: materialization_digest,
             fault: storage_frontier::ApplyFault::None,
         };
-        let preflight = match self.physical.preflight(&current_physical, &request) {
+        let preflight_result = match sealed {
+            Some(sealed) => self
+                .physical
+                .preflight_checkpoint(sealed, &current_physical, &request),
+            None if self.checkpoint_overlay.is_some() => {
+                return Err(ProjectionError::Rebuild(
+                    "anchored SQLite apply lacks its sealed accepted-index reader".into(),
+                ));
+            }
+            None => self.physical.preflight(&current_physical, &request),
+        };
+        let preflight = match preflight_result {
             Ok(disposition) => disposition,
             Err(storage_frontier::FrontierError::BatchCollision(_)) => {
                 let existing = load_batch(&self.physical, event.batch_id)?.ok_or_else(|| {
@@ -5871,13 +6201,25 @@ impl SqliteFrontier {
                 request.fault = storage_frontier::ApplyFault::ReturnAfterMaterialization;
             }
         }
-        let result = if terminal_prefix {
-            self.physical
-                .apply_terminal_prefix_candidate(&current_physical, &request)?
-        } else if candidate_build {
-            self.physical.apply_candidate(&current_physical, &request)?
-        } else {
-            self.physical.apply(&current_physical, &request)?
+        let result = match (terminal_prefix, candidate_build, sealed) {
+            (true, _, Some(sealed)) => self.physical.apply_checkpoint_terminal_prefix_candidate(
+                sealed,
+                &current_physical,
+                &request,
+            )?,
+            (true, _, None) => self
+                .physical
+                .apply_terminal_prefix_candidate(&current_physical, &request)?,
+            (false, true, Some(sealed)) => {
+                self.physical
+                    .apply_checkpoint_candidate(sealed, &current_physical, &request)?
+            }
+            (false, true, None) => self.physical.apply_candidate(&current_physical, &request)?,
+            (false, false, Some(sealed)) => {
+                self.physical
+                    .apply_checkpoint(sealed, &current_physical, &request)?
+            }
+            (false, false, None) => self.physical.apply(&current_physical, &request)?,
         };
         let disposition = match result.disposition {
             storage_frontier::ApplyDisposition::Applied => ApplyDisposition::Applied,
@@ -5885,6 +6227,9 @@ impl SqliteFrontier {
         };
         if matches!(disposition, ApplyDisposition::Applied) && self.checkpoint_each_apply {
             write_projection_checkpoint(&self.path, self.claim, &event.post_frontier_root)?;
+        }
+        if matches!(disposition, ApplyDisposition::Applied) {
+            self.checkpoint_overlay = next_checkpoint_overlay;
         }
         #[cfg(test)]
         if matches!(fault, ApplyFault::AbortAfterCommit)
@@ -6031,19 +6376,44 @@ fn validate_existing(
     if found_count > expected_count {
         return Err("SQLite frontier is ahead of the accepted oplog".into());
     }
-    if let Some(root_key) = found_frontier.document_map_root_key() {
+    let checkpoint_overlay = checkpoint_overlay_at(
+        source,
+        u64::try_from(found_count).map_err(|_| "SQLite frontier sequence is negative")?,
+    )
+    .map_err(|error| error.to_string())?;
+    let found_physical = match checkpoint_overlay.as_ref() {
+        Some(overlay) => overlay
+            .lower_root(&found_frontier)
+            .map_err(|error| error.to_string())?,
+        None => lower_physical_frontier_root(&found_frontier).map_err(|error| error.to_string())?,
+    };
+    if let Some(root_key) = found_physical.document_map_root_key {
         physical
-            .frontier_document(
-                &lower_physical_frontier_root(&found_frontier)
-                    .map_err(|error| error.to_string())?,
-                root_key,
-            )
+            .frontier_document(&found_physical, root_key)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "SQLite authenticated frontier root row is missing".to_string())?;
-    } else if found_frontier.document_count() != 0 {
+    } else if checkpoint_overlay.is_none() && found_frontier.document_count() != 0 {
         return Err("SQLite authenticated frontier root key is missing".into());
     }
-    if found_count > 0 {
+    let checkpoint_floor = checkpoint_overlay
+        .as_ref()
+        .map_or(0, CheckpointOverlayState::covered_count);
+    let expected_applied_rows = u64::try_from(found_count)
+        .map_err(|_| "SQLite frontier sequence is negative".to_string())?
+        .checked_sub(checkpoint_floor)
+        .ok_or_else(|| "SQLite frontier precedes its checkpoint floor".to_string())?;
+    let (applied_rows, _) = physical
+        .diagnostic_row_counts()
+        .map_err(|error| error.to_string())?;
+    if applied_rows != expected_applied_rows {
+        return Err(format!(
+            "SQLite applied-row count {applied_rows} differs from generation tail {expected_applied_rows}"
+        ));
+    }
+    if u64::try_from(found_count)
+        .ok()
+        .is_some_and(|count| count > checkpoint_floor)
+    {
         let final_record =
             load_batch_at_sequence(&physical, found_count).map_err(|error| error.to_string())?;
         let final_record =
@@ -6059,17 +6429,33 @@ fn validate_existing(
         {
             return Err("SQLite final accepted row is not bound to the frontier root".into());
         }
-        if !physical
-            .authenticate_batch(
-                &lower_physical_frontier_root(&found_frontier)
+        let authenticated = match checkpoint_overlay.as_ref() {
+            Some(overlay) => physical.authenticate_checkpoint_batch(
+                &overlay
+                    .checkpoint_root(&found_frontier)
                     .map_err(|error| error.to_string())?,
+                source
+                    .engine
+                    .sealed_accepted_history()
+                    .ok_or_else(|| {
+                        "checkpoint SQLite validation lacks sealed accepted history".to_string()
+                    })?
+                    .as_ref(),
                 final_record.batch_id.as_uuid().into_bytes(),
                 final_record
                     .causal_record_digest()
                     .map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| error.to_string())?
-        {
+            ),
+            None => physical.authenticate_batch(
+                &found_physical,
+                final_record.batch_id.as_uuid().into_bytes(),
+                final_record
+                    .causal_record_digest()
+                    .map_err(|error| error.to_string())?,
+            ),
+        }
+        .map_err(|error| error.to_string())?;
+        if !authenticated {
             return Err("SQLite final accepted row is absent from its authenticated map".into());
         }
     }
@@ -6517,6 +6903,7 @@ impl StoredBatch {
 fn validate_stored_history(
     physical: &PhysicalSqliteDatabase,
     mut prior: AcceptedFrontierRoot,
+    checkpoint_overlay: Option<&CheckpointOverlayState>,
 ) -> Result<(AcceptedFrontierRoot, u64), ProjectionError> {
     let mut count = 0_u64;
     for physical_batch in physical.load_all_batches()? {
@@ -6524,17 +6911,30 @@ fn validate_stored_history(
         count = count
             .checked_add(1)
             .ok_or_else(|| ProjectionError::Corrupt("stored history count overflowed".into()))?;
-        if record.sequence != count as i64 {
+        let expected_sequence = prior
+            .acceptance_sequence()
+            .checked_add(1)
+            .ok_or_else(|| ProjectionError::Corrupt("stored history sequence overflowed".into()))?;
+        if record.sequence != i64::try_from(expected_sequence).unwrap_or(i64::MIN) {
             return Err(ProjectionError::Corrupt(
                 "stored accepted history sequence is not contiguous".into(),
             ));
         }
         let post = record.validate_canonical_transition(&prior)?;
-        if !physical.authenticate_batch(
-            &lower_physical_frontier_root(&post)?,
-            record.batch_id.as_uuid().into_bytes(),
-            record.causal_record_digest()?,
-        )? {
+        let authenticated = match checkpoint_overlay {
+            Some(overlay) => physical.authenticate_checkpoint_batch(
+                &overlay.checkpoint_root(&post)?,
+                overlay.sealed.as_ref(),
+                record.batch_id.as_uuid().into_bytes(),
+                record.causal_record_digest()?,
+            ),
+            None => physical.authenticate_batch(
+                &lower_physical_frontier_root(&post)?,
+                record.batch_id.as_uuid().into_bytes(),
+                record.causal_record_digest()?,
+            ),
+        }?;
+        if !authenticated {
             return Err(ProjectionError::Corrupt(format!(
                 "stored batch {} is absent from its authenticated accepted map",
                 record.batch_id
@@ -8619,14 +9019,15 @@ pub enum ProjectionError {
     },
     FrontierRegression,
     BatchCollision(BatchId),
-    /// A batch whose accepted record is covered by a sealed checkpoint
-    /// generation was offered again. Storage cannot decide whether it is
+    /// Caller-bug tripwire: a drain lost its exact prior-frontier position and
+    /// offered a batch whose accepted record is covered by a sealed checkpoint
+    /// generation again. Storage cannot decide whether it is
     /// equivalent to what was accepted: the sealed record carries the batch id,
     /// manifest fingerprint, event-binding digest, causal dot and canonical
     /// clock, and not the `semantic_effect` the hot duplicate check compares.
-    /// It therefore refuses by name and leaves the decision here. Carrying the
-    /// id rather than folding this into `Corrupt` keeps that decision open --
-    /// this is not a corruption report, and must not be presented as one.
+    /// It therefore refuses by name. This is not corruption detection or an
+    /// external redelivery boundary: production callers make the branch
+    /// unreachable by proving they stand at the event's exact prior root.
     CoveredBatchRedelivery(BatchId),
     Materialization(String),
     Rebuild(String),
@@ -8708,8 +9109,8 @@ impl fmt::Display for ProjectionError {
             Self::CoveredBatchRedelivery(batch_id) => {
                 write!(
                     f,
-                    "accepted batch {batch_id} is covered by a sealed checkpoint generation \
-                     and cannot be compared with its original record"
+                    "SQLite apply caller re-offered accepted batch {batch_id} from a sealed \
+                     checkpoint generation after losing its exact prior-frontier position"
                 )
             }
             Self::Materialization(error) => write!(f, "SQLite materialization failed: {error}"),
@@ -15943,6 +16344,49 @@ mod tests {
             );
         }
         assert!(production.contains("fn apply_engine_owned_accepted("));
+    }
+
+    #[test]
+    fn production_engine_owned_apply_callers_prove_the_exact_next_frontier() {
+        let sqlite = include_str!("sqlite.rs")
+            .split_once("\n#[cfg(test)]\nmod tests")
+            .map(|(production, _)| production)
+            .expect("SQLite source keeps a distinct test module");
+        let local = include_str!("local_journal_drain.rs");
+        let coordinator = include_str!("operational_coordinator.rs");
+        let call_count = [sqlite, local, coordinator]
+            .into_iter()
+            .map(|source| {
+                source
+                    .matches(".apply_engine_owned_accepted(&event")
+                    .count()
+                    + source
+                        .matches(".apply_engine_owned_accepted_with_stats(&event")
+                        .count()
+            })
+            .sum::<usize>();
+        assert_eq!(
+            call_count, 4,
+            "every production apply_engine_owned_accepted* caller must prove it is at the exact \
+             next frontier; imitate local_journal_drain's same_accepted_authority(prior) guard"
+        );
+        for (name, source) in [
+            ("local_journal_drain", local),
+            ("operational_coordinator", coordinator),
+        ] {
+            assert!(
+                source.contains(
+                    "applied.same_accepted_authority(event.prior_frontier_root())"
+                ),
+                "{name} must retain the exact-prior-frontier guard before engine-owned SQLite apply"
+            );
+        }
+        assert!(
+            sqlite.contains(".applied_batch_count()?")
+                && sqlite.contains("source.accepted_event_at(expected_sequence)?")
+                && sqlite.contains("while let Some(event) = cursor.next_event()?"),
+            "the SQLite tail and rebuild callers must derive only the exact next accepted event"
+        );
     }
 
     fn assert_authority_substitution_is_atomic(

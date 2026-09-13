@@ -70,3 +70,28 @@ algorithms; they do not become a second ownership authority. Current path
 memos bind the exact catalog row and current projection-head batch, allowing a
 cut to discard released paths from the resident head map while retaining their
 release facts on disk.
+
+Landing 4c extends the same qualified generation with the physical SQLite
+anchor and a bounded conflict-history seed. SQLite remains a disposable
+derivation: a fresh file installs the generation at covered sequence C with an
+empty document overlay and no accepted or materialization rows, then applies
+only C+1 through the current terminal sequence. The logical frontier continues
+to report total documents, blocks, retained bytes and acceptance sequence;
+separate physical overlay counts describe only post-C rows. Integrity checks
+resident accepted rows against `terminal − C`, never the lifetime sequence.
+
+The generation marker is authoritative across the two stores. A committed
+SQLite tail with the old marker is reusable. Once a newer marker is durable,
+the same rows are covered and a later open rebuilds the disposable database
+from the new anchor plus its uncovered tail. Candidate publication, generation
+publication and handle replacement need not form one filesystem transaction:
+every crash prefix selects a complete generation first and treats absent,
+behind, divergent or differently anchored SQLite as rebuild input, never as a
+veto on graph open.
+
+Conflict evaluation restores causal tips, the non-linearity watermark and
+still-unresolved pair endpoints from checkpoint state. Settled touches do not
+replay through accepted history on healthy open. A covered batch offered to the
+SQLite duplicate branch is a caller-bug tripwire, not a delivery or corruption
+boundary: all production appliers prove the database equals the event's exact
+prior frontier before calling.
