@@ -38605,3 +38605,206 @@ fn completed_local_projection_drain_wakes_query_refresh() {
 
 #[path = "managed_main_snapshot_tests.rs"]
 mod managed_main_snapshot;
+
+/// Diagnostic (not a gate): per-batch archive bytes for trivial edits, by
+/// archive subdirectory and sealed kind. Run by name with --nocapture.
+#[test]
+#[ignore]
+fn measure_per_batch_archive_bytes_for_trivial_edits() {
+    use std::collections::BTreeMap;
+    fn census(root: &std::path::Path) -> BTreeMap<String, (u64, u64)> {
+        fn walk(dir: &std::path::Path, rel: &str, out: &mut BTreeMap<String, (u64, u64)>) {
+            let Ok(entries) = fs::read_dir(dir) else { return };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Ok(meta) = fs::symlink_metadata(&path) else { continue };
+                if meta.is_dir() {
+                    let sub = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+                    walk(&path, &sub, out);
+                } else {
+                    let key = if name.starts_with("sealed-v2-") {
+                        format!("{rel}/sealed-v2-{}", &name[10..11])
+                    } else if name.starts_with("pack-v1-") {
+                        format!("{rel}/pack-v1")
+                    } else if name.len() > 40 {
+                        format!("{rel}/<hashed>")
+                    } else {
+                        format!("{rel}/{name}")
+                    };
+                    let slot = out.entry(key).or_insert((0, 0));
+                    slot.0 += 1;
+                    slot.1 += meta.len();
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        walk(root, "", &mut out);
+        out
+    }
+    fn report(label: &str, n: u64, before: &BTreeMap<String, (u64, u64)>, after: &BTreeMap<String, (u64, u64)>) {
+        eprintln!("== {label} (per batch over {n} batches)");
+        let mut total = (0i64, 0i64);
+        for (key, (count, bytes)) in after {
+            let (c0, b0) = before.get(key).copied().unwrap_or((0, 0));
+            let dc = *count as i64 - c0 as i64;
+            let db = *bytes as i64 - b0 as i64;
+            if dc != 0 || db != 0 {
+                eprintln!("  {key:<70} files {:+.2}  bytes {:+.1}", dc as f64 / n as f64, db as f64 / n as f64);
+                total.0 += dc;
+                total.1 += db;
+            }
+        }
+        eprintln!("  TOTAL files {:+.2}  bytes {:+.1}", total.0 as f64 / n as f64, total.1 as f64 / n as f64);
+    }
+    const N: usize = 20;
+    let fixture = ActivationFixture::nested_unicode("measure-per-batch-bytes", 0xa178_5b00);
+    let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+    let handle = activated.handle.expect("fixture activates");
+    drive_initial_feed(&handle);
+    let root = fixture.request.archive_root.clone();
+    let db = fixture.request.database_path.clone();
+    let db_size = |label: &str| {
+        let bytes = fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
+        let wal = fs::metadata(format!("{}-wal", db.display())).map(|m| m.len()).unwrap_or(0);
+        eprintln!("  sqlite {label}: db {bytes} wal {wal}");
+    };
+    handle.force_clean_checkpoint_for_test().unwrap();
+    let c0 = census(&root);
+    db_size("start");
+    for index in 0..N {
+        let (page, revision) = load_application_exact(&handle, "Root.md");
+        let _ = save_application_block_text(&handle, page, revision, &format!("edit {index}"));
+        drain_managed_local(&handle);
+    }
+    let c1 = census(&root);
+    report("HOT: content edit of block 0", N as u64, &c0, &c1);
+    db_size("after edits");
+    // Newest hot files: what the truth of one edit consists of.
+    {
+        let mut newest: Vec<(std::time::SystemTime, u64, String)> = Vec::new();
+        for sub in ["batches", "objects"] {
+            for entry in fs::read_dir(root.join("operations.0").join(sub)).unwrap().flatten() {
+                let meta = entry.metadata().unwrap();
+                newest.push((meta.modified().unwrap(), meta.len(), format!("{sub}/{}", entry.file_name().to_string_lossy())));
+            }
+        }
+        newest.sort();
+        for (_, len, name) in newest.iter().rev().take(6) {
+            eprintln!("  newest hot file {name:<90} {len} B");
+        }
+        if let Some((_, _, name)) = newest.iter().rev().find(|(_, _, n)| n.starts_with("batches/")) {
+            let bytes = fs::read(root.join("operations.0").join(name)).unwrap();
+            let decoded = OperationBatch::decode(&bytes).map(|b| format!("{b:?}")).unwrap_or_else(|e| format!("decode error {e:?}"));
+            eprintln!("  manifest debug ({} chars): {}", decoded.len(), decoded);
+        }
+    }
+    // Give the page a second block so a move is possible.
+    {
+        let (mut page, revision) = load_application_exact(&handle, "Root.md");
+        page.blocks.push(BlockDto {
+            id: "measure-second-block".into(),
+            raw: "second block".into(),
+            ..BlockDto::default()
+        });
+        match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing { path: page.path.clone(), revision },
+                page,
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { .. } => {}
+            other => panic!("append save was not direct: {other:?}"),
+        }
+        drain_managed_local(&handle);
+    }
+    // Page-size scaling: a big page, then ten single-block edits on it.
+    {
+        let blocks: Vec<BlockDto> = (0..60)
+            .map(|i| BlockDto {
+                id: format!("measure-big-{i}"),
+                raw: format!("block {i} {}", "lorem ipsum dolor sit amet ".repeat(11)),
+                ..BlockDto::default()
+            })
+            .collect();
+        let created = handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::New {
+                    name: "Measure Big".into(),
+                    page_kind: SyncPageKind::Page,
+                },
+                page: PageDto {
+                    activation: None,
+                    name: "Measure Big".into(),
+                    kind: PageKind::Page,
+                    title: "Measure Big".into(),
+                    pre_block: None,
+                    blocks,
+                    rev: None,
+                    format: Format::Md,
+                    read_only: false,
+                    path: String::new(),
+                    guide: false,
+                },
+            })
+            .unwrap();
+        let path = match created {
+            SyncApplicationPageSaveOutcome::Saved { page, .. } => page.path,
+            other => panic!("big page create was not direct: {other:?}"),
+        };
+        drain_managed_local(&handle);
+        let big0 = census(&root);
+        for index in 0..10 {
+            let (page, revision) = load_application_exact(&handle, &path);
+            let _ = save_application_block_text_at(&handle, page, revision, 30, &format!("big edit {index}"));
+            drain_managed_local(&handle);
+        }
+        let big1 = census(&root);
+        report("HOT: content edit of block 30 on a 60-block (~18 KB) page", 10, &big0, &big1);
+        let mut newest: Vec<(std::time::SystemTime, u64, String)> = Vec::new();
+        for entry in fs::read_dir(root.join("operations.0").join("objects")).unwrap().flatten() {
+            let meta = entry.metadata().unwrap();
+            newest.push((meta.modified().unwrap(), meta.len(), entry.file_name().to_string_lossy().into_owned()));
+        }
+        newest.sort();
+        for (_, len, name) in newest.iter().rev().take(4) {
+            let bytes = fs::read(root.join("operations.0").join("objects").join(name)).unwrap();
+            let head = String::from_utf8_lossy(&bytes[..bytes.len().min(360)]).replace('\n', "\\n");
+            eprintln!("  newest big-page object {} {len} B head: {head}", &name[..12]);
+            if let Ok(object) = crate::oplog::batch::OperationObject::decode(&bytes) {
+                let payload = object.payload();
+                let loro_at = payload.windows(4).position(|w| w == b"loro");
+                eprintln!("    kind {:?} payload {} B, 'loro' magic at {:?} -> loro bytes {:?}", object.kind(), payload.len(), loro_at, loro_at.map(|at| payload.len() - at));
+            }
+        }
+    }
+    let c1 = census(&root);
+    for _ in 0..N {
+        let (mut page, revision) = load_application_exact(&handle, "Root.md");
+        assert!(page.blocks.len() >= 2, "fixture page needs two blocks to move");
+        page.blocks.swap(0, 1);
+        match handle
+            .save_application_page(SyncApplicationPageSaveRequest {
+                target: SyncApplicationPageSaveTarget::Existing { path: page.path.clone(), revision },
+                page,
+            })
+            .unwrap()
+        {
+            SyncApplicationPageSaveOutcome::Saved { .. } => {}
+            other => panic!("move save was not direct: {other:?}"),
+        }
+        drain_managed_local(&handle);
+    }
+    let c2 = census(&root);
+    report("HOT: swap blocks 0<->1 (move)", N as u64, &c1, &c2);
+    db_size("after moves");
+    handle.force_clean_checkpoint_for_test().unwrap();
+    let c3 = census(&root);
+    report("CUT: sealed generation + cold history for the 2N batches", 2 * N as u64, &c2, &c3);
+    db_size("after cut");
+    // Sizes of the per-batch sealed records for the last batch.
+    let (page, _) = load_application_exact(&handle, "Root.md");
+    eprintln!("  page blocks now: {}", page.blocks.len());
+    assert!(matches!(handle.clean_shutdown().unwrap(), SyncShutdownOutcome::Safe(_)));
+}
