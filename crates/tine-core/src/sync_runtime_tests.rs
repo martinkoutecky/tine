@@ -10616,8 +10616,8 @@ fn clean_and_checkpoint_reopens_continue_one_persistent_writer_lane() {
     // already published a disposable clean checkpoint. Original archive bytes
     // and the acknowledged journal are preserved; the fixture removes only the
     // derived checkpoint directory while no runtime holds it (D-3).
-    let checkpoint_directory = clean_operation_archive_directory(&fixture.request.archive_root)
-        .join("clean-open-checkpoint-v2");
+    let checkpoint_directory =
+        clean_operation_archive_directory(&fixture.request.archive_root).join("sealed-v3");
     if checkpoint_directory.exists() {
         fs::remove_dir_all(&checkpoint_directory).unwrap();
     }
@@ -11370,6 +11370,11 @@ fn generation_fixed_live_history_curve_child() {
     });
     let mut counters = None;
     let mut stages = Vec::new();
+    // T4's real question is not "how many file opens" but "how much index is
+    // hashed". tine-storage verifies one table's digest once per
+    // `TableSetReader`, so this process-wide counter says whether a reopen
+    // built one reader per domain or one per point read.
+    let verifications_before = tine_storage::sealed_tables::table_digest_verifications();
     let started = std::time::Instant::now();
     let opened = SyncRuntimeHandle::open_with_progress(request, |event| match event {
         SyncRuntimeOpenProgress::CleanOpenCounters { counters: observed } => {
@@ -11397,7 +11402,10 @@ fn generation_fixed_live_history_curve_child() {
             .map(|(_, elapsed)| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX))
             .expect("curve child reports every clean-open stage")
     };
-    eprintln!("P4C_CURVE_STAGES {stages:?}");
+    eprintln!(
+        "P4C_CURVE_STAGES {stages:?} table_digest_verifications={}",
+        tine_storage::sealed_tables::table_digest_verifications() - verifications_before
+    );
     eprintln!("P4C_CURVE_COUNTERS {counters:#?}");
     assert_eq!(counters.checkpoint_opens, 1);
     assert_eq!(counters.full_replay_opens, 0);
@@ -11497,6 +11505,18 @@ fn p4c_curve_samples(root: &Path, seed: u128, expected_batches: usize) -> Vec<P4
             "curve child {trial} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        if trial == 1 {
+            // The child's per-stage trace is the only breakdown of a reopen.
+            // Forwarding one trial's copy costs nothing and makes a curve log
+            // self-contained when a stage regresses.
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            if let Some(line) = stderr
+                .lines()
+                .find(|line| line.contains("P4C_CURVE_STAGES"))
+            {
+                eprintln!("{line}");
+            }
+        }
         let stdout = String::from_utf8(output.stdout).unwrap();
         let line = stdout
             .lines()
@@ -11625,6 +11645,30 @@ fn p4c_curve_submit_batch(
     submit_durable(handle, operations);
 }
 
+/// The sealed container's directory census: its entry names and total file
+/// bytes.
+///
+/// T3 is the whole point of sorted tables: under the treap this directory grew
+/// one file per authenticated-map node and ran ext4's htree out of levels.
+/// Names, not just a count, so a cut's CREATED files can be separated from the
+/// superseded packs it retires.
+fn p4c_sealed_census(archive_root: &Path) -> (std::collections::BTreeSet<String>, u64) {
+    let directory = clean_operation_archive_directory(archive_root).join("sealed-v3");
+    let mut names = std::collections::BTreeSet::new();
+    let mut bytes = 0_u64;
+    if let Ok(entries) = fs::read_dir(&directory) {
+        for entry in entries.flatten() {
+            names.insert(entry.file_name().to_string_lossy().into_owned());
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_file() {
+                    bytes += metadata.len();
+                }
+            }
+        }
+    }
+    (names, bytes)
+}
+
 #[test]
 #[ignore = "release-only: copies the sanctioned corpus and authors 50k durable batches"]
 fn generation_fixed_live_history_curve() {
@@ -11683,11 +11727,18 @@ fn generation_fixed_live_history_curve() {
     let mut epoch_utc_ms = 1_700_000_000_000_i64;
     let mut epoch_monotonic_ms = 1_000_000_u64;
     let mut observations = Vec::new();
-    let targets = if std::env::var_os("TINE_P4C_CURVE_1K_ONLY").is_some() {
+    let targets = if let Ok(spec) = std::env::var("TINE_P4C_CURVE_TARGETS") {
+        // Diagnosis-only override. The release curve is the 1k/10k/50k form
+        // below; a smaller point cannot stand in for it in a receipt.
+        spec.split(',')
+            .map(|value| value.trim().parse::<usize>().unwrap())
+            .collect::<Vec<_>>()
+    } else if std::env::var_os("TINE_P4C_CURVE_1K_ONLY").is_some() {
         vec![1_000_usize]
     } else {
         vec![1_000_usize, 10_000, 50_000]
     };
+    let mut previous_target = 0_usize;
     for target in targets {
         handle
             .set_checkpoint_floor_clock_for_test(epoch_utc_ms, epoch_monotonic_ms)
@@ -11721,7 +11772,59 @@ fn generation_fixed_live_history_curve() {
         handle
             .set_automatic_clean_checkpoint_paused_for_test(false)
             .unwrap();
+        let (names_before_cut, _) = p4c_sealed_census(&fixture.request.archive_root);
+        *crate::oplog::checkpoint_generation::LAST_SEALED_CUT_WORK
+            .lock()
+            .unwrap() = None;
         handle.force_clean_checkpoint_for_test().unwrap();
+        let cut_work = crate::oplog::checkpoint_generation::LAST_SEALED_CUT_WORK
+            .lock()
+            .unwrap()
+            .expect("the forced cut publishes a sealed cut");
+        let cut_batches = u64::try_from(target - previous_target).unwrap();
+        previous_target = target;
+        // T1 (I-25): the sealed INDEX cost of one accepted batch. A directory
+        // census cannot answer this -- index and payload records share a pack.
+        let index_bytes_per_batch = cut_work.index_bytes.div_ceil(cut_batches);
+        assert!(
+            index_bytes_per_batch <= 1024,
+            "T1: {index_bytes_per_batch} sealed index bytes per batch at H={target} \
+             ({} index bytes over {cut_batches} batches)",
+            cut_work.index_bytes
+        );
+        let (sealed_names, sealed_bytes) = p4c_sealed_census(&fixture.request.archive_root);
+        let files_created_by_this_cut = sealed_names.difference(&names_before_cut).count() as u64;
+        let sealed_entries = sealed_names.len() as u64;
+        // T2: a cut creates O(1) files -- the payload/generation slot it
+        // rewrites, the marker, and one pack per 4 MiB of payload it publishes.
+        // Not one per accepted batch, and not one per index node.
+        let payload_packs =
+            sealed_bytes.div_ceil(crate::oplog::cold_object_store::COLD_PACK_TARGET_BYTES as u64);
+        assert!(
+            files_created_by_this_cut <= 3 + payload_packs,
+            "T2: cut at H={target} created {files_created_by_this_cut} files \
+             (bound 3 + {payload_packs} payload packs)"
+        );
+        // T3: directory entries stay O(log N + live bytes / 4 MiB). The fixed
+        // six are the marker, the checkpoint pointer, both payload slots and
+        // both generation slots; the rest are packs, whose count is bounded by
+        // the live bytes and by the tier ladder's depth at fanout R.
+        let tier_levels = (1..)
+            .find(|level| {
+                (crate::oplog::cold_object_store::SEALED_TIER_FANOUT as u64).pow(*level)
+                    >= u64::try_from(target).unwrap()
+            })
+            .unwrap_or(1) as u64;
+        let entry_bound = 6
+            + payload_packs
+            + (crate::oplog::cold_object_store::SEALED_TIER_FANOUT as u64) * tier_levels;
+        assert!(
+            sealed_entries <= entry_bound,
+            "T3: {sealed_entries} sealed directory entries at H={target} \
+             exceed the bound {entry_bound} = 6 + {payload_packs} packs + \
+             {} x {tier_levels} tier levels",
+            crate::oplog::cold_object_store::SEALED_TIER_FANOUT
+        );
         let checkpoint_store = ObjectStore::open_structural(
             &clean_operation_archive_directory(&fixture.request.archive_root),
             fixture.request.identities.workspace_id,
@@ -11814,11 +11917,25 @@ fn generation_fixed_live_history_curve() {
              completion_flush_end_ns={completion_flush_end_ns} \
              projection_exact_auth_ns={projection_exact_auth_ns} \
              projection_structural_validation_ns={projection_structural_validation_ns} \
-             projection_rebuild_ns={projection_rebuild_ns} samples=10",
+             projection_rebuild_ns={projection_rebuild_ns} \
+             sealed_entries={sealed_entries} sealed_bytes={sealed_bytes} \
+             files_created_by_this_cut={files_created_by_this_cut} \
+             sealed_bytes_per_batch={} cut_index_bytes={} cut_payload_bytes={} \
+             cut_index_bytes_per_batch={index_bytes_per_batch} \
+             cut_files_written={} cut_packs_published={} cut_packs_retired={} \
+             cut_tables_written={} cut_tables_merged={} samples=10",
             samples[0].local_completion_names,
             samples[0].local_completion_content_reads,
             samples[0].local_completion_entries,
             samples[0].retired_own_intent_probes,
+            sealed_bytes / u64::try_from(target).unwrap(),
+            cut_work.index_bytes,
+            cut_work.payload_bytes,
+            cut_work.files_written,
+            cut_work.packs_published,
+            cut_work.packs_retired,
+            cut_work.tables_written,
+            cut_work.tables_merged,
         );
         observations.push((
             target,
@@ -11943,6 +12060,73 @@ fn generation_sqlite_anchor_empty_and_hot_tail() {
         tail.clean_shutdown().unwrap(),
         SyncShutdownOutcome::Safe(_)
     ));
+}
+
+/// P4c2 / I-8: the sealed anchor is what makes a COVERED redelivery reach the
+/// sealed index instead of being applied a second time.
+///
+/// `CheckpointOverlayState::lower_root` stamps `PhysicalSealedAnchor` onto
+/// every root the anchored database hands tine-storage. Storage's
+/// `guard_batch_already_accepted` asks the sealed index only when that anchor
+/// is present; with `anchor: None` the same covered id at `current + 1` is
+/// indistinguishable from new work, preflight answers `New`, and the covered
+/// key's authenticated value would be replaced by the apply that follows.
+///
+/// The second half of the assertion IS the necessity control: the same probe
+/// with the anchor removed must report `New`. If both halves refuse, the test
+/// is proving something other than the anchor.
+#[test]
+fn a_covered_redelivery_over_an_anchored_database_reaches_the_sealed_index() {
+    let fixture = ActivationFixture::nested_unicode("covered-redelivery", 0xa178_5b00);
+    let activated = SyncRuntimeHandle::activate_or_resume_local(fixture.request.clone());
+    assert_eq!(activated.status, SyncLocalActivationStatus::Active);
+    let first = activated.handle.expect("redelivery fixture activates");
+    drive_initial_feed(&first);
+    for text in ["covered redelivery row one", "covered redelivery row two"] {
+        let (page, revision) = load_application_exact(&first, "Root.md");
+        let _ = save_application_block_text(&first, page, revision, text);
+        drain_managed_local(&first);
+    }
+    first.force_clean_checkpoint_for_test().unwrap();
+    assert!(matches!(
+        first.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+    drop(first);
+
+    let anchored = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
+    // One uncovered tail row, so the probe's post root has a non-empty tail
+    // treap -- the ordinary shape of a live anchored database.
+    let (page, revision) = load_application_exact(&anchored, "Root.md");
+    let _ = save_application_block_text(&anchored, page, revision, "uncovered tail row");
+    drain_managed_local(&anchored);
+
+    let rows_before = applied_batch_rows(&fixture.request.database_path);
+    let (with_anchor, without_anchor) = anchored.probe_covered_redelivery_for_test(1).unwrap();
+    assert!(
+        with_anchor.contains("already accepted into sealed covered history"),
+        "an anchored database must route a covered redelivery to the sealed index, got {with_anchor}"
+    );
+    assert_eq!(
+        without_anchor, "New",
+        "necessity control: without the anchor the same covered id reads as new work"
+    );
+    assert_eq!(
+        applied_batch_rows(&fixture.request.database_path),
+        rows_before,
+        "a refused redelivery must not add an applied_batches row"
+    );
+    assert!(matches!(
+        anchored.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
+}
+
+fn applied_batch_rows(database_path: &std::path::Path) -> u64 {
+    let physical =
+        tine_storage::sqlite::PhysicalSqliteDatabase::open_read_only(database_path).unwrap();
+    let (rows, _) = physical.diagnostic_row_counts().unwrap();
+    rows
 }
 
 /// I-14 on the write path. Every accepted batch's projection event asks for
@@ -12119,8 +12303,8 @@ fn checkpoint_open_matches_sequence_zero_replay_over_generated_crash_histories()
         let checkpoint_state = checkpoint_open.observable_engine_state().unwrap();
         drop(checkpoint_open);
 
-        let checkpoint_directory = clean_operation_archive_directory(&fixture.request.archive_root)
-            .join("clean-open-checkpoint-v2");
+        let checkpoint_directory =
+            clean_operation_archive_directory(&fixture.request.archive_root).join("sealed-v3");
         fs::remove_dir_all(checkpoint_directory).unwrap();
         let mut replay_counters = None;
         let replay_open =
@@ -12212,8 +12396,8 @@ fn corrupt_checkpoint_payload_is_discarded_for_total_full_replay() {
     drain_managed_local(&handle);
     drop(handle);
 
-    let checkpoint = clean_operation_archive_directory(&fixture.request.archive_root)
-        .join("clean-open-checkpoint-v2");
+    let checkpoint =
+        clean_operation_archive_directory(&fixture.request.archive_root).join("sealed-v3");
     for payload in ["payload-a", "payload-b"] {
         let path = checkpoint.join(payload);
         if path.exists() {
@@ -12260,10 +12444,10 @@ fn corrupt_checkpoint_pointer_and_generation_each_force_total_full_replay() {
         drain_managed_local(&handle);
         drop(handle);
 
-        let checkpoint = clean_operation_archive_directory(&fixture.request.archive_root)
-            .join("clean-open-checkpoint-v2");
+        let checkpoint =
+            clean_operation_archive_directory(&fixture.request.archive_root).join("sealed-v3");
         match damage {
-            "pointer" => fs::write(checkpoint.join("current"), b"bit-flipped pointer").unwrap(),
+            "pointer" => fs::write(checkpoint.join("checkpoint"), b"bit-flipped pointer").unwrap(),
             "generation" => {
                 for generation in ["generation-a", "generation-b"] {
                     let path = checkpoint.join(generation);
@@ -12316,8 +12500,8 @@ fn p3_damaged_predecessor_republishes_a_fresh_base_zero_checkpoint() {
     drain_managed_local(&first);
     drop(first);
 
-    let checkpoint = clean_operation_archive_directory(&fixture.request.archive_root)
-        .join("clean-open-checkpoint-v2");
+    let checkpoint =
+        clean_operation_archive_directory(&fixture.request.archive_root).join("sealed-v3");
     for payload in ["payload-a", "payload-b"] {
         let path = checkpoint.join(payload);
         if path.exists() {
@@ -12437,7 +12621,7 @@ fn p3_torn_checkpoint_full_replay() {
         if let Some(damage) = damage {
             damage_checkpoint_for_test(&store, damage).unwrap();
         } else {
-            fs::remove_file(store.root_path().join("clean-open-checkpoint-v2/current")).unwrap();
+            fs::remove_file(store.root_path().join("sealed-v3/checkpoint")).unwrap();
         }
         drop(store);
 
@@ -12485,7 +12669,7 @@ fn p3_torn_checkpoint_full_replay() {
         .unwrap();
     fs::remove_file(manifest.path()).unwrap();
     let cold_history =
-        clean_operation_archive_directory(&fixture.request.archive_root).join("cold-history-v1");
+        clean_operation_archive_directory(&fixture.request.archive_root).join("sealed-v3");
     if cold_history.exists() {
         for entry in fs::read_dir(cold_history).unwrap().map(Result::unwrap) {
             if entry.file_name().to_string_lossy().starts_with("pack-v1-") {
@@ -15663,9 +15847,9 @@ fn pending_generation_join_from_fixtures(
 #[ignore = "manual release gate: rebaselining foundations on an anonymized corpus copy"]
 fn rebaselining_foundations_real_corpus_gate() {
     use crate::oplog::checkpoint_generation::{
-        SealedDocumentRoster, SealedGenerationStagingStore, TineAcceptedEvidenceDecoder,
+        sealed_batch_records, SealedDocumentRoster, SealedGenerationStagingStore,
+        TineAcceptedEvidenceDecoder,
     };
-    use tine_storage::sealed_accepted_index::SealedAcceptedIndexReader;
     assert!(!cfg!(debug_assertions), "release-only corpus gate");
     let source = real_graph_copy_source_from_env("TINE_REBASELINING_GRAPH_COPY");
     let seed = 0xc200_0000;
@@ -15706,22 +15890,19 @@ fn rebaselining_foundations_real_corpus_gate() {
     let cutoff = engine
         .build_sealed_accepted_cutoff(&mut nodes, None)
         .unwrap();
-    let disk_nodes = nodes.finish().unwrap();
+    let (_, disk_nodes) = nodes.finish().unwrap();
     let cutoff_ms = started.elapsed().as_millis();
-    let reader = SealedAcceptedIndexReader::new(&disk_nodes);
-    for sequence in 1..=cutoff.roots().sequence.len {
+    for sequence in 1..=cutoff.sequence() {
         let (batch_id, evidence) = engine.accepted_batch_entry_at(sequence).unwrap().unwrap();
-        let proof = reader
-            .prove_membership(
-                cutoff.roots(),
-                sequence,
-                batch_id.as_uuid().into_bytes(),
-                &TineAcceptedEvidenceDecoder,
-            )
+        let batch_id = batch_id.as_uuid().into_bytes();
+        let records = sealed_batch_records(&disk_nodes, batch_id)
             .unwrap()
+            .expect("every covered corpus row resolves");
+        records
+            .verify(sequence, batch_id, &TineAcceptedEvidenceDecoder)
             .unwrap();
         assert_eq!(
-            proof.status.exact_evidence_bytes,
+            records.status.exact_evidence_bytes,
             evidence.unwrap().encode_canonical().unwrap()
         );
     }
@@ -15792,7 +15973,7 @@ fn rebaselining_foundations_real_corpus_gate() {
     assert_eq!(engine.canonical_snapshot().unwrap(), before);
     assert_eq!(user_graph_bytes(&joiner.graph_root), expected);
     eprintln!("rebaselining_foundations files={} pages={} blocks={} accepted={} join_ms={join_ms} cutoff_ms={cutoff_ms} compact_documents={compact_documents} compact_bytes={compact_bytes} compact_ms={compact_ms} capsule_reopen_ms={capsule_reopen_ms} inherited_roster_ms={inherited_roster_ms} full_roster_oracle_ms={full_roster_oracle_ms}",
-        expected.len(), before.pages.len(), before.blocks.len(), cutoff.roots().sequence.len);
+        expected.len(), before.pages.len(), before.blocks.len(), cutoff.sequence());
 }
 
 #[test]
@@ -38614,13 +38795,21 @@ fn measure_per_batch_archive_bytes_for_trivial_edits() {
     use std::collections::BTreeMap;
     fn census(root: &std::path::Path) -> BTreeMap<String, (u64, u64)> {
         fn walk(dir: &std::path::Path, rel: &str, out: &mut BTreeMap<String, (u64, u64)>) {
-            let Ok(entries) = fs::read_dir(dir) else { return };
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
             for entry in entries.flatten() {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let Ok(meta) = fs::symlink_metadata(&path) else { continue };
+                let Ok(meta) = fs::symlink_metadata(&path) else {
+                    continue;
+                };
                 if meta.is_dir() {
-                    let sub = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+                    let sub = if rel.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{rel}/{name}")
+                    };
                     walk(&path, &sub, out);
                 } else {
                     let key = if name.starts_with("sealed-v2-") {
@@ -38642,7 +38831,12 @@ fn measure_per_batch_archive_bytes_for_trivial_edits() {
         walk(root, "", &mut out);
         out
     }
-    fn report(label: &str, n: u64, before: &BTreeMap<String, (u64, u64)>, after: &BTreeMap<String, (u64, u64)>) {
+    fn report(
+        label: &str,
+        n: u64,
+        before: &BTreeMap<String, (u64, u64)>,
+        after: &BTreeMap<String, (u64, u64)>,
+    ) {
         eprintln!("== {label} (per batch over {n} batches)");
         let mut total = (0i64, 0i64);
         for (key, (count, bytes)) in after {
@@ -38650,12 +38844,20 @@ fn measure_per_batch_archive_bytes_for_trivial_edits() {
             let dc = *count as i64 - c0 as i64;
             let db = *bytes as i64 - b0 as i64;
             if dc != 0 || db != 0 {
-                eprintln!("  {key:<70} files {:+.2}  bytes {:+.1}", dc as f64 / n as f64, db as f64 / n as f64);
+                eprintln!(
+                    "  {key:<70} files {:+.2}  bytes {:+.1}",
+                    dc as f64 / n as f64,
+                    db as f64 / n as f64
+                );
                 total.0 += dc;
                 total.1 += db;
             }
         }
-        eprintln!("  TOTAL files {:+.2}  bytes {:+.1}", total.0 as f64 / n as f64, total.1 as f64 / n as f64);
+        eprintln!(
+            "  TOTAL files {:+.2}  bytes {:+.1}",
+            total.0 as f64 / n as f64,
+            total.1 as f64 / n as f64
+        );
     }
     const N: usize = 20;
     let fixture = ActivationFixture::nested_unicode("measure-per-batch-bytes", 0xa178_5b00);
@@ -38666,7 +38868,9 @@ fn measure_per_batch_archive_bytes_for_trivial_edits() {
     let db = fixture.request.database_path.clone();
     let db_size = |label: &str| {
         let bytes = fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
-        let wal = fs::metadata(format!("{}-wal", db.display())).map(|m| m.len()).unwrap_or(0);
+        let wal = fs::metadata(format!("{}-wal", db.display()))
+            .map(|m| m.len())
+            .unwrap_or(0);
         eprintln!("  sqlite {label}: db {bytes} wal {wal}");
     };
     handle.force_clean_checkpoint_for_test().unwrap();
@@ -38684,18 +38888,31 @@ fn measure_per_batch_archive_bytes_for_trivial_edits() {
     {
         let mut newest: Vec<(std::time::SystemTime, u64, String)> = Vec::new();
         for sub in ["batches", "objects"] {
-            for entry in fs::read_dir(root.join("operations.0").join(sub)).unwrap().flatten() {
+            for entry in fs::read_dir(root.join("operations.0").join(sub))
+                .unwrap()
+                .flatten()
+            {
                 let meta = entry.metadata().unwrap();
-                newest.push((meta.modified().unwrap(), meta.len(), format!("{sub}/{}", entry.file_name().to_string_lossy())));
+                newest.push((
+                    meta.modified().unwrap(),
+                    meta.len(),
+                    format!("{sub}/{}", entry.file_name().to_string_lossy()),
+                ));
             }
         }
         newest.sort();
         for (_, len, name) in newest.iter().rev().take(6) {
             eprintln!("  newest hot file {name:<90} {len} B");
         }
-        if let Some((_, _, name)) = newest.iter().rev().find(|(_, _, n)| n.starts_with("batches/")) {
+        if let Some((_, _, name)) = newest
+            .iter()
+            .rev()
+            .find(|(_, _, n)| n.starts_with("batches/"))
+        {
             let bytes = fs::read(root.join("operations.0").join(name)).unwrap();
-            let decoded = OperationBatch::decode(&bytes).map(|b| format!("{b:?}")).unwrap_or_else(|e| format!("decode error {e:?}"));
+            let decoded = OperationBatch::decode(&bytes)
+                .map(|b| format!("{b:?}"))
+                .unwrap_or_else(|e| format!("decode error {e:?}"));
             eprintln!("  manifest debug ({} chars): {}", decoded.len(), decoded);
         }
     }
@@ -38709,7 +38926,10 @@ fn measure_per_batch_archive_bytes_for_trivial_edits() {
         });
         match handle
             .save_application_page(SyncApplicationPageSaveRequest {
-                target: SyncApplicationPageSaveTarget::Existing { path: page.path.clone(), revision },
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: page.path.clone(),
+                    revision,
+                },
                 page,
             })
             .unwrap()
@@ -38757,36 +38977,69 @@ fn measure_per_batch_archive_bytes_for_trivial_edits() {
         let big0 = census(&root);
         for index in 0..10 {
             let (page, revision) = load_application_exact(&handle, &path);
-            let _ = save_application_block_text_at(&handle, page, revision, 30, &format!("big edit {index}"));
+            let _ = save_application_block_text_at(
+                &handle,
+                page,
+                revision,
+                30,
+                &format!("big edit {index}"),
+            );
             drain_managed_local(&handle);
         }
         let big1 = census(&root);
-        report("HOT: content edit of block 30 on a 60-block (~18 KB) page", 10, &big0, &big1);
+        report(
+            "HOT: content edit of block 30 on a 60-block (~18 KB) page",
+            10,
+            &big0,
+            &big1,
+        );
         let mut newest: Vec<(std::time::SystemTime, u64, String)> = Vec::new();
-        for entry in fs::read_dir(root.join("operations.0").join("objects")).unwrap().flatten() {
+        for entry in fs::read_dir(root.join("operations.0").join("objects"))
+            .unwrap()
+            .flatten()
+        {
             let meta = entry.metadata().unwrap();
-            newest.push((meta.modified().unwrap(), meta.len(), entry.file_name().to_string_lossy().into_owned()));
+            newest.push((
+                meta.modified().unwrap(),
+                meta.len(),
+                entry.file_name().to_string_lossy().into_owned(),
+            ));
         }
         newest.sort();
         for (_, len, name) in newest.iter().rev().take(4) {
             let bytes = fs::read(root.join("operations.0").join("objects").join(name)).unwrap();
             let head = String::from_utf8_lossy(&bytes[..bytes.len().min(360)]).replace('\n', "\\n");
-            eprintln!("  newest big-page object {} {len} B head: {head}", &name[..12]);
+            eprintln!(
+                "  newest big-page object {} {len} B head: {head}",
+                &name[..12]
+            );
             if let Ok(object) = crate::oplog::batch::OperationObject::decode(&bytes) {
                 let payload = object.payload();
                 let loro_at = payload.windows(4).position(|w| w == b"loro");
-                eprintln!("    kind {:?} payload {} B, 'loro' magic at {:?} -> loro bytes {:?}", object.kind(), payload.len(), loro_at, loro_at.map(|at| payload.len() - at));
+                eprintln!(
+                    "    kind {:?} payload {} B, 'loro' magic at {:?} -> loro bytes {:?}",
+                    object.kind(),
+                    payload.len(),
+                    loro_at,
+                    loro_at.map(|at| payload.len() - at)
+                );
             }
         }
     }
     let c1 = census(&root);
     for _ in 0..N {
         let (mut page, revision) = load_application_exact(&handle, "Root.md");
-        assert!(page.blocks.len() >= 2, "fixture page needs two blocks to move");
+        assert!(
+            page.blocks.len() >= 2,
+            "fixture page needs two blocks to move"
+        );
         page.blocks.swap(0, 1);
         match handle
             .save_application_page(SyncApplicationPageSaveRequest {
-                target: SyncApplicationPageSaveTarget::Existing { path: page.path.clone(), revision },
+                target: SyncApplicationPageSaveTarget::Existing {
+                    path: page.path.clone(),
+                    revision,
+                },
                 page,
             })
             .unwrap()
@@ -38801,10 +39054,18 @@ fn measure_per_batch_archive_bytes_for_trivial_edits() {
     db_size("after moves");
     handle.force_clean_checkpoint_for_test().unwrap();
     let c3 = census(&root);
-    report("CUT: sealed generation + cold history for the 2N batches", 2 * N as u64, &c2, &c3);
+    report(
+        "CUT: sealed generation + cold history for the 2N batches",
+        2 * N as u64,
+        &c2,
+        &c3,
+    );
     db_size("after cut");
     // Sizes of the per-batch sealed records for the last batch.
     let (page, _) = load_application_exact(&handle, "Root.md");
     eprintln!("  page blocks now: {}", page.blocks.len());
-    assert!(matches!(handle.clean_shutdown().unwrap(), SyncShutdownOutcome::Safe(_)));
+    assert!(matches!(
+        handle.clean_shutdown().unwrap(),
+        SyncShutdownOutcome::Safe(_)
+    ));
 }

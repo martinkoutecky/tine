@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use tine_storage::sealed_accepted_index::{
     AuthenticatedMapKey, AuthenticatedMapLinkV1, AuthenticatedMapRootV1, SealedAcceptedIndexError,
-    SealedAcceptedIndexObjectStore, SealedAcceptedIndexReader, SealedAcceptedIndexWriter,
-    SealedAcceptedObjectKind,
 };
+
+use super::receiver_absence_map::{MapNodeObjects, MapReader, MapWriter, MAP_NODE_KIND_CODE};
 
 use super::absence_decision::{
     merge_anchor, restored_generation_relation, AbsenceCompletionAnchor, AbsenceDecisionMap,
@@ -872,7 +872,7 @@ fn probe_history_root(
         published: None,
         counters: &history.counters,
     };
-    SealedAcceptedIndexReader::new(&store)
+    MapReader::new(&store)
         .read_map_node(link)
         .map(|_| ())
         .map_err(|error| format!("receiver absence history root node: {error}"))
@@ -1161,20 +1161,11 @@ fn exact_path_key(path: &ManagedPath) -> ([u8; 16], [u8; 16]) {
     (high, low)
 }
 
-fn sealed_kind_code(kind: SealedAcceptedObjectKind) -> u8 {
-    match kind {
-        SealedAcceptedObjectKind::MapNode => 1,
-        SealedAcceptedObjectKind::StatusRecord => 2,
-        SealedAcceptedObjectKind::SequenceLeaf => 3,
-        SealedAcceptedObjectKind::SequenceNode => 4,
-        SealedAcceptedObjectKind::CausalRecord => 5,
-    }
-}
-
-fn sealed_object_name(kind: SealedAcceptedObjectKind, address: ContentDigest) -> String {
+/// The node object name. The kind code stays the one this namespace has always
+/// written, so relocating the treap codec changed no durable name.
+fn sealed_object_name(address: ContentDigest) -> String {
     format!(
-        "{NODE_PREFIX}{}-{}{OBJECT_SUFFIX}",
-        sealed_kind_code(kind),
+        "{NODE_PREFIX}{MAP_NODE_KIND_CODE}-{}{OBJECT_SUFFIX}",
         hex(address.as_bytes())
     )
 }
@@ -1229,7 +1220,7 @@ impl HistoryCounters {
     }
 }
 
-/// The one `SealedAcceptedIndexObjectStore` adapter for this index.
+/// The one `MapNodeObjects` adapter for this index.
 ///
 /// Reads take the not-yet-published staging group first and the durable
 /// directory second. Publication only stages: nothing becomes durable until the
@@ -1242,13 +1233,12 @@ struct SealedRowObjects<'a> {
     counters: &'a HistoryCounters,
 }
 
-impl SealedAcceptedIndexObjectStore for SealedRowObjects<'_> {
-    fn read_sealed_accepted_object(
+impl MapNodeObjects for SealedRowObjects<'_> {
+    fn read_map_node_object(
         &self,
-        kind: SealedAcceptedObjectKind,
         address: ContentDigest,
     ) -> Result<Option<Vec<u8>>, SealedAcceptedIndexError> {
-        let name = sealed_object_name(kind, address);
+        let name = sealed_object_name(address);
         // The map writer path-copies, so within one call it reads back nodes it
         // has just published. Reads therefore see this batch's own group first.
         if let Some(bytes) = self
@@ -1263,13 +1253,12 @@ impl SealedAcceptedIndexObjectStore for SealedRowObjects<'_> {
             .map_err(SealedAcceptedIndexError::Corrupt)
     }
 
-    fn publish_sealed_accepted_object(
+    fn publish_map_node_object(
         &mut self,
-        kind: SealedAcceptedObjectKind,
         address: ContentDigest,
         bytes: &[u8],
     ) -> Result<(), SealedAcceptedIndexError> {
-        let name = sealed_object_name(kind, address);
+        let name = sealed_object_name(address);
         let counters = self.counters;
         let published = self.published.as_mut().ok_or_else(|| {
             SealedAcceptedIndexError::Corrupt(
@@ -1357,7 +1346,7 @@ fn lookup_row(
         published: None,
         counters,
     };
-    let reader = SealedAcceptedIndexReader::new(&store);
+    let reader = MapReader::new(&store);
     let Some(page_address) = reader
         .map_value(root, page_id.as_uuid().into_bytes())
         .map_err(|error| error.to_string())?
@@ -1526,7 +1515,7 @@ fn read_page_levels(
         published: None,
         counters,
     };
-    let reader = SealedAcceptedIndexReader::new(&store);
+    let reader = MapReader::new(&store);
     let Some(page_address) = reader
         .map_value(root, page_id.as_uuid().into_bytes())
         .map_err(|error| error.to_string())?
@@ -1576,7 +1565,7 @@ fn upsert_map_level(
         published: Some(published),
         counters,
     };
-    SealedAcceptedIndexWriter::new(&mut store)
+    MapWriter::new(&mut store)
         .upsert_map(root, key, value)
         .map_err(|error| error.to_string())
 }

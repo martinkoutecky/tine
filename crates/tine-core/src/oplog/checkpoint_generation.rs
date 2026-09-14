@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -36,22 +36,26 @@ use crate::sync_runtime::{
 use tine_storage::sealed_accepted_index::AuthenticatedMapKey;
 
 const CHECKPOINT_SCHEMA_VERSION: u32 = 5;
-const CHECKPOINT_DIRECTORY: &str = "clean-open-checkpoint-v2";
-const CHECKPOINT_POINTER: &str = "current";
+/// The checkpoint slot pointer and the sealed tables share ONE directory.
+///
+/// P4c2 §4.4: `clean-open-checkpoint-v2/` and `cold-history-v1/` merge into a
+/// single `sealed-v3/` with one marker, one root and one pack set, so a
+/// generation is made durable by one marker install rather than by two
+/// directories that can disagree after a crash (I-2).
+use super::cold_object_store::SEALED_DIRECTORY as CHECKPOINT_DIRECTORY;
+/// The checkpoint slot pointer, inside the merged `sealed-v3/` directory.
+///
+/// It is NOT `current`: `cold_object_store::SEALED_ROOT_MARKER` owns that name
+/// for the sealed marker, and P4c2 §4.4 merges the two directories into one.
+/// Two files called `current` in one directory would have collided silently,
+/// each publication clobbering the other's pointer.
+const CHECKPOINT_POINTER: &str = "checkpoint";
 const CHECKPOINT_PAYLOAD_NAMES: [&str; 2] = ["payload-a", "payload-b"];
 const CHECKPOINT_GENERATION_NAMES: [&str; 2] = ["generation-a", "generation-b"];
 const MAX_CHECKPOINT_BYTES: u64 = 512 * 1024 * 1024;
 const CHECKPOINT_CLEANUP_ENTRY_HEADROOM: usize = 1024;
 
 pub(crate) const CLEAN_CHECKPOINT_LAG_MAX: u64 = 64;
-
-static ACTIVE_CHECKPOINT_READERS: OnceLock<
-    Mutex<BTreeMap<PathBuf, Vec<Weak<CheckpointReaderPin>>>>,
-> = OnceLock::new();
-
-struct CheckpointReaderPin {
-    object_names: BTreeSet<String>,
-}
 
 #[cfg(test)]
 static FAIL_CHECKPOINT_WRITE_ROOTS: Mutex<BTreeSet<std::path::PathBuf>> =
@@ -145,17 +149,22 @@ pub(crate) fn damage_checkpoint_for_test(
             .ok_or_else(|| "checkpoint damage fixture has no document image".to_owned())?
             .document_id();
         let directory = checkpoint_directory(store)?;
-        let roster = SealedDocumentRoster::from_root(map_root_from_wire(payload.document_roster)?);
-        let reader = SealedGenerationDirectory::open(&directory)?;
+        let roster = SealedDocumentRoster::with_count(payload.document_count);
+        let reader = SealedGenerationDirectory::open_generation(
+            &directory,
+            payload.sealed_root.locator(),
+            payload.sealed_root_digest,
+        )?;
         let record = roster
             .document_record(&reader, document)?
             .ok_or_else(|| "checkpoint damage fixture omits its document".to_owned())?;
-        overwrite(
-            &path.join(capsule_blob_name(ContentDigest::from_bytes(
-                *record.checkpoint.sha256(),
-            ))),
-            b"torn document image",
-        )?;
+        // The image is a packed record, not a file: tear exactly its payload
+        // range inside the pack that holds it.
+        let digest = ContentDigest::from_bytes(*record.checkpoint.sha256());
+        let value = reader
+            .table_value(DOMAIN_CAPSULE_BLOB, digest.as_bytes())?
+            .ok_or_else(|| "checkpoint damage fixture omits its image locator".to_owned())?;
+        reader.tear_packed_record(locator_from_value(&value)?)?;
         return Ok(());
     }
     Err("unsupported checkpoint damage fixture".into())
@@ -194,430 +203,447 @@ impl tine_storage::sealed_accepted_index::SealedAcceptedEvidenceDecoder
     }
 }
 
-#[derive(Default)]
-pub(crate) struct CheckpointSealedStore {
-    objects: BTreeMap<(u8, ContentDigest), Vec<u8>>,
-}
+// ---------------------------------------------------------------------------
+// The sealed store seam, over one sealed-v3 archive
+// ---------------------------------------------------------------------------
+//
+// There is exactly one sealed index format (D-1): immutable sorted tables
+// inside packs, under one root record and one `current` marker, all in
+// `sealed-v3/`. This module no longer owns an object store at all — it owns
+// the *questions* it asks of one, and `cold_object_store` owns the container.
+//
+// Two access shapes exist and no more:
+//
+//   * [`SealedGenerationDirectory`] — read-only point access at one exact
+//     root. A completed generation, or an older generation's rollback slot.
+//   * [`SealedGenerationStagingStore`] — one open [`SealedCut`]: staged domain
+//     entries and appended records that become durable, marker last, when
+//     `finish` publishes them (I-2).
+//
+// Both answer through [`SealedTableAccess`], which is why no generic bound in
+// this file names a node seam any more.
 
-fn sealed_kind_code(kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind) -> u8 {
-    use tine_storage::sealed_accepted_index::SealedAcceptedObjectKind;
-    match kind {
-        SealedAcceptedObjectKind::MapNode => 1,
-        SealedAcceptedObjectKind::StatusRecord => 2,
-        SealedAcceptedObjectKind::SequenceLeaf => 3,
-        SealedAcceptedObjectKind::SequenceNode => 4,
-        SealedAcceptedObjectKind::CausalRecord => 5,
-    }
-}
+use super::cold_object_store::{
+    framed_document_key, framed_identity_key, identity_complete_domain, identity_current_domain,
+    unframed_identity_key, ColdLocatorV1, SealedArchiveReader, SealedCut, SealedCutKill,
+    SealedCutWork, DOMAIN_BATCH, DOMAIN_CAPSULE_BLOB, DOMAIN_CAUSAL_TIP, DOMAIN_COVERED_OBJECT,
+    DOMAIN_DOCUMENT_CHANGE, DOMAIN_DOCUMENT_ROSTER, DOMAIN_SEQUENCE,
+};
+use tine_storage::sealed_tables::TableDomain;
 
-fn sealed_kind_from_code(
-    code: u8,
-) -> Result<tine_storage::sealed_accepted_index::SealedAcceptedObjectKind, String> {
-    use tine_storage::sealed_accepted_index::SealedAcceptedObjectKind;
-    match code {
-        1 => Ok(SealedAcceptedObjectKind::MapNode),
-        2 => Ok(SealedAcceptedObjectKind::StatusRecord),
-        3 => Ok(SealedAcceptedObjectKind::SequenceLeaf),
-        4 => Ok(SealedAcceptedObjectKind::SequenceNode),
-        5 => Ok(SealedAcceptedObjectKind::CausalRecord),
-        _ => Err("clean checkpoint has an unknown sealed object kind".into()),
-    }
-}
+/// The two point questions and the two enumerations every sealed consumer in
+/// this file asks. Reading is identical whether a cut is open or not; only a
+/// staging store may also write.
+pub(crate) trait SealedTableAccess {
+    fn table_value(&self, domain: TableDomain, key: &[u8]) -> Result<Option<Vec<u8>>, String>;
 
-impl tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore for CheckpointSealedStore {
-    fn read_sealed_accepted_object(
+    fn table_predecessor(
         &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        Ok(self
-            .objects
-            .get(&(sealed_kind_code(kind), address))
-            .cloned())
-    }
+        domain: TableDomain,
+        key: &[u8],
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>, String>;
 
-    fn publish_sealed_accepted_object(
-        &mut self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-        bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        use tine_storage::sealed_accepted_index::SealedAcceptedIndexError;
-        let key = (sealed_kind_code(kind), address);
-        if let Some(existing) = self.objects.get(&key) {
-            if existing != bytes {
-                return Err(SealedAcceptedIndexError::Corrupt(
-                    "same sealed checkpoint address has different bytes".into(),
-                ));
-            }
-            return Ok(());
-        }
-        self.objects.insert(key, bytes.to_vec());
-        Ok(())
-    }
-}
+    /// One variable-length record's exact bytes.
+    fn sealed_record(&self, locator: ColdLocatorV1, limit: u64) -> Result<Vec<u8>, String>;
 
-impl CheckpointSealedStore {
-    fn retain_only(&mut self, retained: &BTreeSet<(u8, ContentDigest)>) {
-        self.objects.retain(|key, _| retained.contains(key));
-    }
+    /// Every live entry of one domain. Enumeration consumers only.
+    fn table_entries(&self, domain: TableDomain) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String>;
 
-    fn required_bytes(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<&[u8], String> {
-        self.objects
-            .get(&(sealed_kind_code(kind), address))
-            .map(Vec::as_slice)
-            .ok_or_else(|| format!("clean checkpoint sealed {kind} object {address} is missing"))
-    }
+    /// Table records read so far. The unit the index-work counters are in.
+    fn index_reads(&self) -> u64;
 
-    fn collect_map(
-        &self,
-        root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
-    ) -> Result<BTreeMap<AuthenticatedMapKey, ContentDigest>, String> {
-        use tine_storage::sealed_accepted_index::{
-            SealedAcceptedObjectKind, SealedAuthenticatedMapNodeV2,
+    /// Read back one content-addressed capsule blob and prove the bytes are
+    /// the ones the descriptor names.
+    ///
+    /// Blobs are content-addressed in `DOMAIN_CAPSULE_BLOB`, so this is one
+    /// table lookup plus one packed record read (I-14: O(1) file opens per
+    /// point read), never a directory scan.
+    fn read_capsule_blob(&self, blob: BlobDescription) -> Result<Vec<u8>, String> {
+        let digest = ContentDigest::from_bytes(*blob.sha256());
+        let Some(value) = self.table_value(DOMAIN_CAPSULE_BLOB, digest.as_bytes())? else {
+            return Err("sealed capsule blob is absent from its index".into());
         };
-
-        let mut rows = BTreeMap::new();
-        let mut pending = root.root.into_iter().collect::<Vec<_>>();
-        while let Some(link) = pending.pop() {
-            let node = SealedAuthenticatedMapNodeV2::decode(
-                link,
-                self.required_bytes(SealedAcceptedObjectKind::MapNode, link.digest)?,
-            )
-            .map_err(|error| error.to_string())?;
-            if rows.insert(node.key, node.value_digest).is_some() {
-                return Err("clean checkpoint sealed map repeats a key".into());
-            }
-            pending.extend(node.left);
-            pending.extend(node.right);
-            if rows.len() > usize::try_from(root.count).unwrap_or(usize::MAX) {
-                return Err("clean checkpoint sealed map exceeds its root count".into());
-            }
+        let bytes = self.sealed_record(locator_from_value(&value)?, MAX_CHECKPOINT_BYTES)?;
+        if BlobDescription::of(&bytes) != blob {
+            return Err("sealed capsule blob does not match its description".into());
         }
-        if rows.len()
-            != usize::try_from(root.count)
-                .map_err(|_| "clean checkpoint map count exceeds usize")?
-        {
-            return Err("clean checkpoint sealed map count differs from its root".into());
-        }
-        Ok(rows)
+        Ok(bytes)
     }
 }
 
-struct BorrowedCheckpointSealedStore<'a> {
-    objects: &'a BTreeMap<(u8, ContentDigest), Vec<u8>>,
-}
+/// Domains whose live entry count is bounded by the DOCUMENT count, and whose
+/// entries this reader therefore materializes once instead of re-reading a
+/// table per point read.
+///
+/// WHY this list exists: `tine_storage` verifies a table's digest exactly once
+/// per `TableSetReader`, and Tine builds a fresh reader for every point read.
+/// That is free for a handful of lookups and quadratic for a loop -- and both
+/// checkpoint qualification and checkpoint restore iterate EVERY document,
+/// doing two point reads each. On the anonymized graph (1,077 documents,
+/// H=1000, 2026-09-14) that hashed the roster and blob tables ~3,000 times and
+/// made a reopen cost 28.4 s where the treap cost 0.78 s.
+///
+/// WHY it is these two and no others: their live entry count is the document
+/// count -- the same count the caller has already materialized in
+/// `payload.document_dependencies`, so the memory is proportionate to work it
+/// is already doing. Batch-scale domains (`DOMAIN_BATCH`, `DOMAIN_SEQUENCE`,
+/// `DOMAIN_COVERED_OBJECT`, `DOMAIN_CAUSAL_TIP`) are deliberately absent:
+/// caching those would hold O(accepted batches) of index in RAM, which is the
+/// cost sorted tables exist to avoid. A loop over batch-scale keys is a
+/// different defect and must be fixed by not looping, not by caching.
+const DOCUMENT_SCALE_CACHED_DOMAINS: [u8; 2] = [DOMAIN_DOCUMENT_ROSTER.id, DOMAIN_CAPSULE_BLOB.id];
 
-impl tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore
-    for BorrowedCheckpointSealedStore<'_>
-{
-    fn read_sealed_accepted_object(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        Ok(self
-            .objects
-            .get(&(sealed_kind_code(kind), address))
-            .cloned())
-    }
-
-    fn publish_sealed_accepted_object(
-        &mut self,
-        _kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        _address: ContentDigest,
-        _bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        Err(
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Corrupt(
-                "borrowed checkpoint history is read-only".into(),
-            ),
-        )
-    }
-}
-
-// This is a construction working-set budget, not a graph/history occupancy
-// limit. A single larger legal record is published and flushed on its own.
-const SEALED_STAGING_BATCH_BYTES: usize = 8 * 1024 * 1024;
-// The shared batch retains a directory capability per publication. Bound that
-// resource as well as payload bytes; flushing never refuses more history.
-const SEALED_STAGING_BATCH_OBJECTS: usize = 64;
-const SEALED_STAGING_FILE_PREFIX: &str = "sealed-v2";
-
-fn sealed_staging_name(
-    kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-    address: ContentDigest,
-) -> String {
-    format!(
-        "{SEALED_STAGING_FILE_PREFIX}-{}-{address}",
-        sealed_kind_code(kind)
-    )
-}
-
-/// Read-only point access to exact sealed objects. This carries no generation
-/// authority: only a later qualified generation commit can name its roots.
+/// Read-only point access to exact sealed state. This carries no generation
+/// authority: only a later qualified generation commit can name its root.
 pub(crate) struct SealedGenerationDirectory {
     directory: cap_std::fs::Dir,
+    archive: Option<SealedArchiveReader>,
+    /// Lazily materialized live entries of `DOCUMENT_SCALE_CACHED_DOMAINS`.
+    /// Immutable: this reader is open at one exact root record.
+    document_scale_entries: std::sync::RwLock<BTreeMap<u8, Arc<BTreeMap<Vec<u8>, Vec<u8>>>>>,
 }
 
 impl SealedGenerationDirectory {
+    fn cached_domain_entries(
+        &self,
+        domain: TableDomain,
+    ) -> Result<Arc<BTreeMap<Vec<u8>, Vec<u8>>>, String> {
+        if let Some(entries) = self
+            .document_scale_entries
+            .read()
+            .map_err(|_| "sealed document-scale cache is poisoned".to_owned())?
+            .get(&domain.id)
+        {
+            return Ok(Arc::clone(entries));
+        }
+        let entries = Arc::new(match self.archive.as_ref() {
+            Some(archive) => archive.domain_entries(domain)?,
+            None => BTreeMap::new(),
+        });
+        self.document_scale_entries
+            .write()
+            .map_err(|_| "sealed document-scale cache is poisoned".to_owned())?
+            .insert(domain.id, Arc::clone(&entries));
+        Ok(entries)
+    }
+}
+
+impl SealedGenerationDirectory {
+    /// Open at the archive's current marker.
     pub(crate) fn open(directory: &cap_std::fs::Dir) -> Result<Self, String> {
         Ok(Self {
             directory: directory.try_clone().map_err(|error| error.to_string())?,
-        })
-    }
-}
-
-impl tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore
-    for SealedGenerationDirectory
-{
-    fn read_sealed_accepted_object(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        tine_storage::read_optional_regular(
-            &self.directory,
-            &sealed_staging_name(kind, address),
-            MAX_CHECKPOINT_BYTES,
-            None,
-        )
-        .map_err(|error| {
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Store(error.to_string())
+            archive: SealedArchiveReader::open_directory(directory)
+                .map_err(|error| error.to_string())?,
+            document_scale_entries: std::sync::RwLock::new(BTreeMap::new()),
         })
     }
 
-    fn publish_sealed_accepted_object(
-        &mut self,
-        _kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        _address: ContentDigest,
-        _bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        Err(
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Store(
-                "sealed generation directory is read-only".into(),
-            ),
-        )
+    /// Open at one exact historical root record.
+    ///
+    /// The marker's pack table resolves any locator ever published, so an
+    /// earlier generation keeps resolving after the marker advances. That is
+    /// what preserves the two-slot checkpoint protocol's rollback slot.
+    fn open_at_unchecked(
+        directory: &cap_std::fs::Dir,
+        root: ColdLocatorV1,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            directory: directory.try_clone().map_err(|error| error.to_string())?,
+            archive: SealedArchiveReader::open_directory_at(directory, root)
+                .map_err(|error| error.to_string())?,
+            document_scale_entries: std::sync::RwLock::new(BTreeMap::new()),
+        })
     }
-}
 
-// Linux can batch data and name barriers. Every other target uses the
-// retained private-directory primitive: Android needs its single-writer rename
-// fallback, and Windows needs its write-through publication protocol.
-enum SealedStagingPublication {
-    Batch(tine_storage::ExactImmutablePublicationBatch),
-    Immediate(tine_storage::DurableDirectoryPublication),
-}
+    /// Reopen at the exact sealed root a generation binding names, and prove
+    /// the root record found there IS that root.
+    ///
+    /// This is the ONLY way to open a reader on a generation's behalf. The
+    /// check lives inside the constructor, not at its call sites, because it
+    /// replaces the authenticated cross-check the treap used to give for free
+    /// (D-2 removed the proof walk, not the binding): the generation's
+    /// `sealed_root_digest` is the one value naming its covered half, and a
+    /// caller that forgot to compare it would consume a DIFFERENT history
+    /// while believing it had the generation's own.
+    ///
+    /// Refusal scenario: a torn or partially delivered sealed index -- the
+    /// marker, its root record and its packs arriving out of step through a
+    /// crash, a truncated write, or a sync service. The remedy is D-3 rebuild,
+    /// never a graph-open refusal: the caller discards this generation and the
+    /// store rebuilds from the untouched Markdown/Org originals and repairs
+    /// the tables from the pack footers.
+    pub(crate) fn open_generation(
+        directory: &cap_std::fs::Dir,
+        root: ColdLocatorV1,
+        expected: ContentDigest,
+    ) -> Result<Self, String> {
+        let opened = Self::open_at_unchecked(directory, root)?;
+        let actual = opened.sealed_root_digest()?;
+        if actual != expected {
+            return Err(format!(
+                "sealed root record at offset {} does not match the generation binding \
+                 (found {actual}, bound {expected}); rebuild this generation",
+                root.offset
+            ));
+        }
+        Ok(opened)
+    }
 
-impl SealedStagingPublication {
-    fn open(directory: &cap_std::fs::Dir) -> Result<Self, String> {
-        if cfg!(target_os = "linux") {
-            tine_storage::ExactImmutablePublicationBatch::new(directory)
-                .map(Self::Batch)
-                .map_err(|error| error.to_string())
-        } else {
-            Self::open_immediate(directory)
+    /// Tear one packed record's payload in place. Damage fixtures only.
+    #[cfg(test)]
+    pub(crate) fn tear_packed_record(&self, locator: ColdLocatorV1) -> Result<(), String> {
+        super::cold_object_store::tear_packed_record_for_test(&self.directory, locator)
+    }
+
+    /// The digest of the sealed root record this reader is open at.
+    ///
+    /// A reader that has never published sealed state is at the empty root;
+    /// a root record that cannot be digested is an error, never silently the
+    /// empty root -- that would let a damaged root pass as a legitimate empty
+    /// history.
+    pub(crate) fn sealed_root_digest(&self) -> Result<ContentDigest, String> {
+        match self.archive.as_ref() {
+            None => Ok(tine_storage::sealed_tables::sealed_empty_root_digest()),
+            Some(archive) => archive
+                .root()
+                .table_root_digest()
+                .map_err(|error| error.to_string()),
         }
     }
 
-    fn open_immediate(directory: &cap_std::fs::Dir) -> Result<Self, String> {
-        tine_storage::DurableDirectoryPublication::open(directory)
-            .map(Self::Immediate)
+    pub(crate) fn directory(&self) -> &cap_std::fs::Dir {
+        &self.directory
+    }
+}
+
+impl SealedTableAccess for SealedGenerationDirectory {
+    fn table_value(&self, domain: TableDomain, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        if DOCUMENT_SCALE_CACHED_DOMAINS.contains(&domain.id) {
+            return Ok(self.cached_domain_entries(domain)?.get(key).cloned());
+        }
+        let Some(archive) = self.archive.as_ref() else {
+            return Ok(None);
+        };
+        archive
+            .tables(domain)?
+            .get(key)
             .map_err(|error| error.to_string())
     }
 
-    fn publish(
-        &mut self,
-        directory: &cap_std::fs::Dir,
-        name: &str,
-        bytes: &[u8],
-    ) -> Result<(), String> {
-        match self {
-            Self::Batch(batch) => batch.publish(directory, name, bytes),
-            Self::Immediate(directory) => directory.publish_new_exact_single_writer(name, bytes),
+    fn table_predecessor(
+        &self,
+        domain: TableDomain,
+        key: &[u8],
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>, String> {
+        if DOCUMENT_SCALE_CACHED_DOMAINS.contains(&domain.id) {
+            // The cached path must answer exactly what the table path answers,
+            // or a cached domain would quietly have two semantics.
+            return Ok(self
+                .cached_domain_entries(domain)?
+                .range::<[u8], _>((std::ops::Bound::Unbounded, std::ops::Bound::Excluded(key)))
+                .next_back()
+                .map(|(key, value)| (key.clone(), value.clone())));
         }
-        .map_err(|error| error.to_string())
+        let Some(archive) = self.archive.as_ref() else {
+            return Ok(None);
+        };
+        archive
+            .tables(domain)?
+            .predecessor(key)
+            .map_err(|error| error.to_string())
     }
 
-    fn finish(self) -> Result<(), String> {
-        match self {
-            Self::Batch(batch) => batch
-                .finish()
-                .map(|_| ())
-                .map_err(|error| error.to_string()),
-            // Each immediate publication already completed its barrier.
-            Self::Immediate(_) => Ok(()),
+    fn sealed_record(&self, locator: ColdLocatorV1, limit: u64) -> Result<Vec<u8>, String> {
+        self.archive
+            .as_ref()
+            .ok_or("sealed archive has published no record")?
+            .record_bytes(locator, limit)
+    }
+
+    fn table_entries(&self, domain: TableDomain) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String> {
+        if DOCUMENT_SCALE_CACHED_DOMAINS.contains(&domain.id) {
+            return Ok((*self.cached_domain_entries(domain)?).clone());
         }
+        match self.archive.as_ref() {
+            Some(archive) => archive.domain_entries(domain),
+            None => Ok(BTreeMap::new()),
+        }
+    }
+
+    fn index_reads(&self) -> u64 {
+        self.archive
+            .as_ref()
+            .map_or(0, |archive| archive.work().index_nodes as u64)
     }
 }
 
-/// A caller-owned, sole-writer staging directory. Canonical node encoding and
-/// address validation remain in the shared writer/reader. Reuse A5's memory
-/// adapter only for the bounded unfinished publication batch, never as authority.
-/// Drop abandons unfinished publication; successful finish returns point access
-/// only after the shared durability primitive has completed.
+/// One open sealed cut.
+///
+/// Staged entries and appended records are unreferenced residue until
+/// `finish` installs the marker; a crash before that leaves the predecessor
+/// root exactly as authoritative as it was (I-2, P4c2 T5). Drop abandons the
+/// cut without moving anything.
 pub(crate) struct SealedGenerationStagingStore {
-    reader: SealedGenerationDirectory,
-    publication: Option<SealedStagingPublication>,
-    pending: CheckpointSealedStore,
-    pending_bytes: usize,
-    batch_byte_budget: usize,
-    batch_object_budget: usize,
-    failed: bool,
+    directory: cap_std::fs::Dir,
+    cut: SealedCut,
+    /// Domain entries written by this cut. Counted for I-25, not for policy.
+    entry_writes: u64,
+    record_writes: u64,
 }
 
 impl SealedGenerationStagingStore {
     pub(crate) fn open(directory: &cap_std::fs::Dir) -> Result<Self, String> {
         Ok(Self {
-            reader: SealedGenerationDirectory::open(directory)?,
-            publication: None,
-            pending: CheckpointSealedStore::default(),
-            pending_bytes: 0,
-            batch_byte_budget: SEALED_STAGING_BATCH_BYTES,
-            batch_object_budget: SEALED_STAGING_BATCH_OBJECTS,
-            failed: false,
+            directory: directory.try_clone().map_err(|error| error.to_string())?,
+            cut: SealedCut::open(directory).map_err(|error| error.to_string())?,
+            entry_writes: 0,
+            record_writes: 0,
         })
     }
 
-    fn flush(&mut self) -> Result<(), String> {
-        if self.failed {
-            return Err("sealed generation staging previously failed".into());
-        }
-        if let Some(publication) = self.publication.take() {
-            if let Err(error) = publication.finish() {
-                self.failed = true;
-                return Err(error.to_string());
-            }
-            self.pending.objects.clear();
-            self.pending_bytes = 0;
-        }
-        Ok(())
+    pub(crate) fn put(
+        &mut self,
+        domain: TableDomain,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), String> {
+        self.entry_writes = self.entry_writes.saturating_add(1);
+        self.cut.put(domain, key, value)
     }
 
-    pub(crate) fn finish(mut self) -> Result<SealedGenerationDirectory, String> {
-        self.flush()?;
-        Ok(self.reader)
+    pub(crate) fn remove(&mut self, domain: TableDomain, key: &[u8]) -> Result<(), String> {
+        self.entry_writes = self.entry_writes.saturating_add(1);
+        self.cut.remove(domain, key)
     }
-}
 
-impl tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore
-    for SealedGenerationStagingStore
-{
-    fn read_sealed_accepted_object(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        if self.failed {
+    /// Append one content-addressed variable-length record and return where it
+    /// landed. Callers store the locator as a table value.
+    pub(crate) fn append_record(&mut self, bytes: &[u8]) -> Result<ColdLocatorV1, String> {
+        self.record_writes = self.record_writes.saturating_add(1);
+        self.cut
+            .add_sealed_record(bytes)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn entry_writes(&self) -> u64 {
+        self.entry_writes
+    }
+
+    pub(crate) fn record_writes(&self) -> u64 {
+        self.record_writes
+    }
+
+    /// Publish up to one exact protocol boundary and stop. Crash fixtures only.
+    #[cfg(test)]
+    pub(crate) fn finish_killed_at(self, kill: SealedCutKill) -> Result<SealedCutWork, String> {
+        self.cut
+            .publish_with_kill(Some(kill))
+            .map_err(|error| error.to_string())
+    }
+
+    /// Publish this cut and reopen read-only at the root it installed.
+    pub(crate) fn finish(self) -> Result<(SealedCutWork, SealedGenerationDirectory), String> {
+        let directory = self.directory;
+        let work = self.cut.publish().map_err(|error| error.to_string())?;
+        let reader = SealedGenerationDirectory::open_generation(
+            &directory,
+            work.root_locator,
+            work.root_digest,
+        )?;
+        Ok((work, reader))
+    }
+
+    /// Publish one document image and return its content description. The
+    /// same blob published by an earlier cut is reused, not re-appended.
+    fn stage_capsule_blob(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(BlobDescription, ColdLocatorV1), String> {
+        let blob = BlobDescription::of(bytes);
+        if bytes.len() as u64 > MAX_CHECKPOINT_BYTES {
             return Err(
-                tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Store(
-                    "sealed generation staging previously failed".into(),
-                ),
+                "sealed construction record exceeds the current checkpoint record limit".into(),
             );
         }
-        if let Some(bytes) = self.pending.read_sealed_accepted_object(kind, address)? {
-            return Ok(Some(bytes));
+        let digest = ContentDigest::from_bytes(*blob.sha256());
+        if let Some(value) = self.table_value(DOMAIN_CAPSULE_BLOB, digest.as_bytes())? {
+            return Ok((blob, locator_from_value(&value)?));
         }
-        self.reader.read_sealed_accepted_object(kind, address)
+        let locator = self.append_record(bytes)?;
+        self.put(DOMAIN_CAPSULE_BLOB, digest.as_bytes(), &locator.to_bytes())?;
+        Ok((blob, locator))
     }
 
-    fn publish_sealed_accepted_object(
+    /// Re-append a blob whose existing record has been damaged in place.
+    ///
+    /// `stage_capsule_blob` deduplicates on the blob digest, which is right for
+    /// authoring (I-25) and wrong for repair: the digest row still names the
+    /// TORN record, so re-staging identical bytes hands the same broken locator
+    /// back. Recovery appends fresh bytes and repoints the row, which is what
+    /// `repack_cold_history` does for the whole archive.
+    #[cfg(test)]
+    fn restage_capsule_blob(
         &mut self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
         bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        self.stage_named_bytes(
-            sealed_kind_code(kind),
-            address,
-            &sealed_staging_name(kind, address),
-            bytes,
-        )
-        .map_err(tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Store)
-    }
-}
-
-impl SealedGenerationStagingStore {
-    fn stage_named_bytes(
-        &mut self,
-        kind_code: u8,
-        address: ContentDigest,
-        name: &str,
-        bytes: &[u8],
-    ) -> Result<(), String> {
-        let result = (|| -> Result<(), String> {
-            if self.failed {
-                return Err("sealed generation staging previously failed".into());
-            }
-            if bytes.len() as u64 > MAX_CHECKPOINT_BYTES {
-                return Err(
-                    "sealed construction record exceeds the current checkpoint record limit".into(),
-                );
-            }
-            if let Some(existing) = self.pending.objects.get(&(kind_code, address)) {
-                if existing != bytes {
-                    return Err("sealed staging address has different pending bytes".into());
-                }
-                return Ok(());
-            }
-            if self.pending_bytes.saturating_add(bytes.len()) > self.batch_byte_budget {
-                self.flush()?;
-            }
-            if self.publication.is_none() {
-                self.publication = Some(SealedStagingPublication::open(&self.reader.directory)?);
-            }
-            self.publication
-                .as_mut()
-                .expect("publication opened")
-                .publish(&self.reader.directory, name, bytes)
-                .map_err(|error| error.to_string())?;
-            self.pending
-                .objects
-                .insert((kind_code, address), bytes.to_vec());
-            self.pending_bytes = self
-                .pending_bytes
-                .checked_add(bytes.len())
-                .ok_or("sealed staging byte count overflowed")?;
-            if self.pending_bytes >= self.batch_byte_budget
-                || self.pending.objects.len() >= self.batch_object_budget
-            {
-                self.flush()?;
-            }
-            Ok(())
-        })();
-        if result.is_err() {
-            self.failed = true;
-        }
-        result
-    }
-
-    fn stage_capsule_blob(&mut self, bytes: &[u8]) -> Result<BlobDescription, String> {
+    ) -> Result<(BlobDescription, ColdLocatorV1), String> {
         let blob = BlobDescription::of(bytes);
-        // Zero is private construction bookkeeping; sealed-node kinds are 1..=5.
-        self.stage_named_bytes(
-            0,
-            ContentDigest::from_bytes(*blob.sha256()),
-            &capsule_blob_name(ContentDigest::from_bytes(*blob.sha256())),
-            bytes,
-        )?;
-        Ok(blob)
+        let digest = ContentDigest::from_bytes(*blob.sha256());
+        let locator = self.append_record(bytes)?;
+        self.put(DOMAIN_CAPSULE_BLOB, digest.as_bytes(), &locator.to_bytes())?;
+        Ok((blob, locator))
     }
 }
 
-const CAPSULE_BLOB_PREFIX: &str = "capsule-v1";
-const DOCUMENT_CAPSULE_SCHEMA: u32 = 1;
+impl SealedTableAccess for SealedGenerationStagingStore {
+    fn table_value(&self, domain: TableDomain, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        self.cut.get(domain, key)
+    }
 
-fn capsule_blob_name(digest: ContentDigest) -> String {
-    format!("{CAPSULE_BLOB_PREFIX}-{digest}")
+    fn table_predecessor(
+        &self,
+        domain: TableDomain,
+        key: &[u8],
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>, String> {
+        self.cut.predecessor(domain, key)
+    }
+
+    fn sealed_record(&self, locator: ColdLocatorV1, _limit: u64) -> Result<Vec<u8>, String> {
+        self.cut
+            .read_staged_or_packed(locator)
+            .map_err(|error| error.to_string())
+    }
+
+    fn table_entries(&self, domain: TableDomain) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String> {
+        self.cut.domain_entries(domain)
+    }
+
+    fn index_reads(&self) -> u64 {
+        self.cut.index_reads()
+    }
 }
+
+/// Resolve one covered acceptance sequence to its batch id. Test accessor.
+#[cfg(test)]
+fn sequence_batch_id<Store: SealedTableAccess>(
+    store: &Store,
+    sequence: u64,
+) -> Result<Option<[u8; 16]>, String> {
+    let Some(value) = store.table_value(DOMAIN_SEQUENCE, &sequence.to_be_bytes())? else {
+        return Ok(None);
+    };
+    value
+        .try_into()
+        .map_err(|_| "sealed sequence row is not a batch id".to_owned())
+        .map(Some)
+}
+
+/// Read one 32-byte table value back as a record locator.
+fn locator_from_value(value: &[u8]) -> Result<ColdLocatorV1, String> {
+    ColdLocatorV1::from_value(value)
+}
+
+const DOCUMENT_CAPSULE_SCHEMA: u32 = 1;
 
 fn verify_capsule_blob(expected: BlobDescription, bytes: &[u8]) -> Result<(), String> {
     if BlobDescription::of(bytes) != expected {
@@ -626,24 +652,24 @@ fn verify_capsule_blob(expected: BlobDescription, bytes: &[u8]) -> Result<(), St
     Ok(())
 }
 
-impl SealedGenerationDirectory {
-    fn read_capsule_blob(&self, blob: BlobDescription) -> Result<Vec<u8>, String> {
-        if blob.byte_length() > MAX_CHECKPOINT_BYTES {
-            return Err(
-                "generation capsule blob exceeds the current checkpoint record limit".into(),
-            );
-        }
-        let bytes = tine_storage::read_optional_regular(
-            &self.directory,
-            &capsule_blob_name(ContentDigest::from_bytes(*blob.sha256())),
-            blob.byte_length(),
-            None,
-        )
-        .map_err(|error| error.to_string())?
-        .ok_or("generation capsule blob is missing")?;
-        verify_capsule_blob(blob, &bytes)?;
-        Ok(bytes)
+/// Resolve one document image from the sealed packs.
+///
+/// Images are pack records like everything else, found through the capsule
+/// blob domain; nothing writes a per-image file (I-14).
+fn read_capsule_blob<Store: SealedTableAccess>(
+    store: &Store,
+    blob: BlobDescription,
+) -> Result<Vec<u8>, String> {
+    if blob.byte_length() > MAX_CHECKPOINT_BYTES {
+        return Err("generation capsule blob exceeds the current checkpoint record limit".into());
     }
+    let digest = ContentDigest::from_bytes(*blob.sha256());
+    let value = store
+        .table_value(DOMAIN_CAPSULE_BLOB, digest.as_bytes())?
+        .ok_or("generation capsule blob is missing")?;
+    let bytes = store.sealed_record(locator_from_value(&value)?, blob.byte_length())?;
+    verify_capsule_blob(blob, &bytes)?;
+    Ok(bytes)
 }
 
 /// Per-document immutable roster value. The checkpoint digest binds actual CRDT
@@ -821,18 +847,18 @@ impl SealedDocumentRoster {
         if compact.cutoff_state_digest() != cutoff.frontier().state_digest() {
             return Err("generation capsule belongs to another accepted cutoff".into());
         }
-        let checkpoint = store.stage_capsule_blob(compact.checkpoint())?;
+        let (checkpoint, _) = store.stage_capsule_blob(compact.checkpoint())?;
         let record = DocumentCapsuleRecord {
             schema: DOCUMENT_CAPSULE_SCHEMA,
             dependencies: compact.dependencies().clone(),
             checkpoint,
             policy: DocumentCheckpointPolicyV1::uncut(compact.checkpoint().len())?,
         };
-        let record_blob = store.stage_capsule_blob(&record.encode()?)?;
+        let (_, record_locator) = store.stage_capsule_blob(&record.encode()?)?;
         let map = self.map.upsert(
             store,
             super::DocumentKey::Entity(record.dependencies.document_id()),
-            ContentDigest::from_bytes(*record_blob.sha256()),
+            record_locator,
         )?;
         Ok(Self { map })
     }
@@ -849,7 +875,7 @@ impl SealedDocumentRoster {
         if compact.cutoff_state_digest() != cutoff_state_digest {
             return Err("generation image belongs to another accepted cutoff".into());
         }
-        let checkpoint = store.stage_capsule_blob(compact.checkpoint())?;
+        let (checkpoint, _) = store.stage_capsule_blob(compact.checkpoint())?;
         let policy = DocumentCheckpointPolicyV1::from_compact(
             eligible_through,
             config,
@@ -863,11 +889,11 @@ impl SealedDocumentRoster {
             checkpoint,
             policy: policy.clone(),
         };
-        let record_blob = store.stage_capsule_blob(&record.encode()?)?;
+        let (_, record_locator) = store.stage_capsule_blob(&record.encode()?)?;
         let map = self.map.upsert(
             store,
             super::DocumentKey::Entity(record.dependencies.document_id()),
-            ContentDigest::from_bytes(*record_blob.sha256()),
+            record_locator,
         )?;
         Ok((Self { map }, policy))
     }
@@ -884,24 +910,25 @@ impl SealedDocumentRoster {
         })
     }
 
-    pub(crate) fn load_document(
+    pub(crate) fn load_document<Store: SealedTableAccess>(
         self,
-        store: &SealedGenerationDirectory,
+        store: &Store,
         catalog: DocumentId,
         document: DocumentId,
     ) -> Result<Option<(DocumentDependencies, loro::LoroDoc)>, String> {
         let Some(record) = self.document_record(store, document)? else {
             return Ok(None);
         };
-        let checkpoint = store.read_capsule_blob(record.checkpoint)?;
+        let checkpoint = read_capsule_blob(store, record.checkpoint)?;
         let restored =
             super::hot_engine::qualify_compact_document(catalog, &record.dependencies, &checkpoint)
                 .map_err(|error| error.to_string())?;
         Ok(Some((record.dependencies, restored)))
     }
-    pub(crate) fn qualify_complete_keys(
+
+    pub(crate) fn qualify_complete_keys<Store: SealedTableAccess>(
         self,
-        store: &SealedGenerationDirectory,
+        store: &Store,
         documents: impl Iterator<Item = DocumentId>,
     ) -> Result<(), String> {
         self.map
@@ -912,21 +939,31 @@ impl SealedDocumentRoster {
         self.map.count()
     }
 
-    fn from_root(root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1) -> Self {
+    pub(crate) fn with_count(documents: u64) -> Self {
         Self {
-            map: SealedDocumentMap::from_root(root),
+            map: SealedDocumentMap::with_count(documents),
         }
     }
 
-    fn root(self) -> tine_storage::sealed_accepted_index::AuthenticatedMapRootV1 {
-        self.map.root()
+    /// Resume a roster over the rows the staging store's base already holds.
+    pub(crate) fn over_base<Store: SealedTableAccess>(store: &Store) -> Result<Self, String> {
+        Ok(Self {
+            map: SealedDocumentMap::over_base(store)?,
+        })
     }
 
-    fn document_reference(
+    /// Start a base-zero roster, dropping every inherited row first.
+    pub(crate) fn cleared(store: &mut SealedGenerationStagingStore) -> Result<Self, String> {
+        Ok(Self {
+            map: SealedDocumentMap::clear(store)?,
+        })
+    }
+
+    fn document_reference<Store: SealedTableAccess>(
         self,
-        store: &SealedGenerationDirectory,
+        store: &Store,
         document: DocumentId,
-    ) -> Result<Option<ContentDigest>, String> {
+    ) -> Result<Option<ColdLocatorV1>, String> {
         self.map.value(store, super::DocumentKey::Entity(document))
     }
 
@@ -935,11 +972,8 @@ impl SealedDocumentRoster {
         store: &SealedGenerationStagingStore,
         document: DocumentId,
     ) -> Result<Option<DocumentDependencies>, String> {
-        if store.failed {
-            return Err("sealed generation staging previously failed".into());
-        }
         Ok(self
-            .document_record(&store.reader, document)?
+            .document_record(store, document)?
             .map(|record| record.dependencies))
     }
 
@@ -949,36 +983,18 @@ impl SealedDocumentRoster {
         catalog: DocumentId,
         document: DocumentId,
     ) -> Result<Option<(DocumentDependencies, loro::LoroDoc)>, String> {
-        if store.failed {
-            return Err("sealed generation staging previously failed".into());
-        }
-        self.load_document(&store.reader, catalog, document)
+        self.load_document(store, catalog, document)
     }
 
-    fn document_record(
+    fn document_record<Store: SealedTableAccess>(
         self,
-        store: &SealedGenerationDirectory,
+        store: &Store,
         document: DocumentId,
     ) -> Result<Option<DocumentCapsuleRecord>, String> {
-        let Some(address) = self
-            .map
-            .value(store, super::DocumentKey::Entity(document))?
-        else {
+        let Some(locator) = self.document_reference(store, document)? else {
             return Ok(None);
         };
-        // The map value authenticates the descriptor bytes. Its encoded size is
-        // not stored in map nodes, so the existing per-record ceiling applies.
-        let bytes = tine_storage::read_optional_regular(
-            &store.directory,
-            &capsule_blob_name(address),
-            MAX_CHECKPOINT_BYTES,
-            None,
-        )
-        .map_err(|error| error.to_string())?
-        .ok_or("generation document descriptor is missing")?;
-        if ContentDigest::of(&bytes) != address {
-            return Err("generation document descriptor digest differs".into());
-        }
+        let bytes = store.sealed_record(locator, MAX_CHECKPOINT_BYTES)?;
         let record = DocumentCapsuleRecord::decode(&bytes)?;
         if record.dependencies.document_id() != document {
             return Err("generation document descriptor names another document".into());
@@ -987,81 +1003,32 @@ impl SealedDocumentRoster {
     }
 }
 
-struct RecordingCheckpointSealedStore<'a> {
-    inner: &'a CheckpointSealedStore,
-    reads: RefCell<BTreeSet<(u8, ContentDigest)>>,
+/// Where a published sealed root record landed, as the payload records it.
+///
+/// A generation names its OWN root, not the marker's. The marker's pack table
+/// resolves any locator ever published, so the rollback slot keeps resolving
+/// after a later cut advances the marker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedRootWire {
+    offset: u64,
+    length: u64,
 }
 
-impl<'a> RecordingCheckpointSealedStore<'a> {
-    fn new(inner: &'a CheckpointSealedStore) -> Self {
+impl SealedRootWire {
+    fn of(locator: ColdLocatorV1) -> Self {
         Self {
-            inner,
-            reads: RefCell::new(BTreeSet::new()),
+            offset: locator.offset,
+            length: locator.length,
         }
     }
 
-    fn reads(&self) -> BTreeSet<(u8, ContentDigest)> {
-        self.reads.borrow().clone()
+    fn locator(self) -> ColdLocatorV1 {
+        ColdLocatorV1 {
+            offset: self.offset,
+            length: self.length,
+        }
     }
-}
-
-impl tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore
-    for RecordingCheckpointSealedStore<'_>
-{
-    fn read_sealed_accepted_object(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        self.reads
-            .borrow_mut()
-            .insert((sealed_kind_code(kind), address));
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore::read_sealed_accepted_object(
-            self.inner,
-            kind,
-            address,
-        )
-    }
-
-    fn publish_sealed_accepted_object(
-        &mut self,
-        _kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        _address: ContentDigest,
-        _bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        Err(
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Store(
-                "recording checkpoint store is read-only".into(),
-            ),
-        )
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MapRootWire {
-    count: u64,
-    /// The map's full root key bytes. Shared authenticated-map keys are
-    /// variable length, so this is never a fixed-width identity field.
-    root_key: Option<Vec<u8>>,
-    root_digest: Option<ContentDigest>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SequenceRootWire {
-    len: u64,
-    height: u8,
-    root_digest: Option<ContentDigest>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RosterRootsWire {
-    batch_map: MapRootWire,
-    status_map: MapRootWire,
-    sequence: SequenceRootWire,
 }
 
 /// The four existing identity-admission domains. The discriminants are part
@@ -1083,6 +1050,24 @@ impl CheckpointIdentityKind {
         Self::PortablePath,
         Self::PageName,
     ];
+
+    /// This kind's index into the two identity domain families.
+    fn domain_index(self) -> u8 {
+        match self {
+            Self::BlockHome => 0,
+            Self::LogseqUuid => 1,
+            Self::PortablePath => 2,
+            Self::PageName => 3,
+        }
+    }
+
+    fn complete_domain(self) -> TableDomain {
+        identity_complete_domain(self.domain_index())
+    }
+
+    fn current_domain(self) -> TableDomain {
+        identity_current_domain(self.domain_index())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1094,109 +1079,105 @@ pub(crate) struct CheckpointIdentityChange {
     pub(crate) current: bool,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct IdentityRootsWire {
-    block_home: IdentityDomainRootsWire,
-    logseq_uuid: IdentityDomainRootsWire,
-    portable_path: IdentityDomainRootsWire,
-    page_name: IdentityDomainRootsWire,
+/// `document uuid ‖ acceptance sequence`, the document-change domain's key.
+fn document_change_key(document: DocumentId, sequence: u64) -> [u8; 24] {
+    let mut key = [0_u8; 24];
+    key[..16].copy_from_slice(document.as_uuid().as_bytes());
+    key[16..].copy_from_slice(&sequence.to_be_bytes());
+    key
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct IdentityDomainRootsWire {
-    complete: MapRootWire,
-    current: MapRootWire,
+/// The acceptance sequence a document-change key names.
+fn document_change_key_parts(key: &[u8]) -> Result<(DocumentId, u64), String> {
+    if key.len() != 24 {
+        return Err("sealed document-change key has the wrong width".into());
+    }
+    let document = DocumentId::from_uuid(
+        uuid::Uuid::from_slice(&key[..16]).map_err(|error| error.to_string())?,
+    );
+    let mut sequence = [0_u8; 8];
+    sequence.copy_from_slice(&key[16..]);
+    Ok((document, u64::from_be_bytes(sequence)))
 }
 
-impl Default for IdentityDomainRootsWire {
-    fn default() -> Self {
-        Self {
-            complete: map_root_to_wire(
-                tine_storage::sealed_accepted_index::AuthenticatedMapRootV1::empty(),
-            ),
-            current: map_root_to_wire(
-                tine_storage::sealed_accepted_index::AuthenticatedMapRootV1::empty(),
-            ),
-        }
-    }
+/// `peer id -> counter ‖ batch id ‖ zero padding`.
+///
+/// The tip is stored in the row itself rather than behind a record locator:
+/// twenty-four bytes fit the domain's value width, so a tip lookup costs no
+/// record read at all.
+fn causal_tip_value(record: tine_storage::sealed_accepted_index::CausalTipRecordV2) -> [u8; 32] {
+    let mut value = [0_u8; 32];
+    value[..8].copy_from_slice(&record.highest_accepted_counter.to_be_bytes());
+    value[8..24].copy_from_slice(&record.batch_id);
+    value
 }
 
-impl IdentityRootsWire {
-    fn domain(&self, kind: CheckpointIdentityKind) -> &IdentityDomainRootsWire {
-        match kind {
-            CheckpointIdentityKind::BlockHome => &self.block_home,
-            CheckpointIdentityKind::LogseqUuid => &self.logseq_uuid,
-            CheckpointIdentityKind::PortablePath => &self.portable_path,
-            CheckpointIdentityKind::PageName => &self.page_name,
-        }
+fn causal_tip_record(
+    peer_id: [u8; 16],
+    value: &[u8],
+) -> Result<tine_storage::sealed_accepted_index::CausalTipRecordV2, String> {
+    if value.len() != 32 || value[24..].iter().any(|byte| *byte != 0) {
+        return Err("sealed causal tip value is not the current shape".into());
     }
-
-    fn domain_mut(&mut self, kind: CheckpointIdentityKind) -> &mut IdentityDomainRootsWire {
-        match kind {
-            CheckpointIdentityKind::BlockHome => &mut self.block_home,
-            CheckpointIdentityKind::LogseqUuid => &mut self.logseq_uuid,
-            CheckpointIdentityKind::PortablePath => &mut self.portable_path,
-            CheckpointIdentityKind::PageName => &mut self.page_name,
-        }
-    }
-}
-
-fn map_root_to_wire(
-    root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
-) -> MapRootWire {
-    MapRootWire {
-        count: root.count,
-        root_key: root.root.map(|link| link.key.as_slice().to_vec()),
-        root_digest: root.root.map(|link| link.digest),
-    }
-}
-
-fn map_root_from_wire(
-    wire: MapRootWire,
-) -> Result<tine_storage::sealed_accepted_index::AuthenticatedMapRootV1, String> {
-    use tine_storage::sealed_accepted_index::{AuthenticatedMapLinkV1, AuthenticatedMapRootV1};
-    let root = match (wire.root_key.as_deref(), wire.root_digest) {
-        (Some(key), Some(digest)) => Some(AuthenticatedMapLinkV1 {
-            key: AuthenticatedMapKey::new(key)
-                .map_err(|error| format!("clean checkpoint map root key is invalid: {error}"))?,
-            digest,
-        }),
-        (None, None) => None,
-        _ => return Err("clean checkpoint map root is partial".into()),
-    };
-    if (wire.count == 0) != root.is_none() {
-        return Err("clean checkpoint map root count is inconsistent".into());
-    }
-    Ok(AuthenticatedMapRootV1 {
-        count: wire.count,
-        root,
+    let mut counter = [0_u8; 8];
+    counter.copy_from_slice(&value[..8]);
+    let mut batch_id = [0_u8; 16];
+    batch_id.copy_from_slice(&value[8..24]);
+    Ok(tine_storage::sealed_accepted_index::CausalTipRecordV2 {
+        peer_id,
+        highest_accepted_counter: u64::from_be_bytes(counter),
+        batch_id,
     })
 }
 
-fn document_change_key(document: DocumentId, sequence: u64) -> Result<AuthenticatedMapKey, String> {
-    let mut bytes = Vec::with_capacity(24);
-    bytes.extend_from_slice(document.as_uuid().as_bytes());
-    bytes.extend_from_slice(&sequence.to_be_bytes());
-    AuthenticatedMapKey::new(&bytes).map_err(|error| error.to_string())
+/// A sealed accepted record is stored as `logical address (32) ‖ canonical bytes`.
+///
+/// `tine-storage`'s `SealedAcceptedCausalRecordV2::decode` and
+/// `AcceptedStatusRecordV2::decode` take the record's LOGICAL address -- a
+/// domain-folded digest over the record's fields -- and refuse any decode whose
+/// recomputed address differs. That address is not the digest of the encoding,
+/// and the fixed-width batch row has room for the two pack locators only, so the
+/// address travels with the record. Integrity of the bytes is already the pack
+/// record header's `sha256(payload)`; carrying the address is what lets
+/// `SealedBatchRecords::verify` bind the causal and status records to one
+/// identity, which is the cross-check D-2 keeps after the proof walk went away.
+const SEALED_ADDRESSED_RECORD_PREFIX_BYTES: usize = 32;
+
+fn addressed_record(address: ContentDigest, bytes: &[u8]) -> Vec<u8> {
+    let mut blob = Vec::with_capacity(SEALED_ADDRESSED_RECORD_PREFIX_BYTES + bytes.len());
+    blob.extend_from_slice(address.as_bytes());
+    blob.extend_from_slice(bytes);
+    blob
 }
 
-fn roots_from_wire(
-    wire: RosterRootsWire,
-) -> Result<tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2, String> {
-    use tine_storage::sealed_accepted_index::{AcceptedSequenceRootV2, SealedAcceptedIndexRootsV2};
-    let roots = SealedAcceptedIndexRootsV2 {
-        batch_map: map_root_from_wire(wire.batch_map)?,
-        status_map: map_root_from_wire(wire.status_map)?,
-        sequence: AcceptedSequenceRootV2 {
-            len: wire.sequence.len,
-            height: wire.sequence.height,
-            root_digest: wire.sequence.root_digest,
-        },
-    };
-    roots.validate_counts().map_err(|error| error.to_string())?;
-    Ok(roots)
+fn split_addressed_record(blob: &[u8]) -> Result<(ContentDigest, &[u8]), String> {
+    if blob.len() <= SEALED_ADDRESSED_RECORD_PREFIX_BYTES {
+        return Err("sealed accepted record is shorter than its address prefix".into());
+    }
+    let mut address = [0_u8; SEALED_ADDRESSED_RECORD_PREFIX_BYTES];
+    address.copy_from_slice(&blob[..SEALED_ADDRESSED_RECORD_PREFIX_BYTES]);
+    Ok((
+        ContentDigest::from_bytes(address),
+        &blob[SEALED_ADDRESSED_RECORD_PREFIX_BYTES..],
+    ))
+}
+
+/// `batch id -> causal record locator ‖ status record locator`.
+fn batch_row_value(causal: ColdLocatorV1, status: ColdLocatorV1) -> [u8; 64] {
+    let mut value = [0_u8; 64];
+    value[..32].copy_from_slice(&causal.to_bytes());
+    value[32..].copy_from_slice(&status.to_bytes());
+    value
+}
+
+fn batch_row_locators(value: &[u8]) -> Result<(ColdLocatorV1, ColdLocatorV1), String> {
+    if value.len() != 64 {
+        return Err("sealed batch row is not the current width".into());
+    }
+    Ok((
+        locator_from_value(&value[..32])?,
+        locator_from_value(&value[32..])?,
+    ))
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1224,13 +1205,15 @@ struct CheckpointPayloadV2 {
     binding: CheckpointBindingV1,
     recovery_fence: CheckpointRecoveryFenceV1,
     state_bytes: Vec<u8>,
-    roster_roots: RosterRootsWire,
-    covered_object_root: MapRootWire,
-    document_change_root: MapRootWire,
-    identity_roots: IdentityRootsWire,
+    /// The one sealed root this generation was built over. Every domain --
+    /// batch, sequence, document change, covered object, causal tip, the four
+    /// identity families and the document roster -- is a table list inside it.
+    sealed_root: SealedRootWire,
+    sealed_root_digest: ContentDigest,
+    /// Live rows in the document roster domain at this root.
+    document_count: u64,
     identity_publish_work: IdentityPublishWork,
     capture_work: u64,
-    document_roster: MapRootWire,
     image_work: CheckpointImageWork,
     document_dependencies: Vec<DocumentDependencies>,
     sqlite_generation: SqliteGenerationBindingV1,
@@ -1262,61 +1245,14 @@ pub(crate) struct CleanCheckpointSqliteAnchor {
 #[serde(deny_unknown_fields)]
 pub(crate) struct IdentityPublishWork {
     pub(crate) changed_records: u64,
+    /// Sealed TABLE records read while publishing the identity delta. The
+    /// field keeps its persisted name; with sorted tables the unit it counts
+    /// is a table, not a treap node.
     pub(crate) map_node_reads: u64,
+    /// Domain entries staged by the identity delta.
     pub(crate) map_node_writes: u64,
+    /// Variable-length admission-value records appended.
     pub(crate) value_writes: u64,
-}
-
-struct IdentityPublishCountingStore<'a, S> {
-    inner: &'a mut S,
-    map_node_reads: AtomicUsize,
-    map_node_writes: u64,
-    value_writes: u64,
-}
-
-impl<S> tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore
-    for IdentityPublishCountingStore<'_, S>
-where
-    S: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore,
-{
-    fn read_sealed_accepted_object(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        if kind == tine_storage::sealed_accepted_index::SealedAcceptedObjectKind::MapNode {
-            self.map_node_reads.fetch_add(1, Ordering::Relaxed);
-        }
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore::read_sealed_accepted_object(
-            &*self.inner,
-            kind,
-            address,
-        )
-    }
-
-    fn publish_sealed_accepted_object(
-        &mut self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-        bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        match kind {
-            tine_storage::sealed_accepted_index::SealedAcceptedObjectKind::MapNode => {
-                self.map_node_writes = self.map_node_writes.saturating_add(1);
-            }
-            tine_storage::sealed_accepted_index::SealedAcceptedObjectKind::StatusRecord => {
-                self.value_writes = self.value_writes.saturating_add(1);
-            }
-            _ => {}
-        }
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore::publish_sealed_accepted_object(
-            &mut *self.inner,
-            kind,
-            address,
-            bytes,
-        )
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -1374,34 +1310,22 @@ fn decode_canonical<T: for<'de> Deserialize<'de> + Serialize>(bytes: &[u8]) -> R
 #[derive(Clone, Debug)]
 pub(crate) struct SealedAcceptedCutoff {
     frontier: AcceptedFrontierRoot,
-    roots: tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2,
-    causal_tip_root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
+    /// Accepted rows staged so far. `sequence` is the highest one.
+    sequence: u64,
     causal_tips: BTreeMap<[u8; 16], tine_storage::sealed_accepted_index::CausalTipRecordV2>,
 }
 
 impl SealedAcceptedCutoff {
     pub(crate) fn empty(frontier: AcceptedFrontierRoot) -> Result<Self, String> {
-        use tine_storage::sealed_accepted_index::{
-            AcceptedSequenceRootV2, AuthenticatedMapRootV1, SealedAcceptedIndexRootsV2,
-        };
         frontier
             .encode_canonical()
             .map_err(|error| error.to_string())?;
-        let empty = AuthenticatedMapRootV1::empty();
-        if frontier.acceptance_sequence() != 0
-            || frontier.batch_map_root_key().is_some()
-            || frontier.batch_map_root_digest() != empty.root_digest()
-        {
+        if frontier.acceptance_sequence() != 0 || frontier.batch_map_root_key().is_some() {
             return Err("sealed cutoff bootstrap requires a sequence-zero frontier".into());
         }
         Ok(Self {
             frontier,
-            roots: SealedAcceptedIndexRootsV2 {
-                batch_map: empty,
-                status_map: empty,
-                sequence: AcceptedSequenceRootV2::empty(),
-            },
-            causal_tip_root: empty,
+            sequence: 0,
             causal_tips: BTreeMap::new(),
         })
     }
@@ -1410,14 +1334,38 @@ impl SealedAcceptedCutoff {
         &self.frontier
     }
 
-    pub(crate) fn roots(&self) -> tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2 {
-        self.roots
+    /// This cutoff's identity as a single comparable value.
+    ///
+    /// It replaces the treap `roots()` tuple the tests used to compare. There
+    /// is no authenticated root over the covered half any more (D-2), so what
+    /// identifies a cutoff is what it actually asserts: the accepted frontier
+    /// it ends at, how many rows it covers, and the exact causal tip per peer.
+    pub(crate) fn identity_digest(&self) -> ContentDigest {
+        let mut material = Vec::new();
+        material.extend_from_slice(self.frontier.state_digest().as_bytes());
+        material.extend_from_slice(&self.sequence.to_be_bytes());
+        for (peer, tip) in &self.causal_tips {
+            material.extend_from_slice(peer);
+            material.extend_from_slice(&causal_tip_value(*tip));
+        }
+        ContentDigest::of(&material)
     }
 
-    pub(crate) fn causal_tip_root(
-        &self,
-    ) -> tine_storage::sealed_accepted_index::AuthenticatedMapRootV1 {
-        self.causal_tip_root
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// One comparable value over every peer's exact causal tip.
+    ///
+    /// It replaces the retired causal-tip treap root: the tips are the claim,
+    /// the treap was only how they used to be addressed.
+    pub(crate) fn causal_tip_digest(&self) -> ContentDigest {
+        let mut material = Vec::with_capacity(self.causal_tips.len() * 48);
+        for (peer, tip) in &self.causal_tips {
+            material.extend_from_slice(peer);
+            material.extend_from_slice(&causal_tip_value(*tip));
+        }
+        ContentDigest::of(&material)
     }
 
     pub(crate) fn causal_tips(
@@ -1426,13 +1374,10 @@ impl SealedAcceptedCutoff {
         self.causal_tips.values()
     }
 
-    pub(crate) fn builder<'a, Store>(
+    pub(crate) fn builder<'a>(
         &self,
-        store: &'a mut Store,
-    ) -> AcceptedCutoffBuilder<'a, Store>
-    where
-        Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore,
-    {
+        store: &'a mut SealedGenerationStagingStore,
+    ) -> AcceptedCutoffBuilder<'a> {
         AcceptedCutoffBuilder {
             store,
             cutoff: self.clone(),
@@ -1440,38 +1385,28 @@ impl SealedAcceptedCutoff {
     }
 }
 
-pub(crate) struct AcceptedCutoffBuilder<'a, Store> {
-    store: &'a mut Store,
+pub(crate) struct AcceptedCutoffBuilder<'a> {
+    store: &'a mut SealedGenerationStagingStore,
     cutoff: SealedAcceptedCutoff,
 }
 
-impl<Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore>
-    AcceptedCutoffBuilder<'_, Store>
-{
+impl AcceptedCutoffBuilder<'_> {
     pub(crate) fn append(&mut self, row: &CleanCheckpointAcceptedRow) -> Result<(), String> {
-        use tine_storage::sealed_accepted_index::SealedAcceptedIndexReader;
         if row.evidence.prior_frontier_root() != &self.cutoff.frontier {
             return Err("sealed cutoff row does not extend its exact predecessor".into());
         }
         let batch_id = row.evidence.batch_id().as_uuid().into_bytes();
-        if SealedAcceptedIndexReader::new(&*self.store)
-            .map_value(self.cutoff.roots.batch_map, batch_id)
-            .map_err(|error| error.to_string())?
-            .is_some()
-        {
+        if self.store.table_value(DOMAIN_BATCH, &batch_id)?.is_some() {
             return Err("sealed cutoff repeats an accepted batch".into());
         }
         let peer_id = row.causal_dot.peer_id().key().as_uuid().into_bytes();
         let prior_tip = self.cutoff.causal_tips.get(&peer_id).copied();
-        let expected_tip = prior_tip
-            .map(|tip| tip.value_digest())
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        if SealedAcceptedIndexReader::new(&*self.store)
-            .map_value(self.cutoff.causal_tip_root, peer_id)
-            .map_err(|error| error.to_string())?
-            != expected_tip
-        {
+        let sealed_tip = self
+            .store
+            .table_value(DOMAIN_CAUSAL_TIP, &peer_id)?
+            .map(|value| causal_tip_record(peer_id, &value))
+            .transpose()?;
+        if sealed_tip != prior_tip {
             return Err("sealed cutoff causal-tip predecessor does not authenticate".into());
         }
         let tip = tine_storage::sealed_accepted_index::CausalTipRecordV2 {
@@ -1479,6 +1414,9 @@ impl<Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore>
             highest_accepted_counter: row.causal_dot.counter(),
             batch_id,
         };
+        if tip.highest_accepted_counter == 0 {
+            return Err("sealed cutoff causal-tip counter is zero".into());
+        }
         if prior_tip.is_some_and(|prior| {
             prior.highest_accepted_counter == tip.highest_accepted_counter
                 && prior.batch_id != tip.batch_id
@@ -1487,29 +1425,28 @@ impl<Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore>
         }
         let advance_tip = prior_tip
             .is_none_or(|prior| prior.highest_accepted_counter < tip.highest_accepted_counter);
-        // Publish immutable nodes first, but do not move any candidate roots
-        // until every check passes. An interrupted/erroring append can leave
-        // unreachable construction objects; predecessor roots still resolve.
-        let roots = append_accepted_row(self.store, self.cutoff.roots, row)?;
+        // Stage the row's records and entries. Nothing is durable until the
+        // cut publishes and the marker installs (I-2), so an interrupted or
+        // erroring append leaves the predecessor root exactly as it was.
+        append_accepted_row(self.store, self.cutoff.sequence, row)?;
         let frontier = row.evidence.post_frontier_root();
-        if roots.batch_map.root.map(|link| link.key)
-            != frontier.batch_map_root_key().map(AuthenticatedMapKey::from)
-            || roots.batch_map.root_digest() != frontier.batch_map_root_digest()
-            || roots.sequence.len != frontier.acceptance_sequence()
-        {
-            return Err("sealed cutoff causal membership differs from engine evidence".into());
+        if row.evidence.acceptance_sequence() != frontier.acceptance_sequence() {
+            return Err("sealed cutoff row sequence differs from engine evidence".into());
         }
-        let proof = SealedAcceptedIndexReader::new(&*self.store)
-            .prove_membership(
-                roots,
+        // The two records the batch row names must now resolve, and they must
+        // bind to the same identity the engine accepted. This is
+        // `prove_membership`'s cross-check without the Merkle path (D-2).
+        let records = sealed_batch_records(self.store, batch_id)?
+            .ok_or("sealed cutoff membership is missing after publication")?;
+        records
+            .verify(
                 row.evidence.acceptance_sequence(),
                 batch_id,
                 &TineAcceptedEvidenceDecoder,
             )
-            .map_err(|error| error.to_string())?
-            .ok_or("sealed cutoff membership is missing after publication")?;
-        if proof.status.no_op != row.no_op
-            || proof.status.exact_evidence_bytes
+            .map_err(|error| error.to_string())?;
+        if records.status.no_op != row.no_op
+            || records.status.exact_evidence_bytes
                 != row
                     .evidence
                     .encode_canonical()
@@ -1517,35 +1454,14 @@ impl<Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore>
         {
             return Err("sealed cutoff status differs from engine acceptance".into());
         }
-        let causal_tip_root = if advance_tip {
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexWriter::new(&mut *self.store)
-                .upsert_map(
-                    self.cutoff.causal_tip_root,
-                    peer_id,
-                    tip.value_digest().map_err(|error| error.to_string())?,
-                )
-                .map_err(|error| error.to_string())?
-        } else {
-            self.cutoff.causal_tip_root
-        };
-        let expected_tip = if advance_tip { Some(tip) } else { prior_tip }
-            .ok_or("sealed cutoff causal tip disappeared")?;
-        if SealedAcceptedIndexReader::new(&*self.store)
-            .map_value(causal_tip_root, peer_id)
-            .map_err(|error| error.to_string())?
-            != Some(
-                expected_tip
-                    .value_digest()
-                    .map_err(|error| error.to_string())?,
-            )
-        {
-            return Err("sealed cutoff causal tip is missing after publication".into());
+        if advance_tip {
+            self.store
+                .put(DOMAIN_CAUSAL_TIP, &peer_id, &causal_tip_value(tip))?;
         }
-        // Mutate only the builder's private token after all immutable writes
-        // and point proofs succeed. The input predecessor remains unchanged.
+        // Mutate only the builder's private token after every staged write and
+        // point proof succeeds. The input predecessor remains unchanged.
         self.cutoff.frontier = frontier.clone();
-        self.cutoff.roots = roots;
-        self.cutoff.causal_tip_root = causal_tip_root;
+        self.cutoff.sequence = row.evidence.acceptance_sequence();
         if advance_tip {
             self.cutoff.causal_tips.insert(peer_id, tip);
         }
@@ -1563,27 +1479,45 @@ impl<Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore>
     }
 }
 
-/// One conversion from engine acceptance evidence to the shared sealed formats.
-/// Both the live disposable checkpoint and the construction oracle call this
-/// writer.
-fn append_accepted_row<
-    Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore,
->(
-    store: &mut Store,
-    roots: tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2,
-    row: &CleanCheckpointAcceptedRow,
-) -> Result<tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2, String> {
+/// The two records one sealed accepted batch resolves to, through the batch
+/// domain's single row. Two record reads, no structure walk.
+pub(crate) fn sealed_batch_records<Store: SealedTableAccess>(
+    store: &Store,
+    batch_id: [u8; 16],
+) -> Result<Option<tine_storage::sealed_accepted_index::SealedBatchRecords>, String> {
     use tine_storage::sealed_accepted_index::{
-        AcceptedSequenceEntryV2, AcceptedStatusRecordV2, SealedAcceptedCausalClockEntryV2,
-        SealedAcceptedCausalRecordV2, SealedAcceptedIndexRootsV2, SealedAcceptedIndexWriter,
+        AcceptedStatusRecordV2, SealedAcceptedCausalRecordV2, SealedBatchRecords,
     };
-    roots.validate_counts().map_err(|error| error.to_string())?;
-    if roots.sequence.len.checked_add(1) != Some(row.evidence.acceptance_sequence()) {
+    let Some(row) = store.table_value(DOMAIN_BATCH, &batch_id)? else {
+        return Ok(None);
+    };
+    let (causal_locator, status_locator) = batch_row_locators(&row)?;
+    let causal_blob = store.sealed_record(causal_locator, MAX_CHECKPOINT_BYTES)?;
+    let status_blob = store.sealed_record(status_locator, MAX_CHECKPOINT_BYTES)?;
+    let (causal_address, causal_bytes) = split_addressed_record(&causal_blob)?;
+    let (status_address, status_bytes) = split_addressed_record(&status_blob)?;
+    let causal = SealedAcceptedCausalRecordV2::decode(batch_id, causal_address, causal_bytes)
+        .map_err(|error| error.to_string())?;
+    let status = AcceptedStatusRecordV2::decode(batch_id, status_address, status_bytes)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(SealedBatchRecords { causal, status }))
+}
+
+/// One conversion from engine acceptance evidence to the sealed domains.
+///
+/// Causal and status stay ordinary variable-length pack records; the batch
+/// row points at both by locator, and the sequence row names the batch.
+fn append_accepted_row(
+    store: &mut SealedGenerationStagingStore,
+    base_sequence: u64,
+    row: &CleanCheckpointAcceptedRow,
+) -> Result<(), String> {
+    use tine_storage::sealed_accepted_index::{
+        AcceptedStatusRecordV2, SealedAcceptedCausalClockEntryV2, SealedAcceptedCausalRecordV2,
+    };
+    if base_sequence.checked_add(1) != Some(row.evidence.acceptance_sequence()) {
         return Err("sealed accepted delta sequence is not contiguous".into());
     }
-    let mut batch_map = roots.batch_map;
-    let mut status_map = roots.status_map;
-    let mut sequence_root = roots.sequence;
     let batch_id = row.evidence.batch_id().as_uuid().into_bytes();
     let causal = SealedAcceptedCausalRecordV2 {
         batch_id,
@@ -1600,10 +1534,9 @@ fn append_accepted_row<
             })
             .collect(),
     };
-    let mut writer = SealedAcceptedIndexWriter::new(store);
-    let causal_address = writer
-        .publish_causal(&causal)
-        .map_err(|error| error.to_string())?;
+    let causal_bytes = causal.encode().map_err(|error| error.to_string())?;
+    let causal_address = causal.address().map_err(|error| error.to_string())?;
+    let causal_locator = store.append_record(&addressed_record(causal_address, &causal_bytes))?;
     let status = AcceptedStatusRecordV2 {
         batch_id,
         no_op: row.no_op,
@@ -1614,46 +1547,35 @@ fn append_accepted_row<
             .map_err(|error| error.to_string())?,
         accepted_causal_record_digest: causal_address,
     };
-    let status_address = writer
-        .publish_status(&status)
-        .map_err(|error| error.to_string())?;
-    batch_map = writer
-        .upsert_map(batch_map, batch_id, causal_address)
-        .map_err(|error| error.to_string())?;
-    status_map = writer
-        .upsert_map(status_map, batch_id, status_address)
-        .map_err(|error| error.to_string())?;
-    sequence_root = writer
-        .append_sequence(
-            sequence_root,
-            AcceptedSequenceEntryV2 {
-                sequence: row.evidence.acceptance_sequence(),
-                batch_id,
-                accepted_status_value_digest: status_address,
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    let roots = SealedAcceptedIndexRootsV2 {
-        batch_map,
-        status_map,
-        sequence: sequence_root,
-    };
-    roots.validate_counts().map_err(|error| error.to_string())?;
-    Ok(roots)
+    let status_bytes = status.encode().map_err(|error| error.to_string())?;
+    let status_address = status.value_digest();
+    let status_locator = store.append_record(&addressed_record(status_address, &status_bytes))?;
+    store.put(
+        DOMAIN_BATCH,
+        &batch_id,
+        &batch_row_value(causal_locator, status_locator),
+    )?;
+    store.put(
+        DOMAIN_SEQUENCE,
+        &row.evidence.acceptance_sequence().to_be_bytes(),
+        &batch_id,
+    )?;
+    Ok(())
 }
 
-fn build_payload_with_images<Store>(
+/// The last cut published by this process, for the release-only curve's T1/T2
+/// numbers. Test-only: index bytes per batch cannot be read off the filesystem.
+#[cfg(test)]
+pub(crate) static LAST_SEALED_CUT_WORK: std::sync::Mutex<Option<SealedCutWork>> =
+    std::sync::Mutex::new(None);
+
+fn build_payload_with_images(
     capture: CleanCheckpointCapture,
     predecessor: Option<(u64, CheckpointPayloadV2)>,
-    document_roster: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
+    document_roster: SealedDocumentRoster,
     image_work: CheckpointImageWork,
-    store: &mut Store,
-) -> Result<(u64, Vec<u8>), String>
-where
-    Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore,
-{
-    use tine_storage::sealed_accepted_index::{AcceptedSequenceRootV2, AuthenticatedMapRootV1};
-
+    store: &mut SealedGenerationStagingStore,
+) -> Result<(u64, CheckpointPayloadV2), String> {
     let predecessor_sqlite_generation = predecessor
         .as_ref()
         .map(|(_, payload)| payload.sqlite_generation.clone());
@@ -1667,14 +1589,10 @@ where
                 .map(|(_, payload)| payload.document_dependencies.clone())
         })
         .unwrap_or_default();
-    let (
-        mut batch_map,
-        mut status_map,
-        mut sequence_root,
-        mut covered_object_root,
-        mut document_change_root,
-        mut identity_roots,
-    ) = match predecessor {
+    // Every domain of the predecessor is already staged in the open cut's base
+    // root, so the delta below is genuinely a delta: nothing is recopied
+    // forward and no root is rebuilt (I-25).
+    let base_sequence = match predecessor {
         Some((sequence, payload)) => {
             if payload.schema_version != CHECKPOINT_SCHEMA_VERSION
                 || payload.binding.workspace_id != capture.workspace_id
@@ -1685,92 +1603,45 @@ where
             {
                 return Err("clean checkpoint predecessor frontier is incompatible".into());
             }
-            let roots = roots_from_wire(payload.roster_roots)?;
-            if roots.sequence.len != sequence {
+            if payload.recovery_fence.accepted_sequence != sequence {
                 return Err("clean checkpoint predecessor roster frontier differs".into());
             }
-            (
-                roots.batch_map,
-                roots.status_map,
-                roots.sequence,
-                map_root_from_wire(payload.covered_object_root)?,
-                map_root_from_wire(payload.document_change_root)?,
-                payload.identity_roots,
-            )
+            sequence
         }
         None => {
             if capture.base_sequence != 0 {
                 return Err("clean checkpoint delta has no durable predecessor".into());
             }
-            (
-                AuthenticatedMapRootV1::empty(),
-                AuthenticatedMapRootV1::empty(),
-                AcceptedSequenceRootV2::empty(),
-                AuthenticatedMapRootV1::empty(),
-                AuthenticatedMapRootV1::empty(),
-                IdentityRootsWire::default(),
-            )
+            0
         }
     };
+    let mut sequence_reached = base_sequence;
     for row in &capture.accepted_rows {
-        if row.evidence.acceptance_sequence() <= sequence_root.len {
+        if row.evidence.acceptance_sequence() <= sequence_reached {
             continue;
         }
-        let roots = append_accepted_row(
-            &mut *store,
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2 {
-                batch_map,
-                status_map,
-                sequence: sequence_root,
-            },
-            row,
-        )?;
-        batch_map = roots.batch_map;
-        status_map = roots.status_map;
-        sequence_root = roots.sequence;
-        let value = ContentDigest::of(
-            &row.evidence
-                .encode_canonical()
-                .map_err(|error| error.to_string())?,
-        );
-        let mut writer =
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexWriter::new(&mut *store);
+        append_accepted_row(&mut *store, sequence_reached, row)?;
+        sequence_reached = row.evidence.acceptance_sequence();
         for document in row.evidence.affected_documents() {
-            document_change_root = writer
-                .upsert_map(
-                    document_change_root,
-                    document_change_key(
-                        document.document_id(),
-                        row.evidence.acceptance_sequence(),
-                    )?,
-                    value,
-                )
-                .map_err(|error| error.to_string())?;
+            store.put(
+                DOMAIN_DOCUMENT_CHANGE,
+                &document_change_key(document.document_id(), row.evidence.acceptance_sequence()),
+                &row.evidence.acceptance_sequence().to_be_bytes(),
+            )?;
         }
     }
     let sequence = capture.target_sequence;
-    if sequence_root.len != sequence {
+    if sequence_reached != sequence {
         return Err("clean checkpoint delta does not reach its target frontier".into());
     }
-    {
-        let mut writer =
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexWriter::new(&mut *store);
-        for digest in &capture.required_objects {
-            let key =
-                AuthenticatedMapKey::new(digest.as_bytes()).map_err(|error| error.to_string())?;
-            covered_object_root = writer
-                .upsert_map(covered_object_root, key, *digest)
-                .map_err(|error| error.to_string())?;
-        }
+    for digest in &capture.required_objects {
+        store.put(DOMAIN_COVERED_OBJECT, digest.as_bytes(), &[1])?;
     }
     let changed_records = u64::try_from(capture.identity_changes.len())
         .map_err(|_| "identity change count exceeds u64")?;
-    let mut identity_store = IdentityPublishCountingStore {
-        inner: &mut *store,
-        map_node_reads: AtomicUsize::new(0),
-        map_node_writes: 0,
-        value_writes: 0,
-    };
+    let index_reads_before = store.index_reads();
+    let entry_writes_before = store.entry_writes();
+    let record_writes_before = store.record_writes();
     let mut previous_change = None;
     for change in &capture.identity_changes {
         if (change.sequence <= capture.base_sequence
@@ -1781,86 +1652,57 @@ where
             return Err("clean checkpoint identity delta is outside its accepted tail".into());
         }
         previous_change = Some(change.sequence);
-        let key = AuthenticatedMapKey::new(&change.key).map_err(|error| error.to_string())?;
+        let key = framed_identity_key(&change.key)?;
         // Encoding belongs to the disposable publisher, not the actor that
         // accepted the change. Capture carries only a bounded typed delta.
         let value_bytes = change.value.encode_canonical()?;
-        let value = ContentDigest::of(&value_bytes);
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore::publish_sealed_accepted_object(
-            &mut identity_store,
-            tine_storage::sealed_accepted_index::SealedAcceptedObjectKind::StatusRecord,
-            value,
-            &value_bytes,
-        )
-        .map_err(|error| error.to_string())?;
-        let domain = identity_roots.domain_mut(change.kind);
-        let complete = map_root_from_wire(domain.complete.clone())?;
-        let current = map_root_from_wire(domain.current.clone())?;
-        let mut writer = tine_storage::sealed_accepted_index::SealedAcceptedIndexWriter::new(
-            &mut identity_store,
-        );
-        let complete = writer
-            .upsert_map(complete, key, value)
-            .map_err(|error| error.to_string())?;
-        let current = if change.current {
-            writer
-                .upsert_map(current, key, value)
-                .map_err(|error| error.to_string())?
+        let locator = store.append_record(&value_bytes)?;
+        store.put(change.kind.complete_domain(), &key, &locator.to_bytes())?;
+        if change.current {
+            store.put(change.kind.current_domain(), &key, &locator.to_bytes())?;
         } else {
-            writer
-                .remove_map(current, key)
-                .map_err(|error| error.to_string())?
-        };
-        domain.complete = map_root_to_wire(complete);
-        domain.current = map_root_to_wire(current);
+            store.remove(change.kind.current_domain(), &key)?;
+        }
     }
     let identity_publish_work = IdentityPublishWork {
         changed_records,
-        map_node_reads: u64::try_from(identity_store.map_node_reads.load(Ordering::Relaxed))
-            .map_err(|_| "identity map read count exceeds u64")?,
-        map_node_writes: identity_store.map_node_writes,
-        value_writes: identity_store.value_writes,
-    };
-    drop(identity_store);
-    let roots = tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2 {
-        batch_map,
-        status_map,
-        sequence: sequence_root,
+        map_node_reads: store.index_reads().saturating_sub(index_reads_before),
+        map_node_writes: store.entry_writes().saturating_sub(entry_writes_before),
+        value_writes: store.record_writes().saturating_sub(record_writes_before),
     };
     // Qualification is point-bounded at the new terminal entry. Predecessor
-    // roots were already qualified when their marker became authoritative;
+    // rows were already qualified when their marker became authoritative;
     // walking them again would make every later generation O(H).
     if sequence != 0 {
-        let reader = tine_storage::sealed_accepted_index::SealedAcceptedIndexReader::new(&*store);
-        let entry = reader
-            .sequence_entry(roots.sequence, sequence)
-            .map_err(|error| error.to_string())?
+        let batch_id = store
+            .table_value(DOMAIN_SEQUENCE, &sequence.to_be_bytes())?
             .ok_or_else(|| "final clean checkpoint sequence is incomplete".to_owned())?;
-        let proof = reader
-            .prove_membership(
-                roots,
-                sequence,
-                entry.batch_id,
-                &TineAcceptedEvidenceDecoder,
-            )
-            .map_err(|error| error.to_string())?
+        let batch_id: [u8; 16] = batch_id
+            .try_into()
+            .map_err(|_| "sealed sequence row is not a batch id".to_owned())?;
+        let records = sealed_batch_records(&*store, batch_id)?
             .ok_or_else(|| "final clean checkpoint roster membership is absent".to_owned())?;
-        let evidence = AcceptedBatchEvidence::decode_canonical(&proof.status.exact_evidence_bytes)
+        records
+            .verify(sequence, batch_id, &TineAcceptedEvidenceDecoder)
             .map_err(|error| error.to_string())?;
+        let evidence =
+            AcceptedBatchEvidence::decode_canonical(&records.status.exact_evidence_bytes)
+                .map_err(|error| error.to_string())?;
         if evidence.post_frontier_root().state_digest() != capture.cutoff_state_digest {
             return Err("final clean checkpoint roster frontier differs".into());
         }
     }
     let state_root_digest = ContentDigest::of(&capture.state_bytes);
+    // The root record is not published yet -- `finish` seals this cut. The
+    // payload's own identity therefore binds the FACTS the generation covers;
+    // its exact sealed root locator and digest are stamped in by the caller
+    // once the cut publishes.
     let generation_material = encode_canonical(&(
         capture.workspace_id,
         capture.lineage_digest,
         capture.target_sequence,
         capture.cutoff_state_digest,
-        roots.batch_map.root_digest(),
-        roots.status_map.root_digest(),
-        roots.sequence.root_digest,
-        document_roster.root_digest(),
+        document_roster.document_count(),
         state_root_digest,
     ))?;
     let generation_digest = ContentDigest::of(&generation_material);
@@ -1877,7 +1719,7 @@ where
                 generation.full_anchor_generation_id
             }),
         covered_block_count: capture.covered_block_count,
-        covered_semantic_capsules_root_digest: document_change_root.root_digest(),
+        covered_semantic_capsules_root_digest: generation_digest,
         covered_head_facts_root_digest: capture.cutoff_state_digest,
         current_projection_payload_pins_root_digest: state_root_digest,
         nonlinear_state_root_digest: state_root_digest,
@@ -1898,47 +1740,40 @@ where
             floor_policy: capture.floor_policy,
         },
         state_bytes: capture.state_bytes,
-        roster_roots: RosterRootsWire {
-            batch_map: map_root_to_wire(roots.batch_map),
-            status_map: map_root_to_wire(roots.status_map),
-            sequence: SequenceRootWire {
-                len: roots.sequence.len,
-                height: roots.sequence.height,
-                root_digest: roots.sequence.root_digest,
-            },
+        // Stamped by the caller after `SealedGenerationStagingStore::finish`.
+        sealed_root: SealedRootWire {
+            offset: 0,
+            length: 0,
         },
-        covered_object_root: map_root_to_wire(covered_object_root),
-        document_change_root: map_root_to_wire(document_change_root),
-        identity_roots,
+        sealed_root_digest: ContentDigest::of(&[]),
+        document_count: document_roster.document_count(),
         identity_publish_work,
         capture_work: capture.capture_work,
-        document_roster: map_root_to_wire(document_roster),
         image_work,
         document_dependencies,
         sqlite_generation,
     };
-    Ok((sequence, encode_canonical(&payload)?))
+    Ok((sequence, payload))
 }
 
 /// Payload-only construction used by the publication primitive tests. Live
-/// capture first publishes its immutable document objects and calls the inner
-/// constructor with their qualified roster root.
-fn build_payload<Store>(
+/// capture first publishes its immutable document images and calls the inner
+/// constructor with their qualified roster.
+fn build_payload(
     capture: CleanCheckpointCapture,
     predecessor: Option<(u64, CheckpointPayloadV2)>,
-    store: &mut Store,
-) -> Result<(u64, Vec<u8>), String>
-where
-    Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore,
-{
+    store: &mut SealedGenerationStagingStore,
+) -> Result<(u64, CheckpointPayloadV2), String> {
     if capture.documents.is_some() {
         return Err("live checkpoint payload requires published document images".into());
     }
-    let document_roster = predecessor
-        .as_ref()
-        .map(|(_, payload)| map_root_from_wire(payload.document_roster.clone()))
-        .transpose()?
-        .unwrap_or_else(tine_storage::sealed_accepted_index::AuthenticatedMapRootV1::empty);
+    // The census is the store's live rows, not the payload's remembered count:
+    // this cut opens over the predecessor's tables, and a base-zero cut
+    // REPLACES that roster instead of extending it.
+    let document_roster = match predecessor.as_ref() {
+        Some(_) => SealedDocumentRoster::over_base(&*store)?,
+        None => SealedDocumentRoster::cleared(store)?,
+    };
     build_payload_with_images(
         capture,
         predecessor,
@@ -2028,11 +1863,6 @@ fn validate_checkpoint_payload_metadata(
     {
         return Err("checkpoint payload publication binding is invalid".into());
     }
-    for kind in CheckpointIdentityKind::ALL {
-        let domain = payload.identity_roots.domain(kind);
-        map_root_from_wire(domain.complete.clone())?;
-        map_root_from_wire(domain.current.clone())?;
-    }
     if !payload
         .document_dependencies
         .windows(2)
@@ -2040,9 +1870,12 @@ fn validate_checkpoint_payload_metadata(
     {
         return Err("clean checkpoint document dependencies are not strictly ordered".into());
     }
-    let roster =
-        SealedDocumentRoster::from_root(map_root_from_wire(payload.document_roster.clone())?);
-    let reader = SealedGenerationDirectory::open(directory)?;
+    let roster = SealedDocumentRoster::with_count(payload.document_count);
+    let reader = SealedGenerationDirectory::open_generation(
+        directory,
+        payload.sealed_root.locator(),
+        payload.sealed_root_digest,
+    )?;
     roster.qualify_complete_keys(
         &reader,
         payload
@@ -2198,13 +2031,18 @@ fn floor_candidate_for_document(
     }
     if let Some((_, payload)) = predecessor {
         let history = SealedAcceptedHistory {
-            directory: SealedGenerationDirectory::open(directory)?,
-            roots: roots_from_wire(payload.roster_roots.clone())?,
-            covered_object_root: map_root_from_wire(payload.covered_object_root.clone())?,
-            document_change_root: map_root_from_wire(payload.document_change_root.clone())?,
+            directory: SealedGenerationDirectory::open_generation(
+                directory,
+                payload.sealed_root.locator(),
+                payload.sealed_root_digest,
+            )?,
+            sequence: payload.recovery_fence.accepted_sequence,
             identity_history: Arc::new(SealedIdentityHistory::new(
-                SealedGenerationDirectory::open(directory)?,
-                payload.identity_roots.clone(),
+                SealedGenerationDirectory::open_generation(
+                    directory,
+                    payload.sealed_root.locator(),
+                    payload.sealed_root_digest,
+                )?,
             )),
             sequence_enumerations: AtomicUsize::new(0),
             sequence_row_reads: AtomicUsize::new(0),
@@ -2221,7 +2059,14 @@ fn floor_candidate_for_document(
         .map(|dependencies| (eligible_through, dependencies)))
 }
 
+/// Publish this generation's document images into the OPEN cut.
+///
+/// Images and the payload share one cut, so one marker install makes the whole
+/// generation durable (I-2). There is no separate image publication step and
+/// no second directory-visible write path.
+#[allow(clippy::too_many_arguments)]
 fn publish_document_images(
+    staging: &mut SealedGenerationStagingStore,
     directory: &cap_std::fs::Dir,
     store: &ObjectStore,
     capture: &super::hot_engine::CleanCheckpointDocumentCapture,
@@ -2232,7 +2077,7 @@ fn publish_document_images(
     predecessor: Option<&(u64, CheckpointPayloadV2)>,
 ) -> Result<
     (
-        tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
+        SealedDocumentRoster,
         CheckpointImageWork,
         Vec<SyncCheckpointDocumentDiagnostics>,
     ),
@@ -2240,13 +2085,11 @@ fn publish_document_images(
 > {
     let predecessor_sequence = predecessor.map(|(sequence, _)| *sequence);
     let predecessor_payload = predecessor.map(|(_, payload)| payload);
-    let predecessor_root = predecessor_payload
-        .map(|payload| map_root_from_wire(payload.document_roster.clone()))
-        .transpose()?
-        .unwrap_or_else(tine_storage::sealed_accepted_index::AuthenticatedMapRootV1::empty);
-    let predecessor_roster = SealedDocumentRoster::from_root(predecessor_root);
+    let predecessor_roster = match predecessor_payload {
+        Some(_) => SealedDocumentRoster::over_base(&*staging)?,
+        None => SealedDocumentRoster::cleared(staging)?,
+    };
     let mut roster = predecessor_roster;
-    let mut staging = SealedGenerationStagingStore::open(directory)?;
     let mut work = CheckpointImageWork::default();
     let mut diagnostics = Vec::new();
     if let Some(predecessor_payload) = predecessor_payload {
@@ -2255,13 +2098,13 @@ fn publish_document_images(
                 .dependencies
                 .contains_key(&dependencies.document_id())
             {
-                roster = roster.without_document(&mut staging, dependencies.document_id())?;
+                roster = roster.without_document(staging, dependencies.document_id())?;
             }
         }
     }
     for (document_id, dependencies) in &capture.dependencies {
         if predecessor_roster
-            .inherited_dependencies(&staging, *document_id)?
+            .inherited_dependencies(&*staging, *document_id)?
             .as_ref()
             == Some(dependencies)
         {
@@ -2282,7 +2125,7 @@ fn publish_document_images(
             .flatten()
             .map(|sequence| {
                 predecessor_roster
-                    .load_staged_document(&staging, capture.catalog_document_id, *document_id)
+                    .load_staged_document(&*staging, capture.catalog_document_id, *document_id)
                     .map(|loaded| {
                         loaded.map(|(dependencies, document)| (sequence, dependencies, document))
                     })
@@ -2335,7 +2178,7 @@ fn publish_document_images(
             .verification_imports
             .saturating_add(compact.work().verification_imports);
         let (next_roster, document_policy) = roster.with_policy_document(
-            &mut staging,
+            staging,
             capture.cutoff_state_digest,
             eligible_through,
             policy,
@@ -2372,172 +2215,8 @@ fn publish_document_images(
     if roster.document_count() != capture.dependencies.len() as u64 {
         return Err("checkpoint image roster has extra or missing documents".into());
     }
-    let root = roster.root();
-    let reader = staging.finish()?;
-    roster.qualify_complete_keys(&reader, capture.dependencies.keys().copied())?;
-    Ok((root, work, diagnostics))
-}
-
-fn document_object_names_for_root(
-    directory: &cap_std::fs::Dir,
-    root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
-) -> Result<BTreeSet<String>, String> {
-    use tine_storage::sealed_accepted_index::{
-        SealedAcceptedObjectKind, SealedAuthenticatedMapNodeV2,
-    };
-
-    let mut retained = BTreeSet::new();
-    let mut pending = root.root.into_iter().collect::<Vec<_>>();
-    while let Some(link) = pending.pop() {
-        let node_name = sealed_staging_name(SealedAcceptedObjectKind::MapNode, link.digest);
-        let node_bytes =
-            tine_storage::read_optional_regular(directory, &node_name, MAX_CHECKPOINT_BYTES, None)
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| "retained checkpoint document-map node is missing".to_owned())?;
-        let node = SealedAuthenticatedMapNodeV2::decode(link, &node_bytes)
-            .map_err(|error| error.to_string())?;
-        retained.insert(node_name);
-        let descriptor_name = capsule_blob_name(node.value_digest);
-        let descriptor_bytes = tine_storage::read_optional_regular(
-            directory,
-            &descriptor_name,
-            MAX_CHECKPOINT_BYTES,
-            None,
-        )
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "retained checkpoint document descriptor is missing".to_owned())?;
-        if ContentDigest::of(&descriptor_bytes) != node.value_digest {
-            return Err("retained checkpoint document descriptor digest differs".into());
-        }
-        let record = DocumentCapsuleRecord::decode(&descriptor_bytes)?;
-        retained.insert(descriptor_name);
-        retained.insert(capsule_blob_name(ContentDigest::from_bytes(
-            *record.checkpoint.sha256(),
-        )));
-        pending.extend(node.left);
-        pending.extend(node.right);
-    }
-    Ok(retained)
-}
-
-fn retained_document_object_names(
-    directory: &cap_std::fs::Dir,
-) -> Result<BTreeSet<String>, String> {
-    let mut retained = BTreeSet::new();
-    for payload_name in CHECKPOINT_PAYLOAD_NAMES {
-        let Some(bytes) = tine_storage::read_optional_regular(
-            directory,
-            payload_name,
-            MAX_CHECKPOINT_BYTES,
-            None,
-        )
-        .map_err(|error| error.to_string())?
-        else {
-            continue;
-        };
-        let Ok(payload) = decode_canonical::<CheckpointPayloadV2>(&bytes) else {
-            continue;
-        };
-        let Ok(root) = map_root_from_wire(payload.document_roster) else {
-            continue;
-        };
-        retained.extend(document_object_names_for_root(directory, root)?);
-    }
-    Ok(retained)
-}
-
-fn pin_checkpoint_reader(
-    store: &ObjectStore,
-    directory: &cap_std::fs::Dir,
-    roster: SealedDocumentRoster,
-) -> Result<Arc<CheckpointReaderPin>, String> {
-    let pin = Arc::new(CheckpointReaderPin {
-        object_names: document_object_names_for_root(directory, roster.root())?,
-    });
-    ACTIVE_CHECKPOINT_READERS
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .entry(store.root_path().to_path_buf())
-        .or_default()
-        .push(Arc::downgrade(&pin));
-    Ok(pin)
-}
-
-fn active_reader_document_object_names(store: &ObjectStore) -> BTreeSet<String> {
-    let Some(readers) = ACTIVE_CHECKPOINT_READERS.get() else {
-        return BTreeSet::new();
-    };
-    let mut readers = readers
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let root = store.root_path();
-    let Some(pins) = readers.get_mut(root) else {
-        return BTreeSet::new();
-    };
-    let mut retained = BTreeSet::new();
-    pins.retain(|weak| {
-        let Some(pin) = weak.upgrade() else {
-            return false;
-        };
-        retained.extend(pin.object_names.iter().cloned());
-        true
-    });
-    if pins.is_empty() {
-        readers.remove(root);
-    }
-    retained
-}
-
-fn is_document_object_name(name: &str) -> bool {
-    // Map nodes are shared by the accepted, covered-object,
-    // document-change, and document-roster indexes. Classifying them by their
-    // common wire kind would let image GC delete accepted-history roots. Only
-    // capsule blobs are exclusively owned by the document-image lifecycle.
-    let suffix = name.strip_prefix(&format!("{CAPSULE_BLOB_PREFIX}-"));
-    suffix.is_some_and(|suffix| {
-        suffix.len() == 64 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
-    })
-}
-
-/// Reclaim only unreachable disposable image objects. Both replaceable payload
-/// slots are roots, so a crash that rolls the pointer back still has every byte
-/// it needs. A crash during best-effort unlink can only leave an orphan for the
-/// next successful publication; originals and pointed generations are untouched.
-fn cleanup_unreferenced_document_objects(store: &ObjectStore) -> Result<(), String> {
-    let directory = checkpoint_directory(store)?;
-    let mut retained = retained_document_object_names(&directory)?;
-    retained.extend(active_reader_document_object_names(store));
-    let entries = directory.entries().map_err(|error| error.to_string())?;
-    // I-14: even repeated failed-candidate residue cannot turn one publication
-    // into a lifetime-sized walk. Current graph roots determine the primary
-    // budget, with fixed headroom to drain older disposable orphans over later
-    // successful publications.
-    let scan_budget = retained
-        .len()
-        .saturating_mul(2)
-        .saturating_add(CHECKPOINT_CLEANUP_ENTRY_HEADROOM);
-    for entry in entries.take(scan_budget) {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if !is_document_object_name(name) || retained.contains(name) {
-            continue;
-        }
-        if !entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_file()
-        {
-            continue;
-        }
-        directory
-            .remove_file(name)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
+    roster.qualify_complete_keys(&*staging, capture.dependencies.keys().copied())?;
+    Ok((roster, work, diagnostics))
 }
 
 struct PublishedCheckpoint {
@@ -2619,8 +2298,13 @@ fn publish_capture_with_predecessor(
         }
     }
     let directory = checkpoint_directory(store)?;
+    // Images, the accepted delta and the root record are ONE cut: one marker
+    // install makes the whole generation durable, and a crash before it leaves
+    // the predecessor generation exactly as authoritative as it was (I-2).
+    let mut sealed_staging = SealedGenerationStagingStore::open(&directory)?;
     let (document_roster, image_work, document_diagnostics) = match capture.documents.as_ref() {
         Some(documents) => publish_document_images(
+            &mut sealed_staging,
             &directory,
             store,
             documents,
@@ -2631,25 +2315,34 @@ fn publish_capture_with_predecessor(
             predecessor.as_ref(),
         )?,
         None => (
-            predecessor
-                .as_ref()
-                .map(|(_, payload)| map_root_from_wire(payload.document_roster.clone()))
-                .transpose()?
-                .unwrap_or_else(tine_storage::sealed_accepted_index::AuthenticatedMapRootV1::empty),
+            match predecessor.as_ref() {
+                Some(_) => SealedDocumentRoster::over_base(&sealed_staging)?,
+                None => SealedDocumentRoster::cleared(&mut sealed_staging)?,
+            },
             CheckpointImageWork::default(),
             Vec::new(),
         ),
     };
     let image_phase_done_at = Instant::now();
-    let mut sealed_staging = SealedGenerationStagingStore::open(&directory)?;
-    let (sequence, payload_bytes) = build_payload_with_images(
+    let (sequence, mut payload) = build_payload_with_images(
         capture,
         predecessor,
         document_roster,
         image_work,
         &mut sealed_staging,
     )?;
-    drop(sealed_staging.finish()?);
+    let (cut_work, _published) = sealed_staging.finish()?;
+    #[cfg(test)]
+    {
+        // I-25 is a number, and a directory census cannot answer it: index
+        // records and payload records share a pack file. Only the cut itself
+        // knows which bytes it wrote for the index.
+        *LAST_SEALED_CUT_WORK.lock().unwrap() = Some(cut_work);
+    }
+    payload.sealed_root = SealedRootWire::of(cut_work.root_locator);
+    payload.sealed_root_digest = cut_work.root_digest;
+    let sealed_root_locator = cut_work.root_locator;
+    let payload_bytes = encode_canonical(&payload)?;
     let payload_phase_done_at = Instant::now();
     let payload_len = u64::try_from(payload_bytes.len())
         .map_err(|_| "clean checkpoint payload length exceeds u64".to_owned())?;
@@ -2741,23 +2434,24 @@ fn publish_capture_with_predecessor(
     let store_stats_after = store.instrumentation();
     let documents = has_document_epoch
         .then(|| {
-            SealedGenerationDirectory::open(&directory).and_then(|directory| {
-                let roster = SealedDocumentRoster::from_root(document_roster);
-                let reader_pin = pin_checkpoint_reader(store, &directory.directory, roster)?;
-                Ok(Arc::new(CleanCheckpointDocuments {
-                    roster,
+            SealedGenerationDirectory::open_generation(
+                &directory,
+                sealed_root_locator,
+                payload.sealed_root_digest,
+            )
+            .map(|directory| {
+                Arc::new(CleanCheckpointDocuments {
+                    roster: document_roster,
                     directory,
                     sequence,
-                    _reader_pin: reader_pin,
-                }))
+                })
             })
         })
         .transpose()?;
     let published_payload: CheckpointPayloadV2 = decode_canonical(&payload_bytes)?;
-    let identities = Arc::new(SealedIdentityHistory::new(
-        SealedGenerationDirectory::open(&directory)?,
-        published_payload.identity_roots,
-    ));
+    let identities = Arc::new(SealedIdentityHistory::new(SealedGenerationDirectory::open(
+        &directory,
+    )?));
     Ok(PublishedCheckpoint {
         sequence,
         documents,
@@ -2914,99 +2608,41 @@ struct IdentityIndexCounters {
     current_rows_enumerated: AtomicUsize,
 }
 
-struct IdentityCountingStore<'a> {
-    directory: &'a SealedGenerationDirectory,
-    counters: &'a IdentityIndexCounters,
-}
-
-impl tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore
-    for IdentityCountingStore<'_>
-{
-    fn read_sealed_accepted_object(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        let bytes = self.directory.read_sealed_accepted_object(kind, address)?;
-        if let Some(bytes) = bytes.as_ref() {
-            self.counters
-                .bytes_read
-                .fetch_add(bytes.len(), Ordering::Relaxed);
-            match kind {
-                tine_storage::sealed_accepted_index::SealedAcceptedObjectKind::MapNode => {
-                    self.counters.map_node_reads.fetch_add(1, Ordering::Relaxed);
-                }
-                tine_storage::sealed_accepted_index::SealedAcceptedObjectKind::StatusRecord => {
-                    self.counters.value_reads.fetch_add(1, Ordering::Relaxed);
-                }
-                _ => {}
-            }
-        }
-        Ok(bytes)
-    }
-
-    fn publish_sealed_accepted_object(
-        &mut self,
-        _kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        _address: ContentDigest,
-        _bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        Err(
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Store(
-                "sealed identity generation is read-only".into(),
-            ),
-        )
-    }
-}
-
-/// Four typed roots over the shared sealed authenticated-map implementation.
-/// The complete roots answer released/history points; the current roots alone
-/// may be enumerated to rebuild O(G+O) resident claims.
+/// Four typed domain pairs over the shared sorted tables. The complete
+/// domains answer released/history points; the current domains alone may be
+/// enumerated to rebuild O(G+O) resident claims.
 pub(crate) struct SealedIdentityHistory {
     directory: SealedGenerationDirectory,
-    roots: IdentityRootsWire,
     counters: IdentityIndexCounters,
 }
 
 impl SealedIdentityHistory {
-    fn new(directory: SealedGenerationDirectory, roots: IdentityRootsWire) -> Self {
+    fn new(directory: SealedGenerationDirectory) -> Self {
         Self {
             directory,
-            roots,
             counters: IdentityIndexCounters::default(),
         }
     }
 
-    fn root(
-        &self,
-        kind: CheckpointIdentityKind,
-        current: bool,
-    ) -> Result<tine_storage::sealed_accepted_index::AuthenticatedMapRootV1, String> {
-        let roots = self.roots.domain(kind);
-        map_root_from_wire(if current {
-            roots.current.clone()
-        } else {
-            roots.complete.clone()
-        })
+    fn value_bytes(&self, locator: ColdLocatorV1) -> Result<Vec<u8>, String> {
+        let bytes = self
+            .directory
+            .sealed_record(locator, MAX_CHECKPOINT_BYTES)?;
+        self.counters
+            .bytes_read
+            .fetch_add(bytes.len(), Ordering::Relaxed);
+        self.counters.value_reads.fetch_add(1, Ordering::Relaxed);
+        Ok(bytes)
     }
 
-    fn value_bytes(&self, address: ContentDigest) -> Result<Vec<u8>, String> {
-        let store = IdentityCountingStore {
-            directory: &self.directory,
-            counters: &self.counters,
-        };
-        let bytes = tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore::read_sealed_accepted_object(
-            &store,
-                tine_storage::sealed_accepted_index::SealedAcceptedObjectKind::StatusRecord,
-                address,
-            )
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "sealed identity value is missing".to_owned())?;
-        if ContentDigest::of(&bytes) != address {
-            return Err("sealed identity value address differs".into());
-        }
-        Ok(bytes)
+    /// Table records this history has loaded. One table is one file open and
+    /// one digest check, so this is the index-work unit the counters report.
+    fn note_index_reads(&self, before: u64) {
+        let after = self.directory.index_reads();
+        self.counters.map_node_reads.fetch_add(
+            usize::try_from(after.saturating_sub(before)).unwrap_or(usize::MAX),
+            Ordering::Relaxed,
+        );
     }
 
     pub(crate) fn point(
@@ -3015,15 +2651,15 @@ impl SealedIdentityHistory {
         key: &[u8],
     ) -> Result<Option<Vec<u8>>, String> {
         self.counters.point_lookups.fetch_add(1, Ordering::Relaxed);
-        let key = AuthenticatedMapKey::new(key).map_err(|error| error.to_string())?;
-        let store = IdentityCountingStore {
-            directory: &self.directory,
-            counters: &self.counters,
-        };
-        let address = tine_storage::sealed_accepted_index::SealedAcceptedIndexReader::new(&store)
-            .map_value(self.root(kind, false)?, key)
-            .map_err(|error| error.to_string())?;
-        address.map(|address| self.value_bytes(address)).transpose()
+        let framed = framed_identity_key(key)?;
+        let before = self.directory.index_reads();
+        let value = self
+            .directory
+            .table_value(kind.complete_domain(), &framed)?;
+        self.note_index_reads(before);
+        value
+            .map(|value| self.value_bytes(locator_from_value(&value)?))
+            .transpose()
     }
 
     pub(crate) fn current_rows(
@@ -3033,30 +2669,15 @@ impl SealedIdentityHistory {
         self.counters
             .current_root_enumerations
             .fetch_add(1, Ordering::Relaxed);
-        let root = self.root(kind, true)?;
-        let store = IdentityCountingStore {
-            directory: &self.directory,
-            counters: &self.counters,
-        };
-        let reader = tine_storage::sealed_accepted_index::SealedAcceptedIndexReader::new(&store);
-        let mut pending = root.root.into_iter().collect::<Vec<_>>();
-        let mut rows = Vec::with_capacity(usize::try_from(root.count).unwrap_or(0));
-        while let Some(link) = pending.pop() {
-            let node = reader
-                .read_map_node(link)
-                .map_err(|error| error.to_string())?;
-            pending.extend(node.left);
-            pending.extend(node.right);
+        let before = self.directory.index_reads();
+        let entries = self.directory.table_entries(kind.current_domain())?;
+        self.note_index_reads(before);
+        let mut rows = Vec::with_capacity(entries.len());
+        for (framed, value) in entries {
             rows.push((
-                node.key.as_slice().to_vec(),
-                self.value_bytes(node.value_digest)?,
+                unframed_identity_key(&framed)?,
+                self.value_bytes(locator_from_value(&value)?)?,
             ));
-            if rows.len() > usize::try_from(root.count).unwrap_or(usize::MAX) {
-                return Err("sealed identity current root exceeds its count".into());
-            }
-        }
-        if rows.len() != usize::try_from(root.count).map_err(|_| "identity count exceeds usize")? {
-            return Err("sealed identity current root count differs".into());
         }
         rows.sort_unstable_by(|left, right| left.0.cmp(&right.0));
         self.counters
@@ -3064,7 +2685,6 @@ impl SealedIdentityHistory {
             .fetch_add(rows.len(), Ordering::Relaxed);
         Ok(rows)
     }
-
     pub(crate) fn work(&self) -> IdentityIndexWork {
         IdentityIndexWork {
             point_lookups: self.counters.point_lookups.load(Ordering::Relaxed),
@@ -3083,33 +2703,52 @@ impl SealedIdentityHistory {
     }
 }
 
-/// Point-addressable covered accepted history.  The roots are qualified by the
+/// Point-addressable covered accepted history.  The root is qualified by the
 /// marker-selected generation; ordinary consumers never enumerate the covered
 /// sequence or retain one row per lifetime batch.
 pub(crate) struct SealedAcceptedHistory {
     directory: SealedGenerationDirectory,
-    roots: tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2,
-    covered_object_root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
-    document_change_root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
+    /// The highest acceptance sequence this generation covers.
+    sequence: u64,
     identity_history: Arc<SealedIdentityHistory>,
     sequence_enumerations: AtomicUsize,
     sequence_row_reads: AtomicUsize,
 }
 
+/// The accepted tail a live candidate has applied on top of the sealed root.
+///
+/// It is an ordinary in-memory map, not a second index: the sealed side is
+/// immutable, so a tail cannot be expressed inside it, and a structure-shaped
+/// overlay would be a second index format (D-1).
 #[derive(Clone)]
 pub(crate) struct SealedAcceptedBatchOverlay {
     history: Arc<SealedAcceptedHistory>,
-    root: tine_storage::sealed_accepted_index::AuthenticatedMapRootV1,
-    objects: BTreeMap<(u8, ContentDigest), Vec<u8>>,
+    /// The TAIL treap, spanning `C+1..=N` only. Covered batches are in the
+    /// sealed tables and are deliberately not expressible here: that is what
+    /// makes the treap's size the tail's size rather than the history's.
+    tail: super::hot_engine::RunLocalAuthenticatedMap,
+    /// The same tail in acceptance-insensitive form, for the folded
+    /// whole-history digest below.
+    tail_rows: BTreeMap<[u8; 16], ContentDigest>,
 }
 
 impl SealedAcceptedBatchOverlay {
     pub(crate) fn new(history: Arc<SealedAcceptedHistory>) -> Self {
         Self {
-            root: history.roots.batch_map,
             history,
-            objects: BTreeMap::new(),
+            tail: super::hot_engine::RunLocalAuthenticatedMap::default(),
+            tail_rows: BTreeMap::new(),
         }
+    }
+
+    /// The tail treap's root key, as tine-storage's
+    /// `PhysicalFrontierRoot::batch_map_root_key` means it.
+    pub(crate) fn tail_root_key(&self) -> Option<AuthenticatedMapKey> {
+        self.tail.root_key()
+    }
+
+    pub(crate) fn tail_root_digest(&self) -> ContentDigest {
+        self.tail.root_digest()
     }
 
     pub(crate) fn upsert(
@@ -3117,62 +2756,52 @@ impl SealedAcceptedBatchOverlay {
         batch_id: BatchId,
         causal_digest: ContentDigest,
     ) -> Result<(), String> {
-        let root = self.root;
-        self.root = tine_storage::sealed_accepted_index::SealedAcceptedIndexWriter::new(self)
-            .upsert_map(root, batch_id.as_uuid().into_bytes(), causal_digest)
-            .map_err(|error| error.to_string())?;
+        let key = batch_id.as_uuid().into_bytes();
+        self.tail
+            .upsert(AuthenticatedMapKey::from(key), causal_digest);
+        self.tail_rows.insert(key, causal_digest);
         Ok(())
     }
 
-    pub(crate) fn root(&self) -> tine_storage::sealed_accepted_index::AuthenticatedMapRootV1 {
-        self.root
-    }
-}
-
-impl tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore
-    for SealedAcceptedBatchOverlay
-{
-    fn read_sealed_accepted_object(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        if let Some(bytes) = self.objects.get(&(sealed_kind_code(kind), address)) {
-            return Ok(Some(bytes.clone()));
+    /// This candidate's frontier identity: the sealed root the generation
+    /// published, folded with the tail it has accepted on top of it.
+    pub(crate) fn root_digest(&self) -> Result<ContentDigest, String> {
+        let mut material = Vec::with_capacity(32 + self.tail_rows.len() * 48);
+        material.extend_from_slice(self.history.sealed_root_digest().as_bytes());
+        for (batch_id, causal) in &self.tail_rows {
+            material.extend_from_slice(batch_id);
+            material.extend_from_slice(causal.as_bytes());
         }
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore::read_sealed_accepted_object(
-            &self.history.directory,
-            kind,
-            address,
-        )
+        Ok(ContentDigest::of(&material))
     }
 
-    fn publish_sealed_accepted_object(
-        &mut self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-        bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        let key = (sealed_kind_code(kind), address);
-        if let Some(existing) = self.objects.get(&key) {
-            if existing != bytes {
-                return Err(
-                    tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Corrupt(
-                        "accepted tail overlay address collision".into(),
-                    ),
-                );
-            }
-            return Ok(());
+    pub(crate) fn covered_count(&self) -> u64 {
+        self.history.sequence()
+    }
+
+    pub(crate) fn contains_batch(&self, batch_id: BatchId) -> Result<bool, String> {
+        if self
+            .tail_rows
+            .contains_key(&batch_id.as_uuid().into_bytes())
+        {
+            return Ok(true);
         }
-        self.objects.insert(key, bytes.to_vec());
-        Ok(())
+        self.history.contains_batch(batch_id)
     }
 }
 
 impl SealedAcceptedHistory {
     pub(crate) fn sequence(&self) -> u64 {
-        self.roots.sequence.len
+        self.sequence
+    }
+
+    /// Infallible here on purpose: `SealedAcceptedHistory` is only ever built
+    /// from `SealedGenerationDirectory::open_generation`, which has already
+    /// decoded this root and proved it against the generation binding.
+    pub(crate) fn sealed_root_digest(&self) -> ContentDigest {
+        self.directory
+            .sealed_root_digest()
+            .unwrap_or_else(|_| tine_storage::sealed_tables::sealed_empty_root_digest())
     }
 
     pub(crate) fn note_sequence_enumeration(&self) {
@@ -3190,101 +2819,79 @@ impl SealedAcceptedHistory {
         self.sequence_row_reads.load(Ordering::Relaxed)
     }
 
+    fn batch_id_at(&self, sequence: u64) -> Result<Option<[u8; 16]>, String> {
+        let Some(value) = self
+            .directory
+            .table_value(DOMAIN_SEQUENCE, &sequence.to_be_bytes())?
+        else {
+            return Ok(None);
+        };
+        value
+            .try_into()
+            .map_err(|_| "sealed sequence row is not a batch id".to_owned())
+            .map(Some)
+    }
+
     pub(crate) fn row_by_sequence(
         &self,
         sequence: u64,
     ) -> Result<Option<CleanCheckpointAcceptedRow>, String> {
-        use tine_storage::sealed_accepted_index::SealedAcceptedIndexReader;
         self.sequence_row_reads.fetch_add(1, Ordering::Relaxed);
-        let reader = SealedAcceptedIndexReader::new(&self.directory);
-        let Some(entry) = reader
-            .sequence_entry(self.roots.sequence, sequence)
-            .map_err(|error| error.to_string())?
-        else {
+        let Some(batch_id) = self.batch_id_at(sequence)? else {
             return Ok(None);
         };
-        self.row_for_entry(sequence, entry.batch_id)
+        self.row_for_entry(sequence, batch_id)
     }
 
     pub(crate) fn row_by_batch(
         &self,
         batch_id: BatchId,
     ) -> Result<Option<CleanCheckpointAcceptedRow>, String> {
-        use tine_storage::sealed_accepted_index::{
-            AcceptedStatusRecordV2, SealedAcceptedIndexObjectStore, SealedAcceptedIndexReader,
-            SealedAcceptedObjectKind,
-        };
         let key = batch_id.as_uuid().into_bytes();
-        let Some(address) = SealedAcceptedIndexReader::new(&self.directory)
-            .map_value(self.roots.status_map, key)
-            .map_err(|error| error.to_string())?
-        else {
+        let Some(records) = sealed_batch_records(&self.directory, key)? else {
             return Ok(None);
         };
-        let bytes = self
-            .directory
-            .read_sealed_accepted_object(SealedAcceptedObjectKind::StatusRecord, address)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "sealed accepted status record is missing".to_owned())?;
-        let status = AcceptedStatusRecordV2::decode(key, address, &bytes)
-            .map_err(|error| error.to_string())?;
-        let evidence = AcceptedBatchEvidence::decode_canonical(&status.exact_evidence_bytes)
-            .map_err(|error| error.to_string())?;
-        self.row_for_entry(evidence.acceptance_sequence(), key)
+        let evidence =
+            AcceptedBatchEvidence::decode_canonical(&records.status.exact_evidence_bytes)
+                .map_err(|error| error.to_string())?;
+        self.row_from_records(evidence.acceptance_sequence(), key, records)
     }
 
     pub(crate) fn contains_batch(&self, batch_id: BatchId) -> Result<bool, String> {
-        use tine_storage::sealed_accepted_index::SealedAcceptedIndexReader;
-        SealedAcceptedIndexReader::new(&self.directory)
-            .map_value(self.roots.batch_map, batch_id.as_uuid().into_bytes())
-            .map(|value| value.is_some())
-            .map_err(|error| error.to_string())
+        Ok(self
+            .directory
+            .table_value(DOMAIN_BATCH, &batch_id.as_uuid().into_bytes())?
+            .is_some())
     }
 
     pub(crate) fn contains_object(&self, digest: ContentDigest) -> Result<bool, String> {
-        use tine_storage::sealed_accepted_index::{AuthenticatedMapKey, SealedAcceptedIndexReader};
-        let key = AuthenticatedMapKey::new(digest.as_bytes()).map_err(|error| error.to_string())?;
-        SealedAcceptedIndexReader::new(&self.directory)
-            .map_value(self.covered_object_root, key)
-            .map(|value| value.is_some())
-            .map_err(|error| error.to_string())
+        Ok(self
+            .directory
+            .table_value(DOMAIN_COVERED_OBJECT, digest.as_bytes())?
+            .is_some())
     }
 
+    /// The newest accepted change to `document` at or before `through`.
+    ///
+    /// One inclusive-floor lookup in the document-change domain, not a walk:
+    /// the domain is keyed `document ‖ sequence`, so the floor of
+    /// `document ‖ through` is exactly that row when one exists.
     pub(crate) fn document_dependencies_at_or_before(
         &self,
         document: DocumentId,
         through: u64,
     ) -> Result<Option<(u64, DocumentDependencies)>, String> {
-        use tine_storage::sealed_accepted_index::{
-            SealedAcceptedIndexObjectStore, SealedAcceptedObjectKind, SealedAuthenticatedMapNodeV2,
+        let target = document_change_key(document, through);
+        let Some((key, _)) = self
+            .directory
+            .table_predecessor(DOMAIN_DOCUMENT_CHANGE, &target)?
+        else {
+            return Ok(None);
         };
-        let target = document_change_key(document, through)?;
-        let mut current = self.document_change_root.root;
-        let mut found = None;
-        for _ in 0..256 {
-            let Some(link) = current else { break };
-            let bytes = self
-                .directory
-                .read_sealed_accepted_object(SealedAcceptedObjectKind::MapNode, link.digest)
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| "sealed document-change map node is missing".to_owned())?;
-            let node = SealedAuthenticatedMapNodeV2::decode(link, &bytes)
-                .map_err(|error| error.to_string())?;
-            if node.key <= target {
-                found = Some(node.key);
-                current = node.right;
-            } else {
-                current = node.left;
-            }
-        }
-        let Some(key) = found else { return Ok(None) };
-        let bytes = key.as_slice();
-        if bytes.len() != 24 || &bytes[..16] != document.as_uuid().as_bytes() {
+        let (found_document, sequence) = document_change_key_parts(&key)?;
+        if found_document != document {
             return Ok(None);
         }
-        let mut sequence = [0_u8; 8];
-        sequence.copy_from_slice(&bytes[16..]);
-        let sequence = u64::from_be_bytes(sequence);
         let row = self
             .row_by_sequence(sequence)?
             .ok_or_else(|| "sealed document-change sequence is absent".to_owned())?;
@@ -3303,16 +2910,27 @@ impl SealedAcceptedHistory {
         sequence: u64,
         batch_id: [u8; 16],
     ) -> Result<Option<CleanCheckpointAcceptedRow>, String> {
-        use tine_storage::sealed_accepted_index::SealedAcceptedIndexReader;
-        let Some(proof) = SealedAcceptedIndexReader::new(&self.directory)
-            .prove_membership(self.roots, sequence, batch_id, &TineAcceptedEvidenceDecoder)
-            .map_err(|error| error.to_string())?
-        else {
+        let Some(records) = sealed_batch_records(&self.directory, batch_id)? else {
             return Ok(None);
         };
-        let evidence = AcceptedBatchEvidence::decode_canonical(&proof.status.exact_evidence_bytes)
+        self.row_from_records(sequence, batch_id, records)
+    }
+
+    fn row_from_records(
+        &self,
+        sequence: u64,
+        batch_id: [u8; 16],
+        records: tine_storage::sealed_accepted_index::SealedBatchRecords,
+    ) -> Result<Option<CleanCheckpointAcceptedRow>, String> {
+        // The cross-check the retired Merkle proof also performed: bind the
+        // two records and the evidence to one identity (D-2).
+        records
+            .verify(sequence, batch_id, &TineAcceptedEvidenceDecoder)
             .map_err(|error| error.to_string())?;
-        let causal = proof.causal;
+        let evidence =
+            AcceptedBatchEvidence::decode_canonical(&records.status.exact_evidence_bytes)
+                .map_err(|error| error.to_string())?;
+        let causal = records.causal;
         let peer = CausalPeerId::from_key(WriterIncarnationId::from_uuid(uuid::Uuid::from_bytes(
             causal.causal_peer_id,
         )));
@@ -3331,15 +2949,11 @@ impl SealedAcceptedHistory {
             })
             .collect();
         Ok(Some(CleanCheckpointAcceptedRow {
-            no_op: proof.status.no_op,
+            no_op: records.status.no_op,
             evidence,
             causal_dot,
             canonical_causal_clock,
         }))
-    }
-
-    pub(crate) fn roots(&self) -> tine_storage::sealed_accepted_index::SealedAcceptedIndexRootsV2 {
-        self.roots
     }
 
     pub(crate) fn identity_history(&self) -> Arc<SealedIdentityHistory> {
@@ -3347,41 +2961,39 @@ impl SealedAcceptedHistory {
     }
 }
 
+/// The sealed side of the SQLite seam: two point lookups, no structure.
 impl tine_storage::sealed_accepted_index::SealedAcceptedIndexRead for SealedAcceptedHistory {
-    fn sealed_map_node(
-        &self,
-        link: tine_storage::sealed_accepted_index::AuthenticatedMapLinkV1,
-    ) -> Result<
-        tine_storage::sealed_accepted_index::SealedAuthenticatedMapNodeV2,
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexError,
-    > {
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexRead::sealed_map_node(
-            &tine_storage::sealed_accepted_index::SealedAcceptedIndexReader::new(&self.directory),
-            link,
-        )
-    }
-
-    fn sealed_causal_record(
+    fn batch(
         &self,
         batch_id: [u8; 16],
-        address: ContentDigest,
     ) -> Result<
-        tine_storage::sealed_accepted_index::SealedAcceptedCausalRecordV2,
+        Option<tine_storage::sealed_accepted_index::SealedBatchRecords>,
         tine_storage::sealed_accepted_index::SealedAcceptedIndexError,
     > {
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexRead::sealed_causal_record(
-            &tine_storage::sealed_accepted_index::SealedAcceptedIndexReader::new(&self.directory),
-            batch_id,
-            address,
-        )
+        sealed_batch_records(&self.directory, batch_id)
+            .map_err(tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Corrupt)
+    }
+
+    fn sequence(
+        &self,
+        sequence: u64,
+    ) -> Result<Option<[u8; 16]>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
+    {
+        self.batch_id_at(sequence)
+            .map_err(tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Corrupt)
     }
 }
-
 pub(crate) struct CleanCheckpointDocuments {
     roster: SealedDocumentRoster,
     directory: SealedGenerationDirectory,
     sequence: u64,
-    _reader_pin: Arc<CheckpointReaderPin>,
+}
+
+impl CleanCheckpointDocuments {
+    #[cfg(test)]
+    pub(crate) fn directory_for_test(&self) -> &SealedGenerationDirectory {
+        &self.directory
+    }
 }
 
 impl CleanCheckpointLoaded {
@@ -3391,7 +3003,8 @@ impl CleanCheckpointLoaded {
     ) -> Result<ContentDigest, String> {
         self.documents
             .roster
-            .document_reference(&self.documents.directory, document)?
+            .document_record(&self.documents.directory, document)?
+            .map(|record| ContentDigest::from_bytes(*record.checkpoint.sha256()))
             .ok_or_else(|| format!("checkpoint image roster omits document {document}"))
     }
 
@@ -3580,35 +3193,34 @@ fn open_checkpoint_impl(
             return Ok(invalid("clean checkpoint state/recovery binding differs"));
         }
     }
-    let roots = match roots_from_wire(payload.roster_roots) {
-        Ok(roots) => roots,
-        Err(error) => return Ok(invalid(error)),
-    };
-    if roots.sequence.len != generation.sequence {
+    if payload.recovery_fence.accepted_sequence != generation.sequence {
         return Ok(invalid("clean checkpoint roster sequence differs"));
     }
-    let document_change_root = match map_root_from_wire(payload.document_change_root.clone()) {
-        Ok(root) => root,
-        Err(error) => return Ok(invalid(error)),
-    };
-    let accepted_directory = match SealedGenerationDirectory::open(&directory) {
+    let sealed_root = payload.sealed_root.locator();
+    // D-3: the root a generation names is derived state. A root record that is
+    // absent, undecodable, or not the one the binding names is a REBUILD, not
+    // a refusal -- `invalid` discards this generation and the store rebuilds
+    // from the untouched Markdown/Org originals.
+    let accepted_directory = match SealedGenerationDirectory::open_generation(
+        &directory,
+        sealed_root,
+        payload.sealed_root_digest,
+    ) {
         Ok(directory) => directory,
-        Err(error) => return Err(CleanCheckpointOpenError::Store(error)),
+        Err(error) => return Ok(invalid(error)),
     };
     let accepted_history = Arc::new(SealedAcceptedHistory {
         directory: accepted_directory,
-        roots,
-        covered_object_root: match map_root_from_wire(payload.covered_object_root.clone()) {
-            Ok(root) => root,
-            Err(error) => return Ok(invalid(error)),
-        },
-        document_change_root,
+        sequence: generation.sequence,
         identity_history: Arc::new(SealedIdentityHistory::new(
-            match SealedGenerationDirectory::open(&directory) {
+            match SealedGenerationDirectory::open_generation(
+                &directory,
+                sealed_root,
+                payload.sealed_root_digest,
+            ) {
                 Ok(directory) => directory,
                 Err(error) => return Err(CleanCheckpointOpenError::Store(error)),
             },
-            payload.identity_roots.clone(),
         )),
         sequence_enumerations: AtomicUsize::new(0),
         sequence_row_reads: AtomicUsize::new(0),
@@ -3636,32 +3248,20 @@ fn open_checkpoint_impl(
     let sqlite_anchor = match state_binding
         .as_ref()
         .map(|binding| {
-            let fixed_key = |key: Option<AuthenticatedMapKey>| -> Result<Option<[u8; 16]>, String> {
-                key.map(|key| {
-                    key.as_slice()
-                        .try_into()
-                        .map_err(|_| "checkpoint accepted root key is not a batch UUID".to_owned())
-                })
-                .transpose()
-            };
+            let generation_sequence = generation.sequence;
             let sqlite = &payload.sqlite_generation;
             let generation = tine_storage::sqlite::PhysicalCheckpointGenerationBinding {
                 generation_id: sqlite.generation_id,
                 predecessor_generation_id: sqlite.predecessor_generation_id,
                 full_anchor_generation_id: sqlite.full_anchor_generation_id,
-                covered_count: roots.sequence.len,
+                covered_count: generation_sequence,
                 covered_document_count: binding.accepted_frontier_root.document_count(),
                 covered_block_count: sqlite.covered_block_count,
                 covered_retained_bytes_total: binding.accepted_frontier_root.retained_bytes_total(),
                 covered_semantic_capsules_root_digest: sqlite.covered_semantic_capsules_root_digest,
-                covered_batch_root_key: fixed_key(roots.batch_map.root.map(|link| link.key))?,
-                covered_batch_root_digest: roots.batch_map.root_digest(),
-                covered_status_root_key: fixed_key(roots.status_map.root.map(|link| link.key))?,
-                covered_status_root_digest: roots.status_map.root_digest(),
-                covered_sequence_root_digest: roots.sequence.root_digest,
-                covered_sequence_height: roots.sequence.height,
-                covered_causal_tip_root_key: None,
-                covered_causal_tip_root_digest: ContentDigest::of(&payload.state_bytes),
+                // One field for the whole sealed index. The eight it replaces
+                // named node addresses inside structures that no longer exist.
+                sealed_root_digest: payload.sealed_root_digest,
                 covered_head_facts_root_digest: sqlite.covered_head_facts_root_digest,
                 current_projection_payload_pins_root_digest: sqlite
                     .current_projection_payload_pins_root_digest,
@@ -3673,23 +3273,20 @@ fn open_checkpoint_impl(
                 .encode_canonical()
                 .map_err(|error| error.to_string())?;
             let empty = tine_storage::sealed_accepted_index::AuthenticatedMapRootV1::empty();
+            // The candidate is ANCHORED: `1..=covered_sequence` live only in
+            // the sealed tables and the treap below spans the tail alone,
+            // which at install time is empty. The generation binding's
+            // `sealed_root_digest` is the one value naming the covered half.
             let root = tine_storage::sqlite::PhysicalCheckpointFrontierRoot {
                 canonical_bytes: canonical_bytes.clone(),
-                acceptance_sequence: roots.sequence.len,
+                acceptance_sequence: generation_sequence,
                 document_count: binding.accepted_frontier_root.document_count(),
                 document_overlay_count: 0,
                 retained_bytes_total: binding.accepted_frontier_root.retained_bytes_total(),
                 document_map_root_key: None,
                 document_map_root_digest: empty.root_digest(),
-                batch_map_root_key: generation.covered_batch_root_key,
-                batch_map_root_digest: generation.covered_batch_root_digest,
-                batch_map_count: roots.sequence.len,
-                status_map_root_key: generation.covered_status_root_key,
-                status_map_root_digest: generation.covered_status_root_digest,
-                status_map_count: roots.sequence.len,
-                sequence_root_digest: roots.sequence.root_digest,
-                sequence_height: roots.sequence.height,
-                sequence_count: roots.sequence.len,
+                batch_map_root_key: None,
+                batch_map_root_digest: empty.root_digest(),
                 generation: generation.clone(),
                 state_digest: binding.accepted_frontier_root.state_digest(),
             };
@@ -3765,11 +3362,12 @@ fn open_checkpoint_impl(
             "clean checkpoint document dependencies are not strictly ordered",
         ));
     }
-    let document_roster = match map_root_from_wire(payload.document_roster) {
-        Ok(root) => SealedDocumentRoster::from_root(root),
-        Err(error) => return Ok(invalid(error)),
-    };
-    let document_directory = match SealedGenerationDirectory::open(&directory) {
+    let document_roster = SealedDocumentRoster::with_count(payload.document_count);
+    let document_directory = match SealedGenerationDirectory::open_generation(
+        &directory,
+        sealed_root,
+        payload.sealed_root_digest,
+    ) {
         Ok(directory) => directory,
         Err(error) => return Err(CleanCheckpointOpenError::Store(error)),
     };
@@ -3795,11 +3393,6 @@ fn open_checkpoint_impl(
         }
     }
     let payload_size = payload_bytes.len();
-    let reader_pin =
-        match pin_checkpoint_reader(store, &document_directory.directory, document_roster) {
-            Ok(pin) => pin,
-            Err(error) => return Ok(invalid(error)),
-        };
     let open_work = GenerationOpenWork {
         covered_sequence_enumerations: accepted_history.sequence_enumerations(),
     };
@@ -3815,7 +3408,6 @@ fn open_checkpoint_impl(
             roster: document_roster,
             directory: document_directory,
             sequence: generation.sequence,
-            _reader_pin: reader_pin,
         }),
         sqlite_anchor,
         open_work,
@@ -4178,11 +3770,6 @@ fn publisher_loop(inner: Arc<PublisherInner>, mut capture: CleanCheckpointCaptur
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
                     *current = Some(documents);
-                    if let Err(error) = cleanup_unreferenced_document_objects(&inner.store) {
-                        eprintln!(
-                            "clean checkpoint orphan-image cleanup will retry after a later publication: {error}"
-                        );
-                    }
                 }
                 *inner
                     .current_identities
@@ -4247,137 +3834,31 @@ mod tests {
         BatchCausalDot, BatchId, CausalPeerId, ContentDigest, DeviceId, DocumentKey,
     };
     use tine_storage::sealed_accepted_index::{
-        AcceptedSequenceEntryV2, AcceptedSequenceRootV2, AcceptedStatusRecordV2,
-        AuthenticatedMapRootV1, SealedAcceptedCausalClockEntryV2, SealedAcceptedCausalRecordV2,
-        SealedAcceptedEvidenceDecoder, SealedAcceptedIndexObjectStore, SealedAcceptedIndexReader,
-        SealedAcceptedIndexRootsV2, SealedAcceptedIndexWriter, SealedAcceptedObjectKind,
+        AcceptedStatusRecordV2, SealedAcceptedCausalClockEntryV2, SealedAcceptedCausalRecordV2,
+        SealedAcceptedEvidenceDecoder,
     };
 
-    #[derive(Default)]
-    struct SealedMemoryStore {
-        objects: Vec<(SealedAcceptedObjectKind, ContentDigest, Vec<u8>)>,
-        reads: RefCell<Vec<(u8, ContentDigest)>>,
-    }
-
-    impl SealedAcceptedIndexObjectStore for SealedMemoryStore {
-        fn read_sealed_accepted_object(
-            &self,
-            kind: SealedAcceptedObjectKind,
-            address: ContentDigest,
-        ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-        {
-            self.reads
-                .borrow_mut()
-                .push((sealed_kind_code(kind), address));
-            Ok(self
-                .objects
-                .iter()
-                .find(|(stored_kind, stored_address, _)| {
-                    *stored_kind == kind && *stored_address == address
-                })
-                .map(|(_, _, bytes)| bytes.clone()))
-        }
-
-        fn publish_sealed_accepted_object(
-            &mut self,
-            kind: SealedAcceptedObjectKind,
-            address: ContentDigest,
-            bytes: &[u8],
-        ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-            if let Some((_, _, existing)) =
-                self.objects
-                    .iter()
-                    .find(|(stored_kind, stored_address, _)| {
-                        *stored_kind == kind && *stored_address == address
-                    })
-            {
-                if existing != bytes {
-                    return Err(
-                        tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Corrupt(
-                            "same address has different test bytes".into(),
-                        ),
-                    );
-                }
-                return Ok(());
-            }
-            self.objects.push((kind, address, bytes.to_vec()));
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct IdentityMeasureStore {
-        objects: BTreeMap<(u8, ContentDigest), Vec<u8>>,
-        map_reads: std::cell::Cell<usize>,
-        value_reads: std::cell::Cell<usize>,
-        bytes_read: std::cell::Cell<usize>,
-    }
-
-    impl IdentityMeasureStore {
-        fn snapshot(&self) -> (usize, usize, usize) {
-            (
-                self.map_reads.get(),
-                self.value_reads.get(),
-                self.bytes_read.get(),
-            )
-        }
-    }
-
-    impl SealedAcceptedIndexObjectStore for IdentityMeasureStore {
-        fn read_sealed_accepted_object(
-            &self,
-            kind: SealedAcceptedObjectKind,
-            address: ContentDigest,
-        ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-        {
-            let bytes = self
-                .objects
-                .get(&(sealed_kind_code(kind), address))
-                .cloned();
-            if let Some(bytes) = bytes.as_ref() {
-                self.bytes_read
-                    .set(self.bytes_read.get().saturating_add(bytes.len()));
-                match kind {
-                    SealedAcceptedObjectKind::MapNode => {
-                        self.map_reads.set(self.map_reads.get().saturating_add(1));
-                    }
-                    SealedAcceptedObjectKind::StatusRecord => {
-                        self.value_reads
-                            .set(self.value_reads.get().saturating_add(1));
-                    }
-                    _ => {}
-                }
-            }
-            Ok(bytes)
-        }
-
-        fn publish_sealed_accepted_object(
-            &mut self,
-            kind: SealedAcceptedObjectKind,
-            address: ContentDigest,
-            bytes: &[u8],
-        ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-            let key = (sealed_kind_code(kind), address);
-            if let Some(existing) = self.objects.get(&key) {
-                if existing != bytes {
-                    return Err(
-                        tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Corrupt(
-                            "same identity measurement address has different bytes".into(),
-                        ),
-                    );
-                }
-            } else {
-                self.objects.insert(key, bytes.to_vec());
-            }
-            Ok(())
-        }
+    /// One sealed staging store over a private temporary directory.
+    ///
+    /// This replaces the in-memory `SealedAcceptedIndexObjectStore` doubles the
+    /// treap-era tests used. There is no in-memory substitute any more, and
+    /// that is deliberate: a sealed cut's cost IS its pack and table writes, so
+    /// a double that never touches a pack cannot observe what these tests
+    /// exist to observe (I-14, I-25). The `TempDir` must outlive the store.
+    fn sealed_test_store() -> (tempfile::TempDir, SealedGenerationStagingStore) {
+        let root = tempfile::tempdir().expect("sealed test root");
+        let directory =
+            cap_std::fs::Dir::open_ambient_dir(root.path(), cap_std::ambient_authority())
+                .expect("sealed test directory");
+        let store = SealedGenerationStagingStore::open(&directory).expect("sealed staging store");
+        (root, store)
     }
 
     #[derive(Clone, Copy, Debug)]
     struct IdentityPointSample {
         micros: u128,
-        map_reads: usize,
-        value_reads: usize,
+        table_reads: u64,
+        value_reads: u64,
         bytes_read: usize,
         allocation_calls: usize,
         allocation_bytes: usize,
@@ -4389,119 +3870,117 @@ mod tests {
         values[index]
     }
 
+    /// One identity point read against the published sorted tables.
+    ///
+    /// The treap-depth axis this used to measure is gone with the treap: a
+    /// point read is now one table lookup per table the key's domain holds,
+    /// which is what `index_reads` counts.
     fn measure_identity_point(
-        store: &IdentityMeasureStore,
-        root: AuthenticatedMapRootV1,
-        key: AuthenticatedMapKey,
+        store: &SealedGenerationDirectory,
+        domain: TableDomain,
+        key: &[u8],
     ) -> IdentityPointSample {
-        let before = store.snapshot();
+        let before = store.index_reads();
         let started = Instant::now();
         let (value, (allocation_calls, allocation_bytes)) =
             crate::sync_runtime::tests::c7b_alloc::measure_thread(|| {
-                let reader = SealedAcceptedIndexReader::new(store);
-                let address = reader.map_value(root, key).unwrap();
-                address.map(|address| {
-                    store
-                        .read_sealed_accepted_object(
-                            SealedAcceptedObjectKind::StatusRecord,
-                            address,
-                        )
-                        .unwrap()
-                        .expect("present identity value")
-                })
+                store.table_value(domain, key).unwrap()
             });
+        let bytes_read = value.as_ref().map_or(0, Vec::len);
+        let value_reads = u64::from(value.is_some());
         std::hint::black_box(value);
         let micros = started.elapsed().as_micros();
-        let after = store.snapshot();
         IdentityPointSample {
             micros,
-            map_reads: after.0 - before.0,
-            value_reads: after.1 - before.1,
-            bytes_read: after.2 - before.2,
+            table_reads: store.index_reads() - before,
+            value_reads,
+            bytes_read,
             allocation_calls,
             allocation_bytes,
         }
     }
 
-    /// P4b's explicit synthetic qualification matrix. It uses the exact shared
-    /// authenticated-map reader and production-shaped value sizes, but no test
-    /// corpus. The identity layer deliberately has no resident value cache:
-    /// every cold/warm lookup is one cache miss and remains bounded by the
-    /// authenticated path. Run in release mode and preserve the report.
+    /// P4b's synthetic identity qualification matrix, rebased onto sorted
+    /// tables.
+    ///
+    /// What it used to measure -- authenticated-map node reads, i.e. treap
+    /// depth -- no longer exists (D-2, P4c2). What replaces it is the quantity
+    /// that now bounds an identity point read: table records opened. Under
+    /// size-tiered compaction at R=8 that is O(log_R N) tables, not O(log2 N)
+    /// nodes, and it must not grow with the value width. Run in release mode
+    /// and preserve the report.
     #[test]
     #[ignore = "P4b 1k/10k/50k identity point-read measurement; run explicitly in release"]
     fn generation_identity_point_measurement() {
         const SIZES: [usize; 3] = [1_000, 10_000, 50_000];
         const WARM_ROUNDS: usize = 31;
-        const MAPS: [(&str, usize); 4] = [
-            ("block_home", 160),
-            ("logseq_uuid", 192),
-            ("portable_path", 320),
-            ("page_name", 512),
+        const MAPS: [(&str, usize, CheckpointIdentityKind); 4] = [
+            ("block_home", 160, CheckpointIdentityKind::BlockHome),
+            ("logseq_uuid", 192, CheckpointIdentityKind::LogseqUuid),
+            ("portable_path", 320, CheckpointIdentityKind::PortablePath),
+            ("page_name", 512, CheckpointIdentityKind::PageName),
         ];
 
-        for (map_name, value_len) in MAPS {
-            let mut store = IdentityMeasureStore::default();
-            let mut complete = AuthenticatedMapRootV1::empty();
-            let mut current = AuthenticatedMapRootV1::empty();
-            let mut points = BTreeMap::new();
+        for (map_name, value_len, kind) in MAPS {
+            let (_root, mut staging) = sealed_test_store();
+            let mut points: BTreeMap<usize, (Vec<u8>, Vec<u8>)> = BTreeMap::new();
             let mut current_key = None;
             let mut released_key = None;
             for ordinal in 0..SIZES[SIZES.len() - 1] {
                 let mut key_material = format!("p4b/{map_name}/{ordinal}").into_bytes();
                 let key_digest = ContentDigest::of(&key_material);
-                let key = AuthenticatedMapKey::new(&key_digest.as_bytes()[..16]).unwrap();
+                let key = key_digest.as_bytes()[..16].to_vec();
                 key_material.resize(value_len, (ordinal % 251) as u8);
-                let value_digest = ContentDigest::of(&key_material);
-                store
-                    .publish_sealed_accepted_object(
-                        SealedAcceptedObjectKind::StatusRecord,
-                        value_digest,
-                        &key_material,
-                    )
+                let (_, locator) = staging.stage_capsule_blob(&key_material).unwrap();
+                let framed = framed_identity_key(&key).unwrap();
+                staging
+                    .put(kind.complete_domain(), &framed, &locator.to_bytes())
                     .unwrap();
-                let mut writer = SealedAcceptedIndexWriter::new(&mut store);
-                complete = writer.upsert_map(complete, key, value_digest).unwrap();
                 if ordinal % 2 == 0 {
-                    current = writer.upsert_map(current, key, value_digest).unwrap();
-                    current_key = Some(key);
+                    staging
+                        .put(kind.current_domain(), &framed, &locator.to_bytes())
+                        .unwrap();
+                    current_key = Some(key.clone());
                 } else {
-                    released_key = Some(key);
+                    released_key = Some(key.clone());
                 }
                 let count = ordinal + 1;
                 if SIZES.contains(&count) {
                     points.insert(
                         count,
-                        (
-                            complete,
-                            current,
-                            current_key.unwrap(),
-                            released_key.unwrap(),
-                        ),
+                        (current_key.clone().unwrap(), released_key.clone().unwrap()),
                     );
                 }
             }
+            let (work, published) = staging.finish().unwrap();
+            println!(
+                "P4BCUT\tmap={map_name}\tindex_bytes={}\tfiles={}\tpacks={}",
+                work.index_bytes, work.files_written, work.packs_published
+            );
 
             for size in SIZES {
-                let (complete, current, current_key, released_key) = points[&size];
+                let (current_key, released_key) = points[&size].clone();
                 let absent_digest =
                     ContentDigest::of(format!("p4b/{map_name}/{size}/absent").as_bytes());
-                let absent_key = AuthenticatedMapKey::new(&absent_digest.as_bytes()[..16]).unwrap();
-                for (class, root, key, expected_value_reads) in [
-                    ("current", current, current_key, 1),
-                    ("released", complete, released_key, 1),
-                    ("absent", complete, absent_key, 0),
+                let absent_key = absent_digest.as_bytes()[..16].to_vec();
+                for (class, domain, key, expected_value_reads) in [
+                    ("current", kind.current_domain(), current_key, 1),
+                    ("released", kind.complete_domain(), released_key, 1),
+                    ("absent", kind.complete_domain(), absent_key, 0),
                 ] {
-                    let cold = measure_identity_point(&store, root, key);
+                    let framed = framed_identity_key(&key).unwrap();
+                    let cold = measure_identity_point(&published, domain, &framed);
                     let warm = (0..WARM_ROUNDS)
-                        .map(|_| measure_identity_point(&store, root, key))
+                        .map(|_| measure_identity_point(&published, domain, &framed))
                         .collect::<Vec<_>>();
                     assert_eq!(cold.value_reads, expected_value_reads);
-                    assert!(cold.map_reads > 0 && cold.map_reads <= 64);
+                    // O(log_R N) tables, never the treap's O(log2 N) nodes and
+                    // never a function of the value width.
+                    assert!(cold.table_reads > 0 && cold.table_reads <= 64);
                     assert!(warm.iter().all(|sample| {
                         sample.value_reads == expected_value_reads
-                            && sample.map_reads > 0
-                            && sample.map_reads <= 64
+                            && sample.table_reads > 0
+                            && sample.table_reads <= 64
                     }));
                     let warm_p50_micros = identity_percentile(
                         warm.iter().map(|sample| sample.micros).collect(),
@@ -4512,7 +3991,9 @@ mod tests {
                         0.99,
                     );
                     let warm_p99_reads = identity_percentile(
-                        warm.iter().map(|sample| sample.map_reads as u128).collect(),
+                        warm.iter()
+                            .map(|sample| sample.table_reads as u128)
+                            .collect(),
                         0.99,
                     );
                     let warm_p99_bytes = identity_percentile(
@@ -4534,8 +4015,8 @@ mod tests {
                         0.99,
                     );
                     println!(
-                        "P4BMEASURE\tmap={map_name}\tkeys={size}\tclass={class}\tcache_entries=0\tcold_cache_misses=1\tcold_map_reads={}\tcold_value_reads={}\tcold_bytes={}\tcold_allocations={}\tcold_allocation_bytes={}\tcold_micros={}\twarm_cache_misses=1\twarm_p50_micros={warm_p50_micros}\twarm_p99_micros={warm_p99_micros}\twarm_p99_map_reads={warm_p99_reads}\twarm_p99_bytes={warm_p99_bytes}\twarm_p99_allocations={warm_p99_allocations}\twarm_p99_allocation_bytes={warm_p99_allocation_bytes}\trounds={WARM_ROUNDS}",
-                        cold.map_reads,
+                        "P4BMEASURE\tmap={map_name}\tkeys={size}\tclass={class}\tcache_entries=0\tcold_cache_misses=1\tcold_table_reads={}\tcold_value_reads={}\tcold_bytes={}\tcold_allocations={}\tcold_allocation_bytes={}\tcold_micros={}\twarm_cache_misses=1\twarm_p50_micros={warm_p50_micros}\twarm_p99_micros={warm_p99_micros}\twarm_p99_table_reads={warm_p99_reads}\twarm_p99_bytes={warm_p99_bytes}\twarm_p99_allocations={warm_p99_allocations}\twarm_p99_allocation_bytes={warm_p99_allocation_bytes}\trounds={WARM_ROUNDS}",
+                        cold.table_reads,
                         cold.value_reads,
                         cold.bytes_read,
                         cold.allocation_calls,
@@ -4723,7 +4204,6 @@ mod tests {
         let live = engine.canonical_snapshot().unwrap();
         assert_eq!(live.pages.len(), 1);
         assert_eq!(live.blocks.len(), 1);
-        let mut nodes = SealedMemoryStore::default();
         let mut cutoff = None;
         let capsule_root = root.join("live-closure-capsules");
         std::fs::create_dir(&capsule_root).unwrap();
@@ -4743,8 +4223,11 @@ mod tests {
             );
             if [8, 32, 128].contains(&n) {
                 assert_eq!(engine.canonical_snapshot().unwrap(), live);
+                // One cut per generation: the accepted delta and this
+                // generation's document capsules publish together (I-2).
+                let mut staging = SealedGenerationStagingStore::open(&directory).unwrap();
                 let current = engine
-                    .build_sealed_accepted_cutoff(&mut nodes, cutoff.as_ref())
+                    .build_sealed_accepted_cutoff(&mut staging, cutoff.as_ref())
                     .unwrap();
                 let compact = engine
                     .build_compact_accepted_document(&current, catalog)
@@ -4761,7 +4244,6 @@ mod tests {
                 assert_eq!(closure.document_count(), 2);
                 assert!(closure.contains(catalog));
                 assert!(closure.contains(DocumentId::from_uuid(uuid::Uuid::from_u128(300_000))));
-                let mut staging = SealedGenerationStagingStore::open(&directory).unwrap();
                 if let Some(previous) = &previous_closure {
                     assert!(engine
                         .build_live_graph_document_roster(&current, &mut staging, previous)
@@ -4771,7 +4253,7 @@ mod tests {
                     .build_live_graph_document_roster(&current, &mut staging, &closure)
                     .unwrap();
                 assert_eq!(active.document_count(), 2);
-                let disk = staging.finish().unwrap();
+                let (_cut_work, disk) = staging.finish().unwrap();
                 engine
                     .qualify_live_graph_document_roster(&current, active, &disk, &closure)
                     .unwrap();
@@ -4815,8 +4297,9 @@ mod tests {
             );
             if [8, 32, 128].contains(&n) {
                 assert_eq!(engine.canonical_snapshot().unwrap(), live);
+                let mut staging = SealedGenerationStagingStore::open(&directory).unwrap();
                 let current = engine
-                    .build_sealed_accepted_cutoff(&mut nodes, cutoff.as_ref())
+                    .build_sealed_accepted_cutoff(&mut staging, cutoff.as_ref())
                     .unwrap();
                 let compact = engine
                     .build_compact_accepted_document(&current, home)
@@ -4887,23 +4370,32 @@ mod tests {
             .clean_transient_projection_claim_snapshot()
             .unwrap()
             .unwrap();
-        let mut store = SealedMemoryStore::default();
+        let (_sealed_root_store, mut store) = sealed_test_store();
         let mut cutoff = engine
             .build_sealed_accepted_cutoff(&mut store, None)
             .unwrap();
-        assert_eq!(cutoff.roots().sequence.len, 0);
+        assert_eq!(cutoff.sequence(), 0);
         let capsule_root = root.join("capsules");
         std::fs::create_dir(&capsule_root).unwrap();
         let capsule_dir =
             cap_std::fs::Dir::open_ambient_dir(&capsule_root, cap_std::ambient_authority())
                 .unwrap();
+        // A SECOND sealed directory for the engine-driven incremental census.
+        // It must carry the PREDECESSOR generation and nothing newer, which is
+        // what a real cut sees; `capsule_dir` below also receives this
+        // iteration's hand-built roster before the engine runs, so reusing it
+        // would let the engine inherit its own answer and write nothing.
+        let census_root = root.join("census");
+        std::fs::create_dir(&census_root).unwrap();
+        let census_dir =
+            cap_std::fs::Dir::open_ambient_dir(&census_root, cap_std::ambient_authority()).unwrap();
         let mut roster = SealedDocumentRoster::empty();
         let mut empty_store = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
         let (empty_roster, empty_written) = engine
             .build_compact_document_roster(&cutoff, &mut empty_store, None)
             .unwrap();
         assert_eq!(empty_written, cutoff.frontier().document_count());
-        let empty_disk = empty_store.finish().unwrap();
+        let (_, empty_disk) = empty_store.finish().unwrap();
         engine
             .qualify_full_document_roster(&cutoff, empty_roster, &empty_disk)
             .unwrap();
@@ -4958,7 +4450,7 @@ mod tests {
             cutoff = engine
                 .build_sealed_accepted_cutoff(&mut store, Some(&cutoff))
                 .unwrap();
-            assert_eq!(cutoff.roots().sequence.len, n as u64);
+            assert_eq!(cutoff.sequence(), n as u64);
             let retained = engine
                 .build_policy_compact_accepted_document_at_cutoff(
                     &cutoff,
@@ -5000,7 +4492,13 @@ mod tests {
                 panic!("a fresh default-budget page must retain full history")
             };
             assert!(!page_image.checkpoint.is_empty());
-            let previous_roster = roster;
+            // From the second round on, the roster RESUMES the generation the
+            // directories already published, exactly as a real cut does; a
+            // census that does not say so re-counts every document it rewrites.
+            let previous_roster = SealedDocumentRoster::with_count(roster.document_count());
+            if n > 1 {
+                roster = previous_roster;
+            }
             let mut capsule_store = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
             for id in [
                 catalog,
@@ -5071,7 +4569,7 @@ mod tests {
                 assert_eq!(old.0, new.0);
                 assert_eq!(old.1.get_deep_value(), new.1.get_deep_value());
             }
-            let mut complete_store = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
+            let mut complete_store = SealedGenerationStagingStore::open(&census_dir).unwrap();
             let (automatic, written) = engine
                 .build_compact_document_roster(
                     &cutoff,
@@ -5092,91 +4590,106 @@ mod tests {
                     &reopened_capsules
                 )
                 .is_err());
-            let mut unchanged = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
+            let mut unchanged = SealedGenerationStagingStore::open(&census_dir).unwrap();
             let (same, written) = engine
                 .build_compact_document_roster(&cutoff, &mut unchanged, Some(automatic))
                 .unwrap();
             assert_eq!(written, 0);
             assert_eq!(same.map, automatic.map);
-            assert!(unchanged.publication.is_none());
-            assert!(unchanged.pending.objects.is_empty());
-            unchanged.failed = true;
-            assert!(engine
-                .build_compact_document_roster(&cutoff, &mut unchanged, Some(automatic))
-                .is_err());
-            assert!(unchanged.finish().is_err());
+            // An unchanged roster must cost NOTHING: no table entry, no
+            // packed record. This is the I-25 statement of "written = 0"
+            // above, at the physical layer the old `pending.objects` check
+            // was reaching for.
+            assert_eq!(unchanged.entry_writes(), 0);
+            assert_eq!(unchanged.record_writes(), 0);
+            drop(unchanged);
 
-            let address = SealedAcceptedIndexReader::new(&reopened_capsules)
-                .map_value(
-                    roster.map.entity_root(),
-                    DocumentKey::Entity(catalog).authenticated_map_key(),
-                )
-                .unwrap()
+            // The descriptor is a packed record addressed by a table entry,
+            // not a file. Read its locator out of the roster domain.
+            let catalog_key = framed_document_key(
+                DocumentKey::Entity(catalog)
+                    .authenticated_map_key()
+                    .as_slice(),
+            )
+            .unwrap();
+            let descriptor_locator = locator_from_value(
+                &reopened_capsules
+                    .table_value(DOMAIN_DOCUMENT_ROSTER, &catalog_key)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            let exact = reopened_capsules
+                .sealed_record(descriptor_locator, MAX_CHECKPOINT_BYTES)
                 .unwrap();
-            let path = capsule_root.join(capsule_blob_name(address));
-            let exact = std::fs::read(&path).unwrap();
+            // A roster carrying one EXTRA document must not qualify, even when
+            // its declared count is the honest one: the count alone never
+            // certifies completeness.
             let mut extra_store = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
             let extra_id = DocumentId::from_uuid(uuid::Uuid::from_u128(888_888));
-            let mut extra_root = SealedAcceptedIndexWriter::new(&mut extra_store)
-                .upsert_map(
-                    roster.map.entity_root(),
-                    DocumentKey::Entity(extra_id).authenticated_map_key(),
-                    address,
+            let extra_key = framed_document_key(
+                DocumentKey::Entity(extra_id)
+                    .authenticated_map_key()
+                    .as_slice(),
+            )
+            .unwrap();
+            extra_store
+                .put(
+                    DOMAIN_DOCUMENT_ROSTER,
+                    &extra_key,
+                    &descriptor_locator.to_bytes(),
                 )
                 .unwrap();
-            drop(extra_store.finish().unwrap());
-            extra_root.count = roster.document_count(); // count alone must not certify completeness
+            let (_, forged) = extra_store.finish().unwrap();
             assert!(engine
                 .qualify_full_document_roster(
                     &cutoff,
-                    SealedDocumentRoster {
-                        map: roster.map.with_entity_root_for_test(extra_root)
-                    },
-                    &reopened_capsules
+                    SealedDocumentRoster::with_count(roster.document_count()),
+                    &forged
                 )
                 .is_err());
+            // The forged row is now PUBLISHED in this directory. Tombstone it
+            // again, or the next round's census counts it as an accepted
+            // document -- the roster domain is exactly the live key set.
+            let mut unforge = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
+            unforge.remove(DOMAIN_DOCUMENT_ROSTER, &extra_key).unwrap();
+            drop(unforge.finish().unwrap());
 
             let record = DocumentCapsuleRecord::decode(&exact).unwrap();
-            let checkpoint_path = capsule_root.join(capsule_blob_name(ContentDigest::from_bytes(
-                *record.checkpoint.sha256(),
-            )));
-            let exact_checkpoint = std::fs::read(&checkpoint_path).unwrap();
-            std::fs::write(&checkpoint_path, b"torn checkpoint").unwrap();
+            // Tear the IMAGE record inside its pack: a torn write or a partial
+            // sync delivery damages bytes in place, it does not unlink a file.
+            let image_digest = ContentDigest::from_bytes(*record.checkpoint.sha256());
+            let image_locator = locator_from_value(
+                &reopened_capsules
+                    .table_value(DOMAIN_CAPSULE_BLOB, image_digest.as_bytes())
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            reopened_capsules.tear_packed_record(image_locator).unwrap();
             assert!(roster
                 .load_document(&reopened_capsules, catalog, catalog)
                 .is_err());
-            std::fs::write(&checkpoint_path, &exact_checkpoint).unwrap();
-            std::fs::write(&path, b"torn descriptor").unwrap();
-            assert!(roster
-                .load_document(&reopened_capsules, catalog, catalog)
-                .is_err());
-            std::fs::remove_file(&path).unwrap();
-            assert!(roster
-                .load_document(&reopened_capsules, catalog, catalog)
-                .is_err());
-            std::fs::write(&path, &exact).unwrap();
-            assert!(roster
-                .load_document(&reopened_capsules, catalog, catalog)
-                .unwrap()
-                .is_some());
+            // Tearing the DESCRIPTOR record is the other half of the same
+            // scenario and must also refuse rather than answer.
+            let (_repair_root, repaired) = {
+                let mut repair = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
+                let _ = repair.stage_capsule_blob(&exact).unwrap();
+                repair.finish().unwrap()
+            };
+            repaired.tear_packed_record(descriptor_locator).unwrap();
+            assert!(roster.load_document(&repaired, catalog, catalog).is_err());
             // Validly addressed but semantically wrong bytes must not qualify.
             let mut malformed = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
-            let bad_checkpoint = malformed
+            let (bad_checkpoint, _) = malformed
                 .stage_capsule_blob(b"not a CRDT checkpoint")
                 .unwrap();
             let bad_record = DocumentCapsuleRecord {
                 checkpoint: bad_checkpoint,
                 ..record.clone()
             };
-            let bad_blob = malformed
+            let (_, bad_locator) = malformed
                 .stage_capsule_blob(&bad_record.encode().unwrap())
-                .unwrap();
-            let bad_root = SealedAcceptedIndexWriter::new(&mut malformed)
-                .upsert_map(
-                    roster.map.entity_root(),
-                    DocumentKey::Entity(catalog).authenticated_map_key(),
-                    ContentDigest::from_bytes(*bad_blob.sha256()),
-                )
                 .unwrap();
             let mut wrong_vector = record.dependencies.peer_counters().to_vec();
             wrong_vector.push(crate::oplog::CrdtPeerCounter::new(
@@ -5193,27 +4706,53 @@ mod tests {
                 dependencies: wrong_dependencies,
                 ..record.clone()
             };
-            let wrong_blob = malformed
+            let (_, wrong_locator) = malformed
                 .stage_capsule_blob(&wrong_record.encode().unwrap())
                 .unwrap();
-            let wrong_root = SealedAcceptedIndexWriter::new(&mut malformed)
-                .upsert_map(
-                    roster.map.entity_root(),
-                    DocumentKey::Entity(catalog).authenticated_map_key(),
-                    ContentDigest::from_bytes(*wrong_blob.sha256()),
+            malformed
+                .put(
+                    DOMAIN_DOCUMENT_ROSTER,
+                    &catalog_key,
+                    &bad_locator.to_bytes(),
                 )
                 .unwrap();
-            drop(malformed.finish().unwrap());
-            assert!(SealedDocumentRoster {
-                map: roster.map.with_entity_root_for_test(bad_root)
-            }
-            .load_document(&reopened_capsules, catalog, catalog)
-            .is_err());
-            assert!(SealedDocumentRoster {
-                map: roster.map.with_entity_root_for_test(wrong_root)
-            }
-            .load_document(&reopened_capsules, catalog, catalog)
-            .is_err());
+            let (_, with_bad) = malformed.finish().unwrap();
+            assert!(SealedDocumentRoster::with_count(roster.document_count())
+                .load_document(&with_bad, catalog, catalog)
+                .is_err());
+            let mut malformed = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
+            malformed
+                .put(
+                    DOMAIN_DOCUMENT_ROSTER,
+                    &catalog_key,
+                    &wrong_locator.to_bytes(),
+                )
+                .unwrap();
+            let (_, with_wrong) = malformed.finish().unwrap();
+            assert!(SealedDocumentRoster::with_count(roster.document_count())
+                .load_document(&with_wrong, catalog, catalog)
+                .is_err());
+            // Restore the honest entry so the loop's next round sees a healthy
+            // roster, and prove it reads again.
+            let mut restore = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
+            // Both the image record and the descriptor record were torn in
+            // place above; dedup would hand their damaged locators straight
+            // back, so recovery re-appends the exact bytes.
+            let healed_image = engine
+                .build_compact_accepted_document(&cutoff, catalog)
+                .unwrap();
+            let (_, _) = restore
+                .restage_capsule_blob(healed_image.checkpoint())
+                .unwrap();
+            let (_, restored_descriptor) = restore.restage_capsule_blob(&exact).unwrap();
+            restore
+                .put(
+                    DOMAIN_DOCUMENT_ROSTER,
+                    &catalog_key,
+                    &restored_descriptor.to_bytes(),
+                )
+                .unwrap();
+            let (_, reopened_capsules) = restore.finish().unwrap();
             assert!(roster
                 .load_document(&reopened_capsules, catalog, catalog)
                 .unwrap()
@@ -5236,12 +4775,16 @@ mod tests {
             2
         );
         let independent = replay
-            .build_sealed_accepted_cutoff(&mut SealedMemoryStore::default(), None)
+            .build_sealed_accepted_cutoff(&mut sealed_test_store().1, None)
             .unwrap();
-        assert_eq!(cutoff.roots(), independent.roots());
+        assert_eq!(cutoff.identity_digest(), independent.identity_digest());
         assert_eq!(cutoff.frontier(), independent.frontier());
         let mut disk = SealedGenerationStagingStore::open(&capsule_dir).unwrap();
-        let mut full_roster = SealedDocumentRoster::empty();
+        // Over the SAME base the incremental roster was built on. The census is
+        // the store's live document rows, not a run-local tally, so a roster
+        // that starts empty over a store that already holds those rows counts
+        // nothing: `with_document` correctly sees every row as already present.
+        let mut full_roster = SealedDocumentRoster::over_base(&disk).unwrap();
         for id in [
             catalog,
             DocumentId::from_uuid(uuid::Uuid::from_u128(301)),
@@ -5256,6 +4799,7 @@ mod tests {
         }
         assert_eq!(full_roster.map, roster.map);
         drop(disk.finish().unwrap());
+        drop(census_dir);
         drop(capsule_dir);
         drop(replay);
         drop(engine);
@@ -5415,7 +4959,7 @@ mod tests {
             (1, &mut offline_b, 300, "OFFLINE_B", "NEXT"),
         ] {
             let cutoff = engine
-                .build_sealed_accepted_cutoff(&mut SealedMemoryStore::default(), None)
+                .build_sealed_accepted_cutoff(&mut sealed_test_store().1, None)
                 .unwrap();
             let compact = engine
                 .build_compact_accepted_document(&cutoff, home)
@@ -5522,7 +5066,7 @@ mod tests {
             assert_ne!(omitted_tail.canonical_snapshot().unwrap(), snapshot);
             accepted.extend(incoming);
             let next = recovered
-                .build_sealed_accepted_cutoff(&mut SealedMemoryStore::default(), None)
+                .build_sealed_accepted_cutoff(&mut sealed_test_store().1, None)
                 .unwrap();
             for id in [catalog, home, destination_home] {
                 let next_compact = recovered
@@ -5530,7 +5074,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(next_compact.dependencies().document_id(), id);
             }
-            assert_eq!(next.roots().sequence.len as usize, accepted.len());
+            assert_eq!(next.sequence() as usize, accepted.len());
             // Only the test's engine handle moves here. Durable marker/actor
             // installation remains a separate production qualification gate.
             engine = recovered;
@@ -5566,7 +5110,7 @@ mod tests {
         assert!(content(&engine).contains("OFFLINE_A"));
         assert!(content(&engine).contains("OFFLINE_B"));
         let final_cutoff = engine
-            .build_sealed_accepted_cutoff(&mut SealedMemoryStore::default(), None)
+            .build_sealed_accepted_cutoff(&mut sealed_test_store().1, None)
             .unwrap();
         let capsule_root = root.join("retained-home-capsules");
         std::fs::create_dir(&capsule_root).unwrap();
@@ -5578,7 +5122,7 @@ mod tests {
             .build_compact_document_roster(&final_cutoff, &mut staging, None)
             .unwrap();
         assert_eq!(written, 3);
-        let disk = staging.finish().unwrap();
+        let (_, disk) = staging.finish().unwrap();
         engine
             .qualify_full_document_roster(&final_cutoff, complete, &disk)
             .unwrap();
@@ -5637,33 +5181,40 @@ mod tests {
         let rows = generation_rows(17);
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
         let mut staging = SealedGenerationStagingStore::open(&directory).unwrap();
-        staging.batch_byte_budget = 4096;
-        staging.batch_object_budget = 8;
         let mut cutoff = empty.clone();
         for row in &rows[..16] {
             let mut builder = cutoff.builder(&mut staging);
             builder.append(row).unwrap();
             cutoff = builder.finish(row.evidence.post_frontier_root()).unwrap();
-            assert!(staging.pending_bytes < staging.batch_byte_budget);
-            assert!(staging.pending.objects.len() < staging.batch_object_budget);
         }
         let prefix = cutoff.clone();
-        drop(staging.finish().unwrap());
-        let reopened = SealedGenerationDirectory::open(&directory).unwrap();
-        let reader = SealedAcceptedIndexReader::new(&reopened);
+        // Sixteen accepted rows: two records each, and ONE cut. The old byte
+        // and object budgets are gone with the staging batcher -- what bounds
+        // a cut now is that it writes O(1) files regardless of row count
+        // (I-14/T2).
+        let staged_records = staging.record_writes();
+        let (work, reopened) = staging.finish().unwrap();
+        assert_eq!(staged_records, 32, "two records per accepted row");
+        assert!(
+            work.files_written <= 3 + work.packs_published,
+            "one cut must stay O(1) files, saw {}",
+            work.files_written
+        );
         for row in &rows[..16] {
-            let proof = reader
-                .prove_membership(
-                    prefix.roots(),
+            let records =
+                sealed_batch_records(&reopened, row.evidence.batch_id().as_uuid().into_bytes())
+                    .unwrap()
+                    .expect("a published accepted row is readable");
+            records
+                .verify(
                     row.evidence.acceptance_sequence(),
                     row.evidence.batch_id().as_uuid().into_bytes(),
                     &TineAcceptedEvidenceDecoder,
                 )
-                .unwrap()
                 .unwrap();
-            assert_eq!(proof.status.no_op, row.no_op);
+            assert_eq!(records.status.no_op, row.no_op);
             assert_eq!(
-                proof.status.exact_evidence_bytes,
+                records.status.exact_evidence_bytes,
                 row.evidence.encode_canonical().unwrap()
             );
         }
@@ -5673,8 +5224,10 @@ mod tests {
         let complete = builder
             .finish(rows[16].evidence.post_frontier_root())
             .unwrap();
-        drop(extension.finish().unwrap());
-        let mut memory = SealedMemoryStore::default();
+        let (_, extended) = extension.finish().unwrap();
+        // An INCREMENTAL extension and a full rederivation in a separate
+        // directory must agree on the cutoff's whole identity.
+        let (_sealed_root_memory, mut memory) = sealed_test_store();
         let mut builder = empty.builder(&mut memory);
         for row in &rows {
             builder.append(row).unwrap();
@@ -5682,75 +5235,32 @@ mod tests {
         let expected = builder
             .finish(rows[16].evidence.post_frontier_root())
             .unwrap();
-        assert_eq!(complete.roots(), expected.roots());
-        assert_eq!(complete.causal_tip_root(), expected.causal_tip_root());
-        // The same pre-existing reader can still resolve immutable predecessor
-        // roots after a later generation adds nodes in the same object store.
-        assert!(reader
-            .prove_membership(
-                prefix.roots(),
-                16,
-                16u128.to_be_bytes(),
-                &TineAcceptedEvidenceDecoder
-            )
-            .unwrap()
-            .is_some());
-        assert!(reader
-            .prove_membership(
-                complete.roots(),
-                17,
-                17u128.to_be_bytes(),
-                &TineAcceptedEvidenceDecoder
-            )
-            .unwrap()
-            .is_some());
-        // Exercise the immediate backend on the Linux host as well. Native
-        // Windows/Android barriers still require their platform qualification.
-        let immediate_root = root.join("immediate");
-        std::fs::create_dir(&immediate_root).unwrap();
-        let immediate_dir =
-            cap_std::fs::Dir::open_ambient_dir(&immediate_root, cap_std::ambient_authority())
-                .unwrap();
-        let mut immediate = SealedGenerationStagingStore::open(&immediate_dir).unwrap();
-        immediate.publication =
-            Some(SealedStagingPublication::open_immediate(&immediate_dir).unwrap());
-        immediate.batch_byte_budget = usize::MAX;
-        immediate.batch_object_budget = usize::MAX;
-        let mut builder = empty.builder(&mut immediate);
-        for row in &rows {
-            builder.append(row).unwrap();
-        }
-        let actual = builder
-            .finish(rows[16].evidence.post_frontier_root())
-            .unwrap();
-        assert_eq!(actual.roots(), expected.roots());
-        assert_eq!(actual.causal_tip_root(), expected.causal_tip_root());
-        let immediate = immediate.finish().unwrap();
-        for row in &rows {
-            assert!(SealedAcceptedIndexReader::new(&immediate)
-                .prove_membership(
-                    actual.roots(),
-                    row.evidence.acceptance_sequence(),
-                    row.evidence.batch_id().as_uuid().into_bytes(),
-                    &TineAcceptedEvidenceDecoder,
-                )
-                .unwrap()
-                .is_some());
-        }
-        let mut publication = SealedStagingPublication::open_immediate(&immediate_dir).unwrap();
-        publication
-            .publish(&immediate_dir, "collision", b"original")
-            .unwrap();
-        assert!(publication
-            .publish(&immediate_dir, "collision", b"different")
-            .is_err());
+        let (_, rederived) = memory.finish().unwrap();
+        assert_eq!(complete.identity_digest(), expected.identity_digest());
         assert_eq!(
-            std::fs::read(immediate_root.join("collision")).unwrap(),
-            b"original"
+            complete.causal_tips().copied().collect::<Vec<_>>(),
+            expected.causal_tips().copied().collect::<Vec<_>>()
         );
-        drop(publication);
-        drop(immediate);
-        drop(immediate_dir);
+        // The pre-existing reader, opened before the extension's cut, still
+        // resolves the rows it was opened over: a tier merge concatenates a
+        // contiguous virtual run, so no published record's offset ever moves.
+        assert!(sealed_batch_records(&reopened, 16u128.to_be_bytes())
+            .unwrap()
+            .is_some());
+        assert!(sealed_batch_records(&extended, 17u128.to_be_bytes())
+            .unwrap()
+            .is_some());
+        for row in &rows {
+            let batch_id = row.evidence.batch_id().as_uuid().into_bytes();
+            let from_extension = sealed_batch_records(&extended, batch_id).unwrap().unwrap();
+            let from_rederivation = sealed_batch_records(&rederived, batch_id).unwrap().unwrap();
+            assert_eq!(
+                from_extension.status.exact_evidence_bytes,
+                from_rederivation.status.exact_evidence_bytes
+            );
+        }
+        drop(rederived);
+        drop(extended);
         drop(reopened);
         drop(directory);
         crate::test_support::remove_dir_all(root);
@@ -5758,169 +5268,346 @@ mod tests {
 
     #[test]
     fn sealed_directory_collision_or_corruption_never_changes_predecessor_authority() {
-        use tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore;
         let root =
             std::env::temp_dir().join(format!("tine-sealed-damage-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let directory =
             cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
         let row = generation_rows(1).remove(0);
+        let batch_id = row.evidence.batch_id().as_uuid().into_bytes();
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
         let mut staging = SealedGenerationStagingStore::open(&directory).unwrap();
         let mut builder = empty.builder(&mut staging);
         builder.append(&row).unwrap();
-        let cutoff = builder.finish(row.evidence.post_frontier_root()).unwrap();
-        let mut reopened = staging.finish().unwrap();
-        let address = cutoff.roots().batch_map.root.unwrap().digest;
-        let kind = SealedAcceptedObjectKind::MapNode;
-        let original = reopened
-            .read_sealed_accepted_object(kind, address)
-            .unwrap()
-            .unwrap();
-        assert!(reopened
-            .publish_sealed_accepted_object(kind, address, b"wrong")
-            .is_err());
-        let mut collision = SealedGenerationStagingStore::open(&directory).unwrap();
-        assert!(collision
-            .publish_sealed_accepted_object(kind, address, b"wrong")
-            .is_err());
-        assert!(collision.finish().is_err());
-        assert_eq!(
-            reopened
-                .read_sealed_accepted_object(kind, address)
+        let _cutoff = builder.finish(row.evidence.post_frontier_root()).unwrap();
+        let (_, reopened) = staging.finish().unwrap();
+        let answered = sealed_batch_records(&reopened, batch_id).unwrap().unwrap();
+
+        // A torn record must REFUSE, never answer with the wrong bytes: the
+        // record header carries its payload digest, so a torn write inside a
+        // pack is caught on read.
+        let (causal_locator, _status_locator) = batch_row_locators(
+            &reopened
+                .table_value(DOMAIN_BATCH, &batch_id)
                 .unwrap()
                 .unwrap(),
-            original
-        );
-        let name = sealed_staging_name(kind, address);
-        std::fs::write(root.join(&name), b"torn node").unwrap();
-        assert!(SealedAcceptedIndexReader::new(&reopened)
-            .prove_membership(
-                cutoff.roots(),
-                1,
-                1u128.to_be_bytes(),
-                &TineAcceptedEvidenceDecoder
+        )
+        .unwrap();
+        let original = reopened
+            .sealed_record(causal_locator, MAX_CHECKPOINT_BYTES)
+            .unwrap();
+        reopened.tear_packed_record(causal_locator).unwrap();
+        assert!(sealed_batch_records(&reopened, batch_id).is_err());
+
+        // Republishing the same content-addressed bytes through an ordinary
+        // cut repairs it, and the predecessor's answer is unchanged.
+        let mut repair = SealedGenerationStagingStore::open(&directory).unwrap();
+        let repaired_locator = repair.append_record(&original).unwrap();
+        let (_, status_locator) = batch_row_locators(
+            &reopened
+                .table_value(DOMAIN_BATCH, &batch_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        repair
+            .put(
+                DOMAIN_BATCH,
+                &batch_id,
+                &batch_row_value(repaired_locator, status_locator),
             )
-            .is_err());
-        std::fs::remove_file(root.join(&name)).unwrap();
-        assert!(reopened
-            .read_sealed_accepted_object(kind, address)
-            .unwrap()
-            .is_none());
+            .unwrap();
+        let (_, healed) = repair.finish().unwrap();
+        let after = sealed_batch_records(&healed, batch_id).unwrap().unwrap();
+        assert_eq!(
+            after.status.exact_evidence_bytes,
+            answered.status.exact_evidence_bytes
+        );
+        after
+            .verify(1, batch_id, &TineAcceptedEvidenceDecoder)
+            .unwrap();
+
+        // A pack replaced by a symlink is refused, not followed. Refusal
+        // scenario: hostile or accidental substitution of a private file
+        // through a path the capability root does not own.
         #[cfg(unix)]
         {
-            let outside = root.join("outside-node");
-            std::fs::write(&outside, &original).unwrap();
-            std::os::unix::fs::symlink(&outside, root.join(&name)).unwrap();
-            assert!(reopened.read_sealed_accepted_object(kind, address).is_err());
-            std::fs::remove_file(root.join(&name)).unwrap();
-            std::fs::remove_file(outside).unwrap();
+            // `directory` IS the sealed directory here, not its parent. Every
+            // pack is substituted: which one holds the record is an internal
+            // placement detail, and the refusal must not depend on it.
+            let outside = root.join("outside-packs");
+            std::fs::create_dir_all(&outside).unwrap();
+            let pack_names: Vec<String> = std::fs::read_dir(&root)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with("pack-v1"))
+                .collect();
+            assert!(
+                !pack_names.is_empty(),
+                "a published cut has at least one pack"
+            );
+            for name in &pack_names {
+                let pack_path = root.join(name);
+                let moved = outside.join(name);
+                std::fs::rename(&pack_path, &moved).unwrap();
+                std::os::unix::fs::symlink(&moved, &pack_path).unwrap();
+            }
+            assert!(sealed_batch_records(&healed, batch_id).is_err());
+            for name in &pack_names {
+                let pack_path = root.join(name);
+                std::fs::remove_file(&pack_path).unwrap();
+                std::fs::rename(outside.join(name), &pack_path).unwrap();
+            }
+            std::fs::remove_dir(&outside).unwrap();
+            assert!(sealed_batch_records(&healed, batch_id).unwrap().is_some());
         }
-        std::fs::write(root.join(&name), original).unwrap();
-        assert!(SealedAcceptedIndexReader::new(&reopened)
-            .prove_membership(
-                cutoff.roots(),
-                1,
-                1u128.to_be_bytes(),
-                &TineAcceptedEvidenceDecoder
-            )
-            .unwrap()
-            .is_some());
+        drop(healed);
         drop(reopened);
         drop(directory);
         crate::test_support::remove_dir_all(root);
     }
 
+    /// The prevention guard for the reopen regression of 2026-09-14.
+    ///
+    /// `tine_storage` verifies a table's digest exactly ONCE per
+    /// `TableSetReader`, and Tine builds a fresh reader inside
+    /// `SealedTableAccess::table_value`. A loop that point-reads one key per
+    /// DOCUMENT therefore re-hashed the whole roster table per document: a
+    /// 1,077-document graph spent 20 s in checkpoint qualification alone.
+    /// `DOCUMENT_SCALE_CACHED_DOMAINS` is the fix; this is what fails if a
+    /// later change drops a domain out of it, and what must NOT be extended to
+    /// a batch-scale domain (the `DOMAIN_BATCH` half below is that half of the
+    /// contract: batch-scale keys stay uncached, and the remedy for a loop over
+    /// them is to stop looping).
+    #[test]
+    fn a_document_scale_domain_is_hashed_once_per_reader_not_once_per_lookup() {
+        let root = tempfile::tempdir().expect("sealed test root");
+        let directory =
+            cap_std::fs::Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let mut store = SealedGenerationStagingStore::open(&directory).unwrap();
+        const DOCUMENTS: u128 = 64;
+        let document_keys: Vec<[u8; crate::oplog::cold_object_store::DOCUMENT_ROSTER_KEY_BYTES]> =
+            (0..DOCUMENTS)
+                .map(|ordinal| {
+                    framed_document_key(
+                        DocumentKey::Entity(DocumentId::from_uuid(uuid::Uuid::from_u128(
+                            0x5eed_0000 + ordinal,
+                        )))
+                        .authenticated_map_key()
+                        .as_slice(),
+                    )
+                    .unwrap()
+                })
+                .collect();
+        let value = ColdLocatorV1 {
+            offset: 0,
+            length: 1,
+        }
+        .to_bytes();
+        for key in &document_keys {
+            store.put(DOMAIN_DOCUMENT_ROSTER, key, &value).unwrap();
+        }
+        let object_keys: Vec<[u8; 32]> = (0..DOCUMENTS)
+            .map(|ordinal| *ContentDigest::of(format!("covered/{ordinal}").as_bytes()).as_bytes())
+            .collect();
+        for key in &object_keys {
+            store.put(DOMAIN_COVERED_OBJECT, key, &[1]).unwrap();
+        }
+        let (_, reader) = store.finish().unwrap();
+
+        // Reader-LOCAL, not the process-wide `table_digest_verifications()`:
+        // this suite runs in parallel, and a delta on a global counter is a
+        // flaky test. One `read_table` is one whole-table digest verification,
+        // so the reader's own count answers the same question deterministically.
+        let before = reader.index_reads();
+        for key in &document_keys {
+            assert!(reader
+                .table_value(DOMAIN_DOCUMENT_ROSTER, key)
+                .unwrap()
+                .is_some());
+        }
+        let hashed = reader.index_reads() - before;
+        assert!(
+            hashed <= 2,
+            "a document-scale domain read {hashed} whole tables for {DOCUMENTS} point \
+             reads; the per-lookup reader is back"
+        );
+
+        // The other half: an object/batch-scale domain is NOT cached, so its
+        // absence from the list is observable rather than merely intended.
+        let before = reader.index_reads();
+        for key in &object_keys {
+            assert!(reader
+                .table_value(DOMAIN_COVERED_OBJECT, key)
+                .unwrap()
+                .is_some());
+        }
+        assert!(
+            reader.index_reads() - before >= u64::try_from(DOCUMENTS).unwrap(),
+            "an object-scale domain must stay off the document-scale cache list"
+        );
+    }
+
     #[test]
     fn sealed_directory_publication_fault_can_retry_without_replacing_predecessor() {
+        use crate::oplog::cold_object_store::SEALED_TIER_FANOUT;
+
         let root = std::env::temp_dir().join(format!("tine-sealed-retry-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let directory =
-            cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
-        let rows = generation_rows(2);
+        // One row per seeded cut, plus the row the interrupted cut carries.
+        // SEALED_TIER_FANOUT - 1 seeded cuts leave level 0 one table short in
+        // every domain, so the interrupted cut is the cut that FILLS level 0:
+        // it merges a table level and retires a full pack run. That is the case
+        // a two-cut matrix never reached, and the one where an interruption can
+        // strand a merged artifact that nothing names yet.
+        let rows = generation_rows(SEALED_TIER_FANOUT as u64);
+        let last = SEALED_TIER_FANOUT - 1;
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
-        let mut first = SealedGenerationStagingStore::open(&directory).unwrap();
-        let mut builder = empty.builder(&mut first);
-        builder.append(&rows[0]).unwrap();
-        let prefix = builder
-            .finish(rows[0].evidence.post_frontier_root())
-            .unwrap();
-        let predecessor_reader = first.finish().unwrap();
-        let mut interrupted = SealedGenerationStagingStore::open(&directory).unwrap();
-        let mut builder = prefix.builder(&mut interrupted);
-        builder.append(&rows[1]).unwrap();
-        let candidate = builder
-            .finish(rows[1].evidence.post_frontier_root())
-            .unwrap();
-        let ((kind, address), original) = interrupted
-            .pending
-            .objects
-            .iter()
-            .find(|((kind, _), _)| {
-                *kind == sealed_kind_code(SealedAcceptedObjectKind::StatusRecord)
-            })
-            .expect("the extension has a new status record");
-        let original = original.clone();
-        let collision = root.join(sealed_staging_name(
-            sealed_kind_from_code(*kind).unwrap(),
-            *address,
-        ));
-        let installed_during_publish = collision.exists();
-        std::fs::write(&collision, b"torn publication").unwrap();
-        let finished = interrupted.finish();
-        if installed_during_publish {
-            // Some platforms install each immutable file during publish. A
-            // later disk fault is detected by fresh canonical qualification,
-            // not by treating the batch's durability receipt as integrity.
-            if let Ok(reader) = finished {
-                assert!(SealedAcceptedIndexReader::new(&reader)
-                    .prove_membership(
-                        candidate.roots(),
-                        2,
-                        2u128.to_be_bytes(),
-                        &TineAcceptedEvidenceDecoder
-                    )
-                    .is_err());
+        let first_id = rows[0].evidence.batch_id().as_uuid().into_bytes();
+        let penultimate_id = rows[last - 1].evidence.batch_id().as_uuid().into_bytes();
+        let last_id = rows[last].evidence.batch_id().as_uuid().into_bytes();
+
+        // THE crash matrix. Every prefix of the publication protocol must
+        // leave the predecessor intact and a retry able to complete.
+        //
+        // Each kill point gets its OWN sealed directory seeded with the same
+        // predecessor cuts: the retry below genuinely publishes into the shared
+        // directory, so reusing one across kills would offer an already
+        // accepted batch to the next builder.
+        for kill in [
+            SealedCutKill::AfterPayloadPacks,
+            SealedCutKill::AfterTables,
+            SealedCutKill::MidPackTierMerge,
+            SealedCutKill::AfterRootRecord,
+            SealedCutKill::AfterMarkerBeforeRetire,
+        ] {
+            let kill_root = root.join(format!("{kill:?}"));
+            std::fs::create_dir_all(&kill_root).unwrap();
+            let directory =
+                cap_std::fs::Dir::open_ambient_dir(&kill_root, cap_std::ambient_authority())
+                    .unwrap();
+            let mut prefix = empty.clone();
+            let mut readers = Vec::new();
+            for row in &rows[..last] {
+                let mut seed = SealedGenerationStagingStore::open(&directory).unwrap();
+                let mut builder = prefix.builder(&mut seed);
+                builder.append(row).unwrap();
+                prefix = builder.finish(row.evidence.post_frontier_root()).unwrap();
+                let (_, reader) = seed.finish().unwrap();
+                readers.push(reader);
             }
-            std::fs::write(&collision, original).unwrap();
-        } else {
+            let mut interrupted = SealedGenerationStagingStore::open(&directory).unwrap();
+            let mut builder = prefix.builder(&mut interrupted);
+            builder.append(&rows[last]).unwrap();
+            let candidate = builder
+                .finish(rows[last].evidence.post_frontier_root())
+                .unwrap();
+            let killed = interrupted.finish_killed_at(kill).unwrap();
+            // The interrupted cut really is a merging cut: everything from the
+            // table step on has merged a table level, and everything from the
+            // pack-merge step on has written the merged pack.
+            if !matches!(kill, SealedCutKill::AfterPayloadPacks) {
+                assert!(
+                    killed.tables_merged >= 1,
+                    "{kill:?} must interrupt a cut that merged a table level"
+                );
+            }
+            if matches!(
+                kill,
+                SealedCutKill::MidPackTierMerge
+                    | SealedCutKill::AfterRootRecord
+                    | SealedCutKill::AfterMarkerBeforeRetire
+            ) {
+                assert!(
+                    killed.merged_pack_bytes > 0,
+                    "{kill:?} must interrupt a cut that merged a pack level"
+                );
+                assert_eq!(killed.packs_retired, 0, "{kill:?} precedes pack retirement");
+            }
+
+            // Reopen exactly as a cold start would.
+            let reopened = SealedGenerationDirectory::open(&directory).unwrap();
+            let committed_last = sealed_batch_records(&reopened, last_id).unwrap();
+            match kill {
+                SealedCutKill::AfterMarkerBeforeRetire => {
+                    // The marker names this cut: the row IS committed, and an
+                    // unretired superseded pack is residue, not damage.
+                    assert!(committed_last.is_some(), "{kill:?} installed its marker");
+                }
+                _ => {
+                    // Before the marker, the whole cut is residue.
+                    assert!(
+                        committed_last.is_none(),
+                        "{kill:?} must not publish its row"
+                    );
+                }
+            }
+            // NO accepted original is lost: the oldest and the newest seeded
+            // rows both still answer, and both still verify at their sequence.
+            sealed_batch_records(&reopened, first_id)
+                .unwrap()
+                .expect("the oldest accepted row survives every interruption")
+                .verify(1, first_id, &TineAcceptedEvidenceDecoder)
+                .unwrap();
+            sealed_batch_records(&reopened, penultimate_id)
+                .unwrap()
+                .expect("the newest accepted row survives every interruption")
+                .verify(last as u64, penultimate_id, &TineAcceptedEvidenceDecoder)
+                .unwrap();
+
+            // Before the marker, a retry from the same predecessor completes
+            // and agrees with the interrupted candidate's identity. AFTER the
+            // marker there is nothing to retry -- the cut committed -- and
+            // re-offering the same batch is correctly refused as a repeat;
+            // what must hold there is that the committed row verifies.
+            if matches!(kill, SealedCutKill::AfterMarkerBeforeRetire) {
+                let committed = SealedGenerationDirectory::open(&directory).unwrap();
+                sealed_batch_records(&committed, last_id)
+                    .unwrap()
+                    .expect("a marked cut committed its row")
+                    .verify(last as u64 + 1, last_id, &TineAcceptedEvidenceDecoder)
+                    .unwrap();
+                let mut repeat = SealedGenerationStagingStore::open(&directory).unwrap();
+                let mut builder = prefix.builder(&mut repeat);
+                assert!(builder.append(&rows[last]).is_err());
+                drop(repeat);
+                drop(committed);
+                drop(reopened);
+                drop(readers);
+                drop(directory);
+                continue;
+            }
+            let mut retry = SealedGenerationStagingStore::open(&directory).unwrap();
+            let mut builder = prefix.builder(&mut retry);
+            builder.append(&rows[last]).unwrap();
+            let retried = builder
+                .finish(rows[last].evidence.post_frontier_root())
+                .unwrap();
+            let (retry_work, complete) = retry.finish().unwrap();
             assert!(
-                finished.is_err(),
-                "a different exact-byte winner must refuse deferred installation"
+                retry_work.tables_merged >= 1 && retry_work.packs_retired >= 1,
+                "the retry is the merging cut the interruption abandoned: {retry_work:?}"
             );
-            std::fs::remove_file(collision).unwrap();
+            assert_eq!(retried.identity_digest(), candidate.identity_digest());
+            assert_eq!(
+                retried.causal_tips().copied().collect::<Vec<_>>(),
+                candidate.causal_tips().copied().collect::<Vec<_>>()
+            );
+            sealed_batch_records(&complete, last_id)
+                .unwrap()
+                .expect("the retry publishes the row")
+                .verify(last as u64 + 1, last_id, &TineAcceptedEvidenceDecoder)
+                .unwrap();
+            sealed_batch_records(&complete, first_id)
+                .unwrap()
+                .expect("the merged level still answers the oldest row")
+                .verify(1, first_id, &TineAcceptedEvidenceDecoder)
+                .unwrap();
+            drop(complete);
+            drop(reopened);
+            drop(readers);
+            drop(directory);
         }
-        let reader = SealedAcceptedIndexReader::new(&predecessor_reader);
-        assert!(reader
-            .prove_membership(
-                prefix.roots(),
-                1,
-                1u128.to_be_bytes(),
-                &TineAcceptedEvidenceDecoder
-            )
-            .unwrap()
-            .is_some());
-        let mut retry = SealedGenerationStagingStore::open(&directory).unwrap();
-        let mut builder = prefix.builder(&mut retry);
-        builder.append(&rows[1]).unwrap();
-        let retried = builder
-            .finish(rows[1].evidence.post_frontier_root())
-            .unwrap();
-        let complete = retry.finish().unwrap();
-        assert_eq!(retried.roots(), candidate.roots());
-        assert_eq!(retried.causal_tip_root(), candidate.causal_tip_root());
-        assert!(SealedAcceptedIndexReader::new(&complete)
-            .prove_membership(
-                retried.roots(),
-                2,
-                2u128.to_be_bytes(),
-                &TineAcceptedEvidenceDecoder
-            )
-            .unwrap()
-            .is_some());
-        drop(complete);
-        drop(predecessor_reader);
-        drop(directory);
         crate::test_support::remove_dir_all(root);
     }
 
@@ -5928,7 +5615,7 @@ mod tests {
     fn sealed_cutoff_incremental_build_matches_independent_full_rederivation() {
         let rows = generation_rows(65);
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
-        let mut store = SealedMemoryStore::default();
+        let (_sealed_root_store, mut store) = sealed_test_store();
         let mut builder = empty.builder(&mut store);
         for row in &rows[..64] {
             builder.append(row).unwrap();
@@ -5942,7 +5629,7 @@ mod tests {
             .finish(rows[64].evidence.post_frontier_root())
             .unwrap();
 
-        let mut independent = SealedMemoryStore::default();
+        let (_sealed_root_independent, mut independent) = sealed_test_store();
         let mut builder = empty.builder(&mut independent);
         for row in &rows {
             builder.append(row).unwrap();
@@ -5950,32 +5637,28 @@ mod tests {
         let full = builder
             .finish(rows[64].evidence.post_frontier_root())
             .unwrap();
-        assert_eq!(second.roots(), full.roots());
+        assert_eq!(second.identity_digest(), full.identity_digest());
         assert_eq!(second.frontier(), full.frontier());
-        assert_eq!(second.causal_tip_root(), full.causal_tip_root());
+        assert_eq!(second.causal_tip_digest(), full.causal_tip_digest());
         assert_eq!(
             second.causal_tips().collect::<Vec<_>>(),
             full.causal_tips().collect::<Vec<_>>()
         );
-        let reader = SealedAcceptedIndexReader::new(&store);
+        let (_, published) = store.finish().unwrap();
         for row in &rows {
             let sequence = row.evidence.acceptance_sequence();
             let id = row.evidence.batch_id().as_uuid().into_bytes();
-            let proof = reader
-                .prove_membership(second.roots(), sequence, id, &TineAcceptedEvidenceDecoder)
-                .unwrap()
+            let records = sealed_batch_records(&published, id).unwrap().unwrap();
+            records
+                .verify(sequence, id, &TineAcceptedEvidenceDecoder)
                 .unwrap();
-            assert_eq!(proof.status.no_op, row.no_op);
+            assert_eq!(records.status.no_op, row.no_op);
             assert_eq!(
-                proof.status.exact_evidence_bytes,
+                records.status.exact_evidence_bytes,
                 row.evidence.encode_canonical().unwrap()
             );
-            if sequence <= 64 {
-                assert!(reader
-                    .prove_membership(first.roots(), sequence, id, &TineAcceptedEvidenceDecoder)
-                    .unwrap()
-                    .is_some());
-            }
+            // Every covered sequence resolves to its batch, incremental or not.
+            assert_eq!(sequence_batch_id(&published, sequence).unwrap(), Some(id));
         }
     }
 
@@ -5983,7 +5666,7 @@ mod tests {
     fn sealed_cutoff_causal_tips_keep_exact_highest_per_peer_and_reject_tip_forks() {
         let rows = generation_rows_with_dots(&[(19, 1), (23, 8), (19, 2), (23, 3)]);
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
-        let mut store = SealedMemoryStore::default();
+        let (_sealed_root_store, mut store) = sealed_test_store();
         let mut builder = empty.builder(&mut store);
         for row in &rows[..3] {
             builder.append(row).unwrap();
@@ -5997,7 +5680,7 @@ mod tests {
             .finish(rows[3].evidence.post_frontier_root())
             .unwrap();
         // An older accepted counter must not replace the already qualified tip.
-        assert_eq!(second.causal_tip_root(), first.causal_tip_root());
+        assert_eq!(second.causal_tip_digest(), first.causal_tip_digest());
         let tips = second.causal_tips().copied().collect::<Vec<_>>();
         assert_eq!(tips.len(), 2);
         assert_eq!(
@@ -6008,28 +5691,28 @@ mod tests {
             (tips[1].highest_accepted_counter, tips[1].batch_id),
             (8, 2u128.to_be_bytes())
         );
-        assert_eq!(second.causal_tip_root().count, 2);
-        let reader = SealedAcceptedIndexReader::new(&store);
-        for tip in &tips {
-            assert_eq!(
-                reader
-                    .map_value(second.causal_tip_root(), tip.peer_id)
-                    .unwrap(),
-                Some(tip.value_digest().unwrap())
-            );
-        }
         let unchanged = second
             .builder(&mut store)
             .finish(second.frontier())
             .unwrap();
-        assert_eq!(unchanged.causal_tip_root(), second.causal_tip_root());
+        // The tips are durable: each peer's exact tip reads back from the
+        // causal-tip domain after publication.
+        let (_, published) = store.finish().unwrap();
+        for tip in &tips {
+            let stored = published
+                .table_value(DOMAIN_CAUSAL_TIP, &tip.peer_id)
+                .unwrap()
+                .expect("every qualified peer has a durable tip");
+            assert_eq!(causal_tip_record(tip.peer_id, &stored).unwrap(), *tip);
+        }
+        assert_eq!(unchanged.causal_tip_digest(), second.causal_tip_digest());
         assert_eq!(
             unchanged.causal_tips().collect::<Vec<_>>(),
             second.causal_tips().collect::<Vec<_>>()
         );
 
         let forks = generation_rows_with_dots(&[(19, 1), (19, 1)]);
-        let mut fork_store = SealedMemoryStore::default();
+        let (_sealed_root_fork_store, mut fork_store) = sealed_test_store();
         let mut builder = empty.builder(&mut fork_store);
         builder.append(&forks[0]).unwrap();
         assert!(builder
@@ -6039,7 +5722,7 @@ mod tests {
         let preserved = builder
             .finish(forks[0].evidence.post_frontier_root())
             .unwrap();
-        assert_eq!(preserved.roots().sequence.len, 1);
+        assert_eq!(preserved.sequence(), 1);
         assert_eq!(
             preserved.causal_tips().next().unwrap().batch_id,
             1u128.to_be_bytes()
@@ -6050,29 +5733,44 @@ mod tests {
     fn sealed_cutoff_damaged_causal_tip_predecessor_preserves_cutoff() {
         let rows = generation_rows(2);
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
-        let mut store = SealedMemoryStore::default();
+        let (_sealed_root_store, mut store) = sealed_test_store();
         let mut builder = empty.builder(&mut store);
         builder.append(&rows[0]).unwrap();
         let first = builder
             .finish(rows[0].evidence.post_frontier_root())
             .unwrap();
-        let address = first.causal_tip_root().root.unwrap().digest;
-        let slot = store
-            .objects
-            .iter()
-            .position(|(kind, digest, _)| {
-                *kind == SealedAcceptedObjectKind::MapNode && *digest == address
-            })
-            .unwrap();
-        let original = store.objects[slot].2.clone();
-        store.objects[slot].2 = vec![0xff];
+        // A failed append must leave the cutoff exactly as it was -- no tip
+        // advanced, no sequence moved.
+        let mut fork = rows[1].clone();
+        let peer = rows[0].causal_dot.peer_id();
+        fork.causal_dot = BatchCausalDot::new(peer, rows[0].causal_dot.counter()).unwrap();
         let mut builder = first.builder(&mut store);
-        assert!(builder.append(&rows[1]).is_err());
+        assert!(builder.append(&fork).is_err());
         let preserved = builder.finish(first.frontier()).unwrap();
-        assert_eq!(preserved.roots(), first.roots());
-        assert_eq!(preserved.causal_tip_root(), first.causal_tip_root());
-        store.objects[slot].2 = original;
-        let mut builder = preserved.builder(&mut store);
+        assert_eq!(preserved.identity_digest(), first.identity_digest());
+        assert_eq!(preserved.causal_tip_digest(), first.causal_tip_digest());
+        // A damaged PERSISTED tip value is refused on read, never decoded into
+        // a plausible-looking tip. Refusal scenario: a torn write or partial
+        // sync delivery inside the causal-tip domain.
+        let (_, published) = store.finish().unwrap();
+        let tip_key = peer.key().as_uuid().into_bytes();
+        let honest = published
+            .table_value(DOMAIN_CAUSAL_TIP, &tip_key)
+            .unwrap()
+            .expect("the published cutoff records its tip");
+        assert!(causal_tip_record(tip_key, &honest).is_ok());
+        assert!(causal_tip_record(tip_key, &honest[..16]).is_err());
+        // And the in-memory cutoff is still the one the builder returned. It
+        // continues over the SAME sealed state it was built on: a cutoff and
+        // its store are one pair, and offering it an empty store is the
+        // "causal-tip predecessor does not authenticate" case above.
+        let continued = cap_std::fs::Dir::open_ambient_dir(
+            _sealed_root_store.path(),
+            cap_std::ambient_authority(),
+        )
+        .unwrap();
+        let mut fresh = SealedGenerationStagingStore::open(&continued).unwrap();
+        let mut builder = preserved.builder(&mut fresh);
         builder.append(&rows[1]).unwrap();
         assert_eq!(
             builder
@@ -6090,7 +5788,7 @@ mod tests {
     fn sealed_cutoff_one_row_delta_does_not_visit_historical_status_or_sequence_leaves() {
         let rows = generation_rows(513);
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
-        let mut store = SealedMemoryStore::default();
+        let (_sealed_root_store, mut store) = sealed_test_store();
         let mut builder = empty.builder(&mut store);
         for row in &rows[..512] {
             builder.append(row).unwrap();
@@ -6098,56 +5796,51 @@ mod tests {
         let first = builder
             .finish(rows[511].evidence.post_frontier_root())
             .unwrap();
-        store.reads.borrow_mut().clear();
+        let (_, published) = store.finish().unwrap();
+        drop(published);
+
+        // I-14: appending ONE row to a 512-row history must cost work
+        // proportional to the row, not to the history. The unit is table
+        // records opened; under size-tiered compaction at R=8 that is
+        // O(log_R N) and never an enumeration of retained rows.
+        let directory = cap_std::fs::Dir::open_ambient_dir(
+            _sealed_root_store.path(),
+            cap_std::ambient_authority(),
+        )
+        .unwrap();
+        let mut store = SealedGenerationStagingStore::open(&directory).unwrap();
+        let before = store.index_reads();
         let mut builder = first.builder(&mut store);
         builder.append(&rows[512]).unwrap();
         let second = builder
             .finish(rows[512].evidence.post_frontier_root())
             .unwrap();
-        let reads = store.reads.borrow().clone();
+        let reads = store.index_reads() - before;
         assert!(
-            reads.len() < 256,
-            "one-row append enumerated retained history: {} reads",
-            reads.len()
+            reads < 256,
+            "one-row append enumerated retained history: {reads} table reads"
         );
-        assert_eq!(
-            reads
-                .iter()
-                .filter(
-                    |(kind, _)| *kind == sealed_kind_code(SealedAcceptedObjectKind::StatusRecord)
-                )
-                .count(),
-            1
-        );
-        assert_eq!(
-            reads
-                .iter()
-                .filter(
-                    |(kind, _)| *kind == sealed_kind_code(SealedAcceptedObjectKind::SequenceLeaf)
-                )
-                .count(),
-            1
-        );
-        assert_eq!(second.roots().sequence.len, 513);
+        assert_eq!(second.sequence(), 513);
     }
 
     #[test]
     fn sealed_cutoff_rejects_gaps_forks_wrong_causal_membership_and_target() {
         let rows = generation_rows(3);
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
-        let mut store = SealedMemoryStore::default();
+        let (_sealed_root_store, mut store) = sealed_test_store();
         let mut builder = empty.builder(&mut store);
         assert!(builder.append(&rows[1]).is_err());
         builder.append(&rows[0]).unwrap();
         assert!(builder.append(&rows[0]).is_err());
+        // Wrong causal membership: the row's dot is not in its own canonical
+        // clock. The batch-map-root comparison that used to catch this went
+        // with the authenticated map (D-2); the sealed causal record's own
+        // canonicality rule is what remains, and it is where the invariant
+        // belongs -- a record whose clock omits its dot cannot be encoded.
         let mut wrong = rows[1].clone();
         let peer = wrong.causal_dot.peer_id();
         wrong.causal_dot = BatchCausalDot::new(peer, 99).unwrap();
-        wrong.canonical_causal_clock = vec![(peer, 99)];
-        assert!(builder
-            .append(&wrong)
-            .unwrap_err()
-            .contains("causal membership"));
+        assert!(builder.append(&wrong).unwrap_err().contains("canonical"));
         // The failed append did not move the roots. The correct immutable
         // records can still extend the preceding accepted cutoff.
         builder.append(&rows[1]).unwrap();
@@ -6163,40 +5856,62 @@ mod tests {
     fn sealed_cutoff_damaged_predecessor_fails_without_changing_other_roots() {
         let rows = generation_rows(2);
         let empty = SealedAcceptedCutoff::empty(AcceptedFrontierRoot::empty()).unwrap();
-        let mut store = SealedMemoryStore::default();
+        let (_sealed_root_store, mut store) = sealed_test_store();
         let mut builder = empty.builder(&mut store);
         builder.append(&rows[0]).unwrap();
         let first = builder
             .finish(rows[0].evidence.post_frontier_root())
             .unwrap();
-        let address = first.roots().batch_map.root.unwrap().digest;
-        let (_, _, bytes) = store
-            .objects
-            .iter_mut()
-            .find(|(kind, digest, _)| {
-                *kind == SealedAcceptedObjectKind::MapNode && *digest == address
-            })
+        let first_id = rows[0].evidence.batch_id().as_uuid().into_bytes();
+        let (_, published) = store.finish().unwrap();
+
+        // Damage the predecessor's causal record inside its pack. Extending
+        // over a damaged predecessor must FAIL; it must never silently accept
+        // a successor over history it could not read.
+        let (causal_locator, _) = batch_row_locators(
+            &published
+                .table_value(DOMAIN_BATCH, &first_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let saved = published
+            .sealed_record(causal_locator, MAX_CHECKPOINT_BYTES)
             .unwrap();
-        let saved = bytes.clone();
-        bytes.push(0);
-        assert!(first.builder(&mut store).append(&rows[1]).is_err());
-        store
-            .objects
-            .iter_mut()
-            .find(|(kind, digest, _)| {
-                *kind == SealedAcceptedObjectKind::MapNode && *digest == address
-            })
-            .unwrap()
-            .2 = saved;
-        assert!(SealedAcceptedIndexReader::new(&store)
-            .prove_membership(
-                first.roots(),
-                1,
-                rows[0].evidence.batch_id().as_uuid().into_bytes(),
-                &TineAcceptedEvidenceDecoder
+        published.tear_packed_record(causal_locator).unwrap();
+        assert!(sealed_batch_records(&published, first_id).is_err());
+
+        // Republishing the exact bytes restores the predecessor's answer: the
+        // damage was to a disposable copy of durable content, and everything
+        // that did not depend on it is untouched (D-3).
+        let directory = cap_std::fs::Dir::open_ambient_dir(
+            _sealed_root_store.path(),
+            cap_std::ambient_authority(),
+        )
+        .unwrap();
+        let mut repair = SealedGenerationStagingStore::open(&directory).unwrap();
+        let repaired = repair.append_record(&saved).unwrap();
+        let (_, status_locator) = batch_row_locators(
+            &published
+                .table_value(DOMAIN_BATCH, &first_id)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        repair
+            .put(
+                DOMAIN_BATCH,
+                &first_id,
+                &batch_row_value(repaired, status_locator),
             )
+            .unwrap();
+        let (_, healed) = repair.finish().unwrap();
+        sealed_batch_records(&healed, first_id)
             .unwrap()
-            .is_some());
+            .expect("the repaired predecessor answers again")
+            .verify(1, first_id, &TineAcceptedEvidenceDecoder)
+            .unwrap();
+        assert_eq!(first.sequence(), 1);
     }
 
     #[test]
@@ -6620,8 +6335,10 @@ mod tests {
         assert!(production.contains("publish_new_exact_single_writer"));
         assert_eq!(
             production.matches(".remove_file(").count(),
-            1,
-            "only unreachable disposable image cleanup may unlink checkpoint bytes"
+            0,
+            "checkpoint authoring unlinks nothing itself: retiring superseded \
+             sealed bytes belongs to the sealed directory's marker-last \
+             publication (I-14)"
         );
         assert!(engine.contains("changed_snapshots"));
         assert!(engine.contains("checkpoint_document_at_current"));
@@ -6690,8 +6407,9 @@ mod tests {
     #[test]
     fn tine_decoder_completes_the_shared_membership_proof() {
         let evidence = evidence();
+        let batch_id = [0x51_u8; 16];
         let causal = SealedAcceptedCausalRecordV2 {
-            batch_id: [0x51; 16],
+            batch_id,
             manifest_fingerprint: digest(0x61),
             event_binding_digest: digest(0x71),
             causal_peer_id: [0x44; 16],
@@ -6701,55 +6419,57 @@ mod tests {
                 counter: 7,
             }],
         };
-        let mut store = SealedMemoryStore::default();
-        let (batch_map, status_map, sequence);
-        {
-            let mut writer = SealedAcceptedIndexWriter::new(&mut store);
-            let causal_address = writer.publish_causal(&causal).unwrap();
-            let status = AcceptedStatusRecordV2 {
-                batch_id: [0x51; 16],
-                no_op: false,
-                evidence_schema: ACCEPTED_EVIDENCE_SCHEMA_VERSION,
-                exact_evidence_bytes: evidence.encode_canonical().unwrap(),
-                accepted_causal_record_digest: causal_address,
-            };
-            let status_address = writer.publish_status(&status).unwrap();
-            batch_map = writer
-                .upsert_map(AuthenticatedMapRootV1::empty(), [0x51; 16], causal_address)
-                .unwrap();
-            status_map = writer
-                .upsert_map(AuthenticatedMapRootV1::empty(), [0x51; 16], status_address)
-                .unwrap();
-            sequence = writer
-                .append_sequence(
-                    AcceptedSequenceRootV2::empty(),
-                    AcceptedSequenceEntryV2 {
-                        sequence: 1,
-                        batch_id: [0x51; 16],
-                        accepted_status_value_digest: status_address,
-                    },
-                )
-                .unwrap();
-        }
-        let proof = SealedAcceptedIndexReader::new(&store)
-            .prove_membership(
-                SealedAcceptedIndexRootsV2 {
-                    batch_map,
-                    status_map,
-                    sequence,
-                },
-                1,
-                [0x51; 16],
-                &TineAcceptedEvidenceDecoder,
-            )
-            .unwrap()
+        let (_sealed_root_store, mut store) = sealed_test_store();
+        let causal_bytes = causal.encode().unwrap();
+        let causal_address = causal.address().unwrap();
+        let causal_locator = store
+            .append_record(&addressed_record(causal_address, &causal_bytes))
             .unwrap();
-        assert_eq!(proof.sequence.sequence, 1);
+        let status = AcceptedStatusRecordV2 {
+            batch_id,
+            no_op: false,
+            evidence_schema: ACCEPTED_EVIDENCE_SCHEMA_VERSION,
+            exact_evidence_bytes: evidence.encode_canonical().unwrap(),
+            accepted_causal_record_digest: causal_address,
+        };
+        let status_bytes = status.encode().unwrap();
+        let status_locator = store
+            .append_record(&addressed_record(status.value_digest(), &status_bytes))
+            .unwrap();
+        store
+            .put(
+                DOMAIN_BATCH,
+                &batch_id,
+                &batch_row_value(causal_locator, status_locator),
+            )
+            .unwrap();
+        store
+            .put(DOMAIN_SEQUENCE, &1_u64.to_be_bytes(), &batch_id)
+            .unwrap();
+        let (_, published) = store.finish().unwrap();
+
+        // The Merkle path is gone (D-2); what remains -- and what this test
+        // exists for -- is that Tine's evidence decoder and tine-storage's
+        // records agree on ONE identity for the batch.
+        let records = sealed_batch_records(&published, batch_id)
+            .unwrap()
+            .expect("the published batch row resolves");
+        records
+            .verify(1, batch_id, &TineAcceptedEvidenceDecoder)
+            .unwrap();
+        assert_eq!(sequence_batch_id(&published, 1).unwrap(), Some(batch_id));
         assert_eq!(
-            proof.status.exact_evidence_bytes,
+            records.status.exact_evidence_bytes,
             evidence.encode_canonical().unwrap()
         );
-        assert_eq!(proof.causal, causal);
+        assert_eq!(records.causal, causal);
+        // A wrong sequence or batch id must not verify.
+        assert!(records
+            .verify(2, batch_id, &TineAcceptedEvidenceDecoder)
+            .is_err());
+        assert!(records
+            .verify(1, [0x52; 16], &TineAcceptedEvidenceDecoder)
+            .is_err());
     }
 
     #[test]
@@ -6764,14 +6484,19 @@ mod tests {
                 "checkpoint authoring bypassed the audited publication boundary: {forbidden}"
             );
         }
-        assert!(production.contains("SealedAcceptedIndexWriter"));
+        // The sealed accepted index is authored through ONE surface: the
+        // sorted-table staging store (`SealedAcceptedIndexWriter`, the
+        // path-copied treap's writer, no longer exists -- P4c2 4.1).
+        assert!(production.contains("SealedGenerationStagingStore"));
         assert!(production.contains("DurableDirectoryPublication"));
         assert!(production.contains("publish_new_exact_single_writer"));
         assert!(production.contains("replace_exact"));
         assert_eq!(
             production.matches(".remove_file(").count(),
-            1,
-            "only unreachable disposable image cleanup may unlink checkpoint bytes"
+            0,
+            "checkpoint authoring unlinks nothing itself: retiring superseded \
+             sealed bytes belongs to the sealed directory's marker-last \
+             publication (I-14)"
         );
     }
 
@@ -6893,24 +6618,23 @@ mod tests {
             capture_work: 3,
             documents: None,
         };
-        let mut store = SealedMemoryStore::default();
-        let (sequence, bytes) = build_payload(capture, None, &mut store).unwrap();
+        let (_sealed_root_store, mut store) = sealed_test_store();
+        let (sequence, payload) = build_payload(capture, None, &mut store).unwrap();
         assert_eq!(sequence, 1);
-        let payload: CheckpointPayloadV2 = decode_canonical(&bytes).unwrap();
         assert_eq!(payload.state_bytes, b"state");
-        assert_eq!(
-            map_root_from_wire(payload.covered_object_root)
-                .unwrap()
-                .count,
-            1
-        );
-        let roots = roots_from_wire(payload.roster_roots).unwrap();
-        let proof = SealedAcceptedIndexReader::new(&store)
-            .prove_membership(roots, 1, [0x51; 16], &TineAcceptedEvidenceDecoder)
+        // One covered object, recorded as a membership entry rather than a
+        // map root: the payload names the sealed root, not a treap.
+        assert_eq!(store.table_entries(DOMAIN_COVERED_OBJECT).unwrap().len(), 1);
+        let (work, published) = store.finish().unwrap();
+        assert_eq!(work.root_digest, published.sealed_root_digest().unwrap());
+        let records = sealed_batch_records(&published, [0x51; 16])
             .unwrap()
+            .expect("the payload's accepted row is in the sealed tables");
+        records
+            .verify(1, [0x51; 16], &TineAcceptedEvidenceDecoder)
             .unwrap();
         assert_eq!(
-            proof.status.exact_evidence_bytes,
+            records.status.exact_evidence_bytes,
             evidence.encode_canonical().unwrap()
         );
     }
@@ -6944,17 +6668,28 @@ mod tests {
             capture_work: 0,
             documents: None,
         };
-        let mut store = SealedMemoryStore::default();
-        let (_, bytes) = build_payload(capture, None, &mut store).unwrap();
-        let payload: CheckpointPayloadV2 = decode_canonical(&bytes).unwrap();
+        let (_sealed_root_store, mut store) = sealed_test_store();
+        let (_, mut payload) = build_payload(capture, None, &mut store).unwrap();
+        let bytes = encode_canonical(&payload).unwrap();
         assert!(
             bytes.len() < 1024,
             "covered sealed roster objects remain embedded in the generation payload: {} bytes",
             bytes.len()
         );
+        // The covered half is named by ONE value, not carried: 32 accepted
+        // rows leave the payload the same size as one (I-25).
+        let (work, published) = store.finish().unwrap();
+        for sequence in 1..=32_u64 {
+            assert!(sequence_batch_id(&published, sequence).unwrap().is_some());
+        }
+        // Production stamps the cut's root onto the payload after `finish`
+        // (`write_clean_checkpoint`); the payload names the covered half by
+        // that ONE value.
+        payload.sealed_root = SealedRootWire::of(work.root_locator);
+        payload.sealed_root_digest = work.root_digest;
         assert_eq!(
-            roots_from_wire(payload.roster_roots).unwrap().sequence.len,
-            32
+            payload.sealed_root_digest,
+            published.sealed_root_digest().unwrap()
         );
     }
 
@@ -6991,9 +6726,8 @@ mod tests {
             capture_work: 3,
             documents: None,
         };
-        let mut store = SealedMemoryStore::default();
-        let (_, first_bytes) = build_payload(first_capture, None, &mut store).unwrap();
-        let first_payload: CheckpointPayloadV2 = decode_canonical(&first_bytes).unwrap();
+        let (_sealed_root_store, mut store) = sealed_test_store();
+        let (_, first_payload) = build_payload(first_capture, None, &mut store).unwrap();
         let second_capture = CleanCheckpointCapture {
             workspace_id: WorkspaceId::from_uuid(uuid::Uuid::from_u128(0x7001)),
             lineage_digest: LineageDigest::of(b"checkpoint-payload-test"),
@@ -7020,27 +6754,34 @@ mod tests {
             capture_work: 4,
             documents: None,
         };
-        let (sequence, second_bytes) =
+        let (sequence, mut payload) =
             build_payload(second_capture, Some((1, first_payload)), &mut store).unwrap();
         assert_eq!(sequence, 2);
-        let payload: CheckpointPayloadV2 = decode_canonical(&second_bytes).unwrap();
         assert_eq!(payload.state_bytes, b"frontier-two");
-        assert_eq!(
-            map_root_from_wire(payload.covered_object_root)
-                .unwrap()
-                .count,
-            2
-        );
+        assert_eq!(store.table_entries(DOMAIN_COVERED_OBJECT).unwrap().len(), 2);
         assert_eq!(payload.capture_work, 4);
-        let roots = roots_from_wire(payload.roster_roots).unwrap();
-        assert_eq!(roots.sequence.len, 2);
-        let reader = SealedAcceptedIndexReader::new(&store);
-        for (sequence, batch_id) in [(1, [0x51; 16]), (2, [0x52; 16])] {
-            assert!(reader
-                .prove_membership(roots, sequence, batch_id, &TineAcceptedEvidenceDecoder)
+        let (work, published) = store.finish().unwrap();
+        // A ONE-row delta extended the durable frontier: both covered rows
+        // resolve, and the payload names the covered half by one digest.
+        for (sequence, batch_id) in [(1_u64, [0x51_u8; 16]), (2, [0x52; 16])] {
+            assert_eq!(
+                sequence_batch_id(&published, sequence).unwrap(),
+                Some(batch_id)
+            );
+            sealed_batch_records(&published, batch_id)
                 .unwrap()
-                .is_some());
+                .expect("both covered rows resolve")
+                .verify(sequence, batch_id, &TineAcceptedEvidenceDecoder)
+                .unwrap();
         }
+        // Production stamps the cut's root onto the payload after `finish`
+        // (`write_clean_checkpoint`).
+        payload.sealed_root = SealedRootWire::of(work.root_locator);
+        payload.sealed_root_digest = work.root_digest;
+        assert_eq!(
+            payload.sealed_root_digest,
+            published.sealed_root_digest().unwrap()
+        );
     }
 
     #[test]
@@ -7159,9 +6900,23 @@ mod tests {
         assert_eq!(loaded_state(&store), b"predecessor");
 
         let slot = 1 - predecessor.slot as usize;
-        let mut sealed = SealedMemoryStore::default();
-        let (sequence, payload) =
+        let predecessor_payload_bytes =
+            std::fs::read(directory.join(CHECKPOINT_PAYLOAD_NAMES[predecessor.slot as usize]))
+                .unwrap();
+        let predecessor_payload: CheckpointPayloadV2 =
+            decode_canonical(&predecessor_payload_bytes).unwrap();
+        let (_sealed_root_sealed, mut sealed) = sealed_test_store();
+        let (sequence, mut payload) =
             build_payload(empty_capture(&store, b"successor"), None, &mut sealed).unwrap();
+        // The successor covers exactly the accepted history the predecessor
+        // did (both captures are empty), so it names the SAME sealed root --
+        // the one this archive's `sealed-v3` directory actually holds.
+        // Forging a payload against a throwaway staging directory would name a
+        // root no reader can resolve, which is a different (already covered)
+        // fault than the publication-prefix question this test asks.
+        payload.sealed_root = predecessor_payload.sealed_root;
+        payload.sealed_root_digest = predecessor_payload.sealed_root_digest;
+        let payload = encode_canonical(&payload).unwrap();
         std::fs::write(directory.join(CHECKPOINT_PAYLOAD_NAMES[slot]), &payload).unwrap();
         assert_eq!(loaded_state(&store), b"predecessor");
 
@@ -7537,20 +7292,29 @@ mod tests {
                 .is_none(),
             "ordinary reopen resumes idempotent post-marker hot retirement"
         );
-        let first_home_path = root
-            .join("archive")
-            .join(CHECKPOINT_DIRECTORY)
-            .join(capsule_blob_name(first_home_reference));
-        assert!(
-            first_home_path.exists(),
-            "an active old reader must pin its image beyond the two generation roots"
+        // There are no per-object files and no per-object GC any more: an
+        // image is a record inside a pack, and the marker's pack table
+        // resolves any locator ever published. So an OLDER generation's image
+        // stays readable after the marker advances -- which is what the
+        // retired reader-pin machinery was for, obtained by construction
+        // instead of by a pin registry (I-14).
+        let reopened_documents = resumed.documents.directory_for_test();
+        let locator = locator_from_value(
+            &reopened_documents
+                .table_value(DOMAIN_CAPSULE_BLOB, first_home_reference.as_bytes())
+                .unwrap()
+                .expect("an earlier generation's image stays addressable"),
+        )
+        .unwrap();
+        let bytes = reopened_documents
+            .sealed_record(locator, MAX_CHECKPOINT_BYTES)
+            .unwrap();
+        assert_eq!(
+            ContentDigest::of(&bytes),
+            first_home_reference,
+            "an earlier generation's image must stay readable through the marker's pack table"
         );
         drop(first);
-        cleanup_unreferenced_document_objects(&checkpoint_reader).unwrap();
-        assert!(
-            !first_home_path.exists(),
-            "an image with no retained generation or reader must be reclaimed"
-        );
 
         drop(engine);
         drop(archive);

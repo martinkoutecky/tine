@@ -1,160 +1,335 @@
-//! Additive cold whole-object storage and the single logical-object resolver.
+//! The sealed archive: one immutable pack set, one sorted-table index, one
+//! marker — and the cold whole-object tier that lives inside it.
 //!
 //! # What this is
 //!
-//! R2's cold tier under the existing object model. A logical object keeps its
-//! canonical encoded bytes, its content digest and its identity; only its
-//! *physical placement* changes. A cold record lives inside an immutable pack
-//! file together with many other records, so retiring a large history does not
-//! cost one filesystem object -- or one read request -- per logical block.
+//! `sealed-v3` is the single private directory under the archive generation
+//! that holds every sealed index object Tine keeps: the accepted history
+//! (batch, sequence, document-change, covered-object, causal-tip, identity and
+//! document-roster domains) and the cold-history locator index (cold-object and
+//! cold-manifest domains). Before E1 those lived in two directories —
+//! `clean-open-checkpoint-v2/` and `cold-history-v1/` — as persistent
+//! path-copied treaps with ONE FILE PER NODE. That shape wrote ≈140 sealed
+//! nodes and ≈70 cold files per accepted batch (≈0.9 MB per single-block edit)
+//! and reached `EXT4-fs: Directory index full` at 4.75 M entries, after which
+//! every later cut failed forever. Both costs are the data structure, not the
+//! container (P4c2 §1).
 //!
-//! # Existing primitives searched (D-14)
+//! # The shape (P4c2 §4)
 //!
-//! * `ObjectStore`'s `objects/` and `batches/` namespaces are the hot tier and
-//!   remain unchanged. This module never replaces them; it is consulted only
-//!   after the hot name is absent.
-//! * `tine_storage::sealed_accepted_index`'s canonical authenticated map is the
-//!   locator index. No second tree, no tuple hashing, no truncation of a
-//!   SHA-256 into a UUID: the object domain composes two 16-byte map key halves
-//!   exactly the way `SealedDocumentMap` composes a membership pair.
-//! * `checkpoint_generation::{SealedGenerationDirectory, SealedGenerationStagingStore}`
-//!   is the sealed map-node object store, reused verbatim over this module's own
-//!   private directory capability. There is no second node codec or publisher.
-//! * `tine_storage::DurableDirectoryPublication` publishes pack bytes and
-//!   replaces the root marker (D-7/I-1/I-2). No bespoke temp+rename exists here.
-//! * `tine_storage::package_store` was considered and rejected: it publishes
-//!   whole immutable *directories* by no-clobber transition, so it cannot
-//!   address a byte range inside one packed file.
-//! * `tine_storage` has no ranged-read primitive; the range read below is one
-//!   seek plus one `read_exact` on the shared `open_file_nofollow` handle.
+//! * A **table** (`tine_storage::sealed_tables`) is an immutable, sorted,
+//!   fixed-width `(key, value)` array with a fence array and a trailing digest.
+//!   A cut appends one level-0 delta table per touched domain; when a level
+//!   holds `TierPlan::FANOUT` tables they merge into one at the next level, so
+//!   a domain spans `O(log N)` tables and a cut writes `O(T)` index bytes for
+//!   the `T` entries it actually changed.
+//! * A **pack** is the container: `record* footer footer_len:u64be magic:8`,
+//!   where a record is `sha256(payload):32 payload_len:u64be payload`. A table
+//!   is one pack record (class `COLD_CLASS_TABLE`); so is the root
+//!   (`COLD_CLASS_ROOT`), a cold object, a cold manifest, and every
+//!   variable-length sealed record the tables point at (`COLD_CLASS_RECORD`).
+//!   Nothing appends to a published pack.
+//! * The **root record** is `SealedTableRoot` — per domain, the ordered table
+//!   list — plus this module's pack table. The `current` marker names the root
+//!   record's locator and is installed LAST (I-2).
 //!
-//! # Physical format (current, one format, no migration -- D-1)
+//! # Virtual pack addressing — why a locator has no pack name in it
 //!
-//! ```text
-//! <archive>/cold-history-v1/
-//!   pack-v1-<uuid>          immutable pack
-//!   sealed-v2-<kind>-<addr> shared authenticated-map nodes
-//!   current                 canonical root marker, installed last
-//! ```
+//! Packs are tiered exactly like tables: `FANOUT` packs of one level merge into
+//! one pack of the next, which is what keeps the directory at
+//! `O(log N + live bytes / pack target)` entries instead of one pack per cut.
+//! A merge relocates record BYTES, and a locator that named `(pack uuid,
+//! offset)` would then be stale in every table pointing into those packs —
+//! turning each pack merge into a whole-index rewrite, which is precisely the
+//! `O(N)`-per-cut cost this packet exists to remove.
 //!
-//! A pack is `record* footer footer_len:u64be magic:8`. A record is
-//! `sha256(payload):32 payload_len:u64be payload`, so one ranged read
-//! self-verifies its payload without consulting the index a second time. The
-//! footer makes the pack self-describing, which is what lets the *index* be
-//! disposable derived state (D-3): `repack_cold_history` rebuilds every root
-//! from pack footers alone.
+//! So a record is addressed in ONE monotonically growing **virtual byte space**
+//! shared by every pack: `ColdLocatorV1 { offset, length }`, where `offset` is
+//! the record's position in that space. Each pack covers one contiguous virtual
+//! range, declared in its own footer and listed in the root's pack table. A
+//! merge concatenates the bodies of a contiguous run of packs, so every
+//! record's virtual offset is UNCHANGED and not one table entry has to move.
+//! Resolving a locator is a binary search of the pack table (≤ `FANOUT` × levels
+//! entries) plus one ranged read.
 //!
-//! A locator is exactly 32 bytes -- `pack_uuid:16 offset:u64be length:u64be` --
-//! so it fits the authenticated map's fixed value slot with no side blob and no
-//! extra filesystem object per logical record.
+//! # Authentication (P4c2 §4.3, D-2/D-3)
 //!
-//! Object domain: the full 256-bit key is carried by *composing two of the same
-//! authenticated maps*, exactly the way `SealedDocumentMap` composes a
-//! membership pair. The outer map is keyed by `sha256[0..16]`; its value
-//! locates a fixed-size *inner-root descriptor* record, and that descriptor
-//! names an inner authenticated map keyed by `sha256[16..32]` whose values are
-//! the record locators. There is no list, no occupancy assumption and no cap on
-//! how many objects may share a 128-bit prefix -- an outer entry holds a whole
-//! map, so a prefix with one member and a prefix with a million members differ
-//! only in the inner map's depth. The descriptor is packed with the same
-//! physical pack machinery as every other record, which is why the outer map's
-//! fixed 32-byte value slot suffices.
-//! A lookup costs `O(log n)` outer map-node reads, one bounded ranged read of
-//! the descriptor, `O(log m)` inner map-node reads and one bounded ranged read
-//! of the payload: two pack reads however large history or a prefix grows.
-//! Manifest domain: map key is the `BatchId` UUID; the value locates the record
-//! directly, and the record header still carries the manifest's full SHA-256.
+//! Every pack record self-verifies against its header digest, and a table IS
+//! one pack record, so a table's digest is checked once when a reader loads it
+//! and never per lookup. Tables and roots are disposable derived state: a table
+//! that fails its digest is REBUILT from the surviving pack footers, never a
+//! refusal to open the graph. Only the accepted originals inside the packs are
+//! truth; losing those is a separate, named, payload-loss state.
 //!
-//! # Exactness, not name presence
+//! # Blank slate (D-1)
 //!
-//! A repeated identity is only "already archived" when its *bytes* are
-//! byte-identical to what cold history already holds. `BatchId` is an identity,
-//! not a content address: two valid canonical manifests can legitimately carry
-//! the same `BatchId` and differ (a different `SessionId` alone suffices). Every
-//! duplicate path -- publication, repack, and footer reconstruction -- therefore
-//! compares the original bytes through the shared reader before treating a
-//! repeated ID as present, and refuses a conflict by name while preserving the
-//! predecessor root and the original bytes. Objects are additionally bound by
-//! their content digest, which every read re-proves.
-//!
-//! # Lost root marker is a repair condition, never absence
-//!
-//! The root marker is derived state, the packs are the self-describing truth.
-//! An archive with no cold directory, or a cold directory with neither marker
-//! nor packs, has never published cold history: ordinary absence. A cold
-//! directory whose packs survive but whose marker is gone is a *named damaged
-//! state* (`StoreError::ColdHistoryRootMissing`), never ordinary absence and
-//! never a licence to publish a fresh empty-based root over old history. A
-//! *torn or otherwise malformed* marker over surviving packs is the same
-//! damaged class: ordinary reads still reject it, and repair treats it exactly
-//! like a missing one. `repair_cold_history_root` recovers either case
-//! explicitly from the pack footers, reusing the surviving records in place and
-//! swapping the marker last through the audited guarded replacement. A damaged
-//! marker with no surviving pack is never replaced with an empty history --
-//! there is nothing to rebuild from. Healthy opens stay bounded point
-//! operations: only the marker-absent path enumerates, and it short-circuits at
-//! the first pack it sees.
-//!
-//! # What this packet does NOT do
-//!
-//! Publication is additive. Nothing here retires a hot original, and nothing
-//! here retires a superseded pack: `repack_cold_history` publishes new packs and
-//! swaps the root, leaving the predecessor packs in place. Enabling deletion
-//! needs P5's generation/fallback/retention proofs. There is no content-defined
-//! chunker here either -- that is R3, deliberately after this cut.
+//! There is exactly one current representation. There is no reader for the
+//! retired `sealed-v2` node encoding, no dual read path and no migration:
+//! unrecognized pre-E1 sealed state is preserved as a backup and the store is
+//! rebuilt from the untouched Markdown/Org tree.
 
-// Every consumer that may legitimately reach cold history lives in a module
-// this packet does not own (`hot_engine`, `sync_runtime`, the receipt/sweep
-// modules). Their call sites are handed off in RECEIPT.md for the manager to
-// apply, so the resolver is deliberately unreferenced from production code at
-// this cut; its tests exercise the whole surface.
-#![allow(dead_code)]
-
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::RwLock;
 
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::checkpoint_generation::{SealedGenerationDirectory, SealedGenerationStagingStore};
 use super::object_store::{filesystem_error_without_collision, ObjectStore, StoreError};
 use super::{BatchId, ContentDigest, MAX_MANIFEST_BYTES, MAX_OBJECT_BYTES};
-use tine_storage::sealed_accepted_index::{
-    AuthenticatedMapKey, AuthenticatedMapLinkV1, AuthenticatedMapRootV1, SealedAcceptedIndexReader,
-    SealedAcceptedIndexWriter,
+use tine_storage::sealed_accepted_index::SealedAcceptedIndexError;
+use tine_storage::sealed_tables::{
+    compact_tables, merge_tables, SealedTableDomainRoot, SealedTableRoot, TableBuilder, TableBytes,
+    TableDomain, TableLocator, TableRef, TableSetReader, TableView, TierPlan,
 };
 
-/// The private cold-history namespace, rooted in the retained archive
-/// capability exactly like `clean-open-checkpoint-v2`.
-pub(crate) const COLD_HISTORY_DIRECTORY: &str = "cold-history-v1";
-/// The canonical root marker. It is installed last, after every pack and index
-/// node it names is already durable.
-const COLD_ROOT_MARKER: &str = "current";
+/// The one private sealed namespace, rooted in the retained archive capability.
+///
+/// It replaces BOTH `clean-open-checkpoint-v2/` and `cold-history-v1/`: one
+/// directory, one marker, one root, one pack set (P4c2 §4.4).
+pub(crate) const SEALED_DIRECTORY: &str = "sealed-v3";
+
+/// The canonical root marker. Installed last, after every pack it names is
+/// already durable.
+pub(crate) const SEALED_ROOT_MARKER: &str = "current";
 const COLD_PACK_PREFIX: &str = "pack-v1";
-const COLD_SCHEMA_VERSION: u32 = 1;
+const COLD_SCHEMA_VERSION: u32 = 2;
 
 /// `sha256(payload) || payload_len` prefixed to every packed record.
 const COLD_RECORD_HEADER_BYTES: usize = 40;
-const COLD_PACK_MAGIC: [u8; 8] = *b"TINECLD1";
+const COLD_PACK_MAGIC: [u8; 8] = *b"TINECLD2";
 /// A construction target, not an occupancy cap (D-5): one legal record larger
 /// than this is packed alone rather than refused.
-const COLD_PACK_TARGET_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const COLD_PACK_TARGET_BYTES: usize = 4 * 1024 * 1024;
 /// One record is at most `MAX_OBJECT_BYTES`; a pack holds one oversize record
 /// plus its footer, or many target-sized ones.
 const MAX_COLD_PACK_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_COLD_PACK_FOOTER_BYTES: u64 = 64 * 1024 * 1024;
-/// An inner-root descriptor is a fixed-shape record -- a schema tag, a count and
-/// an optional `(key, digest)` link -- so this is the codec size of one constant
-/// structure. It does not bound how many objects share a 128-bit prefix: those
-/// live in the inner map the descriptor names, not in the descriptor.
-const MAX_COLD_INNER_ROOT_BYTES: u64 = 256;
-const MAX_COLD_ROOT_BYTES: u64 = 4 * 1024;
+const MAX_COLD_ROOT_BYTES: u64 = 64 * 1024 * 1024;
+/// The marker carries the pack table, which is `O(FANOUT x levels)` entries of
+/// 41 bytes — never a term that grows with history.
+const MAX_SEALED_MARKER_BYTES: u64 = 1024 * 1024;
 
+/// A cold logical object record, keyed by its full SHA-256.
 const COLD_CLASS_OBJECT: u8 = 1;
+/// A cold batch manifest record, keyed by its `BatchId`.
 const COLD_CLASS_MANIFEST: u8 = 2;
-/// The packed descriptor of one 128-bit prefix's inner authenticated map.
-const COLD_CLASS_INNER_ROOT: u8 = 3;
+// Class 3 was `COLD_CLASS_INNER_ROOT`, the packed descriptor of one 128-bit
+// prefix's inner authenticated map. A sorted table over 32-byte keys has no
+// prefix-bucket problem, so the two-level composition and its descriptor class
+// are gone. The value is not reused.
+/// One immutable sorted table, keyed by its table digest.
+const COLD_CLASS_TABLE: u8 = 4;
+/// The root record: every domain's ordered table list, plus the pack table.
+const COLD_CLASS_ROOT: u8 = 5;
+/// A variable-length sealed record a table points at by locator — an accepted
+/// causal or status record, an identity admission value, a document capsule.
+/// Keyed by its content digest.
+const COLD_CLASS_RECORD: u8 = 6;
+
+/// The tier fanout, shared by tables and packs.
+pub(crate) const SEALED_TIER_FANOUT: usize = TierPlan::FANOUT;
+
+// ---------------------------------------------------------------------------
+// Domains (P4c2 §4.1; the reconciled table is in the contract doc)
+// ---------------------------------------------------------------------------
+
+/// `batch_id -> causal record locator ‖ status record locator`.
+///
+/// `tine-storage` owns this one: the SQLite seam reads it directly.
+pub(crate) const DOMAIN_BATCH: TableDomain = tine_storage::sealed_tables::SEALED_BATCH_DOMAIN;
+/// `acceptance sequence (be) -> batch id`. Also `tine-storage`'s.
+pub(crate) const DOMAIN_SEQUENCE: TableDomain = tine_storage::sealed_tables::SEALED_SEQUENCE_DOMAIN;
+
+/// `document uuid ‖ acceptance sequence (be) -> acceptance sequence (be)`.
+///
+/// The value repeats the key's sequence so a `predecessor` answer carries it
+/// without a second read.
+pub(crate) const DOMAIN_DOCUMENT_CHANGE: TableDomain = TableDomain {
+    id: 3,
+    key_len: 24,
+    value_len: 8,
+    tombstone: false,
+};
+
+/// `object content digest -> present`.
+///
+/// A membership domain. The value is one byte rather than zero because a
+/// zero-width value is not a legal table domain; nothing reads it.
+pub(crate) const DOMAIN_COVERED_OBJECT: TableDomain = TableDomain {
+    id: 4,
+    key_len: 32,
+    value_len: 1,
+    tombstone: false,
+};
+
+/// `causal peer id -> causal tip value digest`.
+pub(crate) const DOMAIN_CAUSAL_TIP: TableDomain = TableDomain {
+    id: 5,
+    key_len: 16,
+    value_len: 32,
+    tombstone: false,
+};
+
+/// `document uuid -> document capsule record locator`. Overwritten on every
+/// changed document and TOMBSTONED on document deletion.
+pub(crate) const DOMAIN_DOCUMENT_ROSTER: TableDomain = TableDomain {
+    id: 14,
+    // A `DocumentKey` is 17 bytes (entity) or 33 (membership pair); a table
+    // key is fixed width, so the domain is the wider of the two and an entity
+    // key is zero-padded. The encoding stays injective because the tag byte
+    // already separates the two address families.
+    key_len: DOCUMENT_ROSTER_KEY_BYTES as u8,
+    value_len: 32,
+    tombstone: true,
+};
+
+/// The document roster's fixed key width: one `DocumentKey`, zero-padded.
+pub(crate) const DOCUMENT_ROSTER_KEY_BYTES: usize = 33;
+
+/// Frame one document address into the roster domain's fixed width.
+pub(crate) fn framed_document_key(key: &[u8]) -> Result<[u8; DOCUMENT_ROSTER_KEY_BYTES], String> {
+    if key.is_empty() || key.len() > DOCUMENT_ROSTER_KEY_BYTES {
+        return Err("sealed document key width is outside the current domain".into());
+    }
+    let mut framed = [0_u8; DOCUMENT_ROSTER_KEY_BYTES];
+    framed[..key.len()].copy_from_slice(key);
+    Ok(framed)
+}
+
+/// Recover the exact document address from its framed form.
+///
+/// The tag byte decides the length, so the padding is unambiguous.
+pub(crate) fn unframed_document_key(framed: &[u8]) -> Result<Vec<u8>, String> {
+    if framed.len() != DOCUMENT_ROSTER_KEY_BYTES {
+        return Err("framed sealed document key has the wrong width".into());
+    }
+    let len = match framed[0] {
+        1 => 17,
+        2 => 33,
+        _ => return Err("framed sealed document key has an unknown address tag".into()),
+    };
+    if framed[len..].iter().any(|byte| *byte != 0) {
+        return Err("framed sealed document key has non-zero padding".into());
+    }
+    Ok(framed[..len].to_vec())
+}
+
+/// `object content digest -> cold record locator`.
+pub(crate) const DOMAIN_COLD_OBJECT: TableDomain = TableDomain {
+    id: 15,
+    key_len: 32,
+    value_len: 32,
+    tombstone: false,
+};
+
+/// `batch id -> cold manifest record locator`.
+pub(crate) const DOMAIN_COLD_MANIFEST: TableDomain = TableDomain {
+    id: 16,
+    key_len: 16,
+    value_len: 32,
+    tombstone: false,
+};
+
+/// `capsule blob digest -> capsule record locator`.
+///
+/// Document images are content-addressed and shared between generations, so
+/// the same blob published by an earlier cut is reused rather than re-appended
+/// (I-25). They live in packs like every other record: nothing writes a file
+/// into the sealed directory except pack publication and the marker swap.
+pub(crate) const DOMAIN_CAPSULE_BLOB: TableDomain = TableDomain {
+    id: 17,
+    key_len: 32,
+    value_len: 32,
+    tombstone: false,
+};
+
+/// Identity admission keys are variable length (`AuthenticatedMapKey`, ≤ 48
+/// bytes) and a table key is fixed width, so an identity key is framed as
+/// `len:u8 ‖ key ‖ zero padding` — injective, and the identity domains are
+/// point-looked-up and fully enumerated, never scanned in key order, so the
+/// length-first ordering this induces is not observable.
+pub(crate) const IDENTITY_KEY_BYTES: usize = 49;
+
+/// `framed identity key -> admission value record locator`, all four kinds.
+pub(crate) const fn identity_complete_domain(kind_index: u8) -> TableDomain {
+    TableDomain {
+        id: 6 + kind_index,
+        key_len: IDENTITY_KEY_BYTES as u8,
+        value_len: 32,
+        tombstone: false,
+    }
+}
+
+/// `framed identity key -> admission value record locator`, current only.
+/// The one domain family with removals besides the document roster.
+pub(crate) const fn identity_current_domain(kind_index: u8) -> TableDomain {
+    TableDomain {
+        id: 10 + kind_index,
+        key_len: IDENTITY_KEY_BYTES as u8,
+        value_len: 32,
+        tombstone: true,
+    }
+}
+
+/// Frame a variable-length identity key into this domain's fixed width.
+pub(crate) fn framed_identity_key(key: &[u8]) -> Result<[u8; IDENTITY_KEY_BYTES], String> {
+    if key.is_empty() || key.len() > IDENTITY_KEY_BYTES - 1 {
+        return Err("sealed identity key width is outside the current domain".into());
+    }
+    let mut framed = [0_u8; IDENTITY_KEY_BYTES];
+    framed[0] = key.len() as u8;
+    framed[1..=key.len()].copy_from_slice(key);
+    Ok(framed)
+}
+
+/// Recover the original identity key from its framed form.
+pub(crate) fn unframed_identity_key(framed: &[u8]) -> Result<Vec<u8>, String> {
+    if framed.len() != IDENTITY_KEY_BYTES {
+        return Err("framed sealed identity key has the wrong width".into());
+    }
+    let len = framed[0] as usize;
+    if len == 0 || len > IDENTITY_KEY_BYTES - 1 {
+        return Err("framed sealed identity key declares an impossible length".into());
+    }
+    if framed[1 + len..].iter().any(|byte| *byte != 0) {
+        return Err("framed sealed identity key has non-zero padding".into());
+    }
+    Ok(framed[1..=len].to_vec())
+}
+
+/// Every domain this archive may hold, in ascending id order.
+///
+/// A domain missing from this list is invisible to repair and to the
+/// contract-consistency test, so the list is the single enumeration.
+pub(crate) fn all_domains() -> Vec<TableDomain> {
+    let mut domains = vec![
+        DOMAIN_BATCH,
+        DOMAIN_SEQUENCE,
+        DOMAIN_DOCUMENT_CHANGE,
+        DOMAIN_COVERED_OBJECT,
+        DOMAIN_CAUSAL_TIP,
+    ];
+    for kind in 0..4 {
+        domains.push(identity_complete_domain(kind));
+    }
+    for kind in 0..4 {
+        domains.push(identity_current_domain(kind));
+    }
+    domains.push(DOMAIN_DOCUMENT_ROSTER);
+    domains.push(DOMAIN_COLD_OBJECT);
+    domains.push(DOMAIN_COLD_MANIFEST);
+    domains.push(DOMAIN_CAPSULE_BLOB);
+    domains.sort_by_key(|domain| domain.id);
+    domains
+}
+
+fn domain_by_id(id: u8) -> Option<TableDomain> {
+    all_domains().into_iter().find(|domain| domain.id == id)
+}
 
 fn pack_filename(pack: Uuid) -> String {
     format!("{COLD_PACK_PREFIX}-{pack}")
@@ -166,7 +341,7 @@ fn parse_pack_filename(name: &str) -> Option<Uuid> {
     (pack.to_string() == rest).then_some(pack)
 }
 
-fn cold_index_error(message: impl Into<String>) -> StoreError {
+pub(crate) fn cold_index_error(message: impl Into<String>) -> StoreError {
     StoreError::ColdHistoryIndexUnavailable(message.into())
 }
 
@@ -191,54 +366,59 @@ fn cold_manifest_conflict(batch_id: BatchId, message: impl Into<String>) -> Stor
     }
 }
 
-/// Physical placement of one packed record. Deliberately exactly 32 bytes so it
-/// occupies the authenticated map's fixed value slot directly.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Physical placement of one packed record in the archive's virtual byte space.
+///
+/// Deliberately exactly 32 bytes so it occupies a table's fixed value slot
+/// directly. It carries NO pack name: see the module header — that is what lets
+/// packs merge without rewriting one table entry.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ColdLocatorV1 {
-    pack: Uuid,
-    offset: u64,
-    length: u64,
+    pub(crate) offset: u64,
+    pub(crate) length: u64,
 }
 
 impl ColdLocatorV1 {
-    fn to_bytes(self) -> [u8; 32] {
+    pub(crate) fn to_bytes(self) -> [u8; 32] {
         let mut bytes = [0_u8; 32];
-        bytes[..16].copy_from_slice(self.pack.as_bytes());
-        bytes[16..24].copy_from_slice(&self.offset.to_be_bytes());
-        bytes[24..].copy_from_slice(&self.length.to_be_bytes());
+        bytes[..8].copy_from_slice(&self.offset.to_be_bytes());
+        bytes[8..16].copy_from_slice(&self.length.to_be_bytes());
         bytes
     }
 
-    fn from_bytes(bytes: [u8; 32]) -> Result<Self, String> {
-        let mut pack = [0_u8; 16];
-        pack.copy_from_slice(&bytes[..16]);
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Result<Self, String> {
+        if bytes[16..].iter().any(|byte| *byte != 0) {
+            return Err("cold locator has non-zero reserved bytes".into());
+        }
         let mut offset = [0_u8; 8];
-        offset.copy_from_slice(&bytes[16..24]);
+        offset.copy_from_slice(&bytes[..8]);
         let mut length = [0_u8; 8];
-        length.copy_from_slice(&bytes[24..]);
+        length.copy_from_slice(&bytes[8..16]);
         let locator = Self {
-            pack: Uuid::from_bytes(pack),
             offset: u64::from_be_bytes(offset),
             length: u64::from_be_bytes(length),
         };
         if locator.length < COLD_RECORD_HEADER_BYTES as u64
             || locator.length > MAX_COLD_PACK_BYTES
-            || locator
-                .offset
-                .checked_add(locator.length)
-                .is_none_or(|end| end > MAX_COLD_PACK_BYTES)
+            || locator.offset.checked_add(locator.length).is_none()
         {
             return Err("cold locator names an impossible pack range".into());
         }
         Ok(locator)
     }
 
-    fn value(self) -> ContentDigest {
-        ContentDigest::from_bytes(self.to_bytes())
+    fn table_locator(self) -> TableLocator {
+        TableLocator(self.to_bytes())
     }
 
-    fn decode_value(value: ContentDigest) -> Result<Self, String> {
-        Self::from_bytes(*value.as_bytes())
+    fn from_table_locator(locator: TableLocator) -> Result<Self, String> {
+        Self::from_bytes(locator.0)
+    }
+
+    pub(crate) fn from_value(value: &[u8]) -> Result<Self, String> {
+        let bytes: [u8; 32] = value
+            .try_into()
+            .map_err(|_| "cold locator value is not 32 bytes".to_owned())?;
+        Self::from_bytes(bytes)
     }
 }
 
@@ -247,6 +427,7 @@ impl ColdLocatorV1 {
 struct ColdPackFooterEntryV1 {
     class: u8,
     key: Vec<u8>,
+    /// Virtual offset, not a file offset.
     offset: u64,
     length: u64,
 }
@@ -255,45 +436,123 @@ struct ColdPackFooterEntryV1 {
 #[serde(deny_unknown_fields)]
 struct ColdPackFooterV1 {
     schema: u32,
+    /// The virtual range this pack's body covers, `[start, start + body_len)`.
+    virtual_start: u64,
+    /// This pack's tier level. `FANOUT` packs of one level merge into one of
+    /// the next.
+    level: u8,
     entries: Vec<ColdPackFooterEntryV1>,
 }
 
-/// The packed descriptor of one 128-bit prefix's inner authenticated map.
+/// One pack as the root's pack table names it.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PackRefV1 {
+    virtual_start: u64,
+    virtual_end: u64,
+    pack: [u8; 16],
+    level: u8,
+}
+
+impl PackRefV1 {
+    fn pack_id(&self) -> Uuid {
+        Uuid::from_bytes(self.pack)
+    }
+}
+
+/// The pack table: every live pack, ordered by virtual start, ranges disjoint
+/// and contiguous.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PackTableV1 {
+    packs: Vec<PackRefV1>,
+}
+
+impl PackTableV1 {
+    fn validate(&self) -> Result<(), String> {
+        let mut expected = None;
+        for pack in &self.packs {
+            if pack.virtual_end <= pack.virtual_start {
+                return Err("sealed pack table names an empty pack".into());
+            }
+            if let Some(expected) = expected {
+                if pack.virtual_start != expected {
+                    return Err("sealed pack table is not contiguous".into());
+                }
+            }
+            expected = Some(pack.virtual_end);
+        }
+        Ok(())
+    }
+
+    fn next_virtual(&self) -> u64 {
+        self.packs.last().map_or(0, |pack| pack.virtual_end)
+    }
+
+    /// The pack holding `offset`, by binary search.
+    fn locate(&self, offset: u64) -> Option<PackRefV1> {
+        let index = self
+            .packs
+            .partition_point(|pack| pack.virtual_end <= offset)
+            .min(self.packs.len().saturating_sub(1));
+        let pack = *self.packs.get(index)?;
+        (pack.virtual_start <= offset && offset < pack.virtual_end).then_some(pack)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.packs.len()
+    }
+
+    pub(crate) fn levels(&self) -> usize {
+        self.packs
+            .iter()
+            .map(|pack| usize::from(pack.level) + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Every pack this table names, in virtual order.
+    pub(crate) fn entries(&self) -> &[PackRefV1] {
+        &self.packs
+    }
+
+    pub(crate) fn live_bytes(&self) -> u64 {
+        self.packs
+            .iter()
+            .map(|pack| pack.virtual_end - pack.virtual_start)
+            .sum()
+    }
+}
+
+/// What one marker resolves to: the index as the archive currently holds it.
 ///
-/// Fixed shape: it names a map root, it never lists members. The members live
-/// in the inner map itself, keyed by the exact low 128 bits of their SHA-256.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ColdInnerRootV1 {
-    schema: u32,
-    root: ColdMapRootWire,
+/// The pack table lives in the MARKER, not in the root record, because the pack
+/// table is what resolves a locator — including the root record's own locator.
+/// Putting it in the record it is needed to read would force every open to scan
+/// every pack footer to bootstrap itself.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SealedRootRecord {
+    pub(crate) tables: SealedTableRoot,
+    pub(crate) packs: PackTableV1,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ColdMapRootWire {
-    count: u64,
-    root_key: Option<[u8; 16]>,
-    root_digest: Option<ContentDigest>,
+impl SealedRootRecord {
+    /// `sha256` of `tine-storage`'s canonical table root. The marker commits to
+    /// this, and an anchored SQLite frontier folds it in.
+    pub(crate) fn table_root_digest(&self) -> Result<ContentDigest, String> {
+        self.tables.root_digest().map_err(|error| error.to_string())
+    }
 }
 
-/// The complete cold lookup root. P5 binds these same values into the
-/// generation commit's "cold logical-object lookup root"; the marker here is
-/// this packet's additive standalone authority.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// The `current` marker: the pack table, the root record's locator and the
+/// table-root digest it commits to.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ColdHistoryRootsV1 {
+struct SealedMarkerV1 {
     schema: u32,
-    /// Outer object map: `sha256[0..16] -> prefix-bucket locator`.
-    objects: ColdMapRootWire,
-    /// Manifest map: `BatchId uuid -> record locator`.
-    manifests: ColdMapRootWire,
-    /// Exact logical counts. `objects.count` counts *prefixes* (outer map
-    /// entries); `object_count` is the exact number of full 256-bit keys
-    /// summed across every inner map, so the two differ as soon as any two
-    /// objects share a 128-bit prefix.
-    object_count: u64,
-    manifest_count: u64,
+    packs: PackTableV1,
+    root_locator: [u8; 32],
+    table_root_digest: ContentDigest,
 }
 
 fn encode_canonical<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -304,186 +563,38 @@ fn decode_canonical<T: for<'de> Deserialize<'de> + Serialize>(bytes: &[u8]) -> R
     let (value, trailing): (T, &[u8]) =
         postcard::take_from_bytes(bytes).map_err(|error| error.to_string())?;
     if !trailing.is_empty() || encode_canonical(&value)? != bytes {
-        return Err("cold history record is noncanonical".into());
+        return Err("sealed archive value is noncanonical".into());
     }
     Ok(value)
-}
-
-/// Cold lookup keys are exactly 128 bits wide by construction. Reject rather
-/// than truncate if a root ever carries a wider shared key.
-fn cold_map_root_key_bytes(key: AuthenticatedMapKey) -> Result<[u8; 16], String> {
-    <[u8; 16]>::try_from(key.as_slice())
-        .map_err(|_| "cold history map root key is not a 128-bit lookup key".to_string())
-}
-
-fn map_root_to_wire(root: AuthenticatedMapRootV1) -> Result<ColdMapRootWire, String> {
-    Ok(ColdMapRootWire {
-        count: root.count,
-        root_key: root
-            .root
-            .map(|link| cold_map_root_key_bytes(link.key))
-            .transpose()?,
-        root_digest: root.root.map(|link| link.digest),
-    })
-}
-
-fn map_root_from_wire(wire: ColdMapRootWire) -> Result<AuthenticatedMapRootV1, String> {
-    let root = match (wire.root_key, wire.root_digest) {
-        (Some(key), Some(digest)) => Some(AuthenticatedMapLinkV1 {
-            key: AuthenticatedMapKey::from(key),
-            digest,
-        }),
-        (None, None) => None,
-        _ => return Err("cold history map root is partial".into()),
-    };
-    if (wire.count == 0) != root.is_none() {
-        return Err("cold history map root count is inconsistent".into());
-    }
-    Ok(AuthenticatedMapRootV1 {
-        count: wire.count,
-        root,
-    })
-}
-
-/// Encode one prefix's inner map root as a fixed-size packed record.
-fn encode_inner_root(root: AuthenticatedMapRootV1) -> Result<Vec<u8>, String> {
-    let bytes = encode_canonical(&ColdInnerRootV1 {
-        schema: COLD_SCHEMA_VERSION,
-        root: map_root_to_wire(root)?,
-    })?;
-    if bytes.len() as u64 > MAX_COLD_INNER_ROOT_BYTES {
-        return Err("cold inner-root descriptor exceeds its fixed codec size".into());
-    }
-    Ok(bytes)
-}
-
-fn decode_inner_root(bytes: &[u8]) -> Result<AuthenticatedMapRootV1, String> {
-    let record: ColdInnerRootV1 = decode_canonical(bytes)?;
-    if record.schema != COLD_SCHEMA_VERSION {
-        return Err("cold inner-root descriptor is not the current schema".into());
-    }
-    let root = map_root_from_wire(record.root)?;
-    if root.count == 0 {
-        // An empty prefix map is never published: an outer entry exists only
-        // because at least one full key lives under it.
-        return Err("cold inner-root descriptor names an empty prefix map".into());
-    }
-    Ok(root)
-}
-
-impl ColdHistoryRootsV1 {
-    fn empty() -> Self {
-        Self {
-            schema: COLD_SCHEMA_VERSION,
-            objects: map_root_to_wire(AuthenticatedMapRootV1::empty())
-                .expect("the empty map root has no key"),
-            manifests: map_root_to_wire(AuthenticatedMapRootV1::empty())
-                .expect("the empty map root has no key"),
-            object_count: 0,
-            manifest_count: 0,
-        }
-    }
-
-    fn object_root(self) -> Result<AuthenticatedMapRootV1, String> {
-        map_root_from_wire(self.objects)
-    }
-
-    fn manifest_root(self) -> Result<AuthenticatedMapRootV1, String> {
-        map_root_from_wire(self.manifests)
-    }
-
-    pub(crate) const fn object_count(self) -> u64 {
-        self.object_count
-    }
-
-    pub(crate) const fn manifest_count(self) -> u64 {
-        self.manifest_count
-    }
-}
-
-fn split_digest(digest: ContentDigest) -> ([u8; 16], [u8; 16]) {
-    let bytes = digest.as_bytes();
-    let mut high = [0_u8; 16];
-    let mut low = [0_u8; 16];
-    high.copy_from_slice(&bytes[..16]);
-    low.copy_from_slice(&bytes[16..]);
-    (high, low)
 }
 
 // ---------------------------------------------------------------------------
 // Directory access
 // ---------------------------------------------------------------------------
 
-fn cold_directory(store: &ObjectStore) -> Result<Dir, StoreError> {
+pub(crate) fn sealed_directory(store: &ObjectStore) -> Result<Dir, StoreError> {
     let root = store.private_derived_root_capability()?;
-    super::object_store::ensure_directory_nofollow(&root, COLD_HISTORY_DIRECTORY)?;
-    super::object_store::open_dir_nofollow(&root, COLD_HISTORY_DIRECTORY)
+    super::object_store::ensure_directory_nofollow(&root, SEALED_DIRECTORY)?;
+    super::object_store::open_dir_nofollow(&root, SEALED_DIRECTORY)
 }
 
-fn open_existing_cold_directory(store: &ObjectStore) -> Result<Option<Dir>, StoreError> {
+pub(crate) fn open_existing_sealed_directory(
+    store: &ObjectStore,
+) -> Result<Option<Dir>, StoreError> {
     let root = store.private_derived_root_capability()?;
-    tine_storage::open_existing_dir_nofollow(&root, COLD_HISTORY_DIRECTORY)
+    tine_storage::open_existing_dir_nofollow(&root, SEALED_DIRECTORY)
         .map_err(filesystem_error_without_collision)
 }
 
-/// The exact raw marker bytes, or `None` when no marker file exists.
-///
-/// Only the explicit repair path uses this: it needs the bytes as the audited
-/// replacement guard even when they do not decode. Every ordinary read goes
-/// through [`read_roots`], which still rejects a damaged marker.
 fn read_root_marker_bytes(directory: &Dir) -> Result<Option<Vec<u8>>, StoreError> {
     super::object_store::read_optional_regular(
         directory,
-        COLD_ROOT_MARKER,
-        MAX_COLD_ROOT_BYTES,
+        SEALED_ROOT_MARKER,
+        MAX_SEALED_MARKER_BYTES,
         None,
     )
 }
 
-fn read_roots(directory: &Dir) -> Result<Option<(Vec<u8>, ColdHistoryRootsV1)>, StoreError> {
-    let Some(bytes) = read_root_marker_bytes(directory)? else {
-        return Ok(None);
-    };
-    let roots = decode_roots(&bytes)?;
-    Ok(Some((bytes, roots)))
-}
-
-fn decode_roots(bytes: &[u8]) -> Result<ColdHistoryRootsV1, StoreError> {
-    let roots: ColdHistoryRootsV1 = decode_canonical(bytes).map_err(cold_index_error)?;
-    if roots.schema != COLD_SCHEMA_VERSION {
-        return Err(cold_index_error(
-            "cold history root marker is not the current schema",
-        ));
-    }
-    // Reject a marker whose roots cannot be decoded before any caller can treat
-    // it as authority.
-    roots.object_root().map_err(cold_index_error)?;
-    roots.manifest_root().map_err(cold_index_error)?;
-    Ok(roots)
-}
-
-/// What the cold directory's *derived* root marker says about this archive.
-///
-/// The distinction this type exists to make: never-initialized absence is not
-/// the same state as a lost marker over preserved packs. Conflating them is
-/// what lets a fresh empty-based root be published over old history.
-enum ColdRootState {
-    /// No marker and no pack: cold history was never published here.
-    NeverInitialized,
-    /// A healthy current marker. Reaching this costs one bounded file read.
-    Published {
-        marker: Vec<u8>,
-        roots: ColdHistoryRootsV1,
-    },
-    /// Self-describing packs survive but their derived root marker is gone.
-    /// A named damaged state; `repair_cold_history_root` recovers it.
-    RootLostWithPreservedPacks,
-}
-
-/// Whether this directory holds at least one pack file.
-///
-/// Only the marker-absent path calls this, and it stops at the first pack, so a
-/// healthy open never pays for it and a damaged open pays one short listing.
 fn contains_any_pack(directory: &Dir) -> Result<bool, StoreError> {
     for entry in directory
         .entries()
@@ -499,14 +610,107 @@ fn contains_any_pack(directory: &Dir) -> Result<bool, StoreError> {
     Ok(false)
 }
 
-fn read_root_state(directory: &Dir) -> Result<ColdRootState, StoreError> {
-    if let Some((marker, roots)) = read_roots(directory)? {
-        return Ok(ColdRootState::Published { marker, roots });
+/// What the sealed directory's *derived* marker says about this archive.
+///
+/// Never-initialized absence is not the same state as a lost marker over
+/// preserved packs. Conflating them is what lets a fresh empty-based root be
+/// published over old history.
+enum SealedRootState {
+    NeverInitialized,
+    Published {
+        marker: Vec<u8>,
+        root: SealedRootRecord,
+    },
+    /// Self-describing packs survive but their derived root is gone or damaged.
+    /// A named damaged state; `repair_cold_history_root` recovers it.
+    RootLostWithPreservedPacks,
+}
+
+/// Fire the one-shot interleaving fault between the marker read and the root
+/// resolution in [`read_root_state`], if a test armed one.
+///
+/// It exists because the window it models — marker installed, superseded packs
+/// retired a moment later — is sub-millisecond in production and cannot be
+/// raced for reliably. In a shipped build this is an empty call: the hook lives
+/// in the test module, so nothing test-only crosses into production state.
+#[cfg(test)]
+fn sealed_torn_root_read_fault_for_test() {
+    let hook = tests::TORN_ROOT_READ_HOOK.lock().unwrap().take();
+    if let Some(mut hook) = hook {
+        hook();
     }
-    if contains_any_pack(directory)? {
-        return Ok(ColdRootState::RootLostWithPreservedPacks);
+}
+
+#[cfg(not(test))]
+fn sealed_torn_root_read_fault_for_test() {}
+
+/// How many times a torn marker read is re-read before the archive is called
+/// damaged. Each retry observes a strictly newer marker (marker-last ordering
+/// means a marker only moves when a cut committed), so the loop terminates;
+/// the bound exists so a pathological writer cannot starve a reader forever.
+const SEALED_ROOT_READ_ATTEMPTS: usize = 8;
+
+fn read_root_state(directory: &Dir) -> Result<SealedRootState, StoreError> {
+    let mut attempt = 0;
+    loop {
+        let Some(marker) = read_root_marker_bytes(directory)? else {
+            return if contains_any_pack(directory)? {
+                Ok(SealedRootState::RootLostWithPreservedPacks)
+            } else {
+                Ok(SealedRootState::NeverInitialized)
+            };
+        };
+        sealed_torn_root_read_fault_for_test();
+        let error = match decode_marker_and_root(directory, &marker) {
+            Ok(root) => return Ok(SealedRootState::Published { marker, root }),
+            Err(error) => error,
+        };
+        // Refusal scenario (I-2): a cut installed its marker and retired the
+        // packs the marker we just read named, between our two reads. The
+        // archive is intact; our snapshot of it is not. Re-read the marker: if
+        // it moved, that is exactly what happened and the retry resolves
+        // against the newer one. Only a marker that has NOT moved across the
+        // failure is evidence of damage.
+        attempt += 1;
+        if attempt < SEALED_ROOT_READ_ATTEMPTS
+            && read_root_marker_bytes(directory)?.as_deref() != Some(marker.as_slice())
+        {
+            continue;
+        }
+        // Derived state over surviving packs: damaged, not absent, and never a
+        // graph-open refusal -- repair rebuilds every table from pack footers
+        // (D-3, P4c2 4.3).
+        return if contains_any_pack(directory)? {
+            Ok(SealedRootState::RootLostWithPreservedPacks)
+        } else {
+            Err(error)
+        };
     }
-    Ok(ColdRootState::NeverInitialized)
+}
+
+fn decode_marker_and_root(directory: &Dir, marker: &[u8]) -> Result<SealedRootRecord, StoreError> {
+    let marker: SealedMarkerV1 = decode_canonical(marker).map_err(cold_index_error)?;
+    if marker.schema != COLD_SCHEMA_VERSION {
+        return Err(cold_index_error(
+            "sealed root marker is not the current schema",
+        ));
+    }
+    marker.packs.validate().map_err(cold_index_error)?;
+    let locator = ColdLocatorV1::from_bytes(marker.root_locator).map_err(cold_index_error)?;
+    let bytes = read_pack_range(directory, &marker.packs, locator, MAX_COLD_ROOT_BYTES)
+        .map_err(cold_index_error)?;
+    let tables =
+        SealedTableRoot::decode(&bytes).map_err(|error| cold_index_error(error.to_string()))?;
+    let root = SealedRootRecord {
+        tables,
+        packs: marker.packs,
+    };
+    if root.table_root_digest().map_err(cold_index_error)? != marker.table_root_digest {
+        return Err(cold_index_error(
+            "sealed root record does not match the digest its marker commits to",
+        ));
+    }
+    Ok(root)
 }
 
 // ---------------------------------------------------------------------------
@@ -515,17 +719,27 @@ fn read_root_state(directory: &Dir) -> Result<ColdRootState, StoreError> {
 
 /// Read exactly one packed record's payload, proving it against the record
 /// header's digest. Knows nothing about what the payload means, so it serves
-/// object records, manifest records and index descriptors alike -- and, later,
-/// P5 capsule records.
+/// object records, manifest records, tables and roots alike.
 fn read_pack_range(
     directory: &Dir,
+    packs: &PackTableV1,
     locator: ColdLocatorV1,
     payload_limit: u64,
 ) -> Result<Vec<u8>, String> {
     if locator.length > payload_limit.saturating_add(COLD_RECORD_HEADER_BYTES as u64) {
         return Err("cold record exceeds its class byte limit".into());
     }
-    let name = pack_filename(locator.pack);
+    let pack = packs
+        .locate(locator.offset)
+        .ok_or("cold locator names no live pack")?;
+    let end = locator
+        .offset
+        .checked_add(locator.length)
+        .ok_or("cold locator range overflows")?;
+    if end > pack.virtual_end {
+        return Err("cold locator range crosses a pack boundary".into());
+    }
+    let name = pack_filename(pack.pack_id());
     match directory.symlink_metadata(&name) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(format!("cold pack {name} is not a regular no-follow file"));
@@ -547,16 +761,13 @@ fn read_pack_range(
     if !metadata.is_file() {
         return Err(format!("cold pack {name} is not a regular no-follow file"));
     }
-    let end = locator
-        .offset
-        .checked_add(locator.length)
-        .ok_or("cold locator range overflows")?;
-    if end > metadata.len() {
+    let file_offset = locator.offset - pack.virtual_start;
+    if file_offset + locator.length > metadata.len() {
         return Err(format!(
             "cold pack {name} is shorter than its locator range"
         ));
     }
-    file.seek(SeekFrom::Start(locator.offset))
+    file.seek(SeekFrom::Start(file_offset))
         .map_err(|error| error.to_string())?;
     let mut raw = vec![0_u8; locator.length as usize];
     file.read_exact(&mut raw)
@@ -567,6 +778,43 @@ fn read_pack_range(
         return Err("cold record bytes differ from their record digest".into());
     }
     Ok(payload)
+}
+
+/// Overwrite one packed record's payload bytes in place, for damage fixtures.
+///
+/// There is no per-object file to truncate any more: a record lives inside a
+/// pack at a virtual offset. Tearing it means writing garbage over exactly its
+/// payload range, which is what a torn write or a partial sync delivery does
+/// to a pack. The record header keeps the ORIGINAL payload digest, so every
+/// reader of this record fails its digest check.
+#[cfg(test)]
+pub(crate) fn tear_packed_record_for_test(
+    directory: &Dir,
+    locator: ColdLocatorV1,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    // The CURRENT marker, not a caller's snapshot: a later cut may have merged
+    // the pack this locator named. Virtual offsets never move, so the current
+    // table still resolves it.
+    let packs = match read_root_state(directory).map_err(|error| error.to_string())? {
+        SealedRootState::Published { root, .. } => root.packs,
+        _ => return Err("sealed archive has published no pack table".into()),
+    };
+    let pack = packs
+        .locate(locator.offset)
+        .ok_or("cold locator names no live pack")?;
+    let name = pack_filename(pack.pack_id());
+    let mut file = directory
+        .open_with(&name, cap_std::fs::OpenOptions::new().write(true))
+        .map_err(|error| error.to_string())?;
+    let payload_len = locator.length - COLD_RECORD_HEADER_BYTES as u64;
+    let payload_start = locator.offset - pack.virtual_start + COLD_RECORD_HEADER_BYTES as u64;
+    file.seek(SeekFrom::Start(payload_start))
+        .map_err(|error| error.to_string())?;
+    file.write_all(&vec![0xA5_u8; payload_len as usize])
+        .map_err(|error| error.to_string())?;
+    file.flush().map_err(|error| error.to_string())
 }
 
 /// Validate a packed record header and return `(payload digest, payload start)`.
@@ -586,733 +834,16 @@ fn parse_record_header(raw: &[u8]) -> Result<(ContentDigest, usize), String> {
 }
 
 // ---------------------------------------------------------------------------
-// The resolver's cold tier
+// Pack inventory and the footer-derived pack table
 // ---------------------------------------------------------------------------
 
-/// Exact physical work one cold lookup performed.
-///
-/// This is the oracle for "bounded by the requested object's ranges and index
-/// paths, not all packs/history": `pack_reads` is a constant 2 for an object
-/// and 1 for a manifest however large history grows, and `index_nodes` grows
-/// only with the map's depth.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ColdReadWork {
-    pub(crate) index_nodes: usize,
-    pub(crate) pack_reads: usize,
-}
-
-/// Counts sealed map-node reads without changing how they are read: the shared
-/// point reader remains the only implementation.
-struct CountingSealedReader {
-    inner: SealedGenerationDirectory,
-    reads: std::cell::Cell<usize>,
-}
-
-impl tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore for CountingSealedReader {
-    fn read_sealed_accepted_object(
-        &self,
-        kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        address: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, tine_storage::sealed_accepted_index::SealedAcceptedIndexError>
-    {
-        self.reads.set(self.reads.get().saturating_add(1));
-        tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore::read_sealed_accepted_object(
-            &self.inner, kind, address,
-        )
-    }
-
-    fn publish_sealed_accepted_object(
-        &mut self,
-        _kind: tine_storage::sealed_accepted_index::SealedAcceptedObjectKind,
-        _address: ContentDigest,
-        _bytes: &[u8],
-    ) -> Result<(), tine_storage::sealed_accepted_index::SealedAcceptedIndexError> {
-        Err(
-            tine_storage::sealed_accepted_index::SealedAcceptedIndexError::Store(
-                "the cold history reader is read-only".into(),
-            ),
-        )
-    }
-}
-
-/// Point access to cold logical history. Carries no hot-tier authority: the
-/// caller consults this only after the hot original name is absent.
-pub(crate) struct ColdHistoryReader {
-    directory: Dir,
-    sealed: CountingSealedReader,
-    roots: ColdHistoryRootsV1,
-    pack_reads: std::cell::Cell<usize>,
-}
-
-impl ColdHistoryReader {
-    /// `Ok(None)` when this archive has never published cold history. That is
-    /// ordinary absence, never a refusal.
-    ///
-    /// A cold directory whose packs survive but whose derived root marker is
-    /// gone is *not* absence: it refuses with the named repair condition
-    /// [`StoreError::ColdHistoryRootMissing`], and
-    /// [`repair_cold_history_root`] recovers it from the preserved packs. A
-    /// healthy open costs one bounded marker read and enumerates nothing.
-    pub(crate) fn open(store: &ObjectStore) -> Result<Option<Self>, StoreError> {
-        let Some(directory) = open_existing_cold_directory(store)? else {
-            return Ok(None);
-        };
-        match read_root_state(&directory)? {
-            ColdRootState::NeverInitialized => Ok(None),
-            ColdRootState::RootLostWithPreservedPacks => Err(StoreError::ColdHistoryRootMissing),
-            ColdRootState::Published { roots, .. } => Self::from_parts(&directory, roots).map(Some),
-        }
-    }
-
-    fn from_parts(directory: &Dir, roots: ColdHistoryRootsV1) -> Result<Self, StoreError> {
-        Ok(Self {
-            directory: directory
-                .try_clone()
-                .map_err(|error| cold_index_error(error.to_string()))?,
-            sealed: CountingSealedReader {
-                inner: SealedGenerationDirectory::open(directory).map_err(cold_index_error)?,
-                reads: std::cell::Cell::new(0),
-            },
-            roots,
-            pack_reads: std::cell::Cell::new(0),
-        })
-    }
-
-    pub(crate) fn roots(&self) -> ColdHistoryRootsV1 {
-        self.roots
-    }
-
-    /// Physical work performed since this reader was opened.
-    pub(crate) fn work(&self) -> ColdReadWork {
-        ColdReadWork {
-            index_nodes: self.sealed.reads.get(),
-            pack_reads: self.pack_reads.get(),
-        }
-    }
-
-    fn read_range(&self, locator: ColdLocatorV1, limit: u64) -> Result<Vec<u8>, String> {
-        self.pack_reads.set(self.pack_reads.get().saturating_add(1));
-        read_pack_range(&self.directory, locator, limit)
-    }
-
-    /// The inner authenticated map holding every full key under one 128-bit
-    /// prefix, or `None` when no object shares that prefix.
-    fn prefix_map(
-        &self,
-        digest: ContentDigest,
-        high: [u8; 16],
-    ) -> Result<Option<AuthenticatedMapRootV1>, StoreError> {
-        let root = self.roots.object_root().map_err(cold_index_error)?;
-        let Some(value) = SealedAcceptedIndexReader::new(&self.sealed)
-            .map_value(root, high)
-            .map_err(|error| cold_object_error(digest, error.to_string()))?
-        else {
-            return Ok(None);
-        };
-        let locator =
-            ColdLocatorV1::decode_value(value).map_err(|error| cold_object_error(digest, error))?;
-        let bytes = self
-            .read_range(locator, MAX_COLD_INNER_ROOT_BYTES)
-            .map_err(|error| cold_object_error(digest, error))?;
-        decode_inner_root(&bytes)
-            .map(Some)
-            .map_err(|error| cold_object_error(digest, error))
-    }
-
-    /// Locate one logical object without reading its payload.
-    ///
-    /// Work is bounded by this object's own two index paths plus one bounded
-    /// descriptor read. No pack is enumerated, no unrelated history is touched,
-    /// and no step depends on how many objects share this object's prefix.
-    fn locate_object(&self, digest: ContentDigest) -> Result<Option<ColdLocatorV1>, StoreError> {
-        let (high, low) = split_digest(digest);
-        let Some(prefix_map) = self.prefix_map(digest, high)? else {
-            return Ok(None);
-        };
-        let Some(value) = SealedAcceptedIndexReader::new(&self.sealed)
-            .map_value(prefix_map, low)
-            .map_err(|error| cold_object_error(digest, error.to_string()))?
-        else {
-            return Ok(None);
-        };
-        ColdLocatorV1::decode_value(value)
-            .map(Some)
-            .map_err(|error| cold_object_error(digest, error))
-    }
-
-    /// Resolve one logical object's exact canonical bytes.
-    pub(crate) fn object_bytes(
-        &self,
-        digest: ContentDigest,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        let Some(locator) = self.locate_object(digest)? else {
-            return Ok(None);
-        };
-        let payload = self
-            .read_range(locator, MAX_OBJECT_BYTES as u64)
-            .map_err(|error| cold_object_error(digest, error))?;
-        if ContentDigest::of(&payload) != digest {
-            return Err(cold_object_error(
-                digest,
-                "cold record resolves to another logical object",
-            ));
-        }
-        Ok(Some(payload))
-    }
-
-    fn locate_manifest(&self, batch_id: BatchId) -> Result<Option<ColdLocatorV1>, StoreError> {
-        let root = self.roots.manifest_root().map_err(cold_index_error)?;
-        let Some(value) = SealedAcceptedIndexReader::new(&self.sealed)
-            .map_value(root, batch_id.as_uuid().into_bytes())
-            .map_err(|error| cold_manifest_error(batch_id, error.to_string()))?
-        else {
-            return Ok(None);
-        };
-        ColdLocatorV1::decode_value(value)
-            .map(Some)
-            .map_err(|error| cold_manifest_error(batch_id, error))
-    }
-
-    /// Resolve one batch manifest's exact canonical bytes.
-    pub(crate) fn manifest_bytes(&self, batch_id: BatchId) -> Result<Option<Vec<u8>>, StoreError> {
-        let Some(locator) = self.locate_manifest(batch_id)? else {
-            return Ok(None);
-        };
-        self.read_range(locator, MAX_MANIFEST_BYTES as u64)
-            .map(Some)
-            .map_err(|error| cold_manifest_error(batch_id, error))
-    }
-
-    /// Enumerate the committed cold manifest membership from the authenticated
-    /// manifest map itself. Full-history reconstruction is the one consumer
-    /// allowed to pay this lifetime-sized walk; using the sealed map keeps the
-    /// root marker as the sole inventory and avoids interpreting pack or
-    /// directory order as committed membership.
-    pub(crate) fn manifest_batch_ids(&self) -> Result<BTreeSet<BatchId>, StoreError> {
-        let root = self.roots.manifest_root().map_err(cold_index_error)?;
-        let reader = SealedAcceptedIndexReader::new(&self.sealed);
-        let mut pending = root.root.into_iter().collect::<Vec<_>>();
-        let mut batches = BTreeSet::new();
-        while let Some(link) = pending.pop() {
-            let node = reader
-                .read_map_node(link)
-                .map_err(|error| cold_index_error(error.to_string()))?;
-            let key = node.key.as_slice();
-            let bytes: [u8; 16] = key
-                .try_into()
-                .map_err(|_| cold_index_error("cold manifest map contains a non-BatchId key"))?;
-            if !batches.insert(BatchId::from_uuid(Uuid::from_bytes(bytes))) {
-                return Err(cold_index_error(
-                    "cold manifest map repeats a BatchId identity",
-                ));
-            }
-            pending.extend(node.left);
-            pending.extend(node.right);
-        }
-        if u64::try_from(batches.len()).ok() != Some(root.count) {
-            return Err(cold_index_error(
-                "cold manifest map traversal differs from its authenticated count",
-            ));
-        }
-        Ok(batches)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Additive publication
-// ---------------------------------------------------------------------------
-
-/// One in-progress pack. Records are appended in memory up to the construction
-/// target and the pack is published as soon as it is sealed, so publication
-/// memory is bounded by that target plus one oversize record.
-///
-/// Deliberately generic over `(class, key, payload)` and ignorant of the object
-/// model: this builder and [`read_pack_range`] are the physical pack/range seam
-/// P5 capsule packing reuses rather than growing a twin. A new payload kind
-/// needs only a new class byte, not a second packer.
-struct ColdPackBuilder {
+struct PackInventory {
     pack: Uuid,
-    bytes: Vec<u8>,
-    entries: Vec<ColdPackFooterEntryV1>,
+    footer: ColdPackFooterV1,
+    body_len: u64,
 }
 
-impl ColdPackBuilder {
-    fn new() -> Self {
-        Self {
-            pack: Uuid::new_v4(),
-            bytes: Vec::new(),
-            entries: Vec::new(),
-        }
-    }
-
-    fn append(&mut self, class: u8, key: Vec<u8>, payload: &[u8]) -> Result<ColdLocatorV1, String> {
-        let offset = self.bytes.len() as u64;
-        self.bytes
-            .extend_from_slice(ContentDigest::of(payload).as_bytes());
-        self.bytes
-            .extend_from_slice(&(payload.len() as u64).to_be_bytes());
-        self.bytes.extend_from_slice(payload);
-        let length = self.bytes.len() as u64 - offset;
-        if self.bytes.len() as u64 > MAX_COLD_PACK_BYTES {
-            return Err("cold pack exceeds its physical record limit".into());
-        }
-        self.entries.push(ColdPackFooterEntryV1 {
-            class,
-            key,
-            offset,
-            length,
-        });
-        Ok(ColdLocatorV1 {
-            pack: self.pack,
-            offset,
-            length,
-        })
-    }
-
-    fn finish(mut self) -> Result<(Uuid, Vec<u8>), String> {
-        let footer = encode_canonical(&ColdPackFooterV1 {
-            schema: COLD_SCHEMA_VERSION,
-            entries: self.entries,
-        })?;
-        if footer.len() as u64 > MAX_COLD_PACK_FOOTER_BYTES {
-            return Err("cold pack footer exceeds its physical limit".into());
-        }
-        self.bytes.extend_from_slice(&footer);
-        self.bytes
-            .extend_from_slice(&(footer.len() as u64).to_be_bytes());
-        self.bytes.extend_from_slice(&COLD_PACK_MAGIC);
-        Ok((self.pack, self.bytes))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ColdPublicationOutcome {
-    pub(crate) objects_published: usize,
-    pub(crate) manifests_published: usize,
-    pub(crate) objects_already_present: usize,
-    pub(crate) manifests_already_present: usize,
-    pub(crate) packs_published: usize,
-}
-
-/// A staged additive publication whose packs and index nodes are durable but
-/// whose root marker has not been installed.
-///
-/// Everything staged is unreferenced residue until [`install_cold_roots`] runs.
-/// A crash here leaves the predecessor root -- or no root at all -- exactly as
-/// authoritative as it was.
-pub(crate) struct StagedColdPublication {
-    roots: ColdHistoryRootsV1,
-    prior_marker: Option<Vec<u8>>,
-    outcome: ColdPublicationOutcome,
-}
-
-impl StagedColdPublication {
-    pub(crate) fn outcome(&self) -> ColdPublicationOutcome {
-        self.outcome
-    }
-}
-
-struct ColdPublicationSession<'a> {
-    directory: &'a Dir,
-    current: ColdPackBuilder,
-    published_packs: usize,
-    objects_published: usize,
-    manifests_published: usize,
-    object_entries: BTreeMap<[u8; 16], BTreeMap<[u8; 16], [u8; 32]>>,
-    manifest_entries: BTreeMap<[u8; 16], [u8; 32]>,
-}
-
-impl<'a> ColdPublicationSession<'a> {
-    fn new(directory: &'a Dir) -> Self {
-        Self {
-            directory,
-            current: ColdPackBuilder::new(),
-            published_packs: 0,
-            objects_published: 0,
-            manifests_published: 0,
-            object_entries: BTreeMap::new(),
-            manifest_entries: BTreeMap::new(),
-        }
-    }
-
-    fn append(
-        &mut self,
-        class: u8,
-        key: Vec<u8>,
-        payload: &[u8],
-    ) -> Result<ColdLocatorV1, StoreError> {
-        let locator = self
-            .current
-            .append(class, key, payload)
-            .map_err(cold_index_error)?;
-        if self.current.bytes.len() >= COLD_PACK_TARGET_BYTES {
-            self.seal_current_pack()?;
-        }
-        Ok(locator)
-    }
-
-    fn seal_current_pack(&mut self) -> Result<(), StoreError> {
-        if self.current.entries.is_empty() {
-            return Ok(());
-        }
-        let builder = std::mem::replace(&mut self.current, ColdPackBuilder::new());
-        let (pack, bytes) = builder.finish().map_err(cold_index_error)?;
-        tine_storage::DurableDirectoryPublication::open(self.directory)
-            .map_err(filesystem_error_without_collision)?
-            .publish_new_exact_single_writer(&pack_filename(pack), &bytes)
-            .map_err(filesystem_error_without_collision)?;
-        self.published_packs += 1;
-        Ok(())
-    }
-
-    fn add_object(&mut self, digest: ContentDigest, payload: &[u8]) -> Result<(), StoreError> {
-        if payload.len() > MAX_OBJECT_BYTES {
-            return Err(cold_object_error(
-                digest,
-                "logical object exceeds the current object byte limit",
-            ));
-        }
-        if ContentDigest::of(payload) != digest {
-            return Err(cold_object_error(
-                digest,
-                "logical object bytes differ from their content address",
-            ));
-        }
-        let (high, low) = split_digest(digest);
-        let locator = self.append(COLD_CLASS_OBJECT, digest.as_bytes().to_vec(), payload)?;
-        if self
-            .object_entries
-            .entry(high)
-            .or_default()
-            .insert(low, locator.to_bytes())
-            .is_none()
-        {
-            self.objects_published += 1;
-        }
-        Ok(())
-    }
-
-    fn add_manifest(&mut self, batch_id: BatchId, payload: &[u8]) -> Result<(), StoreError> {
-        if payload.len() > MAX_MANIFEST_BYTES {
-            return Err(cold_manifest_error(
-                batch_id,
-                "logical manifest exceeds the current manifest byte limit",
-            ));
-        }
-        // A `BatchId` is an identity, not a content address, so bind these
-        // exact bytes to it before they are packed under that key.
-        let manifest = super::OperationBatch::decode(payload)?;
-        if manifest.batch_id() != batch_id {
-            return Err(cold_manifest_conflict(
-                batch_id,
-                "these canonical manifest bytes belong to another batch id",
-            ));
-        }
-        let key = batch_id.as_uuid().into_bytes();
-        let locator = self.append(COLD_CLASS_MANIFEST, key.to_vec(), payload)?;
-        if self
-            .manifest_entries
-            .insert(key, locator.to_bytes())
-            .is_none()
-        {
-            self.manifests_published += 1;
-        }
-        Ok(())
-    }
-}
-
-/// Stage an additive cold publication: pack bytes and index nodes become
-/// durable, the root marker does not.
-///
-/// Ordering is the durability contract. Every payload record is sealed into a
-/// durable pack before any index node can name it; every inner-root descriptor
-/// is sealed before the outer map names it; every index node is durable before
-/// [`install_cold_roots`] publishes the marker that names it.
-fn stage_cold_publication(
-    directory: &Dir,
-    base: ColdHistoryRootsV1,
-    prior_marker: Option<Vec<u8>>,
-    mut session: ColdPublicationSession<'_>,
-    objects_already_present: usize,
-    manifests_already_present: usize,
-) -> Result<StagedColdPublication, StoreError> {
-    let mut object_root = base.object_root().map_err(cold_index_error)?;
-    let mut manifest_root = base.manifest_root().map_err(cold_index_error)?;
-    let mut object_count = base.object_count;
-    let mut manifest_count = base.manifest_count;
-
-    // 1. Payload bytes durable first.
-    session.seal_current_pack()?;
-    let object_entries = std::mem::take(&mut session.object_entries);
-    let manifest_entries = std::mem::take(&mut session.manifest_entries);
-
-    // 2. One inner authenticated map per touched 128-bit prefix, keyed by the
-    //    exact low 128 bits. An existing prefix is extended, never replaced, so
-    //    an additive publication can never lose a predecessor's entry -- and a
-    //    prefix can hold arbitrarily many members, because it is a map.
-    let mut staging = SealedGenerationStagingStore::open(directory).map_err(cold_index_error)?;
-    let mut prefix_maps: Vec<([u8; 16], AuthenticatedMapRootV1)> =
-        Vec::with_capacity(object_entries.len());
-    for (high, lows) in object_entries {
-        let mut prefix_map = match SealedAcceptedIndexReader::new(&staging)
-            .map_value(object_root, high)
-            .map_err(|error| cold_index_error(error.to_string()))?
-        {
-            Some(value) => {
-                let locator = ColdLocatorV1::decode_value(value).map_err(cold_index_error)?;
-                let bytes = read_pack_range(directory, locator, MAX_COLD_INNER_ROOT_BYTES)
-                    .map_err(cold_index_error)?;
-                decode_inner_root(&bytes).map_err(cold_index_error)?
-            }
-            None => AuthenticatedMapRootV1::empty(),
-        };
-        for (low, locator) in lows {
-            let locator = ColdLocatorV1::from_bytes(locator).map_err(cold_index_error)?;
-            let next = SealedAcceptedIndexWriter::new(&mut staging)
-                .upsert_map(prefix_map, low, locator.value())
-                .map_err(|error| cold_index_error(error.to_string()))?;
-            if next.count != prefix_map.count {
-                object_count = object_count
-                    .checked_add(1)
-                    .ok_or_else(|| cold_index_error("cold object count overflow"))?;
-            }
-            prefix_map = next;
-        }
-        prefix_maps.push((high, prefix_map));
-    }
-
-    // 3. Pack each new inner root as a fixed-size descriptor record, using the
-    //    same physical pack machinery, and seal before the outer map names it.
-    let mut descriptors: Vec<([u8; 16], ColdLocatorV1)> = Vec::with_capacity(prefix_maps.len());
-    for (high, prefix_map) in &prefix_maps {
-        let bytes = encode_inner_root(*prefix_map).map_err(cold_index_error)?;
-        let locator = session.append(COLD_CLASS_INNER_ROOT, high.to_vec(), &bytes)?;
-        descriptors.push((*high, locator));
-    }
-    session.seal_current_pack()?;
-
-    let outcome = ColdPublicationOutcome {
-        objects_published: session.objects_published,
-        manifests_published: session.manifests_published,
-        objects_already_present,
-        manifests_already_present,
-        packs_published: session.published_packs,
-    };
-    drop(session);
-
-    // 4. Outer map and manifest map last; both name durable pack bytes.
-    for (high, locator) in &descriptors {
-        object_root = SealedAcceptedIndexWriter::new(&mut staging)
-            .upsert_map(object_root, *high, locator.value())
-            .map_err(|error| cold_index_error(error.to_string()))?;
-    }
-    for (key, locator) in &manifest_entries {
-        let locator = ColdLocatorV1::from_bytes(*locator).map_err(cold_index_error)?;
-        let next = SealedAcceptedIndexWriter::new(&mut staging)
-            .upsert_map(manifest_root, *key, locator.value())
-            .map_err(|error| cold_index_error(error.to_string()))?;
-        if next.count != manifest_root.count {
-            manifest_count = manifest_count
-                .checked_add(1)
-                .ok_or_else(|| cold_index_error("cold manifest count overflow"))?;
-        }
-        manifest_root = next;
-    }
-    staging.finish().map_err(cold_index_error)?;
-
-    Ok(StagedColdPublication {
-        roots: ColdHistoryRootsV1 {
-            schema: COLD_SCHEMA_VERSION,
-            objects: map_root_to_wire(object_root).map_err(cold_index_error)?,
-            manifests: map_root_to_wire(manifest_root).map_err(cold_index_error)?,
-            object_count,
-            manifest_count,
-        },
-        prior_marker,
-        outcome,
-    })
-}
-
-/// Install the root marker last. Before this returns, every staged pack and
-/// index node is unreferenced residue and the predecessor root is unchanged.
-fn install_cold_roots(
-    directory: &Dir,
-    staged: StagedColdPublication,
-) -> Result<ColdPublicationOutcome, StoreError> {
-    let bytes = encode_canonical(&staged.roots).map_err(cold_index_error)?;
-    if bytes.len() as u64 > MAX_COLD_ROOT_BYTES {
-        return Err(cold_index_error(
-            "cold history root marker exceeds its fixed codec size",
-        ));
-    }
-    let publication = tine_storage::DurableDirectoryPublication::open(directory)
-        .map_err(filesystem_error_without_collision)?;
-    match staged.prior_marker {
-        Some(existing) if existing == bytes => {}
-        Some(existing) => publication
-            .replace_exact(COLD_ROOT_MARKER, &existing, &bytes)
-            .map_err(filesystem_error_without_collision)?,
-        None => publication
-            .publish_new_exact_single_writer(COLD_ROOT_MARKER, &bytes)
-            .map_err(filesystem_error_without_collision)?,
-    }
-    Ok(staged.outcome)
-}
-
-/// The base this publication extends.
-///
-/// A lost root marker over preserved packs refuses here for the same reason it
-/// refuses on read: publishing a fresh empty-based root would silently orphan
-/// old history. Repair is explicit.
-fn publication_base(directory: &Dir) -> Result<(Option<Vec<u8>>, ColdHistoryRootsV1), StoreError> {
-    match read_root_state(directory)? {
-        ColdRootState::Published { marker, roots } => Ok((Some(marker), roots)),
-        ColdRootState::NeverInitialized => Ok((None, ColdHistoryRootsV1::empty())),
-        ColdRootState::RootLostWithPreservedPacks => Err(StoreError::ColdHistoryRootMissing),
-    }
-}
-
-/// Stage a caller-built session against the current roots without installing
-/// the root marker.
-fn stage_publication_from_session(
-    directory: &Dir,
-    session: ColdPublicationSession<'_>,
-) -> Result<StagedColdPublication, StoreError> {
-    let (prior_marker, base) = publication_base(directory)?;
-    stage_cold_publication(directory, base, prior_marker, session, 0, 0)
-}
-
-/// Stage an additive publication of exact logical bytes without installing the
-/// root marker.
-///
-/// A repeated identity is resolved by *bytes*, not by name presence: the shared
-/// reader reconstructs what cold history already holds and compares it with the
-/// incoming canonical bytes. Identical bytes are a counted no-op; different
-/// bytes are a named conflict. The whole exactness pass runs before a single
-/// record is appended, so a conflict leaves no residue at all -- the predecessor
-/// root and the original bytes are exactly as authoritative as before.
-fn stage_publication(
-    directory: &Dir,
-    objects: &BTreeMap<ContentDigest, Vec<u8>>,
-    manifests: &BTreeMap<BatchId, Vec<u8>>,
-) -> Result<StagedColdPublication, StoreError> {
-    let (prior_marker, base) = publication_base(directory)?;
-    let base_reader = ColdHistoryReader::from_parts(directory, base)?;
-
-    let mut new_objects: Vec<(ContentDigest, &Vec<u8>)> = Vec::new();
-    let mut new_manifests: Vec<(BatchId, &Vec<u8>)> = Vec::new();
-    let mut objects_already_present = 0;
-    let mut manifests_already_present = 0;
-    for (digest, bytes) in objects {
-        // `object_bytes` re-proves the stored payload against this exact
-        // content address, so the comparison below is a byte comparison of two
-        // fully reconstructed originals.
-        match base_reader.object_bytes(*digest)? {
-            Some(existing) if existing == *bytes => objects_already_present += 1,
-            Some(_) => {
-                return Err(cold_object_error(
-                    *digest,
-                    "cold history holds different bytes under this content address",
-                ))
-            }
-            None => new_objects.push((*digest, bytes)),
-        }
-    }
-    for (batch_id, bytes) in manifests {
-        match base_reader.manifest_bytes(*batch_id)? {
-            Some(existing) if existing == *bytes => manifests_already_present += 1,
-            Some(_) => {
-                return Err(cold_manifest_conflict(
-                    *batch_id,
-                    "cold history already holds a different canonical manifest under this batch id",
-                ))
-            }
-            None => new_manifests.push((*batch_id, bytes)),
-        }
-    }
-    drop(base_reader);
-
-    let mut session = ColdPublicationSession::new(directory);
-    for (digest, bytes) in new_objects {
-        session.add_object(digest, bytes)?;
-    }
-    for (batch_id, bytes) in new_manifests {
-        session.add_manifest(batch_id, bytes)?;
-    }
-    stage_cold_publication(
-        directory,
-        base,
-        prior_marker,
-        session,
-        objects_already_present,
-        manifests_already_present,
-    )
-}
-
-/// Additively publish exact logical objects and batch manifests into immutable
-/// cold packs and extend the point-addressable locator index.
-///
-/// Canonical bytes, content digests and `BatchId`s are preserved verbatim: this
-/// is a physical relocation below the object model, never a re-encoding. Hot
-/// originals are untouched -- this packet is additive and enables no retirement.
-pub(crate) fn publish_cold_history(
-    store: &ObjectStore,
-    objects: &BTreeMap<ContentDigest, Vec<u8>>,
-    manifests: &BTreeMap<BatchId, Vec<u8>>,
-) -> Result<ColdPublicationOutcome, StoreError> {
-    let directory = cold_directory(store)?;
-    let staged = stage_publication(&directory, objects, manifests)?;
-    install_cold_roots(&directory, staged)
-}
-
-/// Copy the exact hot originals named by these batches into cold history.
-///
-/// This is the production maintenance entry point: it reads each batch's
-/// manifest and every object the manifest requires from the hot namespace and
-/// republishes those exact bytes cold. It performs no deletion itself; P4a's
-/// generation open calls it and then, marker-last, calls
-/// [`ObjectStore::retire_hot_history_for_batches`] for the same covered
-/// batches. P5 owns the never-idle schedule that drives those opens.
-pub(crate) fn publish_cold_history_for_batches(
-    store: &ObjectStore,
-    batches: &BTreeSet<BatchId>,
-) -> Result<ColdPublicationOutcome, StoreError> {
-    let mut objects = BTreeMap::new();
-    let mut manifests = BTreeMap::new();
-    for batch_id in batches {
-        // A recovery generation can cover a batch that an earlier committed
-        // generation has already retired from hot storage. Relocation is
-        // idempotent over the logical archive, not conditional on a duplicate
-        // still existing in the hot namespace.
-        let manifest_bytes = store.resolve_logical_manifest_bytes(*batch_id)?;
-        let manifest = super::OperationBatch::decode(&manifest_bytes)?;
-        for descriptor in manifest.required_objects() {
-            let digest = descriptor.content_digest();
-            if objects.contains_key(&digest) {
-                continue;
-            }
-            objects.insert(digest, store.resolve_logical_object_bytes(digest)?);
-        }
-        manifests.insert(*batch_id, manifest_bytes);
-    }
-    publish_cold_history(store, &objects, &manifests)
-}
-
-/// One logical record recovered from a pack footer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ColdInventoryKey {
-    Object(ContentDigest),
-    Manifest(BatchId),
-}
-
-/// Enumerate every logical record a pack file declares.
-///
-/// This is a maintenance/repair path only. Its cost is the pack inventory, not
-/// the graph or the index: no ordinary read reaches it.
-fn read_pack_inventory(
-    directory: &Dir,
-    pack: Uuid,
-) -> Result<Vec<(ColdInventoryKey, ColdLocatorV1)>, StoreError> {
+fn read_pack_footer(directory: &Dir, pack: Uuid) -> Result<PackInventory, StoreError> {
     let name = pack_filename(pack);
     let mut file = tine_storage::open_file_nofollow(directory, &name)
         .map_err(|error| cold_index_error(format!("cold pack {name}: {error}")))?;
@@ -1355,38 +886,11 @@ fn read_pack_inventory(
             "cold pack {name} footer is not the current schema"
         )));
     }
-    let mut inventory = Vec::new();
-    for entry in footer.entries {
-        let key = match (entry.class, entry.key.len()) {
-            (COLD_CLASS_OBJECT, 32) => {
-                let mut bytes = [0_u8; 32];
-                bytes.copy_from_slice(&entry.key);
-                ColdInventoryKey::Object(ContentDigest::from_bytes(bytes))
-            }
-            (COLD_CLASS_MANIFEST, 16) => {
-                let mut bytes = [0_u8; 16];
-                bytes.copy_from_slice(&entry.key);
-                ColdInventoryKey::Manifest(BatchId::from_uuid(Uuid::from_bytes(bytes)))
-            }
-            // Inner-root descriptors are index bytes, not logical history. A
-            // rebuild derives fresh prefix maps from the object records.
-            (COLD_CLASS_INNER_ROOT, 16) => continue,
-            _ => {
-                return Err(cold_index_error(format!(
-                    "cold pack {name} footer names an unknown record class"
-                )))
-            }
-        };
-        inventory.push((
-            key,
-            ColdLocatorV1 {
-                pack,
-                offset: entry.offset,
-                length: entry.length,
-            },
-        ));
-    }
-    Ok(inventory)
+    Ok(PackInventory {
+        pack,
+        body_len: length - trailer - footer_len,
+        footer,
+    })
 }
 
 fn cold_pack_names(directory: &Dir) -> Result<BTreeSet<Uuid>, StoreError> {
@@ -1412,44 +916,1332 @@ fn cold_pack_names(directory: &Dir) -> Result<BTreeSet<Uuid>, StoreError> {
     Ok(packs)
 }
 
-/// Every logical record the preserved packs declare, resolved to one exact
-/// placement each.
-#[derive(Default)]
-struct ColdInventory {
-    objects: BTreeMap<ContentDigest, ColdLocatorV1>,
-    manifests: BTreeMap<BatchId, ColdLocatorV1>,
-    packs: usize,
+/// Rebuild the pack table from the packs' own footers.
+///
+/// Every pack declares its virtual range and level, so the table is derived
+/// state like every other index object (D-3). Overlapping ranges mean a
+/// superseded pack survived a crash between marker installation and retirement:
+/// the pack at the HIGHER level wins, because it is the successor the marker
+/// already named.
+fn pack_table_from_inventories(inventories: &[PackInventory]) -> PackTableV1 {
+    let mut refs: Vec<PackRefV1> = inventories
+        .iter()
+        .map(|inventory| PackRefV1 {
+            virtual_start: inventory.footer.virtual_start,
+            virtual_end: inventory.footer.virtual_start + inventory.body_len,
+            pack: *inventory.pack.as_bytes(),
+            level: inventory.footer.level,
+        })
+        .collect();
+    // Highest level first at a given start, so a surviving superseded run loses
+    // to the merged successor that covers it.
+    refs.sort_by(|left, right| {
+        left.virtual_start
+            .cmp(&right.virtual_start)
+            .then(right.level.cmp(&left.level))
+    });
+    let mut table = PackTableV1::default();
+    let mut covered = 0_u64;
+    for candidate in refs {
+        if candidate.virtual_start < covered {
+            continue;
+        }
+        covered = candidate.virtual_end;
+        table.packs.push(candidate);
+    }
+    table
 }
 
-/// Enumerate every logical record the preserved packs declare, applying the
-/// same exactness rule as publication to repeated identities.
+// ---------------------------------------------------------------------------
+// The read handle
+// ---------------------------------------------------------------------------
+
+/// Exact physical work one sealed lookup performed.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ColdReadWork {
+    /// Table records loaded (each costs one file open and one digest check).
+    pub(crate) index_nodes: usize,
+    pub(crate) pack_reads: usize,
+}
+
+/// Point access to the sealed archive. Carries no hot-tier authority: the
+/// caller consults this only after the hot original name is absent.
+pub(crate) struct SealedArchiveReader {
+    directory: Dir,
+    root: SealedRootRecord,
+    marker: Vec<u8>,
+    /// The PHYSICAL placement this reader currently believes, refreshed from
+    /// the marker when a named pack has been retired underneath it.
+    ///
+    /// Separate from `root.packs` on purpose: `root` is the LOGICAL generation
+    /// this reader was opened at and never changes, while placement does. A
+    /// tier merge concatenates a contiguous virtual run, so a record's virtual
+    /// offset never moves; only the file it lives in does.
+    packs: RwLock<PackTableV1>,
+    pack_reads: AtomicUsize,
+    table_reads: AtomicUsize,
+}
+
+impl TableBytes for SealedArchiveReader {
+    fn read_table<'a>(
+        &'a self,
+        locator: &TableLocator,
+    ) -> Result<Cow<'a, [u8]>, SealedAcceptedIndexError> {
+        let locator = ColdLocatorV1::from_table_locator(*locator)
+            .map_err(SealedAcceptedIndexError::Corrupt)?;
+        self.table_reads.fetch_add(1, Ordering::Relaxed);
+        self.record_bytes(locator, MAX_COLD_ROOT_BYTES)
+            .map(Cow::Owned)
+            .map_err(SealedAcceptedIndexError::Corrupt)
+    }
+}
+
+impl SealedArchiveReader {
+    /// `Ok(None)` when this archive has never published sealed state. That is
+    /// ordinary absence, never a refusal.
+    pub(crate) fn open(store: &ObjectStore) -> Result<Option<Self>, StoreError> {
+        let Some(directory) = open_existing_sealed_directory(store)? else {
+            return Ok(None);
+        };
+        Self::open_directory(&directory)
+    }
+
+    pub(crate) fn open_directory(directory: &Dir) -> Result<Option<Self>, StoreError> {
+        match read_root_state(directory)? {
+            SealedRootState::NeverInitialized => Ok(None),
+            SealedRootState::RootLostWithPreservedPacks => Err(StoreError::ColdHistoryRootMissing),
+            SealedRootState::Published { marker, root } => Ok(Some(Self {
+                directory: directory
+                    .try_clone()
+                    .map_err(|error| cold_index_error(error.to_string()))?,
+                packs: RwLock::new(root.packs.clone()),
+                root,
+                marker,
+                pack_reads: AtomicUsize::new(0),
+                table_reads: AtomicUsize::new(0),
+            })),
+        }
+    }
+
+    /// Reopen this archive at an OLDER root record.
+    ///
+    /// The marker's pack table is the authority for resolving any locator ever
+    /// published: a tier merge concatenates a contiguous virtual run, so a
+    /// record's virtual offset never moves and an earlier generation's root
+    /// record stays resolvable. That is what lets the two-slot checkpoint
+    /// protocol keep its rollback slot after the sealed marker has advanced.
+    pub(crate) fn open_directory_at(
+        directory: &Dir,
+        root_locator: ColdLocatorV1,
+    ) -> Result<Option<Self>, StoreError> {
+        let Some(current) = Self::open_directory(directory)? else {
+            return Ok(None);
+        };
+        let marker: SealedMarkerV1 =
+            decode_canonical(current.marker_bytes()).map_err(cold_index_error)?;
+        if root_locator
+            == ColdLocatorV1::from_bytes(marker.root_locator).map_err(cold_index_error)?
+        {
+            return Ok(Some(current));
+        }
+        let bytes = current
+            .record_bytes(root_locator, MAX_COLD_ROOT_BYTES)
+            .map_err(cold_index_error)?;
+        let tables =
+            SealedTableRoot::decode(&bytes).map_err(|error| cold_index_error(error.to_string()))?;
+        Ok(Some(Self {
+            root: SealedRootRecord {
+                tables,
+                packs: current.root.packs.clone(),
+            },
+            packs: RwLock::new(current.root.packs.clone()),
+            ..current
+        }))
+    }
+
+    pub(crate) fn root(&self) -> &SealedRootRecord {
+        &self.root
+    }
+
+    pub(crate) fn marker_bytes(&self) -> &[u8] {
+        &self.marker
+    }
+
+    pub(crate) fn work(&self) -> ColdReadWork {
+        ColdReadWork {
+            index_nodes: self.table_reads.load(Ordering::Relaxed),
+            pack_reads: self.pack_reads.load(Ordering::Relaxed),
+        }
+    }
+
+    pub(crate) fn record_bytes(
+        &self,
+        locator: ColdLocatorV1,
+        limit: u64,
+    ) -> Result<Vec<u8>, String> {
+        self.pack_reads.fetch_add(1, Ordering::Relaxed);
+        let believed = self
+            .packs
+            .read()
+            .map_err(|_| "sealed pack table lock is poisoned".to_owned())?
+            .clone();
+        let first = match read_pack_range(&self.directory, &believed, locator, limit) {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) => error,
+        };
+        // Refusal scenario (I-8, I-2): a cut published after this reader opened
+        // MERGED the pack this locator named and retired the original, so the
+        // file is gone while the record is not. The virtual byte space is
+        // stable by construction -- a merge concatenates a contiguous run, so
+        // offsets never move -- which is exactly what makes the CURRENT marker's
+        // pack table able to resolve any locator ever published. Re-reading it
+        // is recovery, not re-authentication (D-3): the record header's digest
+        // still proves the bytes. Without this an honest concurrent reader held
+        // across a cut turns a live record into "cold pack ... is missing".
+        let current = match read_root_state(&self.directory) {
+            Ok(SealedRootState::Published { root, .. }) => root.packs,
+            _ => return Err(first),
+        };
+        if current == believed {
+            return Err(first);
+        }
+        let bytes = read_pack_range(&self.directory, &current, locator, limit)?;
+        if let Ok(mut packs) = self.packs.write() {
+            *packs = current;
+        }
+        Ok(bytes)
+    }
+
+    /// A reader over one domain's table list, newest first.
+    pub(crate) fn tables(&self, domain: TableDomain) -> Result<TableSetReader<'_, Self>, String> {
+        TableSetReader::new(self, domain, self.root.tables.tables_for(domain))
+            .map_err(|error| error.to_string())
+    }
+
+    /// Every live entry of one domain, in key order.
+    ///
+    /// Only enumeration consumers reach this: the identity current-roots
+    /// rebuild and cold-manifest inventory. A point read never does.
+    pub(crate) fn domain_entries(
+        &self,
+        domain: TableDomain,
+    ) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String> {
+        domain_live_entries(self, domain, &self.root.tables)
+    }
+
+    // -- the cold whole-object tier -----------------------------------------
+
+    fn locate_object(&self, digest: ContentDigest) -> Result<Option<ColdLocatorV1>, StoreError> {
+        let tables = self
+            .tables(DOMAIN_COLD_OBJECT)
+            .map_err(|error| cold_object_error(digest, error))?;
+        let Some(value) = tables
+            .get(digest.as_bytes())
+            .map_err(|error| cold_object_error(digest, error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        // `read_table` already counts every table record this lookup loaded;
+        // adding the reader's digest verifications on top counted each one
+        // twice and made `index_nodes` exceed `pack_reads`.
+        ColdLocatorV1::from_value(&value)
+            .map(Some)
+            .map_err(|error| cold_object_error(digest, error))
+    }
+
+    /// Resolve one logical object's exact canonical bytes.
+    pub(crate) fn object_bytes(
+        &self,
+        digest: ContentDigest,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(locator) = self.locate_object(digest)? else {
+            return Ok(None);
+        };
+        let payload = self
+            .record_bytes(locator, MAX_OBJECT_BYTES as u64)
+            .map_err(|error| cold_object_error(digest, error))?;
+        if ContentDigest::of(&payload) != digest {
+            return Err(cold_object_error(
+                digest,
+                "cold record resolves to another logical object",
+            ));
+        }
+        Ok(Some(payload))
+    }
+
+    fn locate_manifest(&self, batch_id: BatchId) -> Result<Option<ColdLocatorV1>, StoreError> {
+        let tables = self
+            .tables(DOMAIN_COLD_MANIFEST)
+            .map_err(|error| cold_manifest_error(batch_id, error))?;
+        let Some(value) = tables
+            .get(batch_id.as_uuid().as_bytes())
+            .map_err(|error| cold_manifest_error(batch_id, error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        ColdLocatorV1::from_value(&value)
+            .map(Some)
+            .map_err(|error| cold_manifest_error(batch_id, error))
+    }
+
+    /// Resolve one batch manifest's exact canonical bytes.
+    pub(crate) fn manifest_bytes(&self, batch_id: BatchId) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(locator) = self.locate_manifest(batch_id)? else {
+            return Ok(None);
+        };
+        self.record_bytes(locator, MAX_MANIFEST_BYTES as u64)
+            .map(Some)
+            .map_err(|error| cold_manifest_error(batch_id, error))
+    }
+
+    /// Enumerate the committed cold manifest membership from the sealed index
+    /// itself. Full-history reconstruction is the one consumer allowed to pay
+    /// this lifetime-sized walk.
+    pub(crate) fn manifest_batch_ids(&self) -> Result<BTreeSet<BatchId>, StoreError> {
+        let entries = self
+            .domain_entries(DOMAIN_COLD_MANIFEST)
+            .map_err(cold_index_error)?;
+        let mut batches = BTreeSet::new();
+        for key in entries.keys() {
+            let bytes: [u8; 16] = key
+                .as_slice()
+                .try_into()
+                .map_err(|_| cold_index_error("cold manifest domain contains a non-BatchId key"))?;
+            if !batches.insert(BatchId::from_uuid(Uuid::from_bytes(bytes))) {
+                return Err(cold_index_error(
+                    "cold manifest domain repeats a BatchId identity",
+                ));
+            }
+        }
+        Ok(batches)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Publication: one cut
+// ---------------------------------------------------------------------------
+
+/// One in-progress pack. Records are appended in memory up to the construction
+/// target and the pack is published as soon as it is sealed, so publication
+/// memory is bounded by that target plus one oversize record.
+struct ColdPackBuilder {
+    pack: Uuid,
+    virtual_start: u64,
+    level: u8,
+    bytes: Vec<u8>,
+    entries: Vec<ColdPackFooterEntryV1>,
+}
+
+impl ColdPackBuilder {
+    fn new(virtual_start: u64, level: u8) -> Self {
+        Self {
+            pack: Uuid::new_v4(),
+            virtual_start,
+            level,
+            bytes: Vec::new(),
+            entries: Vec::new(),
+        }
+    }
+
+    fn append(&mut self, class: u8, key: Vec<u8>, payload: &[u8]) -> Result<ColdLocatorV1, String> {
+        let offset = self.bytes.len() as u64;
+        self.bytes
+            .extend_from_slice(ContentDigest::of(payload).as_bytes());
+        self.bytes
+            .extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        self.bytes.extend_from_slice(payload);
+        let length = self.bytes.len() as u64 - offset;
+        if self.bytes.len() as u64 > MAX_COLD_PACK_BYTES {
+            return Err("cold pack exceeds its physical record limit".into());
+        }
+        let locator = ColdLocatorV1 {
+            offset: self.virtual_start + offset,
+            length,
+        };
+        self.entries.push(ColdPackFooterEntryV1 {
+            class,
+            key,
+            offset: locator.offset,
+            length,
+        });
+        Ok(locator)
+    }
+
+    /// Copy one already-encoded record range verbatim. Used only by a pack
+    /// merge, which must preserve every virtual offset.
+    fn append_verbatim(&mut self, entry: &ColdPackFooterEntryV1, raw: &[u8]) -> Result<(), String> {
+        if self.virtual_start + self.bytes.len() as u64 != entry.offset {
+            return Err("pack merge would move a record's virtual offset".into());
+        }
+        if raw.len() as u64 != entry.length {
+            return Err("pack merge record length differs from its footer entry".into());
+        }
+        self.bytes.extend_from_slice(raw);
+        self.entries.push(entry.clone());
+        Ok(())
+    }
+
+    fn body_len(&self) -> u64 {
+        self.bytes.len() as u64
+    }
+
+    fn finish(mut self) -> Result<(PackRefV1, Vec<u8>), String> {
+        let body_len = self.body_len();
+        let footer = encode_canonical(&ColdPackFooterV1 {
+            schema: COLD_SCHEMA_VERSION,
+            virtual_start: self.virtual_start,
+            level: self.level,
+            entries: self.entries,
+        })?;
+        if footer.len() as u64 > MAX_COLD_PACK_FOOTER_BYTES {
+            return Err("cold pack footer exceeds its physical limit".into());
+        }
+        self.bytes.extend_from_slice(&footer);
+        self.bytes
+            .extend_from_slice(&(footer.len() as u64).to_be_bytes());
+        self.bytes.extend_from_slice(&COLD_PACK_MAGIC);
+        Ok((
+            PackRefV1 {
+                virtual_start: self.virtual_start,
+                virtual_end: self.virtual_start + body_len,
+                pack: *self.pack.as_bytes(),
+                level: self.level,
+            },
+            self.bytes,
+        ))
+    }
+}
+
+/// Every live entry of one domain, in key order, over one root's table list.
 ///
-/// This is a maintenance/repair path only. Its cost is the pack inventory, not
-/// the graph or the index: no ordinary read reaches it. An object appearing at
-/// several placements is bound by its content address, which each ranged read
-/// re-proves, so any placement is the same bytes. A `BatchId` appearing twice is
-/// the same logical manifest only if its *bytes* match; a genuine conflict is
-/// refused by name rather than resolved by pack ordering.
-fn collect_cold_inventory(directory: &Dir) -> Result<ColdInventory, StoreError> {
-    let mut inventory = ColdInventory::default();
+/// Only enumeration consumers reach this: the identity current-roots rebuild
+/// and the cold-manifest inventory. A point read never does.
+fn domain_live_entries<Provider: TableBytes>(
+    provider: &Provider,
+    domain: TableDomain,
+    root: &SealedTableRoot,
+) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String> {
+    let mut live: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut shadowed: BTreeSet<Vec<u8>> = BTreeSet::new();
+    // Newest first: the first table that names a key decides it.
+    for table in root.tables_for(domain) {
+        let bytes = provider
+            .read_table(&table.locator)
+            .map_err(|error| error.to_string())?;
+        let view = TableView::decode(domain, &bytes).map_err(|error| error.to_string())?;
+        for (key, value) in view.iter() {
+            if shadowed.contains(key) {
+                continue;
+            }
+            shadowed.insert(key.to_vec());
+            if !domain.is_tombstone(value) {
+                live.insert(key.to_vec(), value.to_vec());
+            }
+        }
+    }
+    Ok(live)
+}
+
+/// Exactly where a publication may be interrupted.
+///
+/// One variant per durable boundary in `publish_with_kill`, in protocol order.
+/// A crash at any of these must leave the PREDECESSOR openable and a retry
+/// able to complete: that is what marker-last publication buys (I-2).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SealedCutKill {
+    /// Payload packs on disk; no table, no root, no marker.
+    AfterPayloadPacks,
+    /// Delta/merged tables on disk; no root record, no marker.
+    AfterTables,
+    /// The root record is on disk; the marker still names the predecessor.
+    AfterRootRecord,
+    /// The marker names this cut; superseded packs are not yet retired.
+    AfterMarkerBeforeRetire,
+    /// A tier merge published its merged pack; the pack table that would name
+    /// it is not durable, the inputs are not retired, and the marker still
+    /// names the predecessor. The merged pack is unreferenced residue.
+    MidPackTierMerge,
+}
+
+/// What one published cut cost, in the terms I-14 and I-25 are stated in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SealedCutWork {
+    /// Where this cut's root record landed. A checkpoint generation records
+    /// this so its rollback slot keeps resolving after the marker advances.
+    pub(crate) root_locator: ColdLocatorV1,
+    pub(crate) root_digest: ContentDigest,
+    pub(crate) index_bytes: u64,
+    pub(crate) payload_bytes: u64,
+    pub(crate) packs_published: usize,
+    pub(crate) packs_retired: usize,
+    pub(crate) tables_written: usize,
+    pub(crate) tables_merged: usize,
+    pub(crate) merged_pack_bytes: u64,
+    pub(crate) files_written: usize,
+}
+
+impl Default for SealedCutWork {
+    fn default() -> Self {
+        Self {
+            root_locator: ColdLocatorV1::default(),
+            // A cut that has published nothing has no root record; this is the
+            // digest of the empty byte string, never a claimed root.
+            root_digest: ContentDigest::of(&[]),
+            index_bytes: 0,
+            payload_bytes: 0,
+            packs_published: 0,
+            packs_retired: 0,
+            tables_written: 0,
+            tables_merged: 0,
+            merged_pack_bytes: 0,
+            files_written: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ColdPublicationOutcome {
+    pub(crate) objects_published: usize,
+    pub(crate) manifests_published: usize,
+    pub(crate) objects_already_present: usize,
+    pub(crate) manifests_already_present: usize,
+    pub(crate) packs_published: usize,
+}
+
+/// One sealed cut: new payload records, new domain entries, one new pack, one
+/// new root record, one marker swap.
+///
+/// Everything staged is unreferenced residue until the marker installs. A crash
+/// before that leaves the predecessor root — or no root at all — exactly as
+/// authoritative as it was (I-2, T5).
+pub(crate) struct SealedCut {
+    directory: Dir,
+    base: SealedRootRecord,
+    prior_marker: Option<Vec<u8>>,
+    builder: ColdPackBuilder,
+    published: Vec<PackRefV1>,
+    entries: BTreeMap<u8, BTreeMap<Vec<u8>, Vec<u8>>>,
+    /// Records staged by THIS cut, so a builder can read its own writes before
+    /// the pack is sealed.
+    staged_records: BTreeMap<ColdLocatorV1, Vec<u8>>,
+    work: SealedCutWork,
+    table_reads: AtomicUsize,
+}
+
+impl SealedCut {
+    /// Table records this cut has read, in the unit I-14 counts: one table
+    /// record is one digest-checked read, staged or packed.
+    pub(crate) fn index_reads(&self) -> u64 {
+        self.table_reads.load(Ordering::Relaxed) as u64
+    }
+}
+
+impl TableBytes for SealedCut {
+    fn read_table<'a>(
+        &'a self,
+        locator: &TableLocator,
+    ) -> Result<Cow<'a, [u8]>, SealedAcceptedIndexError> {
+        let locator = ColdLocatorV1::from_table_locator(*locator)
+            .map_err(SealedAcceptedIndexError::Corrupt)?;
+        self.table_reads.fetch_add(1, Ordering::Relaxed);
+        self.read_staged_or_packed(locator)
+            .map(Cow::Owned)
+            .map_err(|error| SealedAcceptedIndexError::Corrupt(error.to_string()))
+    }
+}
+
+impl SealedCut {
+    pub(crate) fn open(directory: &Dir) -> Result<Self, StoreError> {
+        let (prior_marker, base) = match read_root_state(directory)? {
+            SealedRootState::Published { marker, root } => (Some(marker), root),
+            SealedRootState::NeverInitialized => (None, SealedRootRecord::default()),
+            // Publishing a fresh empty-based root would silently orphan old
+            // history. Repair is explicit.
+            SealedRootState::RootLostWithPreservedPacks => {
+                return Err(StoreError::ColdHistoryRootMissing)
+            }
+        };
+        // Retire residue from an interrupted predecessor cut BEFORE allocating
+        // this cut's virtual range. A pack the marker does not name is either
+        // an unfinished cut's orphan or a merged pack's already-superseded
+        // source; leaving an orphan behind would let this cut allocate the same
+        // virtual range, and a later footer-only repair could then not tell the
+        // two apart.
+        if prior_marker.is_some() {
+            retire_unreferenced_packs(directory, &base.packs)?;
+        }
+        Self::over(directory, base, prior_marker)
+    }
+
+    /// Start a cut over an explicit base. Repair uses this with an empty base.
+    fn over(
+        directory: &Dir,
+        base: SealedRootRecord,
+        prior_marker: Option<Vec<u8>>,
+    ) -> Result<Self, StoreError> {
+        let next_virtual = base.packs.next_virtual();
+        Ok(Self {
+            directory: directory
+                .try_clone()
+                .map_err(|error| cold_index_error(error.to_string()))?,
+            base,
+            prior_marker,
+            builder: ColdPackBuilder::new(next_virtual, 0),
+            published: Vec::new(),
+            entries: BTreeMap::new(),
+            staged_records: BTreeMap::new(),
+            work: SealedCutWork::default(),
+            table_reads: AtomicUsize::new(0),
+        })
+    }
+
+    pub(crate) fn base_root(&self) -> &SealedRootRecord {
+        &self.base
+    }
+
+    /// Append one payload record. Its bytes are durable when the pack that
+    /// holds it is sealed, which always happens before the marker installs.
+    pub(crate) fn add_record(
+        &mut self,
+        class: u8,
+        key: Vec<u8>,
+        payload: &[u8],
+    ) -> Result<ColdLocatorV1, StoreError> {
+        let locator = self
+            .builder
+            .append(class, key, payload)
+            .map_err(cold_index_error)?;
+        self.staged_records.insert(locator, payload.to_vec());
+        if class == COLD_CLASS_TABLE || class == COLD_CLASS_ROOT {
+            self.work.index_bytes = self.work.index_bytes.saturating_add(locator.length);
+        } else {
+            self.work.payload_bytes = self.work.payload_bytes.saturating_add(locator.length);
+        }
+        if self.builder.body_len() as usize >= COLD_PACK_TARGET_BYTES {
+            self.seal_current_pack()?;
+        }
+        Ok(locator)
+    }
+
+    /// Append one variable-length sealed record, addressed by its content
+    /// digest. The single entry point for causal, status, identity-value and
+    /// capsule records.
+    pub(crate) fn add_sealed_record(
+        &mut self,
+        payload: &[u8],
+    ) -> Result<ColdLocatorV1, StoreError> {
+        let digest = ContentDigest::of(payload);
+        self.add_record(COLD_CLASS_RECORD, digest.as_bytes().to_vec(), payload)
+    }
+
+    /// Stage one domain entry. A later `put` of the same key in one cut wins.
+    pub(crate) fn put(
+        &mut self,
+        domain: TableDomain,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), String> {
+        if key.len() != domain.key_len as usize || value.len() != domain.value_len as usize {
+            return Err("sealed cut entry width does not match its domain".into());
+        }
+        self.entries
+            .entry(domain.id)
+            .or_default()
+            .insert(key.to_vec(), value.to_vec());
+        Ok(())
+    }
+
+    /// Stage one removal. Only a tombstone domain may express one.
+    pub(crate) fn remove(&mut self, domain: TableDomain, key: &[u8]) -> Result<(), String> {
+        let tombstone = domain
+            .tombstone_value()
+            .ok_or("sealed cut removes a key from a domain with no tombstone")?;
+        self.put(domain, key, &tombstone)
+    }
+
+    /// This cut's own staged value for a key, if it has one.
+    pub(crate) fn staged(&self, domain: TableDomain, key: &[u8]) -> Option<&[u8]> {
+        self.entries
+            .get(&domain.id)
+            .and_then(|entries| entries.get(key))
+            .map(Vec::as_slice)
+            .filter(|value| !domain.is_tombstone(value))
+    }
+
+    fn seal_current_pack(&mut self) -> Result<(), StoreError> {
+        if self.builder.entries.is_empty() {
+            return Ok(());
+        }
+        let next_virtual = self.builder.virtual_start + self.builder.body_len();
+        let builder = std::mem::replace(&mut self.builder, ColdPackBuilder::new(next_virtual, 0));
+        let (reference, bytes) = builder.finish().map_err(cold_index_error)?;
+        publish_pack(&self.directory, reference, &bytes)?;
+        self.published.push(reference);
+        self.work.packs_published += 1;
+        self.work.files_written += 1;
+        Ok(())
+    }
+
+    /// Publish this cut: delta and merged tables, the root record, the marker
+    /// last, and only then the retirement of superseded packs.
+    pub(crate) fn publish(self) -> Result<SealedCutWork, StoreError> {
+        self.publish_with_kill(None)
+    }
+
+    /// Publish, optionally stopping at one exact point in the protocol.
+    ///
+    /// The kill points are the crash matrix: every prefix of this sequence
+    /// must leave a directory that opens at the PREDECESSOR and that a retry
+    /// can complete (I-2). They exist only under `cfg(test)` callers; the
+    /// `None` path is the production one and is byte-identical to it.
+    pub(crate) fn publish_with_kill(
+        mut self,
+        kill: Option<SealedCutKill>,
+    ) -> Result<SealedCutWork, StoreError> {
+        // 1. Payload records durable first. Tables may only name durable bytes.
+        self.seal_current_pack()?;
+        if kill == Some(SealedCutKill::AfterPayloadPacks) {
+            return Ok(self.work);
+        }
+
+        // 2. One delta table per touched domain, plus at most one level merge
+        //    per domain per cut.
+        let mut domain_roots: BTreeMap<u8, Vec<TableRef>> = self
+            .base
+            .tables
+            .domains
+            .iter()
+            .map(|domain| (domain.domain_id, domain.tables.clone()))
+            .collect();
+        let touched: Vec<u8> = self.entries.keys().copied().collect();
+        for domain_id in touched {
+            let domain = domain_by_id(domain_id)
+                .ok_or_else(|| cold_index_error("sealed cut names an unknown domain"))?;
+            let entries = self.entries.remove(&domain_id).unwrap_or_default();
+            if entries.is_empty() {
+                continue;
+            }
+            let mut builder = TableBuilder::new(domain);
+            for (key, value) in &entries {
+                builder
+                    .insert(key, value)
+                    .map_err(|error| cold_index_error(error.to_string()))?;
+            }
+            let count = builder.len() as u64;
+            let bytes = builder
+                .finish()
+                .map_err(|error| cold_index_error(error.to_string()))?;
+            let locator = self.add_record(
+                COLD_CLASS_TABLE,
+                ContentDigest::of(&bytes).as_bytes().to_vec(),
+                &bytes,
+            )?;
+            self.work.tables_written += 1;
+            let delta = TableRef {
+                locator: locator.table_locator(),
+                level: 0,
+                count,
+            };
+            let current = domain_roots.remove(&domain_id).unwrap_or_default();
+            let cut = TierPlan::next_cut(&current, delta);
+            let mut next = cut.retain;
+            if let Some(level) = cut.merged_level {
+                // `merge_tables` keeps tombstones; `compact_tables` drops them
+                // and is valid ONLY when the inputs are every table of the
+                // domain, because an older table may still hold the value a
+                // tombstone hides.
+                let every_table = next.is_empty();
+                let mut raw = Vec::with_capacity(cut.merge.len());
+                for table in &cut.merge {
+                    let table_locator = ColdLocatorV1::from_table_locator(table.locator)
+                        .map_err(cold_index_error)?;
+                    raw.push(self.read_staged_or_packed(table_locator)?);
+                }
+                let views: Vec<TableView<'_>> = raw
+                    .iter()
+                    .map(|bytes| TableView::decode(domain, bytes))
+                    .collect::<Result<_, _>>()
+                    .map_err(|error| cold_index_error(error.to_string()))?;
+                let merged = if every_table {
+                    compact_tables(domain, &views)
+                } else {
+                    merge_tables(domain, &views)
+                }
+                .map_err(|error| cold_index_error(error.to_string()))?;
+                let merged_count = TableView::decode(domain, &merged)
+                    .map_err(|error| cold_index_error(error.to_string()))?
+                    .len() as u64;
+                let merged_locator = self.add_record(
+                    COLD_CLASS_TABLE,
+                    ContentDigest::of(&merged).as_bytes().to_vec(),
+                    &merged,
+                )?;
+                self.work.tables_merged += 1;
+                self.work.tables_written += 1;
+                // The merged table is NEWER than every table already at its
+                // level, so it goes at the FRONT before canonical ordering.
+                next.insert(
+                    0,
+                    TableRef {
+                        locator: merged_locator.table_locator(),
+                        level,
+                        count: merged_count,
+                    },
+                );
+            }
+            TierPlan::canonical_order(&mut next);
+            domain_roots.insert(domain_id, next);
+        }
+
+        // 3. Seal the table pack, so the root record names durable table bytes.
+        self.seal_current_pack()?;
+        if kill == Some(SealedCutKill::AfterTables) {
+            return Ok(self.work);
+        }
+
+        // 4. The root record: every domain's table list, and nothing else. The
+        //    pack table is the marker's, because it is what resolves this very
+        //    record's locator.
+        let mut domains: Vec<SealedTableDomainRoot> = domain_roots
+            .into_iter()
+            .filter(|(_, tables)| !tables.is_empty())
+            .map(|(domain_id, tables)| SealedTableDomainRoot { domain_id, tables })
+            .collect();
+        domains.sort_by_key(|domain| domain.domain_id);
+        let tables = SealedTableRoot { domains };
+        let root_bytes = tables
+            .encode()
+            .map_err(|error| cold_index_error(error.to_string()))?;
+        let table_root_digest = tables
+            .root_digest()
+            .map_err(|error| cold_index_error(error.to_string()))?;
+        let root_locator = self.add_record(COLD_CLASS_ROOT, Vec::new(), &root_bytes)?;
+        self.work.root_locator = root_locator;
+        self.work.root_digest = table_root_digest;
+        self.seal_current_pack()?;
+
+        // 5. The pack table: this cut's new packs, then at most one level
+        //    merge. A merge only concatenates contiguous bodies, so the root
+        //    locator resolves whether or not its own pack was merged.
+        let mut packs = self.base.packs.clone();
+        packs.packs.extend(self.published.iter().copied());
+        packs.packs.sort_by_key(|pack| pack.virtual_start);
+        packs.validate().map_err(cold_index_error)?;
+        let Some((packs, retired)) = self.merge_pack_level(packs, kill)? else {
+            return Ok(self.work);
+        };
+        if kill == Some(SealedCutKill::AfterRootRecord) {
+            return Ok(self.work);
+        }
+
+        // 6. Marker last. Until this line the whole cut is residue.
+        let marker = encode_canonical(&SealedMarkerV1 {
+            schema: COLD_SCHEMA_VERSION,
+            packs,
+            root_locator: root_locator.to_bytes(),
+            table_root_digest,
+        })
+        .map_err(cold_index_error)?;
+        install_marker(&self.directory, self.prior_marker.as_deref(), &marker)?;
+        self.work.files_written += 1;
+        if kill == Some(SealedCutKill::AfterMarkerBeforeRetire) {
+            return Ok(self.work);
+        }
+
+        // 7. Publish-new-before-retire-old: superseded packs are removed only
+        //    after the marker names their successor. A crash here leaves an
+        //    unreferenced pack, which the next open ignores and the next cut
+        //    may retire.
+        for pack in &retired {
+            retire_pack(&self.directory, pack.pack_id());
+        }
+        self.work.packs_retired = retired.len();
+        Ok(self.work)
+    }
+
+    /// This cut's view of one domain entry: what this cut staged, else what
+    /// the base root holds. `None` is genuine absence, tombstone included.
+    pub(crate) fn get(&self, domain: TableDomain, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        if let Some(staged) = self.entries.get(&domain.id).and_then(|rows| rows.get(key)) {
+            if domain.is_tombstone(staged) {
+                return Ok(None);
+            }
+            return Ok(Some(staged.clone()));
+        }
+        self.base_tables(domain)?
+            .get(key)
+            .map_err(|error| error.to_string())
+    }
+
+    /// The greatest key at or below `key`, over the same two layers.
+    pub(crate) fn predecessor(
+        &self,
+        domain: TableDomain,
+        key: &[u8],
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>, String> {
+        let base = self
+            .base_tables(domain)?
+            .predecessor(key)
+            .map_err(|error| error.to_string())?;
+        let staged = self
+            .entries
+            .get(&domain.id)
+            .and_then(|rows| {
+                rows.range::<[u8], _>((std::ops::Bound::Unbounded, std::ops::Bound::Included(key)))
+                    .next_back()
+            })
+            .filter(|(_, value)| !domain.is_tombstone(value))
+            .map(|(key, value)| (key.clone(), value.clone()));
+        Ok(match (base, staged) {
+            (Some(base), Some(staged)) => Some(if staged.0 >= base.0 { staged } else { base }),
+            (Some(base), None) => Some(base),
+            (None, staged) => staged,
+        })
+    }
+
+    /// Every live entry this cut and its base agree on, for one domain.
+    pub(crate) fn domain_entries(
+        &self,
+        domain: TableDomain,
+    ) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String> {
+        let mut live = domain_live_entries(self, domain, &self.base.tables)?;
+        if let Some(rows) = self.entries.get(&domain.id) {
+            for (key, value) in rows {
+                if domain.is_tombstone(value) {
+                    live.remove(key);
+                } else {
+                    live.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        Ok(live)
+    }
+
+    fn base_tables(&self, domain: TableDomain) -> Result<TableSetReader<'_, Self>, String> {
+        TableSetReader::new(self, domain, self.base.tables.tables_for(domain))
+            .map_err(|error| error.to_string())
+    }
+
+    /// Read one record's bytes, whether it is a predecessor's, one this cut
+    /// has already sealed, or one still in the open builder.
+    pub(crate) fn read_staged_or_packed(
+        &self,
+        locator: ColdLocatorV1,
+    ) -> Result<Vec<u8>, StoreError> {
+        if let Some(bytes) = self.staged_records.get(&locator) {
+            return Ok(bytes.clone());
+        }
+        let mut packs = self.base.packs.clone();
+        packs.packs.extend(self.published.iter().copied());
+        packs.packs.sort_by_key(|pack| pack.virtual_start);
+        read_pack_range(&self.directory, &packs, locator, MAX_COLD_ROOT_BYTES)
+            .map_err(cold_index_error)
+    }
+
+    /// Merge one pack level, if one has reached the fanout.
+    ///
+    /// Same-level packs are always a contiguous virtual run — new packs are
+    /// appended at level 0 and a merge replaces a contiguous run with one pack
+    /// of the next level covering the identical range — so the merged pack is a
+    /// byte-for-byte concatenation of its inputs' bodies and every record keeps
+    /// its virtual offset.
+    /// `Ok(None)` means only the `MidPackTierMerge` crash fixture: the merged
+    /// pack is durable and nothing names it yet.
+    fn merge_pack_level(
+        &mut self,
+        packs: PackTableV1,
+        kill: Option<SealedCutKill>,
+    ) -> Result<Option<(PackTableV1, Vec<PackRefV1>)>, StoreError> {
+        let mut levels: Vec<u8> = packs.packs.iter().map(|pack| pack.level).collect();
+        levels.sort_unstable();
+        levels.dedup();
+        for level in levels {
+            let at_level: Vec<PackRefV1> = packs
+                .packs
+                .iter()
+                .copied()
+                .filter(|pack| pack.level == level)
+                .collect();
+            if at_level.len() < SEALED_TIER_FANOUT {
+                continue;
+            }
+            let run = &at_level[..SEALED_TIER_FANOUT];
+            if run
+                .windows(2)
+                .any(|pair| pair[0].virtual_end != pair[1].virtual_start)
+            {
+                // Never merge a non-contiguous run: it would move offsets.
+                continue;
+            }
+            let mut builder = ColdPackBuilder::new(run[0].virtual_start, level.saturating_add(1));
+            for reference in run {
+                let inventory = read_pack_footer(&self.directory, reference.pack_id())?;
+                let body =
+                    read_pack_body(&self.directory, reference.pack_id(), inventory.body_len)?;
+                for entry in &inventory.footer.entries {
+                    let start = (entry.offset - reference.virtual_start) as usize;
+                    let end = start + entry.length as usize;
+                    let raw = body
+                        .get(start..end)
+                        .ok_or_else(|| cold_index_error("pack footer entry is outside its body"))?;
+                    builder
+                        .append_verbatim(entry, raw)
+                        .map_err(cold_index_error)?;
+                }
+            }
+            let (reference, bytes) = builder.finish().map_err(cold_index_error)?;
+            if reference.virtual_end != run[SEALED_TIER_FANOUT - 1].virtual_end {
+                return Err(cold_index_error(
+                    "merged pack does not cover its inputs' virtual range",
+                ));
+            }
+            publish_pack(&self.directory, reference, &bytes)?;
+            self.work.packs_published += 1;
+            self.work.files_written += 1;
+            self.work.merged_pack_bytes = self
+                .work
+                .merged_pack_bytes
+                .saturating_add(reference.virtual_end - reference.virtual_start);
+            if kill == Some(SealedCutKill::MidPackTierMerge) {
+                return Ok(None);
+            }
+            let retired: Vec<PackRefV1> = run.to_vec();
+            let mut next = PackTableV1::default();
+            for pack in &packs.packs {
+                if retired.contains(pack) {
+                    if pack.virtual_start == reference.virtual_start {
+                        next.packs.push(reference);
+                    }
+                    continue;
+                }
+                next.packs.push(*pack);
+            }
+            next.packs.sort_by_key(|pack| pack.virtual_start);
+            next.validate().map_err(cold_index_error)?;
+            return Ok(Some((next, retired)));
+        }
+        Ok(Some((packs, Vec::new())))
+    }
+}
+
+/// Delete every pack the given table does not name.
+fn retire_unreferenced_packs(directory: &Dir, packs: &PackTableV1) -> Result<(), StoreError> {
+    let referenced: BTreeSet<Uuid> = packs.packs.iter().map(PackRefV1::pack_id).collect();
     for pack in cold_pack_names(directory)? {
-        inventory.packs += 1;
-        for (key, locator) in read_pack_inventory(directory, pack)? {
-            match key {
-                ColdInventoryKey::Object(digest) => {
-                    let payload = read_pack_range(directory, locator, MAX_OBJECT_BYTES as u64)
-                        .map_err(|error| cold_object_error(digest, error))?;
+        if !referenced.contains(&pack) {
+            retire_pack(directory, pack);
+        }
+    }
+    Ok(())
+}
+
+fn publish_pack(directory: &Dir, reference: PackRefV1, bytes: &[u8]) -> Result<(), StoreError> {
+    tine_storage::DurableDirectoryPublication::open(directory)
+        .map_err(filesystem_error_without_collision)?
+        .publish_new_exact_single_writer(&pack_filename(reference.pack_id()), bytes)
+        .map_err(filesystem_error_without_collision)
+}
+
+fn read_pack_body(directory: &Dir, pack: Uuid, body_len: u64) -> Result<Vec<u8>, StoreError> {
+    let name = pack_filename(pack);
+    let mut file = tine_storage::open_file_nofollow(directory, &name)
+        .map_err(|error| cold_index_error(format!("cold pack {name}: {error}")))?;
+    let mut body = vec![0_u8; body_len as usize];
+    file.read_exact(&mut body)
+        .map_err(|error| cold_index_error(error.to_string()))?;
+    Ok(body)
+}
+
+/// Best-effort retirement of a pack the marker no longer names.
+fn retire_pack(directory: &Dir, pack: Uuid) {
+    let _ = directory.remove_file(pack_filename(pack));
+}
+
+fn install_marker(directory: &Dir, prior: Option<&[u8]>, bytes: &[u8]) -> Result<(), StoreError> {
+    if bytes.len() as u64 > MAX_SEALED_MARKER_BYTES {
+        return Err(cold_index_error(
+            "sealed root marker exceeds its fixed codec size",
+        ));
+    }
+    let publication = tine_storage::DurableDirectoryPublication::open(directory)
+        .map_err(filesystem_error_without_collision)?;
+    match prior {
+        Some(existing) if existing == bytes => Ok(()),
+        Some(existing) => publication
+            .replace_exact(SEALED_ROOT_MARKER, existing, bytes)
+            .map_err(filesystem_error_without_collision),
+        None => publication
+            .publish_new_exact_single_writer(SEALED_ROOT_MARKER, bytes)
+            .map_err(filesystem_error_without_collision),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The cold whole-object tier, on top of the cut
+// ---------------------------------------------------------------------------
+
+/// Additively publish exact logical objects and batch manifests into the sealed
+/// archive.
+///
+/// Canonical bytes, content digests and `BatchId`s are preserved verbatim: this
+/// is a physical relocation below the object model, never a re-encoding.
+pub(crate) fn publish_cold_history(
+    store: &ObjectStore,
+    objects: &BTreeMap<ContentDigest, Vec<u8>>,
+    manifests: &BTreeMap<BatchId, Vec<u8>>,
+) -> Result<ColdPublicationOutcome, StoreError> {
+    let directory = sealed_directory(store)?;
+    publish_cold_history_into(&directory, objects, manifests)
+}
+
+pub(crate) fn publish_cold_history_into(
+    directory: &Dir,
+    objects: &BTreeMap<ContentDigest, Vec<u8>>,
+    manifests: &BTreeMap<BatchId, Vec<u8>>,
+) -> Result<ColdPublicationOutcome, StoreError> {
+    let mut outcome = ColdPublicationOutcome::default();
+    // A repeated identity is resolved by BYTES, not by name presence. The whole
+    // exactness pass runs before a single record is appended, so a conflict
+    // leaves no residue at all.
+    let mut new_objects: Vec<(ContentDigest, &Vec<u8>)> = Vec::new();
+    let mut new_manifests: Vec<(BatchId, &Vec<u8>)> = Vec::new();
+    if let Some(reader) = SealedArchiveReader::open_directory(directory)? {
+        for (digest, bytes) in objects {
+            match reader.object_bytes(*digest)? {
+                Some(existing) if existing == *bytes => outcome.objects_already_present += 1,
+                Some(_) => {
+                    return Err(cold_object_error(
+                        *digest,
+                        "cold history holds different bytes under this content address",
+                    ))
+                }
+                None => new_objects.push((*digest, bytes)),
+            }
+        }
+        for (batch_id, bytes) in manifests {
+            match reader.manifest_bytes(*batch_id)? {
+                Some(existing) if existing == *bytes => outcome.manifests_already_present += 1,
+                Some(_) => return Err(cold_manifest_conflict(
+                    *batch_id,
+                    "cold history already holds a different canonical manifest under this batch id",
+                )),
+                None => new_manifests.push((*batch_id, bytes)),
+            }
+        }
+    } else {
+        new_objects = objects
+            .iter()
+            .map(|(digest, bytes)| (*digest, bytes))
+            .collect();
+        new_manifests = manifests
+            .iter()
+            .map(|(batch_id, bytes)| (*batch_id, bytes))
+            .collect();
+    }
+    if new_objects.is_empty() && new_manifests.is_empty() {
+        return Ok(outcome);
+    }
+    let mut cut = SealedCut::open(directory)?;
+    for (digest, payload) in new_objects {
+        add_cold_object(&mut cut, digest, payload)?;
+        outcome.objects_published += 1;
+    }
+    for (batch_id, payload) in new_manifests {
+        add_cold_manifest(&mut cut, batch_id, payload)?;
+        outcome.manifests_published += 1;
+    }
+    let work = cut.publish()?;
+    outcome.packs_published = work.packs_published;
+    Ok(outcome)
+}
+
+fn add_cold_object(
+    cut: &mut SealedCut,
+    digest: ContentDigest,
+    payload: &[u8],
+) -> Result<(), StoreError> {
+    if payload.len() > MAX_OBJECT_BYTES {
+        return Err(cold_object_error(
+            digest,
+            "logical object exceeds the current object byte limit",
+        ));
+    }
+    if ContentDigest::of(payload) != digest {
+        return Err(cold_object_error(
+            digest,
+            "logical object bytes differ from their content address",
+        ));
+    }
+    let locator = cut.add_record(COLD_CLASS_OBJECT, digest.as_bytes().to_vec(), payload)?;
+    cut.put(DOMAIN_COLD_OBJECT, digest.as_bytes(), &locator.to_bytes())
+        .map_err(cold_index_error)
+}
+
+fn add_cold_manifest(
+    cut: &mut SealedCut,
+    batch_id: BatchId,
+    payload: &[u8],
+) -> Result<(), StoreError> {
+    if payload.len() > MAX_MANIFEST_BYTES {
+        return Err(cold_manifest_error(
+            batch_id,
+            "logical manifest exceeds the current manifest byte limit",
+        ));
+    }
+    // A `BatchId` is an identity, not a content address, so bind these exact
+    // bytes to it before they are packed under that key.
+    let manifest = super::OperationBatch::decode(payload)?;
+    if manifest.batch_id() != batch_id {
+        return Err(cold_manifest_conflict(
+            batch_id,
+            "these canonical manifest bytes belong to another batch id",
+        ));
+    }
+    let key = batch_id.as_uuid().into_bytes();
+    let locator = cut.add_record(COLD_CLASS_MANIFEST, key.to_vec(), payload)?;
+    cut.put(DOMAIN_COLD_MANIFEST, &key, &locator.to_bytes())
+        .map_err(cold_index_error)
+}
+
+/// Copy the exact hot originals named by these batches into cold history.
+pub(crate) fn publish_cold_history_for_batches(
+    store: &ObjectStore,
+    batches: &BTreeSet<BatchId>,
+) -> Result<ColdPublicationOutcome, StoreError> {
+    let mut objects = BTreeMap::new();
+    let mut manifests = BTreeMap::new();
+    for batch_id in batches {
+        // A recovery generation can cover a batch that an earlier committed
+        // generation has already retired from hot storage. Relocation is
+        // idempotent over the logical archive, not conditional on a duplicate
+        // still existing in the hot namespace.
+        let manifest_bytes = store.resolve_logical_manifest_bytes(*batch_id)?;
+        let manifest = super::OperationBatch::decode(&manifest_bytes)?;
+        for descriptor in manifest.required_objects() {
+            let digest = descriptor.content_digest();
+            if objects.contains_key(&digest) {
+                continue;
+            }
+            objects.insert(digest, store.resolve_logical_object_bytes(digest)?);
+        }
+        manifests.insert(*batch_id, manifest_bytes);
+    }
+    publish_cold_history(store, &objects, &manifests)
+}
+
+// ---------------------------------------------------------------------------
+// Repair
+// ---------------------------------------------------------------------------
+
+/// One logical record recovered from a pack footer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ColdInventoryKey {
+    Object(ContentDigest),
+    Manifest(BatchId),
+}
+
+/// The result of an explicit sealed-root repair.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ColdRepairOutcome {
+    /// True only when a damaged state was actually recovered.
+    pub(crate) repaired: bool,
+    pub(crate) packs_scanned: usize,
+    pub(crate) objects_recovered: usize,
+    pub(crate) manifests_recovered: usize,
+    pub(crate) domains_rebuilt: usize,
+}
+
+/// Rebuild EVERY domain's tables from the pack footers alone.
+///
+/// This is the explicit damaged-state path named by
+/// [`StoreError::ColdHistoryRootMissing`], and the only place the sealed
+/// archive is enumerated on a recovery. It reuses the surviving records exactly
+/// where they already are — no byte is rewritten, relocated or re-encoded — and
+/// rebuilds only the derived index (D-3): one sort per domain, one fresh root,
+/// one fresh marker. A healthy or never-initialized archive is left untouched.
+///
+/// Note what it can and cannot recover. Cold objects and manifests are keyed by
+/// their footer entries, so they rebuild exactly. The accepted-history domains
+/// are recovered from the surviving TABLE records themselves: every table this
+/// archive ever sealed is in some pack, so replaying them oldest-first
+/// reconstructs each domain's live entry set without consulting the lost root.
+pub(crate) fn repair_cold_history_root(
+    store: &ObjectStore,
+) -> Result<ColdRepairOutcome, StoreError> {
+    let Some(directory) = open_existing_sealed_directory(store)? else {
+        return Ok(ColdRepairOutcome::default());
+    };
+    repair_sealed_root(&directory)
+}
+
+pub(crate) fn repair_sealed_root(directory: &Dir) -> Result<ColdRepairOutcome, StoreError> {
+    let prior_marker = read_root_marker_bytes(directory)?;
+    if let Some(bytes) = prior_marker.as_deref() {
+        if decode_marker_and_root(directory, bytes).is_ok() {
+            return Ok(ColdRepairOutcome::default());
+        }
+    }
+    if !contains_any_pack(directory)? {
+        return if prior_marker.is_none() {
+            Ok(ColdRepairOutcome::default())
+        } else {
+            // A damaged marker with no surviving pack is never replaced with a
+            // fresh empty history: there is nothing to rebuild it from.
+            Err(cold_index_error(
+                "damaged sealed root has no preserved packs to rebuild from",
+            ))
+        };
+    }
+
+    let mut inventories = Vec::new();
+    for pack in cold_pack_names(directory)? {
+        inventories.push(read_pack_footer(directory, pack)?);
+    }
+    let packs = pack_table_from_inventories(&inventories);
+    let packs_scanned = inventories.len();
+
+    // Replay every surviving table oldest-first per domain, so a newer table's
+    // entry shadows an older one exactly as a lookup would.
+    let mut domain_entries: BTreeMap<u8, BTreeMap<Vec<u8>, Vec<u8>>> = BTreeMap::new();
+    let mut tables: Vec<(u64, ColdLocatorV1)> = Vec::new();
+    let mut objects: BTreeMap<ContentDigest, ColdLocatorV1> = BTreeMap::new();
+    let mut manifests: BTreeMap<BatchId, ColdLocatorV1> = BTreeMap::new();
+    for inventory in &inventories {
+        let live = packs
+            .locate(inventory.footer.virtual_start)
+            .is_some_and(|pack| pack.pack_id() == inventory.pack);
+        if !live {
+            continue;
+        }
+        for entry in &inventory.footer.entries {
+            let locator = ColdLocatorV1 {
+                offset: entry.offset,
+                length: entry.length,
+            };
+            match entry.class {
+                COLD_CLASS_TABLE => tables.push((entry.offset, locator)),
+                COLD_CLASS_OBJECT if entry.key.len() == 32 => {
+                    let mut bytes = [0_u8; 32];
+                    bytes.copy_from_slice(&entry.key);
+                    let digest = ContentDigest::from_bytes(bytes);
+                    let payload =
+                        read_pack_range(directory, &packs, locator, MAX_OBJECT_BYTES as u64)
+                            .map_err(|error| cold_object_error(digest, error))?;
                     if ContentDigest::of(&payload) != digest {
                         return Err(cold_object_error(
                             digest,
                             "a packed record is filed under another object's content address",
                         ));
                     }
-                    inventory.objects.entry(digest).or_insert(locator);
+                    objects.entry(digest).or_insert(locator);
                 }
-                ColdInventoryKey::Manifest(batch_id) => {
-                    let payload = read_pack_range(directory, locator, MAX_MANIFEST_BYTES as u64)
-                        .map_err(|error| cold_manifest_error(batch_id, error))?;
+                COLD_CLASS_MANIFEST if entry.key.len() == 16 => {
+                    let mut bytes = [0_u8; 16];
+                    bytes.copy_from_slice(&entry.key);
+                    let batch_id = BatchId::from_uuid(Uuid::from_bytes(bytes));
+                    let payload =
+                        read_pack_range(directory, &packs, locator, MAX_MANIFEST_BYTES as u64)
+                            .map_err(|error| cold_manifest_error(batch_id, error))?;
                     let manifest = super::OperationBatch::decode(&payload)?;
                     if manifest.batch_id() != batch_id {
                         return Err(cold_manifest_conflict(
@@ -1457,10 +2249,14 @@ fn collect_cold_inventory(directory: &Dir) -> Result<ColdInventory, StoreError> 
                             "a packed manifest record is filed under another batch id",
                         ));
                     }
-                    if let Some(previous) = inventory.manifests.get(&batch_id) {
-                        let existing =
-                            read_pack_range(directory, *previous, MAX_MANIFEST_BYTES as u64)
-                                .map_err(|error| cold_manifest_error(batch_id, error))?;
+                    if let Some(previous) = manifests.get(&batch_id) {
+                        let existing = read_pack_range(
+                            directory,
+                            &packs,
+                            *previous,
+                            MAX_MANIFEST_BYTES as u64,
+                        )
+                        .map_err(|error| cold_manifest_error(batch_id, error))?;
                         if existing != payload {
                             return Err(cold_manifest_conflict(
                                 batch_id,
@@ -1469,153 +2265,230 @@ fn collect_cold_inventory(directory: &Dir) -> Result<ColdInventory, StoreError> 
                         }
                         continue;
                     }
-                    inventory.manifests.insert(batch_id, locator);
+                    manifests.insert(batch_id, locator);
+                }
+                COLD_CLASS_ROOT | COLD_CLASS_RECORD => {}
+                _ => {
+                    return Err(cold_index_error(
+                        "a preserved pack footer names an unknown record class",
+                    ))
                 }
             }
         }
     }
-    Ok(inventory)
-}
-
-/// The result of an explicit cold-history root repair.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ColdRepairOutcome {
-    /// True only when a damaged state was actually recovered. A healthy or
-    /// never-initialized archive reports `false` and changes nothing.
-    pub(crate) repaired: bool,
-    pub(crate) packs_scanned: usize,
-    pub(crate) objects_recovered: usize,
-    pub(crate) manifests_recovered: usize,
-}
-
-/// Recover a lost cold root marker from the preserved self-describing packs.
-///
-/// This is the explicit damaged-state path named by
-/// [`StoreError::ColdHistoryRootMissing`], and the only place cold history is
-/// enumerated on a recovery. It reuses the surviving records exactly where they
-/// already are -- no byte is rewritten, relocated or re-encoded -- and rebuilds
-/// only the derived locator index (D-3). A healthy or never-initialized archive
-/// is left untouched and reports `repaired: false`.
-pub(crate) fn repair_cold_history_root(
-    store: &ObjectStore,
-) -> Result<ColdRepairOutcome, StoreError> {
-    let Some(directory) = open_existing_cold_directory(store)? else {
-        return Ok(ColdRepairOutcome::default());
-    };
-    // Capture the exact marker bytes once. Ordinary reads still reject a
-    // damaged root; explicit repair derives replacement roots from the original
-    // packs and uses these bytes only as the audited replacement guard, never as
-    // history. Missing and torn markers are the same damaged class here: both
-    // are derived state over surviving self-describing packs.
-    let prior_marker = read_root_marker_bytes(&directory)?;
-    if prior_marker
-        .as_deref()
-        .is_some_and(|bytes| decode_roots(bytes).is_ok())
-    {
-        return Ok(ColdRepairOutcome::default());
-    }
-    if !contains_any_pack(&directory)? {
-        return if prior_marker.is_none() {
-            // Never initialized: ordinary absence, nothing to repair.
-            Ok(ColdRepairOutcome::default())
-        } else {
-            // A damaged marker with no surviving pack is never replaced with a
-            // fresh empty history: there is nothing to rebuild it from.
-            Err(cold_index_error(
-                "damaged cold root has no preserved packs to rebuild from",
-            ))
+    tables.sort_unstable();
+    for (_, locator) in tables {
+        let bytes = read_pack_range(directory, &packs, locator, MAX_COLD_ROOT_BYTES)
+            .map_err(cold_index_error)?;
+        // A table declares its own domain in its header, so the rebuild does
+        // not need the lost root to interpret it.
+        // `TINETBL1` (8) ‖ schema:u32be (4) ‖ domain id — byte 12, not byte 9.
+        // A table's own header is what lets the rebuild interpret it without
+        // the lost root; reading the wrong byte made every repair of a torn
+        // marker refuse with "a preserved table record names an unknown
+        // domain" (`manager_torn_cold_root_is_rebuildable_from_preserved_packs`).
+        let Some(domain_id) = bytes.get(12).copied() else {
+            return Err(cold_index_error("a preserved table record is truncated"));
         };
+        let Some(domain) = domain_by_id(domain_id) else {
+            return Err(cold_index_error(
+                "a preserved table record names an unknown domain",
+            ));
+        };
+        // A table that fails its digest is damaged derived state, not a
+        // graph-open refusal: skip it and keep rebuilding (D-3, P4c2 §4.3).
+        let Ok(view) = TableView::decode(domain, &bytes) else {
+            continue;
+        };
+        let entries = domain_entries.entry(domain_id).or_default();
+        for (key, value) in view.iter() {
+            entries.insert(key.to_vec(), value.to_vec());
+        }
     }
-    let inventory = collect_cold_inventory(&directory)?;
-    let mut session = ColdPublicationSession::new(&directory);
-    for (digest, locator) in &inventory.objects {
-        let (high, low) = split_digest(*digest);
-        session
-            .object_entries
-            .entry(high)
-            .or_default()
-            .insert(low, locator.to_bytes());
-        session.objects_published += 1;
+    // Cold object and manifest domains are authoritative from the footers, not
+    // from the surviving tables: a footer entry is the record's own claim.
+    let cold_objects = domain_entries.entry(DOMAIN_COLD_OBJECT.id).or_default();
+    cold_objects.clear();
+    for (digest, locator) in &objects {
+        cold_objects.insert(digest.as_bytes().to_vec(), locator.to_bytes().to_vec());
     }
-    for (batch_id, locator) in &inventory.manifests {
-        session
-            .manifest_entries
-            .insert(batch_id.as_uuid().into_bytes(), locator.to_bytes());
-        session.manifests_published += 1;
+    let cold_manifests = domain_entries.entry(DOMAIN_COLD_MANIFEST.id).or_default();
+    cold_manifests.clear();
+    for (batch_id, locator) in &manifests {
+        cold_manifests.insert(
+            batch_id.as_uuid().as_bytes().to_vec(),
+            locator.to_bytes().to_vec(),
+        );
     }
-    let staged = stage_cold_publication(
-        &directory,
-        ColdHistoryRootsV1::empty(),
-        prior_marker,
-        session,
-        0,
-        0,
-    )?;
-    install_cold_roots(&directory, staged)?;
+    domain_entries.retain(|_, entries| !entries.is_empty());
+    let domains_rebuilt = domain_entries.len();
+
+    // One fresh cut over an empty index base, but the SURVIVING pack table:
+    // no record is rewritten and no virtual offset moves.
+    let base = SealedRootRecord {
+        tables: SealedTableRoot::default(),
+        packs,
+    };
+    let mut cut = SealedCut::over(directory, base, prior_marker)?;
+    for (domain_id, entries) in domain_entries {
+        let domain = domain_by_id(domain_id)
+            .ok_or_else(|| cold_index_error("rebuilt sealed domain is unknown"))?;
+        for (key, value) in entries {
+            cut.put(domain, &key, &value).map_err(cold_index_error)?;
+        }
+    }
+    cut.publish()?;
     Ok(ColdRepairOutcome {
         repaired: true,
-        packs_scanned: inventory.packs,
-        objects_recovered: inventory.objects.len(),
-        manifests_recovered: inventory.manifests.len(),
+        packs_scanned,
+        objects_recovered: objects.len(),
+        manifests_recovered: manifests.len(),
+        domains_rebuilt,
     })
 }
 
 /// Republish every cold logical record into fresh packs and rebuild every root
 /// from the pack footers alone.
 ///
-/// This proves two things the design requires and one it forbids relaxing:
-/// logical identity is independent of physical placement (the same digests and
-/// `BatchId`s resolve to the same bytes at new offsets in new packs); the
-/// locator index is genuinely derived, disposable state (D-3) because it is
-/// rebuilt here without consulting the previous roots; and publication remains
-/// publish-new-before-retire-old -- the predecessor packs are left in place,
-/// because retiring them needs P5's retention proofs.
+/// Proves that logical identity is independent of physical placement and that
+/// the index is genuinely derived, disposable state.
 pub(crate) fn repack_cold_history(
     store: &ObjectStore,
 ) -> Result<ColdPublicationOutcome, StoreError> {
-    let Some(directory) = open_existing_cold_directory(store)? else {
+    let Some(directory) = open_existing_sealed_directory(store)? else {
         return Ok(ColdPublicationOutcome::default());
     };
-    let prior_marker = match read_root_state(&directory)? {
-        ColdRootState::NeverInitialized => return Ok(ColdPublicationOutcome::default()),
-        // A repack derives roots, it does not recover them: repairing a lost
-        // marker is the explicit, separately named operation.
-        ColdRootState::RootLostWithPreservedPacks => {
-            return Err(StoreError::ColdHistoryRootMissing)
-        }
-        ColdRootState::Published { marker, .. } => Some(marker),
+    let Some(reader) = SealedArchiveReader::open_directory(&directory)? else {
+        return Ok(ColdPublicationOutcome::default());
     };
-    let inventory = collect_cold_inventory(&directory)?;
-    let mut session = ColdPublicationSession::new(&directory);
-    for (digest, locator) in &inventory.objects {
-        let payload = read_pack_range(&directory, *locator, MAX_OBJECT_BYTES as u64)
-            .map_err(|error| cold_object_error(*digest, error))?;
-        session.add_object(*digest, &payload)?;
+    let mut objects = BTreeMap::new();
+    for (key, value) in reader
+        .domain_entries(DOMAIN_COLD_OBJECT)
+        .map_err(cold_index_error)?
+    {
+        let bytes: [u8; 32] = key
+            .as_slice()
+            .try_into()
+            .map_err(|_| cold_index_error("cold object domain holds a non-digest key"))?;
+        let digest = ContentDigest::from_bytes(bytes);
+        let locator = ColdLocatorV1::from_value(&value).map_err(cold_index_error)?;
+        objects.insert(
+            digest,
+            reader
+                .record_bytes(locator, MAX_OBJECT_BYTES as u64)
+                .map_err(|error| cold_object_error(digest, error))?,
+        );
     }
-    for (batch_id, locator) in &inventory.manifests {
-        let payload = read_pack_range(&directory, *locator, MAX_MANIFEST_BYTES as u64)
-            .map_err(|error| cold_manifest_error(*batch_id, error))?;
-        session.add_manifest(*batch_id, &payload)?;
+    let mut manifests = BTreeMap::new();
+    for (key, value) in reader
+        .domain_entries(DOMAIN_COLD_MANIFEST)
+        .map_err(cold_index_error)?
+    {
+        let bytes: [u8; 16] = key
+            .as_slice()
+            .try_into()
+            .map_err(|_| cold_index_error("cold manifest domain holds a non-BatchId key"))?;
+        let batch_id = BatchId::from_uuid(Uuid::from_bytes(bytes));
+        let locator = ColdLocatorV1::from_value(&value).map_err(cold_index_error)?;
+        manifests.insert(
+            batch_id,
+            reader
+                .record_bytes(locator, MAX_MANIFEST_BYTES as u64)
+                .map_err(|error| cold_manifest_error(batch_id, error))?,
+        );
     }
-    let staged = stage_cold_publication(
-        &directory,
-        ColdHistoryRootsV1::empty(),
-        prior_marker,
-        session,
-        0,
-        0,
-    )?;
-    install_cold_roots(&directory, staged)
+    drop(reader);
+
+    // Republish the exact bytes at fresh virtual offsets, then rebuild the cold
+    // domains to name them.
+    let mut cut = SealedCut::open(&directory)?;
+    let mut outcome = ColdPublicationOutcome::default();
+    for (digest, payload) in &objects {
+        add_cold_object(&mut cut, *digest, payload)?;
+        outcome.objects_published += 1;
+    }
+    for (batch_id, payload) in &manifests {
+        add_cold_manifest(&mut cut, *batch_id, payload)?;
+        outcome.manifests_published += 1;
+    }
+    let work = cut.publish()?;
+    outcome.packs_published = work.packs_published;
+    Ok(outcome)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Stage a publication's packs and tables durably and stop before the
+    /// marker -- the crash window `stage_publication` used to express.
+    fn stage_publication_without_marker(
+        directory: &Dir,
+        objects: &BTreeMap<ContentDigest, Vec<u8>>,
+        manifests: &BTreeMap<BatchId, Vec<u8>>,
+    ) -> Result<ColdPublicationOutcome, StoreError> {
+        let mut outcome = ColdPublicationOutcome::default();
+        let mut cut = SealedCut::open(directory)?;
+        for (digest, payload) in objects {
+            add_cold_object(&mut cut, *digest, payload)?;
+            outcome.objects_published += 1;
+        }
+        for (batch_id, payload) in manifests {
+            add_cold_manifest(&mut cut, *batch_id, payload)?;
+            outcome.manifests_published += 1;
+        }
+        let work = cut.publish_with_kill(Some(SealedCutKill::AfterTables))?;
+        outcome.packs_published = work.packs_published;
+        Ok(outcome)
+    }
+
+    /// The pack file a locator lies in, and the offset of its payload inside
+    /// that file. A locator names a VIRTUAL offset; only the current marker's
+    /// pack table maps it to a file.
+    fn pack_file_for(directory: &Dir, locator: ColdLocatorV1) -> (String, usize) {
+        let packs = match read_root_state(directory).unwrap() {
+            SealedRootState::Published { root, .. } => root.packs,
+            _ => panic!("sealed archive has published no pack table"),
+        };
+        let pack = packs.locate(locator.offset).expect("locator names a pack");
+        (
+            pack_filename(pack.pack_id()),
+            (locator.offset - pack.virtual_start) as usize,
+        )
+    }
+
+    /// Live rows in one cold domain: the retired root pair's `object_count` /
+    /// `manifest_count`, read from the sorted tables that replaced it.
+    fn cold_domain_count(store: &ObjectStore, domain: TableDomain) -> u64 {
+        let reader = SealedArchiveReader::open(store).unwrap().unwrap();
+        reader.domain_entries(domain).unwrap().len() as u64
+    }
+
+    /// The sealed table-root digest, in the shape the retired `ColdRootState`
+    /// pair had: `Ok(None)` is ordinary absence, `Err` is a named damaged
+    /// state, and two equal digests mean the roots did not move.
+    fn cold_history_roots(store: &ObjectStore) -> Result<Option<ContentDigest>, StoreError> {
+        let Some(reader) = SealedArchiveReader::open(store)? else {
+            return Ok(None);
+        };
+        reader
+            .root()
+            .table_root_digest()
+            .map(Some)
+            .map_err(cold_index_error)
+    }
     use crate::oplog::{
         BatchCausalDot, BatchInspection, BatchOrigin, CausalPeerId, CrdtPeerCounter, CrdtPeerId,
         DeviceId, DocumentDependencies, DocumentId, FrontierV2, LineageDigest, ObjectKind,
         OperationObject, PreparedBatch, SemanticEffectDigest, SessionId, WorkspaceId,
     };
+
+    /// One-shot interleaving fault armed by
+    /// `a_torn_marker_read_across_a_pack_retiring_cut_is_recovered_not_refused`
+    /// and fired by `sealed_torn_root_read_fault_for_test`.
+    #[allow(clippy::type_complexity)]
+    pub(super) static TORN_ROOT_READ_HOOK: std::sync::Mutex<Option<Box<dyn FnMut() + Send>>> =
+        std::sync::Mutex::new(None);
 
     struct TestArchive {
         root: std::path::PathBuf,
@@ -1632,7 +2505,7 @@ mod tests {
         }
 
         fn cold_directory(&self) -> std::path::PathBuf {
-            self.store.root_path().join(COLD_HISTORY_DIRECTORY)
+            self.store.root_path().join(SEALED_DIRECTORY)
         }
 
         /// Remove one batch's hot originals, exactly the way a completed R2
@@ -1851,7 +2724,7 @@ mod tests {
     }
 
     #[test]
-    fn full_sha256_key_domains_stay_full_across_the_composed_maps() {
+    fn full_sha256_key_domains_stay_full() {
         let archive = TestArchive::open("full-keys");
         let batches = publish_batches(&archive, 0..2);
         relocate(&archive, &batches);
@@ -1859,19 +2732,17 @@ mod tests {
         let second = batches[1].objects()[0].encode().unwrap();
         let first_digest = ContentDigest::of(&first);
         let second_digest = ContentDigest::of(&second);
-        let (first_high, first_low) = split_digest(first_digest);
-        let (_, second_low) = split_digest(second_digest);
 
-        let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
-        // Four objects across two batches, four distinct 128-bit prefixes: the
-        // outer map counts prefixes, the exact-key total counts full keys.
-        assert_eq!(reader.roots().object_count(), 4);
-        assert_eq!(reader.roots().objects.count, 4);
-        let prefix_map = reader
-            .prefix_map(first_digest, first_high)
-            .unwrap()
-            .expect("the high half addresses this object's prefix map");
-        assert_eq!(prefix_map.count, 1);
+        let reader = SealedArchiveReader::open(&archive.store).unwrap().unwrap();
+        // Four objects across two batches, four rows: the object domain is ONE
+        // sorted table keyed by the whole 256-bit digest. The retired composed
+        // map's prefix/inner split is gone with the treap (P4c2 4.1), and with
+        // it the bucket-occupancy question it existed to answer; what the test
+        // still owns is that no key is truncated.
+        assert_eq!(reader.domain_entries(DOMAIN_COLD_OBJECT).unwrap().len(), 4);
+        let first_high: [u8; 16] = first_digest.as_bytes()[..16].try_into().unwrap();
+        let first_low: [u8; 16] = first_digest.as_bytes()[16..].try_into().unwrap();
+        let second_low: [u8; 16] = second_digest.as_bytes()[16..].try_into().unwrap();
 
         // The low 128 bits are consulted, not discarded: a probe that keeps the
         // high half and changes only the low half is honest absence, never the
@@ -1910,20 +2781,25 @@ mod tests {
     /// Index-domain test: many *keys* sharing one 128-bit prefix.
     ///
     /// This asserts nothing about the fixture payloads' hashes -- a SHA-256
-    /// prefix collision cannot be manufactured. It exercises the index boundary
-    /// directly, by publishing many distinct full keys that share a high half,
-    /// which is exactly the shape a serialized-list bucket with a byte cap could
-    /// not represent. Composing a second authenticated map removes the question:
-    /// an outer entry holds a whole map, so occupancy is unbounded and lookup
-    /// cost is a map path, not a scan.
+    /// prefix collision cannot be manufactured. It exercises the index
+    /// boundary directly, by publishing many distinct full keys that share a
+    /// high half, which is exactly the shape a serialized-list bucket with a
+    /// byte cap could not represent.
+    ///
+    /// The composed prefix/inner map that once answered this is gone (P4c2
+    /// 4.1): the object domain is one sorted table keyed by the whole 256-bit
+    /// digest, so a shared prefix is not a structure at all, merely a run of
+    /// adjacent keys. The invariant the test owns is unchanged -- every full
+    /// key stays independently addressable, a non-member is honest absence,
+    /// and lookup cost stays sublinear in how many keys share the prefix.
     #[test]
     fn many_keys_sharing_one_128_bit_prefix_stay_independently_addressable() {
         const SHARED: usize = 2048;
         let archive = TestArchive::open("shared-prefix");
-        let directory = cold_directory(&archive.store).unwrap();
+        let directory = sealed_directory(&archive.store).unwrap();
         let high = [0xa5_u8; 16];
         let mut expected: BTreeMap<[u8; 16], Vec<u8>> = BTreeMap::new();
-        let mut session = ColdPublicationSession::new(&directory);
+        let mut cut = SealedCut::open(&directory).unwrap();
         for index in 0..SHARED {
             let mut low = [0x11_u8; 16];
             low[..8].copy_from_slice(&(index as u64).to_be_bytes());
@@ -1931,35 +2807,26 @@ mod tests {
             key[..16].copy_from_slice(&high);
             key[16..].copy_from_slice(&low);
             let payload = format!("shared-prefix payload {index}").into_bytes();
-            let locator = session
-                .append(COLD_CLASS_OBJECT, key.to_vec(), &payload)
+            let locator = cut
+                .add_record(COLD_CLASS_OBJECT, key.to_vec(), &payload)
                 .unwrap();
-            session
-                .object_entries
-                .entry(high)
-                .or_default()
-                .insert(low, locator.to_bytes());
-            session.objects_published += 1;
+            cut.put(DOMAIN_COLD_OBJECT, &key, &locator.to_bytes())
+                .unwrap();
             expected.insert(low, payload);
         }
-        let staged = stage_publication_from_session(&directory, session).unwrap();
-        install_cold_roots(&directory, staged).unwrap();
+        cut.publish().unwrap();
 
-        let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
-        // One outer entry holding one inner map of 512 exact low halves. There
-        // is no bucket list, no byte cap and no fixed occupancy refusal.
-        assert_eq!(reader.roots().objects.count, 1);
-        assert_eq!(reader.roots().object_count(), SHARED as u64);
+        let reader = SealedArchiveReader::open(&archive.store).unwrap().unwrap();
+        assert_eq!(
+            reader.domain_entries(DOMAIN_COLD_OBJECT).unwrap().len(),
+            SHARED
+        );
         let sample = {
             let mut key = [0_u8; 32];
             key[..16].copy_from_slice(&high);
             key[16..].copy_from_slice(expected.keys().next().unwrap());
             ContentDigest::from_bytes(key)
         };
-        assert_eq!(
-            reader.prefix_map(sample, high).unwrap().unwrap().count,
-            SHARED as u64
-        );
 
         // Fail-before, made structural rather than historical: the replaced
         // representation serialized one prefix as a canonical list of
@@ -1989,7 +2856,9 @@ mod tests {
                 .unwrap()
                 .expect("every shared-prefix key is addressable by its own low half");
             assert_eq!(
-                &read_pack_range(&reader.directory, locator, MAX_OBJECT_BYTES as u64).unwrap(),
+                &reader
+                    .record_bytes(locator, MAX_OBJECT_BYTES as u64)
+                    .unwrap(),
                 payload,
                 "a shared-prefix key must resolve to its own record"
             );
@@ -2006,9 +2875,9 @@ mod tests {
             None
         );
 
-        // Lookup cost under a 512-member prefix is still one descriptor read
-        // plus one payload read, and the index path is sublinear in occupancy.
-        let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
+        // Lookup cost under a 2048-member prefix is one payload read, and the
+        // index path is sublinear in occupancy.
+        let reader = SealedArchiveReader::open(&archive.store).unwrap().unwrap();
         let last = {
             let mut key = [0_u8; 32];
             key[..16].copy_from_slice(&high);
@@ -2017,7 +2886,10 @@ mod tests {
         };
         reader.locate_object(last).unwrap().unwrap();
         let work = reader.work();
-        assert_eq!(work.pack_reads, 1, "one inner-root descriptor read");
+        assert_eq!(
+            work.pack_reads, 1,
+            "a point lookup costs exactly one pack read"
+        );
         assert!(
             work.index_nodes * 4 < SHARED,
             "index path {} is not sublinear in {SHARED} shared-prefix members",
@@ -2026,7 +2898,7 @@ mod tests {
 
         // These synthetic index keys are not their payloads' content addresses,
         // so the resolver still refuses to hand the bytes back under them: the
-        // index composition never launders identity.
+        // index never launders identity.
         assert!(matches!(
             reader.object_bytes(sample).unwrap_err(),
             StoreError::ColdObjectUnavailable { .. }
@@ -2042,10 +2914,10 @@ mod tests {
         let batch_id = probe[0].manifest().batch_id();
 
         let measure = |archive: &TestArchive| {
-            let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
+            let reader = SealedArchiveReader::open(&archive.store).unwrap().unwrap();
             reader.object_bytes(digest).unwrap().unwrap();
             let object = reader.work();
-            let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
+            let reader = SealedArchiveReader::open(&archive.store).unwrap().unwrap();
             reader.manifest_bytes(batch_id).unwrap().unwrap();
             (object, reader.work())
         };
@@ -2055,17 +2927,34 @@ mod tests {
             let batches = publish_batches(&archive, (chunk * 64 + 1)..(chunk * 64 + 65));
             relocate(&archive, &batches);
         }
-        let roots = archive.store.cold_history_roots().unwrap().unwrap();
-        assert_eq!(roots.object_count(), 2 * 512 + 2);
-        assert_eq!(roots.manifest_count(), 513);
+        let roots = cold_history_roots(&archive.store).unwrap().unwrap();
+        assert_eq!(
+            cold_domain_count(&archive.store, DOMAIN_COLD_OBJECT),
+            2 * 512 + 2
+        );
+        assert_eq!(cold_domain_count(&archive.store, DOMAIN_COLD_MANIFEST), 513);
 
         let (large_object, large_manifest) = measure(&archive);
-        // Byte range reads are constant: one bucket plus one record for an
-        // object, one record for a manifest, whatever the history size.
-        assert_eq!(small_object.pack_reads, 2);
-        assert_eq!(large_object.pack_reads, 2);
-        assert_eq!(small_manifest.pack_reads, 1);
-        assert_eq!(large_manifest.pack_reads, 1);
+        // T4: a point read costs exactly ONE payload record read, whatever the
+        // history size. `pack_reads` counts every ranged read of a pack, and
+        // under sealed-v3 a table IS a packed record, so the payload read is
+        // `pack_reads - index_nodes`. (The retired composition also cost an
+        // inner-root descriptor read; a sorted table answers the key directly.)
+        for (label, work) in [
+            ("small object", small_object),
+            ("large object", large_object),
+            ("small manifest", small_manifest),
+            ("large manifest", large_manifest),
+        ] {
+            assert_eq!(
+                work.pack_reads - work.index_nodes,
+                1,
+                "{label} lookup read {} packs over {} table records; exactly one \
+                 of them must be the payload",
+                work.pack_reads,
+                work.index_nodes
+            );
+        }
         // Index-path reads grow only with map depth, never with history.
         assert!(
             large_object.index_nodes <= small_object.index_nodes + 24,
@@ -2074,10 +2963,11 @@ mod tests {
             large_object.index_nodes
         );
         assert!(
-            large_object.index_nodes * 8 < usize::try_from(roots.object_count()).unwrap(),
+            large_object.index_nodes * 8
+                < usize::try_from(cold_domain_count(&archive.store, DOMAIN_COLD_OBJECT)).unwrap(),
             "index path {} is not sublinear in {} objects",
             large_object.index_nodes,
-            roots.object_count()
+            cold_domain_count(&archive.store, DOMAIN_COLD_OBJECT)
         );
     }
 
@@ -2088,7 +2978,7 @@ mod tests {
         let first = relocate(&archive, &batches);
         assert_eq!(first.objects_published, 8);
         assert_eq!(first.objects_already_present, 0);
-        let roots = archive.store.cold_history_roots().unwrap().unwrap();
+        let roots = cold_history_roots(&archive.store).unwrap().unwrap();
 
         let second = relocate(&archive, &batches);
         assert_eq!(second.objects_published, 0);
@@ -2096,15 +2986,15 @@ mod tests {
         assert_eq!(second.objects_already_present, 8);
         assert_eq!(second.manifests_already_present, 4);
         assert_eq!(second.packs_published, 0);
-        assert_eq!(archive.store.cold_history_roots().unwrap().unwrap(), roots);
+        assert_eq!(cold_history_roots(&archive.store).unwrap().unwrap(), roots);
 
         // A later additive publication extends the same roots without
         // disturbing the predecessor's entries.
         let more = publish_batches(&archive, 4..6);
         relocate(&archive, &more);
-        let extended = archive.store.cold_history_roots().unwrap().unwrap();
-        assert_eq!(extended.object_count(), 12);
-        assert_eq!(extended.manifest_count(), 6);
+        let extended = cold_history_roots(&archive.store).unwrap().unwrap();
+        assert_eq!(cold_domain_count(&archive.store, DOMAIN_COLD_OBJECT), 12);
+        assert_eq!(cold_domain_count(&archive.store, DOMAIN_COLD_MANIFEST), 6);
         for batch in &batches {
             archive.remove_hot_originals(batch);
             for object in batch.objects() {
@@ -2125,12 +3015,12 @@ mod tests {
         let archive = TestArchive::open("interrupted");
         let installed = publish_batches(&archive, 0..2);
         relocate(&archive, &installed);
-        let root_before = archive.store.cold_history_roots().unwrap().unwrap();
+        let root_before = cold_history_roots(&archive.store).unwrap().unwrap();
 
         // Stage a second publication's packs and index nodes durably, then
         // stop before the root marker -- exactly the crash window.
         let pending = publish_batches(&archive, 2..4);
-        let directory = cold_directory(&archive.store).unwrap();
+        let directory = sealed_directory(&archive.store).unwrap();
         let mut objects = BTreeMap::new();
         let mut manifests = BTreeMap::new();
         for batch in &pending {
@@ -2143,14 +3033,13 @@ mod tests {
                 objects.insert(ContentDigest::of(&bytes), bytes);
             }
         }
-        let staged = stage_publication(&directory, &objects, &manifests).unwrap();
-        assert_eq!(staged.outcome().objects_published, 4);
-        drop(staged);
+        let staged = stage_publication_without_marker(&directory, &objects, &manifests).unwrap();
+        assert_eq!(staged.objects_published, 4);
 
         // Residue exists on disk, and confers nothing.
         assert!(cold_pack_names(&directory).unwrap().len() >= 2);
         assert_eq!(
-            archive.store.cold_history_roots().unwrap().unwrap(),
+            cold_history_roots(&archive.store).unwrap().unwrap(),
             root_before
         );
         for batch in &pending {
@@ -2202,13 +3091,15 @@ mod tests {
         // 1. A corrupt record inside an intact pack refuses, and names the
         //    exact logical object it could not reconstruct. The pack is chosen
         //    by the damaged object's own locator, not by directory order.
-        let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
+        let reader = SealedArchiveReader::open(&archive.store).unwrap().unwrap();
         let locator = reader.locate_object(damaged_digest).unwrap().unwrap();
         drop(reader);
-        let pack_path = directory.join(pack_filename(locator.pack));
+        let (pack_name, record_start) =
+            pack_file_for(&sealed_directory(&archive.store).unwrap(), locator);
+        let pack_path = directory.join(pack_name);
         let original = std::fs::read(&pack_path).unwrap();
         let mut corrupt = original.clone();
-        let payload_start = locator.offset as usize + COLD_RECORD_HEADER_BYTES;
+        let payload_start = record_start + COLD_RECORD_HEADER_BYTES;
         corrupt[payload_start] ^= 0xff;
         std::fs::write(&pack_path, &corrupt).unwrap();
         match archive
@@ -2253,19 +3144,51 @@ mod tests {
         ));
         std::fs::write(&pack_path, &original).unwrap();
 
-        // 3. Removing the live object-map root node refuses every object
-        //    lookup by name, and still never invents absence.
-        let root_digest = archive
-            .store
-            .cold_history_roots()
-            .unwrap()
-            .unwrap()
-            .objects
-            .root_digest
-            .expect("a populated object map has a root node");
-        let node = directory.join(format!("sealed-v2-1-{root_digest}"));
-        let node_bytes = std::fs::read(&node).unwrap();
-        std::fs::remove_file(&node).unwrap();
+        // 3. Damaging the object domain's packed TABLE record refuses every
+        //    object lookup by name and still never invents absence.
+        //
+        //    Under the retired composition this was two separate cases -- a
+        //    missing outer root node file and a missing inner prefix-map node
+        //    file -- because every map node was its own directory entry. Tables
+        //    are records inside packs now (I-14: nothing writes a file into the
+        //    sealed directory but pack publication and the marker swap), so
+        //    there is one index-damage case and localisation to one prefix is
+        //    no longer a property the container has.
+        let table_locator = {
+            let sealed = sealed_directory(&archive.store).unwrap();
+            let packs = match read_root_state(&sealed).unwrap() {
+                SealedRootState::Published { root, .. } => root.packs,
+                _ => panic!("sealed archive has published no pack table"),
+            };
+            let mut found = None;
+            for pack in packs.entries() {
+                let inventory = read_pack_footer(&sealed, pack.pack_id()).unwrap();
+                for entry in &inventory.footer.entries {
+                    if entry.class != COLD_CLASS_TABLE {
+                        continue;
+                    }
+                    let locator = ColdLocatorV1 {
+                        offset: entry.offset,
+                        length: entry.length,
+                    };
+                    // A table names its own domain in its header
+                    // (`TINETBL1` ‖ schema:u32be ‖ domain id).
+                    let bytes =
+                        read_pack_range(&sealed, &packs, locator, MAX_COLD_ROOT_BYTES).unwrap();
+                    if bytes.get(12).copied() == Some(DOMAIN_COLD_OBJECT.id) {
+                        found = Some(locator);
+                    }
+                }
+            }
+            found.expect("the object domain has a packed table record")
+        };
+        let (table_pack, table_start) =
+            pack_file_for(&sealed_directory(&archive.store).unwrap(), table_locator);
+        let table_path = directory.join(table_pack);
+        let table_original = std::fs::read(&table_path).unwrap();
+        let mut torn = table_original.clone();
+        torn[table_start + COLD_RECORD_HEADER_BYTES] ^= 0xff;
+        std::fs::write(&table_path, &torn).unwrap();
         for digest in [damaged_digest, healthy_digest] {
             match archive
                 .store
@@ -2286,46 +3209,7 @@ mod tests {
                 .unwrap(),
             BatchInspection::Ready(_)
         ));
-        std::fs::write(&node, &node_bytes).unwrap();
-        assert!(archive
-            .store
-            .resolve_logical_object_bytes(healthy_digest)
-            .is_ok());
-
-        // 4. Damage confined to one prefix's inner map refuses only that
-        //    prefix's objects. The composition localises index damage: the
-        //    outer map and every other prefix map stay usable.
-        let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
-        let (damaged_high, _) = split_digest(damaged_digest);
-        let inner_root_digest = reader
-            .prefix_map(damaged_digest, damaged_high)
-            .unwrap()
-            .expect("the damaged object has a prefix map")
-            .root
-            .expect("a populated prefix map has a root node")
-            .digest;
-        drop(reader);
-        let inner_node = directory.join(format!("sealed-v2-1-{inner_root_digest}"));
-        let inner_bytes = std::fs::read(&inner_node).unwrap();
-        std::fs::remove_file(&inner_node).unwrap();
-        match archive
-            .store
-            .resolve_logical_object_bytes(damaged_digest)
-            .unwrap_err()
-        {
-            StoreError::ColdObjectUnavailable { digest, .. } => {
-                assert_eq!(digest, damaged_digest);
-            }
-            other => panic!("expected a named cold-object refusal, got {other:?}"),
-        }
-        assert!(
-            archive
-                .store
-                .resolve_logical_object_bytes(healthy_digest)
-                .is_ok(),
-            "a damaged prefix map must not take unrelated prefixes down with it"
-        );
-        std::fs::write(&inner_node, &inner_bytes).unwrap();
+        std::fs::write(&table_path, &table_original).unwrap();
         assert!(archive
             .store
             .resolve_logical_object_bytes(damaged_digest)
@@ -2335,9 +3219,13 @@ mod tests {
         let marker = directory.join("current");
         let marker_bytes = std::fs::read(&marker).unwrap();
         std::fs::write(&marker, b"not a canonical cold root").unwrap();
+        // A torn marker over surviving packs is the same named damaged class
+        // as a missing one -- the contract has always said so; under sealed-v3
+        // both reach it through `SealedRootState::RootLostWithPreservedPacks`
+        // rather than through a separate decode refusal.
         assert!(matches!(
-            archive.store.cold_history_roots().unwrap_err(),
-            StoreError::ColdHistoryIndexUnavailable(_)
+            cold_history_roots(&archive.store).unwrap_err(),
+            StoreError::ColdHistoryIndexUnavailable(_) | StoreError::ColdHistoryRootMissing
         ));
         assert!(matches!(
             archive
@@ -2354,7 +3242,9 @@ mod tests {
         let archive = TestArchive::open("root-repair");
         let batches = publish_batches(&archive, 0..4);
         relocate(&archive, &batches);
-        let healthy = archive.store.cold_history_roots().unwrap().unwrap();
+        let healthy = cold_history_roots(&archive.store).unwrap().unwrap();
+        let healthy_objects = cold_domain_count(&archive.store, DOMAIN_COLD_OBJECT);
+        let healthy_manifests = cold_domain_count(&archive.store, DOMAIN_COLD_MANIFEST);
         for batch in &batches {
             archive.remove_hot_originals(batch);
         }
@@ -2376,17 +3266,17 @@ mod tests {
             ColdRepairOutcome::default()
         );
 
-        let marker = archive.cold_directory().join(COLD_ROOT_MARKER);
+        let marker = archive.cold_directory().join(SEALED_ROOT_MARKER);
         std::fs::remove_file(&marker).unwrap();
 
         // Every path that could have called this "never published" now names
         // the repair condition instead.
         assert!(matches!(
-            ColdHistoryReader::open(&archive.store),
+            SealedArchiveReader::open(&archive.store),
             Err(StoreError::ColdHistoryRootMissing)
         ));
         assert!(matches!(
-            archive.store.cold_history_roots(),
+            cold_history_roots(&archive.store),
             Err(StoreError::ColdHistoryRootMissing)
         ));
         assert!(matches!(
@@ -2420,9 +3310,15 @@ mod tests {
 
         // Repair restored the exact old objects and manifests, with no hot
         // original anywhere on disk.
-        let repaired = archive.store.cold_history_roots().unwrap().unwrap();
-        assert_eq!(repaired.object_count(), healthy.object_count());
-        assert_eq!(repaired.manifest_count(), healthy.manifest_count());
+        let _repaired = cold_history_roots(&archive.store).unwrap().unwrap();
+        assert_eq!(
+            cold_domain_count(&archive.store, DOMAIN_COLD_OBJECT),
+            healthy_objects
+        );
+        assert_eq!(
+            cold_domain_count(&archive.store, DOMAIN_COLD_MANIFEST),
+            healthy_manifests
+        );
         for batch in &batches {
             let batch_id = batch.manifest().batch_id();
             assert_eq!(
@@ -2461,20 +3357,20 @@ mod tests {
     #[test]
     fn a_never_initialized_archive_is_absence_not_a_repair_condition() {
         let archive = TestArchive::open("never-initialized");
-        assert!(ColdHistoryReader::open(&archive.store).unwrap().is_none());
-        assert!(archive.store.cold_history_roots().unwrap().is_none());
+        assert!(SealedArchiveReader::open(&archive.store).unwrap().is_none());
+        assert!(cold_history_roots(&archive.store).unwrap().is_none());
         assert_eq!(
             archive.store.repair_cold_history_root().unwrap(),
             ColdRepairOutcome::default()
         );
         // A cold directory that exists but holds no pack is still ordinary
         // absence: this is the shape an interrupted first publication leaves.
-        let directory = cold_directory(&archive.store).unwrap();
+        let directory = sealed_directory(&archive.store).unwrap();
         assert!(matches!(
             read_root_state(&directory).unwrap(),
-            ColdRootState::NeverInitialized
+            SealedRootState::NeverInitialized
         ));
-        assert!(ColdHistoryReader::open(&archive.store).unwrap().is_none());
+        assert!(SealedArchiveReader::open(&archive.store).unwrap().is_none());
         assert_eq!(
             archive.store.repair_cold_history_root().unwrap(),
             ColdRepairOutcome::default()
@@ -2486,8 +3382,8 @@ mod tests {
         let archive = TestArchive::open("manifest-conflict");
         let batches = publish_batches(&archive, 0..2);
         relocate(&archive, &batches);
-        let roots_before = archive.store.cold_history_roots().unwrap().unwrap();
-        let directory = cold_directory(&archive.store).unwrap();
+        let roots_before = cold_history_roots(&archive.store).unwrap().unwrap();
+        let directory = sealed_directory(&archive.store).unwrap();
         let packs_before = cold_pack_names(&directory).unwrap();
         let manifest = batches[0].manifest();
         let original = manifest.encode().unwrap();
@@ -2527,7 +3423,7 @@ mod tests {
         // Predecessor root, original bytes and pack set are all untouched: the
         // exactness pass runs before a single record is appended.
         assert_eq!(
-            archive.store.cold_history_roots().unwrap().unwrap(),
+            cold_history_roots(&archive.store).unwrap().unwrap(),
             roots_before
         );
         assert_eq!(cold_pack_names(&directory).unwrap(), packs_before);
@@ -2552,7 +3448,7 @@ mod tests {
         assert_eq!(repeat.manifests_published, 0);
         assert_eq!(repeat.packs_published, 0);
         assert_eq!(
-            archive.store.cold_history_roots().unwrap().unwrap(),
+            cold_history_roots(&archive.store).unwrap().unwrap(),
             roots_before
         );
     }
@@ -2562,9 +3458,11 @@ mod tests {
         let archive = TestArchive::open("repack");
         let batches = publish_batches(&archive, 0..5);
         relocate(&archive, &batches);
-        let before_roots = archive.store.cold_history_roots().unwrap().unwrap();
+        let before_roots = cold_history_roots(&archive.store).unwrap().unwrap();
+        let before_objects = cold_domain_count(&archive.store, DOMAIN_COLD_OBJECT);
+        let before_manifests = cold_domain_count(&archive.store, DOMAIN_COLD_MANIFEST);
         let before_locators: BTreeMap<ContentDigest, ColdLocatorV1> = {
-            let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
+            let reader = SealedArchiveReader::open(&archive.store).unwrap().unwrap();
             batches
                 .iter()
                 .flat_map(|batch| batch.objects())
@@ -2581,11 +3479,18 @@ mod tests {
         let outcome = archive.store.repack_cold_history().unwrap();
         assert_eq!(outcome.objects_published, 10);
         assert_eq!(outcome.manifests_published, 5);
-        let after_roots = archive.store.cold_history_roots().unwrap().unwrap();
-        assert_eq!(after_roots.object_count(), before_roots.object_count());
-        assert_eq!(after_roots.manifest_count(), before_roots.manifest_count());
+        let after_roots = cold_history_roots(&archive.store).unwrap().unwrap();
+        let _ = after_roots;
+        assert_eq!(
+            cold_domain_count(&archive.store, DOMAIN_COLD_OBJECT),
+            before_objects
+        );
+        assert_eq!(
+            cold_domain_count(&archive.store, DOMAIN_COLD_MANIFEST),
+            before_manifests
+        );
 
-        let reader = ColdHistoryReader::open(&archive.store).unwrap().unwrap();
+        let reader = SealedArchiveReader::open(&archive.store).unwrap().unwrap();
         let mut relocated = 0;
         for batch in &batches {
             let batch_id = batch.manifest().batch_id();
@@ -2617,7 +3522,7 @@ mod tests {
         );
         // Publish-new-before-retire-old: the predecessor packs are still there.
         assert!(
-            cold_pack_names(&cold_directory(&archive.store).unwrap())
+            cold_pack_names(&sealed_directory(&archive.store).unwrap())
                 .unwrap()
                 .len()
                 >= 2
@@ -2664,13 +3569,63 @@ mod tests {
             "a conflicting manifest is not an already archived exact copy"
         );
         assert_eq!(
-            ColdHistoryReader::open(&archive.store)
+            SealedArchiveReader::open(&archive.store)
                 .unwrap()
                 .unwrap()
                 .manifest_bytes(manifest.batch_id())
                 .unwrap()
                 .unwrap(),
             original
+        );
+    }
+
+    /// Refusal scenario (I-2, D-3): a reader that read the marker, then had the
+    /// pack that marker named retired underneath it by a later cut.
+    ///
+    /// Marker-last publication makes this window real: a cut installs its
+    /// marker and only THEN retires the packs the previous marker named, so any
+    /// reader between "read the marker" and "resolve the root record through
+    /// it" can find the file already gone. Misreading that as damage is
+    /// expensive — `contains_any_pack` then reports
+    /// `RootLostWithPreservedPacks`, which `SealedCut::open` and
+    /// `SealedArchiveReader::open_directory` turn into a hard
+    /// `ColdHistoryRootMissing` refusal on a perfectly intact archive. The
+    /// window is sub-millisecond in production, so the interleaving is injected
+    /// rather than raced for: the hook fires exactly once, between the marker
+    /// read and the root resolution.
+    #[test]
+    fn a_torn_marker_read_across_a_pack_retiring_cut_is_recovered_not_refused() {
+        let archive = std::sync::Arc::new(TestArchive::open("torn-marker-read"));
+        let seeded = publish_batches(&archive, 0..2);
+        relocate(&archive, &seeded);
+        let target = seeded[0].manifest().batch_id();
+        // Only the cold tier can answer once the hot originals are gone.
+        archive.remove_hot_originals(&seeded[0]);
+
+        // Arm the interleaving: after the next marker read, advance the archive
+        // far enough that a pack tier merge retires the packs that marker named.
+        let hook_archive = std::sync::Arc::clone(&archive);
+        *TORN_ROOT_READ_HOOK.lock().unwrap() = Some(Box::new(move || {
+            for seed in 100..120_u128 {
+                let batches = publish_batches(&hook_archive, seed..seed + 1);
+                relocate(&hook_archive, &batches);
+            }
+        }));
+
+        let bytes = archive
+            .store
+            .resolve_logical_manifest_bytes(target)
+            .expect("an intact cold manifest stays readable across a pack-retiring cut");
+        assert_eq!(
+            super::super::OperationBatch::decode(&bytes)
+                .unwrap()
+                .batch_id(),
+            target,
+            "the recovered read must resolve the same logical record"
+        );
+        assert!(
+            TORN_ROOT_READ_HOOK.lock().unwrap().is_none(),
+            "the one-shot interleaving hook must have fired"
         );
     }
 
@@ -2686,8 +3641,8 @@ mod tests {
         let original_object = batches[0].objects()[0].encode().unwrap();
         let object_digest = ContentDigest::of(&original_object);
         // Named in-scope fault: torn derived marker; original pack bytes survive.
-        std::fs::write(archive.cold_directory().join(COLD_ROOT_MARKER), b"torn").unwrap();
-        assert!(ColdHistoryReader::open(&archive.store).is_err());
+        std::fs::write(archive.cold_directory().join(SEALED_ROOT_MARKER), b"torn").unwrap();
+        assert!(SealedArchiveReader::open(&archive.store).is_err());
         let repaired = archive.store.repair_cold_history_root();
         assert!(
             repaired.is_ok(),
@@ -2695,7 +3650,7 @@ mod tests {
         );
         assert!(repaired.unwrap().repaired);
         assert_eq!(
-            ColdHistoryReader::open(&archive.store)
+            SealedArchiveReader::open(&archive.store)
                 .unwrap()
                 .unwrap()
                 .manifest_bytes(batch_id)
@@ -2710,10 +3665,10 @@ mod tests {
                 .unwrap(),
             original_object
         );
-        std::fs::remove_file(archive.cold_directory().join(COLD_ROOT_MARKER)).unwrap();
+        std::fs::remove_file(archive.cold_directory().join(SEALED_ROOT_MARKER)).unwrap();
         assert!(archive.store.repair_cold_history_root().unwrap().repaired);
         assert_eq!(
-            ColdHistoryReader::open(&archive.store)
+            SealedArchiveReader::open(&archive.store)
                 .unwrap()
                 .unwrap()
                 .manifest_bytes(batch_id)
@@ -2726,10 +3681,10 @@ mod tests {
     #[test]
     fn a_damaged_root_with_no_preserved_packs_is_never_replaced_with_empty_history() {
         let archive = TestArchive::open("torn-root-no-packs");
-        let directory = cold_directory(&archive.store).unwrap();
+        let directory = sealed_directory(&archive.store).unwrap();
         assert!(cold_pack_names(&directory).unwrap().is_empty());
         std::fs::write(
-            archive.cold_directory().join(COLD_ROOT_MARKER),
+            archive.cold_directory().join(SEALED_ROOT_MARKER),
             b"torn with nothing behind it",
         )
         .unwrap();
@@ -2738,7 +3693,7 @@ mod tests {
             Err(StoreError::ColdHistoryIndexUnavailable(_))
         ));
         assert_eq!(
-            std::fs::read(archive.cold_directory().join(COLD_ROOT_MARKER)).unwrap(),
+            std::fs::read(archive.cold_directory().join(SEALED_ROOT_MARKER)).unwrap(),
             b"torn with nothing behind it"
         );
     }
@@ -2749,8 +3704,8 @@ mod tests {
         let batches = publish_batches(&archive, 0..1);
         relocate(&archive, &batches);
         archive.remove_hot_originals(&batches[0]);
-        std::fs::remove_file(archive.cold_directory().join(COLD_ROOT_MARKER)).unwrap();
-        let reopened = ColdHistoryReader::open(&archive.store);
+        std::fs::remove_file(archive.cold_directory().join(SEALED_ROOT_MARKER)).unwrap();
+        let reopened = SealedArchiveReader::open(&archive.store);
         assert!(
             !matches!(reopened, Ok(None)),
             "preserved cold packs with a lost derived marker need repair or a named error, not ordinary absence"
@@ -2760,21 +3715,40 @@ mod tests {
     #[test]
     fn cold_publication_reuses_the_shared_publication_and_index_primitives() {
         let source = include_str!("cold_object_store.rs");
+        // Split at the TEST MODULE, not at the first `#[cfg(test)]`: this
+        // module now carries a `cfg(test)` production helper above it, and
+        // splitting there silently scanned only the first quarter of the file.
         let production = source
-            .split("#[cfg(test)]")
+            .split("#[cfg(test)]\nmod tests")
             .next()
             .expect("the module has a production region");
+        // Every `#[cfg(test)]` item inside the production region is a named
+        // `*_for_test` helper, which is what lets `shipped_source` strip them
+        // by item instead of truncating the scan at the first one.
+        for (index, chunk) in production.split("#[cfg(test)]").enumerate().skip(1) {
+            let item = chunk
+                .lines()
+                .find(|line| line.contains("fn "))
+                .unwrap_or_default();
+            assert!(
+                item.contains("_for_test"),
+                "production `#[cfg(test)]` item {index} is not a named test helper: {item}"
+            );
+        }
+        let shipped = shipped_source(source);
         for forbidden in ["fs::write", "fs::rename", "OpenOptions", "create_new"] {
             assert!(
-                !production.contains(forbidden),
+                !shipped.contains(forbidden),
                 "cold publication must not reimplement a durable write primitive: {forbidden}"
             );
         }
+        // `SealedAcceptedIndexWriter`/`Reader` (the path-copied treap) are gone
+        // with P4c2 4.1; the sorted-table primitives replace them.
         for required in [
             "DurableDirectoryPublication",
-            "SealedGenerationStagingStore",
-            "SealedAcceptedIndexWriter",
-            "SealedAcceptedIndexReader",
+            "publish_new_exact_single_writer",
+            "tine_storage::sealed_tables",
+            "TierPlan",
         ] {
             assert!(
                 production.contains(required),
@@ -2783,18 +3757,173 @@ mod tests {
         }
     }
 
+    /// The module's SHIPPED source: production minus its `#[cfg(test)]` items.
+    ///
+    /// Splitting at the first `#[cfg(test)]` is the trap: this module keeps a
+    /// damage-fixture helper in the production region, so that split silently
+    /// scanned a fifth of the file and every guard below passed vacuously.
+    /// `production_cfg_test_items_are_named_for_test` keeps the items this
+    /// strips identifiable.
+    fn shipped_source(source: &str) -> String {
+        let production = source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("the module has a production region");
+        let mut shipped = String::with_capacity(production.len());
+        let mut rest = production;
+        while let Some(at) = rest.find("#[cfg(test)]") {
+            shipped.push_str(&rest[..at]);
+            let item = &rest[at..];
+            let end = item.find("\n}\n").map_or(item.len(), |offset| offset + 3);
+            rest = &item[end..];
+        }
+        shipped.push_str(rest);
+        shipped
+    }
+
+    /// I-14: exactly ONE production path creates a file in `sealed-v3`.
+    ///
+    /// Two, historically: the treap wrote one file per authenticated-map node
+    /// (`sealed-v2-<kind>-<digest>`), which is what made a cut's directory-entry
+    /// count grow with history and ran the flat directory into ext4's htree
+    /// limit. Under sorted tables a table is a RECORD inside a pack, so the
+    /// only creators are pack publication and the marker swap; that is the
+    /// property this guard makes unwritable rather than merely intended.
+    #[test]
+    fn only_pack_publication_and_the_marker_swap_create_a_sealed_file() {
+        let shipped = shipped_source(include_str!("cold_object_store.rs"));
+        for creator in [
+            "publish_new_exact_single_writer",
+            "publish_immutable_exact_single_writer",
+            "replace_exact",
+            "create_dir",
+        ] {
+            let sites = shipped.matches(creator).count();
+            let allowed = match creator {
+                // `publish_pack` -- the exemplar -- and the marker's first
+                // publication, which has no predecessor to replace.
+                "publish_new_exact_single_writer" => 2,
+                // the marker swap.
+                "replace_exact" => 1,
+                _ => 0,
+            };
+            assert_eq!(
+                sites, allowed,
+                "I-14: `{creator}` appears {sites} times in the sealed container's \
+                 production region but only {allowed} file-creating site is allowed. \
+                 Exactly two production paths may create a file in `{SEALED_DIRECTORY}`: \
+                 pack publication (`publish_pack` -- the exemplar to imitate) and the \
+                 marker swap. A per-node or per-record file is what made directory \
+                 entries grow with history; put the bytes in a pack record instead."
+            );
+        }
+        // The device-wide absence map has exactly one consumer; a second one
+        // would be a second producer of the same answer (I-12).
+        let oplog = include_str!("mod.rs");
+        let _ = oplog;
+        let consumers = [
+            include_str!("receiver_absence_summary.rs"),
+            include_str!("absence_sweep.rs"),
+        ]
+        .iter()
+        .filter(|source| source.contains("receiver_absence_map::"))
+        .count();
+        assert_eq!(
+            consumers, 1,
+            "`receiver_absence_map` must have exactly ONE consumer \
+             (`receiver_absence_summary`); a second producer of the same \
+             absence answer is the I-12 shape this guard exists to stop"
+        );
+    }
+
     #[test]
     fn contract_names_the_current_cold_representation_and_read_resolution() {
         let contract = include_str!("../../../../docs/storage-sync-contract.md");
         for required in [
-            "cold-history-v1",
+            "sealed-v3",
             "pack-v1-<uuid>",
             "ColdLocatorV1",
-            "inner-root descriptor",
             "ColdHistoryRootMissing",
             "repair_cold_history_root",
             "inspect_batch_with_cold_history",
             "resolve_logical_object_bytes",
+            "CoveredBatchRedelivery",
+            "MidPackTierMerge",
+            "deliberately uncached",
+            "a_document_scale_domain_is_hashed_once_per_reader_not_once_per_lookup",
+            "a_torn_marker_read_across_a_pack_retiring_cut_is_recovered_not_refused",
+            "SEALED_ROOT_READ_ATTEMPTS",
+        ] {
+            assert!(contract.contains(required), "missing contract: {required}");
+        }
+        // The torn-read retry bound is load-bearing in the contract's prose, so
+        // pin the number against the code rather than letting it drift.
+        assert!(
+            contract.contains(&format!(
+                "`SEALED_ROOT_READ_ATTEMPTS` = {SEALED_ROOT_READ_ATTEMPTS}"
+            )),
+            "the contract must state the current torn-read retry bound"
+        );
+        // The two pinned directory names are DIFFERENT commit points and the
+        // contract must name both (P4c2 4.4).
+        assert!(contract.contains(SEALED_DIRECTORY));
+        assert!(
+            contract.contains("`current` is the sealed"),
+            "the contract must say what the `current` marker commits"
+        );
+        assert!(
+            contract.contains("`checkpoint` is the two-slot checkpoint pointer"),
+            "the contract must say what the `checkpoint` pointer commits"
+        );
+        // Load-bearing constants, asserted against the code rather than
+        // restated: drift fails here instead of accumulating silently.
+        assert!(
+            contract.contains(&format!("`R = {SEALED_TIER_FANOUT}`")),
+            "the contract must name the current tier fanout {SEALED_TIER_FANOUT}"
+        );
+        assert!(
+            contract.contains(&format!("{} MiB", COLD_PACK_TARGET_BYTES / (1024 * 1024))),
+            "the contract must name the current pack construction target"
+        );
+        assert!(
+            contract.contains(&format!("({COLD_RECORD_HEADER_BYTES} header bytes)")),
+            "the contract must name the current record header width"
+        );
+        // Every domain the code defines appears in the contract's domain table
+        // with its exact widths.
+        for domain in all_domains() {
+            let row = format!("| {} |", domain.id);
+            let ranged = matches!(domain.id, 6..=13);
+            assert!(
+                contract.contains(&row) || ranged,
+                "the contract's domain table omits domain {}",
+                domain.id
+            );
+        }
+        for width in [
+            format!("{DOCUMENT_ROSTER_KEY_BYTES} (framed `DocumentKey`)"),
+            format!("{IDENTITY_KEY_BYTES} (framed)"),
+        ] {
+            assert!(
+                contract.contains(&width),
+                "the contract's domain table does not carry the current width: {width}"
+            );
+        }
+        // The frontier root's tail semantics are contract, and the two values a
+        // reader must agree with a writer about are pinned against the code.
+        assert!(
+            contract.contains(&format!(
+                "schema version {}",
+                crate::oplog::hot_engine::ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION
+            )),
+            "the contract must name the current accepted-frontier root schema version"
+        );
+        for required in [
+            "tine/oplog/accepted-frontier/v9",
+            "rebased_on_an_empty_generation_tail",
+            "open_generation",
+            "is_physical_archive_damage",
+            "EngineError::ArchiveDamaged",
         ] {
             assert!(contract.contains(required), "missing contract: {required}");
         }

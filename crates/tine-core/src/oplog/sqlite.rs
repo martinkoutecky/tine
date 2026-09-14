@@ -981,6 +981,9 @@ fn lower_physical_frontier_root(
         document_map_root_digest: root.document_map_root_digest(),
         batch_map_root_key: root.batch_map_root_key(),
         batch_map_root_digest: root.batch_map_root_digest(),
+        // A LIVE database has no covered history, so there is nothing to
+        // anchor. The anchored overlay below is what sets this.
+        anchor: None,
         state_digest: root.state_digest(),
     })
 }
@@ -1002,7 +1005,7 @@ impl CheckpointOverlayState {
             anchor,
             sealed,
             documents: BTreeMap::new(),
-            document_root: super::hot_engine::RunLocalAuthenticatedMap::default(),
+            document_root: crate::oplog::hot_engine::RunLocalAuthenticatedMap::default(),
         }
     }
 
@@ -1027,6 +1030,18 @@ impl CheckpointOverlayState {
         let mut physical = lower_physical_frontier_root(logical)?;
         physical.document_map_root_key = self.document_root.root_key();
         physical.document_map_root_digest = self.document_root.root_digest();
+        // This root is ANCHORED: `1..=covered_sequence` live only in the
+        // sealed tables and the treap above spans the tail alone. The anchor
+        // is what makes tine-storage consult the sealed index on a hot miss.
+        //
+        // Refusal scenario (I-8): without it a re-delivered COVERED batch
+        // reads as absent and is applied a second time over the accepted
+        // history that already contains it. `a_covered_redelivery_over_an_
+        // anchored_database_reaches_the_sealed_index` is the proof.
+        physical.anchor = Some(storage_frontier::PhysicalSealedAnchor {
+            sealed_root_digest: self.anchor.anchor.generation.sealed_root_digest,
+            covered_sequence: self.covered_count(),
+        });
         Ok(physical)
     }
 
@@ -1046,17 +1061,6 @@ impl CheckpointOverlayState {
         root.document_map_root_digest = self.document_root.root_digest();
         root.batch_map_root_key = logical.batch_map_root_key();
         root.batch_map_root_digest = logical.batch_map_root_digest();
-        root.batch_map_count = logical.acceptance_sequence();
-        // The sealed anchor owns the covered status/sequence roots. Their
-        // composite hot tails are maintained transactionally by tine-storage;
-        // the checkpoint batch point reader below does not inspect either
-        // tree, but it still validates the terminal root's count shape before
-        // descending the batch map. Advance those counts with the logical
-        // frontier so a legitimate post-C apply remains diagnosable on the
-        // next open. Leaving the anchor counts frozen at C made every nonempty
-        // tail fail that shape check before authentication even began.
-        root.status_map_count = logical.acceptance_sequence();
-        root.sequence_count = logical.acceptance_sequence();
         root.state_digest = logical.state_digest();
         Ok(root)
     }
@@ -1273,7 +1277,7 @@ impl<'a> RebuildSource<'a> {
 
     fn load_event(
         &self,
-        acceptance_sequence: u64,
+        _acceptance_sequence: u64,
         batch_id: BatchId,
         indexed_evidence: Option<&super::AcceptedBatchEvidence>,
     ) -> Result<(AcceptedBatchEvent, Option<usize>), ProjectionError> {
@@ -4795,6 +4799,89 @@ impl SqliteFrontier {
         self.apply_internal(event, ApplyFault::None)
     }
 
+    /// Offer a COVERED batch id at exactly `current + 1` over this anchored
+    /// database, twice: once with the sealed anchor this projection really
+    /// carries, once with the anchor removed.
+    ///
+    /// This is the proof named by `CheckpointOverlayState::lower_root`. The
+    /// anchor is the only thing that makes tine-storage consult the sealed
+    /// index on a hot miss; without it a re-delivered covered batch reads as
+    /// absent, preflight answers `New`, and `upsert_batch_map` takes its
+    /// `Ordering::Equal` arm -- the covered key's value is REPLACED and the
+    /// batch that had been accepted is erased from the authenticated map while
+    /// the sequence advances (I-8 refusal scenario: honest redelivery of
+    /// already-accepted work after a crash, a replayed journal frame, or a
+    /// returning peer).
+    ///
+    /// Returns `(anchored, unanchored)` as displayable outcomes. Preflight
+    /// never writes, so `applied_batches` is unchanged either way; the caller
+    /// asserts that too.
+    #[cfg(test)]
+    pub(crate) fn probe_covered_redelivery_for_test(
+        &self,
+        covered_sequence: u64,
+    ) -> Result<(String, String), ProjectionError> {
+        let overlay = self.checkpoint_overlay.as_ref().ok_or_else(|| {
+            ProjectionError::InvalidFrontier("redelivery probe needs an anchored database".into())
+        })?;
+        let row = overlay
+            .sealed
+            .row_by_sequence(covered_sequence)
+            .map_err(ProjectionError::Corrupt)?
+            .ok_or_else(|| {
+                ProjectionError::Corrupt(format!(
+                    "sealed generation has no covered row at sequence {covered_sequence}"
+                ))
+            })?;
+        let covered_batch_id = row.evidence.batch_id();
+        let root = read_frontier_root(&self.physical)?;
+        let anchored = overlay.lower_root(&root)?;
+        let mut unanchored = anchored.clone();
+        unanchored.anchor = None;
+        let sequence = anchored.acceptance_sequence.saturating_add(1);
+        let describe = |current: &storage_frontier::PhysicalFrontierRoot,
+                        sealed: Option<&dyn SealedAcceptedIndexRead>| {
+            let mut post = current.clone();
+            post.acceptance_sequence = sequence;
+            let request = storage_frontier::PhysicalApplyRequest {
+                batch: storage_frontier::PhysicalAcceptedBatch {
+                    batch_id: covered_batch_id.as_uuid().into_bytes(),
+                    manifest_digest: row.evidence.manifest_fingerprint(),
+                    event_binding_digest: row.evidence.event_binding_digest(),
+                    semantic_effect: Vec::new(),
+                    semantic_effect_digest: ContentDigest::of(&[]),
+                    dependency_frontier: Vec::new(),
+                    prior_frontier_root: current.clone(),
+                    post_frontier_root: post,
+                    affected_documents: Vec::new(),
+                    affected_documents_bytes: Vec::new(),
+                    causal_dependency_heads: Vec::new(),
+                    causal_dependency_heads_bytes: Vec::new(),
+                    causal_peer_id: row.causal_dot.peer_id().key().as_uuid().into_bytes(),
+                    causal_counter: row.causal_dot.counter().max(1),
+                    acceptance_sequence: sequence,
+                    retained_bytes: 0,
+                },
+                materialization: None,
+                materialization_input_digest: None,
+                fault: storage_frontier::ApplyFault::None,
+            };
+            match sealed {
+                Some(sealed) => self
+                    .physical
+                    .preflight_checkpoint(sealed, current, &request),
+                None => self.physical.preflight(current, &request),
+            }
+            .map_or_else(|error| format!("{error}"), |ok| format!("{ok:?}"))
+        };
+        let with_anchor = describe(
+            &anchored,
+            Some(overlay.sealed.as_ref() as &dyn SealedAcceptedIndexRead),
+        );
+        let without_anchor = describe(&unanchored, None);
+        Ok((with_anchor, without_anchor))
+    }
+
     #[cfg(test)]
     fn apply_materialized_accepted(
         &mut self,
@@ -5322,7 +5409,7 @@ impl SqliteFrontier {
     fn terminal_archive_stream(
         &mut self,
         source: &RebuildSource<'_>,
-        terminal_projection_sink: Option<&TerminalProjectionChunkSinkHandle<'_>>,
+        _terminal_projection_sink: Option<&TerminalProjectionChunkSinkHandle<'_>>,
     ) -> Result<
         (
             RebuildInstrumentation,
@@ -5871,7 +5958,7 @@ impl SqliteFrontier {
 
     fn finish_fresh_candidate(
         &mut self,
-        source: &RebuildSource<'_>,
+        _source: &RebuildSource<'_>,
         _inductive_coverage_count: u64,
         instrumentation: &mut RebuildInstrumentation,
     ) -> Result<(), ProjectionError> {
@@ -8429,7 +8516,7 @@ pub(crate) use applier_lease::{
 use applier_lease::{ApplierAuthorization, HeldApplierLocks};
 pub(crate) use applier_lease::{
     LeasedWorkspaceProjection, SqliteApplierSlot, WorkspaceLeaseIdentity, WorkspaceRuntimeLease,
-    WorkspaceRuntimeProof, WorkspaceRuntimePublicationProof,
+    WorkspaceRuntimePublicationProof,
 };
 
 #[cfg(test)]
@@ -14697,27 +14784,20 @@ mod tests {
             .documents()
             .iter()
             .any(|document| document.document_id() == ids.document));
-        let mut sealed_store =
-            crate::oplog::checkpoint_generation::CheckpointSealedStore::default();
-        let mut sealed_root = tine_storage::sealed_accepted_index::AuthenticatedMapRootV1::empty();
+        // Recompute the document map independently and compare it with the
+        // live frontier's. The map is tine-core's own run-local authenticated
+        // map -- the sealed accepted index is a different structure and never
+        // held this one.
+        let mut recomputed = crate::oplog::hot_engine::RunLocalAuthenticatedMap::default();
         for document in exact_frontier.documents() {
-            sealed_root = tine_storage::sealed_accepted_index::SealedAcceptedIndexWriter::new(
-                &mut sealed_store,
-            )
-            .upsert_map(
-                sealed_root,
+            recomputed.upsert(
                 document.document_id().authenticated_map_key(),
                 ContentDigest::of(&encode_frontier_document(document).unwrap()),
-            )
-            .unwrap();
+            );
         }
-        assert_eq!(sealed_root.count, live_root.document_count());
+        assert_eq!(recomputed.root_key(), live_root.document_map_root_key());
         assert_eq!(
-            sealed_root.root.map(|link| link.key),
-            live_root.document_map_root_key()
-        );
-        assert_eq!(
-            sealed_root.root_digest(),
+            recomputed.root_digest(),
             live_root.document_map_root_digest()
         );
         let drained_row_digest = database.materialized_row_digest_for_harness().unwrap();

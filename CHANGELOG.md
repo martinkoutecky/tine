@@ -351,6 +351,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **Managed history keeps its index in a handful of files, however long the
+  history gets.** Sealed history used to write one directory entry per accepted
+  edit, which on ext4 hit the directory limit at a few million entries and cost
+  about 200 files per edit at a cut. The index is now a small set of sorted
+  tables packed into a few immutable files (one merge level per cut, size
+  tiered), and reopening a graph reads those tables once instead of hashing
+  them per lookup. Measured on the anonymized graph in release profile: about
+  270 bytes of index per accepted edit at 1,000 and 10,000 edits, 13 to 23
+  directory entries, reopen in 0.12 to 0.17 s (was 0.78 s). A cut that
+  overlaps a read no longer refuses to open an undamaged graph.
+
 - **A query with two conditions no longer reads the whole graph to answer about
   three blocks.** Every condition in a query was asked of the index as its own
   complete list — "all the DONE tasks", "all the blocks tagged x" — and SQLite

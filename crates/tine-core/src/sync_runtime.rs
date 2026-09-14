@@ -1181,6 +1181,11 @@ impl CleanOpenError {
             {
                 Some(ManagedStorageRefusalScenario::DiskCorrupt)
             }
+            Self::Engine(error)
+                if matches!(error.as_ref(), crate::oplog::EngineError::ArchiveDamaged(_)) =>
+            {
+                Some(ManagedStorageRefusalScenario::DiskCorrupt)
+            }
             Self::Store(error)
                 if matches!(
                     error.as_ref(),
@@ -6441,6 +6446,25 @@ impl SyncRuntimeHandle {
         let _operation = self.inner.operation.lock().unwrap();
         let (reply_sender, reply_receiver) = mpsc::channel();
         self.send(ActorRequest::DiagnoseSqliteIntegrity {
+            reply: reply_sender,
+        })?;
+        reply_receiver
+            .recv()
+            .map_err(|_| SyncRuntimeRequestError::ActorUnavailable)?
+            .map_err(SyncRuntimeRequestError::ActorRefused)
+    }
+
+    /// `(anchored, unanchored)` preflight outcomes for a covered batch id
+    /// re-offered at `current + 1` (`probe_covered_redelivery_for_test`).
+    #[cfg(test)]
+    fn probe_covered_redelivery_for_test(
+        &self,
+        covered_sequence: u64,
+    ) -> Result<(String, String), SyncRuntimeRequestError> {
+        let _operation = self.inner.operation.lock().unwrap();
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.send(ActorRequest::ProbeCoveredRedelivery {
+            covered_sequence,
             reply: reply_sender,
         })?;
         reply_receiver
@@ -11887,6 +11911,11 @@ enum ActorRequest {
         reply: mpsc::Sender<Result<(), String>>,
     },
     #[cfg(test)]
+    ProbeCoveredRedelivery {
+        covered_sequence: u64,
+        reply: mpsc::Sender<Result<(String, String), String>>,
+    },
+    #[cfg(test)]
     SetCheckpointFloorClock {
         utc_ms: i64,
         monotonic_ms: u64,
@@ -12689,6 +12718,25 @@ fn run_actor_loop(
                             .runtime
                             .database()
                             .diagnose_full_integrity()
+                            .map_err(|error| error.to_string())
+                    });
+                let _ = reply.send(result);
+                false
+            }
+            #[cfg(test)]
+            ActorRequest::ProbeCoveredRedelivery {
+                covered_sequence,
+                reply,
+            } => {
+                let result = actor
+                    .clean
+                    .as_ref()
+                    .ok_or_else(|| "clean actor is unavailable".to_owned())
+                    .and_then(|clean| {
+                        clean
+                            .runtime
+                            .database()
+                            .probe_covered_redelivery_for_test(covered_sequence)
                             .map_err(|error| error.to_string())
                     });
                 let _ = reply.send(result);

@@ -129,7 +129,7 @@ const MANAGED_LOCAL_RECORD_SCHEMA_VERSION: u32 = 1;
 const ENGINE_HISTORY_SCHEMA_VERSION: u32 = 16;
 const LOGSEQ_CLAIM_RECORD_SCHEMA_VERSION: u32 = 1;
 pub(crate) const ACCEPTED_EVIDENCE_SCHEMA_VERSION: u32 = 9;
-pub(crate) const ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION: u32 = 8;
+pub(crate) const ACCEPTED_FRONTIER_ROOT_SCHEMA_VERSION: u32 = 9;
 
 /// Test-only, per-thread attribution for the ordinary trusted-local authoring
 /// path.  This is deliberately an observation receipt, not engine state: it
@@ -3543,6 +3543,30 @@ impl AcceptedFrontierRoot {
 
     pub const fn batch_map_root_digest(&self) -> ContentDigest {
         self.batch_map_root_digest
+    }
+
+    /// The same accepted history, re-expressed over an EMPTY generation tail.
+    ///
+    /// `batch_map_root_*` names the tail treap of the current generation --
+    /// the batches a live database still holds as treap nodes -- not the
+    /// accepted history, which the sealed tables hold and `state_digest`
+    /// identifies. A generation cut covers every batch through its target
+    /// sequence, so the engine that reopens at that cutover starts with an
+    /// empty tail; tine-storage requires exactly that shape
+    /// (`validate_root_shape`: `tail_count == 0` iff the batch-map root key is
+    /// absent), and without this rebase the first anchored apply after a
+    /// restore is refused as `physical frontier authenticated-map shape is
+    /// inconsistent`.
+    ///
+    /// `state_digest` is deliberately NOT recomputed. A cut accepts nothing,
+    /// so the accepted history's identity -- and the chain the next batch
+    /// folds into -- must not move because of one. Only the tail shape does.
+    pub(crate) fn rebased_on_an_empty_generation_tail(&self) -> Self {
+        Self {
+            batch_map_root_key: None,
+            batch_map_root_digest: authenticated_map_empty_digest(),
+            ..*self
+        }
     }
 
     pub const fn state_digest(&self) -> ContentDigest {
@@ -8374,7 +8398,7 @@ impl ShardedHotEngine {
             })?;
         let batch_ids = store
             .committed_manifest_names_with_cold_history()
-            .map_err(|error| EngineError::Archive(error.to_string()))?;
+            .map_err(archive_read_error)?;
         self.replay_clean_committed_batch_ids(&batch_ids, baseline_claim_source, true)
     }
 
@@ -8616,14 +8640,11 @@ impl ShardedHotEngine {
     /// This is a staging operation, not the bounded actor snapshot epoch required
     /// before live cutover. It streams one accepted row at a time and never asks
     /// the disposable checkpoint to serialize documents or provide authority.
-    pub(crate) fn build_sealed_accepted_cutoff<Store>(
+    pub(crate) fn build_sealed_accepted_cutoff(
         &self,
-        store: &mut Store,
+        store: &mut super::checkpoint_generation::SealedGenerationStagingStore,
         predecessor: Option<&super::checkpoint_generation::SealedAcceptedCutoff>,
-    ) -> Result<super::checkpoint_generation::SealedAcceptedCutoff, EngineError>
-    where
-        Store: tine_storage::sealed_accepted_index::SealedAcceptedIndexObjectStore,
-    {
+    ) -> Result<super::checkpoint_generation::SealedAcceptedCutoff, EngineError> {
         use super::checkpoint_generation::SealedAcceptedCutoff;
         let base_sequence = predecessor.map_or(0, |cutoff| cutoff.frontier().acceptance_sequence());
         if let Some(reason) = self.clean_checkpoint_capture_skip_reason(base_sequence) {
@@ -8763,7 +8784,16 @@ impl ShardedHotEngine {
         use super::checkpoint_generation::SealedDocumentRoster;
         self.require_complete_document_cutoff(cutoff)?;
         let expected_count = documents.len() as u64;
-        let mut roster = predecessor.unwrap_or_else(SealedDocumentRoster::empty);
+        // With no predecessor this is a full RECENSUS: it replaces whatever
+        // roster the staging store's base tables inherited rather than
+        // extending it, so the domain is cleared first. (A cut opens over the
+        // predecessor's tables now; a census that assumed an empty substrate
+        // counted every rewritten document as already present and reported
+        // zero.)
+        let mut roster = match predecessor {
+            Some(previous) => previous,
+            None => SealedDocumentRoster::cleared(store).map_err(EngineError::Archive)?,
+        };
         let mut written = 0;
         for dependencies in documents {
             if let Some(previous) = predecessor {
@@ -8784,9 +8814,10 @@ impl ShardedHotEngine {
             written += 1;
         }
         if roster.document_count() != expected_count {
-            return Err(EngineError::Archive(
-                "generation roster has extra or missing documents".into(),
-            ));
+            return Err(EngineError::Archive(format!(
+                "generation roster has extra or missing documents: roster={} expected={expected_count} written={written}",
+                roster.document_count()
+            )));
         }
         Ok((roster, written))
     }
@@ -9029,7 +9060,7 @@ impl ShardedHotEngine {
     /// actor-side export and no second lifetime index.
     pub(crate) fn build_policy_compact_worker_document(
         capture: &CleanCheckpointDocumentCapture,
-        document_id: DocumentId,
+        _document_id: DocumentId,
         dependencies: DocumentDependencies,
         document: &LoroDoc,
         eligible_through: u64,
@@ -9848,10 +9879,17 @@ impl ShardedHotEngine {
                 .map(|(id, heads)| (*id, heads.clone()))
                 .collect(),
             accepted_frontier: self.accepted_frontier.clone(),
-            accepted_frontier_root: self.accepted_frontier_root.clone(),
+            // The restored engine starts at this generation's cutover, with an
+            // empty tail; see `rebased_on_an_empty_generation_tail`.
+            accepted_frontier_root: self
+                .accepted_frontier_root
+                .rebased_on_an_empty_generation_tail(),
             current_action_hot_pin_batches: self.checkpoint_current_action_hot_pin_batches(),
             current_path_available: self.current_path_catalog.available,
-            current_path_frontier_root: self.current_path_catalog.accepted_frontier_root.clone(),
+            current_path_frontier_root: self
+                .current_path_catalog
+                .accepted_frontier_root
+                .rebased_on_an_empty_generation_tail(),
             acceptance_age_policy: self
                 .acceptance_age_policy
                 .encode_current()
@@ -9977,19 +10015,50 @@ impl ShardedHotEngine {
         }
 
         let next_acceptance_sequence = accepted_history.sequence();
-        if acceptance_age_policy.observed_through() != next_acceptance_sequence
-            || state.accepted_frontier_root.acceptance_sequence() != next_acceptance_sequence
-            || accepted_history.roots().batch_map.root.map(|link| link.key)
-                != state
-                    .accepted_frontier_root
-                    .batch_map_root_key
-                    .map(AuthenticatedMapKey::from)
-            || accepted_history.roots().batch_map.root_digest()
-                != state.accepted_frontier_root.batch_map_root_digest
+        // 4c compared the sealed batch map's root against the frontier's,
+        // because the overlay's root STARTED at the sealed root and therefore
+        // spanned the whole history. Under sorted tables the frontier's batch
+        // map names the generation TAIL only, so the checkable facts split in
+        // two, and BOTH are checked:
+        //
+        //  - that this IS the generation's covered half, which every reopen
+        //    proves in `SealedGenerationDirectory::open_generation`: it decodes
+        //    the root record the `sealed-v3` marker names and refuses unless
+        //    its digest is the one the generation binding commits to. The
+        //    private `open_at_unchecked` is its only bypass and has no other
+        //    caller. That is the in-kind replacement for the retired proof
+        //    walk (D-2 removed the walk, not the binding).
+        //  - that the frontier restored here has the SHAPE of a cutover, which
+        //    is the arm below: a checkpoint covers every batch through its
+        //    target sequence, so its tail is empty, and tine-storage's
+        //    `validate_root_shape` refuses an anchored root whose tail count
+        //    and batch-map root disagree.
+        //
+        // Each disagreement names itself: this refusal routes to a full
+        // replay (D-3), and a rebuild whose cause is unreadable is a rebuild
+        // nobody can stop paying for.
+        let mismatch = if acceptance_age_policy.observed_through() != next_acceptance_sequence {
+            Some(format!(
+                "acceptance-age policy observed {} against sealed sequence {next_acceptance_sequence}",
+                acceptance_age_policy.observed_through()
+            ))
+        } else if state.accepted_frontier_root.acceptance_sequence() != next_acceptance_sequence {
+            Some(format!(
+                "frontier acceptance sequence {} against sealed sequence {next_acceptance_sequence}",
+                state.accepted_frontier_root.acceptance_sequence()
+            ))
+        } else if state.accepted_frontier_root.batch_map_root_key.is_some()
+            || state.accepted_frontier_root.batch_map_root_digest
+                != authenticated_map_empty_digest()
         {
-            return Err(EngineError::Archive(
-                "clean checkpoint roster does not authenticate its frontier".into(),
-            ));
+            Some("an anchored checkpoint frontier carries a non-empty batch tail".to_owned())
+        } else {
+            None
+        };
+        if let Some(mismatch) = mismatch {
+            return Err(EngineError::Archive(format!(
+                "clean checkpoint roster does not authenticate its frontier: {mismatch}"
+            )));
         }
         let baseline = self.lazy_genesis.as_ref().expect("checked baseline");
         let overlay_documents = state
@@ -12666,7 +12735,22 @@ impl ShardedHotEngine {
                 ))
             })?;
         match evidence {
-            Some(evidence) if evidence.post_frontier_root() == root => Ok(()),
+            // The accepted half must match exactly. The generation TAIL is the
+            // one part that legitimately differs: a checkpoint authored at this
+            // sequence re-expresses the same accepted state over the empty tail
+            // its cutover leaves behind (see
+            // `rebased_on_an_empty_generation_tail`), so a restored engine
+            // presents the cutover form of a root whose evidence still carries
+            // the authoring run's tail. Nothing else is permitted to differ.
+            Some(evidence)
+                if evidence.post_frontier_root() == root
+                    || evidence
+                        .post_frontier_root()
+                        .rebased_on_an_empty_generation_tail()
+                        == *root =>
+            {
+                Ok(())
+            }
             Some(_) => Err(EngineError::Archive(
                 "requested accepted frontier root is not bound to accepted history".into(),
             )),
@@ -12960,10 +13044,9 @@ impl ShardedHotEngine {
                 candidate
                     .upsert(batch_id, causal_record_digest)
                     .map_err(EngineError::Archive)?;
-                let root = candidate.root();
                 (
-                    uuid_domain_map_root_key(root.root.map(|link| link.key))?,
-                    root.root_digest(),
+                    uuid_domain_map_root_key(candidate.tail_root_key())?,
+                    candidate.tail_root_digest(),
                 )
             } else {
                 let candidate = self.ephemeral_accepted_batch_root.with_upserts([(
@@ -13090,10 +13173,7 @@ impl ShardedHotEngine {
             evidence.post_frontier_root.document_map_root_digest
         );
         let (batch_root_key, batch_root_digest) = match &self.sealed_accepted_batch_overlay {
-            Some(sealed) => (
-                sealed.root().root.map(|link| link.key),
-                sealed.root().root_digest(),
-            ),
+            Some(sealed) => (sealed.tail_root_key(), sealed.tail_root_digest()),
             None => (
                 self.ephemeral_accepted_batch_root.root_key(),
                 self.ephemeral_accepted_batch_root.root_digest(),
@@ -16890,7 +16970,7 @@ impl ShardedHotEngine {
                     }
                 }
             };
-            let mut input = CapabilityCapturedProjectionInput::from_draft_capability(
+            let input = CapabilityCapturedProjectionInput::from_draft_capability(
                 path.clone(),
                 source,
                 receipts.store_id(),
@@ -19455,7 +19535,7 @@ impl ShardedHotEngine {
         let (store, endpoint) = self.clean_projection_runtime_binding()?;
         let manifest = store
             .resolve_logical_manifest(batch_id)
-            .map_err(|error| EngineError::Archive(error.to_string()))?
+            .map_err(archive_read_error)?
             .ok_or_else(|| {
                 EngineError::Archive(format!(
                     "clean projection batch {batch_id} has no committed manifest"
@@ -19483,7 +19563,7 @@ impl ShardedHotEngine {
         let (store, endpoint) = self.clean_projection_runtime_binding()?;
         let manifest = store
             .resolve_logical_manifest(batch_id)
-            .map_err(|error| EngineError::Archive(error.to_string()))?
+            .map_err(archive_read_error)?
             .ok_or_else(|| {
                 EngineError::Archive(format!(
                     "clean projection batch {batch_id} has no committed manifest"
@@ -22658,7 +22738,7 @@ impl ShardedHotEngine {
         &self,
         frontier: &FrontierV2,
         updates: &BTreeMap<DocumentId, CrdtUpdatePayload>,
-        requested_catalog_page_ids: &[PageId],
+        _requested_catalog_page_ids: &[PageId],
     ) -> Result<Option<CurrentFrontierDocuments>, EngineError> {
         self.validate_dependency_witnesses(frontier, updates)?;
         if !self.dependency_witnesses_are_current(frontier, updates, self.is_blocked())? {
@@ -22888,7 +22968,7 @@ impl ShardedHotEngine {
         // Prepare every current-state replacement first. No visible document is
         // changed until all imports and structural checks have succeeded.
         let mut replacements = BTreeMap::new();
-        let mut replacement_heads = BTreeMap::new();
+        let replacement_heads = BTreeMap::new();
         let mut new_exact_shards = BTreeSet::new();
         let mut divergent_validated_catalog_pages = None;
         let mut proven_exact_current_documents = BTreeSet::new();
@@ -28650,8 +28730,20 @@ fn next_accepted_frontier_root(
             "accepted frontier sequence is not contiguous".into(),
         ));
     }
-    // v8: the document-map root key is the full, length-framed document key.
-    let mut bytes = b"tine/oplog/accepted-frontier/v8\0".to_vec();
+    // v9: the batch-map root left the preimage. It names the current
+    // generation's TAIL, not the accepted history -- a cut empties it without
+    // accepting anything -- so folding it in made the accepted history's own
+    // identity depend on where this device happened to cut, and a
+    // checkpoint-restored engine and a sequence-zero replay of the same
+    // batches then disagreed on `state_digest`. Nothing is lost: this digest
+    // is a chain, so every accepted batch is already committed through
+    // `prior.state_digest` and its own `event_binding_digest`, and the batch
+    // map is derived from exactly those batches. The tail root survives as a
+    // field of the root, where tine-storage's two-tier lookup needs it.
+    //
+    // v8 additionally: the document-map root key is the full, length-framed
+    // document key.
+    let mut bytes = b"tine/oplog/accepted-frontier/v9\0".to_vec();
     bytes.extend_from_slice(prior.state_digest.as_bytes());
     bytes.extend_from_slice(event_binding_digest.as_bytes());
     bytes.extend_from_slice(&acceptance_sequence.to_be_bytes());
@@ -28663,14 +28755,6 @@ fn next_accepted_frontier_root(
     bytes.extend_from_slice(&retained_bytes_total.to_be_bytes());
     push_framed_document_map_root_key(&mut bytes, document_map_root_key);
     bytes.extend_from_slice(document_map_root_digest.as_bytes());
-    match batch_map_root_key {
-        Some(key) => {
-            bytes.push(1);
-            bytes.extend_from_slice(&key);
-        }
-        None => bytes.push(0),
-    }
-    bytes.extend_from_slice(batch_map_root_digest.as_bytes());
     if let Some(genesis) = prior.genesis {
         genesis
             .validate()
@@ -28748,7 +28832,7 @@ pub(crate) fn validate_accepted_frontier_root(
             }
         }
     } else if root.batch_map_root_key.is_none()
-        || root.batch_map_root_digest == authenticated_map_empty_digest()
+        != (root.batch_map_root_digest == authenticated_map_empty_digest())
         || (root.document_count == 0
             && (root.document_map_root_key.is_some()
                 || root.document_map_root_digest != empty_document_map_digest()))
@@ -31177,6 +31261,20 @@ fn loro_error(error: loro::LoroError) -> EngineError {
     EngineError::InvalidCrdt(error.to_string())
 }
 
+/// Convert an archive read failure, preserving whether it is physical damage.
+///
+/// In-scope scenarios for the damaged arm: crash or power loss mid-write, a
+/// truncated write, a disk error, or a sync service delivering a partially
+/// copied archive. The remedy is never a silent success -- clean open reports
+/// `MS-REF-DISK-CORRUPT` and the archive originals are left untouched.
+fn archive_read_error(error: super::object_store::StoreError) -> EngineError {
+    if error.is_physical_archive_damage() {
+        EngineError::ArchiveDamaged(error.to_string())
+    } else {
+        EngineError::Archive(error.to_string())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum EngineError {
     Archive(String),
@@ -31298,12 +31396,22 @@ pub enum EngineError {
     /// At least one member of the exact canonical dependency sequence bound by
     /// this commitment was rejected. Appended to preserve prior enum tags.
     RejectedDependencySet(ContentDigest),
+    /// An archive read failed because the archive's own bytes are damaged
+    /// (`StoreError::is_physical_archive_damage`), not because the request was
+    /// refused. It displays exactly like `Archive`, and exists only so the
+    /// clean-open taxonomy can report `MS-REF-DISK-CORRUPT` after the typed
+    /// `StoreError` has been converted away -- the alternative is recovering
+    /// control flow from display text, which the taxonomy exists to prevent.
+    /// Appended to preserve prior enum tags.
+    ArchiveDamaged(String),
 }
 
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Archive(error) => write!(f, "immutable archive error: {error}"),
+            Self::Archive(error) | Self::ArchiveDamaged(error) => {
+                write!(f, "immutable archive error: {error}")
+            }
             Self::Batch(error) => write!(f, "batch error: {error}"),
             Self::Semantic(error) => write!(f, "semantic effect error: {error}"),
             Self::Receipt(error) => write!(f, "frontier error: {error}"),
@@ -31994,6 +32102,26 @@ pub(crate) mod validation_tests {
                 }
             }
         }
+        // The generation TAIL is not accepted state either. A checkpoint
+        // re-expresses the frontier over the empty tail its cutover leaves
+        // (`rebased_on_an_empty_generation_tail`), so a restored engine and a
+        // sequence-zero replay of the same history disagree on exactly
+        // `batch_map_root_*` and nowhere else. Normalizing both sides here
+        // keeps the oracle comparing the accepted history -- which is what the
+        // sealed root record, cross-checked at every `open_generation`,
+        // authenticates -- and is the same normalization the blanked
+        // `ephemeral_accepted_batch_root` below already performs for the live
+        // tail maps.
+        for status in statuses.values_mut() {
+            if let ArchiveStatus::Accepted { evidence, .. } = status {
+                evidence.prior_frontier_root = evidence
+                    .prior_frontier_root
+                    .rebased_on_an_empty_generation_tail();
+                evidence.post_frontier_root = evidence
+                    .post_frontier_root
+                    .rebased_on_an_empty_generation_tail();
+            }
+        }
         ObservableEngineState {
             history_failure: engine.history_failure.clone(),
             archive_batches: statuses.keys().copied().collect(),
@@ -32030,12 +32158,17 @@ pub(crate) mod validation_tests {
             ephemeral_accepted_batch_entries: BTreeMap::new(),
             ephemeral_accepted_document_root: RunLocalAuthenticatedMap::default(),
             ephemeral_accepted_batch_root: RunLocalAuthenticatedMap::default(),
-            accepted_frontier_root: engine.accepted_frontier_root.clone(),
+            accepted_frontier_root: engine
+                .accepted_frontier_root
+                .rebased_on_an_empty_generation_tail(),
             accepted_sequence,
             next_acceptance_sequence: engine.next_acceptance_sequence,
             current_path_rows: ordered_rows(&engine.current_path_catalog.rows),
             current_path_available: engine.current_path_catalog.available,
-            current_path_frontier_root: engine.current_path_catalog.accepted_frontier_root.clone(),
+            current_path_frontier_root: engine
+                .current_path_catalog
+                .accepted_frontier_root
+                .rebased_on_an_empty_generation_tail(),
         }
     }
 
@@ -32400,7 +32533,12 @@ pub(crate) mod validation_tests {
             changed_publish_work.value_writes,
             changed_publish_work.changed_records
         );
-        assert!(changed_publish_work.map_node_reads > 0);
+        // `map_node_reads` counts sealed TABLE records read. A sorted-table
+        // identity delta STAGES its entries and may legitimately read no base
+        // table at all -- that is the improvement over the treap, which had to
+        // read a path per upsert -- so its floor is 0, not 1. What must stay
+        // true is that the delta wrote something and that both terms stay
+        // bounded by the changed records below, never by the lifetime maps.
         assert!(changed_publish_work.map_node_writes > 0);
         assert!(
             changed_publish_work.map_node_reads

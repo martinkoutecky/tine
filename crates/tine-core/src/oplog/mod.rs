@@ -47,6 +47,7 @@ pub(crate) mod query_cursor;
 #[cfg(test)]
 pub(crate) mod query_lowering;
 pub(crate) mod receipt;
+pub(crate) mod receiver_absence_map;
 pub(crate) mod receiver_absence_summary;
 pub(crate) mod recovery_input_journal;
 pub(crate) mod reference_catalog;

@@ -3544,7 +3544,7 @@ mod tests {
             // The clean-open checkpoint (Harvest A5) is a disposable
             // acceleration cache the engine may write at any time; it is not
             // part of the immutable publication surface this image compares.
-            .filter(|name| name != "clean-open-checkpoint-v2" && name != "cold-history-v1")
+            .filter(|name| name != "sealed-v3")
             .collect::<Vec<_>>();
         names.sort_unstable();
         image.push((

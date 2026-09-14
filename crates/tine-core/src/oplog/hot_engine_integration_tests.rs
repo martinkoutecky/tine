@@ -11519,9 +11519,22 @@ fn managed_page_shard_checkpoint_and_full_replay_agree() {
         ("checkpoint restore", &restored),
         ("full replay", &replayed),
     ] {
+        // Compare the ACCEPTED history, not the generation tail. A checkpoint
+        // is authored at a cutover, so its frontier is rebased on an empty tail
+        // (`AcceptedFrontierRoot::rebased_on_an_empty_generation_tail`) while a
+        // sequence-zero replay of the same batches still holds them in its own
+        // tail. `batch_map_root_*` is the only field that may differ, and the
+        // covered half is authenticated instead by the sealed root record that
+        // `SealedGenerationDirectory::open_generation` cross-checks.
         assert_eq!(
-            other.accepted_frontier_root().unwrap(),
-            engine.accepted_frontier_root().unwrap(),
+            other
+                .accepted_frontier_root()
+                .unwrap()
+                .rebased_on_an_empty_generation_tail(),
+            engine
+                .accepted_frontier_root()
+                .unwrap()
+                .rebased_on_an_empty_generation_tail(),
             "{label}: accepted root"
         );
         assert_eq!(

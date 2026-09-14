@@ -314,7 +314,7 @@ Managed storage selection, and no byte is written into the user's graph.
 | `sparse-v2-recovery/` | Tauri recovery/escape flow | Tauri recovery | renamed private component trees | temporary crash recovery |
 | `archive/lazy-genesis.<generation>/{manifest.postcard,commit.postcard,catalog.snapshot,segment-*.pack}` | clean activation/join installation | clean open/join through the marker generation resolver | immutable baseline pack, manifest schema 7, page capsule v6, plus commit v1 | authoritative only when named by the marker; generation 0 is the fresh-store publication, and unreferenced generations are reclaimed on open. A sealed baseline whose manifest schema is not the current one is a recognized pre-0.7 containing format: open refuses with `MS-REF-PROTOCOL-INCOMPATIBLE`, which routes the store to preserve-and-rebuild (blank-slate), never to a retryable dead end; no earlier schema is decoded. A schema-5 baseline written by the retired per-block layout takes this same route: the whole private root is preserved as a backup and the current format is rebuilt automatically from Markdown/Org, without replaying backup-only history |
 | `archive/operations.<generation>/{lineage.claim,archive-instance-v1.claim,objects/,batches/}` | clean local/external/provider commit and join installation | causal replay and publication through the marker generation resolver | content-addressed objects plus manifest-last batches | authoritative append-only tail paired with the same marker-named baseline generation; unreferenced generations are reconstructible join residue and are reclaimed on open |
-| `archive/operations.<generation>/clean-open-checkpoint-v2/{current,payload-{a,b},generation-{a,b},capsule-v1-<digest>,sealed-v2-1-<digest>}` | clean engine actor plus one coalesced background writer | the single current-format clean managed opener and image-first cold page loads | canonical checkpoint v2; two bounded replaceable slots, one durable commit pointer, one sealed document-to-image roster, workspace/lineage/catalog binding, accepted-sequence/state-digest recovery fence, and per-document actual floor plus age/size-policy facts | disposable acceleration only; immutable images become durable before payload/generation/pointer, unchanged references are reused after manifest-binding validation without importing every document, objects outside both retained generation roots are reclaimed, and absent/torn/wrong-format/internally inconsistent state sequence-zero full-replays without migration or backup. A damaged predecessor never prevents a fresh base-zero publication, and checkpoint repair never deletes originals |
+| `archive/operations.<generation>/sealed-v3/{checkpoint,payload-{a,b},generation-{a,b},current,pack-v1-<uuid>}` | clean engine actor plus one coalesced background writer | the single current-format clean managed opener and image-first cold page loads | canonical checkpoint v2; two bounded replaceable slots, one durable commit pointer, one sealed document-to-image roster, workspace/lineage/catalog binding, accepted-sequence/state-digest recovery fence, and per-document actual floor plus age/size-policy facts | disposable acceleration only; immutable images become durable before payload/generation/pointer, unchanged references are reused after manifest-binding validation without importing every document, objects outside both retained generation roots are reclaimed, and absent/torn/wrong-format/internally inconsistent state sequence-zero full-replays without migration or backup. A damaged predecessor never prevents a fresh base-zero publication, and checkpoint repair never deletes originals |
 | `archive/operations.<generation>/sweeps/local-completion-index-v1/` | common own-endpoint manifested-projection executor | foreground/cold projection replay and the device-wide absence-decision map | immutable generation-named delta/compaction chain v1 | disposable local completion evidence; rebuilt from valid retained deltas when a summary is stale or invalid; removed with its enrollment era |
 | `archive/operations.<generation>/sweeps/receiver-absence-summary-v1/` | foreign receiver completion/open machinery under the workspace lease | device-wide absence-decision roots | immutable generation-named summary chain v1 naming the absence-history root | disposable receiver roots acceleration; retained receipt records are truth and rebuild it |
 | `archive/operations.<generation>/sweeps/receiver-absence-rows-v1/` | the same receiver open/completion machinery under the workspace lease | point-addressable absence history by exact `(PageId, ManagedPath)` | immutable content-addressed records and authenticated map nodes v1 | disposable derived index; retained receipt records are truth and rebuild it |
@@ -1374,8 +1374,8 @@ otherwise unrelated page creation, and projection validation reconstructs that
 larger frontier. A merely durable pre-shutdown status or an effect-equivalent
 accepted prefix cannot make an unreplayed manifest ready.
 
-Clean open first attempts the disposable `clean-open-checkpoint-v2` state. Its
-single `current` pointer is the commit point; payload and generation bytes land
+Clean open first attempts the disposable `sealed-v3` checkpoint state. Its
+single `checkpoint` pointer is the commit point; payload and generation bytes land
 completely in the inactive one of two bounded slots before that pointer changes.
 An interrupted write therefore leaves the prior pointed generation complete.
 Every create and replacement uses the audited durable directory-publication
@@ -1626,8 +1626,8 @@ Ordinary writable admission is then restored automatically. No shallow
 checkpoint advances a journal drain checkpoint or retires recovery input by
 itself.
 
-The background publisher folds accepted-row deltas into the same
-`clean-open-checkpoint-v2` format; no second reader or authority is introduced.
+The background publisher folds accepted-row deltas into the same `sealed-v3`
+format; no second reader or authority is introduced.
 Changed/exported/reused, handoff-import/reconstruction, and worker export/import
 counts are persisted as diagnostics. Cleanup retains both replaceable payload
 roots (so pointer rollback stays complete), pins the exact object set of every
@@ -2208,6 +2208,7 @@ already complete for this class.
 | `EngineError::ProjectionClaimEvidenceMismatch` | U | The claim evidence is recomputed from the same accepted catalog the intent was drafted against; at `EngineAcceptance` for record N the SQLite claim source reflects exactly records 1..N-1. |
 | `EngineError::InvalidCrdt` | S | `MS-REF-CRASH-TRUNCATED` / `MS-REF-DISK-CORRUPT`: a torn or damaged update payload. Drain maps it to `recovery`. |
 | `EngineError::Archive` | S | `MS-REF-DISK-CORRUPT`: archive read/encode failure. Drain maps it to `recovery`; the store stays openable. |
+| `EngineError::ArchiveDamaged` | S | `MS-REF-DISK-CORRUPT`: the same read failure, carrying the classification that `StoreError::is_physical_archive_damage` made before the typed error was converted away. In-scope scenarios: crash or power loss mid-write, a truncated write, a disk error, a sync service delivering a partially copied archive. It exists so clean open reports the scenario without recovering control flow from display text; it displays identically to `Archive`. |
 | `EngineError::ProjectionWork` | S | `MS-REF-DISK-CORRUPT`: raised by `refresh_clean_projection_head_for_batch` AFTER the batch is accepted, so the drain maps it to `recovery` and retries; acceptance itself already stands. |
 | `history_failure` | S | `MS-REF-DISK-CORRUPT`: an earlier publication failure in the same run already made the workspace terminal. |
 | `canonical page-name key is occupied at the declared dependency frontier` | **R → fixed** | Was the one acceptance-only refusal reachable from ordinary editing: the run-local page-name index was blind to journal-durable-but-unaccepted records, so two pages whose exact names differ but whose canonical keys are equal ("Alpha" and "/Alpha") both passed the draft and the second was refused at acceptance after its manifest was published. Fixed by layering `CommittedLocalOverlay::page_names` under the accepted index in the single producer (`prepare_page_name_updates`), exactly as `portable_path_records_many` already layers the overlay for portable paths. The refusal is now raised at draft time, before the journal append. Guarded by `w5_census_a_canonical_page_name_collision_is_settled_before_the_journal_append`. |
@@ -2400,13 +2401,44 @@ remain available for point answers, but an ordinary drain turn must never scan
 that lifetime map merely to rediscover the handful of currently staged batches.
 
 Advancing the clean runtime's authenticated accepted-frontier roots follows the
-same rule. The document overlay and accepted-batch maps are persistent
-path-copying authenticated trees: one accepted operation updates only its
-changed document keys and its one new batch key. It must not clone, sort, or
-rehash every document touched earlier in the run or every earlier accepted
-batch. The incrementally maintained root is required to be byte-identical to a
-canonical complete rebuild; the complete rebuild remains only a differential
-oracle and an explicit rebuild operation.
+same rule. The document overlay and the accepted-batch TAIL are authenticated
+maps: one accepted operation updates only its changed document keys and its one
+new batch key. It must not clone, sort, or rehash every document touched earlier
+in the run or every earlier accepted batch. The incrementally maintained root is
+required to be byte-identical to a canonical complete rebuild; the complete
+rebuild remains only a differential oracle and an explicit rebuild operation.
+
+### What `AcceptedFrontierRoot.batch_map_root_*` names (and what it does not)
+
+`batch_map_root_key` / `batch_map_root_digest` name the **current generation's
+tail** — the accepted batches a live database still holds as treap nodes —
+never the accepted history. Under sealed tables the covered half has no treap
+root to compare against, so the two facts are separated and both are checked:
+
+| fact | who proves it | where |
+| --- | --- | --- |
+| this IS the generation's covered half | the sealed root record the `sealed-v3` marker names, compared against the generation binding's `sealed_root_digest` | `SealedGenerationDirectory::open_generation`, the only non-private constructor, so every reopen that consumes a generation proves it |
+| the restored frontier has the shape of a cutover | `restore_clean_checkpoint`'s empty-tail arm, matching tine-storage's `validate_root_shape` (`tail_count == 0` iff the batch-map root key is absent) | `hot_engine.rs` |
+
+Two consequences follow, and both are contract, not incident:
+
+- A checkpoint records its frontier **rebased on an empty generation tail**
+  (`AcceptedFrontierRoot::rebased_on_an_empty_generation_tail`). A cut covers
+  every batch through its target sequence, so the engine that reopens there
+  starts with an empty tail; without the rebase the first anchored SQLite apply
+  after a restore is refused with `physical frontier authenticated-map shape is
+  inconsistent`. `authenticate_accepted_frontier_root` therefore accepts either
+  the evidence's own root or that root's cutover form, and nothing else.
+- `state_digest` (`tine/oplog/accepted-frontier/v9`, schema version 9) **does
+  not commit to the batch-map root**. A cut empties the tail while accepting
+  nothing, so folding the tail in would have made the accepted history's
+  identity depend on where a device happened to cut, and a checkpoint-restored
+  engine would disagree with a sequence-zero replay of the same batches.
+  Nothing is lost: the digest is a chain, so every accepted batch is already
+  committed through `prior.state_digest` and its own `event_binding_digest`,
+  and the batch map is derived from exactly those batches. The v8 preimage
+  included it; v9 does not, and pre-0.7 blank slate (D-1) means there is no v8
+  reader.
 
 Checkpoint-generation support obeys the pre-0.7 blank-slate rule: production
 implements one current format, not old/new readers or a migration bridge. The
@@ -2540,92 +2572,218 @@ their `BatchId`s are preserved verbatim, and every read re-proves them. There is
 one current representation and no migration path; an unrecognized private store is
 still backed up and rebuilt.
 
-Layout, under the retained archive capability beside `clean-open-checkpoint-v2`:
+One directory holds the whole sealed tier — the checkpoint generation and the
+cold whole-object history are one container, `sealed-v3`, with ONE marker
+(P4c2 §4.4). Two directories meant two marker-last protocols and two crash
+matrices for state that is published together:
 
 ```
-<archive>/cold-history-v1/
-  pack-v1-<uuid>            immutable pack file
-  sealed-v2-<kind>-<digest> shared authenticated-map nodes
-  current                   canonical root marker, installed last
+<archive>/operations.<generation>/sealed-v3/
+  pack-v1-<uuid>   immutable pack file: payload records, table records, root records
+  current          the sealed root MARKER, installed last
+  checkpoint       the checkpoint commit POINTER (slot a/b)
+  payload-{a,b}    the two bounded replaceable checkpoint payload slots
+  generation-{a,b} their generation descriptors
 ```
 
-A pack is `record* footer footer_len:u64be "TINECLD1"`. A record is
-`sha256(payload):32 payload_len:u64be payload`, so one ranged read self-verifies
-its payload. The footer makes each pack self-describing, which is what keeps the
-locator index disposable derived state: `repack_cold_history` rebuilds every root
-from pack footers alone. Packs are built to a 4 MiB construction target; that is a
-target, never an occupancy cap, and one larger legal record is packed alone.
+Both names are pinned and they are different things: `current` is the sealed
+index's root marker; `checkpoint` is the two-slot checkpoint pointer. (It was
+`current` too until the directories merged, which would have made one name
+mean two commit points in one directory.)
 
-`ColdLocatorV1` is exactly `pack_uuid:16 offset:u64be length:u64be` = 32 bytes, so
-it occupies the shared authenticated map's fixed value slot directly. No side blob
-and no filesystem object exists per logical record: many small records share one
-pack and one point read.
+A pack is `record* footer footer_len:u64be "TINECLD2"`. A record is
+`sha256(payload):32 payload_len:u64be payload` (40 header bytes), so one ranged
+read self-verifies its payload. The footer makes each pack self-describing,
+which is what keeps the index disposable derived state: `repair_sealed_root`
+rebuilds every table from pack footers alone. Packs are built to a 4 MiB
+construction target; that is a target, never an occupancy cap, and one larger
+legal record is packed alone.
 
-Two key domains compose the same shared canonical UUID map; there is no second
-tree, no tuple hashing and no SHA-256 truncated into a UUID. This cold object
-index remains its own two-level 256-bit content-digest composition; unlike it,
-the dormant `SealedDocumentMap` codec stores each lossless tagged entity or full
-membership address directly in one shared authenticated map. The **object domain** carries
-the full 256-bit digest through an outer map keyed by
-`sha256[0..16]`; its value locates a canonical postcard **inner-root descriptor**
-`{schema=1, root: {count, root_key, root_digest}}` packed with the same physical
-pack machinery, and that descriptor names an inner authenticated map keyed by
-`sha256[16..32]` whose values are the record locators. An outer entry therefore
-holds a whole map, not a list: the number of objects sharing one 128-bit prefix is
-unbounded, there is no bucket byte cap and no fixed-occupancy refusal, and
-lookup cost under a prefix is a map path rather than a scan. The descriptor's
-fixed 256-byte read bound is the codec size of that constant structure and is
-independent of prefix occupancy, history size or graph size. The **manifest
-domain** keys the map by the `BatchId` UUID and locates the record directly. One
-object lookup costs `O(log n)` outer map-node reads, one bounded descriptor read,
-`O(log m)` inner map-node reads and one bounded payload read — two pack reads
-however large history or a prefix grows; one manifest lookup costs exactly one.
-No pack, manifest or object namespace is enumerated on any lookup path.
+`ColdLocatorV1` is `offset:u64be length:u64be` = 32 bytes, and the offset is
+**virtual**, not a pack-relative one: each pack covers one contiguous range of
+a single virtual byte space, and the pack table lives in the MARKER, not in the
+root record — putting it in the record it is needed to read would force every
+open to scan every pack footer to bootstrap itself. A tier merge concatenates a
+contiguous run, so a record's virtual offset never moves and only the file it
+lives in does. That is what lets a reader opened before a cut re-resolve any
+locator through the CURRENT marker's pack table instead of failing on a retired
+pack, and what lets the two-slot checkpoint protocol keep its rollback slot
+after the marker has advanced.
+
+### Sorted tables, not a treap
+
+The sealed accepted index is a set of **immutable sorted tables** per domain,
+size-tier compacted at fanout `R = 8` (`TierPlan::FANOUT`), replacing the
+path-copied authenticated treap (P4c2 §4.1, D-1: one current format, no second
+reader). A table is `"TINETBL1" ‖ schema:u32be ‖ domain id ‖ key_len ‖
+value_len ‖ reserved ‖ count:u64be`, then entries, then a fence array every 64
+entries and the table digest; a table declares its own domain in that header,
+so a footer-only rebuild can interpret it without the lost root. A cut writes
+one level-0 delta per domain it touched; `merge_tables` PRESERVES tombstones
+and only `compact_tables`, valid solely over every table of a domain, drops
+them, because a merge that dropped them would resurrect a shadowed value from
+an older tier.
+
+The domains, with their exact widths:
+
+| id | domain | key | value | tombstones |
+| --- | --- | --- | --- | --- |
+| 1 | accepted batch (`tine-storage`) | 16 (batch id) | 64 | no |
+| 2 | acceptance sequence (`tine-storage`) | 8 (be u64) | 16 (batch id) | no |
+| 3 | document change | 24 (`document uuid ‖ sequence be`) | 8 (sequence be) | no |
+| 4 | covered object | 32 (content digest) | 1 | no |
+| 5 | causal tip | 16 (peer id) | 32 (tip value digest) | no |
+| 6–9 | identity complete, one per kind | 49 (framed) | 32 (locator) | no |
+| 10–13 | identity current, one per kind | 49 (framed) | 32 (locator) | yes |
+| 14 | document roster | 33 (framed `DocumentKey`) | 32 (locator) | yes |
+| 15 | cold object | 32 (content digest) | 32 (locator) | no |
+| 16 | cold manifest | 16 (batch id) | 32 (locator) | no |
+| 17 | capsule blob | 32 (blob digest) | 32 (locator) | no |
+
+Four of those widths are deliberate deviations from the narrowest encoding, and
+each is recorded here because a reviewer will otherwise read it as a defect:
+
+* **covered object carries a 1-byte value** for a pure membership domain. A
+  zero-width value is not a legal table domain; nothing reads the byte.
+* **document roster keys are 33 bytes.** A `DocumentKey` is 17 bytes (entity)
+  or 33 (membership pair) and a table key is fixed width, so the domain takes
+  the wider and zero-pads an entity key. The encoding stays injective because
+  the address tag byte already separates the two families.
+* **identity keys are 49 bytes.** An `AuthenticatedMapKey` is variable length
+  (≤ 48), framed as `len:u8 ‖ key ‖ zero padding`. This is injective, and the
+  identity domains are point-looked-up and fully enumerated, never scanned in
+  key order, so the length-first ordering it induces is not observable.
+* **the accepted-batch value is two 32-byte locators**, not two record
+  addresses. `tine-storage`'s own fixtures fill that 64-byte slot with the
+  causal and status records' logical addresses; Tine fills it with their PACK
+  LOCATORS, because Tine owns resolution and the record's logical address is
+  carried in the record itself. A sealed accepted record is therefore stored as
+  `logical address:32 ‖ canonical bytes`: the pack header's `sha256` proves the
+  bytes, and the prefixed address is what binds the causal and status records
+  to one identity for `SealedBatchRecords::verify`.
+
+There is no composed prefix/inner map any more, and no inner-root descriptor:
+the cold object domain is one sorted table keyed by the whole 256-bit digest,
+so a shared 128-bit prefix is a run of adjacent keys rather than a structure,
+and the bucket-occupancy question the composition existed to answer does not
+arise. One object lookup costs `O(log N)` table records plus exactly one
+payload read; one manifest lookup the same. No pack, manifest or object
+namespace is enumerated on any lookup path.
+
+### What a reader holds in memory, and what it re-reads
+
+`tine-storage` verifies a table's trailing digest **once per `TableSetReader`**.
+Tine's `SealedTableAccess::table_value` builds a fresh reader per point read, so
+the cost of a lookup is one whole table hashed, not one node read. That is right
+for the handful of lookups an ordinary operation does and quadratic for a loop
+over documents — checkpoint qualification and checkpoint restore each do two
+point reads per document, so on the anonymized graph (1,077 documents, H=1000) a
+reopen hashed the roster and blob tables about three thousand times and cost
+28.4 s where the path-copied treap cost 0.78 s.
+
+`SealedGenerationDirectory` therefore materializes the live entries of the
+**document-scale** domains once per reader:
+
+| cached | why it is bounded |
+| --- | --- |
+| `document roster` (14) | one live entry per document; the caller has already materialized one `DocumentDependencies` per document in the checkpoint payload |
+| `capsule blob` (17) | one live entry per referenced document image; superseded images are retired at the cut |
+
+Every other domain — accepted batch, acceptance sequence, covered object,
+causal tip, document change, the identity domains, cold object and cold
+manifest — is **deliberately uncached**, because their live entry count grows
+with accepted batches or objects and caching them would put the index back in
+RAM, which is the cost sorted tables exist to avoid. A loop over batch-scale
+keys is a different defect, and its fix is to stop looping.
+`a_document_scale_domain_is_hashed_once_per_reader_not_once_per_lookup` pins
+both halves: the cached domain hashes at most two tables for 64 point reads, and
+an object-scale domain still hashes one per lookup.
+
+### Publication order and what a crash can leave
+
+Publication is **marker-last** and every prefix of it is a state the next open
+handles without losing the predecessor (I-2):
+
+1. payload packs durable;
+2. delta and merged tables durable (they are records in packs too — nothing
+   writes a file into `sealed-v3` except pack publication and the marker swap);
+3. the root record durable;
+4. the marker installed — the commit point;
+5. only then superseded packs retired.
+
+A crash before step 4 leaves unreferenced residue and the predecessor marker
+exactly as authoritative as it was; a retry completes without replacing it. A
+crash between 4 and 5 leaves a committed cut whose superseded packs are still
+on disk, which the next cut retires. A pack-tier merge happens inside step 5,
+before the marker, so a crash with the merged pack durable and nothing naming
+it is the same shape: unreferenced residue over an untouched predecessor.
+
+`sealed_directory_publication_fault_can_retry_without_replacing_predecessor`
+drives all five of those prefixes — `AfterPayloadPacks`, `AfterTables`,
+`MidPackTierMerge`, `AfterRootRecord`, `AfterMarkerBeforeRetire` — over the cut
+that FILLS level 0, so every one interrupts a cut that is also merging a table
+level and retiring a full pack run.
+
+**A reader that straddles the commit point recovers; it does not refuse.**
+Step 5 retires the packs the PREVIOUS marker named, so a reader that has read
+the marker but not yet resolved the root record through it can find that pack
+already gone. The archive is intact; only the reader's snapshot of it is stale.
+`read_root_state` therefore re-reads the marker on that failure: a marker that
+MOVED across the failure is proof that a cut committed underneath the read, and
+the retry resolves against the newer marker (at most
+`SEALED_ROOT_READ_ATTEMPTS` = 8 times, which terminates because a marker only
+moves when a cut commits). Only a marker that did **not** move is evidence of
+damage. The same rule covers an already-open `SealedArchiveReader`, whose
+`record_bytes` refreshes its physical pack table from the current marker for the
+same reason — a merge concatenates a contiguous virtual run, so a record's
+virtual offset never moves and only the file it lives in does. Without this,
+honest concurrency between the checkpoint publisher and any cold read turns a
+live record into `cold pack … is missing`, and `contains_any_pack` then
+escalates it to a hard `ColdHistoryRootMissing` on an undamaged archive.
+`a_torn_marker_read_across_a_pack_retiring_cut_is_recovered_not_refused` injects
+that exact interleaving (the production window is sub-millisecond, so it is
+injected rather than raced for) and proves the read still resolves.
+
+Refusals, each with the in-scope scenario it defends against:
+
+| refusal | scenario |
+| --- | --- |
+| `ColdHistoryRootMissing` | crash or external deletion left packs with no marker, or a torn marker over surviving packs — concluded only after the marker has been re-read and has NOT moved, so a reader racing a committing cut recovers instead. Never ordinary absence, and never a licence to publish a fresh empty-based root over live history: reads, publication and repack all refuse by this name until `repair_cold_history_root` runs |
+| `ColdHistoryIndexUnavailable` | a damaged table or root record. Refuses the INDEX only; the hot tier and current state stay usable |
+| `ColdObjectUnavailable` / `ColdManifestUnavailable` | a torn pack record or a locator that resolves to other bytes. Names the exact logical object or batch; every other object stays resolvable |
+| `ColdManifestConflict` | two different canonical manifests under one `BatchId`. Checked before any record is appended, so a refused conflict leaves the predecessor root, the original bytes and the pack set exactly as they were |
+| `CoveredBatchRedelivery` | an honest re-delivery of an already-accepted covered batch (crash between physical commit and receipt, replayed journal frame, returning peer). The anchored SQLite root routes the miss to the sealed index instead of applying the batch a second time |
+
+A damaged table is disposable derived state, not a graph-open refusal: repair
+skips it and keeps rebuilding (D-3). A damaged marker with no surviving pack is
+never replaced with an empty history — there is nothing to rebuild from, so it
+refuses and leaves the bytes alone.
 
 Publication is **additive**: nothing here retires a hot original, and a repack
-publishes new packs and swaps the root while leaving the predecessor packs in
+publishes new packs and swaps the marker while leaving the predecessor packs in
 place (publish-new-before-retire-old). Enabling deletion needs the generation,
-fallback and retention proofs that follow. Publication order is payload pack
-bytes, then the inner prefix maps, then the packed inner-root descriptors, then
-the outer and manifest maps, then the root marker; before the marker installs,
-every staged pack and index node is unreferenced residue and the predecessor root
-is untouched, so an interrupted publication never becomes authority through
-filename presence.
+fallback and retention proofs that follow.
 
 A repeated identity is "already archived" only when its **bytes** are
 byte-identical to what cold history already holds, compared through the shared
 reader. A `BatchId` is an identity, not a content address: two valid canonical
 manifests may legitimately carry the same `BatchId` and differ (a different
 `SessionId` alone suffices), so a repeated `BatchId` with different bytes is a
-collision, refused as `ColdManifestConflict` with the batch named. The exactness
-comparison runs before any record is appended, so a refused conflict leaves the
-predecessor root, the original bytes and the pack set exactly as they were.
-Publication, repack and footer reconstruction all apply the same rule; object
-records are additionally bound by their content digest, which every read
-re-proves. Republishing byte-identical content is a counted no-op that leaves the
-roots byte-identical.
+collision, refused as `ColdManifestConflict` with the batch named. Publication,
+repack and footer reconstruction all apply the same rule; object records are
+additionally bound by their content digest, which every read re-proves.
+Republishing byte-identical content is a counted no-op that leaves the sealed
+root byte-identical.
 
-The root marker is derived state; the self-describing packs are the truth. No
-cold directory, or a cold directory with neither marker nor packs, is ordinary
-absence. A cold directory whose packs survive but whose marker is **gone** is a
-named damaged state, `StoreError::ColdHistoryRootMissing` — never ordinary
-absence, and never a licence to publish a fresh empty-based root over the old
-history: reads, publication and repack all refuse it by that name. A **torn or
-otherwise malformed** marker over surviving packs is the same damaged class:
-ordinary reads reject it as `ColdHistoryIndexUnavailable`, and repair treats it
-exactly like a missing one.
-
-`repair_cold_history_root` is the explicit recovery for both. It reads the raw
-marker bytes once — using them only as the audited replacement guard for the
-marker-last swap, never as history — rebuilds the locator index from the pack
-footers, and reuses every surviving record exactly where it already lies, without
-rewriting, relocating or re-encoding a byte. A healthy marker makes it a bounded
-no-op. A damaged marker with **no** surviving pack is never replaced with an
-empty history: there is nothing to rebuild from, so it refuses and leaves the
-bytes alone. Repair is the only operation that enumerates cold history; healthy
-opens stay bounded point operations, and the damaged-state check short-circuits
-at the first pack it sees. Throughout a damaged state and its repair, the hot
-tier and current state stay usable.
+`repair_cold_history_root` is the explicit recovery for a lost or torn marker.
+It reads the raw marker bytes once — using them only as the audited replacement
+guard for the marker-last swap, never as history — rebuilds every domain's
+tables from the pack footers, and reuses every surviving record exactly where it
+already lies, without rewriting, relocating or re-encoding a byte. A healthy
+marker makes it a bounded no-op. Repair is the only operation that enumerates
+sealed history; healthy opens stay bounded point operations, and the
+damaged-state check short-circuits at the first pack it sees. Throughout a
+damaged state and its repair, the hot tier and current state stay usable.
 
 Read resolution has exactly one implementation, on `ObjectStore`. Ordinary reads
 -- `inspect_batch`, `read_object`, `read_object_bytes`, `read_manifest`,
@@ -2644,7 +2802,7 @@ history) resolves through it today; the remaining historical consumers are route
 as their owning modules are cut over.
 
 Missing or corrupt cold data is history authority, never active-state authority.
-A damaged pack, record, locator or map node refuses with the affected logical
+A damaged pack, record, locator or table record refuses with the affected logical
 object named (`cold logical object <digest> is unavailable: …` /
 `cold logical manifest <batch> is unavailable: …`), while every other object, the
 whole hot tier and current state stay usable; a damaged or noncanonical root

@@ -1023,11 +1023,12 @@ fn g_a_mutation_primitive_counts_are_pinned_per_file() {
             "cap.remove_file",
             2,
         ),
-        // Packet 3 v2 checkpoint cleanup removes only digest-named image/map
-        // objects absent from both retained generations and all active-reader
-        // pins. The graph-derived scan budget bounds each cleanup pass.
+        // E1 (sorted tables): the checkpoint cleanup unlink moved out of
+        // `checkpoint_generation.rs`. Retirement is now `retire_pack`, one
+        // superseded PACK at a time, and it runs only after the marker names
+        // that pack's successor (publish-new-before-retire-old).
         (
-            "crates/tine-core/src/oplog/checkpoint_generation.rs",
+            "crates/tine-core/src/oplog/cold_object_store.rs",
             "cap.remove_file",
             1,
         ),
@@ -1154,6 +1155,13 @@ fn g_a_mutation_primitive_counts_are_pinned_per_file() {
         (
             "crates/tine-core/src/oplog/projection_store.rs",
             "open.create_new",
+            1,
+        ),
+        // 4c-owed, not E1: the projection-turn journal unlinks its superseded
+        // segment after the replacement segment is durable.
+        (
+            "crates/tine-core/src/oplog/projection_turn_journal.rs",
+            "cap.remove_file",
             1,
         ),
         (
@@ -1638,14 +1646,15 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
         ("crates/tine-core/src/model.rs", "durable_directory.open", 2),
         // Packet A5: the disposable clean-open checkpoint publishes its two
         // slots and commit pointer through one durable directory.
+        //
+        // E1 (sorted tables): the second handle and the immutable BATCH
+        // publication were the treap's per-node file writes. Sealed state is
+        // now records inside packs, published by `cold_object_store.rs`, so
+        // this file opens one durable directory (the checkpoint slots) and
+        // publishes no immutable file set of its own.
         (
             "crates/tine-core/src/oplog/checkpoint_generation.rs",
             "durable_directory.open",
-            2,
-        ),
-        (
-            "crates/tine-core/src/oplog/checkpoint_generation.rs",
-            "immutable.batch",
             1,
         ),
         // The cold resolver publishes immutable packs and its guarded roots
@@ -1763,7 +1772,16 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     dependency_surface.sort();
     assert!(fs::read_to_string(repository_root().join("crates/tine-core/Cargo.toml"))
         .unwrap()
-        .contains("tine-storage = { git = \"https://github.com/martinkoutecky/tine-storage\", tag = \"v0.22.0\""));
+        .contains("tine-storage = { git = \"https://github.com/martinkoutecky/tine-storage\", tag = \"v0.23.1\""));
+    // Re-pinned 2026-09-14 (rebaselining v2, E1 lane 2): v0.23.x replaces the
+    // authenticated treap with immutable sorted tables (`sealed_tables`) and
+    // v0.23.1 exports `sqlite::PhysicalSealedAnchor`, without which a
+    // downstream anchored apply silently runs with `anchor: None` and treats a
+    // covered batch as new (I-8). Two write crossings LEFT
+    // `checkpoint_generation.rs` in the same change: its second durable
+    // directory handle and its immutable BATCH publication were the treap's
+    // per-node file writes, and sealed state is now records inside packs that
+    // `cold_object_store.rs` publishes. Both rows above are updated.
     // Re-pinned 2026-09-12 (rebaselining v2, P4c): v0.22.0 adds construction
     // and candidate/live apply for a generation-anchored SQLite projection --
     // the complete capability 4c's first two attempts were blocked on. The
@@ -2275,9 +2293,25 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     // -- disposable checkpoint state inside a write boundary that already
     // existed, not accepted history, raw files, or the physical projection
     // database. New call-site family, no new write boundary.
+    //
+    // E1 lane 2 (sorted tables), 2026-09-14. The sealed index changed shape, so
+    // this surface changed a lot; the two things worth naming are what ENTERED
+    // it and what it is now allowed to do. Entering: the whole
+    // `sealed_tables::*` family -- `TableBuilder::new(`, `TableSetReader::new(`,
+    // `TableView::decode(`, `SealedTableRoot::{decode,default}(`,
+    // `merge_tables`, `compact_tables`, `TableLocator`,
+    // `sealed_tables::sealed_empty_root_digest(` -- plus
+    // `sqlite::PhysicalSealedAnchor`. None of them writes: tables are built in
+    // memory and published as records inside packs through
+    // `publish_immutable_exact_single_writer`, which was already a crossing.
+    // Leaving: the treap's per-node publication, which is why
+    // `checkpoint_generation.rs` drops one `durable_directory.open` and its
+    // `immutable.batch` row above. The remaining `sealed_accepted_index::*`
+    // tokens are the accepted-evidence record codec, which sorted tables did
+    // not replace.
     assert_eq!(
         inventory_digest(&dependency_surface),
-        "c67041dfc50dc5bf2c3822ac5a7169c681ee68e6bb0d81e46409f8fbe4b0aaa1",
+        "d6b6725516d44dee646c2da254fadc56d1229c1819eb053814eb9ac34128ba8e",
         "the complete tine-storage import/direct-call surface changed: {dependency_surface:#?}"
     );
 }

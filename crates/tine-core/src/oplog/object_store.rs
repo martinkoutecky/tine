@@ -1,8 +1,6 @@
 #[cfg(windows)]
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _, OpenOptionsMaybeDirExt as _};
 use std::collections::{BTreeMap, BTreeSet};
-#[cfg(unix)]
-use std::ffi::CString;
 use std::fmt;
 use std::fs;
 #[cfg(any(test, target_os = "android"))]
@@ -24,7 +22,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::enrollment::EnrollmentBindingV1;
-use super::identity::parse_digest;
 use super::sync_layout::{
     ARCHIVE_BATCHES_DIR as BATCHES_DIR, ARCHIVE_OBJECTS_DIR as OBJECTS_DIR, LINEAGE_CLAIM_FILE,
 };
@@ -1109,7 +1106,7 @@ impl ObjectStore {
         &self,
     ) -> Result<BTreeSet<BatchId>, StoreError> {
         let mut names = self.committed_manifest_names()?;
-        if let Some(cold) = super::cold_object_store::ColdHistoryReader::open(self)? {
+        if let Some(cold) = super::cold_object_store::SealedArchiveReader::open(self)? {
             names.extend(cold.manifest_batch_ids()?);
         }
         Ok(names)
@@ -1702,7 +1699,7 @@ impl ObjectStore {
     /// `None`, not a refusal: an archive that never relocated anything is
     /// healthy.
     fn cold_object_bytes(&self, digest: ContentDigest) -> Result<Option<Vec<u8>>, StoreError> {
-        let Some(reader) = super::cold_object_store::ColdHistoryReader::open(self)? else {
+        let Some(reader) = super::cold_object_store::SealedArchiveReader::open(self)? else {
             return Ok(None);
         };
         let Some(bytes) = reader.object_bytes(digest)? else {
@@ -1730,7 +1727,7 @@ impl ObjectStore {
     }
 
     fn cold_manifest_bytes(&self, batch_id: BatchId) -> Result<Option<Vec<u8>>, StoreError> {
-        let Some(reader) = super::cold_object_store::ColdHistoryReader::open(self)? else {
+        let Some(reader) = super::cold_object_store::SealedArchiveReader::open(self)? else {
             return Ok(None);
         };
         let Some(bytes) = reader.manifest_bytes(batch_id)? else {
@@ -1876,7 +1873,7 @@ impl ObjectStore {
         if batches.is_empty() {
             return Ok((0, 0));
         }
-        let cold = super::cold_object_store::ColdHistoryReader::open(self)?
+        let cold = super::cold_object_store::SealedArchiveReader::open(self)?
             .ok_or_else(|| StoreError::ColdHistoryRootMissing)?;
         let mut pinned_objects = BTreeSet::new();
         for batch_id in pinned_batches {
@@ -2004,14 +2001,6 @@ impl ObjectStore {
         &self,
     ) -> Result<super::cold_object_store::ColdRepairOutcome, StoreError> {
         super::cold_object_store::repair_cold_history_root(self)
-    }
-
-    /// The current cold lookup roots, or `None` when this archive has never
-    /// relocated anything.
-    pub(crate) fn cold_history_roots(
-        &self,
-    ) -> Result<Option<super::cold_object_store::ColdHistoryRootsV1>, StoreError> {
-        Ok(super::cold_object_store::ColdHistoryReader::open(self)?.map(|reader| reader.roots()))
     }
 }
 
@@ -2198,6 +2187,28 @@ pub enum StoreError {
         length: u64,
         limit: u64,
     },
+}
+
+impl StoreError {
+    /// Physical damage to the archive's own bytes, as opposed to a logical
+    /// refusal. These are exactly the variants the clean-open taxonomy reports
+    /// as `MS-REF-DISK-CORRUPT`; the in-scope scenarios are a crash or power
+    /// loss mid-write, a truncated write, a disk/media error, and a sync
+    /// service delivering a partially copied archive.
+    ///
+    /// It exists so a caller that must convert this error into another type
+    /// can carry the classification across the conversion instead of leaving
+    /// the next layer to recover control flow from display text.
+    pub(crate) fn is_physical_archive_damage(&self) -> bool {
+        matches!(
+            self,
+            Self::ColdHistoryIndexUnavailable(_)
+                | Self::ColdHistoryRootMissing
+                | Self::ColdManifestConflict { .. }
+                | Self::ColdObjectUnavailable { .. }
+                | Self::ColdManifestUnavailable { .. }
+        )
+    }
 }
 
 impl fmt::Display for StoreError {
