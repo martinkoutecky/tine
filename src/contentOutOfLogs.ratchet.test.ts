@@ -196,11 +196,11 @@ describe("I-5 content-out-of-logs ratchet", () => {
   it("pins the diagnostics contract to both allowlist sizes and gates", () => {
     const contract = source("docs/contracts/diagnostics.md");
     const rustRatchet = source("crates/tine-core/tests/content_out_of_logs.rs");
-    expect(contract).toContain("76 Rust production print sites");
+    expect(contract).toContain("75 Rust production print sites");
     expect(contract).toContain("21 variable-bearing frontend console sites");
     expect(contract).toContain("debug_enabled()");
     expect(contract).toContain("runtime_debug_diagnostics_enabled()");
-    expect(rustRatchet).toContain("const RUST_PRINT_SITE_COUNT: usize = 76;");
+    expect(rustRatchet).toContain("const RUST_PRINT_SITE_COUNT: usize = 75;");
   });
 
   it("makes parser failures fixed-shape before they cross the lsdoc-diff worker boundary", () => {
