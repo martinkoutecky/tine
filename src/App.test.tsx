@@ -5,6 +5,7 @@ import {
   handleGraphChange,
   handleSparseV2Changed,
   installMobileExternalLinkHandler,
+  safeClose,
 } from "./App";
 import { resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import {
@@ -56,6 +57,17 @@ afterEach(() => {
 });
 
 describe("cold managed recovery route installation", () => {
+  it("identifies the affected page before asking to discard a failed save (GH #540)", async () => {
+    setDoc({ pages: [page("Days of notes", "page", ["draft"])], feed: [],
+      byId: { draft: node("draft", "Days of notes") }, loaded: true });
+    markDirty("Days of notes");
+    vi.spyOn(backend(), "savePage").mockRejectedValue(new Error("disk full"));
+    const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(false);
+    safeClose.reset();
+    await expect(safeClose.prepare()).resolves.toBe("rejected");
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Days of notes"), "Unsaved changes");
+    expect(isDirty("Days of notes")).toBe(true);
+  });
   it("binds the native Direct admission together with the returned generation", () => {
     const result: SparseV2CancelResult = {
       binding_generation: 42,

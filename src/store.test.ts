@@ -20,6 +20,7 @@ import {
   deletePage,
   reloadDisposition,
   setBlockMoving,
+  isBlockMoving,
   splitBlock,
   insertOutlineAfter,
   replaceEmptyBlockWithOutline,
@@ -1265,6 +1266,26 @@ describe("cross-page duplicate id::", () => {
       page: "Authored identity wins",
       pageKind: "page",
     })).toBe(runtime);
+  });
+});
+
+describe("reparenting editor move ownership", () => {
+  it("retains an already active move on another page across indent and outdent", () => {
+    const first = blk("first");
+    const second = blk("second");
+    load([first, second]);
+    setBlockMoving(true, "Other page");
+    try {
+      indentBlock(second.id, 0);
+      expect(doc.byId[second.id].parent).toBe(first.id);
+      expect(isBlockMoving("Other page")).toBe(true);
+      expect(isBlockMoving("Test")).toBe(false);
+      outdentBlock(second.id, 0);
+      expect(doc.byId[second.id].parent).toBeNull();
+      expect(isBlockMoving("Other page")).toBe(true);
+    } finally {
+      setBlockMoving(false);
+    }
   });
 });
 

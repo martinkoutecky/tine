@@ -53,18 +53,23 @@ function escapeRegExp(value) {
 // seam refactor (3a123bc1) moved the trailing test modules of `model.rs` and
 // `sync_runtime.rs` into such files; a `_tests.rs` file with no gated includer
 // is NOT excluded, so a file that merely borrows the suffix stays scanned.
+function gatedTestInclude(source, file) {
+  const stem = file.slice(0, -".rs".length);
+  const visibility = "(?:pub(?:\\([^\\)]+\\))?\\s+)?";
+  const gatedInclude = new RegExp(
+    `^#\\[cfg\\(test\\)\\]\\s*\\n(?:#\\[path = "${escapeRegExp(file)}"\\]\\s*\\n${visibility}mod \\w+;|${visibility}mod ${escapeRegExp(stem)};)`,
+    "m"
+  );
+  return gatedInclude.test(source);
+}
+
 function testOnlyInclude(relative) {
   if (!/_tests\.rs$/.test(relative)) return false;
   const directory = path.dirname(relative);
   const file = path.basename(relative);
-  const stem = file.slice(0, -".rs".length);
-  const gatedInclude = new RegExp(
-    `^#\\[cfg\\(test\\)\\]\\s*\\n(?:#\\[path = "${escapeRegExp(file)}"\\]\\s*\\nmod \\w+;|mod ${escapeRegExp(stem)};)`,
-    "m"
-  );
   for (const sibling of fs.readdirSync(path.join(root, directory))) {
     if (!sibling.endsWith(".rs") || sibling === file) continue;
-    if (gatedInclude.test(fs.readFileSync(path.join(root, directory, sibling), "utf8"))) return true;
+    if (gatedTestInclude(fs.readFileSync(path.join(root, directory, sibling), "utf8"), file)) return true;
   }
   return false;
 }
@@ -182,6 +187,18 @@ function assertDetectorSelfTests() {
   for (const [label, source, expected, relative] of probes) {
     if (!sourceProblems(relative, source).some((finding) => finding.includes(expected))) {
       throw new Error(`retired managed-v1 source guard self-test missed ${label}`);
+    }
+  }
+  for (const visibility of ["", "pub ", "pub(crate) ", "pub(super) ", "pub(in crate::runtime) "]) {
+    for (const declaration of [`#[path = "fixture_tests.rs"]\n${visibility}mod tests;`, `${visibility}mod fixture_tests;`]) {
+      if (!gatedTestInclude(`#[cfg(test)]\n${declaration}`, "fixture_tests.rs")) {
+        throw new Error(`gated include detector missed test visibility: ${visibility}`);
+      }
+      if (gatedTestInclude(declaration, "fixture_tests.rs") ||
+          gatedTestInclude(`#[cfg(feature = "fixture")]\n${declaration}`, "fixture_tests.rs") ||
+          gatedTestInclude(`#[cfg(test)]\n${declaration}`, "different_tests.rs")) {
+        throw new Error("gated include detector excluded an ungated or different module");
+      }
     }
   }
   // The gated-include exclusion must stay exact: the real out-of-line test

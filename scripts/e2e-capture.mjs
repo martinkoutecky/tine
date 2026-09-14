@@ -21,7 +21,7 @@ const TD = process.env.TAURI_DRIVER || "tauri-driver";
 const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4456);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4457);
-const TMP = "/tmp/tine-capture-e2e";
+const TMP = process.env.TINE_CAPTURE_TEST_ROOT || "/tmp/tine-capture-e2e";
 const GRAPH = `${TMP}/graph`;
 // Avoid adjacent duplicate characters: WebKitWebDriver coalesces identical
 // synthetic key-downs on some Linux versions even though a physical keyboard
@@ -244,6 +244,8 @@ try {
     active: document.querySelector(".autocomplete .ac-item.active .ac-label")?.textContent?.trim() ?? "",
     labels: [...document.querySelectorAll(".autocomplete .ac-label")].map((node) => node.textContent?.trim() ?? ""),
     value: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : null,
+    selectionStart: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.selectionStart : null,
+    selectionEnd: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.selectionEnd : null,
   }));
   const expectActiveAutocomplete = async (expected, message) => {
     let last = null;
@@ -274,19 +276,33 @@ try {
     // a queued second `[` after the following text (`[Fz[`), which is an XTest
     // transport artefact rather than the user's literal ordering.
     await browser.keys(["["]);
-    await expectAutocompleteValue("[", "Quick Capture did not receive the first page-ref delimiter");
+    let first = null;
+    const firstDeadline = Date.now() + 5_000;
+    while (Date.now() < firstDeadline) {
+      first = await activeAutocomplete();
+      // The fresh-profile default pairs this opener. Wait for that settled
+      // value and its insertion point before sending the second key.
+      if (first.value === "[]" &&
+          first.selectionStart === 1 && first.selectionEnd === 1) break;
+      await sleep(50);
+    }
+    if (first?.value !== "[]" ||
+        first.selectionStart !== 1 || first.selectionEnd !== 1) {
+      throw new Error(`Quick Capture did not receive the first page-ref delimiter at its insertion point; actual=${JSON.stringify(first)}`);
+    }
     await browser.keys(["["]);
     let opener = null;
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
       opener = await activeAutocomplete();
-      // The completion contract accepts both a hand-typed unclosed opener and
-      // Tine's convenience auto-pair. Which post-input snapshot WebKit exposes
-      // to XTest is immaterial; ordering is proved by observing the second `[`.
-      if (opener.value === "[[" || opener.value === "[[]]") break;
+      // The second opener upgrades the fresh-profile pair to a page reference;
+      // its settled value and caret prove both ordering and pairing.
+      if (opener.value === "[[]]" &&
+          opener.selectionStart === 2 && opener.selectionEnd === 2) break;
       await sleep(50);
     }
-    if (opener?.value !== "[[" && opener?.value !== "[[]]") {
+    if (opener?.value !== "[[]]" ||
+        opener.selectionStart !== 2 || opener.selectionEnd !== 2) {
       throw new Error(`Quick Capture did not receive the second page-ref delimiter; actual=${JSON.stringify(opener)}`);
     }
     for (const key of query) await browser.keys([key]);
@@ -383,8 +399,10 @@ try {
   reopen.unref();
   await waitForWindow("Quick Capture", 10_000);
   await browser.switchToWindow(captureHandle);
-  await browser.keys(["Control", "a"]);
-  await browser.keys(["Backspace"]);
+  // Filing resets the scratch editor. Ctrl+A on its already-empty text exits
+  // into outline selection, so clearing again destroys this test's input owner.
+  // Assert the reset instead and type into the editor the application focused.
+  await expectAutocompleteValue("", "reopened Quick Capture did not retain its empty focused editor after filing");
   await typePageQueryFromEmpty("Fz");
   await expectActiveAutocomplete('Create "Fz"', "reopened Quick Capture retained the hidden existing-first policy");
   await browser.keys(["Escape"]);

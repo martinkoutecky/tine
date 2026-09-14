@@ -116,6 +116,10 @@ fn strip_list_bullet(s: &str) -> &str {
 }
 
 fn code_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
+    // Neither inline code nor a Markdown fence can start without one of these.
+    if !raw.contains(['`', '~']) {
+        return Vec::new();
+    }
     let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
     let mut fence: Option<(u8, usize)> = None; // (marker byte, run length) while open
     let mut pos = 0usize;
@@ -377,7 +381,7 @@ pub(crate) fn rename_refs_multi_with_format(
     while i < raw.len() {
         let rest = &raw[i..];
         // Inside a code fence / inline-code span, refs are literal — copy verbatim
-        // (one char), never rewrite, so code examples aren't corrupted by a rename.
+        // never rewrite, so code examples aren't corrupted by a rename.
         if !in_code_at(i, &code, &mut code_cur) {
             // Org file link: `[[file:…/<stem>.org][desc]]` / `[[file:…/<stem>.org]]`.
             // Its target is a path, not a `[[name]]`, so the generic handler below
@@ -432,9 +436,13 @@ pub(crate) fn rename_refs_multi_with_format(
                 }
             }
         }
-        let ch = rest.chars().next().unwrap();
-        out.push(ch);
-        i += ch.len_utf8();
+        // Only '[' and '#' can start a reference. Copy the intervening literal
+        // run at once; the next opener still checks its exact code-range position.
+        // Consume this character first so an unmatched opener also makes progress.
+        let first = rest.chars().next().unwrap().len_utf8();
+        let end = first + rest[first..].find(['[', '#']).unwrap_or(rest.len() - first);
+        out.push_str(&rest[..end]);
+        i += end;
     }
     out
 }
@@ -499,6 +507,10 @@ pub fn rename_tags_property_multi(
     renames: &std::collections::HashMap<String, String>,
     is_org: bool,
 ) -> String {
+    // The existing property parser requires this literal separator.
+    if !raw.contains("::") {
+        return raw.to_owned();
+    }
     let code = code_ranges_for(raw, is_org);
     let mut code_cur = 0usize; // monotone cursor (line_start only increases)
     let mut out = String::with_capacity(raw.len());
@@ -738,6 +750,19 @@ mod tests {
         assert_eq!(
             rename_refs(raw, "Old", "New", false),
             "[[New]] `[[Old]]` mid [[New]] `x [[Old]]` end [[New]]"
+        );
+    }
+
+    #[test]
+    fn rename_literal_runs_cross_code_boundaries_and_preserve_unicode() {
+        let literal = "é猫 ordinary prose ".repeat(100);
+        let raw = format!("{literal}`literal code` [[Old]]\n```\n{literal}[[Old]]\n```\n{literal}#Old [broken [ [[Old]]");
+        let expected = format!("{literal}`literal code` [[New]]\n```\n{literal}[[Old]]\n```\n{literal}#New [broken [ [[New]]");
+        assert_eq!(rename_refs(&raw, "Old", "New", false), expected);
+        let org = format!("{literal}\n#+BEGIN_SRC\n[[Old]]\n#+END_SRC\n{literal}[[Old]]");
+        assert_eq!(
+            rename_refs(&org, "Old", "New", true),
+            format!("{literal}\n#+BEGIN_SRC\n[[Old]]\n#+END_SRC\n{literal}[[New]]")
         );
     }
 

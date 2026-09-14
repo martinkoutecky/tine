@@ -67,6 +67,116 @@ function openCompletion(textarea: HTMLTextAreaElement) {
 }
 
 describe("outline Tab ownership (GH #157)", () => {
+  it.each([
+    [0, 0, "none"],
+    [6, 6, "none"],
+    [11, 11, "none"],
+    [2, 8, "forward"],
+    [2, 8, "backward"],
+  ] as const)("preserves selection %i..%i (%s) across reparenting (GH #519)", async (start, end, direction) => {
+    loadSingle(page("Tabs", [block("previous", "parent"), block("current", "hello world")]));
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Tabs")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    startEditing("current", 0);
+    try {
+      for (const shiftKey of [false, true]) {
+        const editor = activeEditor(root);
+        editor.focus();
+        editor.setSelectionRange(start, end, direction);
+        const event = keydown(editor, "Tab", { shiftKey });
+        expect(event.defaultPrevented).toBe(true);
+        await vi.waitFor(() => {
+          expect(doc.byId.current.parent).toBe(shiftKey ? null : "previous");
+          const next = activeEditor(root);
+          expect(document.activeElement).toBe(next);
+          expect(next.value).toBe("hello world");
+          expect([next.selectionStart, next.selectionEnd, next.selectionDirection]).toEqual([start, end, direction]);
+        });
+      }
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each([
+    ["hello world", "hello world", false],
+    ["hello world", "hello world", true],
+    ["```js\nhello world\n```", "hello world", false],
+    ["```js\nhello world\n```", "hello world", true],
+    ["hello 🌍\nsecond line", "hello 🌍\nsecond line", false],
+    ["hello world\nid:: current", "hello world", false],
+  ] as const)("keeps a clicked editor's selection for %s (visible=%s, outdent=%s)", async (raw, visible, outdent) => {
+    const current = block("current", raw);
+    const previous = block("previous", "parent");
+    if (outdent) previous.children = [current];
+    loadSingle(page("Tabs", outdent ? [previous] : [previous, current]));
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Tabs")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const content = root.querySelector('[data-block-id="current"] .block-content')!;
+      content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      const editor = activeEditor(root);
+      expect(editor.value).toBe(visible);
+      editor.setSelectionRange(2, 8, "backward");
+      keydown(editor, "Tab", { shiftKey: outdent });
+      await vi.waitFor(() => {
+        const next = activeEditor(root);
+        expect(document.activeElement).toBe(next);
+        expect([next.selectionStart, next.selectionEnd, next.selectionDirection]).toEqual([2, 8, "backward"]);
+        expect(next.value).toBe(visible);
+        expect(doc.byId.current.parent).toBe(outdent ? null : "previous");
+        expect(doc.byId.current.raw).toBe(raw);
+      });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps selection when there is no parent or previous sibling to move to", () => {
+    loadSingle(page("Tabs", [block("current", "hello world")]));
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="current" />);
+    startEditing("current", 0);
+    try {
+      const editor = activeEditor(root);
+      editor.setSelectionRange(2, 8, "backward");
+      for (const shiftKey of [false, true]) {
+        keydown(editor, "Tab", { shiftKey });
+        expect(activeEditor(root)).toBe(editor);
+        expect([editor.selectionStart, editor.selectionEnd, editor.selectionDirection]).toEqual([2, 8, "backward"]);
+        expect(doc.pages[0].roots).toEqual(["current"]);
+      }
+    } finally {
+      dispose();
+    }
+  });
+
+  it("captures the selection before committing pending editor text", () => {
+    loadSingle(page("Tabs", [block("previous", "parent"), block("current", "hello")]));
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Tabs")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    startEditing("current", 0);
+    try {
+      const editor = activeEditor(root);
+      editor.value = "hello world";
+      editor.setSelectionRange(2, 8, "backward");
+      keydown(editor, "Tab");
+      const next = activeEditor(root);
+      expect([next.selectionStart, next.selectionEnd, next.selectionDirection]).toEqual([2, 8, "backward"]);
+      expect(doc.byId.current.raw).toBe("hello world");
+      expect(doc.byId.current.parent).toBe("previous");
+    } finally {
+      dispose();
+    }
+  });
+
   it("indents and outdents an actual editor target, but declines every modified Tab", async () => {
     loadSingle(page("Tabs", [block("previous", "Previous"), block("current", "Current")]));
     startEditing("current", 2);

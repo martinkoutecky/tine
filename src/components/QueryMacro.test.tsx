@@ -13,7 +13,7 @@ import { bumpDataRev, bumpGraphEpoch, setWorkflow } from "../ui";
 import { queryMacroExtent } from "../editor/queryMacro";
 import { backendReadsQueries } from "../queryReadingsTestkit";
 import { searchFilter } from "../editor/queryBuilder";
-import { editingId, endEdit } from "../editorController";
+import { editingId, endEdit, startEditing } from "../editorController";
 
 beforeAll(async () => {
   await initParser();
@@ -1528,4 +1528,34 @@ describe("q3: scoped display settings on an inline query", () => {
       dispose();
     }
   });
+});
+
+// Exercise the actual editor completion and mounted builder ownership handoff.
+it("choosing the Query slash command opens its sheet and field chooser", async () => {
+  backendReadsQueries({ "": { form: "", filter: { kind: "and", items: [] } } });
+  vi.spyOn(backend(), "queryRun").mockResolvedValue(blockResult([]));
+  setDoc({
+    byId: { query: node("query", "/query", null) },
+    pages: [page(["query"])], feed: ["Sheet"], loaded: true,
+  });
+  startEditing("query", 6);
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    editor.focus();
+    editor.value = "/query";
+    editor.setSelectionRange(6, 6);
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "y" }));
+    const command = await vi.waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
+        .filter(item => item.querySelector(".ac-label")?.textContent === "Query");
+      expect(found).toHaveLength(1);
+      return found[0];
+    });
+    command.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(doc.byId.query.raw.trim()).toBe("{{query }}"));
+    await vi.waitFor(() => expect(document.querySelector(".qs-sheet")).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector(".qs-vocab")).not.toBeNull());
+    expect(editingId()).toBeNull();
+  } finally { dispose(); }
 });

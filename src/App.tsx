@@ -170,6 +170,8 @@ import {
 import { freshnessVisible } from "./freshnessBarrier";
 import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidBackHandler } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
+import { openUnsavedRecovery, unsavedRecoveryPages } from "./unsavedRecovery";
+import { UnsavedRecovery } from "./components/UnsavedRecovery";
 import { drainPdfWork } from "./pdfOwnership";
 import { currentPdfOwnership } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
@@ -186,7 +188,7 @@ import {
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
-const safeClose = createSafeCloseCoordinator({
+export const safeClose = createSafeCloseCoordinator({
   blurActive() {
     const active = document.activeElement;
     if (active instanceof HTMLElement) active.blur();
@@ -196,12 +198,19 @@ const safeClose = createSafeCloseCoordinator({
   },
   flushPdfWork: drainPdfWork,
   flushAll,
-  confirmDiscard: (reason) => backend().confirm(
-    reason === "still-saving"
-      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this.\n\nClosing now would lose whatever hasn't been written yet. Close anyway?"
-      : "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
-    "Unsaved changes",
-  ),
+  confirmDiscard: async (reason) => {
+    const pages = unsavedRecoveryPages();
+    const explanation = reason === "still-saving"
+      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this.\n\nClosing now would lose whatever hasn't been written yet."
+      : "Tine has changes that could not be saved. Closing now can lose them.";
+    const inventory = pages.map((p) => `• ${p.name} — ${p.state}`).join("\n");
+    const discard = await backend().confirm(
+      `${explanation}\n\n${pages.length} affected pages:\n${inventory || "Pending attachments or storage work; no page draft identified."}\n\nChoose No to review, retry saving, or copy your drafts. Close anyway?`,
+      "Unsaved changes",
+    );
+    if (!discard) openUnsavedRecovery();
+    return discard;
+  },
   flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
@@ -1838,6 +1847,7 @@ export function App(): JSX.Element {
       </DrawerBackground>
       <PageProps />
       <ExportModal />
+      <UnsavedRecovery />
       <PdfExportDialog />
       <Show when={settingsOpen()}>
         <Suspense>

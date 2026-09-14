@@ -33,6 +33,11 @@ const BLOCKS_PER_PAGE = Number(process.env.E2E_MANAGED_BLOCKS_PER_PAGE || 10);
 const TOTAL_FILE_COUNT = Number(process.env.E2E_MANAGED_TOTAL_FILE_COUNT || 25_890);
 const ASSET_LOGICAL_BYTES = Number(process.env.E2E_MANAGED_ASSET_LOGICAL_BYTES || 25_200_000_000);
 const ACTIVATION_TIMEOUT_MS = Number(process.env.E2E_MANAGED_ACTIVATION_TIMEOUT_MS || 30 * 60_000);
+// The first query owns reporter-scale cold projection readiness. Keep its
+// finite ceiling distinct from the 30 s navigation requirement measured after
+// readiness, so a slow or stuck index cannot be hidden as ordinary page-switch
+// performance.
+const COLD_INDEX_TIMEOUT_MS = Number(process.env.E2E_MANAGED_COLD_INDEX_TIMEOUT_MS || 5 * 60_000);
 const CURRENT_ONLY = process.env.E2E_MANAGED_CURRENT_ONLY === "true";
 const canonicalExecutable = (value) => fs.realpathSync(value).toLocaleLowerCase("en-US");
 const candidateExecutable = canonicalExecutable(APP);
@@ -48,6 +53,7 @@ for (const [name, value, minimum] of [
   ["E2E_MANAGED_TOTAL_FILE_COUNT", TOTAL_FILE_COUNT, PAGE_COUNT + 3],
   ["E2E_MANAGED_ASSET_LOGICAL_BYTES", ASSET_LOGICAL_BYTES, 0],
   ["E2E_MANAGED_ACTIVATION_TIMEOUT_MS", ACTIVATION_TIMEOUT_MS, 60_000],
+  ["E2E_MANAGED_COLD_INDEX_TIMEOUT_MS", COLD_INDEX_TIMEOUT_MS, 30_000],
 ]) {
   if (!Number.isSafeInteger(value) || value < minimum) throw new Error(`invalid ${name} ${value}`);
 }
@@ -298,7 +304,7 @@ async function waitForActivation() {
   throw new Error(`managed activation timed out; last body=${last.slice(-1000)}`);
 }
 
-async function openPage(title, { expectedMarker = nestedMarker, requireHeading = true } = {}) {
+async function openPage(title, { expectedMarker = nestedMarker, requireHeading = true, timeout = 30_000 } = {}) {
   // WebView2 attachment does not guarantee native keyboard focus, so this
   // journey enters the switcher through the visible Search control rather than
   // Ctrl+K; fixture navigation is not a shortcut assertion. Everything else --
@@ -306,7 +312,7 @@ async function openPage(title, { expectedMarker = nestedMarker, requireHeading =
   // broke run 33350869828), exact name matching, and activating in ONE round
   // trip so no row handle outlives the switcher's re-render -- is now the
   // shared contract in scripts/lib/e2e-navigation.mjs.
-  await openPageByName(browser, title, { entry: "button", timeout: 30_000 });
+  await openPageByName(browser, title, { entry: "button", timeout });
   if (requireHeading) {
     const heading = await browser.$("h1.page-title");
     await heading.waitForExist({ timeout: 30_000 });
@@ -479,7 +485,12 @@ const receipt = {
 };
 try {
   await startJourney(BASELINE_APP, "activation");
-  await openPage(nestedTitle);
+  const coldIndexStarted = Date.now();
+  await openPage(nestedTitle, { timeout: COLD_INDEX_TIMEOUT_MS });
+  receipt.milestones.directFilesColdReady = {
+    elapsedMs: Date.now() - coldIndexStarted,
+    maxMs: COLD_INDEX_TIMEOUT_MS,
+  };
   receipt.milestones.directFilesOpened = true;
   receipt.milestones.directFilesPageSwitch = await measurePageSwitches();
 

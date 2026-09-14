@@ -2499,9 +2499,10 @@ export async function reviewConflictCapsule(
   const live = conflict.live;
   if (!live) throw new Error("conflict capsule has no retained draft");
   if (live.disk_rev !== undefined) {
+    const diff = await current.durableLiveSaveConflictDiff(live.page, live.base_text ?? null);
     return {
-      diff: await current.durableLiveSaveConflictDiff(live.page, live.base_text ?? null),
-      authority: { kind: "direct_durable", expected_disk_rev: live.disk_rev },
+      diff,
+      authority: { kind: "direct_durable", expected_disk_rev: diff.conflict_rev },
     };
   }
   return {

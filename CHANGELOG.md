@@ -8,7 +8,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Privacy-safe diagnostic reports now include the bounded reason code for
+  failed Tine-managed storage page saves, making prolonged unsaved-draft
+  failures diagnosable without debug mode or a special build (GH #540).
+- Closing with failed saves identifies the affected pages. Choosing not to
+  discard opens a recovery panel with page navigation, save retry, and draft
+  copying, including a complete recovery copy (GH #540).
+- A conflict whose original physical page is unavailable exposes its retained
+  draft and guarded resolution instead of hiding recovery behind the page-load
+  error (GH #541).
+
+## [0.6.983] - 2026-09-13
+
 ### Added
+
+- **Commands can have no keyboard shortcut** without becoming unavailable in
+  the command palette. Shortcut recording can be cancelled, and help reflects
+  cleared bindings (GH #523).
+
+- **Reset interface zoom** is available in the command palette (GH #522).
 
 - **Changes from a long-absent device now merge automatically.** If an older
   incoming change falls behind this device's compact local history, Tine
@@ -187,168 +207,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   block as the evidence, and the Blocks section is unaffected by the choice.
   Leaving it unset keeps the existing name-and-alias behaviour byte for byte.
 
-### Fixed
-
-- **Quitting while a change arrives from another device now shuts down cleanly.**
-  If a synced change landed in the moment you closed Tine, the shutdown reported
-  an error instead of finishing normally. Nothing was lost either way — the
-  change was already saved — but the error was wrong and alarming. Ordinary
-  progress during shutdown is now treated as ordinary progress.
-
-- **Two devices renaming the same page no longer stall syncing.** If two devices
-  each gave one page a different title while apart, and either had been running
-  long enough to compact its history, reconnecting could stop syncing with a
-  message about damaged internal state — and reopening Tine reported the same
-  thing again, because nothing was actually damaged. Tine now recognises this
-  for what it is: an ordinary editing conflict between two titles, handled the
-  way every other one is. Your pages and both titles were never at risk.
-
-- **Queries survive a settings change.** On a Direct Files graph, dismissing
-  the Guide toast — or changing the default home, time tracking, bracket
-  display, doc-mode Enter, logical outdenting, preferred format or journal
-  title format, restoring a backup, or having `config.edn` rewritten outside
-  Tine — turned every query block into "Query results unavailable" until the
-  graph was reopened. The refresh that follows a configuration write rebuilt
-  the graph without the query index the ordinary open attaches. Both paths now
-  attach it through one function, and the refresh retires the previous index
-  worker before starting its replacement.
-- **Creating a block no longer freezes every query on "Rebuilding the query
-  index…".** A block created in the editor is saved under the editor's own id,
-  which is not a UUID; the index refused the whole page for it, and every
-  automatic rebuild refused the same page again, so after one such save no
-  query in the app answered until restart. Such a block now gets a stable index
-  key and answers still name it by the id the editor knows.
-- **"why empty?" describes an answer, not the absence of one.** While the query
-  index was still rebuilding, a query block said "No results" and offered
-  "why empty?", which opened onto an empty panel. The block now shows
-  "Rebuilding the query index…" until its query has actually run, and the
-  affordance appears only for a query that ran and matched nothing.
-- **A query and a board no longer disagree about what `group by state` means.**
-  One line, `tine.group-by:: state`, meant two different things depending on
-  which face was reading it: the task marker to a board, and an ordinary property
-  named `state` to a list — so changing a query from a list to a board could
-  change what it grouped by, and a board asked to group by a property called
-  `status` silently grouped by the task marker instead. A query now names its
-  grouping field outright, in a line of its own: `tine.group-field:: prop:status`
-  for the property, `tine.group-field:: state` for the task marker. There is one
-  reading of that line, and one piece of code produces it — the app, the saved
-  file and a published page cannot drift apart, which they could before.
-
-  Notes written the old way keep working with no migration and are not rewritten
-  until you change the grouping yourself; when you do, the old line is replaced
-  rather than left beside the new one. Turning grouping off on a board now stays
-  off: switching the view used to bring the task marker back, because "you said
-  no" and "nobody said anything" looked the same in the file. Tables and boards
-  built from a block's own children are unchanged.
-
-- **A query summary shows every total you asked for.** A query can ask for more
-  than one — `count; cost=sum` — and only the first was ever shown, whichever the
-  line happened to spell first; asking for a second one looked like it did
-  nothing. Every requested total now renders, in order, repeats included, both
-  overall and per group. The grouped breakdown, the board's columns and the
-  table's footer are now computed by one piece of code over one set of rows, so
-  they cannot disagree about which group a row belongs to. Grouping by tags puts
-  a row in every one of its tags' groups, exactly as the board does, and the
-  summary says so instead of presenting counts that do not add up to the result
-  as though they did.
-
-- **Which columns a query table shows, and what its columns ARE, are two
-  different lines now — and neither erases the other.** A query block used to
-  keep both in `tine.fields::`, so the two halves of Tine that write it took
-  turns destroying each other's work: editing the query's conditions replaced a
-  table's declared column types with a bare list of names, and declaring a column
-  type deleted the list of columns you had chosen to see. `tine.fields::` is now
-  only the column *types*; a new `tine.columns::` line holds the columns a query
-  table shows, and their order. Editing a query leaves your types, widths,
-  filter, formulas and any other property on the block exactly as they were, and
-  declaring a type on a query table carries your existing column choice across
-  in one step you can undo in one go.
-
-  Notes written before this keep working with no migration and without being
-  rewritten: a `tine.fields::` line holding only plain names is still read as a
-  column list until something replaces it. Published pages now show the same
-  columns, in the same order, with the same types as the app — they used to
-  ignore the choice entirely. A column you asked for that no result carries
-  still gets its place, empty, instead of shifting the rest.
-
-- **Editing a query's conditions no longer costs it its grouping or its
-  totals.** Saving a change to what a query selects rewrites the query's text,
-  and that text has no room for grouping or aggregates — so a `(group-by …)` or
-  `(aggregate …)` written in the query itself simply vanished on the next save,
-  along with everything else the rewritten text could not carry. Tine now writes
-  down whatever the block does not already record before rewriting it, so a
-  filter edit keeps the view you had. Column totals a query does not recognize
-  — the sheet's own `median`, `stddev` and the rest — survive the save untouched
-  instead of being dropped, and renaming a field carries a query's totals across
-  intact, repeated columns and all.
-
-- Managed Storage page deletion retains original block state for Restore, and
-  moving a subtree within its page preserves concurrent edits to its children.
-  Bulk edits avoid repeated page-membership reconstruction.
-
-- Managed Storage accepts independent page-path and content edits from offline
-  devices without requiring their whole path indexes to match at delivery time.
-  Exact path ownership, release ancestry, and local journal checks remain in place.
-
-- Managed Storage reuses durable writer identities across edits and restarts.
-  If its writer record is lost or damaged, new edits use a fresh causal identity
-  so an older offline branch can still arrive with its original edits intact.
-
-- Managed Storage validates the exact peer-counter ranges in incoming CRDT
-  updates, rejecting replayed ranges even when their starting frontier matches.
-
-- **A query written in the middle of a line now shows its title.** A
-  `{{query …}}` with a title or other display options — anything in the trailing
-  `{…}` — was read back from a truncated copy of your text whenever it sat
-  inside a sentence rather than alone on its own line: the closing brace was
-  missing, so the title was ignored and a stray `}` appeared after the results.
-  A query with a comma inside a quoted condition was cut at the comma the same
-  way. Tine now reads the query out of the file exactly as you wrote it, so what
-  it shows is what is there.
-
-- **A published page no longer prints a stray `}` after a query.** Publishing
-  read query macros from the same truncated copy, so a query carrying a title
-  emitted its options' closing brace as visible text next to the results, and
-  the results themselves were computed from a query missing its last character.
-
-- **Renaming a query can no longer rewrite the query.** Editing a query's title
-  used to re-assemble the whole macro from Tine's own reading of it. Now the
-  title is the only thing that changes: your conditions go back to the file
-  exactly as you typed them, even for a query Tine only partly understands. If
-  the new title would produce something Tine could not read back, nothing is
-  written at all and the query says why.
-
-- **A saved query can no longer be written as text Tine will not read back.**
-  A query whose conditions produced a comma next to a `[[page]]`, or that
-  started with a page reference and carried a title or a sort order, was written
-  to the file as bytes the document reader does not see as a query at all: the
-  block turned into literal text and the query was gone, with no way to get it
-  back by reopening. Saving now proves the result is readable — with the same
-  parser that renders your page, in both Markdown and Org. A query that starts
-  with a page reference is written in an equivalent spelling Logseq reads
-  identically; anything still unreadable is refused with a message instead of
-  being written, so the query you had stays exactly as it was.
-
-- **Turning a row off no longer changes what the rest of the query answers.**
-  Disabling one condition in a group could make a query that matched nothing
-  suddenly match everything, because a disabled row and a leftover `true`
-  cancelled each other out in a way the query never asked for. A disabled row
-  now removes exactly itself.
-
-- **A `<% current page %>` query no longer runs twice when you navigate.**
-  Moving to another page re-ran such a query immediately against the page you
-  had just left, then ran it again once the substituted text caught up — so one
-  navigation cost two whole-graph passes and could briefly show the previous
-  page's answer. It now runs once, for the page you are actually on.
-
-- **A broken or unusual condition survives editing another row.** A commented
-  out condition with an unfinished quote used to be replaced with `false` — the
-  text you wrote was gone after one save, and the unfinished quote could swallow
-  the working row underneath it. Old `content-regex` conditions had no way to be
-  written down at all, so editing any other row in the same query erased them.
-  Both are now preserved exactly, shown with their original text and error, and
-  left alone when you edit a neighbour.
-
 ### Changed
 
 - **Managed history keeps its index in a handful of files, however long the
@@ -361,6 +219,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   270 bytes of index per accepted edit at 1,000 and 10,000 edits, 13 to 23
   directory entries, reopen in 0.12 to 0.17 s (was 0.78 s). A cut that
   overlaps a read no longer refuses to open an undamaged graph.
+
+- **Page rename scans less text in Direct Files graphs.** A controlled
+  10,005-file graph completed the reference scan about 34.5% faster; the later
+  whole-graph cache refresh remains a separate cost (GH #406).
+
+- **Blocked rename/save messages identify the actual pending work**, conflicts
+  or reopen requirement. This improves diagnosis of GH #535; the underlying
+  reported false-conflict state is not yet resolved.
+
+- **Default task styling** uses consistent checkbox colors, strikes through
+  completed task text without its label, and applies the approved hover,
+  opacity, title-spacing and primary-text theme adjustments (GH #394).
 
 - **A query with two conditions no longer reads the whole graph to answer about
   three blocks.** Every condition in a query was asked of the index as its own
@@ -442,6 +312,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   happens, with **Undo that change** — the ordinary undo, so Ctrl+Z does the same
   thing — and **Keep it**. **Don't show this again** is remembered per graph on
   that device only; the choice is never written into your graph and never syncs.
+
 - **A view directive you remove now stays removed.** Column totals and grouping
   were written both into the query text and into the block's `tine.*` properties,
   and the properties win — so deleting a total or a grouping in the builder left
@@ -458,6 +329,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   projection is rebuilt by streaming pages through a bounded queue instead of
   holding the whole parsed graph. Saves and deletions reach the projection
   whether or not a parsed copy of the graph exists.
+
 - **A query about pages now answers with pages.** `{{query (page-property …)}}`,
   `(page-tags …)` and `(namespace …)` ask a question about pages, but Tine
   answered them by listing every block on each matching page — so one matching
@@ -495,6 +367,212 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Recovered drafts can be resolved after files change while Tine is closed.** Concord now applies choices to the same current file version shown in its review. A further change after review still stops the write and asks for a fresh review.
+
+- **Externally replaced images refresh reliably in linked asset folders.** File notifications through an approved assets symlink now reach every graph window sharing that folder, including after files are deleted.
+
+- **Quick Capture works on a cold launch.** Starting Tine with `--capture` waits for the selected graph to open before showing the capture window, so page suggestions and the saved completion policy are ready for the first input.
+
+- **Compact PDF toolbars keep More and Close reachable.** The document title
+  uses its own row in narrow panes, and settings and outline panels stay below
+  the controls (UI-PDF-COMPACT-TOOLBAR-CLIPPED-INTERNAL).
+
+- **Dragging down through multiline text keeps selection under the pointer.**
+  Starting a drag in rendered text no longer accumulates a character offset on
+  each wrapped line; code blocks and Unicode text follow the same native caret.
+
+- **Windows network graphs open correctly through UNC paths and mapped SMB
+  drives.** Directory enumeration preserves the network root while retaining
+  filesystem path-confinement checks (GH #533).
+
+- **Android formatting-toolbar taps perform each command once.** The toolbar
+  retains its horizontal position and editing focus, stays above the keyboard,
+  and keeps the keyboard open during sibling moves (GH #495, #496).
+
+- **Touch long-press page menus stay open.** Touch does not arm desktop hover
+  previews, and duplicate native context-menu or compatibility-click events no
+  longer dismiss the menu just opened (GH #207).
+
+- **Initial native Android text selection updates the formatting toolbar**
+  without requiring a later selection-handle movement (GH #375).
+
+- **Indent and outdent preserve the caret and selection** instead of moving
+  them to the end of the block (GH #519).
+
+- **Code-block horizontal scrollbars can be dragged** without the click
+  entering edit mode (GH #520).
+
+- **Embed gestures keep the intended host or source.** Clicking a gap does not
+  edit the host block; dragging an embedded root moves that occurrence, while
+  nested source controls retain their own actions (GH #514, #516).
+
+- **Editing below an expanded embed preserves the viewport**, including Undo
+  and Redo when the source text changes the embed's height (GH #515).
+
+- **Journals adds the new day after midnight without replacing the active
+  editor**, preserving its draft, focus and selection (GH #532).
+
+- **Block references render live task states** while preserving literal task
+  words and aliases (GH #518).
+
+- **Editor emoji font selection follows the platform display font**, reducing
+  the font switch between reading and editing (GH #458).
+
+- **Quitting while a change arrives from another device now shuts down cleanly.**
+  If a synced change landed in the moment you closed Tine, the shutdown reported
+  an error instead of finishing normally. Nothing was lost either way — the
+  change was already saved — but the error was wrong and alarming. Ordinary
+  progress during shutdown is now treated as ordinary progress.
+
+- **Concurrent page titles after a checkpoint are reported as an editing conflict.** If two offline devices gave one page different titles and compacted their history, reopening could incorrectly report a damaged page-name index. Tine now identifies the conflicting titles correctly; synchronization may remain blocked until that conflict is resolved.
+
+- **Queries survive a settings change.** On a Direct Files graph, dismissing
+  the Guide toast — or changing the default home, time tracking, bracket
+  display, doc-mode Enter, logical outdenting, preferred format or journal
+  title format, restoring a backup, or having `config.edn` rewritten outside
+  Tine — turned every query block into "Query results unavailable" until the
+  graph was reopened. The refresh that follows a configuration write rebuilt
+  the graph without the query index the ordinary open attaches. Both paths now
+  attach it through one function, and the refresh retires the previous index
+  worker before starting its replacement.
+
+- **Creating a block no longer freezes every query on "Rebuilding the query
+  index…".** A block created in the editor is saved under the editor's own id,
+  which is not a UUID; the index refused the whole page for it, and every
+  automatic rebuild refused the same page again, so after one such save no
+  query in the app answered until restart. Such a block now gets a stable index
+  key and answers still name it by the id the editor knows.
+
+- **"why empty?" describes an answer, not the absence of one.** While the query
+  index was still rebuilding, a query block said "No results" and offered
+  "why empty?", which opened onto an empty panel. The block now shows
+  "Rebuilding the query index…" until its query has actually run, and the
+  affordance appears only for a query that ran and matched nothing.
+
+- **A query and a board no longer disagree about what `group by state` means.**
+  One line, `tine.group-by:: state`, meant two different things depending on
+  which face was reading it: the task marker to a board, and an ordinary property
+  named `state` to a list — so changing a query from a list to a board could
+  change what it grouped by, and a board asked to group by a property called
+  `status` silently grouped by the task marker instead. A query now names its
+  grouping field outright, in a line of its own: `tine.group-field:: prop:status`
+  for the property, `tine.group-field:: state` for the task marker. There is one
+  reading of that line, and one piece of code produces it — the app, the saved
+  file and a published page cannot drift apart, which they could before.
+
+  Notes written the old way keep working with no migration and are not rewritten
+  until you change the grouping yourself; when you do, the old line is replaced
+  rather than left beside the new one. Turning grouping off on a board now stays
+  off: switching the view used to bring the task marker back, because "you said
+  no" and "nobody said anything" looked the same in the file. Tables and boards
+  built from a block's own children are unchanged.
+
+- **A query summary shows every total you asked for.** A query can ask for more
+  than one — `count; cost=sum` — and only the first was ever shown, whichever the
+  line happened to spell first; asking for a second one looked like it did
+  nothing. Every requested total now renders, in order, repeats included, both
+  overall and per group. The grouped breakdown, the board's columns and the
+  table's footer are now computed by one piece of code over one set of rows, so
+  they cannot disagree about which group a row belongs to. Grouping by tags puts
+  a row in every one of its tags' groups, exactly as the board does, and the
+  summary says so instead of presenting counts that do not add up to the result
+  as though they did.
+
+- **Which columns a query table shows, and what its columns ARE, are two
+  different lines now — and neither erases the other.** A query block used to
+  keep both in `tine.fields::`, so the two halves of Tine that write it took
+  turns destroying each other's work: editing the query's conditions replaced a
+  table's declared column types with a bare list of names, and declaring a column
+  type deleted the list of columns you had chosen to see. `tine.fields::` is now
+  only the column *types*; a new `tine.columns::` line holds the columns a query
+  table shows, and their order. Editing a query leaves your types, widths,
+  filter, formulas and any other property on the block exactly as they were, and
+  declaring a type on a query table carries your existing column choice across
+  in one step you can undo in one go.
+
+  Notes written before this keep working with no migration and without being
+  rewritten: a `tine.fields::` line holding only plain names is still read as a
+  column list until something replaces it. Published pages now show the same
+  columns, in the same order, with the same types as the app — they used to
+  ignore the choice entirely. A column you asked for that no result carries
+  still gets its place, empty, instead of shifting the rest.
+
+- **Editing a query's conditions no longer costs it its grouping or its
+  totals.** Saving a change to what a query selects rewrites the query's text,
+  and that text has no room for grouping or aggregates — so a `(group-by …)` or
+  `(aggregate …)` written in the query itself simply vanished on the next save,
+  along with everything else the rewritten text could not carry. Tine now writes
+  down whatever the block does not already record before rewriting it, so a
+  filter edit keeps the view you had. Column totals a query does not recognize
+  — the sheet's own `median`, `stddev` and the rest — survive the save untouched
+  instead of being dropped, and renaming a field carries a query's totals across
+  intact, repeated columns and all.
+
+- Managed Storage page deletion retains original block state for Restore, and moving a subtree within its page preserves concurrent edits to its children.
+
+- Managed Storage accepts independent page-path and content edits from offline
+  devices without requiring their whole path indexes to match at delivery time.
+  Exact path ownership, release ancestry, and local journal checks remain in place.
+
+- Managed Storage reuses durable writer identities across edits and restarts.
+  If its writer record is lost or damaged, new edits use a fresh causal identity
+  so an older offline branch can still arrive with its original edits intact.
+
+- Managed Storage validates the exact peer-counter ranges in incoming CRDT
+  updates, rejecting replayed ranges even when their starting frontier matches.
+
+- **A query written in the middle of a line now shows its title.** A
+  `{{query …}}` with a title or other display options — anything in the trailing
+  `{…}` — was read back from a truncated copy of your text whenever it sat
+  inside a sentence rather than alone on its own line: the closing brace was
+  missing, so the title was ignored and a stray `}` appeared after the results.
+  A query with a comma inside a quoted condition was cut at the comma the same
+  way. Tine now reads the query out of the file exactly as you wrote it, so what
+  it shows is what is there.
+
+- **A published page no longer prints a stray `}` after a query.** Publishing
+  read query macros from the same truncated copy, so a query carrying a title
+  emitted its options' closing brace as visible text next to the results, and
+  the results themselves were computed from a query missing its last character.
+
+- **Renaming a query can no longer rewrite the query.** Editing a query's title
+  used to re-assemble the whole macro from Tine's own reading of it. Now the
+  title is the only thing that changes: your conditions go back to the file
+  exactly as you typed them, even for a query Tine only partly understands. If
+  the new title would produce something Tine could not read back, nothing is
+  written at all and the query says why.
+
+- **A saved query can no longer be written as text Tine will not read back.**
+  A query whose conditions produced a comma next to a `[[page]]`, or that
+  started with a page reference and carried a title or a sort order, was written
+  to the file as bytes the document reader does not see as a query at all: the
+  block turned into literal text and the query was gone, with no way to get it
+  back by reopening. Saving now proves the result is readable — with the same
+  parser that renders your page, in both Markdown and Org. A query that starts
+  with a page reference is written in an equivalent spelling Logseq reads
+  identically; anything still unreadable is refused with a message instead of
+  being written, so the query you had stays exactly as it was.
+
+- **Turning a row off no longer changes what the rest of the query answers.**
+  Disabling one condition in a group could make a query that matched nothing
+  suddenly match everything, because a disabled row and a leftover `true`
+  cancelled each other out in a way the query never asked for. A disabled row
+  now removes exactly itself.
+
+- **A `<% current page %>` query no longer runs twice when you navigate.**
+  Moving to another page re-ran such a query immediately against the page you
+  had just left, then ran it again once the substituted text caught up — so one
+  navigation cost two whole-graph passes and could briefly show the previous
+  page's answer. It now runs once, for the page you are actually on.
+
+- **A broken or unusual condition survives editing another row.** A commented
+  out condition with an unfinished quote used to be replaced with `false` — the
+  text you wrote was gone after one save, and the unfinished quote could swallow
+  the working row underneath it. Old `content-regex` conditions had no way to be
+  written down at all, so editing any other row in the same query erased them.
+  Both are now preserved exactly, shown with their original text and error, and
+  left alone when you edit a neighbour.
+
 - **A query with a filter Tine does not understand now says so instead of
   quietly answering a shorter question.** `{{query (and (task TODO)
   (frobnicate x))}}` used to drop everything from the unknown filter onwards
@@ -515,6 +593,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   every later open refusing. The second save is now refused up front, while
   nothing has been written, the same way it already is once the first save has
   settled.
+
 - **A Managed Storage sync operation no longer gets stuck behind its own
   leftover crash evidence.** If Tine lost power midway through tidying up after
   publishing a file to the shared sync folder, it left behind a small record

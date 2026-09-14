@@ -136,6 +136,16 @@ function writeReceipt() {
   fs.writeFileSync(RECEIPT_PATH, `${JSON.stringify(receipt, null, 2)}\n`);
 }
 
+// Persist progress before each blocking phase: an outer process timeout cannot
+// execute this script's catch/finally handlers to write the final receipt.
+function enterPhase(next) {
+  phase = next;
+  receipt.result = "running";
+  receipt.phase = next;
+  receipt.updatedAt = new Date().toISOString();
+  writeReceipt();
+}
+
 function processAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
 }
@@ -246,7 +256,7 @@ async function stopHarness() {
 }
 
 try {
-  phase = "window-manager";
+  enterPhase("window-manager");
   wmLog = fs.openSync(path.join(ARTIFACTS, "openbox.log"), "w");
   wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], {
     env: baseEnv,
@@ -255,7 +265,7 @@ try {
   });
   await waitFor(() => wm.exitCode === null && windowManagerReady(), 15_000, "window manager did not become ready");
 
-  phase = "native-session";
+  enterPhase("native-session");
   await webdriverLifecycle.reap("pre-connect", { graceMs: 0 });
   driverLog = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
   driver = spawn(TD, webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, WD), {
@@ -274,11 +284,12 @@ try {
   }));
   await browser.$(".journal-day, .ls-block").waitForExist({ timeout: 60_000 });
 
-  phase = "managed-activation";
-  await enableManagedStorage(browser);
+  enterPhase("managed-activation");
+  await enableManagedStorage(browser, { onPhase: (next) => enterPhase(`managed-activation:${next}`) });
+  enterPhase("managed-feed-reload");
   await forceManagedFeedReload();
 
-  phase = "initial-managed-window";
+  enterPhase("initial-managed-window");
   const initial = await feedText();
   const initialMarkers = markers.filter((marker) => initial.includes(marker));
   if (initialMarkers.length !== 3 || initialMarkers.some((marker, index) => marker !== markers[index])) {
@@ -286,7 +297,7 @@ try {
   }
   receipt.milestones.initialManagedWindow = { markers: initialMarkers };
 
-  phase = "managed-pagination";
+  enterPhase("managed-pagination");
   const scrollProof = await browser.execute(() => {
     const scroller = document.querySelector(".main-content");
     const sentinel = document.querySelector(".feed-sentinel");
@@ -321,7 +332,7 @@ try {
   }
   receipt.milestones.pagination = { scrollProof, observed };
 
-  phase = "accepted-edit-refresh";
+  enterPhase("accepted-edit-refresh");
   const todayBlock = await waitFor(async () => {
     for (const block of await browser.$$(".journal-today .ls-block")) {
       if ((await block.getText()).includes(markers[0])) return block;
@@ -382,7 +393,7 @@ try {
   }
   receipt.milestones.acceptedEditRefresh = { marker: EDIT_MARKER, projected: true, rendered: true };
 
-  phase = "excluded-backup-noise";
+  enterPhase("excluded-backup-noise");
   const backupPath = path.join(GRAPH, ...BACKUP_RELATIVE_PATH.split("/"));
   fs.mkdirSync(path.dirname(backupPath), { recursive: true });
   fs.writeFileSync(backupPath, "- excluded Logseq backup copy\n");
@@ -400,7 +411,7 @@ try {
     errorNotifications: backupErrors,
   };
 
-  phase = "rapid-multi-day-move";
+  enterPhase("rapid-multi-day-move");
   const rapidBlock = await waitFor(async () => {
     for (const block of await browser.$$(".journal-today .ls-block")) {
       if ((await block.getText()).includes(RAPID_MOVE_MARKER)) return block;
@@ -526,7 +537,7 @@ try {
     errorNotifications: rapidErrors,
   });
 
-  phase = "bulk-cross-page-cut-paste";
+  enterPhase("bulk-cross-page-cut-paste");
   const bulkStartedAt = Date.now();
   await openPageThroughSwitcher(BULK_SOURCE_PAGE);
   await waitFor(async () => (await visibleRootTexts()).length === BULK_MARKERS.length,

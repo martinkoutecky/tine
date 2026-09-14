@@ -8,6 +8,13 @@ describe("editable emoji crash guard", () => {
     expect(entry).toContain('@fontsource-variable/noto-emoji/wght.css');
   });
 
+  it.each(["src/main.tsx", "src/capture.tsx"])("initializes the same font policy in %s", (path) => {
+    const entry = readFileSync(path, "utf8");
+    expect(entry).toContain("@fontsource-variable/noto-emoji/wght.css");
+    expect(entry).toContain("./styles/inter.css");
+    expect(entry).toContain("installEditableEmojiPlatform();");
+  });
+
   it("uses platform color emoji before the safe fallback except on desktop Linux", () => {
     const css = readFileSync("src/styles/app.css", "utf8");
     expect(css).toContain('--tine-editable-emoji-font: "Noto Emoji Variable"');

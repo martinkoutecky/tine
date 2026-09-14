@@ -693,6 +693,13 @@ pub(crate) fn record_direct_save(
     record_fixed_event("direct.save", fields);
 }
 
+pub(crate) fn record_managed_save(outcome: &'static str, total_ms: u64) {
+    let mut fields = Map::new();
+    fields.insert("outcome".into(), json!(outcome));
+    fields.insert("totalMs".into(), json!(total_ms));
+    record_fixed_event("managed.save", fields);
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn record_watcher_latency(
     mode: &'static str,
@@ -1243,6 +1250,7 @@ mod tests {
         assert!(production.contains("managed.checkpoint_capture_skipped"));
         assert!(production.contains("managed.history_recovery"));
         assert!(production.contains("managed.checkpoint_publication"));
+        assert!(production.contains("record_fixed_event(\"managed.save\", fields)"));
         for field in [
             "attempt",
             "reason",

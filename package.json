@@ -1,6 +1,6 @@
 {
   "name": "tine",
-  "version": "0.6.982",
+  "version": "0.6.983",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -34,6 +34,8 @@
     "ui:check-mobile-safe-area": "node scripts/check-mobile-safe-area.mjs",
     "ui:check-selection-toolbar": "node scripts/check-selection-toolbar.mjs",
     "ui:check-sheet-scroll": "node scripts/check-sheet-scroll.mjs",
+    "ui:check-code-scrollbar": "node scripts/check-code-scrollbar.mjs",
+    "ui:check-drag-selection": "node scripts/check-drag-selection.mjs",
     "ui:check-touch-selection": "node scripts/check-touch-selection.mjs",
     "ui:check-devtools-detach": "node scripts/check-devtools-detach.mjs",
     "e2e:wayland-app-id": "node scripts/e2e-wayland-app-id.mjs",

@@ -1,0 +1,18 @@
+[package]
+name = "tine-windows-smb-open-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+cap-std = "=4.0.2"
+cap-fs-ext = "=4.0.2"
+cap-primitives = "=4.0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
+
+[patch.crates-io]
+cap-primitives = { path = "../../../vendor/cap-primitives-4.0.2" }

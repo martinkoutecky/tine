@@ -222,6 +222,7 @@ const suites = {
     ["external-graph-wide-changes", "scripts/e2e-external-graph-wide-changes.mjs", {}],
     ["concord-focus-freshness", "scripts/e2e-concord-focus-freshness.mjs", {}],
     ["concord-live-save", "scripts/e2e-concord-live-save.mjs", {}],
+    ["concord-missing-target", "scripts/e2e-concord-live-save.mjs", { TINE_E2E_MISSING_TARGET: "1" }],
     ["concord-sync-copy-native", "scripts/e2e-concord-sync-copy.mjs", { TINE_E2E_WATCH_MODE: "inotify" }],
     ["concord-sync-copy-poll", "scripts/e2e-concord-sync-copy.mjs", { TINE_E2E_WATCH_MODE: "poll" }],
     ["concord-sync-copy-native-same-content", "scripts/e2e-concord-sync-copy.mjs", { TINE_E2E_WATCH_MODE: "inotify", TINE_E2E_CONCORD_DECISION: "mine" }],
@@ -491,8 +492,21 @@ function xmlEscape(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
 }
 
+function hasRecordedSemanticFailure(output, errors) {
+  // Scenarios may finish their assertions, then lose the driver during cleanup.
+  // Positive failure evidence takes precedence over any later transport error;
+  // successful checks alone do not rule out an infrastructure retry.
+  const combined = `${output}\n${errors}`.replace(/\u001b\[[0-9;]*m/g, "");
+  return /^\s*(?:FAIL:|[1-9]\d* FAILURES\b)/m.test(combined)
+    || /\bAssertionError(?: \[[^\]]+\])?:/.test(combined)
+    // A scenario's explicit expected/actual observation is an assertion even
+    // when it uses Error rather than AssertionError. Anchor to the emitted
+    // error line, not a source excerpt printed with an uncaught stack trace.
+    || /^\s*Error: [^\r\n]*; expected=.+ actual=.+$/m.test(combined);
+}
+
 function isRetryableDriverTransportFailure(output, errors, timedOut) {
-  if (timedOut) return false;
+  if (timedOut || hasRecordedSemanticFailure(output, errors)) return false;
   const combined = `${output}\n${errors}`;
   const webDriverError = /WebDriverError/.test(combined);
   const invalidSession = /WebDriverError:\s*invalid session id\b/.test(combined);
@@ -502,7 +516,7 @@ function isRetryableDriverTransportFailure(output, errors, timedOut) {
 }
 
 function isRetryableNativeHarnessFailure(id, output, errors, timedOut) {
-  if (timedOut) return false;
+  if (timedOut || hasRecordedSemanticFailure(output, errors)) return false;
   const combined = `${output}\n${errors}`;
   // Page-properties proves the target editor and document focus before sending
   // ArrowDown, then records the capture-phase key event. Only a missing event is

@@ -46,6 +46,7 @@ import {
 } from "../ui";
 import {
   dropObservation,
+  graphBinding,
   flushPageToQuiescence,
   holdManagedMovePages,
   isDirty,
@@ -60,6 +61,7 @@ import {
   pageToDto,
   pageInstanceGeneration,
   reloadPage,
+  loadRoutedPage,
 } from "../store";
 import {
   DiffRowView,
@@ -111,7 +113,7 @@ function sideLabels(conflict: ConflictObject): {
 }
 
 /** The in-page conflict resolver for the page currently being viewed. */
-export function PageConflictResolution(props: { conflict: ConflictObject }): JSX.Element {
+export function PageConflictResolution(props: { conflict: ConflictObject; unavailable?: boolean; onResolved?: () => void }): JSX.Element {
   const conflict = () => props.conflict;
   // These survive removal of the surrounding `<Show>`. Cleanup runs precisely
   // while that owner is being disposed, when reading `props.conflict` again is
@@ -362,6 +364,8 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     const pagePath = c.page_path;
     const sides = [...c.sides];
     const live = c.live;
+    const onResolved = props.onResolved;
+    const binding = graphBinding();
     setBusy(true);
     let releasePageUi = () => {};
     let releasePageSaves = () => {};
@@ -383,8 +387,13 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         const edit = editGeneration(pageName);
         const transaction = editorTransactionGeneration(pageName);
         const reviewedDraft = pageToDto(pageName);
-        if (!reviewedDraft || instance === null) {
+        const detached = props.unavailable && !reviewedDraft && instance === null;
+        if ((!reviewedDraft || instance === null) && !detached) {
           pushToast("This page is no longer open. Open it again before applying the resolution.", "error");
+          return;
+        }
+        if (reviewedDraft && reviewedDraft.path !== live.page.path) {
+          pushToast("Another file with this page name is open. Preserve its edits before resolving this retained draft.", "error");
           return;
         }
         if (
@@ -425,14 +434,14 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           );
           return;
         }
-        if (!live.restored && snapshot(reviewedDraft) !== snapshot(live.page)) {
+        if (!detached && !live.restored && reviewedDraft && snapshot(reviewedDraft) !== snapshot(live.page)) {
           await refreshLiveSaveConflictDraft(reviewedDraft);
           alignment = undefined;
           void refetch();
           pushToast("Your draft changed. Review the updated comparison, then apply it again.", "info");
           return;
         }
-        const draftToResolve = live.restored ? live.page : reviewedDraft;
+        const draftToResolve = detached || live.restored ? live.page : reviewedDraft!;
         releasePageSaves = holdManagedMovePages([pageName]);
         const authority = capsuleAuthority();
         if (!authority) {
@@ -446,6 +455,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           decisions(),
           preChoice(),
         );
+        if (!mounted || graphBinding() !== binding) return;
         if (
           pageInstanceGeneration(pageName) !== instance
           || editGeneration(pageName) !== edit
@@ -457,9 +467,13 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         // the capsule before acknowledging or replacing the editor, so a crash
         // immediately after the click cannot resurrect a resolved conflict.
         await retireLiveSaveConflict(pageName);
+        if (graphBinding() !== binding) return;
         dropObservation(pageName);
         clearConflict(pageName);
-        await reloadPage(resolved);
+        if (detached) await loadRoutedPage(resolved, binding);
+        else await reloadPage(resolved);
+        if (graphBinding() !== binding) return;
+        onResolved?.();
         pushToast(`Resolved the live conflict in “${pageName}”`, "success");
       } else if (source === "vcs-markers") {
         await backend().resolveVcsMarkerConflict(

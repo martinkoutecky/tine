@@ -97,15 +97,18 @@ assert.throws(
 
 // And a listed exclusion whose test no longer exists must fail too, so the list
 // cannot rot through renames or deletions.
-const staleOracleName = LINUX_CORE_RELEASE_EXCLUDED_TEST_NAMES[0];
-const coreWithoutOneOracleTest = listedInventory("tine-core", [
-  ...releaseSelectedNames,
-  ...LINUX_CORE_RELEASE_EXCLUDED_TEST_NAMES.filter((name) => name !== staleOracleName),
-]);
-assert.throws(
-  () => verifyLinuxReleaseSelection(coreWithoutOneOracleTest, releaseWithoutKnownRedOracle),
-  new RegExp(`Linux release exclusion contract changed; missing \\[${staleOracleName}\\]`)
-);
+if (LINUX_CORE_RELEASE_EXCLUDED_TEST_NAMES.length > 0) {
+  const staleOracleName = LINUX_CORE_RELEASE_EXCLUDED_TEST_NAMES[0];
+  const coreWithoutOneOracleTest = listedInventory("tine-core", [
+    ...releaseSelectedNames,
+    ...LINUX_CORE_RELEASE_EXCLUDED_TEST_NAMES.filter((name) => name !== staleOracleName),
+  ]);
+  assert.throws(
+    () => verifyLinuxReleaseSelection(coreWithoutOneOracleTest, releaseWithoutKnownRedOracle),
+    new RegExp(`Linux release exclusion contract changed; missing \\[${staleOracleName}\\]`)
+  );
+
+}
 
 // The allow-by-default filter must not permit a non-oracle omission, whether
 // the omitted test is in sync_runtime or another module.
@@ -145,14 +148,15 @@ assert.equal(
   KNOWN_RED_TINE_CORE_EXCLUDED_TEST_NAMES.length
 );
 
-assert.equal(PROJECT_VERSION, ONE_RELEASE_CI_EXCEPTION_VERSION);
-assert.equal(oneReleaseCiExceptionActive(), true);
+const exceptionActive = PROJECT_VERSION === ONE_RELEASE_CI_EXCEPTION_VERSION;
+assert.equal(oneReleaseCiExceptionActive(), exceptionActive);
+assert.equal(oneReleaseCiExceptionActive(ONE_RELEASE_CI_EXCEPTION_VERSION), true);
 assert.equal(oneReleaseCiExceptionActive(NEXT_RELEASE_VERSION), false);
 assert.deepEqual(
   ONE_RELEASE_CI_EXCEPTION.releaseE2eNonblockingScenarioKeys,
   ["linux-release:managed-journal-feed"]
 );
-assert.equal(releaseE2eScenarioIsNonblocking("linux-release", "managed-journal-feed"), true);
+assert.equal(releaseE2eScenarioIsNonblocking("linux-release", "managed-journal-feed"), exceptionActive);
 assert.equal(releaseE2eScenarioIsNonblocking("linux-release", "managed-journal-feed", NEXT_RELEASE_VERSION), false);
 assert.equal(releaseE2eScenarioIsNonblocking("linux-release", "some-other-scenario"), false);
 assert.deepEqual(
@@ -161,16 +165,25 @@ assert.deepEqual(
 );
 assert.equal(
   LINUX_CORE_RELEASE_EXCLUDED_TEST_NAMES.length,
-  KNOWN_RED_TINE_CORE_EXCLUDED_TEST_NAMES.length
-    + ONE_RELEASE_CI_EXCEPTION.linuxAdditionalKnownRedTestNames.length
+  exceptionActive ? KNOWN_RED_TINE_CORE_EXCLUDED_TEST_NAMES.length
+    + ONE_RELEASE_CI_EXCEPTION.linuxAdditionalKnownRedTestNames.length : 0
 );
 assert.deepEqual(
   linuxReleaseExcludedTestNames(KNOWN_RED_TINE_CORE_EXCLUDED_TEST_NAMES, NEXT_RELEASE_VERSION),
   []
 );
 assert.equal(linuxCoreReleaseFilterset(NEXT_RELEASE_VERSION), "all()");
+if (!exceptionActive) {
+  assert.equal(LINUX_CORE_RELEASE_FILTERSET, "all()");
+  assert.deepEqual(LINUX_CORE_RELEASE_EXCLUDED_TEST_NAMES, []);
+  assert.equal(releaseE2eScenarioIsNonblocking("linux-release", "managed-journal-feed"), false);
+}
+assert.deepEqual(
+  linuxReleaseExcludedTestNames(KNOWN_RED_TINE_CORE_EXCLUDED_TEST_NAMES, ONE_RELEASE_CI_EXCEPTION_VERSION),
+  [...new Set([...KNOWN_RED_TINE_CORE_EXCLUDED_TEST_NAMES, ...ONE_RELEASE_CI_EXCEPTION.linuxAdditionalKnownRedTestNames])].sort()
+);
 const releaseWaivedOnlyRed = ONE_RELEASE_CI_EXCEPTION.linuxAdditionalKnownRedTestNames[0];
-assert.match(LINUX_CORE_RELEASE_FILTERSET, new RegExp(`test\\(=${escapeRegExp(releaseWaivedOnlyRed)}\\)`));
+assert.match(linuxCoreReleaseFilterset(ONE_RELEASE_CI_EXCEPTION_VERSION), new RegExp(`test\\(=${escapeRegExp(releaseWaivedOnlyRed)}\\)`));
 assert.doesNotMatch(
   linuxCoreReleaseFilterset(NEXT_RELEASE_VERSION),
   new RegExp(`test\\(=${escapeRegExp(releaseWaivedOnlyRed)}\\)`)
@@ -200,10 +213,10 @@ assert.deepEqual(
 );
 
 assert.match(
-  LINUX_CORE_RELEASE_FILTERSET,
+  linuxCoreReleaseFilterset(ONE_RELEASE_CI_EXCEPTION_VERSION),
   /not \(test\(=/
 );
-assert.match(LINUX_CORE_RELEASE_FILTERSET, /test\(=sync_runtime::tests::/);
+assert.match(linuxCoreReleaseFilterset(ONE_RELEASE_CI_EXCEPTION_VERSION), /test\(=sync_runtime::tests::/);
 assert.doesNotMatch(LINUX_CORE_RELEASE_FILTERSET, /not test\(\/sync_runtime::tests::\/\)/);
 assert.throws(
   () => verifyLinuxShardCoverage(fullCore, [shards[0], shards[1], shards[2], shards[2]]),
@@ -232,10 +245,10 @@ assert.deepEqual(WINDOWS_CORE_EXACT_TEST_NAMES, coreWindowsTests);
 const coreLifecycleWitnesses = [
   "oplog::local_active::bounded_admission::clean_admissions_are_bounded_at_one_one_thousand_and_ten_thousand",
   "model::tests::bootstrap_source_regular_file_sync_uses_supported_handle_access",
-  "oplog::import::tests::bootstrap_preparation_flush_handles_use_platform_durability_contracts",
-  "oplog::import::tests::inactive_streaming_bootstrap_preseal_crash_retries_exactly",
-  "oplog::import::tests::inactive_streaming_bootstrap_repeated_run_reuses_exact_seal",
-  "oplog::enrollment::tests::a_second_live_session_cannot_write_the_journal_and_dropping_one_releases_it",
+  "sync_runtime::tests::managed_activation_abort_cuts_retire_unmarked_generation_and_retry",
+  "oplog::lazy_genesis::tests::lazy_genesis_seal_reopens_and_detects_payload_corruption",
+  "oplog::sqlite::tests::one_workspace_runtime_lease_vends_one_applier_slot_at_a_time",
+  "oplog::sqlite::tests::lease_contention_and_drop_recovery_are_process_scoped",
   "oplog::sqlite::tests::separate_process_workspace_lease_contends_and_crash_releases",
 ];
 assert.deepEqual(WINDOWS_CORE_LIFECYCLE_WITNESS_NAMES, coreLifecycleWitnesses);
@@ -289,7 +302,7 @@ assert.throws(
   ),
   /Windows core smoke selection omitted required test/
 );
-for (const missingWindowsWitness of ONE_RELEASE_CI_EXCEPTION.windowsMissingRequiredTestNames) {
+for (const missingWindowsWitness of coreLifecycleWitnesses) {
   const nextReleaseWithoutOneWitness = ordinaryCoreSmokeTests.filter((name) => name !== missingWindowsWitness);
   assert.throws(
     () => verifyWindowsCoreSmokeSelection(
@@ -316,7 +329,7 @@ assert.deepEqual(
 
 const retiredWaivedProblem = ONE_RELEASE_CI_EXCEPTION.retiredManagedV1AllowedProblems[0];
 assert.deepEqual(
-  classifyRetiredManagedV1Problems([retiredWaivedProblem]),
+  classifyRetiredManagedV1Problems([retiredWaivedProblem], ONE_RELEASE_CI_EXCEPTION_VERSION),
   { allowed: [retiredWaivedProblem], unexpected: [] }
 );
 assert.deepEqual(
@@ -324,7 +337,7 @@ assert.deepEqual(
   { allowed: [], unexpected: [retiredWaivedProblem] }
 );
 assert.deepEqual(
-  classifyRetiredManagedV1Problems([retiredWaivedProblem, "new retired-v1 problem"]),
+  classifyRetiredManagedV1Problems([retiredWaivedProblem, "new retired-v1 problem"], ONE_RELEASE_CI_EXCEPTION_VERSION),
   { allowed: [retiredWaivedProblem], unexpected: ["new retired-v1 problem"] }
 );
 assert.match(WINDOWS_CORE_SMOKE_FILTERSET, /test\(=model::tests::windows_live_graph_root_move_is_denied_without_rebinding\)/);
@@ -367,25 +380,13 @@ for (const [ledger, names] of [
       + "rather than carrying a green name forward as known-red."
   );
 }
-// The Windows waiver subtracts from the required set, so its invariant is
-// containment, not existence: you can only waive something that is required.
-// (The four names it waives are oplog tests that moved to the tine-storage
-// crate; WINDOWS_CORE_EXACT_TEST_NAMES still lists them and the waiver is what
-// keeps the Windows gate green. That is real rot in the Windows release
-// contract, tracked separately -- it is not what this scan is for.)
-const ordinaryWindowsRequired = new Set([
-  ...WINDOWS_CORE_EXACT_TEST_NAMES,
-  ...WINDOWS_CORE_CAPTURE_WITNESS_NAMES,
-  ...WINDOWS_CORE_LIFECYCLE_WITNESS_NAMES,
-]);
-const unrequiredWaivers = ONE_RELEASE_CI_EXCEPTION.windowsMissingRequiredTestNames.filter(
-  (name) => !ordinaryWindowsRequired.has(name)
-);
-assert.deepEqual(
-  unrequiredWaivers,
-  [],
-  `windowsMissingRequiredTestNames waives ${unrequiredWaivers.join(", ")}, which the Windows `
-    + "required set does not contain, so the waiver subtracts nothing and hides its own staleness."
-);
+// Historical waiver names describe retired architectures. They must not remove
+// any current witness, even when the helper is asked about the old version.
+assert.deepEqual(windowsCoreSmokeTestNames(ONE_RELEASE_CI_EXCEPTION_VERSION), ordinaryCoreSmokeTests);
+for (const name of ordinaryCoreSmokeTests) {
+  const leaf = name.split("::").at(-1);
+  const integrationSource = fs.readFileSync(path.join(repoRoot, "crates/tine-core/tests/oplog_store.rs"), "utf8");
+  assert.ok(declaredCoreTestFns.has(leaf) || integrationSource.includes(`fn ${leaf}(`), `Windows required witness no longer exists: ${name}`);
+}
 
 console.log("tine-core nextest contract fixture tests passed.");

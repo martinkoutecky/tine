@@ -71,3 +71,14 @@ routed page per invalidation — consumers of the same routed page share one
 request, distinct routed pages are distinct questions. Measured at bound on the
 checked base, so no production change was made. Proof:
 `src/components/Page.test.tsx::tag-page table::issues one tag query per distinct routed page per invalidation, not one per consumer`.
+
+Quick Capture begins each native show with a new request generation and an empty
+read lease. If cold startup has not published a graph yet, Capture stays hidden;
+a successful `load_graph` publication may complete only that pending request,
+after rechecking the published window binding. Completion installs one immutable
+read lease before mapping, notifying, or focusing Capture. A later publication
+cannot retarget it, and delayed focus work from an older show cannot activate a
+newer show. `capture_graph_binding` only reads the selected lease; it never picks
+another graph. `pending_capture_show_is_completed_once_and_newer_show_revokes_it`
+pins pending ownership and one-time completion; the native Capture journey pins
+cold-process autocomplete and the persisted completion policy.

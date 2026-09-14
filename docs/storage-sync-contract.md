@@ -303,6 +303,14 @@ decode (torn or foreign bytes at this app-private boundary) is set aside as
 reopens empty; it never blocks capture or resolution. Explicit resolution re-proves
 the active backend's authority and durably rewrites the envelope, or removes
 and directory-syncs the final file, before the frontend acknowledges success.
+For a recovered Direct Files draft, the stored disk revision selects the durable
+recovery path but does not authorize the next write. Review returns the revision
+of the current disk snapshot it actually displays. Apply rechecks that revision
+under the page lock; a subsequent external change returns `conflict.base_rev`
+and preserves the newer bytes for another review. The native and browser review
+adapters share this rule, covered by
+`rehydrates a durable live conflict and applies the currently reviewed disk revision`
+and `concord_live_save_conflict_capsule_survives_restart_and_rechecks_disk`.
 This state is recovery material only: it grants neither graph authority nor a
 Managed storage selection, and no byte is written into the user's graph.
 
@@ -935,7 +943,11 @@ The native watcher may observe metadata changes below the approved assets
 capability solely to invalidate WebView render caches. That observation grants
 no managed actor admission, publishes no operation or provider object, and does
 not make Tine responsible for transferring or resolving asset bytes; the user's
-whole-directory synchronizer remains their transport.
+whole-directory synchronizer remains their transport. Notifications through a graph's
+`assets` symlink are mapped to its currently approved canonical asset root
+before per-window routing, including when several graph windows share that
+root. This mapping uses all live approved bindings and works after deletion;
+it neither follows an event path to a new target nor grants approval.
 
 Authority is transferred only by a validated, durably published record while
 the current owner retains the relevant lease/capability. A path name, a newer

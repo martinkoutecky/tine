@@ -12836,11 +12836,17 @@ fn checkpoint_roots_resolve_a_retired_hot_object_from_cold_history() {
     handle.force_clean_checkpoint_for_test().unwrap();
     drop(handle);
 
+    // This test's precondition is that cold history covers the object it
+    // deletes; otherwise the reopen cannot resolve it and fails with
+    // `missing stored file <digest>.object`. Neither half of that precondition
+    // used to be forced: the checkpoint was whatever `drain_managed_local`
+    // incidentally left behind, and the object was whichever entry `read_dir`
+    // happened to return first. Both are environment-dependent, and CI failed
+    // on them. Force the checkpoint, then select the exact object the
+    // generation's cold accepted-history index proves it covers.
     let operations = clean_operation_archive_directory(&fixture.request.archive_root);
     let objects = operations.join("objects");
-    let store =
-        crate::oplog::ObjectStore::open(&operations, fixture.request.identities.workspace_id)
-            .unwrap();
+    let store = ObjectStore::open(&operations, fixture.request.identities.workspace_id).unwrap();
     let loaded =
         match crate::oplog::checkpoint_generation::open_checkpoint_with_cold_history(&store)
             .unwrap()

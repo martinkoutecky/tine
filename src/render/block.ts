@@ -146,10 +146,14 @@ const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*<[^>]+>\s*$/;
  *  derived here; they come from the one lsdoc parse via `render/facets` `facetsOf`.
  *  So there's no second facet recognizer — just one body-text extractor. */
 export function visibleBody(raw: string): string[] {
+  // Recognize against the whole raw, as the source block does. Looking only at
+  // line one mistakes `TODO\nbody` for a task and misses leading blank lines.
+  const markerMatch = matchLeadingMarker(raw);
+  const body = markerMatch ? raw.slice(markerMatch.end).replace(/^ /, "") : raw;
   const lines: string[] = [];
   let inDrawer = false;
   let fence: string | null = null;
-  for (const line of raw.split("\n")) {
+  for (const line of body.split("\n")) {
     const fm = /^\s*(`{3,}|~{3,})/.exec(line);
     if (fm) {
       const ch = fm[1][0];
@@ -177,11 +181,8 @@ export function visibleBody(raw: string): string[] {
     lines.push(line);
   }
   if (lines.length === 0) lines.push("");
-  // Strip the marker / priority / heading prefix from the first line (chrome that
-  // facetsOf surfaces separately) via the one shared lsdoc-equivalent recognizer.
+  // Strip the remaining priority / heading prefix from the first line.
   let first = lines[0];
-  const markerMatch = matchLeadingMarker(first);
-  if (markerMatch) first = first.slice(markerMatch.end).replace(/^ /, "");
   const pm = /^\[#[ABC]\]\s?/.exec(first);
   if (pm) first = first.slice(pm[0].length);
   const hm = /^(#{1,6}) /.exec(first);

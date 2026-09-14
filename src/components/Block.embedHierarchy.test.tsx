@@ -88,6 +88,22 @@ describe("block embed hierarchy", () => {
     }
   });
 
+  it("leaves the host rendered when a gap inside the embedded outline is pressed", async () => {
+    const { root, dispose } = renderFixture("embed-gap");
+    try {
+      const gap = await vi.waitFor(() => {
+        const row = root.querySelector('.embed-block [data-block-id="embed-gap"] > .block-main');
+        expect(row).not.toBeNull();
+        return row!;
+      });
+      mouseDownAndUp(gap);
+      expect(editingId()).toBeNull();
+      expect(root.querySelector(".embed-block")).not.toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("runs an embedded disclosure control through the real pointer sequence without editing the host", async () => {
     const targetId = "embed-pointer-collapse";
     const { root, dispose } = renderFixture(targetId);

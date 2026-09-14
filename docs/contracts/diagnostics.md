@@ -53,6 +53,16 @@ require an exact reviewed entry, and a caught failure reaches one only through
 and message hash and drops the message itself. Graph identity on the save path
 is represented by a count, never a page name.
 
+Every failed page save has one fixed-shape native receipt. Direct Files records
+its closed save-failure code and guarded-index counters as `direct.save`;
+Tine-managed storage records the actor's closed refusal code as `managed.save`.
+Managed conflict and deferred outcomes preserve their closed, content-free
+subtype (for example `managed.conflict.stale_base` or
+`managed.deferred.blocked_recovery`), rather than disappearing behind a generic
+IPC failure.
+Unknown actor stages collapse to `actor_refused_at_stage`: stage text, page
+identity, paths, error prose, and draft content never enter either event.
+
 ## Print-site classes
 
 Every row of both censuses carries one of four buckets, and they mean the same

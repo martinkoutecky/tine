@@ -1,3 +1,4 @@
+import { renameFlushFailureMessage } from "../persistence";
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import {
   contextMenu,
@@ -1122,7 +1123,7 @@ function RenamePage(props: {
       // from disk to rewrite its `[[refs]]`, so a dirty edit on ANY page would be
       // read stale and lost.
       if (!(await flushAll())) {
-        pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
+        pushToast(renameFlushFailureMessage(), "error", { sticky: true });
         return;
       }
       const outcome = await renameOrMergePage(from, next, props.path);

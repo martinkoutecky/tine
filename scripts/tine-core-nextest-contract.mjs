@@ -204,8 +204,8 @@ export const LINUX_CORE_RELEASE_FILTERSET = linuxCoreReleaseFilterset();
 // Windows is deliberately not a second complete tine-core behavior matrix.
 // Linux carries that full inventory in four isolated shards. This exact list is
 // the Windows release contract: every explicitly Windows-named core test, plus
-// the bootstrap/durability/lifecycle witnesses that exercised the Windows
-// failures fixed for v0.6.90. Keep the names explicit so a rename, removal, or
+// current activation/seal/durability/lifecycle witnesses (see docs/CI.md for
+// the retired bootstrap/enrollment replacements). Keep names explicit so a rename, removal, or
 // newly added Windows test cannot silently shrink the release gate.
 export const WINDOWS_CORE_EXACT_TEST_NAMES = Object.freeze([
   "model::tests::page_name_encoding_is_injective_reversible_and_windows_safe",
@@ -228,10 +228,10 @@ export const WINDOWS_CORE_EXACT_TEST_NAMES = Object.freeze([
 export const WINDOWS_CORE_LIFECYCLE_WITNESS_NAMES = Object.freeze([
   "oplog::local_active::bounded_admission::clean_admissions_are_bounded_at_one_one_thousand_and_ten_thousand",
   "model::tests::bootstrap_source_regular_file_sync_uses_supported_handle_access",
-  "oplog::import::tests::bootstrap_preparation_flush_handles_use_platform_durability_contracts",
-  "oplog::import::tests::inactive_streaming_bootstrap_preseal_crash_retries_exactly",
-  "oplog::import::tests::inactive_streaming_bootstrap_repeated_run_reuses_exact_seal",
-  "oplog::enrollment::tests::a_second_live_session_cannot_write_the_journal_and_dropping_one_releases_it",
+  "sync_runtime::tests::managed_activation_abort_cuts_retire_unmarked_generation_and_retry",
+  "oplog::lazy_genesis::tests::lazy_genesis_seal_reopens_and_detects_payload_corruption",
+  "oplog::sqlite::tests::one_workspace_runtime_lease_vends_one_applier_slot_at_a_time",
+  "oplog::sqlite::tests::lease_contention_and_drop_recovery_are_process_scoped",
   "oplog::sqlite::tests::separate_process_workspace_lease_contends_and_crash_releases",
 ]);
 

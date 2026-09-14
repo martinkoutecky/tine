@@ -567,7 +567,7 @@ export function QuickSwitcher(): JSX.Element {
                           aria-selected={idx() === sel()}
                           onMouseMove={() => setSel(idx())}
                           onMouseDown={(e) => {
-                            if (longPress.consumeClick()) {
+                            if (longPress.consumeClick(e)) {
                               e.preventDefault();
                               e.stopPropagation();
                               return;

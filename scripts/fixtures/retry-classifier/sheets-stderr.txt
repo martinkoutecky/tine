@@ -1,0 +1,6 @@
+dbus-daemon[3988023]: [session uid=3042 pid=3988023] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=3042 pid=3988047 comm="/aux/koutecky/logseq/tine-agents/runtime/artifacts")
+dbus-daemon[3988023]: [session uid=3042 pid=3988023] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[3988075]: Activating service name='org.a11y.atspi.Registry' requested by ':1.1' (uid=3042 pid=3988077 comm="/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWeb")
+dbus-daemon[3988075]: Successfully activated service 'org.a11y.atspi.Registry'
+E2E error: query Board did not retain points > 2
+2026-09-13T18:19:51.599Z ERROR webdriver: WebDriverError: invalid session id when running "execute/sync" with method "POST"

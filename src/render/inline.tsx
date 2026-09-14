@@ -26,6 +26,7 @@ import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, typographicPlainSpan
 import { createLongPress } from "./longPress";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
+import { leadingMarker, matchLeadingMarker } from "../markers";
 import { isQueryMacroName, queryMacroExtentAtSpan, QUERY_MACRO_NAMES } from "../editor/queryMacro";
 import { AstBody } from "./body";
 import { backend } from "../backend";
@@ -307,7 +308,10 @@ function createPeekBridge(disabled: () => boolean) {
       closeT = undefined;
     }
   };
-  const anchorEnter = () => {
+  const anchorEnter = (event: PointerEvent) => {
+    // Touch WebViews synthesize mouse hover around a hold. Only a real mouse
+    // may arm a hover preview; hybrid devices keep their mouse behavior.
+    if (event.pointerType !== "mouse") { dismiss(); return; }
     if (disabled()) return;
     clearClose();
     clearOpen();
@@ -359,7 +363,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
     !props.tag && !isGuidePageName(targetName()) && pageIsMissing(targetName());
   const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : isJournalTitle(targetName()) ? "journal" : "page");
   const open = (e: MouseEvent) => {
-    if (longPress.consumeClick()) {
+    if (longPress.consumeClick(e)) {
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -399,8 +403,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         // so the gestures can't leak to the browser (GH #42, GH #207).
         onMouseDown={internalLinkMouseDown}
         onClick={open}
-        onMouseEnter={peek.anchorEnter}
-        onMouseLeave={peek.anchorLeave}
+        onPointerEnter={peek.anchorEnter}
+        onPointerLeave={peek.anchorLeave}
         onPointerDown={longPress.onPointerDown}
         onPointerMove={longPress.onPointerMove}
         onPointerUp={longPress.onPointerUp}
@@ -1195,16 +1199,27 @@ function blockInlines(blocks: AstBlock[]): Inline[] {
  *  preview line, …) — anything NOT a full block body. Parses via the in-browser
  *  wasm parser (src/render/parse.ts) and renders the inline run; `blockId` is
  *  threaded to inline `{{query}}` macros so they can rewrite the owning block. */
-export function InlineText(props: { text: string; blockId?: string; format?: Format; macroExpansion?: boolean }): JSX.Element {
+export function InlineText(props: { text: string; blockId?: string; format?: Format; macroExpansion?: boolean; preserveMarker?: boolean }): JSX.Element {
   // Only parse once the wasm parser is ready — `parseBlock` THROWS otherwise, and
   // unlike AstBody these callers (property values, breadcrumbs, ref previews, PDF
   // annotations) have no error boundary. When the parser isn't ready, OR when the
   // line is a block construct that yields no inline-flow content (`> quote`, `---`,
   // `| a | b |`, `[^1]: …`, `$$…$$`, …), fall back to the literal text so the
   // content is never dropped — matching the old inline-only renderer.
-  const inlines = createMemo(() =>
-    parserReady() ? blockInlines(parseBlock(props.text, props.format === "org")) : null,
-  );
+  const inlines = createMemo(() => {
+    if (!parserReady()) return null;
+    const blocks = parseBlock(props.text, props.format === "org");
+    const inline = blockInlines(blocks);
+    // A reference has already separated its task state from the body. A task
+    // word still in that body is literal content (e.g. `TODO TODO buy milk`),
+    // even though the block parser projects it as a header facet on reparse.
+    const marker = props.preserveMarker && matchLeadingMarker(props.text);
+    if (marker && inline.length > 0) {
+      const end = marker.end + (props.text[marker.end] === " " ? 1 : 0);
+      return [{ k: "plain" as const, text: props.text.slice(0, end) }, ...inline];
+    }
+    return inline;
+  });
   return (
     <Show when={inlines() && inlines()!.length > 0} fallback={<EmojiText text={props.text} />}>
       {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false, props.format)}
@@ -1293,6 +1308,14 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   };
   // Visible text: an explicit label wins; otherwise the target's first line.
   const text = () => props.label ?? (targetRaw() ? visibleBody(targetRaw()!)[0] : undefined);
+  // Mirror the source's state with its shared recognizer and chip styling.
+  // Explicit aliases remain label-only; targetRaw keeps live and unloaded
+  // references current without another resolver (GH #518).
+  const marker = () => {
+    if (props.label !== undefined) return null;
+    const raw = targetRaw();
+    return raw ? leadingMarker(raw) : null;
+  };
   // Parse the referenced block's text with ITS page's format (org refs render org).
   const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
   const annotation = () => {
@@ -1322,8 +1345,8 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         // Shared guard: suppress native shift-range-selection / middle-click
         // autoscroll up front (GH #42, GH #207).
         onMouseDown={internalLinkMouseDown}
-        onMouseEnter={peek.anchorEnter}
-        onMouseLeave={peek.anchorLeave}
+        onPointerEnter={peek.anchorEnter}
+        onPointerLeave={peek.anchorLeave}
         // Middle-click → background tab with the block anchor (GH #283).
         onAuxClick={(e) => {
           if (internalLinkAuxClick(e, () => {
@@ -1384,7 +1407,10 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         }}
       >
         <Show when={text() !== undefined} fallback={<>(({props.id.slice(0, 8)}))</>}>
-          <InlineText text={text()!} format={fmt()} />
+          <Show when={marker()}>
+            {(m) => <><span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}</>}
+          </Show>
+          <InlineText text={text()!} format={fmt()} preserveMarker={props.label === undefined} />
         </Show>
       </span>
       <Show when={peek.open() && preview() && capped().blocks.length > 0}>

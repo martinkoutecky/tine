@@ -27,7 +27,7 @@ function mount(node: () => JSX.Element) {
   return { root, dispose: render(node, root) };
 }
 
-async function mountSelectedEditor(mobile: boolean) {
+async function mountEditor(mobile: boolean) {
   platform.mobile = mobile;
   const { Block } = await import("./Block");
   const block: BlockDto = {
@@ -43,6 +43,12 @@ async function mountSelectedEditor(mobile: boolean) {
   ));
   const textarea = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
   textarea.focus();
+  return { ...mounted, textarea };
+}
+
+async function mountSelectedEditor(mobile: boolean) {
+  const mounted = await mountEditor(mobile);
+  const { textarea } = mounted;
   textarea.setSelectionRange(6, 14);
   textarea.dispatchEvent(new Event("select", { bubbles: true }));
   await vi.waitFor(() => expect(mounted.root.querySelector(".sel-toolbar")).not.toBeNull());
@@ -50,6 +56,41 @@ async function mountSelectedEditor(mobile: boolean) {
 }
 
 describe("selected-text toolbar platform ownership (GH #375)", () => {
+  it("tracks native selectionchange without a select or mouseup event", async () => {
+    const mounted = await mountEditor(true);
+    try {
+      let start = 6;
+      let end = 14;
+      // Native WebView selection updates the DOM range without the desktop
+      // select/mouseup events. Avoid jsdom's synthetic setSelectionRange events.
+      Object.defineProperty(mounted.textarea, "selectionStart", { configurable: true, get: () => start });
+      Object.defineProperty(mounted.textarea, "selectionEnd", { configurable: true, get: () => end });
+      document.dispatchEvent(new Event("selectionchange"));
+      expect(mounted.root.querySelector("[data-mobile-selection-toolbar]")).not.toBeNull();
+      start = end;
+      mounted.textarea.dispatchEvent(new Event("selectionchange"));
+      expect(mounted.root.querySelector("[data-mobile-selection-toolbar]")).toBeNull();
+    } finally {
+      mounted.dispose();
+    }
+  });
+
+  it("ignores selection changes owned by another focused control", async () => {
+    const mounted = await mountEditor(true);
+    const other = document.createElement("textarea");
+    document.body.append(other);
+    try {
+      other.focus();
+      Object.defineProperty(mounted.textarea, "selectionStart", { configurable: true, get: () => 6 });
+      Object.defineProperty(mounted.textarea, "selectionEnd", { configurable: true, get: () => 14 });
+      document.dispatchEvent(new Event("selectionchange"));
+      expect(mounted.root.querySelector("[data-mobile-selection-toolbar]")).toBeNull();
+    } finally {
+      other.remove();
+      mounted.dispose();
+    }
+  });
+
   it("marks the mobile formatting surface for keyboard-dock positioning", async () => {
     const mounted = await mountSelectedEditor(true);
     try {

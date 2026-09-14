@@ -330,7 +330,8 @@ export function LiveRefGroup(props: {
                       </div>
                     )}
                   </Show>
-                  <Block id={id} hideRefCount={!!props.embedId && id === props.embedId} />
+                  <Block id={id} hideRefCount={!!props.embedId && id === props.embedId}
+                    dragHostId={props.surface === "embed" && id === props.embedId ? props.hostBlockId : undefined} />
                 </Show>
               </>
             );

@@ -1,0 +1,2662 @@
+{
+  "schemaVersion": 2,
+  "version": "0.6.983",
+  "baseTag": "v0.6.982",
+  "items": [
+    {
+      "section": "Added",
+      "text": "**Commands can have no keyboard shortcut** without becoming unavailable in the command palette. Shortcut recording can be cancelled, and help reflects cleared bindings (GH #523).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SHORTCUT-UNBIND-20260913"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Tips explicitly describes Unbind, Reset interface zoom and platform Redo shortcuts.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Reset interface zoom** is available in the command palette (GH #522).",
+      "userVisible": true,
+      "regressions": [
+        "UI-RESET-INTERFACE-ZOOM-20260913"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Tips explicitly describes Unbind, Reset interface zoom and platform Redo shortcuts.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Changes from a long-absent device now merge automatically.** If an older incoming change falls behind this device's compact local history, Tine rebuilds that history, waits for any still-arriving prerequisite, and resumes editing by itself without asking you to reopen the app or merge manually.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-AUTOMATIC-HISTORY-RECONSTRUCTION"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Managed sync explains automatic older-history reconstruction, pending prerequisites and retry without reopening.",
+        "refs": [
+          "crates/tine-core/src/templates/managed-sync.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**All of a query's display settings, in one place.** A query block carries six presentation facts \u2014 the view, what the results are grouped by, the sort order, which columns show, what the footer totals, and a row limit \u2014 and until now the controls beside a query could state one and a half of them: `+ sort` held one sort, `+ summarize` held one total and one grouping, and the column list, the view and the limit had no inline control at all. A **Display** button in the open sheet now holds all six. The sort, column and total lists are real lists: add to them, move an entry up or down, remove one. A second sort or a second total is editable rather than invisible, and a setting Tine's controls do not cover is left exactly as your file spells it. Every change is one undo step and one ordinary property line. A **query table** now saves what you do to it, too. Clicking a header sorts the results and keeps that sort in the note \u2014 ascending, descending, then off. Where the engine cannot sort by a column (the title, the task marker, tags, a computed column) the table still sorts what is on screen and says **Table-only sort**, so the difference between *sorted* and *saved as sorted* is visible rather than found after a reload. Dragging a header saves the column order, and a column's footer cycles count / sum / average.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-DISPLAY-INLINE-001",
+        "UI-QUERY-TABLE-DISPLAY-SURFACES-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The structured-information workflow explicitly describes Display and its ordered lists.",
+        "refs": [
+          "crates/tine-core/src/templates/structure-repeated-information.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Picking a field now shows you your own graph.** Adding a condition used to ask which KIND of thing you wanted first, and then \u2014 for a property \u2014 offer an alphabetical list of every key in the graph, with no counts and no types, in which a key you use four hundred times sat below one you used once. Changing an existing row's field asked the same question again through a different control. Both are one list now, and it is your graph: the built-in fields first, then every property key you actually use, commonest first, each row saying what type Tine has observed for it (and what you declared, when you have), how many blocks or pages carry it, and a few of the values it holds. Type to narrow it. A key the list does not already offer where you need it is offered by name \u2014 **Use \"\u2026\" as a block property**, and on a block query **Use \"\u2026\" as a page property** for the same key read off the block's own page \u2014 each with its honest `0 blocks today`. That is how a key your graph has not got yet, and a key it has only on pages, both stay writable. A graph with thousands of keys opens as quickly as a small one \u2014 the list draws a screenful at a time \u2014 and the arrow keys reach any of them, including on a phone-width window, where the sheet scrolls to bring your own properties into view. While Tine is still reading your graph's properties, the list says so and keeps the built-in fields usable; it does not show an empty graph. A property condition waits for that answer rather than guessing that the key holds text \u2014 which matters most right after you declare a type, when the old answer is the wrong one. Your chosen key and anything you have typed are kept while it waits. Built-in fields \u2014 *Task marker*, *Scheduled*, *Page / tag reference* \u2014 show no count. Tine keeps no statistics for those, and showing a borrowed number would be telling you something it never measured.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-VOCABULARY-ONE-PICKER-001",
+        "UI-QUERY-VOCABULARY-BOTH-SCOPES-001",
+        "UI-QUERY-REGISTRY-PENDING-001",
+        "UI-QUERY-VOCABULARY-NARROW-001",
+        "UI-QUERY-VOCABULARY-BOUNDED-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**The query text is always there, and it answers back.** The box holding the query's text used to be a collapsed *Query text* twisty at the foot of the sheet \u2014 the one control that can say everything the rows cannot was the one control you had to know to look for. It is now simply part of an open sheet, and Tine reads what you type as you type it. When it cannot read something it says which word, offers **Show me** to select that word in the text, lists the spellings it does know and the property keys your graph has that look like it, and points at the Guide's query-language reference. Your results stay on screen, greyed, while the text is broken \u2014 a typo is not an empty graph \u2014 and **Save query text** only ever saves the text that is in front of you. The `\u27e8advanced\u27e9` row is a button now: press it and the cursor lands in the text at the part the rows could not draw.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-TEXT-PANE-LIVE-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**A query Tine understood only part of says so plainly.** It used to list what it could not read under a bare *No results*, which read as \"here are your results\". It now says: *Tine didn't understand part of this query, so it returned no results* \u2014 which is what actually happened.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-ADVANCED-AND-NOTICE-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**A query block now reads as a sentence, and edits as a sheet.** The row of chips over every `{{query}}` is gone. At rest a query is one line of plain English \u2014 *Blocks where task: TODO and page: Project/Roadmap* \u2014 with the number of results beside it and a \u2699 to open it. Click either and a sheet opens over the blocks below: **Find blocks \u25be where \u2026** on top, then one row per condition, each of them `field \u25be | operator \u25be | value` with a \u22ee for the rest and an \u00d7 to remove it. **+ Add condition** adds one. Conditions can be grouped as *all of*, *any of*, *none of* or *not all of* when a query needs a branch. Escape, Back, or a click anywhere else closes the sheet and leaves the sentence. On a phone-width screen the sheet docks to the bottom of the window instead of hanging off the side of the block. A condition Tine cannot draw as a row is still shown \u2014 in red, with the reason, and removable \u2014 rather than hidden behind raw text, and a query nested far deeper than anyone means to read folds into one `\u27e8advanced\u27e9` row that is still saved, still run, and still removable. Nothing about the file changes: the block stays an ordinary `{{query}}` bullet, and the query text is still there under the sheet to read or edit directly.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-SENTENCE-TOTALITY-001",
+        "UI-QUERY-SHEET-NARROW-BOTTOM-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Changing what a query selects tells you what it will cost.** Switching a query between *blocks* and *pages* used to silently drop the conditions that stopped applying \u2014 `task` means nothing for a page \u2014 so a click could delete half a query without saying so. Tine now re-reads the whole query first and says exactly what happened: *Switching to pages \u2014 1 of your 3 conditions don't apply to pages (`task = 'TODO'`)*, with **Remove them**, **Keep anyway** and **Cancel**. Kept conditions stay visible as red rows with their reason, so nothing disappears behind your back.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-ANCHOR-SWITCH-REVALIDATION-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**A typed condition reopens as the comparison that wrote it.** `cost > 100`, `due before 2026-01-01` and `name starts with proj` could be built but not read back: reopening one showed a bare equality, and editing it destroyed the comparison. Every comparison the builder offers now survives the round trip, so a query you built last month opens with the operator you chose.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-TYPED-LEAF-REOPEN-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**One `/query` command.** The slash menu had **Query** and **Query (visual builder)** as separate commands that made the same block. There is one now, and it opens the new sheet with the field chooser already up.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-SINGLE-SLASH-COMMAND"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "Add the exact missing authoring or compatibility instruction supplied in guide-updates.PROPOSED.patch.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**`{{query (all-page-tags)}}` works.** Logseq has this filter \u2014 every page that carries at least one `tags::` value \u2014 and Tine did not know it, so a graph written in Logseq that used it showed nothing. It now selects the same pages Logseq selects.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-QUERY-ALL-PAGE-TAGS-001"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "Add the supported all-page-tags form to the existing page-query reference; proposed patch supplied.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**A query that finds nothing can say which condition emptied it.** Under an empty result there is now a **why empty?** disclosure: for each condition it shows how many blocks that condition matches on its own, and how many the query would match without it. A query with several conditions used to say only \"No results\", which is the one moment you most need to know which one to loosen. Nothing extra is asked of the engine until you open it.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-EXPLANATION-001",
+        "UI-QUERY-WHY-EMPTY-BEFORE-ANY-RUN-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Search reference documents pending/read failure, page-query results and why-empty behavior; workflow supplies query examples.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Ctrl+Y also redoes, on Windows and Linux.** Ctrl+Z undid and Ctrl+Y did nothing, because Logseq binds redo to Ctrl/Cmd+Shift+Z and leaves Ctrl+Y unbound \u2014 so the key most editors on those platforms use for redo reached no command at all. Ctrl+Shift+Z is still the binding the shortcuts list shows and remaps; Ctrl+Y rides along as a second default, keeps one Redo row, and is dropped if you bind Redo to something of your own. Not on macOS, where Ctrl+Y is the system's yank inside every text field (GH #491).",
+      "userVisible": true,
+      "regressions": [
+        "UI-REDO-CTRL-Y-UNBOUND-491"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Tips explicitly describes Unbind, Reset interface zoom and platform Redo shortcuts.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**You can tell Tine what a property is, and then compare by it.** Open a property in the visual query builder and it now names the property's type \u2014 `text`, `number`, `date`, `checkbox` or a page link \u2014 and whether that type was observed from your own values or declared. Choose **declare type\u2026** to state it yourself, with a **list of** box for keys that hold several values; Tine writes an ordinary `tine.type::` line on the page named after the key, and **remove declaration** takes it away again. Declaring one is what makes real comparisons available: `before` / `after` / `between` for dates, `<` `\u2264` `>` `\u2265` for numbers, `contains` and `starts with` for text. Once a type is declared, Tine also tells you how many blocks disagree with it, which is usually a typo you wanted to find.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-PROPERTY-TYPE-DECLARATION-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Search and the page switcher tell you when they are still catching up.** Whole-graph search, the Ctrl-K page switcher and the `((` block picker now read their answers from the same index the rest of Tine queries, instead of re-reading and re-parsing your pages for every keystroke. On a large graph that is the difference between a search that stalls and one that returns. Two things change on screen. While the index is still being built \u2014 right after opening a graph, or in the moment after a save \u2014 the switcher says it is searching rather than showing an empty list, and if it genuinely cannot answer it says so and offers to retry, instead of silently reporting that nothing matched. An empty result now means \"nothing matches\", and only that.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-TYPED-READINESS-RESOURCE"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Search reference documents pending/read failure, page-query results and why-empty behavior; workflow supplies query examples.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**A search that returns both pages and blocks is now two results, each with its own controls.** A mixed query used to render one undifferentiated run of hits and offer one set of display settings for all of them, so choosing a table because the pages suited one meant the blocks got a table too, and a row limit meant to trim a long block list also trimmed the pages. **Pages** and **Blocks** are now separate sections, pages first, each with its own Display button, its own view, its own columns and sort, and its own row limit. Setting one says nothing about the other: emptying the Blocks section leaves every page in place, and neither section can borrow the room the other did not use. A section that matches nothing says so and keeps its controls, so you can change the setting that emptied it. A section that leaves its display unset still follows the query's own settings, exactly as before. Saying *nothing* and saying *nothing, on purpose* are different states and Tine keeps them apart: clearing a section's settings is recorded, survives a save and reopen in both Markdown and Org, and does not quietly revert to the inherited ones the next time the file is read.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-WORKSPACE-001",
+        "UI-QUERY-PRESENTATION-MEMBERSHIP-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Choose what makes a page a match.** A search that returns pages matched them on their name and aliases only. A query can now ask for pages matched on their **content** \u2014 a page whose own blocks satisfy the search \u2014 or on **both**. A page admitted by its content is returned once, showing its best-matching block as the evidence, and the Blocks section is unaffected by the choice. Leaving it unset keeps the existing name-and-alias behaviour byte for byte.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-WORKSPACE-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Page rename scans less text in Direct Files graphs.** A controlled 10,005-file graph completed the reference scan about 34.5% faster; the later whole-graph cache refresh remains a separate cost (GH #406).",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-RENAME-LITERAL-SCANNER-406"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Performance-only or internal-only change; existing user actions and result semantics are unchanged.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Blocked rename/save messages identify the actual pending work**, conflicts or reopen requirement. This improves diagnosis of GH #535; the underlying reported false-conflict state is not yet resolved.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGE-RENAME-FLUSH-DIAGNOSTIC-535"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Troubleshooting describes save/refusal recovery; clearer diagnosis does not introduce a new recovery action.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Typed refusal ownership and configuration deferral are existing contracts.",
+        "refs": [
+          "docs/contracts/typed-errors.md",
+          "docs/contracts/config-live-reload.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Default task styling** uses consistent checkbox colors, strikes through completed task text without its label, and applies the approved hover, opacity, title-spacing and primary-text theme adjustments (GH #394).",
+      "userVisible": true,
+      "regressions": [
+        "UI-DEFAULT-TASK-CSS-394"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Task workflow and completed-state semantics remain the documented ones; visual defaults need no new instructions.",
+        "refs": [
+          "crates/tine-core/src/templates/journals-tasks-scheduling.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**A query with two conditions no longer reads the whole graph to answer about three blocks.** Every condition in a query was asked of the index as its own complete list \u2014 \"all the DONE tasks\", \"all the blocks tagged x\" \u2014 and SQLite builds each list in full before it compares them. So a query scoped to one page, answering three rows, still enumerated every DONE task you have, and got slower as the graph grew even though its answer did not. Tine now picks the one condition that names a single thing (a page, a reference, a tag, a property value), asks the index for that, and checks the remaining conditions against each candidate directly \u2014 including when your query groups its conditions, which used to hide the useful one a level down. On a 1,045-file graph the three slowest queries in it went from 1.0 ms to 0.07 ms; on a thirty-times- larger copy of the same graph one of them went from 53 ms to 0.4 ms. Results, their order and their grouping are unchanged, and both spellings are checked against the old whole-graph walk on every test shape.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-SELECTIVE-CONJUNCTION-SQL"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Performance-only or internal-only change; existing user actions and result semantics are unchanged.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Linked References looks only at the blocks that link to the page.** The index has always known which blocks refer to a page, but the panel asked it only which PAGES did, and then re-examined every block on each of them. On a 1,045-page graph the busiest page narrowed to 184 pages holding 3,434 blocks, of which 412 actually referred to it. The panel now asks for the blocks, so it examines about one block for every ten it examined before. The rows, their order, their breadcrumbs and their highlighted matches are unchanged, and a page the index cannot narrow is still read the old way rather than answered wrongly. Unlinked References is unaffected: its index narrows to pages.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-BLOCK-INDEXED-BACKLINK-NARROWING"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Performance-only or internal-only change; existing user actions and result semantics are unchanged.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Opening a page no longer reads the whole graph while the index is catching up.** Linked and Unlinked References used to answer a question the index was still preparing by parsing every page in the graph instead. Right after a graph opens, that is every file you have, once for each of the two panels, to produce rows the index serves a moment later anyway. The panels now wait the same fraction of a second a query block already waits, and the Unlinked References header says what it is waiting for. Printing, publishing and the reference diagnostics are unchanged: they have nothing to wait on, so they still read the pages directly.",
+      "userVisible": true,
+      "regressions": [
+        "REG-REF-INDEXED-PANEL-POLICY-001"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "Add the references-panel waiting behavior using the proposed Guide patch.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The query sheet's `+ sort` and `+ summarize` buttons are gone.** Everything they did \u2014 and the three settings they never reached \u2014 is in the **Display** panel that now sits beside every query, on the sheet and inline alike. Notes written with the old controls are read and rendered unchanged; only the place you go to edit them has moved.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-DISPLAY-INLINE-001"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "The structured-information workflow explicitly describes Display and its ordered lists.",
+        "refs": [
+          "crates/tine-core/src/templates/structure-repeated-information.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Queries order all matches before sampling and display limits.** Without an explicit sort, a sample is taken from the complete default page/document order, so an existing sampled query may show different rows than it did before. Query statistics describe that complete sample even when a display limit hides rows.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-ORDER-SAMPLE-COMPLETE-STATISTICS"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Export to PDF answers a page's queries from the same index the rest of Tine reads.** A `{{query \u2026}}` or `{{tine-query \u2026}}` inside a page you export is answered from the current search index on both Direct Files and Managed graphs, instead of walking the graph a second time just for the export. Two differences you will notice. While the index is still being built \u2014 the first open, or the moment after a save \u2014 preparation now waits and retries rather than exporting a page with a gap where the results belong. And when a query exceeds a Print limit, whether in matches, source length or nesting depth, Tine tells you which limit it hit and prepares nothing: no print dialog opens on a page whose results are incomplete, where before the PDF was produced with a \"narrow it before publishing\" note printed in place of the results. Starting a second export, or switching graphs mid-preparation, cancels the first cleanly. Page-anchored queries remain unsupported in a printed page.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-PRINT-INDEXED-QUERY-SUBTREES"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "Existing PDF export instructions cover waiting and limit refusal; proposed patch adds page-query limitation and cancellation.",
+        "refs": [
+          "crates/tine-core/src/templates/research-document.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**A `{{query (property \u2026)}}` on a Direct Files graph no longer re-reads every page to work out what its values mean.** Deciding whether `rank:: 007` is a number or a word is a whole-graph question, and Tine answered it by walking every loaded document each time it needed an answer, even though the same facts already sit in the projection it keeps beside the graph. Once that projection is ready the answer is read straight out of it; while it is still being built \u2014 the first open, or the moment after a save \u2014 the old walk still answers, so nothing waits on it. The values a query matches are unchanged, and proved so: all three sources now build a byte-identical table on the same graph.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-REGISTRY-INDEXED-ROW-SOURCE"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Performance-only or internal-only change; existing user actions and result semantics are unchanged.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Tine now says when a query stops being readable by Logseq.** Some things you can build \u2014 grouping, column totals, typed comparisons like `cost > 100` \u2014 have no `{{query}}` spelling at all, and saving one has always rewritten the block into Tine's own `{{tine-query}}` form, which Logseq shows as plain text. It did that silently. A notice now appears under the query the moment it happens, with **Undo that change** \u2014 the ordinary undo, so Ctrl+Z does the same thing \u2014 and **Keep it**. **Don't show this again** is remembered per graph on that device only; the choice is never written into your graph and never syncs.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-CROSSING-NOTICE-UNDO-001",
+        "REG-QE-P2-NOTICE-DISMISSAL-DEVICE-LOCAL"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**A view directive you remove now stays removed.** Column totals and grouping were written both into the query text and into the block's `tine.*` properties, and the properties win \u2014 so deleting a total or a grouping in the builder left the old copy in the text, and the next time the block was read it came back. Those two directives now live in the block's properties alone; `sort-by` and `sample` keep their place in the query text, because Logseq reads those too. A block you open and close without editing is still not written at all.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-P2-DIRECTIVE-MIGRATION-BYTE-STABILITY"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Find and revisit documents the stated query sheet, vocabulary, scoped Pages/Blocks and complete-sample statistics behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Reopening an unchanged Direct Files graph no longer re-parses it.** Tine now checks the graph's files against the query projection it keeps beside the graph, page by page from the file bytes, and parses only the pages that actually changed since the last session; an unchanged graph is ready with nothing parsed and nothing retained in memory. A missing or damaged projection is rebuilt by streaming pages through a bounded queue instead of holding the whole parsed graph. Saves and deletions reach the projection whether or not a parsed copy of the graph exists.",
+      "userVisible": true,
+      "regressions": [
+        "REG-DIRECT-WARM-REOPEN-NO-PARSE"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Performance-only or internal-only change; existing user actions and result semantics are unchanged.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**A query about pages now answers with pages.** `{{query (page-property \u2026)}}`, `(page-tags \u2026)` and `(namespace \u2026)` ask a question about pages, but Tine answered them by listing every block on each matching page \u2014 so one matching page could fill the result with its whole outline. They now list the pages themselves. A query about blocks is unaffected.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-PAGE-ANCHOR-PAGE-ROWS"
+      ],
+      "guide": {
+        "status": "current",
+        "reason": "Search reference documents pending/read failure, page-query results and why-empty behavior; workflow supplies query examples.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The query block's `\u2699 advanced` / `\u2190 Simple` switch is gone.** It converted between the chip builder and a datalog query, in both directions, and neither direction was safe: going out dropped any sort, grouping or summary the query carried, and coming back could only read the exact shape it had itself written, so an advanced query written by hand came back wrong or not at all. An advanced query now stays advanced \u2014 editable as text, with its own note saying which parts Tine ran and which it ignored \u2014 and is no longer offered a chip builder that would rewrite it.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-ADVANCED-TEXT-ONLY"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "Add the exact missing authoring or compatibility instruction supplied in guide-updates.PROPOSED.patch.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**`{{query (property \u2026)}}` now matches the way you read the page, not the way the bytes happen to be written.** A property value matches whatever its letter case \u2014 `status:: Done` answers `(property status done)`; a value written as a list matches any of its items, so `topics:: rust, queries` answers `(property topics rust)`; and a key whose values are all numbers or all dates is compared as a number or a date instead of as text, so `rank:: 007` answers `(property rank 7)` and a date property compares in calendar order. Logseq compares the raw text, case-sensitively, and splits only a handful of built-in keys \u2014 so a property query that found nothing in Logseq may well find what you meant here. Page names (`[[\u2026]]`, `tags::`, `alias::`) were already matched case-insensitively and still are.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-TYPED-CASE-LIST-ATOM-COMPARISONS"
+      ],
+      "guide": {
+        "status": "update",
+        "reason": "Add the exact missing authoring or compatibility instruction supplied in guide-updates.PROPOSED.patch.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**The Concord base ledger now reclaims entries whose stored text has been removed from underneath it.** Its prune already dropped unreferenced blobs and unreadable records; an index or conflict pin naming a blob that an antivirus quarantine, a disk cleaner or a partial restore had deleted was kept forever as dead metadata. Conflict diffs were never affected \u2014 a missing blob has always degraded to the ordinary two-column diff \u2014 and the ledger still never warns about one.",
+      "userVisible": true,
+      "regressions": [
+        "REG-CONCORD-LEDGER-DANGLING-ENTRY-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Performance-only or internal-only change; existing user actions and result semantics are unchanged.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Compact PDF toolbars keep More and Close reachable.** The document title uses its own row in narrow panes, and settings and outline panels stay below the controls (UI-PDF-COMPACT-TOOLBAR-CLIPPED-INTERNAL).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-COMPACT-TOOLBAR-CLIPPED-INTERNAL"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Restores access to existing PDF controls without introducing a new user workflow.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Responsive presentation correction; no engine or persistence contract changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No separate website claim; canonical Guide already documents existing PDF controls.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch interaction correction; no standalone editorial update.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Dragging down through multiline text keeps selection under the pointer.** Starting a drag in rendered text no longer accumulates a character offset on each wrapped line; code blocks and Unicode text follow the same native caret.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MULTILINE-DRAG-ENDPOINT-20260913"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Windows network graphs open correctly through UNC paths and mapped SMB drives.** Directory enumeration preserves the network root while retaining filesystem path-confinement checks (GH #533).",
+      "userVisible": true,
+      "regressions": [
+        "REG-WINDOWS-SMB-CAPABILITY-UNC-533"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android formatting-toolbar taps perform each command once.** The toolbar retains its horizontal position and editing focus, stays above the keyboard, and keeps the keyboard open during sibling moves (GH #495, #496).",
+      "userVisible": true,
+      "regressions": [
+        "UI-MOBILE-TOOLBAR-SINGLE-GESTURE-20260913"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Touch long-press page menus stay open.** Touch does not arm desktop hover previews, and duplicate native context-menu or compatibility-click events no longer dismiss the menu just opened (GH #207).",
+      "userVisible": true,
+      "regressions": [
+        "UI-INTERNAL-LINK-GESTURE-207",
+        "UI-SPLIT-PANE-LAST-TAB-CLOSE-207",
+        "UI-PAGE-LINK-LONG-PRESS-207",
+        "UI-ANDROID-UI-RUNTIME-LONG-PRESS-207"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Initial native Android text selection updates the formatting toolbar** without requiring a later selection-handle movement (GH #375).",
+      "userVisible": true,
+      "regressions": [
+        "UI-MOBILE-SELECTION-TOOLBAR-DOCK-375",
+        "UI-ANDROID-UI-RUNTIME-INITIAL-SELECTION-375"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Indent and outdent preserve the caret and selection** instead of moving them to the end of the block (GH #519).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EDITOR-TAB-SELECTION-20260913"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Code-block horizontal scrollbars can be dragged** without the click entering edit mode (GH #520).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CODE-SCROLLBAR-520"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Embed gestures keep the intended host or source.** Clicking a gap does not edit the host block; dragging an embedded root moves that occurrence, while nested source controls retain their own actions (GH #514, #516).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EMBED-INPUT-OWNERSHIP-20260913"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Editing below an expanded embed preserves the viewport**, including Undo and Redo when the source text changes the embed's height (GH #515).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EMBED-EDITOR-SCROLL-ANCHOR-20260913"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Journals adds the new day after midnight without replacing the active editor**, preserving its draft, focus and selection (GH #532).",
+      "userVisible": true,
+      "regressions": [
+        "UI-JOURNAL-ROLLOVER-EDITOR-20260913"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Block references render live task states** while preserving literal task words and aliases (GH #518).",
+      "userVisible": true,
+      "regressions": [
+        "UI-REFERENCE-TASK-STATE-20260913"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Editor emoji font selection follows the platform display font**, reducing the font switch between reading and editing (GH #458).",
+      "userVisible": true,
+      "regressions": [
+        "UI-EMOJI-DISPLAY-EDITOR-20260913"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Quitting while a change arrives from another device now shuts down cleanly.** If a synced change landed in the moment you closed Tine, the shutdown reported an error instead of finishing normally. Nothing was lost either way \u2014 the change was already saved \u2014 but the error was wrong and alarming. Ordinary progress during shutdown is now treated as ordinary progress.",
+      "userVisible": true,
+      "regressions": [
+        "REG-HARVEST-W6-CLEAN-SHUTDOWN-PROVIDER-MUTATION-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Concurrent page titles after a checkpoint are reported as an editing conflict.** If two offline devices gave one page different titles and compacted their history, reopening could incorrectly report a damaged page-name index. Tine now identifies the conflicting titles correctly; synchronization may remain blocked until that conflict is resolved.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-CHECKPOINT-TITLE-RACE-CLASSIFICATION"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Queries survive a settings change.** On a Direct Files graph, dismissing the Guide toast \u2014 or changing the default home, time tracking, bracket display, doc-mode Enter, logical outdenting, preferred format or journal title format, restoring a backup, or having `config.edn` rewritten outside Tine \u2014 turned every query block into \"Query results unavailable\" until the graph was reopened. The refresh that follows a configuration write rebuilt the graph without the query index the ordinary open attaches. Both paths now attach it through one function, and the refresh retires the previous index worker before starting its replacement.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QUERY-REFRESH-DROPS-PROJECTION-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Configuration invalidation versus graph-text ownership is documented.",
+        "refs": [
+          "docs/contracts/config-live-reload.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Creating a block no longer freezes every query on \"Rebuilding the query index\u2026\".** A block created in the editor is saved under the editor's own id, which is not a UUID; the index refused the whole page for it, and every automatic rebuild refused the same page again, so after one such save no query in the app answered until restart. Such a block now gets a stable index key and answers still name it by the id the editor knows.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QUERY-NEW-BLOCK-WEDGES-PROJECTION-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Direct query physical/editor identity is documented.",
+        "refs": [
+          "docs/contracts/direct-query-identities.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**\"why empty?\" describes an answer, not the absence of one.** While the query index was still rebuilding, a query block said \"No results\" and offered \"why empty?\", which opened onto an empty panel. The block now shows \"Rebuilding the query index\u2026\" until its query has actually run, and the affordance appears only for a query that ran and matched nothing.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-WHY-EMPTY-BEFORE-ANY-RUN-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A query and a board no longer disagree about what `group by state` means.** One line, `tine.group-by:: state`, meant two different things depending on which face was reading it: the task marker to a board, and an ordinary property named `state` to a list \u2014 so changing a query from a list to a board could change what it grouped by, and a board asked to group by a property called `status` silently grouped by the task marker instead. A query now names its grouping field outright, in a line of its own: `tine.group-field:: prop:status` for the property, `tine.group-field:: state` for the task marker. There is one reading of that line, and one piece of code produces it \u2014 the app, the saved file and a published page cannot drift apart, which they could before. Notes written the old way keep working with no migration and are not rewritten until you change the grouping yourself; when you do, the old line is replaced rather than left beside the new one. Turning grouping off on a board now stays off: switching the view used to bring the task marker back, because \"you said no\" and \"nobody said anything\" looked the same in the file. Tables and boards built from a block's own children are unchanged.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-GROUPING-IDENTITY-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A query summary shows every total you asked for.** A query can ask for more than one \u2014 `count; cost=sum` \u2014 and only the first was ever shown, whichever the line happened to spell first; asking for a second one looked like it did nothing. Every requested total now renders, in order, repeats included, both overall and per group. The grouped breakdown, the board's columns and the table's footer are now computed by one piece of code over one set of rows, so they cannot disagree about which group a row belongs to. Grouping by tags puts a row in every one of its tags' groups, exactly as the board does, and the summary says so instead of presenting counts that do not add up to the result as though they did.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-SUMMARY-ALL-AGGREGATES-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Which columns a query table shows, and what its columns ARE, are two different lines now \u2014 and neither erases the other.** A query block used to keep both in `tine.fields::`, so the two halves of Tine that write it took turns destroying each other's work: editing the query's conditions replaced a table's declared column types with a bare list of names, and declaring a column type deleted the list of columns you had chosen to see. `tine.fields::` is now only the column *types*; a new `tine.columns::` line holds the columns a query table shows, and their order. Editing a query leaves your types, widths, filter, formulas and any other property on the block exactly as they were, and declaring a type on a query table carries your existing column choice across in one step you can undo in one go. Notes written before this keep working with no migration and without being rewritten: a `tine.fields::` line holding only plain names is still read as a column list until something replaces it. Published pages now show the same columns, in the same order, with the same types as the app \u2014 they used to ignore the choice entirely. A column you asked for that no result carries still gets its place, empty, instead of shifting the rest.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-P5A-COLUMNS-ARE-NOT-SCHEMA"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Editing a query's conditions no longer costs it its grouping or its totals.** Saving a change to what a query selects rewrites the query's text, and that text has no room for grouping or aggregates \u2014 so a `(group-by \u2026)` or `(aggregate \u2026)` written in the query itself simply vanished on the next save, along with everything else the rewritten text could not carry. Tine now writes down whatever the block does not already record before rewriting it, so a filter edit keeps the view you had. Column totals a query does not recognize \u2014 the sheet's own `median`, `stddev` and the rest \u2014 survive the save untouched instead of being dropped, and renaming a field carries a query's totals across intact, repeated columns and all.",
+      "userVisible": true,
+      "regressions": [
+        "REG-QE-P5A-VIEW-SAVE-PRESERVES-PERSISTED-FACTS"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The current query-display contract covers the affected display writer, scoped family, ordering/statistics or Print boundary.",
+        "refs": [
+          "docs/contracts/query-display.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Managed Storage page deletion retains original block state for Restore, and moving a subtree within its page preserves concurrent edits to its children.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-REAL-DELETION-RESTORE-RECONSTRUCTION",
+        "REG-MANAGED-SAME-PAGE-MOVE-PRESERVES-CHILD-ORDER"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Managed Storage accepts independent page-path and content edits from offline devices without requiring their whole path indexes to match at delivery time. Exact path ownership, release ancestry, and local journal checks remain in place.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-INDEPENDENT-PATH-CONTENT-ADMISSION"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Managed Storage reuses durable writer identities across edits and restarts. If its writer record is lost or damaged, new edits use a fresh causal identity so an older offline branch can still arrive with its original edits intact.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-PERSISTENT-WRITER-INCARNATION"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Managed Storage validates the exact peer-counter ranges in incoming CRDT updates, rejecting replayed ranges even when their starting frontier matches.",
+      "userVisible": true,
+      "regressions": [
+        "REG-MANAGED-EXACT-PEER-RANGE-ADMISSION"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A query written in the middle of a line now shows its title.** A `{{query \u2026}}` with a title or other display options \u2014 anything in the trailing `{\u2026}` \u2014 was read back from a truncated copy of your text whenever it sat inside a sentence rather than alone on its own line: the closing brace was missing, so the title was ignored and a stray `}` appeared after the results. A query with a comma inside a quoted condition was cut at the comma the same way. Tine now reads the query out of the file exactly as you wrote it, so what it shows is what is there.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-QUERY-MACRO-RAW-SOURCE-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A published page no longer prints a stray `}` after a query.** Publishing read query macros from the same truncated copy, so a query carrying a title emitted its options' closing brace as visible text next to the results, and the results themselves were computed from a query missing its last character.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-QUERY-MACRO-RAW-SOURCE-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Renaming a query can no longer rewrite the query.** Editing a query's title used to re-assemble the whole macro from Tine's own reading of it. Now the title is the only thing that changes: your conditions go back to the file exactly as you typed them, even for a query Tine only partly understands. If the new title would produce something Tine could not read back, nothing is written at all and the query says why.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-QUERY-MACRO-RAW-SOURCE-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A saved query can no longer be written as text Tine will not read back.** A query whose conditions produced a comma next to a `[[page]]`, or that started with a page reference and carried a title or a sort order, was written to the file as bytes the document reader does not see as a query at all: the block turned into literal text and the query was gone, with no way to get it back by reopening. Saving now proves the result is readable \u2014 with the same parser that renders your page, in both Markdown and Org. A query that starts with a page reference is written in an equivalent spelling Logseq reads identically; anything still unreadable is refused with a message instead of being written, so the query you had stays exactly as it was.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-QUERY-MACRO-UNREADABLE-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Turning a row off no longer changes what the rest of the query answers.** Disabling one condition in a group could make a query that matched nothing suddenly match everything, because a disabled row and a leftover `true` cancelled each other out in a way the query never asked for. A disabled row now removes exactly itself.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-QUERY-DISABLED-ROW-MEANING-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A `<% current page %>` query no longer runs twice when you navigate.** Moving to another page re-ran such a query immediately against the page you had just left, then ran it again once the substituted text caught up \u2014 so one navigation cost two whole-graph passes and could briefly show the previous page's answer. It now runs once, for the page you are actually on.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-CURRENT-PAGE-NAV-301"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A broken or unusual condition survives editing another row.** A commented out condition with an unfinished quote used to be replaced with `false` \u2014 the text you wrote was gone after one save, and the unfinished quote could swallow the working row underneath it. Old `content-regex` conditions had no way to be written down at all, so editing any other row in the same query erased them. Both are now preserved exactly, shown with their original text and error, and left alone when you edit a neighbour.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-QUERY-LOSSLESS-LEAF-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A query with a filter Tine does not understand now says so instead of quietly answering a shorter question.** `{{query (and (task TODO) (frobnicate x))}}` used to drop everything from the unknown filter onwards and run as `(task TODO)` \u2014 a list that looked right and was not. The unknown filter is now reported, the rest of the query is still shown, and no results are returned until it is fixed.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-QUERY-UNKNOWN-HEAD-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A property line with no value no longer crashes the reference reader.** A block whose last line is a bare `size::` \u2014 a property you have written the name of but not the value \u2014 could panic while Tine gathered the evidence behind a linked reference.",
+      "userVisible": true,
+      "regressions": [
+        "REG-P0-EMPTY-PROPERTY-VALUE-BORROW-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Two pages whose names differ only by punctuation or case no longer wedge a Managed Storage graph.** Creating a page and then, before the background save-settling caught up, creating a second page whose name folds to the same key (`Alpha` and `/Alpha`, or `Foo` and `foo` at a different file path) reported both saves as successful \u2014 and then left the graph unopenable, with every later open refusing. The second save is now refused up front, while nothing has been written, the same way it already is once the first save has settled.",
+      "userVisible": true,
+      "regressions": [
+        "REG-HARVEST-W5-CENSUS-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A Managed Storage sync operation no longer gets stuck behind its own leftover crash evidence.** If Tine lost power midway through tidying up after publishing a file to the shared sync folder, it left behind a small record named for that exact operation \u2014 and the next time the same operation ran, it refused to start because that name was taken. The refusal could only clear when an unrelated periodic sweep happened to run, which on a quiet graph might be never. An operation now clears its own leftover record and carries on.",
+      "userVisible": true,
+      "regressions": [
+        "REG-HARVEST-W5-SMALLS-ORPHAN-REFUSAL-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Managed Storage keeps cleaning up sync conflict copies for the life of the graph.** When a file-sync service delivered a conflict copy of a shared provider file, Tine cleaned it up and kept one small record of what it had removed \u2014 and never retired those records. After 512 of them, the cleanup itself started refusing, so a busy multi-device graph accumulated conflict copies it could no longer clear from inside the app. Those records are now retired as soon as the operation they belong to is finished and forgotten, so the directory tracks the graph rather than its history. Checking there is room for one more also no longer opens and inspects every record already there, which took up to 511 file opens on a path a save waits on.",
+      "userVisible": true,
+      "regressions": [
+        "REG-HARVEST-RESIDUE-CAP-001"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The existing storage contract specifies automatic history recovery, per-key incoming identity, writer incarnation/range validation, and completion ownership; no contract rewrite is needed for this item.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**On Android, dark mode no longer blanks the notification bar.** Since 0.6.981 the strip behind the status bar has been painted by the app window rather than the page, and it followed the phone's light/dark setting while the clock and icons followed Tine's own \u2014 so running Tine in dark mode on a phone still in light mode put white icons on a white strip. One setting now decides both (GH #467).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ANDROID-SYSTEM-BAR-STRIP-THEME-467"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A conflict Tine cannot read no longer freezes the page.** When the comparison failed, the panel stayed on \"Reading both versions\u2026\" forever and the page body went blank, so the page could not be used at all. The failure is now shown, with the reason, and the rest of the page keeps working (GH #490).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CONFLICTED-PAGE-FILE-ACTIONS-490",
+        "UI-CONFLICT-DIFF-FAILURE-STUCK-PANEL-490"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**A page with an unresolved save conflict can be opened on disk again.** \"Open with default app\" and \"Show in folder\" both refused while a conflict was pending, which left a page whose conflict view would not load with no way to read it at all. Both now open the file as it stands on disk and say so; your unsaved changes stay in Tine until you resolve the conflict (GH #490).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CONFLICTED-PAGE-FILE-ACTIONS-490",
+        "UI-CONFLICT-DIFF-FAILURE-STUCK-PANEL-490"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Clicking inside a code block now puts the cursor where you clicked.** In a code block of any size, clicking anywhere in it opened an editor that looked blank: the cursor jumped to the very end of the block, and the editor was scrolled to the far right of its longest line, so none of the code you clicked was on screen. Both halves are fixed \u2014 a click maps to the character under it, and the editor opens showing that character (GH #489).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CODE-BLOCK-CLICK-CARET-489"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Clicking a link to the PDF you are already reading keeps your place.** Opening a PDF link with no page or highlight attached \u2014 a plain `![](\u2026\u200b.pdf)` asset link to the document already open in that pane \u2014 jumped the reader back to page 1 and cleared the highlight you were looking at. Reopening the resource you are already on is now a no-op; a link that does name a page or a highlight still navigates.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-REOPEN-CURRENT-RESOURCE-JUMPS-20260904"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Zooming a PDF no longer throws you back to page 1, and your place in a PDF survives quitting and reopening.** A zoom briefly collapses the reader's scroll position, and the reader was recording that momentary position as \"where you are\" \u2014 so zooming jumped to page 1, and a reopened PDF often started at the beginning instead of where you left off.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-READER-POSITION-LOST-ON-ZOOM-20260904"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The PDF reader's Fit width, Fit height, Area highlight, Notes and Outline are reachable again in a narrow reader pane.** Below 520px \u2014 a split pane, a companion pane, a phone \u2014 the toolbar correctly moved those five tools into the More-settings menu, but a CSS ordering mistake left the menu copies hidden as well, so there was nowhere left to click them. They now appear in the menu exactly when the toolbar is too narrow to show them inline.",
+      "userVisible": true,
+      "regressions": [
+        "UI-PDF-READER-OVERFLOW-TOOLS-UNREACHABLE-INTERNAL"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**The whole left-sidebar row opens its page again, and the right sidebar's spare width is now the drag handle it was meant to be.** v0.6.981 narrowed the wrong pane: it made only the page title clickable in the left sidebar, which turned a page named `test` into a target a few characters wide, and it left untouched the right sidebar, where the reported problem actually was. Both are corrected. In the left sidebar every pixel of a row navigates, including the blank space beside a short name \u2014 a deliberate divergence from Logseq, since reordering a favourite is protected by the drag threshold, not by keeping part of the row inert. In the right sidebar the title anchor no longer stretches across the row, so the empty space beside it belongs to the reorder drag and the hand cursor stops following the pointer out over nothing (GH #468, GH #464).",
+      "userVisible": true,
+      "regressions": [
+        "UI-SIDEBAR-ROW-LINK-HITBOX-464",
+        "UI-SIDEBAR-LEFT-ROW-FULL-CLICK-468"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No additional engineering contract or public API documentation change is needed for this restoration or implementation-cost change; executable evidence is recorded separately.",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Quick Capture works on a cold launch.** Starting Tine with `--capture` waits for the selected graph to open before showing the capture window, so page suggestions and the saved completion policy are ready for the first input.",
+      "userVisible": true,
+      "regressions": [
+        "UI-CAPTURE-COLD-START-GRAPH-BINDING"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Document pending-show readiness, frozen graph selection, and superseded focus ownership.",
+        "refs": [
+          "docs/contracts/frontend-staleness.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Recovered drafts can be resolved after files change while Tine is closed.** Concord now applies choices to the same current file version shown in its review. A further change after review still stops the write and asks for a fresh review.",
+      "userVisible": true,
+      "regressions": [
+        "UI-CONCORD-DURABLE-REVIEW-CURRENT-AUTHORITY"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Recovered Direct review authority must name the displayed current revision; post-review races retain the guarded refusal.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Externally replaced images refresh reliably in linked asset folders.** File notifications through an approved assets symlink now reach every graph window sharing that folder, including after files are deleted.",
+      "userVisible": true,
+      "regressions": [
+        "UI-EXTERNAL-ASSET-WATCH-LEXICAL-ALIAS"
+      ],
+      "guide": {
+        "status": "not-applicable",
+        "reason": "Correction restores existing interaction or safety behavior; no new user action is introduced.",
+        "refs": []
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Approved lexical asset aliases normalize to the existing canonical capability for all live windows; no new approval or asset write path is introduced.",
+        "refs": [
+          "docs/storage-sync-contract.md"
+        ]
+      },
+      "website": {
+        "status": "update",
+        "reason": "Regenerate and verify the Guide site from canonical templates; no separate marketing claim proposed.",
+        "refs": [
+          "website/guide/"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Proposed patch release; no standalone blog feature or minor-release editorial gate proposed.",
+        "refs": []
+      }
+    }
+  ]
+}

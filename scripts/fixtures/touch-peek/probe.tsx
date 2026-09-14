@@ -1,0 +1,10 @@
+import { render } from "solid-js/web";
+import { AstBody } from "../../../src/render/body";
+import { initParser } from "../../../src/render/parse";
+import { ContextMenu } from "../../../src/components/ContextMenu";
+import "../../../src/styles/inter.css";
+import "../../../src/styles/theme.css";
+import "../../../src/styles/app.css";
+await initParser();
+render(() => <><main style="padding:80px 24px;min-height:600px"><div class="block-content"><AstBody raw="Read [[Tine]] with a mouse or hold it with touch." /></div></main><ContextMenu/></>, document.getElementById("root")!);
+(window as any).peekReady = true;

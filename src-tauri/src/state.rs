@@ -605,6 +605,31 @@ impl GraphRegistry {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct CaptureShow {
+    generation: u64,
+    pending: bool,
+    binding: Option<CaptureGraphBinding>,
+}
+
+impl CaptureShow {
+    fn begin(&mut self) -> u64 {
+        self.generation += 1;
+        self.pending = true;
+        self.binding = None;
+        self.generation
+    }
+
+    fn complete(&mut self, generation: u64, binding: CaptureGraphBinding) -> bool {
+        if self.generation != generation || !self.pending {
+            return false;
+        }
+        self.pending = false;
+        self.binding = Some(binding);
+        true
+    }
+}
+
 pub(crate) struct AppState {
     pub(crate) graphs: RwLock<GraphRegistry>,
     /// Sole owner of serialized open/switch/storage-mode transitions and their
@@ -612,7 +637,7 @@ pub(crate) struct AppState {
     pub(crate) storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor,
     pub(crate) watch_ctl: Mutex<Option<Sender<()>>>,
     pub(crate) last_focused: Mutex<Option<WindowKey>>,
-    pub(crate) capture_graph: Mutex<Option<CaptureGraphBinding>>,
+    pub(crate) capture_graph: Mutex<CaptureShow>,
     /// Stateless sparse runtime composition. It retains no runtime handle;
     /// active authority lives only in the corresponding graph slot.
     pub(crate) sync_runtime: crate::sync_runtime::SyncRuntimeFacade,
@@ -641,19 +666,48 @@ impl AppState {
     /// Capture show. The capture WebView must present this exact generation on
     /// every graph-scoped invoke; a later show, graph switch, or close makes
     /// older requests stale rather than letting them read another graph.
+    #[cfg(test)]
     pub(crate) fn bind_capture_graph(&self, target: WindowKey, binding_generation: u64) {
-        *self.capture_graph.lock().unwrap() = Some(CaptureGraphBinding {
-            target,
-            binding_generation,
-        });
+        let generation = self.begin_capture_show();
+        assert!(self.complete_capture_show(generation, target, binding_generation));
+    }
+
+    pub(crate) fn begin_capture_show(&self) -> u64 {
+        self.capture_graph.lock().unwrap().begin()
+    }
+
+    pub(crate) fn pending_capture_show(&self) -> Option<u64> {
+        let show = self.capture_graph.lock().unwrap();
+        show.pending.then_some(show.generation)
+    }
+
+    pub(crate) fn complete_capture_show(
+        &self,
+        generation: u64,
+        target: WindowKey,
+        binding_generation: u64,
+    ) -> bool {
+        self.capture_graph.lock().unwrap().complete(
+            generation,
+            CaptureGraphBinding {
+                target,
+                binding_generation,
+            },
+        )
+    }
+
+    pub(crate) fn capture_show_is_current(&self, generation: u64) -> bool {
+        let show = self.capture_graph.lock().unwrap();
+        show.generation == generation && show.binding.is_some()
+    }
+
+    pub(crate) fn bound_capture_show(&self) -> Option<u64> {
+        let show = self.capture_graph.lock().unwrap();
+        show.binding.as_ref().map(|_| show.generation)
     }
 
     pub(crate) fn capture_graph_binding(&self) -> Option<CaptureGraphBinding> {
-        self.capture_graph.lock().unwrap().clone()
-    }
-
-    pub(crate) fn clear_capture_graph(&self) {
-        *self.capture_graph.lock().unwrap() = None;
+        self.capture_graph.lock().unwrap().binding.clone()
     }
 }
 
@@ -1296,7 +1350,7 @@ mod tests {
             storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor::default(),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(Some("graph-1".into())),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             sync_runtime: crate::sync_runtime::SyncRuntimeFacade::default(),
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),
@@ -1308,13 +1362,41 @@ mod tests {
     }
 
     #[test]
+    fn pending_capture_show_is_completed_once_and_newer_show_revokes_it() {
+        let mut show = CaptureShow::default();
+        let first = show.begin();
+        assert!(show.binding.is_none());
+        let second = show.begin();
+        let binding = CaptureGraphBinding {
+            target: "main".into(),
+            binding_generation: 17,
+        };
+        assert!(!show.complete(first, binding.clone()));
+        assert!(show.pending);
+        assert!(show.complete(second, binding.clone()));
+        assert_eq!(show.binding, Some(binding));
+        // An unrelated graph publication cannot retarget an already shown lease.
+        assert!(!show.complete(
+            second,
+            CaptureGraphBinding {
+                target: "other".into(),
+                binding_generation: 18,
+            }
+        ));
+        assert_eq!(show.binding.as_ref().unwrap().target, "main");
+        assert!(!show.pending);
+        assert!(show.begin() > second);
+        assert!(show.binding.is_none());
+    }
+
+    #[test]
     fn capture_binding_retains_the_selected_graph_lease() {
         let state = AppState {
             graphs: RwLock::new(GraphRegistry::default()),
             storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor::default(),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(Some("main".into())),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             sync_runtime: crate::sync_runtime::SyncRuntimeFacade::default(),
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),
@@ -1373,7 +1455,7 @@ mod tests {
             storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor::default(),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(Some("main".into())),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             sync_runtime: crate::sync_runtime::SyncRuntimeFacade::default(),
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),

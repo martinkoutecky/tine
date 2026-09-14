@@ -385,3 +385,23 @@ Practical notes:
   (no suggestions) until the ledger repopulates through normal editing.
 - It fills in as you work: pages saved or reloaded since the feature arrived
   have a remembered version; untouched pages simply have none yet.
+## Unavailable physical pages and refused close
+
+GH #540/#541: the close warning names dirty, saving, and conflicted page owners.
+Declining discard opens the current graph's recovery inventory. Retry uses the
+ordinary flush path; copying is read-only and never acknowledges a save. The
+complete recovery copy serializes the retained PageDto without dropping fields.
+The inventory is transient, retired on graph rebound, and separate current and
+recovered drafts remain separate when they differ.
+
+A pinned page-load error does not hide an exact-path live capsule. It exposes
+the retained draft and existing conflict resolver. An unloaded capsule may be
+resolved without inventing an editable empty page; same-name other-file owners
+are refused. Native durable review represents a missing current file explicitly
+and resolution rechecks that absence before no-replace publication. No graph
+file is created merely by viewing recovery.
+
+The review API uses `conflict_rev = "absent"` for a missing disk side, distinct
+from the content hash of an existing empty file. Present files retain their
+snapshot identity through publication, so a late replacement or byte change
+refuses the stale merge. This changes no persisted capsule format.

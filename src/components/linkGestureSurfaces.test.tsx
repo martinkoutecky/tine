@@ -201,7 +201,8 @@ describe("reference page headers follow the gesture contract (GH #207)", () => {
       vi.advanceTimersByTime(LONG_PRESS_DELAY);
       expect(contextMenu()).toMatchObject({ kind: "page", name: "Backlink Owner" });
       header.dispatchEvent(touch("pointerup"));
-      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      // Touch compatibility clicks have a nonzero detail; zero is keyboard activation.
+      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
       expect(activeRouteName()).toBe("Elsewhere");
       vi.useRealTimers();
     } finally {

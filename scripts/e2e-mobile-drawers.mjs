@@ -100,6 +100,17 @@ async function withApp(index, forced, fn) {
     await browser.$(".main-content").waitForExist({ timeout: 20_000 });
     await fn(browser);
     await sleep(500);
+  } catch (error) {
+    // Retain the live obstruction/focus state before teardown. Diagnostics must
+    // never replace the original assertion or WebDriver failure.
+    try {
+      fs.writeFileSync(path.join(ARTIFACT, `failure-${index}.json`), JSON.stringify(await snapshot(browser), null, 2));
+      fs.writeFileSync(path.join(ARTIFACT, `failure-${index}.html`), await browser.getPageSource());
+      nativeScreenshot(path.join(ARTIFACT, `failure-${index}.png`));
+    } catch (diagnosticError) {
+      console.error("Failure diagnostics:", diagnosticError);
+    }
+    throw error;
   } finally {
     try { await browser?.deleteSession(); } catch {}
     try { process.kill(-driver.pid, "SIGKILL"); } catch {}

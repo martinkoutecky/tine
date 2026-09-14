@@ -15,7 +15,8 @@ import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 await ensureDisplay();
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const G = "/tmp/sheets-e2e";
+const G = process.env.TINE_SHEETS_TEST_ROOT || "/tmp/sheets-e2e";
+const XDG = `${G}-xdg`;
 const APP = process.env.TINE_APP || `${repo}/target/release/tine`;
 const TD =
   process.env.TAURI_DRIVER ||
@@ -77,21 +78,21 @@ fs.mkdirSync(`${G}/pages`, { recursive: true });
 fs.mkdirSync(`${G}/journals`, { recursive: true });
 fs.writeFileSync(JFILE, GRID_MD);
 
-fs.rmSync("/tmp/sheets-e2e-xdg", { recursive: true, force: true });
-for (const d of ["data", "config", "cache"]) fs.mkdirSync(`/tmp/sheets-e2e-xdg/${d}`, { recursive: true });
+fs.rmSync(XDG, { recursive: true, force: true });
+for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${XDG}/${d}`, { recursive: true });
 const env = {
   ...process.env,
   TINE_GRAPH: G,
-  XDG_DATA_HOME: "/tmp/sheets-e2e-xdg/data",
-  XDG_CONFIG_HOME: "/tmp/sheets-e2e-xdg/config",
-  XDG_CACHE_HOME: "/tmp/sheets-e2e-xdg/cache",
+  XDG_DATA_HOME: `${XDG}/data`,
+  XDG_CONFIG_HOME: `${XDG}/config`,
+  XDG_CACHE_HOME: `${XDG}/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1",
   LIBGL_ALWAYS_SOFTWARE: "1",
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   GDK_BACKEND: "x11",
 };
 
-const tdLog = fs.openSync("/tmp/sheets-e2e-td.log", "w");
+const tdLog = fs.openSync(`${G}-td.log`, "w");
 const td = spawn(
   TD,
   webdriverServerArgs(DRIVER_PORT, NATIVE_PORT, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"),
@@ -818,6 +819,29 @@ try {
   // proof: the backend must materialize both coarse rows, the formula editor
   // must persist tine.filter, and the same filtered identity must survive the
   // actual Table -> Board view switch without rewriting the coarse query.
+  // Builder-backed queries own their view in Display. The old header switcher
+  // remains only for queries without the builder, so selecting it here never
+  // changes this fixture's presentation.
+  const openQueryFilterDisplay = async () => {
+    const found = await browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      const gear = block?.querySelector(".qs-gear");
+      if (!(gear instanceof HTMLButtonElement)) return false;
+      if (!document.querySelector(".qs-sheet")) gear.click();
+      return true;
+    });
+    if (!found) throw new Error("query filter proof has no builder sheet control");
+    await browser.waitUntil(async () => browser.execute(() => !!document.querySelector(".qs-sheet .qd-trigger")),
+      { timeout: 10_000, timeoutMsg: "query filter Display trigger did not appear" });
+    await browser.execute(() => {
+      if (!document.querySelector(".qd-panel")) document.querySelector(".qs-sheet .qd-trigger").click();
+    });
+    await browser.waitUntil(async () => browser.execute(() => !!document.querySelector(".qd-panel .qd-view.active")),
+      { timeout: 10_000, timeoutMsg: "query filter Display panel did not appear" });
+  };
+  await openQueryFilterDisplay();
   const queryFilterInitial = await browser.execute(() => {
     const block = [...document.querySelectorAll(".ls-block")].find((el) =>
       (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
@@ -827,7 +851,7 @@ try {
       .map((el) => (el.textContent ?? "").trim());
     return {
       found: true,
-      active: block.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+      active: document.querySelector(".qd-panel .qd-view.active")?.textContent?.trim() ?? null,
       count: block.querySelector(".query-count")?.textContent?.trim() ?? null,
       titles,
     };
@@ -839,6 +863,9 @@ try {
       queryFilterInitial.titles.includes("Low score") && queryFilterInitial.titles.includes("High score"),
     JSON.stringify(queryFilterInitial)
   );
+
+  await browser.keys("Escape");
+  await browser.keys("Escape");
 
   const filterMenuOpened = await browser.execute(() => {
     const block = [...document.querySelectorAll(".ls-block")].find((el) =>
@@ -909,11 +936,9 @@ try {
       JSON.stringify(tableDisk)
     );
 
+    await openQueryFilterDisplay();
     const boardClicked = await browser.execute(() => {
-      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
-        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
-      );
-      const button = [...(block?.querySelectorAll(".query-view-switcher button") ?? [])]
+      const button = [...document.querySelectorAll(".qd-panel .qd-view")]
         .find((el) => (el.textContent ?? "").trim() === "Board");
       if (!(button instanceof HTMLButtonElement)) return false;
       button.click();
@@ -928,12 +953,15 @@ try {
         .map((el) => (el.textContent ?? "").trim());
       return titles.length === 1 && titles[0] === "High score";
     }), { timeout: 10_000, timeoutMsg: "query Board did not retain points > 2" });
+    // Saving the new view can remount the builder and close its popover.
+    // Reopen Display to read the persisted active presentation.
+    await openQueryFilterDisplay();
     const filteredBoard = await browser.execute(() => {
       const block = [...document.querySelectorAll(".ls-block")].find((el) =>
         (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
       );
       return {
-        active: block?.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+        active: document.querySelector(".qd-panel .qd-view.active")?.textContent?.trim() ?? null,
         count: block?.querySelector(".query-count")?.textContent?.trim() ?? null,
         titles: [...(block?.querySelectorAll(".sheet-board-card-title") ?? [])]
           .map((el) => (el.textContent ?? "").trim()),

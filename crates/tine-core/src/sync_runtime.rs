@@ -2753,6 +2753,21 @@ pub enum SyncEditorDeferred {
     },
 }
 
+impl SyncEditorDeferred {
+    /// Content-free deferred-work class for the always-on save flight recorder.
+    /// Batch identities and publication phases stay out of diagnostic reports.
+    pub fn diagnostic_reason_code(&self) -> &'static str {
+        match self {
+            Self::RetryableExternalWork => "managed.deferred.retryable_external_work",
+            Self::RetryableRetainedPublication { .. } => {
+                "managed.deferred.retryable_retained_publication"
+            }
+            Self::BlockedRecovery { .. } => "managed.deferred.blocked_recovery",
+            Self::Revoked { .. } => "managed.deferred.revoked",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SyncEditorLoadOutcome {
@@ -3286,6 +3301,21 @@ pub enum SyncApplicationPageConflict {
     ReadOnly,
 }
 
+impl SyncApplicationPageConflict {
+    pub fn diagnostic_reason_code(self) -> &'static str {
+        match self {
+            Self::StaleBase => "managed.conflict.stale_base",
+            Self::MissingPage => "managed.conflict.missing_page",
+            Self::PageAlreadyExists => "managed.conflict.page_already_exists",
+            Self::AmbiguousPageName => "managed.conflict.ambiguous_page_name",
+            Self::DerivedPathOccupied => "managed.conflict.derived_path_occupied",
+            Self::UnknownOrForeignBlock => "managed.conflict.unknown_or_foreign_block",
+            Self::RestoreSourceStillArriving => "managed.conflict.restore_source_still_arriving",
+            Self::ReadOnly => "managed.conflict.read_only",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SyncApplicationPageSaveOutcome {
@@ -3518,6 +3548,35 @@ impl fmt::Display for SyncApplicationPageRequestError {
 impl std::error::Error for SyncApplicationPageRequestError {}
 
 impl SyncApplicationPageRequestError {
+    /// Content-free failure class for the always-on save flight recorder.
+    /// Detailed actor stages and error prose stay out of the report; closed
+    /// refusal codes remain exact because they are the actionable diagnosis.
+    pub fn diagnostic_reason_code(&self) -> &'static str {
+        match self {
+            Self::InvalidRequest(SyncApplicationPageInvalidRequest::InvalidName) => {
+                "invalid_request.name"
+            }
+            Self::InvalidRequest(SyncApplicationPageInvalidRequest::InvalidPath) => {
+                "invalid_request.path"
+            }
+            Self::InvalidRequest(SyncApplicationPageInvalidRequest::DuplicateBlockId) => {
+                "invalid_request.duplicate_block_id"
+            }
+            Self::InvalidRequest(SyncApplicationPageInvalidRequest::MalformedPage) => {
+                "invalid_request.malformed_page"
+            }
+            Self::RequestTooLarge(_) => "request_too_large",
+            Self::ActorRefused => "actor_refused",
+            Self::ActorRefusedAt(_) => "actor_refused_at_stage",
+            Self::ActorRefusedWithCode(code)
+            | Self::ActorRefusedAtWithCode { code, .. }
+            | Self::ActorRefusedWithDebugDetail { code, .. }
+            | Self::ActorRefusedAtWithDebugDetail { code, .. } => code.as_str(),
+            Self::QueryExecution(_) => "query_execution",
+            Self::ActorUnavailable => "actor_unavailable",
+        }
+    }
+
     pub fn backend_wire_string(&self) -> String {
         match self {
             Self::ActorRefusedWithCode(code)
@@ -3542,6 +3601,49 @@ impl SyncApplicationPageRequestError {
             Self::ActorRefusedWithDebugDetail { debug_detail, .. }
             | Self::ActorRefusedAtWithDebugDetail { debug_detail, .. } => Some(debug_detail),
             _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod application_save_diagnostic_tests {
+    use super::{
+        SyncApplicationPageInvalidRequest, SyncApplicationPageRequestError, SyncEditorRefusalCode,
+        SyncEditorRequestSize,
+    };
+
+    #[test]
+    fn managed_save_diagnostic_codes_are_bounded_and_drop_actor_stage_detail() {
+        let cases = [
+            (
+                SyncApplicationPageRequestError::InvalidRequest(
+                    SyncApplicationPageInvalidRequest::MalformedPage,
+                ),
+                "invalid_request.malformed_page",
+            ),
+            (
+                SyncApplicationPageRequestError::RequestTooLarge(SyncEditorRequestSize::default()),
+                "request_too_large",
+            ),
+            (
+                SyncApplicationPageRequestError::ActorRefusedAt(
+                    "private implementation stage that must not enter reports",
+                ),
+                "actor_refused_at_stage",
+            ),
+            (
+                SyncApplicationPageRequestError::ActorRefusedWithCode(
+                    SyncEditorRefusalCode::TrustedLocalAppendOutcomeUnknown,
+                ),
+                "trusted_local.append_outcome_unknown",
+            ),
+            (
+                SyncApplicationPageRequestError::ActorUnavailable,
+                "actor_unavailable",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(error.diagnostic_reason_code(), expected);
         }
     }
 }

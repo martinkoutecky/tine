@@ -42,7 +42,7 @@ html[data-theme="light"] {
   --bg-tertiary: #eaeaea;
   --bg-quaternary: #e2e2e2;
 
-  --text-primary: #433f38;
+  --text-primary: var(--text-title);
   --text-secondary: #5c5c5c;
   --text-title: #0f1419;
   --text-muted: #9b9b9b;
@@ -79,7 +79,7 @@ html[data-theme="dark"] {
   --bg-tertiary: #2f3035;
   --bg-quaternary: #3a3b40;
 
-  --text-primary: #c6c8cc;
+  --text-primary: var(--text-title);
   --text-secondary: #a0a2a8;
   --text-title: #ecedf0;
   --text-muted: #7a7c82;

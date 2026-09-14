@@ -199,8 +199,18 @@ assert.match(
 assert.match(uiE2eWorkflow, /windows-smoke:[\s\S]*?timeout-minutes: 75/);
 assert.match(
   uiE2eWorkflow,
-  /E2E_MANAGED_ACTIVATION_TIMEOUT_MS: "900000"[\s\S]*?E2E_SCENARIO_TIMEOUT_MS: "2700000"/,
+  /E2E_MANAGED_ACTIVATION_TIMEOUT_MS: "900000"[\s\S]*?E2E_MANAGED_COLD_INDEX_TIMEOUT_MS: "300000"[\s\S]*?E2E_SCENARIO_TIMEOUT_MS: "2700000"/,
   "the Windows managed-storage activation deadline can outrun its scenario failure capsule"
+);
+assert.match(
+  uiE2eWorkflow,
+  /scenarioResultPath = Join-Path[\s\S]*?scenarioStatus = \(Get-Content -Raw \$scenarioResultPath \| ConvertFrom-Json\)\.status[\s\S]*?\$scenarioStatus -eq "passed"[\s\S]*?if \(\$scenarioStatus -ne "passed"\)/,
+  "a quarantined Windows managed-storage failure must stop burn-in even when the ordinary runner exits zero"
+);
+assert.match(
+  uiE2eWorkflow,
+  /retainedRelativePath = "tested-binary\\tine\.exe"[\s\S]*?Copy-Item -LiteralPath \$app -Destination \$retainedPath -Force[\s\S]*?Get-FileHash -Algorithm SHA256 \$retainedPath[\s\S]*?retained candidate executable hash mismatch/,
+  "the exact post-burn-in Windows executable must be retained and verified in the evidence artifact"
 );
 assert.match(
   windowsManagedScenario,
@@ -211,6 +221,11 @@ assert.match(
   windowsManagedScenario,
   /pageBody\(nestedMarker, ordinaryTitle\)[\s\S]*?pageBody\([\s\S]*?index \+ 1 < PAGE_COUNT \? index \+ 1 : 1/,
   "the reporter-scale page-switch fixture collapsed back into one pathological graph-wide backlink hub"
+);
+assert.match(
+  windowsManagedScenario,
+  /COLD_INDEX_TIMEOUT_MS[\s\S]*?coldIndexStarted = Date\.now\(\);\s*await openPage\(nestedTitle, \{ timeout: COLD_INDEX_TIMEOUT_MS \}\);\s*receipt\.milestones\.directFilesColdReady = \{[\s\S]*?elapsedMs:[\s\S]*?maxMs: COLD_INDEX_TIMEOUT_MS[\s\S]*?directFilesPageSwitch = await measurePageSwitches\(\)/,
+  "reporter-scale cold readiness must have a finite recorded bound distinct from warm page-switch measurements"
 );
 // `affe9be1` moved page navigation into ONE implementation, so this property no
 // longer lives in the journey: the scenario calls `openPageByName` and the row
@@ -934,7 +949,7 @@ assert.equal(
 );
 assert.equal(
   yamlScalar(androidUiRuntime, "if", 4),
-  "github.event_name == 'workflow_dispatch' && (inputs.scope == 'android-ui-runtime' || inputs.scope == 'android-ui-runtime-205' || inputs.scope == 'android-ui-runtime-pdf-routes')"
+  "github.event_name == 'workflow_dispatch' && (inputs.scope == 'android-ui-runtime' || inputs.scope == 'android-ui-runtime-205' || inputs.scope == 'android-ui-runtime-pdf-routes' || inputs.scope == 'android-ui-runtime-toolbar')"
 );
 assert.match(
   yamlNamedStep(androidUiRuntime, "Run physical Android UI MotionEvent proofs").join("\n"),
@@ -974,6 +989,7 @@ for (const evidence of [
   assert.ok(androidUiRuntimeScript.includes(evidence), `Android UI runtime runner is missing ${evidence}`);
 }
 for (const method of [
+  "toolbarStructuralTouchesDispatchOnceAndRetainHorizontalScroll",
   "responsiveChromeFitsPortraitAndLandscapeAtDefault90And110Percent",
   "longPressPageReferenceOpensExactlyOnePageActionsMenuWithoutPreviewSelectionOrNavigation",
   "initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement",
@@ -1365,12 +1381,16 @@ assert.match(
   /TAURI_DRIVER: process\.env\.TAURI_DRIVER \|\| \(process\.platform === "win32" \? "msedgedriver\.exe" : "tauri-driver"\)/,
   "Windows scenarios still route native WebView2 through the unnecessary Tauri proxy"
 );
+const semanticFailureSource = e2eRunner.match(
+  /function hasRecordedSemanticFailure\(output, errors\) \{[\s\S]*?\n\}/
+);
+assert.ok(semanticFailureSource, "the release runner is missing semantic-failure precedence");
 const driverTransportFailureSource = e2eRunner.match(
   /function isRetryableDriverTransportFailure\(output, errors, timedOut\) \{[\s\S]*?\n\}/
 );
 assert.ok(driverTransportFailureSource, "the release runner is missing its WebDriver transport retry predicate");
 const isRetryableDriverTransportFailure = new Function(
-  `${driverTransportFailureSource[0]}\nreturn isRetryableDriverTransportFailure;`
+  `${semanticFailureSource[0]}\n${driverTransportFailureSource[0]}\nreturn isRetryableDriverTransportFailure;`
 )();
 assert.equal(
   isRetryableDriverTransportFailure(
@@ -1403,13 +1423,48 @@ assert.equal(
   isRetryableDriverTransportFailure("WebDriverError: invalid session id", "", true), false,
   "scenario timeouts must not be retried as driver infrastructure failures"
 );
+// Exact generated-graph Sheets output from native release a65aa7ef: semantic
+// FAIL checks preceded a later cleanup invalid-session error.
+const sheetsRetryOutput = fs.readFileSync(path.join(process.cwd(), "scripts/fixtures/retry-classifier/sheets-stdout.txt"), "utf8");
+const sheetsRetryErrors = fs.readFileSync(path.join(process.cwd(), "scripts/fixtures/retry-classifier/sheets-stderr.txt"), "utf8");
+assert.equal(isRetryableDriverTransportFailure(sheetsRetryOutput, sheetsRetryErrors, false), false,
+  "a cleanup invalid session must not erase already-recorded Sheets failures");
+for (const semantic of ["FAIL: saved edit was lost", "3 FAILURES (74 checks)", "AssertionError: page content differed", "AssertionError [ERR_ASSERTION]: data differed", "\u001b[31mFAIL: saved edit was lost\u001b[0m"]) {
+  assert.equal(isRetryableDriverTransportFailure(semantic, "WebDriverError: GET /session failed: ECONNRESET", false), false,
+    "recorded semantic failure must dominate later driver transport loss");
+}
+assert.equal(isRetryableDriverTransportFailure("PASS: startup displayed", "WebDriverError: invalid session id", false), true,
+  "successful observations alone must not disable legitimate transport retries");
+assert.equal(isRetryableDriverTransportFailure("0 FAILURES (4 checks)", "WebDriverError: invalid session id", false), true,
+  "a zero-failure summary must not disable a legitimate transport retry");
 const nativeHarnessFailureSource = e2eRunner.match(
   /function isRetryableNativeHarnessFailure\(id, output, errors, timedOut\) \{[\s\S]*?\n\}/
 );
 assert.ok(nativeHarnessFailureSource, "the release runner is missing its Quick Capture native-harness retry predicate");
 const isRetryableNativeHarnessFailure = new Function(
-  `${nativeHarnessFailureSource[0]}\nreturn isRetryableNativeHarnessFailure;`
+  `${semanticFailureSource[0]}\n${nativeHarnessFailureSource[0]}\nreturn isRetryableNativeHarnessFailure;`
 )();
+const captureRetryOutput = fs.readFileSync(path.join(process.cwd(), "scripts/fixtures/retry-classifier/capture-stdout.txt"), "utf8");
+const captureRetryErrors = fs.readFileSync(path.join(process.cwd(), "scripts/fixtures/retry-classifier/capture-stderr.txt"), "utf8");
+assert.equal(isRetryableNativeHarnessFailure("capture", captureRetryOutput, captureRetryErrors, false), false,
+  "an explicit Capture expected/actual mismatch must dominate native-window errors");
+const classificationSource = e2eRunner.match(/function failureClassification\(id, output, errors, timedOut\) \{[\s\S]*?\n\}/);
+assert.ok(classificationSource);
+const classifyFailure = new Function(`${semanticFailureSource[0]}\n${driverTransportFailureSource[0]}\n${nativeHarnessFailureSource[0]}\n${classificationSource[0]}\nreturn failureClassification;`)();
+assert.equal(classifyFailure("capture", captureRetryOutput, captureRetryErrors, false), "ambiguous",
+  "withholding retry must also stop classifying the semantic mismatch as infrastructure");
+assert.equal(isRetryableNativeHarnessFailure("capture", "",
+  "Error: native window query unavailable\nxdo_get_active_window reported an error\nXGetWindowProperty[_NET_ACTIVE_WINDOW] failed", false), true,
+  "generic native errors without semantic observations remain retryable");
+assert.equal(isRetryableNativeHarnessFailure("capture", "throw new Error(`expected=${expected} actual=${actual}`)",
+  "xdo_get_active_window reported an error\nXGetWindowProperty[_NET_ACTIVE_WINDOW] failed", false), true,
+  "a source-code excerpt is not an observed expectation mismatch");
+assert.equal(isRetryableNativeHarnessFailure("capture", "FAIL: saved capture was lost",
+  "BadWindow (invalid Window parameter)\nxdo_get_active_window reported an error", false), false,
+  "a native cleanup failure must not erase a recorded semantic failure");
+assert.equal(isRetryableNativeHarnessFailure("page-properties", "FAIL: content changed",
+  "E2E_NATIVE_INPUT_UNDELIVERED page-properties ArrowDown", false), false,
+  "a later missing-input marker must not erase an earlier semantic failure");
 assert.equal(
   isRetryableNativeHarnessFailure(
     "capture",
@@ -1694,3 +1749,6 @@ try {
 }
 
 console.log("Release pipeline fixture tests passed (exact-SHA CI gate + release workflow + fail-closed cases).");
+
+assert.ok(androidUiRuntimeScript.includes('methods=(toolbarStructuralTouchesDispatchOnceAndRetainHorizontalScroll)'), "focused toolbar scope must execute the physical toolbar journey");
+assert.match(yamlNamedStep(androidUiRuntime, "Run physical Android UI MotionEvent proofs").join("\n"), /inputs\.scope == 'android-ui-runtime-toolbar'[\s\S]*?'toolbar'/);

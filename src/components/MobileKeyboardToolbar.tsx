@@ -220,51 +220,55 @@ export function MobileKeyboardToolbar(): JSX.Element {
   });
   const keepEditorFocus = (e: Event) => e.preventDefault();
 
-  // GH #434: on iOS 27 the toolbar painted but no button responded, while the
-  // same build worked on iOS 18.5. Every button's only activation path was the
-  // compatibility `click` that trails a pointer sequence — and that sequence
-  // opens with a `preventDefault()`ed `pointerdown`, which is precisely how the
-  // toolbar keeps the editor focused. A WebKit that stops synthesizing the
-  // click after a cancelled pointerdown leaves the button inert, with nothing
-  // to fall back to.
-  //
-  // So the pointer sequence itself is now the primary path, and `click` is the
-  // fallback that still carries mouse, keyboard and assistive-technology
-  // activation. Whichever arrives first wins; the other is swallowed. This is
-  // deliberately not conditioned on an iOS version — the dependency on a
-  // synthesized event was the defect, not the version that exposed it.
+  // A structural command can briefly unregister the editor and retarget the
+  // browser's compatibility click (#495/#496). Own the completed pointer at
+  // toolbar scope, and consume its click before any new target can act. A new
+  // primary pointerdown starts a new gesture; keyboard/AT clicks have detail 0.
+  // No elapsed-time window may suppress an independent second activation.
+  let completedPointer: number | null = null;
+  onMount(() => {
+    if (!isMobilePlatform) return;
+    const beginPointer = (e: PointerEvent) => {
+      if (e.isPrimary) completedPointer = null;
+    };
+    const consumeClick = (e: MouseEvent) => {
+      if (completedPointer === null || e.detail === 0) return;
+      const clickPointer = "pointerId" in e ? (e as PointerEvent).pointerId : null;
+      if (clickPointer !== null && clickPointer !== completedPointer) return;
+      completedPointer = null;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    document.addEventListener("pointerdown", beginPointer, true);
+    document.addEventListener("click", consumeClick, true);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", beginPointer, true);
+      document.removeEventListener("click", consumeClick, true);
+    });
+  });
+
+  // Pointer-up remains the primary activation path: iOS WebKit can omit the
+  // compatibility click after our focus-preserving canceled pointerdown (#434).
   function tapActivation(run: () => void) {
     let pointer: number | null = null;
-    let alreadyRan = false;
-    let forgetTimer: ReturnType<typeof setTimeout> | undefined;
-    const ranNow = () => {
-      alreadyRan = true;
-      clearTimeout(forgetTimer);
-      // Long enough to cover a trailing click, short enough that a WebView
-      // which emits none cannot poison the next tap.
-      forgetTimer = setTimeout(() => (alreadyRan = false), 400);
-    };
-    onCleanup(() => clearTimeout(forgetTimer));
     return {
       onPointerDown(e: PointerEvent) {
-        // Cancelling this default is what keeps the editor focused.
         e.preventDefault();
-        if (!e.isPrimary) return;
+        if (!e.isPrimary || e.button !== 0) return;
         pointer = e.pointerId;
         (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
       },
       onPointerUp(e: PointerEvent) {
         if (pointer !== e.pointerId) return;
         pointer = null;
+        completedPointer = e.pointerId;
         const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        // A press that slid off the button is a cancel, exactly as it would be
-        // for a click. jsdom reports a zero box; treat that as "on target".
+        // Sliding off cancels activation, including a possible trailing click.
+        // jsdom has no layout and reports a zero box.
         const off =
           (box.width > 0 || box.height > 0) &&
           (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom);
-        if (off) return;
-        ranNow();
-        run();
+        if (!off) run();
       },
       onPointerCancel(e: PointerEvent) {
         if (pointer === e.pointerId) pointer = null;
@@ -272,11 +276,6 @@ export function MobileKeyboardToolbar(): JSX.Element {
       onClick(e: MouseEvent) {
         e.preventDefault();
         e.stopPropagation();
-        if (alreadyRan) {
-          alreadyRan = false;
-          clearTimeout(forgetTimer);
-          return;
-        }
         run();
       },
     };
@@ -308,14 +307,18 @@ export function MobileKeyboardToolbar(): JSX.Element {
   const hideTap = tapActivation(endHideGesture);
 
   return (
-    <Show when={isMobilePlatform && visible()}>
+    // The toolbar belongs to the mobile shell, not a particular editor DOM node.
+    // Preserve its buttons and horizontal scroll through bridge handoffs; only
+    // its visibility follows focus/keyboard state.
+    <Show when={isMobilePlatform}>
       <div
         ref={toolbarRef}
         class="mobile-keyboard-toolbar"
         data-mobile-keyboard-toolbar
         role="toolbar"
         aria-label="Editor toolbar"
-        style={style()}
+        hidden={!visible()}
+        style={{ ...style(), display: visible() ? undefined : "none" }}
       >
         <div class="mobile-keyboard-toolbar-strip" data-lenis-prevent>
           <For each={ACTIONS}>

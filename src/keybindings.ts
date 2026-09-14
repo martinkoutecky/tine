@@ -31,6 +31,7 @@ import {
   dismissMobileDrawer,
 } from "./ui";
 import { restoreDrawerFocus } from "./mobileDrawers";
+import { zoomReset } from "./zoom";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
@@ -324,6 +325,7 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/follow-link", binding: "mod+o", label: "Open the link at the caret", scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
   { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: "Open the link at the caret in the sidebar", scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
+  { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can
@@ -784,14 +786,17 @@ export function paletteCommands(
     .map((c) => ({
       id: c.id,
       label: c.label,
-      binding: overridesApplied[c.id] ?? c.binding,
+      binding: (overridesApplied[c.id] ?? c.binding) === "false"
+        ? ""
+        : overridesApplied[c.id] ?? c.binding,
       run: c.run!,
-    }))
-    .filter((c) => c.binding !== "false");
+    }));
   const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
     id: `plugin:${pluginId}:${contribution.id}`,
     label: contribution.title,
-    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
+    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] === "false"
+      ? ""
+      : overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)

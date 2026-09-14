@@ -52,6 +52,19 @@ afterEach(() => {
 });
 
 describe("live-save conflict retirement", () => {
+  it("keeps a replacement queue entry when an older retirement completes", async () => {
+    let finish!: () => void;
+    stubBackend({ retireConflictCapsule: () => new Promise<void>((resolve) => { finish = resolve; }) });
+    setGraphMeta({ root: "/graphs/A" } as never);
+    await registerLiveSaveConflict(page, "rev-1", 1);
+    const retiring = retireLiveSaveConflict("Draft");
+    await registerLiveSaveConflict({ ...page, blocks: [{ ...page.blocks[0], raw: "new retained draft" }] }, "rev-2", 2);
+    const replacement = conflictQueue()[0];
+    finish();
+    await expect(retiring).rejects.toThrow("retained draft changed");
+    expect(conflictQueue()).toEqual([replacement]);
+  });
+
   it("does not rewrite the capsule for identical conflicted draft save attempts", async () => {
     const { store } = stubBackend({});
     setGraphMeta({ root: "/graphs/A" } as never);

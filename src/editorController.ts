@@ -1,3 +1,4 @@
+import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
 import { clearSelection, sweepReplaceable } from "./store";
@@ -10,7 +11,10 @@ import { deferEditorStartUntilFresh } from "./freshnessBarrier";
 // last visual row (Up), resolved against the TARGET's own editor value/layout
 // so hidden props, calc/annotation blocks, and soft-wrapped lines land correctly.
 // Where layout is unavailable, Up falls back to the last source line.
-export type CaretPos = number | { col: number; edge: "first" | "last" };
+// Structural edits keep the same editor projection, so a selection is expressed
+// in textarea coordinates (unlike numeric raw-block targets).
+export type EditorSelection = { start: number; end: number; direction: "forward" | "backward" | "none" };
+export type CaretPos = number | { col: number; edge: "first" | "last" } | EditorSelection;
 
 export type EndEditReason =
   | "blur"
@@ -64,6 +68,7 @@ export interface HistoryEditorTarget {
   surface: string;
   selection: () => { start: number; end: number };
   focused?: () => boolean;
+  viewport?: () => { editor: HTMLTextAreaElement; scroller: HTMLElement | null };
 }
 
 const historyEditorTargets = new Set<HistoryEditorTarget>();
@@ -79,6 +84,22 @@ export function clearPendingHistoryEditorRestore() {
 export function registerHistoryEditorTarget(target: HistoryEditorTarget): () => void {
   historyEditorTargets.add(target);
   return () => historyEditorTargets.delete(target);
+}
+
+/** Raw history replaces the textarea; retain only the same focused block/surface
+ * across that replay, with the usual user-scroll and focus-owner guards. */
+export function captureRawHistoryViewport(blockId: string): (() => void) | undefined {
+  const target = [...historyEditorTargets].find((candidate) =>
+    candidate.blockId === blockId && candidate.focused?.());
+  const viewport = target?.viewport?.();
+  if (!target || !viewport) return;
+  const anchor = captureEditorScrollAnchor(viewport.editor, viewport.scroller);
+  if (!anchor) return;
+  return () => requestAnimationFrame(() => {
+    const restored = [...historyEditorTargets].find((candidate) =>
+      candidate.blockId === blockId && candidate.surface === target.surface && candidate.focused?.());
+    anchor.restore(restored?.viewport?.().editor ?? null);
+  });
 }
 
 /** Capture the active textarea's exact selection when available. The controller

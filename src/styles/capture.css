@@ -68,3 +68,23 @@ body {
 .capture-status-error {
   color: var(--danger, #b42318);
 }
+
+.capture-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.capture-actions button {
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.capture-actions button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

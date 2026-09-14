@@ -242,6 +242,66 @@ fn schedule_main_window_reveal_fallback(app: &tauri::AppHandle) {
 /// No-op if the window is missing.
 #[cfg(desktop)]
 fn show_capture(app: &tauri::AppHandle) {
+    if app.get_webview_window("capture").is_none() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let show_generation = state.begin_capture_show();
+    match graph::refresh_capture_graph_binding(&state, show_generation) {
+        Ok(Some(_)) => {}
+        Ok(None) => return, // A newer show already owns this window.
+        Err(_) => {
+            // Cold startup opens the graph asynchronously in the main WebView.
+            // Leave Capture hidden until publication installs its read lease.
+            if state.pending_capture_show() == Some(show_generation) {
+                if let Some(window) = app.get_webview_window("capture") {
+                    let _ = window.hide();
+                }
+            }
+            return;
+        }
+    }
+    present_capture(app, show_generation);
+}
+
+#[cfg(desktop)]
+fn complete_pending_capture_show(app: &tauri::AppHandle, label: String, binding_generation: u64) {
+    let Some(show_generation) = app.state::<AppState>().pending_capture_show() else {
+        return;
+    };
+    let ready_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if ready_app.get_webview_window(&label).is_none() {
+            return;
+        }
+        let state = ready_app.state::<AppState>();
+        // Keep the slot stable while installing the lease. A completed older
+        // graph open must not resurrect its binding after a switch or close.
+        let completed = {
+            let graphs = state.graphs.read().unwrap();
+            graphs.slot(&label).is_some_and(|slot| {
+                slot.binding_generation == binding_generation
+                    && state.complete_capture_show(
+                        show_generation,
+                        label.clone(),
+                        binding_generation,
+                    )
+            })
+        };
+        if completed {
+            present_capture(&ready_app, show_generation);
+        }
+    });
+}
+
+#[cfg(desktop)]
+fn present_capture(app: &tauri::AppHandle, show_generation: u64) {
+    if !app
+        .state::<AppState>()
+        .capture_show_is_current(show_generation)
+    {
+        return;
+    }
     if let Some(w) = app.get_webview_window("capture") {
         let _ = w.set_size(tauri::LogicalSize::new(600.0, 92.0));
         if let Ok(Some(mon)) = w.current_monitor() {
@@ -253,14 +313,6 @@ fn show_capture(app: &tauri::AppHandle) {
             let _ = w.center();
         }
         let _ = w.show();
-        // Retarget the read-only capture lease before the window can receive
-        // the fallback focus. Until its frontend obtains this generation, old
-        // WebView requests fail stale instead of querying a previously selected
-        // graph after a hidden-window reopen.
-        let state = app.state::<AppState>();
-        if graph::refresh_capture_graph_binding(&state).is_err() {
-            state.clear_capture_graph();
-        }
         // Do not activate until the frontend acknowledges that its textarea and
         // capture-shown listener exist. Activating a newly mapped window first
         // lets a fast typist send keys into an unready WebView; Plasma can also
@@ -285,7 +337,7 @@ fn show_capture(app: &tauri::AppHandle) {
                     .and_then(|window| window.is_visible().ok())
                     .unwrap_or(false)
                 {
-                    activate_capture_window(&main_thread_app);
+                    activate_capture_window(&main_thread_app, show_generation);
                 }
             });
         });
@@ -302,10 +354,19 @@ const CAPTURE_FOCUS_RETRY_DELAYS_MS: [u64; 5] = [40, 120, 260, 520, 900];
 /// in the same turn as mapping a frameless window because it is not ready for
 /// painting yet. Every retry follows an explicit `tine --capture` user action.
 #[cfg(desktop)]
-fn activate_capture_window(app: &tauri::AppHandle) {
+fn activate_capture_window(app: &tauri::AppHandle, show_generation: u64) {
+    if !app
+        .state::<AppState>()
+        .capture_show_is_current(show_generation)
+    {
+        return;
+    }
     let Some(window) = app.get_webview_window("capture") else {
         return;
     };
+    if !window.is_visible().unwrap_or(false) {
+        return;
+    }
     let _ = window.unminimize();
     let _ = window.set_focus();
     let _ = app.emit_to("capture", "capture-focus-editor", ());
@@ -321,7 +382,11 @@ fn activate_capture_window(app: &tauri::AppHandle) {
                 let Some(window) = focus_app.get_webview_window("capture") else {
                     return;
                 };
-                if window.is_visible().unwrap_or(false) {
+                if window.is_visible().unwrap_or(false)
+                    && focus_app
+                        .state::<AppState>()
+                        .capture_show_is_current(show_generation)
+                {
                     let _ = window.set_focus();
                     let _ = focus_app.emit_to("capture", "capture-focus-editor", ());
                 }
@@ -350,7 +415,9 @@ fn capture_frontend_ready(
                 "capture window is hidden",
             ));
         }
-        activate_capture_window(&app);
+        if let Some(show_generation) = app.state::<AppState>().bound_capture_show() {
+            activate_capture_window(&app, show_generation);
+        }
         Ok(())
     }
 
@@ -703,7 +770,7 @@ pub fn run() {
             storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor::default(),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(None),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             sync_runtime: sync_runtime::SyncRuntimeFacade::default(),
             #[cfg(desktop)]
             next_window: AtomicU64::new(1),

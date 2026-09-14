@@ -520,7 +520,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                     class="reference-page"
                     onMouseDown={internalLinkMouseDown}
                     onClick={(e) => {
-                      if (longPress.consumeClick()) {
+                      if (longPress.consumeClick(e)) {
                         e.preventDefault();
                         e.stopPropagation();
                         return;

@@ -75,7 +75,7 @@ describe("page-ref long-press gesture (GH #231)", () => {
       // Releasing a completed hold must also consume the browser's
       // compatibility click; otherwise the menu opens and then navigates away.
       anchor().dispatchEvent(touch("pointerup", 41, 62));
-      anchor().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      anchor().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
       vi.advanceTimersByTime(2 * LONG_PRESS_DELAY);
       expect(contextMenu()?.kind).toBe("page");
       {
@@ -96,7 +96,7 @@ describe("page-ref long-press gesture (GH #231)", () => {
       anchor().dispatchEvent(touch("pointerup", 41, 62));
       vi.advanceTimersByTime(2 * LONG_PRESS_DELAY);
       expect(contextMenu()).toBeNull();
-      anchor().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      anchor().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
       {
         const r = route();
         expect(r.kind === "page" ? r.name : null).toBe("Some Page");
@@ -116,7 +116,7 @@ describe("page-ref long-press gesture (GH #231)", () => {
       vi.advanceTimersByTime(2 * LONG_PRESS_DELAY);
       expect(contextMenu()).toBeNull();
       anchor().dispatchEvent(touch("pointerup", 71, 62));
-      anchor().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      anchor().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
       {
         const r = route();
         expect(r.kind === "page" ? r.name : null).toBe("Some Page");

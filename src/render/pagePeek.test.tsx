@@ -50,10 +50,12 @@ async function waitFor(fn: () => boolean, timeout = 1000): Promise<boolean> {
   return fn();
 }
 
-function fireEnter(el: Element) {
+function fireEnter(el: Element, pointerType = "mouse") {
+  el.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, pointerType, isPrimary: true }));
   el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
 }
 function fireLeave(el: Element) {
+  el.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false, pointerType: "mouse", isPrimary: true }));
   el.dispatchEvent(new MouseEvent("mouseleave", { bubbles: false }));
 }
 
@@ -62,6 +64,20 @@ function popup(): HTMLElement | null {
 }
 
 describe("page hover-peek (GH #40)", () => {
+  it.each(["touch", "pen"])("ignores %s compatibility hover but still accepts a later real mouse on the same link", async (pointerType) => {
+    const { root, dispose } = mountAttached("A link to [[Tine]] here");
+    try {
+      const link = root.querySelector("a.page-ref")!;
+      fireEnter(link, pointerType);
+      await advance(PEEK_OPEN_MS + 100);
+      expect(popup()).toBeNull();
+      fireLeave(link);
+      fireEnter(link);
+      await advance(PEEK_OPEN_MS);
+      expect(await waitFor(() => !!popup()?.querySelector(".ls-block"))).toBe(true);
+    } finally { dispose(); }
+  });
+
   it("renders a portaled RefBlocks tree for a page after dwell", async () => {
     const { root, dispose } = mountAttached("A link to [[Tine]] here");
     try {

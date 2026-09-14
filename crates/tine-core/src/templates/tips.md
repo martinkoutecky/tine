@@ -35,11 +35,11 @@ icon:: ⌨️
 	- **t w** switches between the standard reading column and Wide mode. The page keeps the same width while you edit, fold blocks, or open reference sections.
 	- Wide mode fills the available pane by default. To tune either layout on this device, open Settings → **Appearance** → **Advanced**: set the standard page width in pixels, or give Wide mode a custom maximum.
 - ## A few more worth knowing
-	- In Settings → **Keyboard Shortcuts**, use the settings search field to filter commands by name, command ID, or current binding before recording a replacement. A shortcut you record works while you are editing a block too, including one whose only modifier is Alt.
+	- In Settings → **Keyboard Shortcuts**, use the settings search field to filter commands by name, command ID, or current binding before recording a replacement. Choose **Unbind** to give a command no key at all; it remains available from places such as the command palette, and **Reset** restores its default instead. A shortcut you record works while you are editing a block too, including one whose only modifier is Alt.
 	- **Undo is Ctrl/Cmd+Z and redo is Ctrl/Cmd+Shift+Z.** On Windows and Linux **Ctrl+Y** also redoes, because that is the key most editors there use; the shortcuts list shows it beside the binding. It is a second default rather than a second command, so remapping Redo replaces both.
 	- Use the **…** beside an ordinary page title for its complete actions menu: open the source file, copy/export, inspect properties, rename, carry tasks, or delete. It is the same menu as right-click and works from the keyboard and touch.
 	- **Carry unfinished tasks** forward into today (from the command palette) — the last 7 / 30 / 365 days, optionally with their context.
 	- Select several task bullets and press **Ctrl/Cmd+Enter** to advance each one through your workflow in a single Undo step. The selection toolbar can also wrap selected text as a page link or inline code.
 	- **Namespaces**: name a page `Project/Roadmap` and it nests under `Project` in the sidebar. This page lives under `Features`.
 	- **Page icons**: add a property like `icon:: 📚` at the very top of a page — that's where the ⌨️ on this one comes from.
-	- **Interface zoom** with **Ctrl + / - / 0**, and PDFs, images, and audio all have their own controls.
+	- **Interface zoom** with **Ctrl/Cmd + / - / 0** while the notes pane is focused. To return the whole interface to its default **100%**, open the command palette (**Ctrl/Cmd+Shift+P**) and choose **Reset interface zoom**. This leaves PDF/image zoom and block zoom unchanged; a focused PDF keeps its own **Ctrl/Cmd + / - / 0** controls.

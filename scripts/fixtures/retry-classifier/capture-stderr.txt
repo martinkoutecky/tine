@@ -1,0 +1,24 @@
+dbus-daemon[3997561]: [session uid=3042 pid=3997561] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=3042 pid=3997591 comm="/aux/koutecky/logseq/tine-agents/runtime/artifacts")
+dbus-daemon[3997561]: [session uid=3042 pid=3997561] Successfully activated service 'org.a11y.Bus'
+XGetWindowProperty[_NET_ACTIVE_WINDOW] failed (code=1)
+xdo_get_active_window reported an error
+XGetWindowProperty[_NET_ACTIVE_WINDOW] failed (code=1)
+xdo_get_active_window reported an error
+dbus-daemon[3997619]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=3042 pid=3997620 comm="/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWeb")
+dbus-daemon[3997619]: Successfully activated service 'org.a11y.atspi.Registry'
+XGetWindowProperty[_NET_ACTIVE_WINDOW] failed (code=1)
+xdo_get_active_window reported an error
+XGetWindowProperty[_NET_ACTIVE_WINDOW] failed (code=1)
+xdo_get_active_window reported an error
+XGetWindowProperty[_NET_ACTIVE_WINDOW] failed (code=1)
+xdo_get_active_window reported an error
+file:///aux/koutecky/logseq/tine-agent-worktrees/release-v0.6.983-candidate-20260913/scripts/e2e-capture.mjs:269
+    throw new Error(`${message}; expected=${JSON.stringify(expected)} actual=${JSON.stringify(last)}`);
+          ^
+
+Error: Quick Capture did not receive the first page-ref delimiter; expected="[" actual={"labels":[],"value":"[]","active":""}
+    at expectAutocompleteValue (file:///aux/koutecky/logseq/tine-agent-worktrees/release-v0.6.983-candidate-20260913/scripts/e2e-capture.mjs:269:11)
+    at async typePageQueryFromEmpty (file:///aux/koutecky/logseq/tine-agent-worktrees/release-v0.6.983-candidate-20260913/scripts/e2e-capture.mjs:277:5)
+    at async file:///aux/koutecky/logseq/tine-agent-worktrees/release-v0.6.983-candidate-20260913/scripts/e2e-capture.mjs:297:3
+
+Node.js v20.20.2

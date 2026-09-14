@@ -133,7 +133,12 @@ async function splitAndFocusOther(browser) {
 }
 
 async function openSwitcher(browser, paneId, source = "") {
-  await browser.$(paneSelector(paneId)).click();
+  // The pane center may be an actionable control (for example Page display).
+  // Activate its current tab through the real strip before opening Ctrl+K so
+  // pane focus does not also open an unrelated modal over later tab clicks.
+  const activeTab = await browser.$(`${paneSelector(paneId)} .tab.active .tab-title`);
+  await activeTab.waitForDisplayed({ timeout: 5_000 });
+  await activeTab.click();
   await browser.keys(["Control", "k"]);
   const input = await browser.$(".switcher-input");
   await input.waitForExist({ timeout: 5_000 });

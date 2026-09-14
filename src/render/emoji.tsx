@@ -1,10 +1,10 @@
-// Emoji as bundled Twemoji SVG *images*, not a color-emoji font. WebKitGTK paints
-// a color-emoji webfont as a blank glyph, so page icons / emoji showed as empty
-// gaps; an <img> renders identically in every engine. The SVGs are copied to
-// `dist/twemoji/<codepoint>.svg` at build (see vite.config.ts).
+// Windows/Apple use the same native emoji face as editable controls (#458).
+// Other platforms retain bundled Twemoji SVGs: WebKitGTK can paint color fonts
+// blank or crash. SVGs are copied to dist/twemoji at build (vite.config.ts).
 
 import { For, type JSX } from "solid-js";
 import emojiRegex from "emoji-regex";
+import { usesNativeEmojiDisplay } from "../editableEmoji";
 
 // Twemoji filename rule (its `grabTheRightIcon`): codepoints joined by '-', with
 // the U+FE0F variation selector dropped UNLESS the sequence is a ZWJ (U+200D)
@@ -44,13 +44,16 @@ export function emojiSplit(text: string): EmojiPart[] {
   return out.length ? out : [{ t: "text", v: text }];
 }
 
-/** Render text with any emoji turned into Twemoji <img> SVGs. */
+/** Keep complete emoji sequences together, using the installed platform policy. */
 export function EmojiText(props: { text: string }): JSX.Element {
+  const native = usesNativeEmojiDisplay();
   return (
     <For each={emojiSplit(props.text)}>
       {(p) =>
         p.t === "text" ? (
           <>{p.v}</>
+        ) : native ? (
+          <span class="emoji-native">{p.v}</span>
         ) : (
           <img
             class="emoji"

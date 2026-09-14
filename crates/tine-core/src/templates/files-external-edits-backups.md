@@ -1,6 +1,8 @@
 icon:: 🗄️
 
 - # Files, external edits, and backups
+	- **If closing reports unsaved changes:** the prompt lists affected pages and their save states. Choose **No** to keep the window open and review them. **Retry saving** uses the normal save guards; **Open page / resolve conflict** takes you to the affected page. **Copy draft** copies the outline for pasting into a separate file. **Copy complete recovery data** also preserves every draft field, including block IDs, original whitespace, and collapsed state. Neither copy action saves the graph; keep the pasted copy before closing.
+	- **If a conflict's original file is missing:** the error view still exposes the retained draft and comparison. Copy it for safekeeping, then review and explicitly **Apply resolution** to restore it. A file recreated or changed by another editor after your review makes Apply refuse rather than overwrite unseen changes. **Try opening again** rechecks the exact original file.
 	- Your graph content stays in ordinary files shared with Logseq. Tine also keeps device settings and launch snapshots outside the graph. This page maps what is written where, and the safety nets around it.
 - ## What lands on disk
 	- **Pages and journals** — one Markdown or Org file per page. Existing files may live at the graph root or in nested folders; Tine saves each one back to its exact path. New files use the configured `pages/` and `journals/` folders.

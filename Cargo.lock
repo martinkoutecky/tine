@@ -510,8 +510,6 @@ dependencies = [
 [[package]]
 name = "cap-primitives"
 version = "4.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdadbd7c002d3a484b35243669abdae85a0ebaded5a61117169dc3400f9a7ff0"
 dependencies = [
  "ambient-authority",
  "fs-set-times",
@@ -5706,7 +5704,7 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.6.982"
+version = "0.6.983"
 dependencies = [
  "base64 0.22.1",
  "cap-std",
@@ -5744,7 +5742,7 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.6.982"
+version = "0.6.983"
 dependencies = [
  "ahash",
  "ammonia",
@@ -5783,7 +5781,7 @@ dependencies = [
 
 [[package]]
 name = "tine-ios-folder-picker-native"
-version = "0.6.982"
+version = "0.6.983"
 dependencies = [
  "tauri",
  "tauri-plugin",

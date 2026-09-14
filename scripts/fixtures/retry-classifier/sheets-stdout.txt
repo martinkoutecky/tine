@@ -1,0 +1,77 @@
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry
+PASS: grid renders in real app
+PASS: clicking a cell selects without editing
+PASS: click selected exactly one cell
+PASS: first-column click selects with visible sticky ring
+PASS: Enter edits selected cell
+PASS: Esc from cell edit returns to selection
+PASS: double-click edits selected cell
+PASS: Enter commits (editor closed)
+PASS: Enter returns to cell selection
+PASS: edited text saved to disk
+PASS: no block was split/created (17 bullets)
+PASS: grid config intact
+PASS: Esc exits toward outline selection (no crash)
+PASS: Esc changed nothing on disk
+PASS: ArrowDown lands on a seam
+PASS: seam-typing inserted a row on disk (19 bullets: +row +cell)
+PASS: inserted cell holds the typed char
+PASS: two undos fully revert the seam insert (text, then structure)
+PASS: seam ladder starts from §1 grid cell
+PASS: seam ladder cell-to-seam renders
+PASS: seam ladder seam-to-cell renders
+PASS: seam ladder left boundary seam renders
+PASS: seam ladder boundary stays visible
+PASS: Ctrl+D filled beta into the row below
+PASS: table field edge widens live inside a usable horizontal scroller
+PASS: table width persists by encoded field identity on the owner block
+PASS: stable table width survives a real app reload
+PASS: double-click reset removes the durable table width
+PASS: Table ArrowRight uses the real global key path
+PASS: checkbox single-click wrote shipped:: true
+PASS: enum popup lists declared values + Clear
+PASS: enum pick wrote topic:: ui
+PASS: typed Table Tab commits then advances
+PASS: typing after Tab targets the next cell
+PASS: repeated typed Table Tab keeps advancing
+PASS: typing after repeated Tab targets the third cell
+PASS: formula observes all Tab-committed values
+PASS: typed Table values survive the next edit and save
+PASS: declared Table field opens the inline rename editor
+PASS: rename produces exactly one OCC header and keeps the formula live
+PASS: rename persists every dependency with no old field identity
+PASS: rename preserves string literals and non-field formula member names
+PASS: one Undo restores every field dependency together
+PASS: one Redo reapplies every field dependency
+PASS: renamed field and every dependency survive a real app reload
+PASS: Add formula… menu entry opens
+PASS: formula editor fields filled
+PASS: formula editor save enabled + clicked
+PASS: formula property written to disk
+PASS: computed value NOT stored on disk
+PASS: computed column renders with value 2
+PASS: clicking a board card selects without editing
+PASS: one-block query board renders exactly one visible board
+PASS: one-block query board stays inside its SheetContainer
+PASS: one-block query board container has no vertical bleed
+PASS: exactly one board renders for the query block
+PASS: card-move flipped TODO to DONE on disk
+PASS: card-move touched only the marker (no reparent)
+PASS: 2-tag card renders in both tag columns
+PASS: tag move rewrote exactly the tag token
+PASS: tag move left the 2-tag sibling untouched
+PASS: marker pill single-click toggled the open pair
+PASS: marker pill click selected without editing
+PASS: corner Σ toggle appears on hover
+PASS: pinned footer shows Σ add buttons
+PASS: aggregate picker opens as in-DOM menu with fns
+PASS: picking Sum writes tine.col-aggregates to disk
+PASS: aggregate row adds no vertical scroller overflow
+FAIL: query-sourced Table starts from both coarse numeric rows  {"count":"2","titles":["Low score","High score"],"active":null,"found":true}
+PASS: query Sheet opens the real filter editor
+PASS: query Sheet filter expression is accepted by the real editor
+PASS: query-sourced Table filters only the fine-grained subset while retaining coarse count
+PASS: query filter persists without rewriting coarse query membership
+FAIL: query filter proof switches through the real Board control  
+
+3 FAILURES (74 checks)

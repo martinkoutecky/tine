@@ -66,6 +66,12 @@ describe("isPropertyLine", () => {
 });
 
 describe("visibleBody strips header chrome from the body text", () => {
+  it("uses whole-block task recognition before extracting the first visible line", () => {
+    expect(visibleBody("\n\nTODO buy milk")).toEqual(["buy milk"]);
+    expect(visibleBody("TODO\nmore detail")).toEqual(["TODO", "more detail"]);
+    expect(visibleBody("TODO TODO buy milk")).toEqual(["TODO buy milk"]);
+    expect(visibleBody("id:: example\nTODO buy milk")).toEqual(["TODO buy milk"]);
+  });
   it("strips marker / priority / heading prefix from the first line", () => {
     expect(visibleBody("TODO [#A] ## ship it")).toEqual(["ship it"]);
     expect(visibleBody("DOING write the doc")).toEqual(["write the doc"]);

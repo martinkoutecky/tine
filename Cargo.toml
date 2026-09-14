@@ -10,13 +10,14 @@ members = [
 # test --workspace` (host target) never touch it. See docs/wasm-parse-plan.md.
 exclude = [
     "crates/lsdoc-wasm",
+    "vendor/cap-primitives-4.0.2",
     "vendor/loro-1.13.6",
     "vendor/loro-internal-1.13.6",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.6.982"
+version = "0.6.983"
 edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Martin Koutecký"]
@@ -38,6 +39,8 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [patch.crates-io]
+# GH #533: preserve absolute UNC paths reconstructed from retained Windows handles.
+cap-primitives = { path = "vendor/cap-primitives-4.0.2" }
 # tao 0.35.3 stops GTK button events at the application-window handler, which
 # also swallows Linux native titlebar controls. This exact upstream merge makes
 # GTK propagate those events again. Remove the pin once Tauri adopts tao 0.36+.

@@ -1,6 +1,7 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createMemo, createSignal, useContext } from "solid-js";
 import { notifyGraphRebound } from "./modeHooks";
+import { graphBinding } from "./persistence";
 import type {
   ConflictObject,
   GraphMeta,
@@ -559,8 +560,15 @@ export function clearLiveSaveConflict(name: string): void {
  * in-memory entry stays until the on-disk capsule is gone, so a failed
  * retirement leaves the conflict visible instead of silently dropping it. */
 export async function retireLiveSaveConflict(name: string): Promise<void> {
-  if (!liveSaveConflicts.has(name)) return;
+  const conflict = liveSaveConflicts.get(name);
+  if (!conflict) return;
+  const binding = graphBinding();
+  const root = graphMeta()?.root;
   await retireCapsuleOnDisk(name);
+  if (graphBinding() !== binding || graphMeta()?.root !== root) return;
+  if (liveSaveConflicts.get(name) !== conflict) {
+    throw new Error("The retained draft changed during retirement; review the current draft again.");
+  }
   liveSaveConflicts.delete(name);
   publishConflictQueue();
 }

@@ -137,10 +137,13 @@ describe("a structural edit inside a block embed keeps the caret there (GH #477)
   it("keeps Tab (indent) in the embed", async () => {
     await withHostPage(async (root) => {
       const editor = await editInsideEmbed(root);
+      editor.setSelectionRange(2, 7, "backward");
       editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId["kid-two"]?.parent).toBe("kid-one"));
       expect(editingId()).toBe("kid-two");
       await expectCaretStayedInTheEmbed();
+      const active = document.activeElement as HTMLTextAreaElement;
+      expect([active.selectionStart, active.selectionEnd, active.selectionDirection]).toEqual([2, 7, "backward"]);
     });
   });
 
@@ -158,13 +161,15 @@ describe("a structural edit inside a block embed keeps the caret there (GH #477)
         expect(element).not.toBeNull();
         return element!;
       });
-      nested.setSelectionRange(0, 0);
+      nested.setSelectionRange(2, 7, "forward");
       nested.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }),
       );
       await vi.waitFor(() => expect(doc.byId["kid-two"]?.parent).toBe("target"));
       expect(editingId()).toBe("kid-two");
       await expectCaretStayedInTheEmbed();
+      const active = document.activeElement as HTMLTextAreaElement;
+      expect([active.selectionStart, active.selectionEnd, active.selectionDirection]).toEqual([2, 7, "forward"]);
     });
   });
 

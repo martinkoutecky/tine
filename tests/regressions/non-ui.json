@@ -2,6 +2,364 @@
  "schemaVersion": 1,
  "entries": [
 {
+ "id": "REG-MANAGED-CHECKPOINT-TITLE-RACE-CLASSIFICATION",
+ "title": "Restored checkpoint title races classify as quarantined conflict rather than malformed index",
+ "family": "managed-storage",
+ "sources": {
+  "issues": [],
+  "commits": []
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/sync_runtime_tests.rs::restored_checkpoint_title_race_preserves_catalog_index_agreement"
+  ],
+  "scenario": "reg-managed-checkpoint-title-race-classification",
+  "failBefore": "Not established by this source-only registration."
+ },
+ "notes": "Two divergent offline titles after clean checkpoints and reopen reach bounded RecoveryBlocked Quarantined on both peers, without malformed page-name ownership index or wrong terminal state. This does NOT assert automatic convergence or uninterrupted syncing. Release0.6.983 wording states conflict classification and explicitly preserves the possibility of blocked synchronization. Existing body inspected 2026-09-13; no new execution, native delivery or performance evidence. Full candidate CI pending."
+},
+{
+ "id": "REG-MANAGED-SAME-PAGE-MOVE-PRESERVES-CHILD-ORDER",
+ "title": "Same-page subtree move changes only root membership and preserves concurrent child order",
+ "family": "managed-storage",
+ "sources": {
+  "issues": [],
+  "commits": []
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/oplog/hot_engine_integration_tests.rs::same_page_nested_move_writes_only_the_root_pair_and_preserves_concurrent_child_reorder"
+  ],
+  "scenario": "reg-managed-same-page-move-preserves-child-order",
+  "failBefore": "Not established by this source-only registration."
+ },
+ "notes": "Wrong-home move is rejected; valid move writes the home document and root membership only. Both delivery orders retain concurrent child order, unchanged grandchild order and identical canonical snapshots. This does not establish bulk reconstruction or multi-delete performance; the historical author_outline_builds_page_membership_once_for_many_independent_deletes test no longer exists. The unsupported bulk reconstruction performance claim was removed from release0.6.983 wording. Existing body inspected 2026-09-13; no new execution, native delivery or performance evidence. Full candidate CI pending."
+},
+{
+ "id": "REG-MANAGED-INDEPENDENT-PATH-CONTENT-ADMISSION",
+ "title": "Independent rename and other-page content edits preserve author intents in either delivery order",
+ "family": "managed-storage",
+ "sources": {
+  "issues": [],
+  "commits": []
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/oplog/import_integration_tests.rs::transported_path_root_is_metadata_but_local_journal_checks_its_prefix",
+   "crates/tine-core/src/oplog/import_integration_tests.rs::concurrent_rename_and_other_page_edit_keep_author_intents_and_converge"
+  ],
+  "scenario": "reg-managed-independent-path-content-admission",
+  "failBefore": "Not established by this metadata registration."
+ },
+ "notes": "Actual author projection intents retain original encoded manifests; both delivery orders preserve renamed path and independent content. Transported path context does not gate receiver authority, while local journal prefix mismatch is rejected without prefix advancement. This is engine admission evidence, not a new multi-device native receipt. Registered 2026-09-13 by inspection of existing test bodies. No new test execution or fail-before/pass-after evidence; full candidate CI pending."
+},
+{
+ "id": "REG-QE-BLOCK-INDEXED-BACKLINK-NARROWING",
+ "title": "Indexed explicit-reference candidate blocks preserve walked results while reducing classifications",
+ "family": "query-engine",
+ "sources": {
+  "issues": [],
+  "commits": []
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/query/sql_gates_tests.rs::block_narrowing_answers_exactly_what_the_walk_answers",
+   "crates/tine-core/src/query/sql_gates_tests.rs::block_narrowing_answers_exactly_what_the_walk_answers_on_a_real_corpus"
+  ],
+  "scenario": "reg-qe-block-indexed-backlink-narrowing",
+  "failBefore": "Not established by this metadata registration."
+ },
+ "notes": "Fast-corpus assertions require identical walked/narrowed reference rows, nonempty narrowing and fewer classifications. Plain-reference candidates remain outside explicit block narrowing. The real-corpus test is ignored by default and requires TINE_QUERY_IDENTITY_GRAPH; no fresh corpus or wall-clock speedup receipt is claimed. Registered 2026-09-13 by inspection of existing test bodies. No new test execution or fail-before/pass-after evidence; full candidate CI pending."
+},
+{
+ "id": "REG-QE-PAGE-ANCHOR-PAGE-ROWS",
+ "title": "Page-anchored execution returns page rows rather than block descriptors",
+ "family": "query-engine",
+ "sources": {
+  "issues": [],
+  "commits": []
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/query/conformance.rs::the_page_anchor_returns_page_rows_and_reads_no_document",
+   "crates/tine-core/src/query/results_tests.rs::a_page_anchored_statement_has_no_block_descriptor"
+  ],
+  "scenario": "reg-qe-page-anchor-page-rows",
+  "failBefore": "Not established by this metadata registration."
+ },
+ "notes": "Conformance checks page-row variant and namespace membership; SQL result test rejects block-descriptor construction for page anchoring. These backend assertions do not certify every page predicate or native page-row rendering. Registered 2026-09-13 by inspection of existing test bodies. No new test execution or fail-before/pass-after evidence; full candidate CI pending."
+},
+{
+ "id": "REG-QE-TYPED-CASE-LIST-ATOM-COMPARISONS",
+ "title": "Property atoms compare by effective type and explicit case and list comparison modes",
+ "family": "query-engine",
+ "sources": {
+  "issues": [],
+  "commits": []
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/query/conformance.rs::property_atoms_compare_by_their_keys_effective_type",
+   "crates/tine-core/src/query/conformance.rs::the_case_matrix_mode_og_reproduces_ogs_measured_answers",
+   "crates/tine-core/src/query/conformance.rs::each_mode_changes_only_the_answers_its_decision_owns",
+   "crates/tine-core/src/query/conformance.rs::the_typed_case_separates_both_untyped_from_both"
+  ],
+  "scenario": "reg-qe-typed-case-list-atom-comparisons",
+  "failBefore": "Not established by this metadata registration."
+ },
+ "notes": "Assertions distinguish numeric/date comparison from text ordering, reject uncoercible values even for inequality while retaining presence, and isolate case folding, comma splitting and declared-number coercion against frozen OG expectations. Oracle comments are historical provenance, not a new live OG run; these fixtures do not imply exhaustive operator or graph parity. Registered 2026-09-13 by inspection of existing test bodies. No new test execution or fail-before/pass-after evidence; full candidate CI pending."
+},
+{
+ "id": "REG-MANAGED-AUTOMATIC-HISTORY-RECONSTRUCTION",
+ "title": "Automatic history reconstruction preserves original operations and resumes after missing prerequisites arrive",
+ "family": "managed-storage",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "Release impact registration for Unreleased item 3 at 6bc9c675"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/sync_runtime_tests.rs::p3_automatic_full_history_reconstruction_preserves_original_and_resumes",
+   "crates/tine-core/src/sync_runtime_tests.rs::p3_missing_recovery_prerequisite_is_bounded_then_delivery_cascades"
+  ],
+  "scenario": "reg-managed-automatic-history-reconstruction",
+  "failBefore": "Not established by this metadata registration; existing test source inspected only."
+ },
+ "notes": "Cold-only history reconstruction preserves exact manifest/object bytes and restores authoring; withheld-parent recovery bounds repeated reconstruction and resumes on delivery. Registered 2026-09-13 from existing executable test bodies. No new test execution, fail-before/pass-after, performance or native delivery result is claimed. Full candidate CI is pending; current release acceptance remains with the integrating owner."
+},
+{
+ "id": "REG-MANAGED-PERSISTENT-WRITER-INCARNATION",
+ "title": "Clean and checkpoint reopens preserve writer lanes while lost records separate causal incarnations",
+ "family": "managed-storage",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "Release impact registration for Unreleased item 42 at 6bc9c675"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/sync_runtime_tests.rs::clean_and_checkpoint_reopens_continue_one_persistent_writer_lane",
+   "crates/tine-core/src/sync_runtime_tests.rs::a_lost_writer_record_keeps_an_older_published_epoch_causally_apart"
+  ],
+  "scenario": "reg-managed-persistent-writer-incarnation",
+  "failBefore": "Not established by this metadata registration; existing test source inspected only."
+ },
+ "notes": "Healthy full-replay and checkpoint reopens retain peer identities and own causal counters; lost or undecodable records keep older published epochs causally distinct. Registered 2026-09-13 from existing executable test bodies. No new test execution, fail-before/pass-after, performance or native delivery result is claimed. Full candidate CI is pending; current release acceptance remains with the integrating owner."
+},
+{
+ "id": "REG-MANAGED-EXACT-PEER-RANGE-ADMISSION",
+ "title": "Incoming updates start at exact retained peer counters and reject overlapping ranges",
+ "family": "managed-storage",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "Release impact registration for Unreleased item 43 at 6bc9c675"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/oplog/shallow_authoring_tests.rs::exact_frontier_alone_does_not_reject_overlapping_peer_ranges",
+   "crates/tine-core/src/oplog/shallow_authoring_tests.rs::update_ranges_start_at_exact_retained_peer_counters"
+  ],
+  "scenario": "reg-managed-exact-peer-range-admission",
+  "failBefore": "Not established by this metadata registration; existing test source inspected only."
+ },
+ "notes": "Exact frontier equality alone is insufficient: overlapping peer ranges are rejected and exact retained-counter exports are accepted. Registered 2026-09-13 from existing executable test bodies. No new test execution, fail-before/pass-after, performance or native delivery result is claimed. Full candidate CI is pending; current release acceptance remains with the integrating owner."
+},
+{
+ "id": "REG-QE-SELECTIVE-CONJUNCTION-SQL",
+ "title": "Positive conjunction bounds and indexed subqueries preserve query results",
+ "family": "query-engine",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "Release impact registration for Unreleased item 54 at 6bc9c675"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/query/sql_gates_tests.rs::a_nested_conjunction_is_part_of_the_root_conjunction",
+   "crates/tine-core/src/query/sql_gates_tests.rs::a_positively_bounded_query_searches_its_anchor_and_indexes_its_subqueries",
+   "crates/tine-core/src/query/sql_gates_tests.rs::the_baseline_and_current_statements_are_measured_against_each_other"
+  ],
+  "scenario": "reg-qe-selective-conjunction-sql",
+  "failBefore": "Not established by this metadata registration; existing test source inspected only."
+ },
+ "notes": "Nested conjunctions participate in root conjunction bounds and positively bounded queries retain anchor/indexed-subquery behavior. The baseline comparison is ignored by default and requires TINE_QUERY_IDENTITY_GRAPH plus TINE_QUERY_STATEMENT_BASELINE; it is a benchmark harness, not a fresh speedup receipt. Registered 2026-09-13 from existing executable test bodies. No new test execution, fail-before/pass-after, performance or native delivery result is claimed. Full candidate CI is pending; current release acceptance remains with the integrating owner."
+},
+{
+ "id": "REG-QE-ORDER-SAMPLE-COMPLETE-STATISTICS",
+ "title": "Ordering and sampling use the complete match set before display caps",
+ "family": "query-engine",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "Release impact registration for Unreleased item 58 at 6bc9c675"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/query/results_tests.rs::q4_blocks_sort_all_before_row_cap_and_sample",
+   "crates/tine-core/src/query/results_tests.rs::q4_unsorted_sample_uses_complete_base_order",
+   "crates/tine-core/src/query/results_tests.rs::q4_statistics_cap1_of3_includes_tail_numeric_group"
+  ],
+  "scenario": "reg-qe-order-sample-complete-statistics",
+  "failBefore": "Not established by this metadata registration; existing test source inspected only."
+ },
+ "notes": "Block ordering precedes caps and sampling; unsorted samples use complete base order and statistics include tail numeric groups beyond the displayed cap. Registered 2026-09-13 from existing executable test bodies. No new test execution, fail-before/pass-after, performance or native delivery result is claimed. Full candidate CI is pending; current release acceptance remains with the integrating owner."
+},
+{
+ "id": "REG-QE-PRINT-INDEXED-QUERY-SUBTREES",
+ "title": "Print uses indexed query subtrees and preserves export readiness and cancellation",
+ "family": "query-engine",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "Release impact registration for Unreleased item 59 at 6bc9c675"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/sync_runtime_tests.rs::print_managed_uses_actor_body_and_sqlite_query_subtrees",
+   "crates/tine-core/src/sync_runtime_tests.rs::print_query_routes_have_no_parsed_graph_hydration",
+   "src/print.query.test.ts"
+  ],
+  "scenario": "reg-qe-print-indexed-query-subtrees",
+  "failBefore": "Not established by this metadata registration; existing test source inspected only."
+ },
+ "notes": "Managed Print uses actor bodies and SQLite query subtrees; query routes do not hydrate parsed graphs. Frontend Print tests cover its query preparation contract; native PDF rendering needs separate receipts. Registered 2026-09-13 from existing executable test bodies. No new test execution, fail-before/pass-after, performance or native delivery result is claimed. Full candidate CI is pending; current release acceptance remains with the integrating owner."
+},
+{
+ "id": "REG-DIRECT-REGISTRY-INDEXED-ROW-SOURCE",
+ "title": "Ready Direct registry rebuilds read the projection and preserve row-source equivalence",
+ "family": "query-engine",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "Release impact registration for Unreleased item 60 at 6bc9c675"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/model_tests.rs::every_implemented_row_source_builds_the_same_registry",
+   "crates/tine-core/src/model_tests.rs::registry_row_sources_agree_on_a_real_graph"
+  ],
+  "scenario": "reg-direct-registry-indexed-row-source",
+  "failBefore": "Not established by this metadata registration; existing test source inspected only."
+ },
+ "notes": "Constructed graph test checks equivalent registries across row sources and proves projection wiring with indexed-read counters. Real-graph equivalence test is ignored by default and needs TINE_REGISTRY_TIMING_GRAPH; no real-corpus or timing run claimed. Registered 2026-09-13 from existing executable test bodies. No new test execution, fail-before/pass-after, performance or native delivery result is claimed. Full candidate CI is pending; current release acceptance remains with the integrating owner."
+},
+{
+ "id": "REG-DIRECT-WARM-REOPEN-NO-PARSE",
+ "title": "Unchanged Direct warm reopen parses no pages and answers public queries through SQL",
+ "family": "query-engine",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "Release impact registration for Unreleased item 63 at 6bc9c675"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/direct_projection.rs::warm_reopen_parses_nothing_and_answers_from_sql",
+   "crates/tine-core/src/direct_projection.rs::public_ir_query_on_warm_reopen_uses_sql_without_parsed_cache"
+  ],
+  "scenario": "reg-direct-warm-reopen-no-parse",
+  "failBefore": "Not established by this metadata registration; existing test source inspected only."
+ },
+ "notes": "Counters assert zero page/stream parses and lowerings on unchanged warm reopen; public bounded and IR queries use SQLite without parsed-cache hydration. This structural proof is not a wall-clock latency measurement. Registered 2026-09-13 from existing executable test bodies. No new test execution, fail-before/pass-after, performance or native delivery result is claimed. Full candidate CI is pending; current release acceptance remains with the integrating owner."
+},
+  {
+   "id": "REG-DIRECT-RENAME-LITERAL-SCANNER-406",
+   "title": "Direct rename copies literal runs and omits scans whose required syntax is absent",
+   "family": "page-rename",
+   "sources": {
+    "issues": [
+     406
+    ],
+    "commits": []
+   },
+   "platforms": [
+    "all"
+   ],
+   "layer": "native",
+   "status": "covered",
+   "coverage": {
+    "tests": [
+     "crates/tine-core/src/refs.rs",
+     "crates/tine-core/tests/graph.rs"
+    ],
+    "scenario": "direct-files.rename-literal-run-scanner-preserves-references",
+    "failBefore": "proven"
+   },
+   "notes": "Partial GH #406 performance improvement. Controlled optimized Linux Graph::rename_page_reporting measurement with 10005 generated files, 164430159 bytes, and 5 edited files: baseline median 2087.725 ms, identical-binary control 2078.299 ms, candidate median 1366.6345 ms (34.54% reduction). Scanner differential probe compared 40000 generated Markdown/Org inputs against frozen prior scanner with zero mismatches. Every current file remains read; namespace/ref rewrite, no-follow paths, collisions, base revisions, publication and rollback are unchanged. Hosted title workflow and Windows reporter latency remain unverified; do not interpret this row as closing the full issue."
+  },
+{
  "id": "REG-QE-EXPORT-EXPLICIT-TQL-DIALECT",
  "title": "Copy and export preserve the declared TQL dialect and subtree membership",
  "family": "query-engine",
@@ -22,19 +380,27 @@
  "id": "REG-QE-PAGE-BLOCKS-SEMANTICS",
  "title": "Page queries quantify the ordinary blocks physically owned by each page",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "C2B page Blocks semantic completion" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "C2B page Blocks semantic completion"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
   "tests": [
    "crates/tine-core/src/query/sql_gates_tests.rs::page_blocks_quantifies_the_physical_page_forest_with_full_block_semantics",
-   "crates/tine-core/src/query/sql_gates_tests.rs::page_blocks_supports_finite_page_blocks_reentry_and_outer_physical_masks",
    "crates/tine-core/src/query/sql_gates_tests.rs::page_blocks_keeps_invalid_and_wrong_scope_inputs_empty",
-   "crates/tine-core/src/query/sql.rs::tests::page_blocks_bounds_only_from_a_selective_positive_block_predicate"
+   "crates/tine-core/src/query/sql.rs::tests::page_blocks_bounds_only_from_a_selective_positive_block_predicate",
+   "crates/tine-core/src/query/sql_gates_tests.rs::page_blocks_supports_finite_page_blocks_reentry"
   ],
   "scenario": "query-engine.page-blocks-physical-page-semantics",
   "failBefore": "Manager gate 32038 failed expected TODO page membership on base 464f9808. With the semantic changes and TQL dependency 4c0fd750, gate 43010 passed all four page-block tests; gate 11427 passed 46 SQL tests with eight ignored; gate 99375 passed 402 query tests with twelve ignored."
  },
- "notes": "The relation ranges over all ordinary roots and descendants on one page_id, excludes the page preamble, preserves vacuous Every/None, block predicates and nested Page/Blocks re-entry, and admits each outer page once. Equal display names do not merge physical pages. Manager verified fail-before and pass-after at the core layer. This does not claim completed page Display or native delivery."
+ "notes": "The relation ranges over all ordinary roots and descendants on one page_id, excludes the page preamble, preserves vacuous Every/None, block predicates and nested Page/Blocks re-entry, and admits each outer page once. Equal display names do not merge physical pages. Manager verified fail-before and pass-after at the core layer. This does not claim completed page Display or native delivery. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/query/sql_gates_tests.rs::page_blocks_supports_finite_page_blocks_reentry_and_outer_physical_masks. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release. The current reentry test verifies nested Page/Blocks against both SQL and walk; it no longer includes the removed outer-physical-mask assertions, so this is partial replacement only."
 },
 {
  "id": "REG-QE-PUBLICATION-WINDOWS-PRIVATE-DIRECTORY",
@@ -52,84 +418,125 @@
  "id": "REG-QE-PUBLICATION-WRITER-LIFETIME",
  "title": "Publication retains temporary query resources through writer close timeout",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 Direct correction manager review" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 Direct correction manager review"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/direct_projection.rs::tests::a_timed_out_close_retains_resources_until_the_writer_really_exits", "crates/tine-core/src/publish.rs::tests::publication_snapshot_query_index_is_owner_private_and_dies_with_its_root"],
+  "tests": [
+   "crates/tine-core/src/direct_projection.rs::tests::a_timed_out_close_retains_resources_until_the_writer_really_exits"
+  ],
   "scenario": "query-engine.publication-writer-lifetime"
  },
- "notes": "Real paused writer cannot release resources merely because a zero-duration wait expires; resources release after exit and late registration cannot leak. Windows permissions have their own platform fixture."
+ "notes": "Real paused writer cannot release resources merely because a zero-duration wait expires; resources release after exit and late registration cannot leak. Windows permissions have their own platform fixture. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/publish.rs::tests::publication_snapshot_query_index_is_owner_private_and_dies_with_its_root. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-PUBLIC-REGISTRY-CAPTURED-READ",
  "title": "The public property-registry request reads the database and never serves stale or empty metadata",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 Managed public registry packet" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 Managed public registry packet"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": [
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_never_serves_stale_metadata_after_read_damage",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_reads_snapshots_and_hydrates_no_page",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_snapshot_equals_the_merged_oracle_over_every_shape",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_reports_typed_execution_errors_and_never_falls_back",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_reports_a_real_exhausted_job_owner",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_a_registry_drain_after_construction_cancels_the_answer_and_releases_handles",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_public_registry_captures_follow_the_opened_snapshot_not_the_capture",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_an_acceptance_between_registry_capture_and_open_recaptures"
-  ],
+  "tests": [],
   "scenario": "query-engine.public-registry-captured-read",
   "failBefore": "fail-before.log: with a pending property/type edit the public PropertyRegistry request ANSWERED after real accepted-projection read damage (rows=4 generation=1 equals_pre_edit_table=true), and the same request hydrated the pending page document and rebuilt the merged table on the actor (navigation_overlay_pending_path_loads=1, result_page_hydrations=1, property_registry_builds=1, registry_patches=0)"
  },
- "notes": "SPEC 7.1 query_registry was a serialized actor turn over the merged registry builder: it hydrated pending pages and, on a refused build, served the last published or empty table as if it were the answer. It is now the same captured off-actor read a result query takes, sharing managed_query::open_managed_read, with typed readiness/cancellation/read-failure and no published or memoized failure."
+ "notes": "SPEC 7.1 query_registry was a serialized actor turn over the merged registry builder: it hydrated pending pages and, on a refused build, served the last published or empty table as if it were the answer. It is now the same captured off-actor read a result query takes, sharing managed_query::open_managed_read, with typed readiness/cancellation/read-failure and no published or memoized failure. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_never_serves_stale_metadata_after_read_damage; crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_reads_snapshots_and_hydrates_no_page; crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_snapshot_equals_the_merged_oracle_over_every_shape; crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_reports_typed_execution_errors_and_never_falls_back; crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_registry_reports_a_real_exhausted_job_owner; crates/tine-core/src/sync_runtime_tests.rs::ret2_a_registry_drain_after_construction_cancels_the_answer_and_releases_handles; crates/tine-core/src/sync_runtime_tests.rs::ret2_public_registry_captures_follow_the_opened_snapshot_not_the_capture; crates/tine-core/src/sync_runtime_tests.rs::ret2_an_acceptance_between_registry_capture_and_open_recaptures. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-PENDING-REGISTRY-OPENED-SNAPSHOT",
  "title": "Queued queries use property types from their own opened SQLite snapshot",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager snapshot identity audit" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager snapshot identity audit"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_registry_cache_follows_the_opened_snapshot_not_the_capture"],
+  "tests": [],
   "scenario": "query-engine.pending-registry-opened-snapshot",
   "failBefore": "registry-snapshot-before.log: second queued query returns one numeric match after its snapshot has changed the declaration to text; oracle returns zero"
  },
- "notes": "Two identical actor captures execute on different pending revisions. The shared registry cache must follow opened snapshot identity, not the earlier requested revision."
+ "notes": "Two identical actor captures execute on different pending revisions. The shared registry cache must follow opened snapshot identity, not the earlier requested revision. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_registry_cache_follows_the_opened_snapshot_not_the_capture. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-PENDING-REPAIR-PUBLIC-ROUTES",
  "title": "Pending projection repair retries public SQL routes and terminates failed creation",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 automatic pending query recovery" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 automatic pending query recovery"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_automatically_recovers_the_captured_public_routes", "crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_creation_failure_is_terminal_for_later_queries", "crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_install_uses_authority_after_acceptance"],
+  "tests": [],
   "scenario": "query-engine.pending-repair-public-routes"
  },
- "notes": "Real missing-file recovery for IR, Explain and advanced SQL; persistent file-creation damage returns unavailability without automatic reattempt; acceptance between repair capture and installation cannot resurrect pending rows."
+ "notes": "Real missing-file recovery for IR, Explain and advanced SQL; persistent file-creation damage returns unavailability without automatic reattempt; acceptance between repair capture and installation cannot resurrect pending rows. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_automatically_recovers_the_captured_public_routes; crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_creation_failure_is_terminal_for_later_queries; crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_install_uses_authority_after_acceptance. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-PENDING-REPAIR-ACTOR-PROTOCOL",
  "title": "Pending projection reconstruction preserves concurrent edits and candidate teardown",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager actor repair protocol" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager actor repair protocol"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_restores_a_missing_projection_without_document_hydration", "crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_leaves_actor_edits_responsive_while_old_jobs_drain", "crates/tine-core/src/sync_runtime_tests.rs::ret2_shutdown_cleans_a_registered_but_uninstalled_repair_candidate"],
+  "tests": [],
   "scenario": "query-engine.pending-repair-actor-protocol"
  },
- "notes": "Exercises automatic simple-query repair and explicit lifecycle protocol entry with real SQL afterward. Further acceptance/rename/config replacement interleavings remain campaign gates."
+ "notes": "Exercises automatic simple-query repair and explicit lifecycle protocol entry with real SQL afterward. Further acceptance/rename/config replacement interleavings remain campaign gates. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_restores_a_missing_projection_without_document_hydration; crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_repair_leaves_actor_edits_responsive_while_old_jobs_drain; crates/tine-core/src/sync_runtime_tests.rs::ret2_shutdown_cleans_a_registered_but_uninstalled_repair_candidate. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-PENDING-REPAIR-OWNERSHIP",
  "title": "Pending repair candidates have one teardown owner before actor installation",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager repair ownership contract" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager repair ownership contract"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/managed_overlay.rs::tests::repair_owner_transfers_one_candidate_and_rejects_old_tokens", "crates/tine-core/src/managed_overlay.rs::tests::retiring_repair_before_registration_closes_the_unpublished_candidate", "crates/tine-core/src/managed_overlay.rs::tests::failed_candidate_creation_is_terminal_until_lifecycle_cleanup"],
+  "tests": [],
   "scenario": "query-engine.pending-repair-ownership"
  },
- "notes": "Real disposable files and exact registration-boundary hook. Covers the owner primitive, not automatic recovery wiring, actor responsiveness, or full shutdown interleavings."
+ "notes": "Real disposable files and exact registration-boundary hook. Covers the owner primitive, not automatic recovery wiring, actor responsiveness, or full shutdown interleavings. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/managed_overlay.rs::tests::repair_owner_transfers_one_candidate_and_rejects_old_tokens; crates/tine-core/src/managed_overlay.rs::tests::retiring_repair_before_registration_closes_the_unpublished_candidate; crates/tine-core/src/managed_overlay.rs::tests::failed_candidate_creation_is_terminal_until_lifecycle_cleanup. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-DRAIN-FENCE-ADMISSION",
@@ -147,34 +554,48 @@
  "id": "REG-QE-MANAGED-ADVANCED-CAPTURED-ROUTE",
  "title": "The public Managed advanced query is captured SQL, not an actor traversal",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2-Managed-Advanced dossier; Martin 2026-09-07 no-production-traversal amendment; user override Q18" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2-Managed-Advanced dossier; Martin 2026-09-07 no-production-traversal amendment; user override Q18"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
   "tests": [
    "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_reads_statements_and_hydrates_no_page",
    "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_reports_typed_execution_errors_and_never_walks",
    "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_answers_every_shape_exactly_as_the_walk",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_answers_a_pending_suffix_exactly_as_the_walk",
-   "crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_memo_is_invalidated_by_edits_and_property_declarations",
    "crates/tine-core/src/sync_runtime_tests.rs::ret2_an_actor_edit_turn_completes_while_a_public_advanced_selection_waits"
   ],
   "scenario": "query-engine.managed-advanced-captured-route",
   "failBefore": "evidence/qe/ret2-managed-advanced/fail-before-advanced-route.log: SyncApplicationNavigationRequest::AdvancedQuery over real matching TODOs reported result_page_hydrations=13 and property_registry_builds=1 for a task-only source, and answered successfully while the captured executor was injected Busy"
  },
- "notes": "RET2-Managed-Advanced. `application_advanced_query_ready` and its whole-graph `application_all_query_pages_ready` load are deleted; the wire request is intercepted by SyncRuntimeHandle::application_captured_query and shares RET1's capture/retry/execute/memo loop with query_run/query_explain_empty. query::resolve_advanced_source stays the ONE advanced source-limit/parse/bind/report owner; a refused source keeps its semantic answer. query::run_application_advanced_query_pages_bounded is now #[cfg(test)] and survives only as the parity oracle (Q18). Public validator unchanged; no fallback on the route."
+ "notes": "RET2-Managed-Advanced. `application_advanced_query_ready` and its whole-graph `application_all_query_pages_ready` load are deleted; the wire request is intercepted by SyncRuntimeHandle::application_captured_query and shares RET1's capture/retry/execute/memo loop with query_run/query_explain_empty. query::resolve_advanced_source stays the ONE advanced source-limit/parse/bind/report owner; a refused source keeps its semantic answer. query::run_application_advanced_query_pages_bounded is now #[cfg(test)] and survives only as the parity oracle (Q18). Public validator unchanged; no fallback on the route. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_route_answers_a_pending_suffix_exactly_as_the_walk; crates/tine-core/src/sync_runtime_tests.rs::ret2_the_public_advanced_memo_is_invalidated_by_edits_and_property_declarations. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-OVERLAY-RECLOSE-REPLACEMENT",
  "title": "Repeated teardown of an old overlay cannot delete its replacement",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager recovery lifecycle review" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager recovery lifecycle review"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/managed_overlay.rs::tests::closing_a_retired_instance_again_cannot_remove_its_replacement"],
+  "tests": [],
   "scenario": "query-engine.overlay-reclose-replacement",
   "failBefore": "overlay-reclose-before.log: repeated close on the old instance deletes the new projection"
  },
- "notes": "Teardown completion is serialized per instance. File lifecycle remains at the existing path; no epoch-named files or authority changes."
+ "notes": "Teardown completion is serialized per instance. File lifecycle remains at the existing path; no epoch-named files or authority changes. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/managed_overlay.rs::tests::closing_a_retired_instance_again_cannot_remove_its_replacement. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-CAPTURE-DRAIN-EPOCH",
@@ -193,70 +614,106 @@
  "id": "REG-QE-OVERLAY-INSTANCE-MEMO",
  "title": "Recreated pending projections cannot reuse cached results or registry types from an older instance",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager recovery review" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager recovery review"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/sync_runtime_tests.rs::ret2_recreated_pending_projection_cannot_reuse_an_older_instances_memo", "crates/tine-core/src/managed_query.rs::tests::a_recreated_overlay_cannot_reuse_the_patched_registry"],
+  "tests": [],
   "scenario": "query-engine.overlay-instance-memo",
   "failBefore": "overlay-instance-before.log: pending edit plus rebuild returns an old empty answer0 instead of1 because revision numbers repeat"
  },
- "notes": "The effective stamp includes the overlay instance as well as revision. No durable schema change. Automatic repair scheduling is a separate unfinished campaign obligation."
+ "notes": "The effective stamp includes the overlay instance as well as revision. No durable schema change. Automatic repair scheduling is a separate unfinished campaign obligation. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::ret2_recreated_pending_projection_cannot_reuse_an_older_instances_memo; crates/tine-core/src/managed_query.rs::tests::a_recreated_overlay_cannot_reuse_the_patched_registry. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-OVERLAY-RETIRE-BEFORE-WRITER-WAIT",
  "title": "Overlay retirement refuses new snapshots before waiting for its writer",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager recovery review" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager recovery review"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/managed_overlay.rs::tests::close_refuses_new_snapshots_before_waiting_for_the_writer"],
+  "tests": [],
   "scenario": "query-engine.overlay-retirement",
   "failBefore": "overlay-retire-before.log: real teardown held at writer-channel boundary still admits a snapshot"
  },
- "notes": "Actor drain sites retire the old overlay first. This tests the overlay fence, not every accepted-projection replacement race."
+ "notes": "Actor drain sites retire the old overlay first. This tests the overlay fence, not every accepted-projection replacement race. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/managed_overlay.rs::tests::close_refuses_new_snapshots_before_waiting_for_the_writer. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-PENDING-REBUILD-NO-APPLICATION-HYDRATION",
  "title": "Pending projection reconstruction consumes authority materialization without parser or editor pages",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager recovery review" },
- "platforms": ["all"], "layer": "rust-core", "status": "covered",
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager recovery review"
+ },
+ "platforms": [
+  "all"
+ ],
+ "layer": "rust-core",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_projection_rebuild_does_not_construct_parser_or_editor_pages"],
+  "tests": [],
   "scenario": "query-engine.pending-rebuild-materialization",
   "failBefore": "overlay-producer-before.log: rebuilding one pending page hydrates an application page before extracting the existing authority materialization"
  },
- "notes": "Shared pending materialization remains the sole producer. Editing retains its original parser/editor checks; rebuilding uses the materialized page directly and preserves exact query/oracle equality."
+ "notes": "Shared pending materialization remains the sole producer. Editing retains its original parser/editor checks; rebuilding uses the materialized page directly and preserves exact query/oracle equality. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::ret2_pending_projection_rebuild_does_not_construct_parser_or_editor_pages. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-ACCEPTED-REGISTRY-FAILURE-STOPS-CAPTURE",
  "title": "Failed accepted property metadata stops Managed query capture before execution",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager registry review" },
- "platforms": ["all"],
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager registry review"
+ },
+ "platforms": [
+  "all"
+ ],
  "layer": "rust-core",
- "status": "covered",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/sync_runtime_tests.rs::ret2_failed_accepted_registry_aborts_capture_before_execution"],
+  "tests": [],
   "scenario": "query-engine.accepted-registry-failure",
   "failBefore": "accepted-registry-stage-before.log: real orphaned property metadata reaches injected Busy executor instead of failing capture"
  },
- "notes": "SimpleQuery and public IR capture must propagate failed metadata reads, not substitute cached or empty type information. The executor stage witness distinguishes this from downstream SQL validation of the same damage."
+ "notes": "SimpleQuery and public IR capture must propagate failed metadata reads, not substitute cached or empty type information. The executor stage witness distinguishes this from downstream SQL validation of the same damage. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::ret2_failed_accepted_registry_aborts_capture_before_execution. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-FAILED-PENDING-OVERLAY-NOT-BUSY",
  "title": "A vanished pending query projection repairs once instead of waiting endlessly",
  "family": "query-engine",
- "sources": { "issues": [], "commits": [], "internal": "RET2 manager review" },
- "platforms": ["all"],
+ "sources": {
+  "issues": [],
+  "commits": [],
+  "internal": "RET2 manager review"
+ },
+ "platforms": [
+  "all"
+ ],
  "layer": "rust-core",
- "status": "covered",
+ "status": "needs-revalidation",
  "coverage": {
-  "tests": ["crates/tine-core/src/sync_runtime_tests.rs::r5a_an_unopenable_overlay_is_repaired_once_without_traversal", "crates/tine-core/src/managed_overlay.rs::tests::open_creates_a_fresh_file_and_close_deletes_it"],
+  "tests": [],
   "scenario": "query-engine.failed-pending-overlay",
   "failBefore": "overlay-classification-before.log: vanished file reports NotReady(Busy), expected Unavailable(ReadFailed)"
  },
- "notes": "Only live unfinished work is retryable readiness. The original fail-before records the earlier failure-classification step; public queries now repair a vanished overlay once and answer through SQL. Persistent creation failure is covered by REG-QE-PENDING-REPAIR-PUBLIC-ROUTES. Tests also stop the actual overlay worker and verify failed channel detection."
+ "notes": "Only live unfinished work is retryable readiness. The original fail-before records the earlier failure-classification step; public queries now repair a vanished overlay once and answer through SQL. Persistent creation failure is covered by REG-QE-PENDING-REPAIR-PUBLIC-ROUTES. Tests also stop the actual overlay worker and verify failed channel detection. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::r5a_an_unopenable_overlay_is_repaired_once_without_traversal; crates/tine-core/src/managed_overlay.rs::tests::open_creates_a_fresh_file_and_close_deletes_it. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release."
 },
 {
  "id": "REG-QE-P1D-PERSISTENT-CACHE-RECOVERY",
@@ -497,16 +954,20 @@
    "id": "REG-MANAGED-CLEAN-OPEN-CHECKPOINT-001",
    "title": "Clean Managed Storage reopen restores a disposable checkpoint and semantically replays only its uncheckpointed tail",
    "family": "managed-storage-lifetime-cost",
-   "sources": {"issues": [], "commits": [], "internal": "Harvest A5"},
-   "platforms": ["all"],
+   "sources": {
+    "issues": [],
+    "commits": [],
+    "internal": "Harvest A5"
+   },
+   "platforms": [
+    "all"
+   ],
    "layer": "rust-core-storage",
-   "status": "covered",
+   "status": "needs-revalidation",
    "coverage": {
     "tests": [
      "crates/tine-core/src/sync_runtime_tests.rs::second_clean_cold_open_restores_checkpoint_instead_of_full_replay",
-     "crates/tine-core/src/sync_runtime_tests.rs::checkpoint_roster_surfaces_missing_authoritative_manifest_immediately",
      "crates/tine-core/src/sync_runtime_tests.rs::checkpoint_roster_never_masks_mutated_authoritative_manifest",
-     "crates/tine-core/src/sync_runtime_tests.rs::checkpoint_roster_surfaces_missing_required_object_immediately",
      "crates/tine-core/src/sync_runtime_tests.rs::checkpoint_open_matches_sequence_zero_replay_over_generated_crash_histories",
      "crates/tine-core/src/sync_runtime_tests.rs::pre_07_shared_descriptor_fixture_routes_to_preserve_and_rebuild",
      "crates/tine-core/src/sync_runtime_tests.rs::failure_after_clean_activation_retain_completes_on_the_next_open",
@@ -516,7 +977,7 @@
     "scenario": "managed-clean-open.disposable-checkpoint-tail-only",
     "failBefore": "at e19514f98cf1044391f3a3d2f09d2579275353ee, sync_runtime_tests::second_clean_cold_open_restores_checkpoint_instead_of_full_replay fails because the second clean open replays every accepted batch (no checkpoint path exists); the checkpoint_open_counter unit test fails for the same reason"
    },
-   "notes": "Before Harvest A5 every clean reopen semantically reapplied every accepted batch onto sequence-zero genesis: N=800 committed_tail_replay measured 1253.5 ms and 90.0% of clean recovery. The checkpoint is disposable, compares its roster/fingerprints against authoritative archive evidence, existence-checks required objects by name, and falls back without a new refusal; a roster-named manifest or object missing from the archive is surfaced as MS-REF-DISK-CORRUPT (archive damage, not checkpoint damage). Wave 3 captures only roster/object deltas after the durable frontier, compares canonical per-block state across checkpoint and full replay, removes the pre-0.7 sharing descriptor decoder, and resumes a failure after authoritative activation retain. Martin accepted option (a) on 2026-09-02: the prior open ratios are accepted with archive rebaselining as the terminal bound, while per-save capture is gated at N=800/N=50 <= 1.25."
+   "notes": "Before Harvest A5 every clean reopen semantically reapplied every accepted batch onto sequence-zero genesis: N=800 committed_tail_replay measured 1253.5 ms and 90.0% of clean recovery. The checkpoint is disposable, compares its roster/fingerprints against authoritative archive evidence, existence-checks required objects by name, and falls back without a new refusal; a roster-named manifest or object missing from the archive is surfaced as MS-REF-DISK-CORRUPT (archive damage, not checkpoint damage). Wave 3 captures only roster/object deltas after the durable frontier, compares canonical per-block state across checkpoint and full replay, removes the pre-0.7 sharing descriptor decoder, and resumes a failure after authoritative activation retain. Martin accepted option (a) on 2026-09-02: the prior open ratios are accepted with archive rebaselining as the terminal bound, while per-save capture is gated at N=800/N=50 <= 1.25. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::checkpoint_roster_surfaces_missing_authoritative_manifest_immediately; crates/tine-core/src/sync_runtime_tests.rs::checkpoint_roster_surfaces_missing_required_object_immediately. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release. Current checkpoint_roots_resolve_a_retired_hot_manifest_from_cold_history and checkpoint_roots_resolve_a_retired_hot_object_from_cold_history instead assert successful reopen when cold history covers deleted hot files; they are not substitutes for missing-authoritative-evidence refusal. The previous hot-roster-only description above is historical after rebaselining."
   },
   {
    "id": "REG-HARVEST-F-CONTENT-DEPTH-BOUNDS-001",
@@ -3901,11 +4362,10 @@
    "status": "covered",
    "coverage": {
     "tests": [
-     "crates/tine-core/src/sync_runtime_tests.rs::r5a_a_pending_page_local_query_is_answered_off_the_actor",
      "crates/tine-core/src/sync_runtime.rs::managed_activation_single_page_block_scale_manual_benchmark"
     ]
    },
-   "notes": "Historical admission fixes removed false cumulative parser-memory estimates and increased bounded coordinator slices. The retained manual benchmark covers 5,000, 10,000 and 20,000-block page admission. Query campaign retirement removed the old sparse candidate-query implementation and its test; the current pending-query fixture proves off-actor SQL selection without page hydration, but does not substitute for the 20,000-block manual admission benchmark. No current claim relies on the retired sparse-query reader."
+   "notes": "Historical admission fixes removed false cumulative parser-memory estimates and increased bounded coordinator slices. The retained manual benchmark covers 5,000, 10,000 and 20,000-block page admission. Query campaign retirement removed the old sparse candidate-query implementation and its test; the current pending-query fixture proves off-actor SQL selection without page hydration, but does not substitute for the 20,000-block manual admission benchmark. No current claim relies on the retired sparse-query reader. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime_tests.rs::r5a_a_pending_page_local_query_is_answered_off_the_actor. The removed pending-query witness did not test 20,000-block admission. The retained ignored manual release benchmark explicitly activates 5,000/10,000/20,000 blocks and asserts the admitted count; existing admission coverage status is retained, with no new execution claimed. The earlier note about a current pending-query fixture is historical and no longer a coverage claim."
   },
   {
    "id": "REG-ANDROID-STRUCTURAL-BLOCK-MOVE-312",
@@ -6059,14 +6519,14 @@
     "all"
    ],
    "layer": "rust-core-storage",
-   "status": "covered",
+   "status": "needs-revalidation",
    "coverage": {
     "tests": [
-     "crates/tine-core/src/sync_runtime.rs::tests::clean_foreground_page_can_be_saved_again_after_hot_document_eviction"
+     "crates/tine-core/src/sync_runtime_tests.rs::clean_foreground_page_can_be_saved_again_after_unrelated_page_edits"
     ],
     "failBefore": "On the exact MS-15 base, 64 distinct page saves succeeded, but after the 65th page displaced the first document from the bounded hot set, a second save of the first page was refused during trusted-local predecessor capture because its manifested projection no longer matched the history-materialized deterministic rendering. The same second save passed when only 64 pages were involved."
    },
-   "notes": "Discovered by the MS-15 anonymized-corpus recovery benchmark, then reduced to a content-independent 65-page synthetic fixture. The bounded cache had evicted both a CRDT document and its run-local head entry; the cold path mistook that cache miss for an untouched lazy-genesis document and omitted the accepted edit. A no-scratch clean runtime now recovers missing hot heads from its authoritative accepted frontier and reconstructs the exact accepted document tail. Projection and reconciliation checks remain unchanged. The corpus benchmark also excludes first-block replacements that would delete an externally imported id:: property: that is an intentional identity refusal, not a representative content edit."
+   "notes": "Discovered by the MS-15 anonymized-corpus recovery benchmark, then reduced to a content-independent 65-page synthetic fixture. The bounded cache had evicted both a CRDT document and its run-local head entry; the cold path mistook that cache miss for an untouched lazy-genesis document and omitted the accepted edit. A no-scratch clean runtime now recovers missing hot heads from its authoritative accepted frontier and reconstructs the exact accepted document tail. Projection and reconciliation checks remain unchanged. The corpus benchmark also excludes first-block replacements that would delete an externally imported id:: property: that is an intentional identity refusal, not a representative content edit. 2026-09-13 coverage reconciliation at 3602f3e4: removed unresolved executable references (historical evidence only): crates/tine-core/src/sync_runtime.rs::tests::clean_foreground_page_can_be_saved_again_after_hot_document_eviction. The original contract and fail-before history above are retained, but current full coverage is not established. Surviving tests remain partial evidence; this metadata repair does not certify the contract or authorize release. The surviving 65-page save fixture explicitly does not assert eviction; it cannot certify the nonresident-document contract."
   },
   {
    "id": "REG-MANAGED-MS16-CURRENT-ACTOR-ONLY",
@@ -7357,6 +7817,50 @@
   "failBefore": "On d61cfb3d the test panics after 10 s: 'queries never answered again after a save that created a block; last: not ready (recovering)', with 495 'projection is stale; indexed reads are unavailable' lines (tine-agents/evidence/2026-09-11-query-fixes/wedge-fail-before.log)"
  },
  "notes": "User outcome: pressing Enter to create a block, then saving, made every query in the app say 'Rebuilding the query index...' permanently (a plain text edit did not). Classification: blocking core operation. Mechanism: a block created in the editor is saved with the frontend's live id (b<base36 time>-<n>), which the in-memory save path deliberately keeps; lower_blocks refused the WHOLE page delta because that id is not a UUID, the failed turn latched a full rebuild, and every rebuild re-lowered the same live document and failed the same way. Fix: a non-UUID live id gets a deterministic 16-byte projection key (the row's public identity is the id string, so answers still name the block by the editor's id). The walk fallback the query campaign retired used to hide this refusal."
+},
+{
+ "id": "REG-COLD-HISTORY-INDEX-INIT-RACE-001",
+ "title": "Cold-history publication must not depend on the sealed accepted index store already existing",
+ "family": "managed-storage",
+ "sources": { "issues": [], "commits": [], "internal": "2026-09-13 master CI: intermittent failure across runs 34686286172 and 34751395025" },
+ "platforms": ["all"], "layer": "rust-core", "status": "reported",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/oplog/sqlite.rs::tests::projection_replay_resolves_a_rebaselined_batch_through_the_single_resolver"
+  ],
+  "scenario": "managed.cold-history-index-init",
+  "failBefore": "Hosted CI only: panics at oplog/sqlite.rs:12650 on publish_cold_history_for_batches().unwrap() with ColdHistoryRootMissing; stderr names the cause as 'sealed accepted index store: No such file or directory (os error 2)' and the same run logs 'clean checkpoint write failed; retrying at the next trigger: cold history index is unavailable'. Does not reproduce locally (42/42 green, serial and 12-way parallel)."
+ },
+ "notes": "QUARANTINED, NOT FIXED -- the test carries #[ignore] and must be un-ignored before the next release (Martin's call, 2026-09-13). Quarantined rather than patched because the failure is very likely a production initialization-ORDER defect in cold-history/sealed-index setup rather than a test defect: the checkpoint writer itself fails with the same missing-store cause in the same run, so a test-side workaround would hide a real storage bug. Suspected user-visible shape if confirmed: on a machine/timing where the sealed accepted index store is not yet present, a clean checkpoint write fails and retries indefinitely, so cold history never becomes available and hot objects are never retired -- an availability and unbounded-growth risk, not a corruption risk. Do not un-ignore without diagnosing why the store directory is absent at that point."
+},
+{
+ "id": "REG-WINDOWS-SMB-CAPABILITY-UNC-533",
+ "title": "Capability directory enumeration preserves absolute UNC paths on Windows SMB graphs",
+ "family": "direct-files-graph-open",
+ "sources": {
+  "issues": [
+   533
+  ],
+  "commits": [
+   "d5600500"
+  ],
+  "internal": "Windows loopback SMB fail-before and pass-after using exact cap-primitives4.0.2 dependency"
+ },
+ "platforms": [
+  "windows"
+ ],
+ "layer": "filesystem-capability-dependency",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "vendor/cap-primitives-4.0.2/src/windows/fs/get_path.rs::tests::removing_extended_prefix_keeps_unc_paths_absolute",
+   "scripts/probes/windows-smb-open/run.ps1",
+   ".github/workflows/ci.yml#windows-smb-probe"
+  ],
+  "scenario": "windows.smb-unc-and-mapped-retained-handle-enumeration",
+  "failBefore": "https://github.com/martinkoutecky/tine/actions/runs/34755503592 : local path passes; both UNC and mappedZ pass ambient writes/reads, cap no-follow directory open and FileIdInfo but entries() fails NotFound OS3."
+ },
+ "notes": "The owning cap-primitives helper reconstructed a retained Windows handle's extended UNC path by stripping only the first4 prefix code units, yielding relative UNC/server/share. The local patch converts that prefix to ordinary absolute UNC while preserving the existing local-drive conversion and caller no-follow/conflict/durability guards. Pass-after https://github.com/martinkoutecky/tine/actions/runs/34755743020 : same local/UNC/mapped paths enumerate and read, nested Unicode files read, all3 outside junction controls refuse with OS681, and the prefix unit cases pass. This is a proven Windows loopback capability-layer correction, not a claim that every NAS implementation or full Tauri workflow was exercised."
 }
 ]
 }

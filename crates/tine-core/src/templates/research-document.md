@@ -23,6 +23,7 @@ icon:: 📖
   - What you should see: your note cites the source live, not as a copied excerpt — touch nothing, and the quote still opens the PDF at the right page tomorrow.
 - ## Share the result
   - 1. From the notes page title's right-click menu (or its ⋯ menu): **Copy page as Markdown** puts a clean outline on the clipboard, **Copy / export as…** offers a rendered copy, and **Export to PDF…** prints the whole page through your OS print dialog — always on a light background, whatever your theme. While query results are updating, PDF preparation waits and retries. If a query exceeds a Print limit, narrow it and try again; Tine shows the reason and opens no print dialog for an incomplete page.
+  - A query about pages cannot currently be included in a printed page. Starting another **Export to PDF…** or switching graphs cancels the earlier preparation.
   - 2. Publishing on the web? Pages marked `public:: true` are included in the static HTML export (Settings → Graph → **Export graph to HTML**).
   - Your annotations are stored Logseq-compatibly — the `hls__` page with your notes, an `.edn` sidecar and any clipped area images under `assets/` — so launch snapshots cover your notes, config, and PDF highlights (not media files), and another Logseq-compatible tool reads the same annotations.
 - ## Where next

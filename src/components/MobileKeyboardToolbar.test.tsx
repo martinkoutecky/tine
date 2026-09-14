@@ -156,7 +156,7 @@ describe("MobileKeyboardToolbar", () => {
     probe.onclick = () => probeClicks++;
     document.body.appendChild(probe);
     const { div, dispose } = mount(render, MobileKeyboardToolbar);
-    const toolbarOf = () => div.querySelector("[data-mobile-keyboard-toolbar]");
+    const toolbarOf = () => div.querySelector("[data-mobile-keyboard-toolbar]:not([hidden])");
     expect(toolbarOf()).not.toBeNull();
 
     // pointerdown blurs (keyboard starts hiding) — unchanged behavior.
@@ -204,7 +204,7 @@ describe("MobileKeyboardToolbar", () => {
       blur() {},
     });
     const { div, dispose } = mount(render, MobileKeyboardToolbar);
-    const toolbarOf = () => div.querySelector("[data-mobile-keyboard-toolbar]");
+    const toolbarOf = () => div.querySelector("[data-mobile-keyboard-toolbar]:not([hidden])");
 
     const hide = toolbarOf()!.querySelector<HTMLButtonElement>(".mobile-keyboard-toolbar-hide")!;
     vi.useFakeTimers();
@@ -254,7 +254,7 @@ describe("MobileKeyboardToolbar", () => {
     expect(calls).toEqual(["editor/indent"]);
 
     // The click a cooperative WebView still emits must not run it a second time.
-    indent.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    indent.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
     expect(calls).toEqual(["editor/indent"]);
 
     // Keyboard and assistive technology deliver a bare click; it must still work.
@@ -263,6 +263,53 @@ describe("MobileKeyboardToolbar", () => {
 
     unregister();
     dispose();
+  });
+
+  it("keeps toolbar ownership across an editor handoff and consumes a retargeted click", async () => {
+    const { render } = await import("solid-js/web");
+    const bridge = await import("../editorCommandBridge");
+    const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
+    const calls: string[] = [];
+    let unregister = () => {};
+    const register = () => bridge.registerFocusedEditorCommandBridge({
+      blockId: "current",
+      dispatch(command) {
+        calls.push(command);
+        unregister();
+        unregister = register();
+        return true;
+      },
+      blur() {},
+    });
+    unregister = register();
+    const { div, dispose } = mount(render, MobileKeyboardToolbar);
+    const toolbar = div.querySelector("[data-mobile-keyboard-toolbar]")!;
+    const strip = toolbar.querySelector<HTMLElement>(".mobile-keyboard-toolbar-strip")!;
+    strip.scrollLeft = 80;
+    const indent = toolbar.querySelector<HTMLButtonElement>('[aria-label="Indent"]')!;
+    indent.dispatchEvent(pointer("pointerdown"));
+    indent.dispatchEvent(pointer("pointerup"));
+    expect(div.querySelector("[data-mobile-keyboard-toolbar]")).toBe(toolbar);
+    expect(strip.scrollLeft).toBe(80);
+    // Android can target a different button after the editor moves. The
+    // completed pointer owns this click regardless of its target.
+    const outdent = div.querySelector<HTMLButtonElement>('[aria-label="Outdent"]')!;
+    outdent.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    expect(calls).toEqual(["editor/indent"]);
+    // A real second gesture is never suppressed by the first one's age.
+    outdent.dispatchEvent(pointer("pointerdown", { pointerId: 2 }));
+    outdent.dispatchEvent(pointer("pointerup", { pointerId: 2 }));
+    expect(calls).toEqual(["editor/indent", "editor/outdent"]);
+    // No compatibility click is required; keyboard/AT still acts immediately.
+    outdent.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(calls).toEqual(["editor/indent", "editor/outdent", "editor/outdent"]);
+    const outside = document.createElement("button");
+    const outsideClick = vi.fn();
+    outside.onclick = outsideClick; document.body.append(outside);
+    outside.dispatchEvent(pointer("pointerdown", { pointerId: 3 }));
+    outside.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    expect(outsideClick).toHaveBeenCalledOnce();
+    outside.remove(); unregister(); dispose();
   });
 
   it("treats a press that slides off the button as a cancel", async () => {

@@ -169,7 +169,7 @@ export function shortcutPaneCommandIds(sections: ShortcutPaneSection[]): string[
 function displayBinding(binding: string): string {
   const b = binding.trim();
   if (!b) return "Unbound";
-  if (b === "false") return "Disabled";
+  if (b === "false") return "Unbound";
   return b;
 }
 
@@ -318,6 +318,7 @@ function ShortcutRow(props: {
   row: ShortcutSettingRow;
   recording: string | null;
   onRecord: (id: string) => void;
+  onUnbind: (id: string) => void;
   onReset: (id: string) => void;
 }): JSX.Element {
   const recording = () => props.recording === props.row.id;
@@ -340,6 +341,15 @@ function ShortcutRow(props: {
         </Show>
       </span>
       <span class="help-shortcut-tail">
+        <Show when={props.row.effective.trim() && props.row.effective !== "false"}>
+          <button
+            class="help-reset"
+            title="Remove this keybinding"
+            onClick={() => props.onUnbind(props.row.id)}
+          >
+            Unbind
+          </button>
+        </Show>
         <Show when={props.row.overridden}>
           <button
             class="help-reset"
@@ -378,6 +388,7 @@ export function ShortcutsSettingsPane(props: {
   search: string;
   recording: string | null;
   onRecord: (id: string) => void;
+  onUnbind: (id: string) => void;
   onReset: (id: string) => void;
 }): JSX.Element {
   const query = () => props.search.trim();
@@ -422,6 +433,7 @@ export function ShortcutsSettingsPane(props: {
                       row={row}
                       recording={props.recording}
                       onRecord={props.onRecord}
+                      onUnbind={props.onUnbind}
                       onReset={props.onReset}
                     />
                   )}

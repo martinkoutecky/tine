@@ -86,6 +86,10 @@ html[data-editable-emoji="apple"] {
 html[data-editable-emoji="android"] {
   --tine-editable-emoji-font: "Noto Color Emoji", "Noto Emoji Variable";
 }
+/* Native display runs share the entire editable stack, including typography
+   presets and text faces that cover some symbols. Keep ordinary text outside
+   these runs in its existing face; never split an emoji sequence (#458). */
+.emoji-native,
 input:not([type="checkbox"]):not([type="radio"]),
 textarea {
   font-family: var(--tine-editable-font, "Inter", var(--tine-editable-emoji-font), var(--ls-font-family)) !important;
@@ -1757,14 +1761,14 @@ textarea {
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
-  line-height: 1.2;
+  line-height: 1.5;
 }
 .page-title-input {
   font-size: var(--ls-page-title-size);
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
-  line-height: 1.2;
+  line-height: 1.5;
   border: none;
   border-bottom: 2px solid var(--accent, #10b981);
   background: transparent;
@@ -5026,8 +5030,21 @@ html[data-theme-journal-header="editorial"] .page-section.journal-today .page-ti
 }
 
 .block-content.done {
-  color: var(--done-color);
+  color: var(--text-primary);
+  opacity: 0.5;
+  text-decoration: none;
+}
+/* Decorate content separately from its task controls: an ancestor decoration
+   cannot be canceled with text-decoration:none on the marker itself. */
+.block-content.done > :not(.block-marker):not(.block-task-checkbox):not(.block-refs-count) {
   text-decoration: line-through;
+}
+/* A block reference can contain its own task label (#518). Its text keeps the
+   completion strike, while this atomic inline box keeps the label unstruck. */
+.block-content.done .block-ref .block-marker {
+  display: inline-block;
+  line-height: normal;
+  text-decoration: none;
 }
 
 /* headings — re-assert a ratio line-height (the block uses a fixed 26px; without this
@@ -5560,17 +5577,24 @@ html[data-theme-journal-header="editorial"] .page-section.journal-today .page-ti
   box-sizing: border-box;
   vertical-align: -1px;
   margin-right: 1px;
-  border: 1.5px solid color-mix(in srgb, currentColor 45%, transparent);
+  --task-checkbox-color: var(--marker-color);
+  border: 1.5px solid var(--task-checkbox-color);
   border-radius: 3px;
   cursor: pointer;
   position: relative;
 }
-.block-task-checkbox:hover {
-  border-color: var(--accent, #4c8bf5);
+.block-task-checkbox:has(+ .marker-todo) { --task-checkbox-color: var(--marker-todo); }
+.block-task-checkbox:has(+ .marker-doing) { --task-checkbox-color: var(--marker-doing); }
+.block-task-checkbox:has(+ .marker-now) { --task-checkbox-color: var(--marker-now); }
+.block-task-checkbox:has(+ .marker-later) { --task-checkbox-color: var(--marker-later); }
+.block-task-checkbox:has(+ .marker-waiting),
+.block-task-checkbox:has(+ .marker-in-progress) { --task-checkbox-color: var(--marker-waiting); }
+.block-task-checkbox:not(.checked):hover {
+  background: color-mix(in srgb, var(--task-checkbox-color) 20%, transparent);
 }
 .block-task-checkbox.checked {
-  background: var(--accent, #4c8bf5);
-  border-color: var(--accent, #4c8bf5);
+  background: var(--marker-done);
+  border: none;
 }
 .block-task-checkbox.checked::after {
   content: "";
@@ -11145,6 +11169,27 @@ html.drag-selection-suppressed * {
    (Notes) journeys were reporting. Guarded by
    scripts/check-pdf-overflow-reachability.mjs. */
 @container pdfviewer (max-width: 520px) {
+  /* Give the document title its own row so the fixed pager/zoom controls
+     cannot push More and Close outside a phone-sized pane. */
+  .pdf-toolbar {
+    height: 64px;
+    flex-basis: 64px;
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: 4px;
+  }
+  .pdf-title {
+    flex: 0 0 100%;
+  }
+  .pdf-toolbar-actions {
+    flex: 0 0 100%;
+    justify-content: space-between;
+    gap: 2px;
+  }
+  .pdf-settings-menu,
+  .pdf-outline-panel {
+    top: 68px;
+  }
   .pdf-toolbar .pdf-overflow-action {
     display: none;
   }
@@ -11727,6 +11772,32 @@ html.drag-selection-suppressed * {
   font-size: 12.5px;
 }
 
+.unsaved-recovery-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 35%);
+}
+.unsaved-recovery-panel {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 20px;
+  width: min(720px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+}
+.recovery-draft pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 250px;
+  overflow: auto;
+  user-select: text;
+}
+.unsaved-recovery-panel button { margin: 4px; }
 .graph-transition-shield {
   position: fixed;
   inset: 0;

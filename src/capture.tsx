@@ -44,8 +44,13 @@ import { CAPTURE_SCRATCH_NAME, createCaptureScratchPage } from "./captureSeed";
 // selection highlight, and data-theme="dark" did nothing.
 import "./styles/theme.css";
 import "./lsShimInstall";
+import "./styles/inter.css";
+import "@fontsource-variable/noto-emoji/wght.css";
+import { installEditableEmojiPlatform } from "./editableEmoji";
 import "./styles/app.css";
 import "./styles/capture.css";
+
+installEditableEmojiPlatform();
 
 const SCRATCH = CAPTURE_SCRATCH_NAME;
 
@@ -73,9 +78,10 @@ function Capture() {
   const [shortcuts, setShortcuts] = createSignal<Record<string, string>>({});
   const [captureStatus, setCaptureStatus] = createSignal<"idle" | "saving" | "error">("idle");
   const [captureMessage, setCaptureMessage] = createSignal("");
-  const submitShortcut = () =>
-    formatBinding(shortcuts()["editor/quick-capture-file"] || "mod+shift+enter");
-  const bulletHint = () => `Edit as usual, ${submitShortcut()} to submit`;
+  const submitBinding = () => shortcuts()["editor/quick-capture-file"] ?? "mod+shift+enter";
+  const bulletHint = () => submitBinding() === "false"
+    ? "Edit as usual; use File capture to submit"
+    : `Edit as usual, ${formatBinding(submitBinding())} to submit`;
   let titleRef: HTMLInputElement | undefined;
 
   const roots = () => pageByName(SCRATCH)?.roots ?? [];
@@ -577,6 +583,13 @@ function Capture() {
           <div class="page-blocks">
             <For each={roots()}>{(rid) => <Block id={rid} />}</For>
           </div>
+          <Show when={submitBinding() === "false"}>
+            <div class="capture-actions">
+              <button type="button" onClick={submit} disabled={captureStatus() === "saving"}>
+                File capture
+              </button>
+            </div>
+          </Show>
           <Show when={captureMessage()}>
             <div
               class="capture-status"

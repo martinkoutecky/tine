@@ -196,6 +196,7 @@ class AndroidUiRuntimeTest {
   @Test
   fun longPressPageReferenceOpensExactlyOnePageActionsMenuWithoutPreviewSelectionOrNavigation() {
     withFreshDemoGraph("longPressPageReferenceOpensExactlyOnePageActionsMenuWithoutPreviewSelectionOrNavigation") { _, webView ->
+      dismissFirstRunNotices(webView)
       val pageRef = awaitVisibleElementByScrolling(webView, "a.page-ref", "a rendered page reference in the demo graph")
       installLongPressMutationTrace(webView)
       val before = locationAndSelection(webView)
@@ -239,6 +240,17 @@ class AndroidUiRuntimeTest {
   @Test
   fun initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement() {
     withFreshDemoGraph("initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement") { scenario, webView ->
+      dismissFirstRunNotices(webView)
+      val graphRoot = findGeneratedDirectFilesGraph(ApplicationProvider.getApplicationContext<Context>())
+      val welcome = File(graphRoot, "pages").listFiles()?.singleOrNull {
+        it.isFile && runCatching { it.readText().contains("# Welcome to Tine") }.getOrDefault(false)
+      } ?: throw AssertionError("missing generated Welcome fixture")
+      welcome.writeText("# Welcome to Tine\n\n- Native selection paragraph has ordinary editable words across several visual lines so the caret can begin on the first line before a still hold selects a word on the second line.\n- Short selection words\n")
+      awaitCondition("production watcher imports editable native selection paragraphs") {
+        evaluateJson(webView, """
+          (() => JSON.stringify({ imported: document.body.textContent.includes('Native selection paragraph') }))()
+        """.trimIndent()).optBoolean("imported")
+      }
       val selections = JSONArray()
       val failures = mutableListOf<String>()
 
@@ -253,24 +265,68 @@ class AndroidUiRuntimeTest {
       )) {
         val target = awaitContentBlock(webView, textBounds.first, textBounds.second, kind == "single-line")
         val blockId = target.getString("blockId")
-        tapContentEditorEntry(webView, target)
-        val textarea = awaitEditor(webView, blockId, kind != "single-line")
+        val entryHit = evaluateJson(webView, """
+          (() => {
+            const content = document.querySelector('.ls-block[data-block-id="${blockId}"] > .block-main > .block-content-wrapper');
+            const rect = content.getBoundingClientRect();
+            const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 20;
+            const hit = document.elementFromPoint(rect.right - 6, rect.top + lineHeight / 2);
+            return JSON.stringify({ blockId: hit?.closest('.ls-block')?.dataset.blockId || '',
+              contentOwner: hit?.closest('.block-content-wrapper')?.closest('.ls-block')?.dataset.blockId || '',
+              tag: hit?.tagName || '', className: hit?.className || '', target: ${target},
+              currentBounds: { left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+                lineHeight, viewportWidth: innerWidth, viewportHeight: innerHeight } });
+          })()
+        """.trimIndent())
+        assertEquals("native editor entry must hit the selected block: $entryHit", blockId, entryHit.optString("blockId"))
+        assertEquals("native editor entry must hit editable content: $entryHit", blockId, entryHit.optString("contentOwner"))
+        Log.i(RECEIPT_TAG, "native selection entry: $entryHit")
+        tapContentEditorEntry(webView, entryHit.getJSONObject("currentBounds"))
+        awaitEditor(webView, blockId, kind != "single-line")
+        showIme(scenario, webView)
+        var textarea = awaitEditor(webView, blockId, kind != "single-line")
         if (kind != "single-line") {
           // Establish the reporter's literal starting state through touch: the
           // caret is on visual line one while the keyboard is already open,
           // then the only long press lands on visual line two.
           tapAtEditorLine(webView, textarea, 0)
+          textarea = awaitEditor(webView, blockId, true)
         }
-        showIme(scenario, webView)
+        evaluateJson(webView, """
+          (() => {
+            window.__nativeSelectionEvents = [];
+            if (!window.__nativeSelectionTraceInstalled) {
+              window.__nativeSelectionTraceInstalled = true;
+              for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'touchstart', 'touchend', 'contextmenu', 'selectionchange']) {
+                document.addEventListener(type, event => {
+                  const editor = document.activeElement;
+                  window.__nativeSelectionEvents.push({type, time: performance.now(), trusted: event.isTrusted,
+                    target: event.target?.className || event.target?.nodeName, x: event.clientX, y: event.clientY,
+                    touchX: event.touches?.[0]?.clientX, touchY: event.touches?.[0]?.clientY,
+                    pointerId: event.pointerId, pointerType: event.pointerType,
+                    start: editor?.selectionStart, end: editor?.selectionEnd});
+                }, true);
+              }
+            }
+            return JSON.stringify({installed:true});
+          })()
+        """.trimIndent())
+        captureStageScreenshot("selection-$kind-before-hold")
         val imeBefore = imeVisible(webView)
         val orientationBefore = currentOrientation(scenario)
         val before = selectionState(webView, blockId)
+        before.put("holdEditorBounds", textarea)
+        before.put("nativeViewport", nativeViewportState(webView))
+        val holdPoint = if (kind == "single-line") motionPoint(webView, textarea) else editorLinePoint(webView, textarea, 1)
+        before.put("holdMotionPoint", JSONArray().put(holdPoint.first.toDouble()).put(holdPoint.second.toDouble()))
         if (kind == "single-line") longPress(webView, textarea) else longPressAtEditorLine(webView, textarea, 1)
+        captureStageScreenshot("selection-$kind-after-hold")
         val completeStateObserved = waitForCondition(SELECTION_TIMEOUT_MS) {
           val state = selectionState(webView, blockId)
           state.optInt("selectionLength") > 0 && state.optBoolean("toolbarVisible") && imeVisible(webView)
         }
         val observed = selectionState(webView, blockId)
+        observed.put("events", evaluateJson(webView, "JSON.stringify({events: window.__nativeSelectionEvents})").getJSONArray("events"))
         observed.put("kind", kind)
         observed.put("caretProbeVisualLine", if (kind == "single-line") JSONObject.NULL else 0)
         observed.put("holdProbeVisualLine", if (kind == "single-line") 0 else 1)
@@ -312,15 +368,164 @@ class AndroidUiRuntimeTest {
   }
 
   @Test
+  fun toolbarStructuralTouchesDispatchOnceAndRetainHorizontalScroll() {
+    withFreshDemoGraph("toolbarStructuralTouchesDispatchOnceAndRetainHorizontalScroll") { scenario, webView ->
+      dismissFirstRunNotices(webView)
+      evaluateJson(webView, """
+        (() => {
+          window.__tineToolbarEvents = [];
+          for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'click']) {
+            document.addEventListener(type, event => window.__tineToolbarEvents.push({
+              type, target: event.target.closest?.('button')?.getAttribute('aria-label') || event.target.className,
+              x: event.clientX, y: event.clientY, pointerId: event.pointerId,
+            }), true);
+          }
+          return JSON.stringify({installed: true});
+        })()
+      """.trimIndent())
+      // Ordinary app-private Markdown enters through the production watcher.
+      val root = findGeneratedDirectFilesGraph(ApplicationProvider.getApplicationContext<Context>())
+      val welcome = File(root, "pages").listFiles()?.singleOrNull {
+        it.isFile && runCatching { it.readText().contains("# Welcome to Tine") }.getOrDefault(false)
+      } ?: throw AssertionError("missing generated Welcome fixture")
+      welcome.writeText("# Welcome to Tine\n\n- Toolbar A\n- Toolbar B\n  - Toolbar X\n- Toolbar C\n- Toolbar D\n- Toolbar E\n")
+      val target = awaitElementRectByText(webView, ".block-content-wrapper", "Toolbar C")
+      target.put("lineHeight", 24)
+      tapContentEditorEntry(webView, target)
+      showIme(scenario, webView)
+      awaitElementRect(webView, "[aria-label='Editor toolbar']:not([hidden])")
+      val stages = JSONArray()
+      fun state(): JSONObject = evaluateJson(webView, """
+        (() => {
+          const text = row => (row?.querySelector(':scope > .block-main textarea')?.value ||
+            row?.querySelector(':scope > .block-main > .block-content-wrapper')?.textContent || '').trim();
+          const rows = [...document.querySelectorAll('.ls-block')].filter(row => /^Toolbar [A-EX]$/.test(text(row)));
+          const current = rows.find(row => text(row) === 'Toolbar C');
+          const toolbar = document.querySelector('[aria-label="Editor toolbar"]');
+          return JSON.stringify({events: window.__tineToolbarEvents, activeEditor: document.activeElement === current?.querySelector('textarea.block-editor'),
+            parent: text(current?.parentElement?.closest('.ls-block')),
+            order: rows.filter(row => !row.parentElement?.closest('.ls-block')).map(text).join(','),
+            scroll: toolbar?.querySelector('.mobile-keyboard-toolbar-strip')?.scrollLeft ?? toolbar?.scrollLeft ?? 0});
+        })()
+      """.trimIndent())
+      fun action(label: String, parent: String, order: String) {
+        val selector = "[aria-label='Editor toolbar'] button[aria-label='$label']"
+        var bounds = awaitElementRect(webView, selector)
+        var geometry = JSONObject()
+        val tappable = waitForCondition(SELECTION_TIMEOUT_MS) {
+          bounds = awaitElementRect(webView, selector)
+          val point = motionPoint(webView, bounds)
+          val location = IntArray(2)
+          val rootLocation = IntArray(2)
+          webView.getLocationOnScreen(location)
+          webView.rootView.getLocationOnScreen(rootLocation)
+          val imeBottom = webView.rootWindowInsets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0
+          val imeTop = rootLocation[1] + webView.rootView.height - imeBottom
+          val hit = evaluateJson(webView, """
+            (() => {
+              const button = document.querySelector(${JSONObject.quote(selector)});
+              const rect = button.getBoundingClientRect();
+              const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+              return JSON.stringify({matches: target === button || button.contains(target),
+                target: target?.closest('button')?.getAttribute('aria-label') || target?.className || ''});
+            })()
+          """.trimIndent())
+          geometry = JSONObject().put("button", bounds).put("motionY", location[1] + point.second)
+            .put("imeTop", imeTop).put("imeBottom", imeBottom).put("webViewHeight", webView.height).put("hit", hit)
+          imeBottom > 0 && location[1] + point.second < imeTop && hit.optBoolean("matches")
+        }
+        stages.put(JSONObject().put("action", "$label touch geometry").put("geometry", geometry))
+        emitReceipt("toolbarStructuralTouchesDispatchOnceAndRetainHorizontalScroll",
+          JSONObject().put("journey", "495-496-native-toolbar").put("stages", stages))
+        assertTrue("toolbar must be physically above the IME before touch: $geometry", tappable)
+        tap(webView, bounds)
+        SystemClock.sleep(500) // Observe the compatibility click too, not just pointerup.
+        val observed = state().put("action", label)
+        stages.put(observed)
+        assertTrue("one $label touch must retain the active editor: $observed", observed.getBoolean("activeEditor"))
+        assertEquals("one $label touch parent: $observed", parent, observed.getString("parent"))
+        assertEquals("one $label touch order: $observed", order, observed.getString("order"))
+      }
+      action("Indent", "Toolbar B", "Toolbar A,Toolbar B,Toolbar D,Toolbar E")
+      action("Indent", "Toolbar X", "Toolbar A,Toolbar B,Toolbar D,Toolbar E")
+      action("Outdent", "Toolbar B", "Toolbar A,Toolbar B,Toolbar D,Toolbar E")
+      action("Outdent", "", "Toolbar A,Toolbar B,Toolbar C,Toolbar D,Toolbar E")
+      action("Move block up", "", "Toolbar A,Toolbar C,Toolbar B,Toolbar D,Toolbar E")
+      action("Move block down", "", "Toolbar A,Toolbar B,Toolbar C,Toolbar D,Toolbar E")
+      val strip = awaitElementRect(webView, ".mobile-keyboard-toolbar-strip")
+      val start = motionPoint(webView, strip)
+      val end = motionPoint(webView, strip,
+        strip.getDouble("left") + strip.getDouble("width") / 2 - 42,
+        strip.getDouble("top") + strip.getDouble("height") / 2)
+      val down = SystemClock.uptimeMillis()
+      dispatchMotion(webView, down, MotionEvent.ACTION_DOWN, start.first, start.second)
+      repeat(12) { index ->
+        SystemClock.sleep(25)
+        dispatchMotion(webView, down, MotionEvent.ACTION_MOVE,
+          start.first + (end.first - start.first) * (index + 1) / 12, start.second)
+      }
+      SystemClock.sleep(300)
+      dispatchMotion(webView, down, MotionEvent.ACTION_UP, end.first, end.second)
+      SystemClock.sleep(300)
+      val scrolled = state()
+      stages.put(scrolled.put("action", "native horizontal swipe"))
+      assertTrue("physical toolbar swipe must change scroll: $scrolled", scrolled.getDouble("scroll") > 10)
+      assertEquals("swipe must not move the block", "", scrolled.getString("parent"))
+      action("Indent", "Toolbar B", "Toolbar A,Toolbar B,Toolbar D,Toolbar E")
+      assertEquals("editor handoff must preserve strip scroll", scrolled.getDouble("scroll"), state().getDouble("scroll"), 1.0)
+      val keyboardViewportHeight = webView.height
+      tap(webView, awaitElementRect(webView, "button[aria-label='Hide keyboard']"))
+      awaitCondition("native viewport recovers after hiding the keyboard") {
+        !imeVisible(webView) && webView.height > keyboardViewportHeight
+      }
+      stages.put(JSONObject().put("action", "hide keyboard")
+        .put("keyboardViewportHeight", keyboardViewportHeight).put("restoredViewportHeight", webView.height))
+      val reopened = awaitElementRectByText(webView, ".block-content-wrapper", "Toolbar C")
+      reopened.put("lineHeight", 24)
+      tapContentEditorEntry(webView, reopened)
+      showIme(scenario, webView)
+      // The stable strip retains its scroll across keyboard hide/reopen. Reveal
+      // Outdent with a real swipe before attempting its guarded native tap.
+      val reopenedStrip = awaitElementRect(webView, ".mobile-keyboard-toolbar-strip")
+      val reverseStart = motionPoint(webView, reopenedStrip)
+      val reverseEnd = motionPoint(webView, reopenedStrip,
+        reopenedStrip.getDouble("left") + reopenedStrip.getDouble("width") / 2 + 64,
+        reopenedStrip.getDouble("top") + reopenedStrip.getDouble("height") / 2)
+      val reverseDown = SystemClock.uptimeMillis()
+      dispatchMotion(webView, reverseDown, MotionEvent.ACTION_DOWN, reverseStart.first, reverseStart.second)
+      repeat(12) { index ->
+        SystemClock.sleep(25)
+        dispatchMotion(webView, reverseDown, MotionEvent.ACTION_MOVE,
+          reverseStart.first + (reverseEnd.first - reverseStart.first) * (index + 1) / 12, reverseStart.second)
+      }
+      SystemClock.sleep(300)
+      dispatchMotion(webView, reverseDown, MotionEvent.ACTION_UP, reverseEnd.first, reverseEnd.second)
+      awaitCondition("reverse swipe reveals the leading toolbar controls") { state().getDouble("scroll") <= 1 }
+      val revealed = state()
+      stages.put(revealed.put("action", "native reverse swipe after reopen"))
+      assertEquals("reverse swipe must not move the block", "Toolbar B", revealed.getString("parent"))
+      action("Outdent", "", "Toolbar A,Toolbar B,Toolbar C,Toolbar D,Toolbar E")
+      emitReceipt("toolbarStructuralTouchesDispatchOnceAndRetainHorizontalScroll",
+        JSONObject().put("journey", "495-496-native-toolbar").put("stages", stages))
+    }
+  }
+
+  @Test
   fun generatedDirectFilesPdfRouteHonorsHardwareBackHistory() {
     withFreshDemoGraph("generatedDirectFilesPdfRouteHonorsHardwareBackHistory") { scenario, webView ->
+      dismissFirstRunNotices(webView)
       val fixture = installGeneratedPdfLinkFixture()
       val sourceRoute = "Welcome to Tine"
       val notesRoute = "hls__android-route"
       val stages = JSONArray()
 
       awaitCondition("production watcher imports the generated Direct Files link") {
-        pdfRouteState(webView).optInt("sourcePdfLinks") == 1
+        // Offscreen AstBody content is intentionally a raw deferred placeholder.
+        // Import must precede scrolling; parsed PDF anchors need not exist yet.
+        evaluateJson(webView, """
+          (() => JSON.stringify({ imported: [...document.querySelectorAll('.block-content-wrapper')]
+            .some(content => content.textContent.includes('Android route PDF')) }))()
+        """.trimIndent()).optBoolean("imported")
       }
       val pdfLink = awaitVisibleElementByScrolling(
         webView,
@@ -574,6 +779,15 @@ class AndroidUiRuntimeTest {
     }
   }
 
+  private fun dismissFirstRunNotices(webView: WebView) {
+    // Sticky Guide/CPU notices may cover a valid editor or link target.
+    // Use their actual controls, keeping native hit testing intact.
+    for (attempt in 0 until 8) {
+      val close = elementRectOrNull(webView, ".toast-close") ?: break
+      tap(webView, close)
+    }
+  }
+
   /**
    * Add one generated PDF link to the app-owned demo graph that the first-run
    * journey just created. This stays entirely in Direct Files: instrumentation
@@ -777,7 +991,8 @@ class AndroidUiRuntimeTest {
               const singleLine = rect.height <= lineHeight * 1.6;
               return length >= $minimumTextLength && length <= $maximumTextLength &&
                 (${if (requireSingleVisualLine) "singleLine" else "!singleLine"}) &&
-                rect.top > 64 && rect.bottom < window.innerHeight * 0.58;
+                rect.top > 64 &&
+                (${if (requireSingleVisualLine) "rect.bottom" else "rect.top + lineHeight * 2"}) < window.innerHeight * 0.58;
             });
           if (!block) return null;
           const content = block.querySelector(':scope > .block-main > .block-content-wrapper');
@@ -789,13 +1004,52 @@ class AndroidUiRuntimeTest {
             lineHeight, blockId: block.dataset.blockId, textLength: content.innerText.trim().length });
         })()
       """.trimIndent())
-      if (result != null) return result
+      if (result != null) return awaitStableContentTarget(webView, result)
       if (attempt < MAX_FIXTURE_SCROLLS) swipeUp(webView)
     }
     throw AssertionError(
       "timed out waiting for a demo block with $minimumTextLength..$maximumTextLength visible characters " +
         "after $MAX_FIXTURE_SCROLLS native scroll gestures",
     )
+  }
+
+  private fun awaitStableContentTarget(webView: WebView, initial: JSONObject): JSONObject {
+    var previous: JSONObject? = null
+    var settled = initial
+    var stableSamples = 0
+    val keys = listOf("left", "top", "width", "height", "viewportWidth", "viewportHeight")
+    awaitCondition("same editable target settles after imported AST, fonts and viewport layout") {
+      val current = evaluateJsonOrNull(webView, """
+        (() => {
+          if (document.fonts.status !== 'loaded') return null;
+          if ([...document.querySelectorAll('.ast-deferred')].some(node => {
+            const rect = node.getBoundingClientRect(); return rect.bottom > 0 && rect.top < innerHeight;
+          })) return null;
+          const block = document.querySelector('.ls-block[data-block-id="${initial.getString("blockId")}"]');
+          const content = block?.querySelector(':scope > .block-main > .block-content-wrapper');
+          if (!content) return null;
+          const rect = content.getBoundingClientRect();
+          const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 20;
+          const hit = document.elementFromPoint(rect.right - 6, rect.top + lineHeight / 2);
+          if (hit?.closest('.block-content-wrapper') !== content) return null;
+          return JSON.stringify({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+            viewportWidth: innerWidth, viewportHeight: innerHeight, lineHeight,
+            blockId: block.dataset.blockId, textLength: content.innerText.trim().length });
+        })()
+      """.trimIndent())
+      if (current == null) { stableSamples = 0; false } else {
+        val native = nativeViewportState(webView)
+        val expectedHeight = current.getDouble("viewportHeight") * native.getDouble("webViewWidth") / current.getDouble("viewportWidth")
+        val coordinatesAgree = abs(expectedHeight - native.getDouble("webViewHeight")) <= 1
+        stableSamples = if (coordinatesAgree && previous != null && keys.all {
+          abs(current.getDouble(it) - previous!!.getDouble(it)) < 0.5
+        }) stableSamples + 1 else 0
+        previous = current
+        settled = current.put("nativeViewport", native)
+        stableSamples >= 2
+      }
+    }
+    return settled.put("initialBounds", initial)
   }
 
   private fun setRootZoom(webView: WebView, scale: Double) {
@@ -847,7 +1101,13 @@ class AndroidUiRuntimeTest {
 
   private fun editorLinePoint(webView: WebView, editor: JSONObject, line: Int): Pair<Float, Float> {
     val lineHeight = editor.getDouble("lineHeight")
-    val cssX = editor.getDouble("left") + minOf(56.0, editor.getDouble("width") * 0.32)
+    // Android can place its insertion handle below the first-line caret. The
+    // same-column native probe was intercepted before WebView received any
+    // touch event. Keep the initial second-line hold over text in a separate
+    // column; this is not a handle drag or a retry after selection failure.
+    val column = if (line == 0) minOf(56.0, editor.getDouble("width") * 0.32)
+      else editor.getDouble("width") * 0.60
+    val cssX = editor.getDouble("left") + column
     val cssY = editor.getDouble("top") + lineHeight * (line + 0.5)
     require(cssY < editor.getDouble("top") + editor.getDouble("height")) {
       "requested visual line $line lies outside the active editor: $editor"
@@ -907,10 +1167,11 @@ class AndroidUiRuntimeTest {
     // changing window.innerWidth. Convert back to the physical viewport before
     // injecting; omission previously turned a zoomed overflow tap into Settings.
     val rootZoom = rect.optDouble("rootZoom", 1.0)
-    val x = (cssX * rootZoom * webView.width / viewportWidth)
-      .coerceIn(1.0, (webView.width - 1).toDouble())
-    val y = (cssY * rootZoom * webView.height / viewportHeight)
-      .coerceIn(1.0, (webView.height - 1).toDouble())
+    val x = cssX * rootZoom * webView.width / viewportWidth
+    val y = cssY * rootZoom * webView.height / viewportHeight
+    require(x >= 0 && x < webView.width && y >= 0 && y < webView.height) {
+      "native touch target is outside the viewport; reveal it through the UI before tapping: point=($x,$y), rect=$rect"
+    }
     return x.toFloat() to y.toFloat()
   }
 
@@ -952,7 +1213,7 @@ class AndroidUiRuntimeTest {
       (() => {
         const state = {
           menuAdds: 0, menuRemoves: 0, previewAdds: 0, previewRemoves: 0,
-          selectionEvents: [], routeEvents: [], mutations: [],
+          selectionEvents: [], routeEvents: [], mutations: [], inputEvents: [],
         };
         const route = () => document.querySelector('.page-title')?.textContent?.trim() || '';
         const snapshot = () => ({
@@ -965,6 +1226,14 @@ class AndroidUiRuntimeTest {
           if (!(node instanceof Element)) return 0;
           return (node.matches(selector) ? 1 : 0) + node.querySelectorAll(selector).length;
         };
+        for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'mousedown', 'mouseup', 'click', 'contextmenu']) {
+          document.addEventListener(type, event => state.inputEvents.push({
+            type, trusted: event.isTrusted, target: event.target?.className || event.target?.tagName,
+            path: event.composedPath().slice(0, 6).map(node => node.className || node.tagName || node.constructor.name),
+            x: event.clientX, y: event.clientY, pointerId: event.pointerId,
+            at: performance.now(), ...snapshot(),
+          }), true);
+        }
         const observer = new MutationObserver((records) => {
           for (const record of records) {
             for (const node of record.addedNodes) {
@@ -1030,6 +1299,12 @@ class AndroidUiRuntimeTest {
         selectedText: editor ? editor.value.slice(editor.selectionStart, editor.selectionEnd) : '',
         editorVisualLines: editor ? Math.max(1, Math.round(editor.getBoundingClientRect().height /
           (parseFloat(getComputedStyle(editor).lineHeight) || 20))) : 0,
+        editorBounds: editor?.getBoundingClientRect().toJSON() || null,
+        viewport: { width: innerWidth, height: innerHeight, visualWidth: visualViewport?.width, visualHeight: visualViewport?.height },
+        keyboardToolbarBounds: document.querySelector('[data-mobile-keyboard-toolbar]')?.getBoundingClientRect().toJSON() || null,
+        toolbarBounds: toolbarRect?.toJSON() || null,
+        toolbarDisplay: toolbarStyle?.display || null,
+        toolbarVisibility: toolbarStyle?.visibility || null,
         mobileToolbar: !!toolbar,
         toolbarVisible: !!toolbar && toolbarStyle.display !== 'none' && toolbarStyle.visibility !== 'hidden' &&
           toolbarRect.width > 0 && toolbarRect.height > 0,
@@ -1052,7 +1327,8 @@ class AndroidUiRuntimeTest {
         .put("webViewWidth", webView.width)
         .put("webViewHeight", webView.height)
         .put("statusBarTop", status?.top ?: 0)
-        .put("navigationBarBottom", navigation?.bottom ?: 0))
+        .put("navigationBarBottom", navigation?.bottom ?: 0)
+        .put("imeBottom", rootInsets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0))
       latch.countDown()
     }
     assertTrue("native WebView geometry was unavailable", latch.await(EVALUATE_TIMEOUT_MS, TimeUnit.MILLISECONDS))
@@ -1201,6 +1477,16 @@ class AndroidUiRuntimeTest {
       SystemClock.sleep(POLL_MS)
     }
     return false
+  }
+
+  private fun captureStageScreenshot(name: String) {
+    val directory = File(ApplicationProvider.getApplicationContext<Context>().filesDir, "android-ui-runtime")
+    require(directory.mkdirs() || directory.isDirectory)
+    val screenshot = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+      ?: throw AssertionError("missing native stage screenshot: $name")
+    File(directory, "$name.png").outputStream().use {
+      assertTrue("could not encode native stage screenshot: $name", screenshot.compress(Bitmap.CompressFormat.PNG, 100, it))
+    }
   }
 
   private fun emitReceipt(test: String, receipt: JSONObject) {

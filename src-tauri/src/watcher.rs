@@ -1094,6 +1094,48 @@ fn take_matching_asset_self_write(
     Instant::now().duration_since(write.recorded_at) <= ASSET_SELF_WRITE_TTL && write.stamp == stamp
 }
 
+// notify can label one watched inode through any recursively watched symlink.
+// Add the canonical spelling from every live approved binding before routing
+// to individual windows. Do not canonicalize event files: deleted entries no
+// longer exist, and an event must never grant a new filesystem capability.
+fn normalize_asset_event_aliases<'a>(
+    bindings: impl Iterator<Item = (&'a Path, &'a AssetWatchState)>,
+    exact_paths: &mut HashSet<PathBuf>,
+    full_paths: &mut HashSet<PathBuf>,
+) {
+    if exact_paths.is_empty() && full_paths.is_empty() {
+        return;
+    }
+    let mut exact_additions = HashSet::new();
+    let mut full_additions = HashSet::new();
+    for (graph_root, assets) in bindings {
+        if !assets.active {
+            continue;
+        }
+        let lexical = graph_root.join("assets");
+        if lexical == assets.root {
+            continue;
+        }
+        let map = |path: &Path| {
+            let relative = path.strip_prefix(&lexical).ok()?;
+            relative
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+                .then(|| assets.root.join(relative))
+        };
+        exact_additions.extend(exact_paths.iter().filter_map(|path| map(path)));
+        for path in full_paths.iter() {
+            if let Some(mapped) = map(path) {
+                full_additions.insert(mapped);
+            } else if lexical.starts_with(path) {
+                full_additions.insert(assets.root.clone());
+            }
+        }
+    }
+    exact_paths.extend(exact_additions);
+    full_paths.extend(full_additions);
+}
+
 fn asset_full_scan_owned(root: &Path, paths: &HashSet<PathBuf>) -> bool {
     paths
         .iter()
@@ -2560,6 +2602,21 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
             let explicit_rescan = pending_full_rescan();
             let event_need_full = event_need_full || explicit_rescan.is_some();
 
+            let mut asset_paths = asset_paths;
+            let mut asset_full_paths = asset_full_paths;
+            normalize_asset_event_aliases(
+                graphs
+                    .values()
+                    .map(|graph| (graph.root.as_path(), &graph.assets))
+                    .chain(
+                        sparse_graphs
+                            .values()
+                            .map(|graph| (graph.root.as_path(), &graph.assets)),
+                    ),
+                &mut asset_paths,
+                &mut asset_full_paths,
+            );
+
             // Assets are ordinary externally synchronized files, not managed
             // graph text. Observe only their metadata here and emit one
             // assets-relative cache-invalidation batch; this lane never calls
@@ -3624,6 +3681,129 @@ mod tests {
             None
         );
         assert_eq!(asset_relative_event_path(root, root), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_asset_alias_events_refresh_replacement_and_deletion() {
+        let graph = TempGraph::new("asset-watch-lexical-alias");
+        let canonical = graph.path("external");
+        let lexical = graph.path("assets");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::os::unix::fs::symlink(&canonical, &lexical).unwrap();
+        let image = canonical.join("pixel.png");
+        std::fs::write(&image, b"same bytes").unwrap();
+        let mut state = AssetWatchState::new(canonical.clone());
+        let empty = HashSet::new();
+        // notify's recursive graph watch follows this symlink and may assign
+        // its lexical path to the same descriptor as the canonical watch.
+        let mut exact = HashSet::from([lexical.join("pixel.png")]);
+        normalize_asset_event_aliases(
+            std::iter::once((graph.path("").as_path(), &state)),
+            &mut exact,
+            &mut HashSet::new(),
+        );
+        std::fs::write(canonical.join("replacement"), b"same bytes").unwrap();
+        std::fs::rename(canonical.join("replacement"), &image).unwrap();
+        assert_eq!(
+            reconcile_asset_observation("alias", &mut state, &exact, &empty, false, false),
+            vec!["pixel.png"],
+        );
+        std::fs::remove_file(&image).unwrap();
+        let mut exact = HashSet::from([lexical.join("pixel.png")]);
+        normalize_asset_event_aliases(
+            std::iter::once((graph.path("").as_path(), &state)),
+            &mut exact,
+            &mut HashSet::new(),
+        );
+        assert_eq!(
+            reconcile_asset_observation("alias", &mut state, &exact, &empty, false, false),
+            vec!["pixel.png"],
+        );
+    }
+
+    #[test]
+    fn asset_alias_routing_refreshes_all_shared_root_windows_and_keeps_scope() {
+        let graph = TempGraph::new("asset-alias-shared");
+        let first_root = graph.path("first");
+        let second_root = graph.path("second");
+        let inactive_root = graph.path("inactive");
+        let canonical = graph.path("external");
+        std::fs::create_dir_all(&canonical).unwrap();
+        let image = canonical.join("pixel.png");
+        std::fs::write(&image, b"old").unwrap();
+        let mut first = AssetWatchState::new(canonical.clone());
+        let mut second = AssetWatchState::new(canonical.clone());
+        let inactive = AssetWatchState::default();
+        let lexical_event = second_root.join("assets/pixel.png");
+        let mut exact = HashSet::from([
+            lexical_event.clone(),
+            first_root.join("assets/../outside.png"),
+            inactive_root.join("assets/unapproved.png"),
+            graph.path("unbound/assets/unknown.png"),
+        ]);
+        normalize_asset_event_aliases(
+            [
+                (first_root.as_path(), &first),
+                (second_root.as_path(), &second),
+                (inactive_root.as_path(), &inactive),
+            ]
+            .into_iter(),
+            &mut exact,
+            &mut HashSet::new(),
+        );
+        assert_eq!(exact.len(), 5, "only the approved pixel alias adds a path");
+        assert!(
+            exact.contains(&lexical_event),
+            "preserve the original event"
+        );
+        assert!(exact.contains(&image));
+        std::fs::write(&image, b"replacement image").unwrap();
+        for (label, state) in [("first", &mut first), ("second", &mut second)] {
+            assert_eq!(
+                reconcile_asset_observation(label, state, &exact, &HashSet::new(), false, false),
+                vec!["pixel.png"]
+            );
+        }
+    }
+
+    #[test]
+    fn asset_alias_directory_deletion_routes_without_following_missing_paths() {
+        let graph = TempGraph::new("asset-alias-directory");
+        let root = graph.path("graph");
+        let canonical = graph.path("external");
+        std::fs::create_dir_all(canonical.join("nested")).unwrap();
+        std::fs::write(canonical.join("nested/image.png"), b"image").unwrap();
+        let mut state = AssetWatchState::new(canonical.clone());
+        std::fs::remove_dir_all(canonical.join("nested")).unwrap();
+        let mut full = HashSet::from([root.join("assets/nested")]);
+        normalize_asset_event_aliases(
+            std::iter::once((root.as_path(), &state)),
+            &mut HashSet::new(),
+            &mut full,
+        );
+        assert!(full.contains(&canonical.join("nested")));
+        assert_eq!(
+            reconcile_asset_observation(
+                "directory",
+                &mut state,
+                &HashSet::new(),
+                &full,
+                false,
+                false
+            ),
+            vec!["nested/image.png"]
+        );
+        let mut parent = HashSet::from([root.clone()]);
+        normalize_asset_event_aliases(
+            std::iter::once((root.as_path(), &state)),
+            &mut HashSet::new(),
+            &mut parent,
+        );
+        assert!(
+            parent.contains(&canonical),
+            "uncertain root events include the approved asset root"
+        );
     }
 
     #[test]

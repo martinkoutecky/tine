@@ -3382,7 +3382,7 @@ pub(crate) fn run_android_managed_return_to_direct_files(
         storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor::default(),
         watch_ctl: Mutex::new(None),
         last_focused: Mutex::new(None),
-        capture_graph: Mutex::new(None),
+        capture_graph: Mutex::new(Default::default()),
         sync_runtime: SyncRuntimeFacade,
         #[cfg(desktop)]
         next_window: std::sync::atomic::AtomicU64::new(1),
@@ -5302,7 +5302,7 @@ mod tests {
                 ),
                 watch_ctl: Mutex::new(None),
                 last_focused: Mutex::new(None),
-                capture_graph: Mutex::new(None),
+                capture_graph: Mutex::new(Default::default()),
                 sync_runtime: SyncRuntimeFacade,
                 #[cfg(desktop)]
                 next_window: std::sync::atomic::AtomicU64::new(1),
@@ -5422,7 +5422,7 @@ mod tests {
             storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor::default(),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(None),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             sync_runtime: SyncRuntimeFacade,
             #[cfg(desktop)]
             next_window: std::sync::atomic::AtomicU64::new(1),
@@ -8072,7 +8072,7 @@ mod tests {
             storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor::default(),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(None),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             sync_runtime: SyncRuntimeFacade,
             #[cfg(desktop)]
             next_window: std::sync::atomic::AtomicU64::new(1),

@@ -201,18 +201,19 @@ pub(crate) struct CaptureGraphBindingResult {
     pub(crate) binding_generation: u64,
 }
 
-/// Snapshot the graph selected for a Quick Capture show. Calling this from the
-/// native show path revokes the prior capture lease before a focused, persistent
-/// capture WebView can issue a query against an older graph. The frontend calls
-/// it again to learn the generation it must present with IPC.
+/// Complete the current native show with one selected read lease. Beginning
+/// the show already revoked the prior lease; a superseded request cannot bind.
+/// The frontend only reads the resulting selection through `capture_graph_binding`.
 pub(crate) fn refresh_capture_graph_binding(
     state: &AppState,
-) -> Result<u64, crate::command_error::CommandError> {
+    show_generation: u64,
+) -> Result<Option<u64>, crate::command_error::CommandError> {
     let target = capture_target_for_state(state)?;
     let slot = slot_for_window(state, &target).map_err(crate::command_error::CommandError::from)?;
     let binding_generation = slot.binding_generation;
-    state.bind_capture_graph(target, binding_generation);
-    Ok(binding_generation)
+    Ok(state
+        .complete_capture_show(show_generation, target, binding_generation)
+        .then_some(binding_generation))
 }
 
 /// Return the binding selected by the native capture-show path. This is
@@ -484,6 +485,19 @@ pub(crate) async fn load_graph(
         return Err(crate::command_error::CommandError::prose(
             "graph window closed while storage was opening",
         ));
+    }
+
+    // Only a pending unbound Capture request may consume this publication.
+    // A shown Capture keeps its frozen graph lease across unrelated opens.
+    #[cfg(desktop)]
+    if let LoadGraphResult::Loaded {
+        binding_generation, ..
+    }
+    | LoadGraphResult::AlreadyCurrent {
+        binding_generation, ..
+    } = &result
+    {
+        crate::complete_pending_capture_show(&app, label.clone(), *binding_generation);
     }
 
     // The iOS Simulator probe exercises the same bound-graph helper as the
@@ -1517,7 +1531,7 @@ mod tests {
             storage_supervisor: crate::storage_mode_supervisor::StorageModeSupervisor::default(),
             watch_ctl: std::sync::Mutex::new(None),
             last_focused: std::sync::Mutex::new(None),
-            capture_graph: std::sync::Mutex::new(None),
+            capture_graph: std::sync::Mutex::new(Default::default()),
             sync_runtime: crate::sync_runtime::SyncRuntimeFacade::default(),
             #[cfg(desktop)]
             next_window: std::sync::atomic::AtomicU64::new(1),

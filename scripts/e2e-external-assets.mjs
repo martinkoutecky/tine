@@ -22,6 +22,10 @@ const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4491);
 const TMP = "/tmp/tine-external-assets-e2e";
 const GRAPH = `${TMP}/graph`;
 const EXTERNAL = `${TMP}/external-assets`;
+const ARTIFACTS = process.env.E2E_ARTIFACT_DIR;
+if (ARTIFACTS) fs.mkdirSync(ARTIFACTS, { recursive: true });
+let phase = "startup";
+let firstSrc;
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lO1O0QAAAABJRU5ErkJggg==";
 const ASSET_OBSERVATION_TIMEOUT_MS = 30_000;
 
@@ -88,11 +92,12 @@ try {
   await browser.waitUntil(async () => (await image.getProperty("complete")) === true, {
     timeout: 10_000, timeoutMsg: "external asset image did not finish loading",
   });
-  const firstSrc = await image.getAttribute("src");
+  firstSrc = await image.getAttribute("src");
 
   // Replace the approved external file exactly as a filesystem synchronizer
   // does (temp + rename). The native asset-observation lane must invalidate the
   // image cache without importing the bytes into graph text or managed state.
+  phase = "replacement";
   fs.writeFileSync(`${EXTERNAL}/pixel.replacement`, Buffer.from(PNG, "base64"));
   fs.renameSync(`${EXTERNAL}/pixel.replacement`, `${EXTERNAL}/pixel.png`);
   await browser.waitUntil(async () => {
@@ -103,6 +108,7 @@ try {
     timeoutMsg: "externally replaced asset did not receive a fresh blob URL",
   });
 
+  phase = "deletion";
   fs.unlinkSync(`${EXTERNAL}/pixel.png`);
   await browser.$(".inline-image-missing").waitForExist({
     timeout: ASSET_OBSERVATION_TIMEOUT_MS,
@@ -132,6 +138,22 @@ try {
     throw new Error("graph assets link was unexpectedly replaced");
   }
   console.log("PASS: approved external assets opened, refreshed, showed deletion, and accepted a native write");
+} catch (error) {
+  if (ARTIFACTS) {
+    try {
+      const dom = await browser?.execute(() => ({
+        body: document.body.innerText,
+        images: [...document.images].map(image => ({
+          src: image.src, complete: image.complete,
+          width: image.naturalWidth, html: image.outerHTML,
+        })),
+      }));
+      fs.writeFileSync(path.join(ARTIFACTS, "failure.json"), JSON.stringify({ phase, firstSrc, dom }, null, 2));
+      await browser?.saveScreenshot(path.join(ARTIFACTS, "failure.png"));
+      fs.copyFileSync(`${TMP}/tauri-driver.log`, path.join(ARTIFACTS, "native.log"));
+    } catch {} // Evidence collection must not replace the original failure.
+  }
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

@@ -31,6 +31,10 @@ on:
         description: Activate and reopen the current candidate instead of the historical upgrade baseline
         required: false
         default: "false"
+      managed_burn_in_repetitions:
+        description: Repetitions of the focused Windows managed-storage scenario against one unchanged executable
+        required: false
+        default: "1"
 
 permissions:
   contents: read
@@ -144,6 +148,7 @@ jobs:
           if (-not $application) { throw "v0.6.94 portable baseline did not contain Tine.exe" }
           "TINE_BASELINE_APP=$application" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Run Windows WebView2 smoke
+        if: ${{ matrix.scenario != 'windows-managed-storage' }}
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
           E2E_MANAGED_PAGE_COUNT: ${{ inputs.managed_page_count }}
@@ -152,8 +157,109 @@ jobs:
           E2E_MANAGED_ASSET_LOGICAL_BYTES: ${{ inputs.managed_asset_logical_bytes }}
           E2E_MANAGED_CURRENT_ONLY: ${{ inputs.managed_current_only }}
           E2E_MANAGED_ACTIVATION_TIMEOUT_MS: "900000"
+          E2E_MANAGED_COLD_INDEX_TIMEOUT_MS: "300000"
           E2E_SCENARIO_TIMEOUT_MS: "2700000"
         run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
+      - name: Run Windows managed-storage unchanged-binary burn-in
+        if: ${{ matrix.scenario == 'windows-managed-storage' }}
+        shell: pwsh
+        env:
+          TINE_APP: ${{ github.workspace }}\target\release\tine.exe
+          E2E_MANAGED_PAGE_COUNT: ${{ inputs.managed_page_count }}
+          E2E_MANAGED_BLOCKS_PER_PAGE: ${{ inputs.managed_blocks_per_page }}
+          E2E_MANAGED_TOTAL_FILE_COUNT: ${{ inputs.managed_total_file_count }}
+          E2E_MANAGED_ASSET_LOGICAL_BYTES: ${{ inputs.managed_asset_logical_bytes }}
+          E2E_MANAGED_CURRENT_ONLY: ${{ inputs.managed_current_only }}
+          E2E_MANAGED_BURN_IN_REPETITIONS: ${{ inputs.managed_burn_in_repetitions }}
+          E2E_MANAGED_ACTIVATION_TIMEOUT_MS: "900000"
+          E2E_MANAGED_COLD_INDEX_TIMEOUT_MS: "300000"
+          E2E_SCENARIO_TIMEOUT_MS: "2700000"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repetitions = 0
+          if (-not [int]::TryParse($env:E2E_MANAGED_BURN_IN_REPETITIONS, [ref]$repetitions) -or $repetitions -lt 1 -or $repetitions -gt 10) {
+            throw "managed_burn_in_repetitions must be an integer from 1 through 10"
+          }
+          if ($repetitions -gt 1 -and $env:E2E_MANAGED_CURRENT_ONLY -ne "true") {
+            throw "repeated managed-storage burn-in requires managed_current_only=true"
+          }
+
+          $app = (Resolve-Path $env:TINE_APP).Path
+          $expectedHash = (Get-FileHash -Algorithm SHA256 $app).Hash.ToLowerInvariant()
+          $burnInRoot = Join-Path $env:GITHUB_WORKSPACE "test-results\e2e\windows-smoke\burn-in"
+          New-Item -ItemType Directory -Force -Path $burnInRoot | Out-Null
+          $manifest = [ordered]@{
+            schemaVersion = 1
+            candidateSha = (git rev-parse HEAD).Trim()
+            executable = $app
+            expectedExecutableSha256 = $expectedHash
+            repetitionsRequested = $repetitions
+            fixtureIsolation = "Each repetition is a fresh Node process with its own PID-scoped graph, APPDATA, LOCALAPPDATA, and WebView2 profile."
+            runs = [System.Collections.Generic.List[object]]::new()
+          }
+
+          try {
+            for ($run = 1; $run -le $repetitions; $run += 1) {
+              $beforeHash = (Get-FileHash -Algorithm SHA256 $app).Hash.ToLowerInvariant()
+              if ($beforeHash -ne $expectedHash) {
+                throw "candidate executable changed before repetition ${run}: expected ${expectedHash}, got ${beforeHash}"
+              }
+
+              $env:E2E_ARTIFACT_DIR = Join-Path $burnInRoot ("repetition-{0:d2}" -f $run)
+              New-Item -ItemType Directory -Force -Path $env:E2E_ARTIFACT_DIR | Out-Null
+              $startedAt = (Get-Date).ToUniversalTime()
+              & npm run e2e:windows:smoke -- --scenario=windows-managed-storage
+              $exitCode = $LASTEXITCODE
+              $completedAt = (Get-Date).ToUniversalTime()
+              $afterHash = (Get-FileHash -Algorithm SHA256 $app).Hash.ToLowerInvariant()
+              $scenarioResultPath = Join-Path $env:E2E_ARTIFACT_DIR "windows-managed-storage\result.json"
+              $scenarioStatus = "missing"
+              if (Test-Path $scenarioResultPath) {
+                $scenarioStatus = (Get-Content -Raw $scenarioResultPath | ConvertFrom-Json).status
+              }
+              $manifest.runs.Add([ordered]@{
+                repetition = $run
+                artifactDirectory = $env:E2E_ARTIFACT_DIR
+                startedAt = $startedAt.ToString("o")
+                completedAt = $completedAt.ToString("o")
+                processExitCode = $exitCode
+                scenarioResultPath = $scenarioResultPath
+                scenarioStatus = $scenarioStatus
+                executableSha256Before = $beforeHash
+                executableSha256After = $afterHash
+                result = if ($exitCode -eq 0 -and $scenarioStatus -eq "passed" -and $afterHash -eq $expectedHash) { "pass" } else { "fail" }
+              })
+
+              if ($afterHash -ne $expectedHash) {
+                throw "candidate executable changed during repetition ${run}: expected ${expectedHash}, got ${afterHash}"
+              }
+              if ($exitCode -ne 0) {
+                throw "managed-storage burn-in repetition ${run} process failed with exit code ${exitCode}"
+              }
+              if ($scenarioStatus -ne "passed") {
+                throw "managed-storage burn-in repetition ${run} scenario status was ${scenarioStatus}; see ${scenarioResultPath}"
+              }
+            }
+          } finally {
+            try {
+              $retainedRelativePath = "tested-binary\tine.exe"
+              $retainedPath = Join-Path $burnInRoot $retainedRelativePath
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $retainedPath) | Out-Null
+              Copy-Item -LiteralPath $app -Destination $retainedPath -Force
+              $retainedHash = (Get-FileHash -Algorithm SHA256 $retainedPath).Hash.ToLowerInvariant()
+              $manifest["retainedExecutable"] = [ordered]@{
+                relativePath = $retainedRelativePath
+                sha256 = $retainedHash
+              }
+              if ($retainedHash -ne $expectedHash) {
+                throw "retained candidate executable hash mismatch: expected ${expectedHash}, got ${retainedHash}"
+              }
+            } finally {
+              $manifest.repetitionsCompleted = $manifest.runs.Count
+              $manifest.completedAt = (Get-Date).ToUniversalTime().ToString("o")
+              $manifest | ConvertTo-Json -Depth 8 | Out-File -FilePath (Join-Path $burnInRoot "burn-in-manifest.json") -Encoding utf8
+            }
+          }
       - name: Upload Windows E2E evidence
         if: always()
         uses: actions/upload-artifact@v4

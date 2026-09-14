@@ -1,3 +1,4 @@
+import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { autocompleteFacets, backend } from "../backend";
@@ -428,7 +429,7 @@ function CollapseAllBorder(props: { id: string; readOnly: boolean }): JSX.Elemen
   );
 }
 
-export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
+export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean; dragHostId?: string }): JSX.Element {
   // ONE store read per block for the node itself. Every derivation below reads
   // `node()` several times over, and each raw `doc.byId[id]` costs two Solid
   // store proxy traps (plus a wrap); on a 2000-block page that proxy `get` was
@@ -608,7 +609,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               // PRIMARY-paste that these destinations replace. The bullet ran
               // its own onMouseDown and skipped it.
               internalLinkMouseDown(e);
-              if (e.button === 0 && !readOnly()) beginDrag(props.id, e);
+              // A transparent whole-block embed has only this root bullet. Its
+              // drag moves the occurrence; click/zoom still belongs to source.
+              // Inline/page embeds retain their ordinary source drag semantics.
+              const host = e.currentTarget.closest<HTMLElement>(".block-embed-host");
+              const dragOwner = props.dragHostId && host?.dataset.blockId === props.dragHostId
+                ? props.dragHostId : props.id;
+              if (e.button === 0 && pageWritable(doc.byId[dragOwner].page)) beginDrag(dragOwner, e);
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -802,7 +809,13 @@ function beginEditGesture(
     if (over === g.blockId) {
       const active = document.activeElement;
       if (active instanceof HTMLTextAreaElement && active.classList.contains("block-editor")) {
-        if (g.caretPoints === undefined) g.caretPoints = textareaCaretPoints(active);
+        if (g.caretPoints === undefined) {
+          // Edit entry maps raw source offsets into the actual textarea (code
+          // wrappers, for example, are hidden). Continue from that native
+          // anchor rather than mixing raw-block and editor coordinates.
+          g.offset = active.selectionStart;
+          g.caretPoints = textareaCaretPoints(active);
+        }
         const points = g.caretPoints;
         if (points?.length) {
           const rect = active.getBoundingClientRect();
@@ -1301,6 +1314,8 @@ export function Editor(props: { id: string }): JSX.Element {
     surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:") ? surfaceKey : null;
   const structuralSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   let ref!: HTMLTextAreaElement;
+  let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
+  onCleanup(() => pendingScrollAnchor?.cancel());
   let pluginSlashInvocation = 0;
   let editorMounted = true;
   onCleanup(() => {
@@ -1388,6 +1403,13 @@ export function Editor(props: { id: string }): JSX.Element {
     // dirty or push undo — avoids churn and can't rewrite the block's bytes.
     if (next === node().raw) return;
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
+    // Capture at most once for the existing autosize frame, before live mirrors
+    // above us react to setRaw. No document-wide occurrence scan is needed.
+    if (pendingScrollAnchor === undefined) {
+      pendingScrollAnchor = ref && document.activeElement === ref
+        ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
+    }
+    autosize();
     setRaw(props.id, next, setRawOpts);
   };
 
@@ -1755,6 +1777,16 @@ export function Editor(props: { id: string }): JSX.Element {
     setHasSel(selected);
     if (!selected) setSelectionOverflowOpen(false);
   };
+  onMount(() => {
+    const owner = ref.ownerDocument;
+    const syncNativeSelection = () => {
+      if (owner.activeElement === ref) updateSel();
+    };
+    // Native selection may notify the document or textarea without select or
+    // mouseup. Capture both, but only update the editor that owns focus.
+    owner.addEventListener("selectionchange", syncNativeSelection, true);
+    onCleanup(() => owner.removeEventListener("selectionchange", syncNativeSelection, true));
+  });
   createEffect(() => {
     if (!selectionOverflowOpen() || !hasSel()) return;
     const unregister = registerTransientLayer({
@@ -2589,6 +2621,8 @@ export function Editor(props: { id: string }): JSX.Element {
     autosizeRaf = requestAnimationFrame(() => {
       autosizeRaf = undefined;
       resizeNow();
+      pendingScrollAnchor?.restore();
+      pendingScrollAnchor = undefined;
     });
   };
 
@@ -2619,6 +2653,11 @@ export function Editor(props: { id: string }): JSX.Element {
       const start = Math.min(historySelection.start, end);
       ref.setSelectionRange(start, end);
       revealCaretColumn(start);
+      return;
+    }
+    if (want !== null && typeof want === "object" && "start" in want) {
+      ref.setSelectionRange(want.start, want.end, want.direction);
+      revealCaretColumn(want.direction === "backward" ? want.start : want.end);
       return;
     }
     let offset: number;
@@ -2658,6 +2697,7 @@ export function Editor(props: { id: string }): JSX.Element {
       owner: editingOwner(),
       surface: surfaceKey,
       selection: () => ({ start: ref.selectionStart, end: ref.selectionEnd }),
+      viewport: () => ({ editor: ref, scroller: nearestScrollableY(ref) }),
       focused: () => typeof document !== "undefined" && document.activeElement === ref,
     });
     onCleanup(unregisterHistoryTarget);
@@ -2890,20 +2930,29 @@ export function Editor(props: { id: string }): JSX.Element {
   // reorder briefly blurs the textarea; cross-day it remounts).
   const moveBlockCmd = (e: KeyboardEvent, dir: 1 | -1): boolean => {
     e.preventDefault();
-    const start = ref.selectionStart;
+    const movedEditor = ref;
+    const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+    const restoreMovedEditor = () => {
+      if (ref !== movedEditor || !movedEditor.isConnected || editingId() !== props.id) return;
+      if (document.activeElement !== movedEditor && document.activeElement !== document.body) return;
+      movedEditor.focus();
+      movedEditor.setSelectionRange(
+        Math.min(selection.start, movedEditor.value.length),
+        Math.min(selection.end, movedEditor.value.length), selection.direction,
+      );
+    };
     commit(ref.value);
     setBlockMoving(true, doc.byId[props.id]?.page);
-    startEditing(props.id, start, null, structuralSurface());
+    startEditing(props.id, selection, null, structuralSurface());
     const move = outlineScope && !outlineScope.navOnly
       ? (moveItem(props.id, dir), Promise.resolve())
       : moveBlockFeed(props.id, dir).then(() => undefined);
+    // Synchronous sibling reorders retain the same textarea. Restore it in this
+    // gesture: waiting a frame lets Android dismiss the IME despite later focus.
+    restoreMovedEditor();
     void move.then(() => {
       requestAnimationFrame(() => {
-        if (ref.isConnected) {
-          ref.focus();
-          const o = Math.min(start, ref.value.length);
-          ref.setSelectionRange(o, o);
-        }
+        if (document.activeElement !== movedEditor) restoreMovedEditor();
         setBlockMoving(false);
       });
     });
@@ -3042,14 +3091,16 @@ export function Editor(props: { id: string }): JSX.Element {
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll) { nudgeListItem(ll, +2); return true; }
       if (!outlineScope?.navOnly && outlineScope?.roots.includes(props.id)) return true;
-      commit(ref.value); indentBlock(props.id, ref.selectionStart, structuralSurface()); return true;
+      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+      commit(ref.value); indentBlock(props.id, selection, structuralSurface()); return true;
     },
     "editor/outdent": (e) => {
       e.preventDefault();
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
       if (outlineScope?.forceExpandedRoot === doc.byId[props.id]?.parent) return true;
-      commit(ref.value); outdentBlock(props.id, ref.selectionStart, structuralSurface()); return true;
+      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+      commit(ref.value); outdentBlock(props.id, selection, structuralSurface()); return true;
     },
   };
   const mobileKeyEvent = { preventDefault() {} } as KeyboardEvent;

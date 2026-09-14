@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { render } from "solid-js/web";
+import { Show } from "solid-js";
 import { PageConflictResolution } from "./ConflictResolution";
 import { __setBackendForTest, SaveConflictError, type Backend } from "../backend";
 import {
@@ -606,7 +607,7 @@ describe("in-page conflict resolution", () => {
     }
   });
 
-  it("rehydrates a durable live conflict after restart and uses its revision guard", async () => {
+  it("rehydrates a durable live conflict and applies the currently reviewed disk revision", async () => {
     const draft: PageDto = {
       name: "Durable",
       kind: "page",
@@ -627,7 +628,7 @@ describe("in-page conflict resolution", () => {
     expect(restored.live?.page.blocks[0].raw).toBe("draft");
     loadSingle({
       ...draft,
-      rev: "disk-rev",
+      rev: "newer-disk-rev",
       blocks: [{ id: "disk", raw: "disk from phone", collapsed: false, children: [] }],
     });
 
@@ -640,7 +641,7 @@ describe("in-page conflict resolution", () => {
     stubBackend({
       durableLiveSaveConflictDiff: async () => ({
         ...markerDiff.diff,
-        conflict_rev: "disk-rev",
+        conflict_rev: "newer-disk-rev",
       }),
       resolveDurableLiveSaveConflict: resolve,
       getPageByPath: async () => null,
@@ -656,10 +657,75 @@ describe("in-page conflict resolution", () => {
       await flush();
       expect(resolve).toHaveBeenCalledTimes(1);
       expect(resolve.mock.calls[0][0].blocks[0].raw).toBe("draft");
-      expect(resolve.mock.calls[0][1]).toBe("disk-rev");
+      expect(resolve.mock.calls[0][1]).toBe("newer-disk-rev");
     } finally {
       dispose();
     }
+  });
+
+  it("restores a detached retained draft only through explicit guarded Apply (GH #541)", async () => {
+    const draft: PageDto = { name: "Missing", title: "Missing", kind: "page", path: "pages/Missing.md",
+      pre_block: null, rev: "old", blocks: [{ id: "kept", raw: "Retained writing", children: [], collapsed: false }] };
+    const conflict: ConflictObject = { id: "live:pages/Missing.md", source: "live-save",
+      page_name: draft.name, page_path: draft.path!, kind: "page", sides: [],
+      live: { page: draft, base_rev: "old", base_text: "- old\n", disk_rev: "old", conflict_epoch: 1, draft_version: 1, restored: true } };
+    const resolve = vi.fn(async () => ({ ...draft, rev: "restored" }));
+    stubBackend({ durableLiveSaveConflictDiff: async () => ({ ...markerDiff.diff, conflict_rev: "absent" }),
+      resolveDurableLiveSaveConflict: resolve, getPageByPath: async () => null,
+      activateEditor: async (path) => ({ target: path, activation: 1, prospective: false }) });
+    setGraphMeta({ root: "/graph", preferred_format: "md" } as never);
+    setConflictQueue([conflict]);
+    const host = document.createElement("div"); document.body.append(host);
+    const onResolved = vi.fn();
+    const dispose = render(() => <Show when={conflictQueue().find((item) => item.id === conflict.id)}>
+      {(current) => <PageConflictResolution conflict={current()} unavailable onResolved={onResolved} />}
+    </Show>, host);
+    try {
+      await flush(); await flush();
+      expect(resolve).not.toHaveBeenCalled();
+      [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Apply resolution"))!.click();
+      await flush(); await flush();
+      expect(resolve).toHaveBeenCalledWith(draft, "absent", expect.any(Object), "union");
+      expect(pageByName("Missing"), JSON.stringify(toasts())).toBeDefined();
+      expect(conflictQueue()).toHaveLength(0);
+      expect(onResolved).toHaveBeenCalledOnce();
+    } finally { dispose(); }
+  });
+
+  it("does not retire or load another graph's same-name draft after delayed retirement", async () => {
+    const draft: PageDto = { name: "Missing", title: "Missing", kind: "page", path: "pages/Missing.md",
+      pre_block: null, rev: "old", blocks: [{ id: "kept", raw: "Graph A draft", children: [], collapsed: false }] };
+    const conflict: ConflictObject = { id: "live:pages/Missing.md", source: "live-save",
+      page_name: draft.name, page_path: draft.path!, kind: "page", sides: [],
+      live: { page: draft, base_rev: "old", disk_rev: "old", conflict_epoch: 1, draft_version: 1, restored: true } };
+    let finishRetirement!: () => void;
+    const retire = vi.fn(() => new Promise<void>((resolve) => { finishRetirement = resolve; }));
+    const activate = vi.fn(async (path: string) => ({ target: path, activation: 1, prospective: false }));
+    stubBackend({ durableLiveSaveConflictDiff: async () => ({ ...markerDiff.diff, conflict_rev: "absent" }),
+      resolveDurableLiveSaveConflict: async () => ({ ...draft, rev: "restored" }),
+      retireConflictCapsule: retire, activateEditor: activate });
+    setGraphMeta({ root: "/graph-A", preferred_format: "md" } as never);
+    setConflictQueue([conflict]);
+    const host = document.createElement("div"); document.body.append(host);
+    const onResolved = vi.fn();
+    const dispose = render(() => <PageConflictResolution conflict={conflict} unavailable onResolved={onResolved} />, host);
+    try {
+      await flush(); await flush();
+      [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Apply resolution"))!.click();
+      await flush(); await flush();
+      expect(retire).toHaveBeenCalledWith("/graph-A", "Missing");
+      resetStore();
+      setGraphMeta({ root: "/graph-B", preferred_format: "md" } as never);
+      const newer = { ...conflict, live: { ...conflict.live!, page: { ...draft,
+        blocks: [{ ...draft.blocks[0], raw: "Graph B draft" }] } } };
+      setConflictQueue([newer]);
+      finishRetirement();
+      await flush(); await flush();
+      expect(conflictQueue()).toEqual([newer]);
+      expect(pageByName("Missing")).toBeUndefined();
+      expect(activate).not.toHaveBeenCalled();
+      expect(onResolved).not.toHaveBeenCalled();
+    } finally { dispose(); }
   });
 
   // Concord P5. The Settings modal was the only surface that let the user choose

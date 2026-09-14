@@ -151,6 +151,18 @@ export async function openPageByName(browser, name, opts = {}) {
   }
 
   await waitForTitle(browser, name, timeout, "Quick Switcher", pane);
+  // Startup can restore this route while our switcher is still searching.
+  // A matching title underneath the modal is not a completed navigation:
+  // dismiss the switcher we opened before handing control to the next action.
+  if (await browser.execute(() => Boolean(document.querySelector(".switcher-input")))) {
+    await browser.keys(["Escape"]);
+  }
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".switcher-input")), {
+    timeout,
+    interval: 100,
+    timeoutMsg: "Quick Switcher remained open after the requested page became visible",
+  });
+
 }
 
 /**

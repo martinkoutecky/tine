@@ -106,6 +106,33 @@ describe("GH #161 P1A1-F2 Settings shortcut recording", () => {
       expect(ordinary.defaultPrevented).toBe(true);
       expect(localStorage.getItem(SHORTCUTS_KEY)).toBe(JSON.stringify({ "go/find-in-page": "mod+k" }));
 
+      const row = keycap()!.closest<HTMLElement>(".help-shortcut-row")!;
+      const unbind = [...row.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.trim() === "Unbind");
+      expect(unbind).toBeDefined();
+      unbind!.click();
+      await tick();
+
+      expect(shortcutOverrides()).toEqual({ "go/find-in-page": "false" });
+      expect(keycap()!.textContent).toBe("Unbound");
+      expect(localStorage.getItem(SHORTCUTS_KEY)).toBe(JSON.stringify({ "go/find-in-page": "false" }));
+
+      const reset = [...keycap()!.closest<HTMLElement>(".help-shortcut-row")!
+        .querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.trim() === "Reset");
+      expect(reset).toBeDefined();
+      reset!.click();
+      await tick();
+      expect(shortcutOverrides()).toEqual({});
+      expect(keycap()!.textContent).toBe("mod+f");
+      expect(localStorage.getItem(SHORTCUTS_KEY)).toBe("{}");
+
+      // Restore the remap for the recorder cancellation assertions below.
+      keycap()!.click();
+      await tick();
+      keycap()!.dispatchEvent(keydown({ key: "k", code: "KeyK", ctrlKey: true }));
+      await tick();
+
       const recorded = { ...shortcutOverrides() };
       await beginRecording();
       const modifier = keydown({ key: "Control", code: "ControlLeft", ctrlKey: true });

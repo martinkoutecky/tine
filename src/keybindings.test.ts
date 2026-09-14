@@ -276,6 +276,22 @@ describe("plugin command context", () => {
 });
 
 describe("keyboard binding strings", () => {
+  it("keeps an unbound global command in the palette while suppressing its chord", () => {
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "go/find-in-page": "false" });
+
+    const key = modFEvent();
+    fake.dispatchCaptureKeydown(key.event);
+
+    expect(inPageFindOpen()).toBe(false);
+    expect(key.prevented()).toBe(false);
+    const command = paletteCommands().find((candidate) => candidate.id === "go/find-in-page");
+    expect(command).toMatchObject({ binding: "" });
+    command!.run();
+    expect(inPageFindOpen()).toBe(true);
+    dispose();
+  });
+
   it("records physical Control distinctly from Command on macOS (GH #378)", async () => {
     vi.resetModules();
     vi.stubGlobal("navigator", { platform: "MacIntel" });
@@ -926,6 +942,21 @@ describe("secondary default chords (aliases)", () => {
       trackedKeyEvent({ key: "r", code: "KeyR", ctrlKey: true, altKey: true }).event,
     );
     expect(doc.byId.b1.raw).toBe("Body edited");
+
+    dispose();
+    resetStore();
+  });
+
+  it("an unbound command suppresses both its primary chord and built-in alias", () => {
+    seedUndoneEdit();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "editor/redo": "false" });
+
+    fake.dispatchCaptureKeydown(
+      trackedKeyEvent({ key: "z", code: "KeyZ", ctrlKey: true, shiftKey: true }).event,
+    );
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "y", code: "KeyY", ctrlKey: true }).event);
+    expect(doc.byId.b1.raw).toBe("Body");
 
     dispose();
     resetStore();

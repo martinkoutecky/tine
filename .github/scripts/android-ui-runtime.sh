@@ -21,8 +21,16 @@ if [[ ${#app_apks[@]} -ne 1 || ${#test_apks[@]} -ne 1 ]]; then
   exit 1
 fi
 
-adb install -r "${app_apks[0]}"
-adb install -r "${test_apks[0]}"
+# Retain the exact installed bytes with the receipts, including failed journeys.
+# Debug emulator APKs are evidence artifacts, not signed release deliveries.
+cp "${app_apks[0]}" "$artifact_root/tested-app.apk"
+cp "${test_apks[0]}" "$artifact_root/tested-instrumentation.apk"
+(
+  cd "$artifact_root"
+  sha256sum tested-app.apk tested-instrumentation.apk > tested-apks.sha256
+)
+adb install -r "$artifact_root/tested-app.apk"
+adb install -r "$artifact_root/tested-instrumentation.apk"
 # Hosted emulators expose a hardware keyboard by default. Keep the real soft
 # keyboard visible as well so WindowInsets/IME assertions exercise the reported
 # phone boundary instead of timing out for an emulator configuration reason.
@@ -41,7 +49,7 @@ adb shell settings put secure show_ime_with_hard_keyboard 1
 
 run_journey() {
   local method="$1"
-  local name runner_output runner_log receipt_file failure_file screenshot_file receipts started finished failed status png_signature
+  local name runner_output runner_log receipt_file failure_file screenshot_file receipts started finished failed status png_signature selection_kind selection_stage stage_name
   name="${method//./_}"
   name="${name//\#/_}"
   runner_output="$artifact_root/$name.junit.txt"
@@ -61,7 +69,11 @@ run_journey() {
   adb logcat -c || true
 
   set +e
+  # The AndroidX runner otherwise posts ActivityFinisher after JUnit returns.
+  # Keep this isolated method's activity alive until the existing shell force-stop;
+  # automatic teardown of the API35 WebView can abort HWUI after a passing journey.
   adb shell am instrument -w \
+    -e waitForActivitiesToComplete false \
     -e class "page.tine.app.AndroidUiRuntimeTest#$method" \
     page.tine.app.test/androidx.test.runner.AndroidJUnitRunner > "$runner_output" 2>&1
   status=$?
@@ -73,6 +85,14 @@ run_journey() {
   # The test captures while the menu/selection/topbar is alive and writes
   # beside its JSON receipt; pull those exact in-journey bytes.
   adb exec-out run-as page.tine.app cat "files/android-ui-runtime/$method.png" > "$screenshot_file" || true
+  if [[ "$method" == "initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement" ]]; then
+    for selection_kind in first-line-caret-second-line-hold single-line; do
+      for selection_stage in before-hold after-hold; do
+        stage_name="selection-$selection_kind-$selection_stage.png"
+        adb exec-out run-as page.tine.app cat "files/android-ui-runtime/$stage_name" > "$artifact_root/$stage_name" || true
+      done
+    done
+  fi
   # The log line is convenient in an Actions failure view, while this exact file
   # is the durable DOM/native receipt (large responsive matrices can exceed a
   # single logcat line). Debug instrumentation permits run-as without exposing
@@ -109,6 +129,9 @@ run_journey() {
     ! jq -e --arg method "$method" '.test == $method and .screenshot == ($method + ".png")' "$receipt_file" >/dev/null 2>&1 ||
     [[ "$png_signature" != "89504e470d0a1a0a" ]] || [[ ! -s "$receipts" ]]; then
     printf 'Android UI runtime method %s is RED; inspect %s\n' "$method" "$artifact_root" >&2
+    # Keep the actionable assertion visible without downloading retained APKs.
+    tail -n 45 "$runner_output" >&2
+    if [[ -s "$receipt_file" ]]; then head -c 16000 "$receipt_file" >&2; printf '\n' >&2; fi
     return 1
   fi
 }
@@ -118,10 +141,13 @@ methods=(
   longPressPageReferenceOpensExactlyOnePageActionsMenuWithoutPreviewSelectionOrNavigation \
   initialNativeSelectionShowsMobileToolbarForSingleAndWrappedLinesWithoutHandleMovement \
   generatedDirectFilesPdfRouteHonorsHardwareBackHistory \
+  toolbarStructuralTouchesDispatchOnceAndRetainHorizontalScroll \
   systemBarStripAndIconsAgreeWithTinesOwnThemeNotTheDeviceNightSetting
 )
 if [[ "${TINE_ANDROID_UI_RUNTIME_ONLY:-}" == "205" ]]; then
   methods=(responsiveChromeFitsPortraitAndLandscapeAtDefault90And110Percent)
+elif [[ "${TINE_ANDROID_UI_RUNTIME_ONLY:-}" == "toolbar" ]]; then
+  methods=(toolbarStructuralTouchesDispatchOnceAndRetainHorizontalScroll)
 elif [[ "${TINE_ANDROID_UI_RUNTIME_ONLY:-}" == "pdf-routes" ]]; then
   methods=(generatedDirectFilesPdfRouteHonorsHardwareBackHistory)
 fi

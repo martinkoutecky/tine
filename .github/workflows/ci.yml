@@ -43,12 +43,14 @@ on:
         options:
           - full
           - windows
+          - windows-smb-probe
           - android
           - android-compile
           - android-runtime
           - android-ui-runtime
           - android-ui-runtime-205
           - android-ui-runtime-pdf-routes
+          - android-ui-runtime-toolbar
           - performance
       windows_test_name:
         description: Full Rust harness name for one exact Windows tine-core test (windows scope only)
@@ -338,6 +340,28 @@ jobs:
   # The independently certified tine-storage package is not retested here.
   # Windows compiles every tine-core target against the exact pin and executes
   # declared cross-layer durability/lifecycle smokes in isolated processes.
+  windows-smb-probe:
+    name: Diagnostic / Windows loopback SMB checked opens (GH533)
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows-smb-probe'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - name: UNC prefix normalization controls
+        run: cargo test --locked --manifest-path scripts/probes/windows-smb-open/Cargo.toml -p cap-primitives --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
+      - name: Compare local, UNC and mapped-drive file access
+        shell: pwsh
+        run: |
+          Start-Transcript -Path windows-smb-probe.log
+          try { & ./scripts/probes/windows-smb-open/run.ps1 }
+          finally { Stop-Transcript }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-smb-probe-${{ github.sha }}
+          path: windows-smb-probe.log
+
   windows-compile:
     name: Full CI / Windows core compile + integration smoke
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
@@ -530,7 +554,7 @@ jobs:
   # A reported UI outcome remains red until its exact method passes here.
   android-ui-runtime:
     name: Android UI runtime / MotionEvent proof receipts
-    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'android-ui-runtime' || inputs.scope == 'android-ui-runtime-205' || inputs.scope == 'android-ui-runtime-pdf-routes')
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'android-ui-runtime' || inputs.scope == 'android-ui-runtime-205' || inputs.scope == 'android-ui-runtime-pdf-routes' || inputs.scope == 'android-ui-runtime-toolbar')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -597,7 +621,7 @@ jobs:
           script: bash .github/scripts/android-ui-runtime.sh
         env:
           TINE_ANDROID_UI_RUNTIME_ARTIFACT_DIR: ${{ github.workspace }}/test-results/android-ui-runtime
-          TINE_ANDROID_UI_RUNTIME_ONLY: ${{ inputs.scope == 'android-ui-runtime-205' && '205' || inputs.scope == 'android-ui-runtime-pdf-routes' && 'pdf-routes' || '' }}
+          TINE_ANDROID_UI_RUNTIME_ONLY: ${{ inputs.scope == 'android-ui-runtime-205' && '205' || inputs.scope == 'android-ui-runtime-pdf-routes' && 'pdf-routes' || inputs.scope == 'android-ui-runtime-toolbar' && 'toolbar' || '' }}
 
       - name: Upload Android UI runtime evidence
         if: always()

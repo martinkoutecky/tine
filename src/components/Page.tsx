@@ -20,6 +20,7 @@ import { QueryMacro } from "./Macro";
 import { SheetTable } from "./SheetTable";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { PageConflictResolution } from "./ConflictResolution";
+import { RecoveryDraft } from "./UnsavedRecovery";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 import { pageProperties, aliasNames, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
@@ -32,7 +33,7 @@ import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../
 import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
-import { graphBinding } from "../persistence";
+import { graphBinding, renameFlushFailureMessage } from "../persistence";
 import { markPageDeleteFallbackFetch, markPageDeleteFallbackFirstPaint } from "../pageDeleteTrace";
 import { selectedThemePresentation } from "../themeGallery";
 import { TodayTaskSummary } from "./TodayTaskSummary";
@@ -56,12 +57,14 @@ export interface JournalsFeedOwner {
 }
 
 function feedHasActiveEdit(): boolean {
+  // Other page tabs/sidebar pages do not belong to the feed replacement.
+  return doc.feed.some(pageHasActiveEdit);
+}
+
+function pageHasActiveEdit(name: string): boolean {
   const edited = editingId();
-  // An editor in a sidebar, a page tab, or another split pane is unrelated to
-  // the working set that loadFeed replaces.  Only a block owned by a visible
-  // feed page is unsafe here.
-  if (edited && doc.byId[edited] && doc.feed.includes(doc.byId[edited].page)) return true;
-  return doc.feed.some((name) =>
+  if (edited && doc.byId[edited]?.page === name) return true;
+  return (
     isDirty(name)
     || isSaving(name)
     || isConflicted(name)
@@ -89,12 +92,12 @@ function ownerIsLive(owner: JournalsFeedOwner): boolean {
 /** The single start-over owner for route loads, watcher changes and calendar
  * rollover.  It intentionally keeps the old feed/cursor until a response has
  * passed all ownership checks. */
-async function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Promise<unknown | null> {
+async function restartJournalFeed(owner: JournalsFeedOwner, retried = false, rollover = false): Promise<unknown | null> {
   // An already-dead watcher/surface must be entirely inert.  In particular it
   // must not steal the generation from a live request that is about to land.
   if (!ownerIsLive(owner)) return null;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
-  if (feedHasActiveEdit()) {
+  if (!rollover && feedHasActiveEdit()) {
     pendingFeedRestart = true;
     return null;
   }
@@ -103,16 +106,17 @@ async function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Pr
   try {
     const response = await backend().journalFeedPage(FEED_PAGE, null);
     if (generation !== feedGeneration || !ownerIsLive(owner) || !responseMatches(browserDay, response)) {
-      if (generation === feedGeneration && ownerIsLive(owner) && !retried && !feedHasActiveEdit()) {
-        return restartJournalFeed(owner, true);
+      if (generation === feedGeneration && ownerIsLive(owner) && !retried && (rollover || !feedHasActiveEdit())) {
+        return restartJournalFeed(owner, true, rollover);
       }
       // A stale/disposed owner cannot create deferred work for a later surface.
       if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
       return null;
     }
-    // The page can become owned while the backend request is in flight. Never
-    // begin installing a feed response that is already known to be unsafe.
-    if (feedHasActiveEdit()) {
+    // Same-day replacement must wait for ownership release. A calendar change
+    // only adds days and retains every existing feed page, including an editor
+    // acquired while the request or a new page's activation is in flight.
+    if (!rollover && feedHasActiveEdit()) {
       pendingFeedRestart = true;
       return null;
     }
@@ -123,6 +127,8 @@ async function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Pr
     const installed = await loadFeed(withToday(response.pages), {
       endEdit: false,
       expectedGraphBinding: owner.graphBinding,
+      preserveExisting: rollover,
+      isRequestLive: () => generation === feedGeneration && ownerIsLive(owner) && responseMatches(browserDay, response),
     });
     // Installation rechecks every page at its final replacement boundary. A
     // mutation may begin after the post-request check above; in that case keep
@@ -160,6 +166,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
   if (!ownerIsLive(owner)) return null;
   const date = new Date();
   const day = localDayKey(date);
+  const rollover = journalAsOfDay !== null && journalAsOfDay !== day && doc.feed.length > 0;
   const current = journalRefreshFlight;
   if (
     current
@@ -175,7 +182,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
   // the existing dirty-edit rule while preventing an old-day response from
   // landing during materialization.
   ++feedGeneration;
-  if (feedHasActiveEdit()) {
+  if (!rollover && feedHasActiveEdit()) {
     pendingFeedRestart = true;
     return null;
   }
@@ -188,7 +195,11 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
     promise: Promise.resolve<unknown | null>(null),
   };
   flight.promise = (async () => {
-    const ensured = await ensureJournalTemplateForDay(date, () => !feedHasActiveEdit());
+    // Only today's page can be written by template materialization. Yesterday's
+    // editor must not block it; today's own edit/dirty/mutation gates still do.
+    const ensured = await ensureJournalTemplateForDay(date, () =>
+      ownerIsLive(flight.owner) && !(rollover ? pageHasActiveEdit(journalTitle(date)) : feedHasActiveEdit())
+    );
     const liveOwner = flight.owner;
     if (ensured !== "ready") {
       if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
@@ -198,7 +209,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
       if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
       return null;
     }
-    return restartJournalFeed(liveOwner);
+    return restartJournalFeed(liveOwner, false, rollover);
   })();
   journalRefreshFlight = flight;
   try {
@@ -255,6 +266,7 @@ export function PageView(): JSX.Element {
   // an older rejected request could replace a newer page with its error state.
   const [loadedRoute, setLoadedRoute] = createSignal<ReturnType<PaneRouter["route"]> | null>(null);
   const [loadError, setLoadError] = createSignal<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = createSignal(0);
 
   // Depend on the active route BY VALUE: opening a background tab (or pinning /
   // reordering / closing another tab) mutates the `tabs` signal but not the active
@@ -268,6 +280,7 @@ export function PageView(): JSX.Element {
   });
   createEffect(() => {
     const r = currentRoute();
+    loadAttempt();
     const epoch = graphEpoch(); // reload when the open graph changes
     const binding = graphBinding();
     const deleteFallbackTrace = markPageDeleteFallbackFetch(pane.paneId, r.kind);
@@ -524,6 +537,19 @@ export function PageView(): JSX.Element {
           <div class="page-load-error-hint">
             Tine did not modify the file. Try reopening, or check the file on disk.
           </div>
+          <Show when={(() => {
+            const route = currentRoute();
+            if (route.kind !== "page") return;
+            const conflict = conflictObjectFor(route.path, route.name);
+            return conflict && conflict.page_path === route.path && conflict.live ? conflict : undefined;
+          })()}>
+            {(conflict) => <>
+              <p>The conflict's original file is unavailable. Your retained draft is available below; copy it before making changes to the files on disk.</p>
+              <RecoveryDraft page={conflict().live!.page} />
+              <PageConflictResolution conflict={conflict()} unavailable onResolved={() => setLoadAttempt((n) => n + 1)} />
+            </>}
+          </Show>
+          <button onClick={() => setLoadAttempt((n) => n + 1)}>Try opening again</button>
         </div>
       </div>
     }>
@@ -537,8 +563,7 @@ export function PageView(): JSX.Element {
         <div class="page">
           <For each={pagesToRender()}>
             {(p, i) => (
-              <>
-                <PageSection page={p} />
+              <PageSection page={p}>
                 {/* Agenda sits at the bottom of today's (the first) day, like OG.
                     Window is configurable (Settings → Journal) and keyed off the
                     item's scheduled/deadline date over the whole graph. */}
@@ -551,7 +576,7 @@ export function PageView(): JSX.Element {
                     />
                   </div>
                 </Show>
-              </>
+              </PageSection>
             )}
           </For>
           <Show when={currentRoute().kind === "journals" && mainPages().length === 0}>
@@ -682,7 +707,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   );
 }
 
-function PageSection(props: { page: FeedPage }): JSX.Element {
+function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
@@ -772,7 +797,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       // `[[refs]]`, so a dirty edit on ANY page (not just the renamed one) would
       // be read stale and its link left dangling. Abort if anything can't save.
       if (!(await flushAll())) {
-        alert("Couldn't save pending edits — resolve the conflict before renaming.");
+        alert(renameFlushFailureMessage());
         return;
       }
       const outcome = await renameOrMergePage(props.page.name, next, props.page.path);
@@ -1004,6 +1029,10 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         <For each={rootsToRender()}>{(id) => <Block id={id} />}</For>
       </div>
       <PageTypingTarget page={() => props.page} surface={editSurface()} />
+      {/* Keep each keyed feed item a single DOM root. A sibling agenda changing
+          at rollover otherwise makes reconciliation move the live editor's root
+          out of the document, losing native focus even though it stays mounted. */}
+      {props.children}
     </div>
   );
 }

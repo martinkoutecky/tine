@@ -33,6 +33,14 @@ const COPY_PROPS = [
   "textIndent",
   "wordSpacing",
   "tabSize",
+  "direction",
+  "textAlign",
+  "whiteSpace",
+  "wordBreak",
+  "overflowWrap",
+  "fontKerning",
+  "fontFeatureSettings",
+  "fontVariationSettings",
 ] as const;
 
 function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
@@ -43,9 +51,9 @@ function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
   div.style.top = "0";
   div.style.left = "-9999px";
   div.style.visibility = "hidden";
-  div.style.whiteSpace = "pre-wrap";
-  div.style.wordWrap = "break-word";
-  div.style.overflowWrap = "break-word";
+  // In particular, a body-only code editor is wrap=off: wrapping its mirror
+  // invents extra rows that do not exist under the user's pointer.
+  div.style.whiteSpace = cs.whiteSpace || (ta.wrap === "off" ? "pre" : "pre-wrap");
   return div;
 }
 
@@ -58,19 +66,24 @@ function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
 export function textareaCaretPoints(ta: HTMLTextAreaElement): Array<{ x: number; y: number }> | null {
   if (typeof document === "undefined") return null;
   const div = buildMirror(ta);
+  // Keep shaping and word-break opportunities identical to the textarea.
+  // A zero-width marker between every character permits wrapping inside words
+  // and progressively displaces the drag endpoint on subsequent visual rows.
+  const text = document.createTextNode(ta.value + "\u200b");
+  div.appendChild(text);
   document.body.appendChild(div);
   try {
     const points: Array<{ x: number; y: number }> = [];
-    for (let offset = 0; offset <= ta.value.length; offset++) {
-      const marker = document.createElement("span");
-      marker.textContent = "\u200b";
-      marker.dataset.caretOffset = String(offset);
-      div.appendChild(marker);
-      if (offset < ta.value.length) div.appendChild(document.createTextNode(ta.value[offset]));
-    }
     if (!div.offsetHeight) return null;
-    for (const marker of div.querySelectorAll<HTMLElement>("[data-caret-offset]")) {
-      points.push({ x: marker.offsetLeft, y: marker.offsetTop });
+    const origin = div.getBoundingClientRect();
+    const range = document.createRange();
+    for (let offset = 0; offset <= ta.value.length; offset++) {
+      range.setStart(text, offset);
+      range.collapse(true);
+      const rects = range.getClientRects();
+      const rect = rects[rects.length - 1];
+      if (!rect) return null;
+      points.push({ x: rect.left - origin.left, y: rect.top - origin.top });
     }
     return points;
   } finally {
