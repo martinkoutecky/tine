@@ -1107,6 +1107,16 @@ scan order, which is why this state reproduces only intermittently in journeys â
 `a_dependency_queued_behind_its_dependent_is_promoted_ahead_of_it` pins the rule
 deterministically.
 
+**Outbound causal heads retain replay evidence.** Before publishing a queued
+batch's objects, manifest, or frontier head, the runtime requires every immediate
+causal parent to be complete in the logical hot/cold archive and to name the same
+workspace and lineage. Accepted effects alone do not prove retained replay bytes.
+Missing manifests or objects block publication and Safe handoff; restoration
+unblocks the queued batch without reopening. This check reads the immediate heads,
+not the whole accepted history. The two
+`outbound_child_blocks_when_ordinary_parent_*_lost` tests cover missing manifests
+and objects, refusal, and recovery.
+
 ### 2.3a Adoption: a device that already has a managed graph of its own
 
 Both a phone and a desktop can enable Tine-managed storage on the same synced

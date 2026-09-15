@@ -19880,6 +19880,20 @@ fn own_provider_manifest_revalidation_cursor(fixture: &ActivationFixture) -> Opt
 
 #[test]
 fn outbound_child_blocks_when_ordinary_parent_is_lost() {
+    outbound_child_blocks_until_parent_restored(false, false);
+}
+
+#[test]
+fn outbound_child_blocks_when_ordinary_parent_object_is_lost() {
+    outbound_child_blocks_until_parent_restored(true, false);
+}
+
+#[test]
+fn outbound_child_accepts_retained_cold_parent_after_hot_manifest_loss() {
+    outbound_child_blocks_until_parent_restored(false, true);
+}
+
+fn outbound_child_blocks_until_parent_restored(remove_object: bool, retain_cold: bool) {
     let fixture = make_shared_fixture("provider-outbound-parent-loss", 0xbb2c);
     let _descriptor = activate_and_prepare_shared(&fixture);
     let handle = active_handle(SyncRuntimeHandle::open(reopen_request(&fixture.request)));
@@ -19894,13 +19908,36 @@ fn outbound_child_blocks_when_ordinary_parent_is_lost() {
     publish_shared_batch(&handle, &fixture, parent_batch);
     settle_shared_provider(&handle);
 
-    let child_batch = submit_durable(
-        &handle,
-        vec![SemanticOperation::SetPagePreamble {
-            page_id,
-            preamble: Some("child must not publish past lost parent".into()),
-        }],
-    );
+    assert!(matches!(
+        handle.clean_shutdown(),
+        Ok(SyncShutdownOutcome::Safe(_))
+    ));
+    drop(handle);
+    let request = reopen_request(&fixture.request);
+    let resources = open_clean_runtime_resources(&request).unwrap().unwrap();
+    let mut actor = RuntimeActor::from_clean_resources(
+        request.clone(),
+        request.clean_identities.clone().unwrap(),
+        resources,
+        SyncRuntimeRecovery::CleanManifestReplay,
+        Arc::new(crate::managed_query::ManagedQueryShared::default()),
+    )
+    .unwrap();
+    for _ in 0..128 {
+        if !actor.provider_has_work() {
+            break;
+        }
+        assert!(!matches!(actor.tick(), SyncRuntimeTick::RecoveryBlocked(_)));
+    }
+    let transaction = OperationTransaction::new(vec![SemanticOperation::SetPagePreamble {
+        page_id,
+        preamble: Some("child must not publish past lost parent".into()),
+    }])
+    .unwrap();
+    let child_batch = match actor.submit_local_mutation(transaction) {
+        SyncLocalMutationOutcome::Durable { batch_id } => batch_id,
+        other => panic!("child fixture must commit before parent loss: {other:?}"),
+    };
     let store = ObjectStore::open(
         &clean_operation_archive_directory(&fixture.request.archive_root),
         fixture.request.identities.workspace_id,
@@ -19925,30 +19962,69 @@ fn outbound_child_blocks_when_ordinary_parent_is_lost() {
             fs::remove_file(provider_manifest).unwrap();
         }
     }
-    fs::remove_file(
+    let parent_manifest_bytes = store.read_manifest_bytes(parent_batch).unwrap();
+    let lost_path = if remove_object {
+        let parent = OperationBatch::decode(&parent_manifest_bytes).unwrap();
+        clean_operation_archive_directory(&fixture.request.archive_root)
+            .join("objects")
+            .join(format!(
+                "{}.object",
+                parent.required_objects()[0].content_digest()
+            ))
+    } else {
         clean_operation_archive_directory(&fixture.request.archive_root)
             .join("batches")
-            .join(format!("{parent_batch}.manifest")),
-    )
-    .unwrap();
-    assert!(matches!(
+            .join(format!("{parent_batch}.manifest"))
+    };
+    let lost_bytes = fs::read(&lost_path).unwrap();
+    fs::remove_file(&lost_path).unwrap();
+    assert!(!matches!(
         store.inspect_batch(parent_batch).unwrap(),
-        crate::oplog::BatchInspection::Absent
+        crate::oplog::BatchInspection::Ready(_)
     ));
 
     let child_provider_manifest = fixture
         .request
         .provider_root
         .join(format!("outbox/manifests/{child_batch}.manifest"));
-    // `2a578d87` retired both the manifest-recovery records this fixture used to
-    // remove and the `RecoveryBlocked("durable outbound dependency {parent} is
-    // absent")` wording; neither has a production writer/emitter today. What
-    // remains is the live user outcome asserted below, and it is currently
-    // BROKEN: with the ordinary parent's manifest absent from the provider AND
-    // from the local archive, the child still publishes and the device reaches a
-    // Safe handoff, so a peer receives a batch whose causal parent exists nowhere.
+    if retain_cold {
+        assert!(matches!(
+            actor
+                .retained_archive_store()
+                .unwrap()
+                .inspect_batch_with_cold_history(parent_batch),
+            Ok(crate::oplog::BatchInspection::Ready(_))
+        ));
+        for _ in 0..128 {
+            if !actor.provider_has_work() {
+                break;
+            }
+            assert!(!matches!(actor.tick(), SyncRuntimeTick::RecoveryBlocked(_)));
+        }
+        assert!(child_provider_manifest.is_file());
+        assert!(matches!(
+            actor.clean_shutdown(),
+            Ok(SyncShutdownOutcome::Safe(_))
+        ));
+        return;
+    }
+    let cold = store
+        .root_path()
+        .join(crate::oplog::cold_object_store::COLD_HISTORY_DIRECTORY);
+    let cold_backup = store.root_path().join("test-withheld-cold-history");
+    if cold.exists() {
+        fs::rename(&cold, &cold_backup).unwrap();
+    }
+    assert!(!matches!(
+        actor
+            .retained_archive_store()
+            .unwrap()
+            .inspect_batch_with_cold_history(parent_batch),
+        Ok(crate::oplog::BatchInspection::Ready(_))
+    ));
+    // Accepted effects alone do not prove that a peer can replay this parent.
     for _ in 0..64 {
-        match handle.tick().unwrap() {
+        match actor.tick() {
             SyncRuntimeTick::RecoveryBlocked(_) => break,
             SyncRuntimeTick::Recovering | SyncRuntimeTick::Idle => {}
             other => panic!("ordinary parent loss did not fail closed: {other:?}"),
@@ -19959,9 +20035,35 @@ fn outbound_child_blocks_when_ordinary_parent_is_lost() {
         "child published past its lost ordinary parent"
     );
     assert!(
-        handle.clean_shutdown().is_err(),
+        actor.clean_shutdown().is_err(),
         "ordinary parent loss reached Safe with the child unpublished"
     );
+
+    // Restoring the evidence must unblock the same queued child without reopen.
+    fs::write(&lost_path, lost_bytes).unwrap();
+    if cold_backup.exists() {
+        fs::rename(&cold_backup, &cold).unwrap();
+    }
+    fs::write(
+        fixture
+            .request
+            .provider_root
+            .join("outbox")
+            .join(parent_relative),
+        parent_manifest_bytes,
+    )
+    .unwrap();
+    for _ in 0..128 {
+        if !actor.provider_has_work() {
+            break;
+        }
+        assert!(!matches!(actor.tick(), SyncRuntimeTick::RecoveryBlocked(_)));
+    }
+    assert!(child_provider_manifest.is_file());
+    assert!(matches!(
+        actor.clean_shutdown(),
+        Ok(SyncShutdownOutcome::Safe(_))
+    ));
 }
 
 #[test]

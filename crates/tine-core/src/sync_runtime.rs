@@ -11634,6 +11634,24 @@ fn publish_clean_archive_batch(
             "clean outbound batch {batch_id} is outside the sharing namespace"
         )));
     }
+    // Acceptance is not evidence that the parent's replay bytes still exist.
+    // Check only immediate heads, through the logical hot/cold archive, before
+    // publishing any part of this child or advertising its frontier.
+    for dependency in validated.manifest().causal_dependency_heads() {
+        match store
+            .inspect_batch_with_cold_history(*dependency)
+            .map_err(|error| SyncRuntimeRequestError::ActorRefused(error.to_string()))?
+        {
+            crate::oplog::BatchInspection::Ready(parent)
+                if parent.manifest().workspace_id() == workspace_id
+                    && parent.manifest().lineage_digest() == lineage_digest => {}
+            _ => {
+                return Err(SyncRuntimeRequestError::ActorRefused(format!(
+                    "clean outbound dependency {dependency} is not completely retained"
+                )));
+            }
+        }
+    }
     for object in validated.manifest().required_objects() {
         let bytes = store
             .resolve_logical_object_bytes(object.content_digest())
