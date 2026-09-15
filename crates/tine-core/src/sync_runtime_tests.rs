@@ -31642,6 +31642,30 @@ fn failure_after_clean_activation_retain_completes_on_the_next_open() {
 }
 
 #[test]
+fn activation_provider_namespace_accepts_canonical_and_lexical_graph_paths() {
+    let fixture = ActivationFixture::nested_unicode("provider-path-spelling", 0xa1f5_c2e0);
+    let mut request = fixture.request.clone();
+    assert!(validate_activation_paths(&request, &fixture.graph_root).is_ok());
+    request.provider_root = fs::canonicalize(&fixture.graph_root)
+        .unwrap()
+        .join(".tine-sync/v2/shared");
+    assert!(validate_activation_paths(&request, &fixture.graph_root).is_ok());
+    for suffix in [
+        ".tine-sync/v2/other",
+        ".tine-sync/v3/shared",
+        "other/v2/shared",
+    ] {
+        request.provider_root = fixture.graph_root.join(suffix);
+        assert!(validate_activation_paths(&request, &fixture.graph_root).is_err());
+    }
+    request.provider_root = fixture.root.join(".tine-sync/v2/shared");
+    assert!(validate_activation_paths(&request, &fixture.graph_root).is_err());
+    request = fixture.request.clone();
+    request.archive_root = fixture.graph_root.join("must-not-be-private");
+    assert!(validate_activation_paths(&request, &fixture.graph_root).is_err());
+}
+
+#[test]
 fn managed_activation_abort_cuts_retire_unmarked_generation_and_retry() {
     const CUT_ENV: &str = "TINE_TEST_CLEAN_ACTIVATION_ABORT_CUT";
     const ROOT_ENV: &str = "TINE_TEST_CLEAN_ACTIVATION_ABORT_ROOT";

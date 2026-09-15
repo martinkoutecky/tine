@@ -10320,8 +10320,17 @@ fn validate_activation_paths(
 ) -> Result<(), String> {
     let canonical_graph = fs::canonicalize(graph_root)
         .map_err(|error| format!("cannot canonicalize graph root for activation: {error}"))?;
-    let expected_provider = canonical_graph.join(".tine-sync").join("v2").join("shared");
-    if normalize_absolute(&request.provider_root)? != expected_provider {
+    // The namespace may not exist yet. Canonicalize its existing graph ancestor,
+    // rather than comparing a lexical path with Windows' verbatim canonical path.
+    let provider = normalize_absolute(&request.provider_root)?;
+    let provider_graph = provider
+        .ancestors()
+        .nth(3)
+        .filter(|_| provider.ends_with(Path::new(".tine-sync/v2/shared")))
+        .map(fs::canonicalize)
+        .transpose()
+        .map_err(|error| format!("cannot canonicalize provider graph root: {error}"))?;
+    if provider_graph.as_deref() != Some(canonical_graph.as_path()) {
         return Err(
             "provider_root must be exactly the graph's .tine-sync/v2/shared namespace".into(),
         );
