@@ -2083,14 +2083,19 @@ fn managed_save_refusals_cannot_be_constructed_without_a_site_name() {
             "managed refusals must name their site (use ActorRefusedAt/…WithCode/…WithDebugDetail): {unattributed:#?}"
         );
 
-    // The same variants are also reachable through `Self::` inside the two
-    // `Display` impls. Those two arms are the entire legitimate use; a
-    // third would be a construction site hidden behind the shorthand.
-    assert_eq!(
-        production.matches("Self::ActorRefused =>").count(),
-        2,
-        "only the two managed Display arms may name the payload-less refusal"
-    );
+    // `Self::` is legitimate in the two Display arms and the content-free
+    // diagnostic classifier; enumerate exact consumers rather than counting
+    // every shorthand match as a potential construction site.
+    let shorthand = production
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("Self::ActorRefused =>"))
+        .collect::<Vec<_>>();
+    assert_eq!(shorthand, vec![
+        "Self::ActorRefused => formatter.write_str(\"sync actor refused application page intent\"),",
+        "Self::ActorRefused => \"actor_refused\",",
+        "Self::ActorRefused => formatter.write_str(\"sync actor refused editor intent\"),",
+    ]);
 
     // The guard above is satisfied trivially if the named variants stop
     // being used at all, so hold the inventory itself: the managed surface
@@ -22005,10 +22010,12 @@ fn frontier_head_conflicts_fall_back_and_preserve_unreconciled_bytes() {
             false,
         )
         .unwrap();
-    settle_shared_provider(&handle);
-    let traversal = provider_traversal_instrumentation(fixture.request.identities.workspace_id);
-    assert!(traversal.full_scan_entries > 0, "{traversal:?}");
+    let refusal = wait_for_provider_recovery_block(&handle, "differing head conflict");
+    assert!(refusal.contains("differs from canonical"), "{refusal}");
     assert_eq!(fs::read(&differing_path).unwrap(), differing);
+    assert!(handle.clean_shutdown().is_err());
+    fs::remove_file(&differing_path).unwrap();
+    settle_shared_provider(&handle);
 
     let malformed_name = format!(
         "{}-{}.head",
@@ -22019,10 +22026,11 @@ fn frontier_head_conflicts_fall_back_and_preserve_unreconciled_bytes() {
     fs::write(&malformed, b"{").unwrap();
     reset_provider_traversal_instrumentation(fixture.request.identities.workspace_id);
     handle.observe_provider().unwrap();
-    settle_shared_provider(&handle);
-    let traversal = provider_traversal_instrumentation(fixture.request.identities.workspace_id);
-    assert!(traversal.full_scan_entries > 0, "{traversal:?}");
+    let _refusal = wait_for_provider_recovery_block(&handle, "malformed head");
     assert_eq!(fs::read(&malformed).unwrap(), b"{");
+    // A malformed unaccepted head is reported and preserved; unlike the exact
+    // differing-conflict queue entry above, the scan can advance past it.
+    settle_shared_provider(&handle);
     assert!(matches!(
         handle.clean_shutdown(),
         Ok(SyncShutdownOutcome::Safe(_))
