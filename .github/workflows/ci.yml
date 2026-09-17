@@ -364,7 +364,7 @@ jobs:
 
   windows-compile:
     name: Full CI / Windows core compile + integration smoke
-    if: github.event_name == 'workflow_dispatch' && inputs.windows_test_name != 'diagnose543' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
+    if: github.event_name == 'workflow_dispatch' && !startsWith(inputs.windows_test_name, 'diagnose543') && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -464,6 +464,44 @@ jobs:
         with:
           name: diagnose-543-${{ matrix.os }}
           path: diagnose-543.log
+
+  diagnose-543-app:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543app'
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-proof-windows-x64
+          run-id: 35167507742
+          github-token: ${{ github.token }}
+          path: diagnostic-release
+      - name: Locate and verify the released binary
+        shell: pwsh
+        run: |
+          $app = @(Get-ChildItem diagnostic-release -Recurse -Filter tine.exe)
+          if ($app.Count -ne 1) { throw 'Expected one released executable' }
+          $hash = (Get-FileHash $app[0].FullName -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne 'aff86a2e5c8fe1cff61650724bd2cce06acfe4097da11df5f65730349fbb4d11') { throw "Unexpected release binary $hash" }
+          "TINE_APP=$($app[0].FullName)" >> $env:GITHUB_ENV
+      - shell: pwsh
+        run: ./scripts/install-windows-webview2-driver.ps1
+      - name: Exercise Ctrl+K in the released Windows app
+        run: node scripts/diagnose-543-windows-app.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnose-543-released-windows-app
+          path: test-results/diagnose-543-app
 
   android-core-compile:
     name: Full CI / Android core compile
