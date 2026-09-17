@@ -434,7 +434,7 @@ jobs:
         run: cargo check -p tine --features custom-protocol
 
   diagnose-543:
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543'
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && (inputs.windows_test_name == 'diagnose543' || inputs.windows_test_name == 'diagnose543sql')
     name: GH543 progress / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 55
@@ -448,6 +448,9 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+      - name: Add disposable storage-stage timing overlay
+        if: inputs.windows_test_name == 'diagnose543sql'
+        run: python scripts/diagnose-543-storage.py
       - name: Compile diagnostic
         run: cargo test --locked -p tine-core --lib --no-run
       - name: Cold, reopen and concurrent-startup search
