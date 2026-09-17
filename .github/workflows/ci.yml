@@ -503,14 +503,14 @@ jobs:
           path: diagnose-543-io.log
 
   diagnose-543-matched:
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543matched'
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && (inputs.windows_test_name == 'diagnose543matched' || inputs.windows_test_name == 'diagnose543matchedfastdisk')
     name: GH543 matched SQL / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 65
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-22.04]
+        os: ${{ fromJSON(inputs.windows_test_name == 'diagnose543matchedfastdisk' && '["windows-latest"]' || '["windows-latest","ubuntu-22.04"]') }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.96.0
@@ -521,10 +521,27 @@ jobs:
         run: python scripts/diagnose-543-storage.py
       - name: Compile matched release workload
         run: cargo test --locked --release -p tine-core --lib --no-run
+      - name: Use Windows temporary SSD volume for controlled comparison
+        if: inputs.windows_test_name == 'diagnose543matchedfastdisk'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force D:\tine543-temp
+          "TMP=D:\tine543-temp" | Out-File -Append $env:GITHUB_ENV
+          "TEMP=D:\tine543-temp" | Out-File -Append $env:GITHUB_ENV
+      - name: Retain matched executable for any further diagnostic replay
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnose-543-matched-executable-${{ matrix.os }}
+          path: |
+            target/release/deps/tine_core-*.exe
+            target/release/deps/tine_core-*
+          retention-days: 3
       - name: Host facts Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          [System.IO.Path]::GetTempPath() | Out-File diagnose-543-temp-path.log
+          Get-Volume | Select-Object DriveLetter,FileSystem,Size,SizeRemaining | Format-List | Out-File diagnose-543-volumes.log
           Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Format-List | Out-File diagnose-543-host.log
           Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Format-List | Out-File -Append diagnose-543-host.log
           Get-PhysicalDisk | Select-Object FriendlyName,MediaType,BusType,Size | Format-List | Out-File -Append diagnose-543-host.log
