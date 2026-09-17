@@ -505,6 +505,42 @@ jobs:
           name: diagnose-543-released-windows-app
           path: test-results/diagnose-543-app
 
+  diagnose-543-instrumented-app:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543instrumented'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run build
+      - name: Build instrumented release app
+        run: cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - shell: pwsh
+        run: ./scripts/install-windows-webview2-driver.ps1
+      - name: Reproduce with worker-state logging
+        timeout-minutes: 8
+        env:
+          TINE_APP: ${{ github.workspace }}\target\release\tine.exe
+          TINE_DIAGNOSE_543: '1'
+          TINE_DIAGNOSE_543_SIZES: '10000'
+          TINE_DIAGNOSE_543_PHASES: 'cold'
+          TINE_DIAGNOSE_543_APP_BUDGET_MS: '180000'
+        run: node scripts/diagnose-543-windows-app.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnose-543-instrumented-windows-app
+          path: test-results/diagnose-543-app
+
   android-core-compile:
     name: Full CI / Android core compile
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android' || inputs.scope == 'android-compile')

@@ -1032,6 +1032,20 @@ pub(crate) fn warm_cache_async(
     warm_generation: u64,
 ) -> Result<(), crate::command_error::CommandError> {
     let graph = slot.graph();
+    if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+        let diagnostic_graph = graph.clone();
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            for _ in 0..180 {
+                eprintln!(
+                    "DIAG543 APP t={:?} {}",
+                    started.elapsed(),
+                    diagnostic_graph.diagnostic_543_state()
+                );
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        });
+    }
     std::thread::spawn(move || {
         // Brief delay so the first journal paint (which only needs a few pages)
         // grabs the lock first; then build the whole-graph cache in the

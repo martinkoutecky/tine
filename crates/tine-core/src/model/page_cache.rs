@@ -310,6 +310,13 @@ impl Graph {
     /// parse — no projection, a lease held elsewhere, a failed worker,
     /// cancellation, or a mutation that raced the warm (generation drift).
     pub(super) fn warm_projection_cancellable(&self, cancelled: &impl Fn() -> bool) -> bool {
+        let diagnostic = std::env::var_os("TINE_DIAGNOSE_543").is_some();
+        if diagnostic {
+            eprintln!(
+                "DIAG543 WARM begin thread={:?}",
+                std::thread::current().id()
+            );
+        }
         if cancelled() {
             return false;
         }
@@ -333,6 +340,13 @@ impl Graph {
         let Ok(entries) = self.page_build_entries(&permit) else {
             return false;
         };
+        if diagnostic {
+            eprintln!(
+                "DIAG543 WARM inventory={} thread={:?}",
+                entries.len(),
+                std::thread::current().id()
+            );
+        }
         let mut sources = Vec::with_capacity(entries.len());
         let mut failures = Vec::new();
         for (i, entry) in entries.into_iter().enumerate() {
@@ -354,10 +368,36 @@ impl Graph {
             return false;
         }
         let parse_config = Arc::new(self.config.parse_config());
+        if diagnostic {
+            eprintln!(
+                "DIAG543 WARM sources={} thread={:?}",
+                sources.len(),
+                std::thread::current().id()
+            );
+        }
         if !projection.enqueue_warm(generation, sources, Arc::clone(&parse_config)) {
+            if diagnostic {
+                eprintln!(
+                    "DIAG543 WARM enqueue refused thread={:?}",
+                    std::thread::current().id()
+                );
+            }
             return false;
         }
-        match projection.wait_warm_outcome() {
+        if diagnostic {
+            eprintln!(
+                "DIAG543 WARM waiting outcome thread={:?}",
+                std::thread::current().id()
+            );
+        }
+        let outcome = projection.wait_warm_outcome();
+        if diagnostic {
+            eprintln!(
+                "DIAG543 WARM received outcome thread={:?}",
+                std::thread::current().id()
+            );
+        }
+        match outcome {
             crate::direct_projection::WarmOutcome::Clean => {
                 self.publish_page_index_failures(generation, failures);
                 true

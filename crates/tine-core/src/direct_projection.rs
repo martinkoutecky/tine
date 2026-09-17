@@ -1831,10 +1831,9 @@ impl DirectProjection {
 
     /// Test diagnostic: the queue and readiness state in one line, for a
     /// convergence failure that would otherwise be a bare timeout.
-    #[cfg(test)]
     pub(crate) fn debug_state_test(&self) -> String {
         let pending = self.shared.pending.lock().unwrap();
-        format!(
+        let state = format!(
             "ready={} validated={} ready_generation={} latest_generation={} full={} deltas={} warm={} warm_outcome={:?} warm_stream={:?} order={:?} superseded={} needs_full={} rebuild={} stop={} page_order={} worker_available={} worker_failed={} worker_busy={}",
             self.shared.ready.load(Ordering::Acquire),
             self.shared.validated.load(Ordering::Acquire),
@@ -1859,6 +1858,10 @@ impl DirectProjection {
             self.shared.worker_available.load(Ordering::Acquire),
             self.shared.worker_failed.load(Ordering::Acquire),
             self.shared.worker_busy.load(Ordering::Acquire),
+        );
+        format!(
+            "{state} repairs_in_flight={}",
+            self.shared.repairs_in_flight.load(Ordering::Acquire)
         )
     }
 
@@ -2275,8 +2278,15 @@ fn projection_worker(shared: Arc<ProjectionShared>) {
                 } else {
                     PageRegistryMetadata::new()
                 };
+                let diagnostic_turn = std::time::Instant::now();
+                if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+                    eprintln!("DIAG543 WORKER begin full={had_full} warm={had_warm} deltas={} rebuild={rebuild}", deltas.len());
+                }
                 let mut applied =
                     apply_pending(writer_slot.as_mut().unwrap(), full, warm.as_ref(), deltas)?;
+                if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+                    eprintln!("DIAG543 WORKER applied {:?}", diagnostic_turn.elapsed());
+                }
                 // R6: the stream's closing turn (or a `Clean` warm turn, or a
                 // turn that lowered mid-stream deltas without positions)
                 // reconciles the order table over the queue's inventory. The
@@ -2560,7 +2570,6 @@ fn apply_pending(
     warm: Option<&PendingWarm>,
     deltas: BTreeMap<String, (u64, PageDelta)>,
 ) -> Result<AppliedTurn, String> {
-    #[cfg(test)]
     let diagnostic_start = std::time::Instant::now();
     let mut turn = AppliedTurn::default();
     let applied = &mut turn.pages;
@@ -2644,7 +2653,6 @@ fn apply_pending(
         turn.warm_outcome = Some(validate_warm(database, warm, applied)?);
     }
     if !deltas.is_empty() {
-        #[cfg(test)]
         let diagnostic_count = deltas.len();
         let mut replacements = Vec::new();
         let mut reference_postings = Vec::new();
@@ -2694,14 +2702,12 @@ fn apply_pending(
                 }
             }
         }
-        #[cfg(test)]
         if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
-            println!(
+            eprintln!(
                 "DIAG543 STAGE deltas={diagnostic_count} lower={:?}",
                 diagnostic_start.elapsed()
             );
         }
-        #[cfg(test)]
         let diagnostic_sql = std::time::Instant::now();
         database
             .apply_with_source_revisions_and_aliases(
@@ -2714,9 +2720,8 @@ fn apply_pending(
                 &aliases,
             )
             .map_err(|error| error.to_string())?;
-        #[cfg(test)]
         if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
-            println!(
+            eprintln!(
                 "DIAG543 STAGE deltas={diagnostic_count} sql={:?} total={:?}",
                 diagnostic_sql.elapsed(),
                 diagnostic_start.elapsed()

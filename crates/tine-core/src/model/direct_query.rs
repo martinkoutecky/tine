@@ -6,6 +6,20 @@
 use super::*;
 
 impl Graph {
+    pub fn diagnostic_543_state(&self) -> String {
+        let projection = self
+            .direct_projection
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(Arc::clone);
+        format!(
+            "generation={} {}",
+            self.cache_generation(),
+            projection.map(|p| p.debug_state_test()).unwrap_or_default()
+        )
+    }
+
     /// **SPEC §5.9's Direct Files dispatch, in ONE place.**
     ///
     /// Every route out of a simple or advanced query goes through here — ready,
@@ -871,6 +885,12 @@ impl Graph {
         let Ok(_repair) = self.projection_recovery.try_lock() else {
             return;
         };
+        if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+            eprintln!(
+                "DIAG543 REPAIR begin reset={reset} thread={:?}",
+                std::thread::current().id()
+            );
+        }
         let (reset, _in_flight) = {
             let projection = self.direct_projection.lock().unwrap();
             let Some(projection) = projection.as_ref() else {
@@ -891,7 +911,13 @@ impl Graph {
             // validating this source inventory, then consumes bounded page
             // batches. Never call warm_cache here: its legacy fallback builds
             // the parsed graph when streaming cannot currently acquire ownership.
-            self.warm_projection_cancellable(&|| false);
+            let diagnostic_warm = self.warm_projection_cancellable(&|| false);
+            if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+                eprintln!(
+                    "DIAG543 REPAIR warm returned={diagnostic_warm} thread={:?}",
+                    std::thread::current().id()
+                );
+            }
             return;
         };
         let revisions = self.disk_revs.read().unwrap().clone();

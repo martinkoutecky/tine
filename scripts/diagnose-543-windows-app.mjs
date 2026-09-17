@@ -11,7 +11,7 @@ if (process.platform !== 'win32' || !app) throw new Error('Windows and TINE_APP 
 const artifacts = path.resolve('test-results/diagnose-543-app');
 fs.mkdirSync(artifacts, { recursive: true });
 const records = [];
-for (const count of [1000, 10000]) {
+for (const count of (process.env.TINE_DIAGNOSE_543_SIZES ?? '1000,10000').split(',').map(Number)) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tine-543-app-'));
   const graph = path.join(root, 'graph');
   for (const dir of ['pages', 'journals', 'logseq']) fs.mkdirSync(path.join(graph, dir), { recursive: true });
@@ -23,7 +23,7 @@ for (const count of [1000, 10000]) {
   const now = new Date();
   const stem = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, '0')}_${String(now.getDate()).padStart(2, '0')}`;
   fs.writeFileSync(path.join(graph, 'journals', `${stem}.md`), '- DIAG543 launch marker\n');
-  for (const phase of ['cold', 'reopen']) {
+  for (const phase of (process.env.TINE_DIAGNOSE_543_PHASES ?? 'cold,reopen').split(',')) {
     const prefix = path.join(artifacts, `${count}-${phase}`);
     const env = { ...process.env, TINE_GRAPH: graph, TINE_DEBUG: '1', TINE_DEBUG_LOG: `${prefix}-debug.log`,
       APPDATA: path.join(root, 'appdata'), LOCALAPPDATA: path.join(root, 'localappdata'),
@@ -59,7 +59,7 @@ for (const count of [1000, 10000]) {
       await browser.$('.switcher-input').waitForExist({ timeout: 10000 });
       await browser.$('.switcher-input').setValue('sentinel543');
       let passed = false;
-      const deadline = Date.now() + (count === 1000 ? 180000 : 600000);
+      const deadline = Date.now() + Number(process.env.TINE_DIAGNOSE_543_APP_BUDGET_MS ?? (count === 1000 ? 180000 : 600000));
       while (Date.now() < deadline) {
         const snapshot = await browser.execute(() => ({
           status: document.querySelector('.switcher [role="status"]')?.textContent ?? null,
