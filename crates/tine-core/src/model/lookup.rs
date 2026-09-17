@@ -176,6 +176,7 @@ impl Graph {
         if let Some(aliases) = self.direct_projection_page_aliases_with_owners() {
             return aliases;
         }
+        if std::env::var_os("TINE_DIAGNOSE_543").is_some() { eprintln!("DIAG543 ALIASES parser_fallback"); }
         crate::query::page_aliases_with_owners(self)
     }
 
@@ -312,6 +313,7 @@ impl Graph {
         if let Some(counts) = self.direct_projection_block_ref_counts() {
             return Ok(Arc::new(counts));
         }
+        if std::env::var_os("TINE_DIAGNOSE_543").is_some() { eprintln!("DIAG543 REF_COUNTS parser_fallback"); }
         let map = self.with_pages(|pages| -> io::Result<_> {
             let mut counts = std::collections::HashMap::new();
             for (_entry, doc) in pages {
