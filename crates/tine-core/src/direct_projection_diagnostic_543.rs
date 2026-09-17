@@ -24,7 +24,8 @@ fn windows_indexing_progress_probe_543() {
         }
         let db_root = scratch("543-db");
         let database = db_root.join("projection.sqlite");
-        for phase in ["cold-warm-first", "reopen-query-first", "cold-startup-race"] {
+        let phases = std::env::var("TINE_DIAGNOSE_543_PHASES").unwrap_or("cold-warm-first,reopen-query-first,cold-startup-race".into());
+        for phase in ["cold-warm-first", "reopen-query-first", "cold-startup-race"].into_iter().filter(|phase| phases.split(',').any(|requested| requested == *phase)) {
             let path = if phase == "cold-startup-race" {
                 db_root.join("race.sqlite")
             } else {
@@ -152,7 +153,11 @@ fn windows_indexing_progress_probe_543() {
             drop(projection);
             release_projection(&*graph);
         }
-        std::fs::remove_dir_all(root).unwrap();
-        std::fs::remove_dir_all(db_root).unwrap();
+        if std::env::var_os("TINE_DIAGNOSE_543_KEEP").is_some() {
+            println!("DIAG543 KEPT graph={} database={}", root.display(), db_root.display());
+        } else {
+            std::fs::remove_dir_all(root).unwrap();
+            std::fs::remove_dir_all(db_root).unwrap();
+        }
     }
 }

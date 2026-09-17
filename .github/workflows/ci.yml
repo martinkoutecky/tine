@@ -520,6 +520,44 @@ jobs:
           name: diagnose-543-released-windows-app
           path: test-results/diagnose-543-app
 
+  diagnose-543-previous-app:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543previous'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Download the previous released Windows portable app
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.6.982 -R martinkoutecky/tine -p Tine_0.6.982_x64-portable.zip -D previous
+          Expand-Archive previous/Tine_0.6.982_x64-portable.zip previous/app
+          $app = @(Get-ChildItem previous/app -Recurse -Filter tine.exe)
+          if ($app.Count -ne 1) { throw 'Expected one application' }
+          Get-FileHash $app[0].FullName -Algorithm SHA256
+          "TINE_APP=$($app[0].FullName)" >> $env:GITHUB_ENV
+      - shell: pwsh
+        run: ./scripts/install-windows-webview2-driver.ps1
+      - name: Same synthetic graphs on v0.6.982
+        timeout-minutes: 15
+        env:
+          TINE_DIAGNOSE_543_SIZES: '1000,10000'
+          TINE_DIAGNOSE_543_PHASES: 'cold'
+          TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
+          TINE_DIAGNOSE_543_CASE: 'v0.6.982'
+        run: node scripts/diagnose-543-windows-app.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnose-543-previous-windows-app
+          path: test-results/diagnose-543-app
+
   diagnose-543-instrumented-app:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543instrumented'
     runs-on: windows-latest
