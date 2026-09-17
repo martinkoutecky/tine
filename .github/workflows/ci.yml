@@ -455,6 +455,8 @@ jobs:
         shell: bash
         env:
           TINE_DIAGNOSE_543: '1'
+          TINE_DIAGNOSE_543_SIZES: '1000'
+          TINE_DIAGNOSE_543_BUDGET: '600'
           RUST_BACKTRACE: '1'
         run: |
           set -o pipefail

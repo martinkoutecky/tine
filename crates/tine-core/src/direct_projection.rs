@@ -2560,6 +2560,8 @@ fn apply_pending(
     warm: Option<&PendingWarm>,
     deltas: BTreeMap<String, (u64, PageDelta)>,
 ) -> Result<AppliedTurn, String> {
+    #[cfg(test)]
+    let diagnostic_start = std::time::Instant::now();
     let mut turn = AppliedTurn::default();
     let applied = &mut turn.pages;
     if let Some(PendingFull {
@@ -2642,6 +2644,8 @@ fn apply_pending(
         turn.warm_outcome = Some(validate_warm(database, warm, applied)?);
     }
     if !deltas.is_empty() {
+        #[cfg(test)]
+        let diagnostic_count = deltas.len();
         let mut replacements = Vec::new();
         let mut reference_postings = Vec::new();
         let mut aliases = Vec::new();
@@ -2690,6 +2694,15 @@ fn apply_pending(
                 }
             }
         }
+        #[cfg(test)]
+        if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+            println!(
+                "DIAG543 STAGE deltas={diagnostic_count} lower={:?}",
+                diagnostic_start.elapsed()
+            );
+        }
+        #[cfg(test)]
+        let diagnostic_sql = std::time::Instant::now();
         database
             .apply_with_source_revisions_and_aliases(
                 &PhysicalGraphProjectionChange {
@@ -2701,6 +2714,14 @@ fn apply_pending(
                 &aliases,
             )
             .map_err(|error| error.to_string())?;
+        #[cfg(test)]
+        if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+            println!(
+                "DIAG543 STAGE deltas={diagnostic_count} sql={:?} total={:?}",
+                diagnostic_sql.elapsed(),
+                diagnostic_start.elapsed()
+            );
+        }
     }
     Ok(turn)
 }

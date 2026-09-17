@@ -108,7 +108,12 @@ fn windows_indexing_progress_probe_543() {
                     }
                 })
             };
-            let budget = Duration::from_secs(if count <= 1000 { 180 } else { 600 });
+            let budget = Duration::from_secs(
+                std::env::var("TINE_DIAGNOSE_543_BUDGET")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(if count <= 1000 { 180 } else { 600 }),
+            );
             while start.elapsed() < budget {
                 let bytes = |suffix: &str| {
                     std::fs::metadata(format!("{}{suffix}", path.display()))
