@@ -528,14 +528,6 @@ jobs:
           New-Item -ItemType Directory -Force D:\tine543-temp
           "TMP=D:\tine543-temp" | Out-File -Append $env:GITHUB_ENV
           "TEMP=D:\tine543-temp" | Out-File -Append $env:GITHUB_ENV
-      - name: Retain matched executable for any further diagnostic replay
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnose-543-matched-executable-${{ matrix.os }}
-          path: |
-            target/release/deps/tine_core-*.exe
-            target/release/deps/tine_core-*
-          retention-days: 3
       - name: Host facts Windows
         if: runner.os == 'Windows'
         shell: pwsh
