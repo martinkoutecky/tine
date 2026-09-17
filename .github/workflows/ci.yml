@@ -559,7 +559,7 @@ jobs:
           path: test-results/diagnose-543-app
 
   diagnose-543-instrumented-app:
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543instrumented'
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && (inputs.windows_test_name == 'diagnose543instrumented' || inputs.windows_test_name == 'diagnose543largecache')
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -580,9 +580,14 @@ jobs:
         run: |
           python scripts/diagnose-543-storage.py
           cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diagnose-543-profile-executable
+          path: target/release/tine.exe
       - shell: pwsh
         run: ./scripts/install-windows-webview2-driver.ps1
       - name: Reproduce with worker-state logging
+        if: inputs.windows_test_name == 'diagnose543instrumented'
         timeout-minutes: 20
         continue-on-error: true
         env:
@@ -607,7 +612,7 @@ jobs:
           TINE_DIAGNOSE_543_PHASES: 'cold'
           TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
           TINE_DIAGNOSE_543_CASE: 'cache64mb'
-          TINE_DIAGNOSE_543_CACHE_KIB: '65536'
+          TINE_DIAGNOSE_543_CACHE_KIB: ${{ inputs.windows_test_name == 'diagnose543largecache' && '524288' || '65536' }}
         run: node scripts/diagnose-543-windows-app.mjs
       - uses: actions/upload-artifact@v4
         if: always()
