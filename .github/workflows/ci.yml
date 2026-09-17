@@ -482,6 +482,26 @@ jobs:
           name: diagnose-543-${{ matrix.os }}
           path: diagnose-543*.log
 
+  diagnose-543-io:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543iomicro'
+    name: GH543 file calls / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Matched positioned file operations in temp and workspace
+        shell: bash
+        run: python scripts/diagnose-543-io.py | tee diagnose-543-io.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnose-543-io-${{ matrix.os }}
+          path: diagnose-543-io.log
+
   diagnose-543-matched:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543matched'
     name: GH543 matched SQL / ${{ matrix.os }}
