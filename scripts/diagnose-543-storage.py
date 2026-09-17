@@ -22,6 +22,8 @@ file = target / 'src/sqlite_graph_projection.rs'
 patch(file, '        Ok(Self { connection })\n    }\n\n    pub fn open_read_only',
     '        if std::env::var_os("TINE_DIAGNOSE_543_NO_AUTOCHECKPOINT").is_some() {\n'
     '            connection.pragma_update(None, "wal_autocheckpoint", 0)?;\n'
+    '        }\n        if let Ok(kib) = std::env::var("TINE_DIAGNOSE_543_CACHE_KIB") {\n'
+    '            connection.pragma_update(None, "cache_size", -kib.parse::<i64>().unwrap())?;\n'
     '        }\n        Ok(Self { connection })\n    }\n\n    pub fn open_read_only')
 patch(file, '        let instrumentation = sqlite_materialization::apply_graph_projection_rows(',
     '        let sql543 = std::time::Instant::now();\n        let instrumentation = sqlite_materialization::apply_graph_projection_rows(')
@@ -36,9 +38,17 @@ file = target / 'src/sqlite_materialization.rs'
 patch(file, '    let old_fts = load_fts_source_rows(transaction, &affected_pages)?;',
     '    let sql543 = std::time::Instant::now();\n    let old_fts = load_fts_source_rows(transaction, &affected_pages)?;' + timer('load_old_fts'))
 patch(file, '    for page in replacements {\n        insert_page(transaction, page)?;\n    }',
-    timer('cleanup') + '    for page in replacements {\n        insert_page(transaction, page)?;\n    }' + timer('insert_pages'))
+    timer('cleanup') + '    for (index, page) in replacements.iter().enumerate() {\n'
+    '        if index % 1000 == 0 { eprintln!("SQL543 insert_progress={index}/{} elapsed={:?}", replacements.len(), sql543.elapsed()); sql543_stats(transaction, "insert_progress"); }\n'
+    '        insert_page(transaction, page)?;\n    }' + timer('insert_pages') + '    sql543_stats(transaction, "insert_done");\n')
 patch(file, '        fts_instrumentation,\n    )?;\n    Ok(instrumentation)',
     '        fts_instrumentation,\n    )?;' + timer('reconcile_fts') + '    let _ = sql543;\n    Ok(instrumentation)')
+patch(file, '    Ok(transaction.prepare_cached(sql)?.execute(parameters)?)',
+    '    let start = std::time::Instant::now();\n'
+    '    let result = transaction.prepare_cached(sql)?.execute(parameters);\n'
+    '    sql543_record(sql, start.elapsed());\n    Ok(result?)')
+with file.open('a', encoding='utf-8') as output:
+    output.write(pathlib.Path('scripts/diagnose-543-sql-helpers.rs').read_text(encoding='utf-8'))
 
 config = pathlib.Path('.cargo/config.toml')
 config.parent.mkdir(exist_ok=True)

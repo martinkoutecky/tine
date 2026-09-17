@@ -8,7 +8,7 @@ import { freeLoopbackPort, startWebdriverApplication, stopWebdriverApplication, 
 
 const app = process.env.TINE_APP;
 if (process.platform !== 'win32' || !app) throw new Error('Windows and TINE_APP required');
-const artifacts = path.resolve('test-results/diagnose-543-app');
+const artifacts = path.resolve('test-results/diagnose-543-app', process.env.TINE_DIAGNOSE_543_CASE ?? 'baseline');
 fs.mkdirSync(artifacts, { recursive: true });
 const records = [];
 for (const count of (process.env.TINE_DIAGNOSE_543_SIZES ?? '1000,10000').split(',').map(Number)) {
@@ -33,6 +33,7 @@ for (const count of (process.env.TINE_DIAGNOSE_543_SIZES ?? '1000,10000').split(
     const driverPort = await freeLoopbackPort(new Set([nativePort]));
     const started = Date.now();
     const target = await startWebdriverApplication(app, env, nativePort);
+    const resources = spawn('pwsh', ['-NoProfile', '-File', 'scripts/diagnose-543-resources.ps1', '-OutputFile', `${prefix}-resources.jsonl`, '-CacheRoot', root], { stdio: 'ignore' });
     const driverLog = fs.openSync(`${prefix}-driver.log`, 'w');
     const driver = spawn('msedgedriver', [`--port=${driverPort}`], { env: target.env, stdio: ['ignore', driverLog, driverLog] });
     let browser;
@@ -82,6 +83,7 @@ for (const count of (process.env.TINE_DIAGNOSE_543_SIZES ?? '1000,10000').split(
       try { await browser?.saveScreenshot(`${prefix}-final.png`); } catch {}
       try { await browser?.deleteSession(); } catch {}
       spawnSync('taskkill', ['/PID', String(driver.pid), '/T', '/F'], { stdio: 'ignore' });
+      spawnSync('taskkill', ['/PID', String(resources.pid), '/T', '/F'], { stdio: 'ignore' });
       stopWebdriverApplication(target);
       fs.closeSync(driverLog);
     }

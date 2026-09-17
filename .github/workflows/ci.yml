@@ -538,17 +538,38 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Build instrumented release app
-        run: cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+        # Diagnostic overlay is local to this runner and never modifies Cargo's cache.
+        run: |
+          python scripts/diagnose-543-storage.py
+          cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
       - shell: pwsh
         run: ./scripts/install-windows-webview2-driver.ps1
       - name: Reproduce with worker-state logging
-        timeout-minutes: 8
+        timeout-minutes: 20
+        continue-on-error: true
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
           TINE_DIAGNOSE_543: '1'
-          TINE_DIAGNOSE_543_SIZES: '10000'
+          TINE_DIAGNOSE_543_SIZES: '1000,10000'
           TINE_DIAGNOSE_543_PHASES: 'cold'
-          TINE_DIAGNOSE_543_APP_BUDGET_MS: '180000'
+          TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
+        run: node scripts/diagnose-543-windows-app.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnose-543-app-stage-baseline
+          path: test-results/diagnose-543-app/baseline
+      - name: Compare a larger SQLite page cache on the same released-profile executable
+        timeout-minutes: 20
+        continue-on-error: true
+        env:
+          TINE_APP: ${{ github.workspace }}\target\release\tine.exe
+          TINE_DIAGNOSE_543: '1'
+          TINE_DIAGNOSE_543_SIZES: '1000,10000'
+          TINE_DIAGNOSE_543_PHASES: 'cold'
+          TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
+          TINE_DIAGNOSE_543_CASE: 'cache64mb'
+          TINE_DIAGNOSE_543_CACHE_KIB: '65536'
         run: node scripts/diagnose-543-windows-app.mjs
       - uses: actions/upload-artifact@v4
         if: always()

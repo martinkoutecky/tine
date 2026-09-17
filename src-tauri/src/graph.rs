@@ -1036,7 +1036,7 @@ pub(crate) fn warm_cache_async(
         let diagnostic_graph = graph.clone();
         std::thread::spawn(move || {
             let started = std::time::Instant::now();
-            for _ in 0..180 {
+            for _ in 0..600 {
                 eprintln!(
                     "DIAG543 APP t={:?} {}",
                     started.elapsed(),
