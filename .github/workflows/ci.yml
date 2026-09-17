@@ -434,7 +434,7 @@ jobs:
         run: cargo check -p tine --features custom-protocol
 
   diagnose-543:
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && (inputs.windows_test_name == 'diagnose543' || inputs.windows_test_name == 'diagnose543sql')
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && (inputs.windows_test_name == 'diagnose543' || inputs.windows_test_name == 'diagnose543sql' || inputs.windows_test_name == 'diagnose543checkpoint')
     name: GH543 progress / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 55
@@ -449,7 +449,7 @@ jobs:
         with:
           workspaces: ". -> target"
       - name: Add disposable storage-stage timing overlay
-        if: inputs.windows_test_name == 'diagnose543sql'
+        if: inputs.windows_test_name == 'diagnose543sql' || inputs.windows_test_name == 'diagnose543checkpoint'
         run: python scripts/diagnose-543-storage.py
       - name: Compile diagnostic
         run: cargo test --locked -p tine-core --lib --no-run
@@ -464,11 +464,23 @@ jobs:
         run: |
           set -o pipefail
           cargo test --locked -p tine-core --lib direct_projection::tests::diagnostic_543::windows_indexing_progress_probe_543 -- --exact --nocapture --test-threads=1 2>&1 | tee diagnose-543.log
+      - name: Controlled comparison with checkpoint deferred to completion
+        if: inputs.windows_test_name == 'diagnose543checkpoint'
+        timeout-minutes: 30
+        shell: bash
+        env:
+          TINE_DIAGNOSE_543: '1'
+          TINE_DIAGNOSE_543_NO_AUTOCHECKPOINT: '1'
+          TINE_DIAGNOSE_543_SIZES: '1000'
+          TINE_DIAGNOSE_543_BUDGET: '600'
+        run: |
+          set -o pipefail
+          cargo test --locked -p tine-core --lib direct_projection::tests::diagnostic_543::windows_indexing_progress_probe_543 -- --exact --nocapture --test-threads=1 2>&1 | tee diagnose-543-deferred.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: diagnose-543-${{ matrix.os }}
-          path: diagnose-543.log
+          path: diagnose-543*.log
 
   diagnose-543-app:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543app'

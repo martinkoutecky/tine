@@ -19,6 +19,10 @@ def timer(label):
     return f'\n        eprintln!("SQL543 {label}={{:?}}", sql543.elapsed());\n        let sql543 = std::time::Instant::now();\n'
 
 file = target / 'src/sqlite_graph_projection.rs'
+patch(file, '        Ok(Self { connection })\n    }\n\n    pub fn open_read_only',
+    '        if std::env::var_os("TINE_DIAGNOSE_543_NO_AUTOCHECKPOINT").is_some() {\n'
+    '            connection.pragma_update(None, "wal_autocheckpoint", 0)?;\n'
+    '        }\n        Ok(Self { connection })\n    }\n\n    pub fn open_read_only')
 patch(file, '        let instrumentation = sqlite_materialization::apply_graph_projection_rows(',
     '        let sql543 = std::time::Instant::now();\n        let instrumentation = sqlite_materialization::apply_graph_projection_rows(')
 patch(file, '        sqlite_materialization::replace_graph_projection_reference_facts(',

@@ -138,6 +138,12 @@ fn windows_indexing_progress_probe_543() {
             );
             warm.join().unwrap();
             query.join().unwrap();
+            let checkpoint_start = Instant::now();
+            PhysicalGraphProjectionDatabase::open_writable(&path)
+                .unwrap()
+                .checkpoint_truncate()
+                .unwrap();
+            println!("DIAG543 FINAL_CHECKPOINT phase={phase} elapsed={:?}", checkpoint_start.elapsed());
             println!(
                 "DIAG543 RESULT pages={count} phase={phase} elapsed={:?} lowered={}",
                 start.elapsed(),
