@@ -21,6 +21,9 @@ use crate::model::Graph;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[path = "direct_projection_diagnostic_543.rs"]
+mod diagnostic_543;
+
 static PROJECTION_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Serialize the projection tests without letting one failure hide the

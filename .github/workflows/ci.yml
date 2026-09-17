@@ -364,7 +364,7 @@ jobs:
 
   windows-compile:
     name: Full CI / Windows core compile + integration smoke
-    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_test_name != 'diagnose543' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -432,6 +432,38 @@ jobs:
           }
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
+
+  diagnose-543:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543'
+    name: GH543 progress / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Compile diagnostic
+        run: cargo test --locked -p tine-core --lib --no-run
+      - name: Cold, reopen and concurrent-startup search
+        timeout-minutes: 30
+        shell: bash
+        env:
+          TINE_DIAGNOSE_543: '1'
+          RUST_BACKTRACE: '1'
+        run: |
+          set -o pipefail
+          cargo test --locked -p tine-core --lib direct_projection::tests::diagnostic_543::windows_indexing_progress_probe_543 -- --exact --nocapture --test-threads=1 2>&1 | tee diagnose-543.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnose-543-${{ matrix.os }}
+          path: diagnose-543.log
 
   android-core-compile:
     name: Full CI / Android core compile
