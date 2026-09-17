@@ -375,7 +375,7 @@ jobs:
 
   windows-compile:
     name: Full CI / Windows core compile + integration smoke
-    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
+    if: github.event_name == 'workflow_dispatch' && !startsWith(inputs.windows_test_name, 'diagnose543') && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -443,6 +443,72 @@ jobs:
           }
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
+
+  # GH #543 verification: build the real Windows app at this exact commit and time
+  # cold/reopen Ctrl+K results on synthetic 1k and 10k graphs, then run the same
+  # probe on the released v0.6.982 on the SAME runner as the comparison baseline.
+  diagnose-543-verify-app:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnose543verify'
+    name: GH543 verify / Windows app cold start
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run build
+      - name: Build release app at this commit
+        run: cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - shell: pwsh
+        run: |
+          Get-FileHash target/release/tine.exe -Algorithm SHA256
+          git rev-parse HEAD
+      - shell: pwsh
+        run: ./scripts/install-windows-webview2-driver.ps1
+      - name: This commit, cold then reopen, 1k and 10k pages
+        timeout-minutes: 30
+        continue-on-error: true
+        env:
+          TINE_APP: ${{ github.workspace }}\target\release\tine.exe
+          TINE_DIAGNOSE_543_SIZES: '1000,10000'
+          TINE_DIAGNOSE_543_PHASES: 'cold,reopen'
+          TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
+          TINE_DIAGNOSE_543_CASE: 'candidate'
+        run: node scripts/diagnose-543-windows-app.mjs
+      - name: Download the previous released Windows portable app
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.6.982 -R martinkoutecky/tine -p Tine_0.6.982_x64-portable.zip -D previous
+          Expand-Archive previous/Tine_0.6.982_x64-portable.zip previous/app
+          $app = @(Get-ChildItem previous/app -Recurse -Filter tine.exe)
+          if ($app.Count -ne 1) { throw 'Expected one application' }
+          Get-FileHash $app[0].FullName -Algorithm SHA256
+          "TINE_PREVIOUS_APP=$($app[0].FullName)" >> $env:GITHUB_ENV
+      - name: v0.6.982 on the same runner, cold, 1k and 10k pages
+        timeout-minutes: 15
+        continue-on-error: true
+        env:
+          TINE_APP: ${{ env.TINE_PREVIOUS_APP }}
+          TINE_DIAGNOSE_543_SIZES: '1000,10000'
+          TINE_DIAGNOSE_543_PHASES: 'cold'
+          TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
+          TINE_DIAGNOSE_543_CASE: 'v0.6.982'
+        run: node scripts/diagnose-543-windows-app.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnose-543-verify-windows-app
+          path: test-results/diagnose-543-app
 
   android-core-compile:
     name: Full CI / Android core compile
