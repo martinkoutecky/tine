@@ -260,7 +260,12 @@ impl Graph {
             let expected_generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
             let (flight, owner) = self.claim_page_build(expected_generation);
             if owner {
-                if std::env::var_os("TINE_DIAGNOSE_543").is_some() { eprintln!("DIAG543 FULL_PARSE with_pages caller={} generation={expected_generation}", std::panic::Location::caller()); }
+                if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+                    eprintln!(
+                        "DIAG543 FULL_PARSE with_pages caller={} generation={expected_generation}",
+                        std::panic::Location::caller()
+                    );
+                }
                 let built = self.load_all_pages_with_permit(&permit);
                 let outcome =
                     PageBuildOutcome::from(self.install_built(flight.expected_generation, built));
@@ -367,7 +372,13 @@ impl Graph {
             }
         }
         if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) != generation {
-            if diagnostic { eprintln!("DIAG543 WARM drift captured={generation} current={} thread={:?}", self.cache_generation(), std::thread::current().id()); }
+            if diagnostic {
+                eprintln!(
+                    "DIAG543 WARM drift captured={generation} current={} thread={:?}",
+                    self.cache_generation(),
+                    std::thread::current().id()
+                );
+            }
             return false;
         }
         let parse_config = Arc::new(self.config.parse_config());
@@ -516,7 +527,12 @@ impl Graph {
     }
 
     pub(super) fn warm_page_cache_cancellable(&self, cancelled: &impl Fn() -> bool) -> bool {
-        if std::env::var_os("TINE_DIAGNOSE_543").is_some() { eprintln!("DIAG543 FULL_PARSE warm_page_cache generation={}", self.cache_generation()); }
+        if std::env::var_os("TINE_DIAGNOSE_543").is_some() {
+            eprintln!(
+                "DIAG543 FULL_PARSE warm_page_cache generation={}",
+                self.cache_generation()
+            );
+        }
         if cancelled() {
             return false;
         }

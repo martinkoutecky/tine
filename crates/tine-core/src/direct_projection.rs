@@ -2580,7 +2580,9 @@ fn apply_pending(
     }) = full
     {
         let diagnostic = std::env::var_os("TINE_DIAGNOSE_543").is_some();
-        if diagnostic { eprintln!("DIAG543 FULL start pages={}", pages.len()); }
+        if diagnostic {
+            eprintln!("DIAG543 FULL start pages={}", pages.len());
+        }
         let parse_config = parse_config.as_ref();
         let config_digest = parse_config.digest();
         let sources = pages
@@ -2612,14 +2614,25 @@ fn apply_pending(
             .iter()
             .map(|source| source.page_id)
             .collect::<Vec<_>>();
-        if diagnostic { eprintln!("DIAG543 FULL sources_and_delta={:?} replacements={}", diagnostic_start.elapsed(), replacements_needed.len()); }
+        if diagnostic {
+            eprintln!(
+                "DIAG543 FULL sources_and_delta={:?} replacements={}",
+                diagnostic_start.elapsed(),
+                replacements_needed.len()
+            );
+        }
         let full_lower_start = std::time::Instant::now();
         let lowered = pages
             .iter()
             .enumerate()
             .filter(|(_, (entry, _))| replacements_needed.contains(&page_id(&entry.rel_path)))
             .map(|(position, (entry, document))| {
-                if diagnostic && position % 1000 == 0 { eprintln!("DIAG543 FULL lower_progress={position} elapsed={:?}", full_lower_start.elapsed()); }
+                if diagnostic && position % 1000 == 0 {
+                    eprintln!(
+                        "DIAG543 FULL lower_progress={position} elapsed={:?}",
+                        full_lower_start.elapsed()
+                    );
+                }
                 let (mut page, postings, aliases) = physical_page(entry, document, parse_config)?;
                 page.query_page_order = Some(position as u64);
                 Ok::<_, String>((page, postings, aliases))
@@ -2641,7 +2654,13 @@ fn apply_pending(
         applied
             .deleted
             .extend(source_delta.deletions.iter().copied());
-        if diagnostic { eprintln!("DIAG543 FULL lowered={:?} SQL_begin replacements={}", full_lower_start.elapsed(), replacements.len()); }
+        if diagnostic {
+            eprintln!(
+                "DIAG543 FULL lowered={:?} SQL_begin replacements={}",
+                full_lower_start.elapsed(),
+                replacements.len()
+            );
+        }
         let full_sql_start = std::time::Instant::now();
         database
             .apply_with_source_revisions_aliases_and_page_order(
@@ -2655,7 +2674,13 @@ fn apply_pending(
                 &inventory,
             )
             .map_err(|error| error.to_string())?;
-        if diagnostic { eprintln!("DIAG543 FULL SQL_done={:?} total={:?}", full_sql_start.elapsed(), diagnostic_start.elapsed()); }
+        if diagnostic {
+            eprintln!(
+                "DIAG543 FULL SQL_done={:?} total={:?}",
+                full_sql_start.elapsed(),
+                diagnostic_start.elapsed()
+            );
+        }
     }
     if let Some(warm) = warm {
         turn.warm_outcome = Some(validate_warm(database, warm, applied)?);

@@ -16,9 +16,16 @@ def patch(file, old, new):
     file.write_text(text.replace(old, new), encoding='utf-8')
 
 def timer(label):
-    return f'\n        eprintln!("SQL543 {label}={{:?}}", sql543.elapsed());\n        let sql543 = std::time::Instant::now();\n'
+    return f'\n        if std::env::var_os("TINE_DIAGNOSE_543_VFS").is_some() {{ crate::sqlite_graph_projection::sql543_vfs_dump(); }}\n        eprintln!("SQL543 {label}={{:?}}", sql543.elapsed());\n        let sql543 = std::time::Instant::now();\n'
 
 file = target / 'src/sqlite_graph_projection.rs'
+patch(file, '    pub fn open_writable(path: &Path) -> Result<Self, MaterializationError> {',
+    '    pub fn open_writable(path: &Path) -> Result<Self, MaterializationError> {\n'
+    '        if std::env::var_os("TINE_DIAGNOSE_543_VFS").is_some() { sql543_vfs_install(); }')
+patch(file, '            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;',
+    '            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;\n        if std::env::var_os("TINE_DIAGNOSE_543_VFS").is_some() { sql543_vfs_dump(); }')
+with file.open('a', encoding='utf-8') as output:
+    output.write(pathlib.Path('scripts/diagnose-543-vfs.rs').read_text(encoding='utf-8'))
 patch(file, '        Ok(Self { connection })\n    }\n\n    pub fn open_read_only',
     '        if std::env::var_os("TINE_DIAGNOSE_543_NO_AUTOCHECKPOINT").is_some() {\n'
     '            connection.pragma_update(None, "wal_autocheckpoint", 0)?;\n'

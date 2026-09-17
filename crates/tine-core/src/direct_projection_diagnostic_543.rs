@@ -24,8 +24,12 @@ fn windows_indexing_progress_probe_543() {
         }
         let db_root = scratch("543-db");
         let database = db_root.join("projection.sqlite");
-        let phases = std::env::var("TINE_DIAGNOSE_543_PHASES").unwrap_or("cold-warm-first,reopen-query-first,cold-startup-race".into());
-        for phase in ["cold-warm-first", "reopen-query-first", "cold-startup-race"].into_iter().filter(|phase| phases.split(',').any(|requested| requested == *phase)) {
+        let phases = std::env::var("TINE_DIAGNOSE_543_PHASES")
+            .unwrap_or("cold-warm-first,reopen-query-first,cold-startup-race".into());
+        for phase in ["cold-warm-first", "reopen-query-first", "cold-startup-race"]
+            .into_iter()
+            .filter(|phase| phases.split(',').any(|requested| requested == *phase))
+        {
             let path = if phase == "cold-startup-race" {
                 db_root.join("race.sqlite")
             } else {
@@ -144,7 +148,10 @@ fn windows_indexing_progress_probe_543() {
                 .unwrap()
                 .checkpoint_truncate()
                 .unwrap();
-            println!("DIAG543 FINAL_CHECKPOINT phase={phase} elapsed={:?}", checkpoint_start.elapsed());
+            println!(
+                "DIAG543 FINAL_CHECKPOINT phase={phase} elapsed={:?}",
+                checkpoint_start.elapsed()
+            );
             println!(
                 "DIAG543 RESULT pages={count} phase={phase} elapsed={:?} lowered={}",
                 start.elapsed(),
@@ -154,10 +161,118 @@ fn windows_indexing_progress_probe_543() {
             release_projection(&*graph);
         }
         if std::env::var_os("TINE_DIAGNOSE_543_KEEP").is_some() {
-            println!("DIAG543 KEPT graph={} database={}", root.display(), db_root.display());
+            println!(
+                "DIAG543 KEPT graph={} database={}",
+                root.display(),
+                db_root.display()
+            );
         } else {
             std::fs::remove_dir_all(root).unwrap();
             std::fs::remove_dir_all(db_root).unwrap();
         }
     }
+}
+
+/// Matched single-thread SQL workload: no startup races, watchers, or UI.
+#[test]
+fn matched_full_build_543() {
+    if std::env::var_os("TINE_DIAGNOSE_543").is_none() {
+        return;
+    }
+    let _serial = serialize_projection_tests();
+    let count: usize = std::env::var("TINE_DIAGNOSE_543_COUNT")
+        .unwrap_or("10000".into())
+        .parse()
+        .unwrap();
+    let root = scratch("543-matched");
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    for page in 0..count {
+        let mut content = format!("title:: Topic {page} 你好\n\n");
+        for block in 0..60 {
+            content.push_str(&format!("- outline sentinel543 你好世界 page {page} block {block} [[Topic {} 你好]] #tag{}\n", (page+1)%count, block%10));
+        }
+        std::fs::write(root.join(format!("pages/主题-{page:05}.md")), content).unwrap();
+    }
+    let graph = Graph::open(&root);
+    let start = Instant::now();
+    let config = graph.config.parse_config();
+    use sha2::Digest;
+    let mut fingerprint = sha2::Sha256::new();
+    let (replacements, reference_postings, aliases) = graph.with_pages(|pages| {
+        let mut ordered = pages.iter().collect::<Vec<_>>();
+        ordered.sort_by(|a, b| a.0.rel_path.cmp(&b.0.rel_path));
+        let mut replacements = Vec::new();
+        let mut postings = Vec::new();
+        let mut aliases = Vec::new();
+        for (position, (entry, document)) in ordered.into_iter().enumerate() {
+            let (mut page, mut refs, mut page_aliases) =
+                physical_page(entry, document, &config).unwrap();
+            page.query_page_order = Some(position as u64);
+            fingerprint.update(format!("{page:?}{refs:?}{page_aliases:?}").as_bytes());
+            replacements.push(page);
+            postings.append(&mut refs);
+            aliases.append(&mut page_aliases);
+        }
+        (replacements, postings, aliases)
+    });
+    println!(
+        "MATCH543 prepared os={} count={count} elapsed={:?} fingerprint={:x}",
+        std::env::consts::OS,
+        start.elapsed(),
+        fingerprint.finalize()
+    );
+    let ids = replacements.iter().map(|p| p.page_id).collect::<Vec<_>>();
+    let sources = ids
+        .iter()
+        .map(|id| PhysicalGraphProjectionSourceRevision {
+            page_id: *id,
+            revision: "matched-fixture-543".into(),
+        })
+        .collect::<Vec<_>>();
+    let db_root = scratch("543-matched-db");
+    std::fs::create_dir_all(&db_root).unwrap();
+    let path = db_root.join("projection.sqlite");
+    let mut db = PhysicalGraphProjectionDatabase::open_writable(&path).unwrap();
+    db.initialize_schema().unwrap();
+    let sql_start = Instant::now();
+    db.apply_with_source_revisions_aliases_and_page_order(
+        &PhysicalGraphProjectionChange {
+            replacements,
+            deletions: Vec::new(),
+            reference_postings,
+        },
+        &sources,
+        &aliases,
+        &ids,
+    )
+    .unwrap();
+    println!(
+        "MATCH543 applied elapsed={:?} db={} wal={}",
+        sql_start.elapsed(),
+        std::fs::metadata(&path).unwrap().len(),
+        std::fs::metadata(format!("{}-wal", path.display()))
+            .map(|x| x.len())
+            .unwrap_or(0)
+    );
+    let cp = Instant::now();
+    db.checkpoint_truncate().unwrap();
+    println!(
+        "MATCH543 checkpoint={:?} final_bytes={}",
+        cp.elapsed(),
+        std::fs::metadata(&path).unwrap().len()
+    );
+    let c = rusqlite::Connection::open(&path).unwrap();
+    let n: i64 = c
+        .query_row("SELECT count(*) FROM blocks", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, count as i64 * 60);
+    println!(
+        "MATCH543 verified blocks={n} sqlite={}",
+        rusqlite::version()
+    );
+    drop(c);
+    drop(db);
+    drop(graph);
+    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(db_root).unwrap();
 }
