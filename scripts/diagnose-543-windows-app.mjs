@@ -79,6 +79,18 @@ for (const count of (process.env.TINE_DIAGNOSE_543_SIZES ?? '1000,10000').split(
       fs.writeFileSync(`${prefix}-ipc.json`, JSON.stringify(await browser.execute(() => window.__diag543), null, 2));
       if (!passed) throw new Error(`APP543 timeout pages=${count} phase=${phase}`);
       console.log(`APP543 RESULT pages=${count} phase=${phase} elapsedMs=${Date.now() - started} PASS`);
+      if (process.env.TINE_DIAGNOSE_543_WAIT_BUILD === '1') {
+        // Search can answer from a partial build; a reopen is only warm once
+        // the projection has published, so wait for it before stopping.
+        const buildDeadline = Date.now() + 900000;
+        let ready = false;
+        while (Date.now() < buildDeadline) {
+          const log = fs.existsSync(env.TINE_E2E_APPLICATION_STDERR_LOG) ? fs.readFileSync(env.TINE_E2E_APPLICATION_STDERR_LOG, 'utf8') : '';
+          if (/projection \+\d+ms ready at generation/.test(log)) { ready = true; break; }
+          await sleep(1000);
+        }
+        console.log(`APP543 BUILD pages=${count} phase=${phase} projectionReadyMs=${ready ? Date.now() - started : 'timeout'}`);
+      }
     } finally {
       try { await browser?.saveScreenshot(`${prefix}-final.png`); } catch {}
       try { await browser?.deleteSession(); } catch {}
