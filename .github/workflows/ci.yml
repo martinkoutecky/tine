@@ -482,6 +482,7 @@ jobs:
           TINE_DIAGNOSE_543_PHASES: 'cold,reopen'
           TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
           TINE_DIAGNOSE_543_CASE: 'candidate'
+          TINE_DIAGNOSE_543_WAIT_BUILD: '1'
         run: node scripts/diagnose-543-windows-app.mjs
       - name: Download the previous released Windows portable app
         shell: pwsh
