@@ -478,7 +478,7 @@ jobs:
         continue-on-error: true
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
-          TINE_DIAGNOSE_543_SIZES: '1000,10000'
+          TINE_DIAGNOSE_543_SIZES: '100,1000,10000'
           TINE_DIAGNOSE_543_PHASES: 'cold,reopen'
           TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
           TINE_DIAGNOSE_543_CASE: 'candidate'
@@ -500,7 +500,7 @@ jobs:
         continue-on-error: true
         env:
           TINE_APP: ${{ env.TINE_PREVIOUS_APP }}
-          TINE_DIAGNOSE_543_SIZES: '1000,10000'
+          TINE_DIAGNOSE_543_SIZES: '100,1000,10000'
           TINE_DIAGNOSE_543_PHASES: 'cold'
           TINE_DIAGNOSE_543_APP_BUDGET_MS: '600000'
           TINE_DIAGNOSE_543_CASE: 'v0.6.982'
