@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { remote } from 'webdriverio';
+import { generateRealisticGraph } from './generate-realistic-graph.mjs';
 import { freeLoopbackPort, startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, selectWebdriverWindowWithSelector } from './e2e-capabilities.mjs';
 
 const app = process.env.TINE_APP;
@@ -14,15 +15,10 @@ const records = [];
 for (const count of (process.env.TINE_DIAGNOSE_543_SIZES ?? '1000,10000').split(',').map(Number)) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tine-543-app-'));
   const graph = path.join(root, 'graph');
-  for (const dir of ['pages', 'journals', 'logseq']) fs.mkdirSync(path.join(graph, dir), { recursive: true });
-  for (let page = 0; page < count; page++) {
-    let text = `title:: Topic ${page} 你好\n\n`;
-    for (let block = 0; block < 60; block++) text += `- outline sentinel543 你好世界 page ${page} block ${block} [[Topic ${(page + 1) % count} 你好]] #tag${block % 10}\n`;
-    fs.writeFileSync(path.join(graph, 'pages', `主题-${String(page).padStart(5, '0')}.md`), text);
-  }
-  const now = new Date();
-  const stem = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, '0')}_${String(now.getDate()).padStart(2, '0')}`;
-  fs.writeFileSync(path.join(graph, 'journals', `${stem}.md`), '- DIAG543 launch marker\n');
+  // The realistic generator (links, tags, refs, embeds, hub pages); the old
+  // 60-identical-blocks graph never rendered the whole-graph work #543 is about.
+  const today = new Date();
+  await generateRealisticGraph({ root: graph, pages: Math.round(count * 0.7), journals: count - Math.round(count * 0.7), today });
   for (const phase of (process.env.TINE_DIAGNOSE_543_PHASES ?? 'cold,reopen').split(',')) {
     const prefix = path.join(artifacts, `${count}-${phase}`);
     const env = { ...process.env, TINE_GRAPH: graph, TINE_DEBUG: '1', TINE_DEBUG_LOG: `${prefix}-debug.log`,
@@ -73,23 +69,27 @@ for (const count of (process.env.TINE_DIAGNOSE_543_SIZES ?? '1000,10000').split(
         console.log('APP543', JSON.stringify(record));
         fs.writeFileSync(path.join(artifacts, 'progress.json'), JSON.stringify(records, null, 2));
         if (snapshot.matches.some(text => text.includes('sentinel543')) && !snapshot.status && !snapshot.error) { passed = true; break; }
-        await sleep(2000);
+        await sleep(100);
       }
       await browser.saveScreenshot(`${prefix}.png`);
       fs.writeFileSync(`${prefix}-ipc.json`, JSON.stringify(await browser.execute(() => window.__diag543), null, 2));
       if (!passed) throw new Error(`APP543 timeout pages=${count} phase=${phase}`);
-      console.log(`APP543 RESULT pages=${count} phase=${phase} elapsedMs=${Date.now() - started} PASS`);
+      const appLog = () => [env.TINE_E2E_APPLICATION_STDERR_LOG, env.TINE_DEBUG_LOG]
+        .map(file => fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '').join('\n');
+      const readyAt = (text) => text.match(/projection \+(\d+)ms ready at generation/)?.[1] ?? 'none';
+      const fullSnapshots = (text) => (text.match(/turn begin full=true/g) ?? []).length;
+      console.log(`APP543 RESULT pages=${count} phase=${phase} elapsedMs=${Date.now() - started} appProjectionReadyMs=${readyAt(appLog())} fullSnapshots=${fullSnapshots(appLog())} PASS`);
       if (process.env.TINE_DIAGNOSE_543_WAIT_BUILD === '1') {
         // Search can answer from a partial build; a reopen is only warm once
         // the projection has published, so wait for it before stopping.
         const buildDeadline = Date.now() + 900000;
         let ready = false;
         while (Date.now() < buildDeadline) {
-          const log = fs.existsSync(env.TINE_E2E_APPLICATION_STDERR_LOG) ? fs.readFileSync(env.TINE_E2E_APPLICATION_STDERR_LOG, 'utf8') : '';
+          const log = appLog();
           if (/projection \+\d+ms ready at generation/.test(log)) { ready = true; break; }
-          await sleep(1000);
+          await sleep(100);
         }
-        console.log(`APP543 BUILD pages=${count} phase=${phase} projectionReadyMs=${ready ? Date.now() - started : 'timeout'}`);
+        console.log(`APP543 BUILD pages=${count} phase=${phase} projectionReadyMs=${ready ? Date.now() - started : 'timeout'} appProjectionReadyMs=${readyAt(appLog())} fullSnapshots=${fullSnapshots(appLog())}`);
       }
     } finally {
       try { await browser?.saveScreenshot(`${prefix}-final.png`); } catch {}
