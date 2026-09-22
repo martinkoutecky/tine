@@ -3797,6 +3797,15 @@ fn require_warm(attempt: Option<u64>) -> u64 {
     attempt.expect("the warm validation was refused by the queue")
 }
 
+/// The walk order of a warm's sources and retained pages, in that order.
+fn walk_order(sources: &[(PageEntry, String)], retained: &[PageEntry]) -> Vec<String> {
+    sources
+        .iter()
+        .map(|(entry, _)| entry.rel_path.clone())
+        .chain(retained.iter().map(|entry| entry.rel_path.clone()))
+        .collect()
+}
+
 fn warm_sources(graph: &Graph) -> (Vec<(PageEntry, String)>, u64) {
     let mut text_bytes = 0u64;
     let sources = graph
@@ -5077,10 +5086,120 @@ fn external_watcher_edit_after_warm_reopen_enqueues_a_page_delta() {
     assert!(!graph.has_parsed_cache_test());
 }
 
-/// **R6 §1, one external edit between sessions.** Exactly that page is
-/// parsed and relowered; the parsed cache is never built.
+/// **R6 §1, pages changed between sessions** (Martin, 2026-09-22). Syncthing
+/// delivers an edit, a journal written on the phone, a deletion while Tine is
+/// closed: exactly those pages are parsed and relowered in one transaction
+/// and the image is validated again. It used to be rebuilt from a parse of
+/// the whole graph, 20 s on a 10,000-page graph for one changed page.
 #[test]
-fn an_external_edit_between_sessions_builds_one_complete_fresh_image() {
+fn pages_changed_between_sessions_are_repaired_page_by_page() {
+    let _serial = serialize_projection_tests();
+    for case in ["edited", "added", "deleted", "all-three"] {
+        let root = r6_graph(&format!("between-sessions-{case}"));
+        for index in 0..12 {
+            std::fs::write(
+                root.join("pages").join(format!("bulk-{index:02}.md")),
+                format!("- TODO bulk {index}\n"),
+            )
+            .unwrap();
+        }
+        let database = scratch(&format!("between-sessions-{case}-db")).join("projection.sqlite");
+        {
+            let graph = Graph::open(&root);
+            graph.attach_direct_projection(database.clone()).unwrap();
+            graph.warm_cache();
+            wait_ready(&graph);
+            release_projection(&graph);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+        let edit = matches!(case, "edited" | "all-three");
+        let add = matches!(case, "added" | "all-three");
+        let delete = matches!(case, "deleted" | "all-three");
+        if edit {
+            std::fs::write(root.join("pages/two.md"), "- TODO two changed\n").unwrap();
+        }
+        if add {
+            // Sorts into the middle of the walk, not after it.
+            std::fs::write(
+                root.join("pages/bulk-05a.md"),
+                "- TODO added while closed\n",
+            )
+            .unwrap();
+        }
+        if delete {
+            std::fs::remove_file(root.join("pages/bulk-03.md")).unwrap();
+        }
+
+        reset_lowerings(&root);
+        let graph = Graph::open(&root);
+        graph.attach_direct_projection(database.clone()).unwrap();
+        assert!(graph.warm_cache_cancellable(|| false));
+        wait_ready(&graph);
+        let changed = usize::from(edit) + usize::from(add);
+        assert_eq!(
+            graph.page_build_parses_test(),
+            0,
+            "{case}: a whole-graph pass ran"
+        );
+        assert!(!graph.has_parsed_cache_test(), "{case}");
+        assert_eq!(graph.warm_repair_parses_test(), changed, "{case}");
+        assert_eq!(
+            lowerings(),
+            changed as u64,
+            "{case}: only the changed pages are relowered"
+        );
+        let expect = |graph: &Graph| {
+            let oracle = Graph::open(&root);
+            assert_eq!(
+                signature(
+                    &graph
+                        .run_query_bounded("(task TODO)", 100, 1_000_000)
+                        .expect("the ready projection answers")
+                        .groups
+                ),
+                signature(
+                    &crate::query::run_query_bounded(&oracle, "(task TODO)", 100, 1_000_000).groups
+                ),
+                "{case}: the index must answer what the files say"
+            );
+        };
+        expect(&graph);
+
+        // Positions stay coherent: an ordinary edit to a page walked after
+        // the added or deleted one lands without a failure or a rebuild.
+        let failures = reported_projection_failures_test();
+        let later = root.join("pages/bulk-11.md");
+        std::fs::write(&later, "- TODO bulk 11 edited after the repair\n").unwrap();
+        graph
+            .load_page(&graph.entry_for_path(&later).unwrap())
+            .unwrap();
+        wait_ready(&graph);
+        assert_eq!(reported_projection_failures_test(), failures, "{case}");
+        expect(&graph);
+        release_projection(&graph);
+        drop(graph);
+
+        // And the repaired image reopens clean.
+        std::thread::sleep(Duration::from_millis(20));
+        reset_lowerings(&root);
+        let graph = Graph::open(&root);
+        graph.attach_direct_projection(database.clone()).unwrap();
+        assert!(graph.warm_cache_cancellable(|| false));
+        wait_ready(&graph);
+        assert_eq!(graph.page_build_parses_test(), 0, "{case}: reopen");
+        assert_eq!(graph.warm_repair_parses_test(), 0, "{case}: reopen");
+        assert_eq!(lowerings(), 0, "{case}: reopen");
+        release_projection(&graph);
+        drop(graph);
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(database.parent().unwrap());
+    }
+}
+
+/// Past a quarter of the graph, a stale image is rebuilt from one complete
+/// parsed snapshot instead of being rewritten in place.
+#[test]
+fn many_pages_changed_between_sessions_build_one_complete_fresh_image() {
     let _serial = serialize_projection_tests();
     let root = r6_graph("external-edit-stream");
     let database = scratch("external-edit-stream-db").join("projection.sqlite");
@@ -5093,6 +5212,7 @@ fn an_external_edit_between_sessions_builds_one_complete_fresh_image() {
     }
     std::thread::sleep(Duration::from_millis(20));
     std::fs::write(root.join("pages/two.md"), "- TODO two changed\n").unwrap();
+    std::fs::write(root.join("pages/one.md"), "- TODO one changed\n").unwrap();
 
     reset_lowerings(&root);
     let graph = Graph::open(&root);
@@ -5101,6 +5221,7 @@ fn an_external_edit_between_sessions_builds_one_complete_fresh_image() {
     wait_ready(&graph);
     assert_eq!(lowerings(), 5);
     assert_eq!(graph.page_build_parses_test(), 5);
+    assert_eq!(graph.warm_repair_parses_test(), 0);
     assert!(graph.has_parsed_cache_test());
     let oracle = Graph::open(&root);
     let indexed = graph
@@ -5376,8 +5497,8 @@ fn session_identity_survives_parsed_page_eviction() {
         "a live save answers with the preserved id"
     );
 
-    // Losing this disposable source stamp forces a streamed replacement
-    // from unchanged bytes, exercising recovery's identity provenance.
+    // Losing this disposable source stamp forces a page repair from
+    // unchanged bytes, exercising recovery's identity provenance.
     let writer = rusqlite::Connection::open(&database).unwrap();
     assert_eq!(
         writer
@@ -5390,6 +5511,7 @@ fn session_identity_survives_parsed_page_eviction() {
     );
     drop(writer);
     let parses = graph.page_build_parses_test();
+    let repairs = graph.warm_repair_parses_test();
     graph.invalidate_cache();
     assert!(
         projection.session_pages_test().contains(&one),
@@ -5397,8 +5519,12 @@ fn session_identity_survives_parsed_page_eviction() {
     );
     graph.warm_cache();
     wait_ready(&graph);
-    assert_eq!(graph.page_build_parses_test(), parses + 5);
-    assert!(graph.has_parsed_cache_test());
+    assert_eq!(
+        graph.page_build_parses_test(),
+        parses,
+        "one lost stamp is repaired page by page, not by a whole-graph pass"
+    );
+    assert_eq!(graph.warm_repair_parses_test(), repairs + 1);
     let statements = graph.direct_projection_statement_reads_test();
     let after = graph
         .run_query_bounded("(task TODO)", 100, 1_000_000)
@@ -6555,10 +6681,13 @@ fn a_warm_does_not_take_a_later_attempts_verdict() {
 
     // Attempt A announces a warm and is descheduled before reading its verdict.
     let (sources, bytes) = warm_sources(&graph);
+    let order = walk_order(&sources, &[]);
     let attempt_a = require_warm(projection.enqueue_warm(
         graph.cache_generation(),
         sources,
         Vec::new(),
+        Vec::new(),
+        order,
         Arc::clone(&config),
         bytes,
     ));
@@ -6603,10 +6732,13 @@ fn a_warm_does_not_take_a_later_attempts_verdict() {
         std::thread::sleep(Duration::from_millis(10));
     }
     let (sources, bytes) = warm_sources(&graph);
+    let order = walk_order(&sources, &[]);
     let attempt_b = require_warm(projection.enqueue_warm(
         graph.cache_generation(),
         sources,
         Vec::new(),
+        Vec::new(),
+        order,
         config,
         bytes,
     ));
@@ -6723,8 +6855,16 @@ fn a_page_the_walk_could_not_read_keeps_the_rows_it_already_had() {
     assert_eq!(retained.len(), 1, "fixture did not contain the page");
     let config = Arc::new(graph.config.parse_config());
     let generation = graph.cache_generation();
-    let attempt =
-        require_warm(projection.enqueue_warm(generation, sources, retained, config, bytes));
+    let order = walk_order(&sources, &retained);
+    let attempt = require_warm(projection.enqueue_warm(
+        generation,
+        sources,
+        retained,
+        Vec::new(),
+        order,
+        config,
+        bytes,
+    ));
     let outcome = projection.wait_warm_outcome(attempt);
     wait_ready(&graph);
 
@@ -6735,6 +6875,65 @@ fn a_page_the_walk_could_not_read_keeps_the_rows_it_already_had() {
             .is_empty(),
         "an unreadable page's rows were deleted as if the page were gone \
          (warm outcome {outcome:?}): {}",
+        projection.debug_state_test()
+    );
+}
+
+/// GH #543: a page the warm could not read keeps its place in the page order.
+/// Appending it after the pages that were read shifted every page walked
+/// after it by one, so the next update to any of them claimed a position
+/// another stored page still held (`UNIQUE constraint failed:
+/// pages.position`), and that failure rebuilt the whole index.
+#[test]
+fn a_page_the_walk_could_not_read_keeps_its_place_for_later_updates() {
+    let _serial = serialize_projection_tests();
+    let root = r6_graph("gh543-retained-order");
+    let graph = Graph::open(&root);
+    graph
+        .attach_direct_projection(root.join("private/projection.sqlite"))
+        .unwrap();
+    graph.warm_cache();
+    wait_ready(&graph);
+    let projection = graph.direct_projection_test().unwrap();
+
+    // Every page but the last is followed by one: retain the first.
+    let (all, bytes) = warm_sources(&graph);
+    let order = walk_order(&all, &[]);
+    let retained = vec![all[0].0.clone()];
+    let later = all.last().unwrap().0.clone();
+    let sources = all.into_iter().skip(1).collect::<Vec<_>>();
+    let config = Arc::new(graph.config.parse_config());
+    let attempt = require_warm(projection.enqueue_warm(
+        graph.cache_generation(),
+        sources,
+        retained,
+        Vec::new(),
+        order,
+        config,
+        bytes,
+    ));
+    assert!(matches!(
+        projection.wait_warm_outcome(attempt),
+        WarmOutcome::Clean
+    ));
+    wait_ready(&graph);
+
+    let failures = reported_projection_failures_test();
+    std::fs::write(&later.path, "- gh543 later page edited\n").unwrap();
+    graph.load_page(&later).expect("the page opens");
+    wait_ready(&graph);
+    assert_eq!(
+        reported_projection_failures_test(),
+        failures,
+        "the update to a page walked after the unreadable one failed: {}",
+        projection.debug_state_test()
+    );
+    assert!(
+        !graph
+            .search("gh543 later page edited", 50)
+            .unwrap()
+            .is_empty(),
+        "the edit is not indexed: {}",
         projection.debug_state_test()
     );
 }
@@ -8707,15 +8906,16 @@ fn gh550_journal_feed_before_the_warm_keeps_a_clean_reopen_clean() {
 }
 
 /// GH #550 siblings: a launch read of a page that changed since the image was
-/// written applies in place, and one of a page the image has never seen is
-/// left to the warm's fresh build. Neither may fail the projection, and both
-/// must answer queries from the current bytes.
+/// written applies in place, and one of a page the image has never seen waits
+/// for the warm, which repairs that one page (GH #543). Neither may fail the
+/// projection, lower the page twice, or rebuild the graph, and both must
+/// answer queries from the current bytes.
 #[test]
 fn gh550_launch_reads_of_changed_and_new_pages_settle_without_failing() {
     let _serial = serialize_projection_tests();
     for (case, edit, expected_lowerings) in [
         ("changed", "journals/2026_09_20.md", 1),
-        ("new", "journals/2026_09_21.md", 4),
+        ("new", "journals/2026_09_21.md", 1),
     ] {
         let root = scratch(&format!("gh550-launch-{case}"));
         std::fs::create_dir_all(root.join("journals")).unwrap();
@@ -8775,11 +8975,13 @@ fn gh550_launch_reads_of_changed_and_new_pages_settle_without_failing() {
 /// Windows graph the warm's read took 5.6 s; the publication moved the cache
 /// generation, the warm abandoned on drift, and every warm reopen fell back to
 /// parsing the whole graph (16 s to a working search on the verify runner).
-/// A real edit to a page the warm has already read must still be caught.
+/// A real edit or a new page is published as an update, and the warm keeps
+/// its read and applies that update after validating (audit IT-03): throwing
+/// the read away for one changed page parsed all 10,000.
 #[test]
 fn gh543_a_page_opened_during_the_warm_read_keeps_the_warm() {
     let _serial = serialize_projection_tests();
-    for case in ["unchanged", "edited", "created"] {
+    for case in ["unchanged", "edited", "created", "created-taken"] {
         let root = scratch(&format!("gh543-open-during-warm-{case}"));
         std::fs::create_dir_all(root.join("journals")).unwrap();
         std::fs::create_dir_all(root.join("pages")).unwrap();
@@ -8814,7 +9016,7 @@ fn gh543_a_page_opened_during_the_warm_read_keeps_the_warm() {
         let opened = match case {
             // A page the warm never saw: a warm that let this move pass would
             // validate an inventory without it and drop its rows.
-            "created" => {
+            "created" | "created-taken" => {
                 let created = root.join("pages/created.md");
                 std::fs::write(&created, "- TODO created after the warm read\n").unwrap();
                 created
@@ -8830,17 +9032,32 @@ fn gh543_a_page_opened_during_the_warm_read_keeps_the_warm() {
             .entry_for_path(&opened)
             .expect("the page has an entry");
         graph.load_page(&entry).expect("the page opens");
+        if case == "created-taken" {
+            // The worker takes the new page's update before the warm hands
+            // over: with no inventory yet it cannot place a page the image
+            // does not hold.
+            let projection = graph.direct_projection_test().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !projection.shared.pending.lock().unwrap().deltas.is_empty()
+                || projection.shared.worker_busy.load(Ordering::Acquire)
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "the worker never took the update"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
         pause.release.wait();
         warm.join().unwrap();
         wait_ready(&graph);
 
-        if case == "unchanged" {
-            assert!(
-                !graph.has_parsed_cache_test() && graph.page_build_parses_test() == 0,
-                "an unchanged page opened during the warm read threw the warm away \
-                 and parsed the whole graph"
-            );
-        }
+        assert!(
+            !graph.has_parsed_cache_test() && graph.page_build_parses_test() == 0,
+            "{case}: a page opened during the warm read threw the warm away \
+             and parsed the whole graph ({} parses)",
+            graph.page_build_parses_test()
+        );
         let projected = graph
             .run_query_bounded("(task TODO)", 100, 1_000_000)
             .expect("the ready projection answers the public bounded route")
@@ -8860,9 +9077,114 @@ fn gh543_a_page_opened_during_the_warm_read_keeps_the_warm() {
         );
         release_projection(graph.as_ref());
         drop(graph);
+
+        // The image the update left behind is current: the next reopen
+        // validates it without parsing and still answers the edit.
+        std::thread::sleep(Duration::from_millis(20));
+        let graph = Graph::open(&root);
+        graph.attach_direct_projection(database.clone()).unwrap();
+        graph.warm_cache();
+        wait_ready(&graph);
+        assert!(
+            !graph.has_parsed_cache_test() && graph.page_build_parses_test() == 0,
+            "{case}: the next reopen parsed the whole graph ({} parses)",
+            graph.page_build_parses_test()
+        );
+        assert_eq!(
+            graph
+                .run_query_bounded("(task TODO)", 100, 1_000_000)
+                .expect("the reopened projection answers")
+                .groups
+                .len(),
+            if case == "unchanged" { 8 } else { 9 },
+            "{case}: the reopened index still holds the page written during the warm"
+        );
+        release_projection(&graph);
+        drop(graph);
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(database.parent().unwrap());
     }
+}
+
+/// GH #543 (audit IT-03): a warm that reads the generation of an edit made
+/// during it must not publish readiness before that edit's update is queued.
+/// The update used to be queued after the cache lock was released: in that
+/// gap the warm kept its read, left the edited page to an update that did not
+/// exist yet, and search at the new generation answered the old text.
+#[test]
+fn gh543_a_warm_never_publishes_an_edit_before_its_update_is_queued() {
+    let _serial = serialize_projection_tests();
+    let root = r6_graph("gh543-warm-edit-gap");
+    let database = scratch("gh543-warm-edit-gap-db").join("projection.sqlite");
+    {
+        let graph = Graph::open(&root);
+        graph.attach_direct_projection(database.clone()).unwrap();
+        graph.warm_cache();
+        wait_ready(&graph);
+        release_projection(&graph);
+    }
+    std::thread::sleep(Duration::from_millis(20));
+
+    let graph = Arc::new(Graph::open(&root));
+    graph.attach_direct_projection(database.clone()).unwrap();
+    let read_done = graph.pause_next_warm_after_read_test();
+    let warm = {
+        let graph = Arc::clone(&graph);
+        std::thread::spawn(move || graph.warm_cache())
+    };
+    read_done.reached.wait();
+    let edited = root.join("pages/two.md");
+    std::fs::write(&edited, "- TODO gh543 edited during the warm\n").unwrap();
+    let published = graph.pause_next_page_publication_test();
+    let opener = {
+        let graph = Arc::clone(&graph);
+        let entry = graph.entry_for_path(&edited).expect("entry");
+        std::thread::spawn(move || graph.load_page(&entry).expect("the page opens"))
+    };
+    // The edit's generation is observable; the opener has not returned.
+    published.reached.wait();
+    read_done.release.wait();
+    warm.join().unwrap();
+    let generation = graph.cache_generation();
+    let projection = graph.direct_projection_test().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut stale = None;
+    while Instant::now() < deadline && stale.is_none() {
+        if projection.ready_at(generation) {
+            let hits = graph
+                .search("gh543 edited during the warm", 50)
+                .unwrap_or_default();
+            stale = Some(hits.is_empty());
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    published.release.wait();
+    opener.join().unwrap();
+    wait_ready(&graph);
+    assert_ne!(
+        stale,
+        Some(true),
+        "readiness was published at the edit's generation while search still \
+         answered the old text: {}",
+        projection.debug_state_test()
+    );
+    assert!(
+        !graph
+            .search("gh543 edited during the warm", 50)
+            .unwrap()
+            .is_empty(),
+        "the edit is not indexed after its update: {}",
+        projection.debug_state_test()
+    );
+    assert_eq!(
+        graph.page_build_parses_test(),
+        0,
+        "the warm was thrown away"
+    );
+    release_projection(graph.as_ref());
+    drop(graph);
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(database.parent().unwrap());
 }
 
 /// GH #543 (audit IT-03): pages opened at launch publish updates the index

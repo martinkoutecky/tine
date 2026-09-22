@@ -153,6 +153,9 @@ pub(super) struct PageBuildTestState {
     /// Pause one warm validation after it has read every page and before it
     /// checks the generation, so a test can publish a page it already read.
     pub(super) warm_read_done_pause: std::sync::Mutex<Option<Arc<PageBuildTestPause>>>,
+    /// Pause one page publication right after it releases the cache lock,
+    /// with its new generation observable, before it returns.
+    pub(super) upsert_published_pause: std::sync::Mutex<Option<Arc<PageBuildTestPause>>>,
     pub(super) joined: std::sync::Mutex<usize>,
     pub(super) joined_changed: std::sync::Condvar,
     pub(super) force_warm_failure: std::sync::atomic::AtomicBool,
@@ -162,6 +165,8 @@ pub(super) struct PageBuildTestState {
     pub(super) derived_read_open_once: std::sync::Mutex<Option<PathBuf>>,
     pub(super) enumerations: std::sync::atomic::AtomicUsize,
     pub(super) parses: std::sync::atomic::AtomicUsize,
+    /// Pages a warm repair parsed (one per changed page, never a graph pass).
+    pub(super) repair_parses: std::sync::atomic::AtomicUsize,
     pub(super) installs: std::sync::atomic::AtomicUsize,
     pub(super) censuses: std::sync::atomic::AtomicUsize,
     /// R6: pages parsed on demand for reference/fuzzy hydration without a

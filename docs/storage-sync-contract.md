@@ -272,9 +272,18 @@ assigns it.
 **Warm validation from bytes, never from a parsed graph.** Opening a Direct
 Files graph validates the projection against the walk inventory and each
 page's exact content revision computed from file bytes, parsing nothing. An
-unchanged graph is READY with no parsed cache and nothing retained. A changed,
+unchanged graph is READY with no parsed cache and nothing retained. When the
+walk read every page and at most a quarter of them changed, were added or
+were deleted since the image was written, the warm is **repaired page by
+page** (GH #543): exactly those pages are parsed, the worker applies them and
+the deletions in one transaction that also reconciles `pages.position` to the
+walk order, and then validates again; readiness is published only after that
+check is clean, never from a partial image. At most two repairs are attempted
+per warm. A larger change, an incomplete walk (a page it could not read), a
 missing, damaged or config-mismatched projection is rebuilt from one captured
 parsed snapshot in an unpublished same-directory stage, in bounded batches.
+In-scope scenario: Syncthing or another device delivering a few pages between
+two sessions.
 Live saves and deletions enqueue their delta whether or not a parsed cache
 exists, but readiness is published only after this session has validated the
 complete inventory once (a full snapshot or a clean warm) — a delta alone
@@ -285,8 +294,11 @@ sessions, followed by a save of a different page before the warm completes.
 Until this session's order is seeded from an inventory, a delta carries no
 position (GH #550): a page the image already holds at the same source revision
 is dropped, a changed one is applied in place and keeps its stored position,
-and a page the image does not hold waits for the warm's fresh build instead of
-being given a guessed position. Launch reads such as the Journals feed publish
+and a page the image does not hold waits for the warm (which repairs or
+rebuilds it) instead of being given a guessed position. A warm that names
+pages to repair returns the queue to this unseeded state until its repair
+lands, because the walk's order already includes pages the image does not
+hold, and an update for exactly the bytes a repair wrote is not lowered again. Launch reads such as the Journals feed publish
 exactly these deltas; counting their positions from 0 collided with the stored
 ones and rebuilt the whole projection on every launch.
 

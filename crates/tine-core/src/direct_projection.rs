@@ -145,8 +145,31 @@ struct PendingWarm {
     /// for them, but they still exist: validation must leave their existing
     /// rows alone instead of reading their omission as a deletion (GH #543).
     retained: Vec<PageEntry>,
+    /// Pages this session published after the walk read them, or created
+    /// after it: each has an update queued beside the warm that brings its
+    /// rows to the current bytes, so validation leaves the image's rows for
+    /// it alone instead of calling the whole image stale (audit IT-03).
+    published: Vec<String>,
+    /// The pages an earlier attempt named `Changed`, parsed by the caller,
+    /// applied before this attempt validates.
+    repair: Option<WarmRepair>,
     parse_config: Arc<ParseConfig>,
 }
+
+/// A stale image brought current page by page (Martin, 2026-09-22): the
+/// pages whose bytes changed, or that appeared, since the image was written,
+/// and the pages that disappeared. Applied in one transaction, with the page
+/// order reconciled to the walk; readiness still waits for the validation
+/// that follows it.
+pub(crate) struct WarmRepair {
+    pub(crate) replacements: Vec<(PageEntry, Arc<Document>, String)>,
+    pub(crate) deletions: Vec<String>,
+}
+
+/// Above this share of the walk, a stale image is rebuilt from a complete
+/// parsed snapshot instead: it parses the same pages and writes a fresh file
+/// rather than rewriting most of the old one in place.
+const WARM_REPAIR_MAX_SHARE_DIVISOR: usize = 4;
 
 /// What the worker's warm-validation turn decided (R6), read by the warm
 /// thread through `wait_warm_outcome`.
@@ -157,6 +180,13 @@ pub(crate) enum WarmOutcome {
     /// Some row, source revision, or page-set fact differs. A complete parsed
     /// snapshot must be built into a new unpublished database.
     FreshBuildRequired,
+    /// A few pages differ from the walk (edited, added or removed while the
+    /// image was not watching). The caller parses exactly the replacements
+    /// and queues the warm again with them as its `WarmRepair`.
+    Changed {
+        replacements: Vec<String>,
+        deletions: Vec<String>,
+    },
     /// A full parsed snapshot arrived first and owns readiness.
     Superseded,
     /// The validation turn failed; the parser fallback owns readiness.
@@ -212,6 +242,14 @@ struct PendingProjection {
     /// image already stores (`UNIQUE constraint failed: pages.position`), and
     /// that failure rebuilt the whole projection on every launch (GH #550).
     order_seeded: bool,
+    /// Updates for pages the reopened image does not hold, taken before the
+    /// order was seeded. They cannot be placed without an inventory, so they
+    /// wait here, outside `has_work`, and rejoin `deltas` the moment a warm or
+    /// full snapshot seeds it. Before that nothing is validated, so readiness
+    /// cannot be published without them. Refusing the turn instead latched a
+    /// fresh build, and a page created during the warm read parsed the whole
+    /// graph (GH #543, audit IT-03).
+    unplaced: BTreeMap<String, (u64, PageDelta)>,
     /// R6 warm validation queued for the worker.
     warm: Option<PendingWarm>,
     /// R6: the worker's verdict on the last warm validation.
@@ -271,6 +309,107 @@ impl PendingProjection {
             .enumerate()
             .map(|(position, rel_path)| (rel_path.to_owned(), position as u64))
             .collect();
+        for (path, parked) in std::mem::take(&mut self.unplaced) {
+            // A newer update for the page supersedes the parked one.
+            self.deltas.entry(path).or_insert(parked);
+        }
+    }
+
+    /// Park updates the worker could not place (see `unplaced`). If the order
+    /// was seeded while the worker held them, they are placed right away.
+    fn park_unplaced(&mut self, parked: BTreeMap<String, (u64, PageDelta)>) {
+        for (path, update) in parked {
+            if self.deltas.contains_key(&path) {
+                continue;
+            }
+            if self.order_seeded {
+                self.deltas.insert(path, update);
+            } else {
+                self.unplaced.entry(path).or_insert(update);
+            }
+        }
+        if self.order_seeded {
+            self.place_unseeded_deltas();
+        }
+    }
+
+    /// Forget the seeded order and every queued position: the image does not
+    /// keep the order's positions (a warm named pages to repair). Updates
+    /// then settle against the image as they do before any seed, and the
+    /// repair's warm seeds the order again.
+    fn unseed_page_order(&mut self) {
+        self.order_seeded = false;
+        self.next_page_order = 0;
+        self.page_order.clear();
+        for (_, (_, delta)) in self.deltas.iter_mut() {
+            if let PageDelta::Replace { page_position, .. } = delta {
+                *page_position = None;
+            }
+        }
+    }
+
+    /// After a warm repair reconciled the image to `order`, make the queue's
+    /// order that same list and re-place every queued update against it.
+    fn reseed_after_repair(&mut self, order: &[String]) {
+        self.order_seeded = true;
+        self.next_page_order = order.len() as u64;
+        self.page_order = order
+            .iter()
+            .enumerate()
+            .map(|(position, rel_path)| (rel_path.clone(), position as u64))
+            .collect();
+        for (_, (_, delta)) in self.deltas.iter_mut() {
+            if let PageDelta::Replace { page_position, .. } = delta {
+                *page_position = None;
+            }
+        }
+        self.place_unseeded_deltas();
+    }
+
+    /// Positions for updates a worker turn has already taken, from the
+    /// queue's current order.
+    fn place_taken(&mut self, taken: &mut BTreeMap<String, (u64, PageDelta)>) {
+        for (key, (_, delta)) in taken.iter_mut() {
+            match delta {
+                PageDelta::Replace { page_position, .. } => {
+                    *page_position = Some(match self.page_order.get(key) {
+                        Some(position) => *position,
+                        None => {
+                            let position = self.next_page_order;
+                            self.next_page_order += 1;
+                            self.page_order.insert(key.clone(), position);
+                            position
+                        }
+                    });
+                }
+                PageDelta::Delete { .. } => {
+                    self.page_order.remove(key);
+                }
+            }
+        }
+    }
+
+    /// Give the updates queued before the order was seeded their positions.
+    /// A page the inventory lists keeps its place; a page created after the
+    /// inventory was read goes after it, as it would in a full snapshot.
+    fn place_unseeded_deltas(&mut self) {
+        for (key, (_, delta)) in self.deltas.iter_mut() {
+            if let PageDelta::Replace {
+                page_position: position @ None,
+                ..
+            } = delta
+            {
+                *position = Some(match self.page_order.get(key) {
+                    Some(position) => *position,
+                    None => {
+                        let position = self.next_page_order;
+                        self.next_page_order += 1;
+                        self.page_order.insert(key.clone(), position);
+                        position
+                    }
+                });
+            }
+        }
     }
 
     /// The queue's own page inventory in position order: the R6 order turn's
@@ -1041,11 +1180,39 @@ impl DirectProjection {
     /// updates after it. Refusing turned every page opened at launch into a
     /// whole-graph parse whenever the worker had not yet taken its update
     /// (GH #543, audit IT-03).
+    #[cfg(test)]
     pub(crate) fn enqueue_warm(
         &self,
         generation: u64,
         sources: Vec<(PageEntry, String)>,
         retained: Vec<PageEntry>,
+        published: Vec<String>,
+        walk_order: Vec<String>,
+        parse_config: Arc<ParseConfig>,
+        text_bytes: u64,
+    ) -> Option<u64> {
+        self.enqueue_warm_with_repair(
+            generation,
+            sources,
+            retained,
+            published,
+            walk_order,
+            None,
+            parse_config,
+            text_bytes,
+        )
+    }
+
+    /// `enqueue_warm`, carrying the pages a previous attempt named `Changed`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_warm_with_repair(
+        &self,
+        generation: u64,
+        sources: Vec<(PageEntry, String)>,
+        retained: Vec<PageEntry>,
+        published: Vec<String>,
+        walk_order: Vec<String>,
+        repair: Option<WarmRepair>,
         parse_config: Arc<ParseConfig>,
         _text_bytes: u64,
     ) -> Option<u64> {
@@ -1072,18 +1239,20 @@ impl DirectProjection {
         }
         let sources_len = sources.len();
         self.shared.ready.store(false, Ordering::Release);
-        let ordered = sources
-            .iter()
-            .map(|(entry, _)| entry.rel_path.as_str())
-            .chain(retained.iter().map(|entry| entry.rel_path.as_str()))
-            .collect::<Vec<_>>();
-        pending.seed_page_order(ordered.into_iter());
+        // The walk's own order, pages it could not read included: the image
+        // stores positions in that order, and appending the unreadable pages
+        // instead shifted every page after them onto a position another page
+        // still held (GH #543).
+        pending.seed_page_order(walk_order.iter().map(String::as_str));
+        pending.place_unseeded_deltas();
         pending.warm_outcome = None;
         pending.warm_attempt += 1;
         let attempt = pending.warm_attempt;
         pending.warm = Some(PendingWarm {
             sources,
             retained,
+            published,
+            repair,
             parse_config,
         });
         pending.latest_generation = generation;
@@ -2257,6 +2426,14 @@ impl DirectProjection {
             pending.warm_outcome.as_ref().map(|(_, outcome)| match outcome {
                 WarmOutcome::Clean => "Clean".to_owned(),
                 WarmOutcome::FreshBuildRequired => "FreshBuildRequired".to_owned(),
+                WarmOutcome::Changed {
+                    replacements,
+                    deletions,
+                } => format!(
+                    "Changed(replacements={}, deletions={})",
+                    replacements.len(),
+                    deletions.len()
+                ),
                 WarmOutcome::Superseded => "Superseded".to_owned(),
                 WarmOutcome::Failed => "Failed".to_owned(),
             }),
@@ -2645,8 +2822,8 @@ fn projection_worker(shared: Arc<ProjectionShared>) {
         };
         let WorkerTurn {
             full,
-            warm,
-            deltas,
+            mut warm,
+            mut deltas,
             inventory,
             latest_generation,
             rebuild,
@@ -2762,22 +2939,46 @@ fn projection_worker(shared: Arc<ProjectionShared>) {
                     writer_slot = Some(database);
                     applied
                 }
-            } else if let Some(warm) = warm.as_ref() {
+            } else if let Some(warm) = warm.as_mut() {
                 let outcome = if rebuild || requires_full_rebuild {
                     WarmOutcome::FreshBuildRequired
+                } else if let Some(database) = writer_slot.as_mut() {
+                    if let Some(repair) = warm.repair.take() {
+                        let repaired = repair
+                            .replacements
+                            .iter()
+                            .map(|(entry, _, revision)| (entry.rel_path.clone(), revision.clone()))
+                            .collect::<HashMap<_, _>>();
+                        let config_digest = warm.parse_config.digest();
+                        // An update for exactly the bytes the repair just
+                        // wrote would lower the page a second time.
+                        deltas.retain(|path, (_, delta)| {
+                            !matches!(
+                                delta,
+                                PageDelta::Replace { revision, parse_config, .. }
+                                    if repaired.get(path) == Some(revision)
+                                        && parse_config.digest() == config_digest
+                            )
+                        });
+                        let order =
+                            apply_warm_repair(database, &shared, repair, &warm.parse_config)
+                                .map_err(ProjectionRefusal::Failed)?;
+                        // The image now keeps the order's positions; so does
+                        // the queue, and so do the updates taken with it.
+                        let mut pending = shared.pending.lock().unwrap();
+                        pending.reseed_after_repair(&order);
+                        pending.place_taken(&mut deltas);
+                    }
+                    validate_warm(database, warm).map_err(ProjectionRefusal::Failed)?
                 } else {
-                    writer_slot
-                        .as_ref()
-                        .map(|database| validate_warm(database, warm))
-                        .transpose()
-                        .map_err(ProjectionRefusal::Failed)?
-                        .unwrap_or(WarmOutcome::FreshBuildRequired)
+                    WarmOutcome::FreshBuildRequired
                 };
-                if matches!(outcome, WarmOutcome::FreshBuildRequired) {
-                    // The warm owns no image, so the updates taken beside it
-                    // are not applied. Put them back: the full snapshot that
-                    // follows clears them, and until then a later warm or
-                    // turn must not publish readiness without them.
+                if !matches!(outcome, WarmOutcome::Clean) {
+                    // The warm owns no validated image, so the updates taken
+                    // beside it are not applied. Put them back: the full
+                    // snapshot or repair that follows takes them, and until
+                    // then a later warm or turn must not publish readiness
+                    // without them.
                     let mut pending = shared.pending.lock().unwrap();
                     for (path, (generation, delta)) in deltas {
                         match pending.deltas.entry(path) {
@@ -2787,6 +2988,14 @@ fn projection_worker(shared: Arc<ProjectionShared>) {
                             // A newer update for the page arrived meanwhile.
                             std::collections::btree_map::Entry::Occupied(_) => {}
                         }
+                    }
+                    if matches!(outcome, WarmOutcome::Changed { .. }) {
+                        // The walk's order includes pages the image does not
+                        // hold yet, so its positions collide with the stored
+                        // ones until the repair reconciles them. Updates that
+                        // run before the repair go by the image's own
+                        // positions instead (`settle_unseeded_deltas`).
+                        pending.unseed_page_order();
                     }
                     drop(pending);
                     return Ok(AppliedTurn {
@@ -2814,9 +3023,11 @@ fn projection_worker(shared: Arc<ProjectionShared>) {
                 let database = writer_slot
                     .as_mut()
                     .ok_or(ProjectionRefusal::AwaitingFullInventory)?;
-                let deltas = settle_unseeded_deltas(database, deltas)
-                    .map_err(ProjectionRefusal::Failed)?
-                    .ok_or(ProjectionRefusal::AwaitingFullInventory)?;
+                let (deltas, unplaced) =
+                    settle_unseeded_deltas(database, deltas).map_err(ProjectionRefusal::Failed)?;
+                if !unplaced.is_empty() {
+                    shared.pending.lock().unwrap().park_unplaced(unplaced);
+                }
                 apply_deltas(database, deltas).map_err(ProjectionRefusal::Failed)?
             };
 
@@ -3393,10 +3604,100 @@ fn validate_warm(
             .collect::<std::collections::BTreeSet<_>>();
         source_delta.deletions.retain(|id| !retained.contains(id));
     }
+    if !warm.published.is_empty() {
+        let published = warm
+            .published
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        source_delta.deletions.retain(|id| !published.contains(id));
+        source_delta
+            .replacements
+            .retain(|id| !published.contains(id));
+    }
     if source_delta.replacements.is_empty() && source_delta.deletions.is_empty() {
         return Ok(WarmOutcome::Clean);
     }
-    Ok(WarmOutcome::FreshBuildRequired)
+    let walk = warm.sources.len() + warm.retained.len();
+    let changed = source_delta.replacements.len() + source_delta.deletions.len();
+    // An incomplete walk (a page it could not read) is never repaired: the
+    // repaired image would mix fresh pages with a page whose current bytes
+    // nobody has seen, so the old coherent image stays until a complete
+    // reconstruction succeeds.
+    if !warm.retained.is_empty() || changed * WARM_REPAIR_MAX_SHARE_DIVISOR > walk {
+        return Ok(WarmOutcome::FreshBuildRequired);
+    }
+    Ok(WarmOutcome::Changed {
+        replacements: source_delta.replacements,
+        deletions: source_delta.deletions,
+    })
+}
+
+/// Apply a `WarmRepair` in one transaction and reconcile every stored page's
+/// position to the queue's order (the walk, then pages this session created),
+/// restricted to the pages the image holds afterwards. Returns that order.
+fn apply_warm_repair(
+    database: &mut PhysicalGraphProjectionDatabase,
+    shared: &ProjectionShared,
+    repair: WarmRepair,
+    parse_config: &Arc<ParseConfig>,
+) -> Result<Vec<String>, String> {
+    let mut deltas = BTreeMap::new();
+    for (entry, document, revision) in repair.replacements {
+        deltas.insert(
+            entry.rel_path.clone(),
+            (
+                0,
+                PageDelta::Replace {
+                    entry,
+                    document,
+                    revision,
+                    parse_config: Arc::clone(parse_config),
+                    page_position: None,
+                },
+            ),
+        );
+    }
+    let lowered = lower_deltas(deltas)?;
+    let mut change = lowered.change;
+    change.deletions = repair.deletions;
+    // Against an empty inventory every stored page reads as a deletion: that
+    // is the set of paths the image holds.
+    let mut after = database
+        .source_delta(&[])
+        .map_err(|error| error.to_string())?
+        .deletions
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    for path in &change.deletions {
+        after.remove(path);
+    }
+    after.extend(change.replacements.iter().map(|page| page.path.clone()));
+    let mut order = shared
+        .pending
+        .lock()
+        .unwrap()
+        .ordered_inventory()
+        .into_iter()
+        .filter(|path| after.remove(path))
+        .collect::<Vec<_>>();
+    // Nothing should be left; anything that is still gets a place at the end.
+    order.extend(after);
+    projection_diag(|| {
+        format!(
+            "warm repair: relowering {} page(s), deleting {}",
+            change.replacements.len(),
+            change.deletions.len()
+        )
+    });
+    database
+        .apply_with_source_revisions_aliases_and_page_order(
+            &change,
+            &lowered.revisions,
+            &lowered.aliases,
+            &order,
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(order)
 }
 
 /// GH #550: settle the deltas a session published before it had seeded its
@@ -3409,13 +3710,19 @@ fn validate_warm(
 /// - A changed page the image holds is applied without a position, so it
 ///   keeps its stored one.
 /// - A page the image does not hold cannot be placed without the session's
-///   inventory. `None` asks for that inventory instead of inventing a
-///   position; the page set differs from the image, so the warm would have
-///   required a fresh build anyway.
+///   inventory. It is returned second, to wait for that inventory instead of
+///   inventing a position (`PendingProjection::unplaced`).
+#[allow(clippy::type_complexity)]
 fn settle_unseeded_deltas(
     database: &PhysicalGraphProjectionDatabase,
     mut deltas: BTreeMap<String, (u64, PageDelta)>,
-) -> Result<Option<BTreeMap<String, (u64, PageDelta)>>, String> {
+) -> Result<
+    (
+        BTreeMap<String, (u64, PageDelta)>,
+        BTreeMap<String, (u64, PageDelta)>,
+    ),
+    String,
+> {
     let unseeded = deltas
         .values()
         .filter_map(|(_, delta)| match delta {
@@ -3432,8 +3739,9 @@ fn settle_unseeded_deltas(
             _ => None,
         })
         .collect::<Vec<_>>();
+    let mut unplaced = BTreeMap::new();
     if unseeded.is_empty() {
-        return Ok(Some(deltas));
+        return Ok((deltas, unplaced));
     }
     // Against an empty inventory every stored page reads as a deletion: that
     // is the set of paths the image holds.
@@ -3451,13 +3759,16 @@ fn settle_unseeded_deltas(
         .collect::<std::collections::BTreeSet<_>>();
     for source in unseeded {
         if !stored.contains(&source.path) {
-            return Ok(None);
+            if let Some(update) = deltas.remove(&source.path) {
+                unplaced.insert(source.path, update);
+            }
+            continue;
         }
         if !changed.contains(&source.path) {
             deltas.remove(&source.path);
         }
     }
-    Ok(Some(deltas))
+    Ok((deltas, unplaced))
 }
 
 fn apply_deltas(

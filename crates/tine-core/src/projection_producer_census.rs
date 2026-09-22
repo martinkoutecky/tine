@@ -1555,9 +1555,15 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     // production import and direct-call inventory is unchanged.
     // 2026-09-21: BL1 adds read-only derived SQL snapshots and typed row
     // validation. No storage write crossing, schema or dependency pin changes.
+    // 2026-09-22: GH #543 bounded warm repair applies the pages a warm named
+    // changed through `apply_warm_repair`: one more
+    // `apply_with_source_revisions_aliases_and_page_order` call (the existing
+    // order-turn write, now also used for the repair's single transaction) and
+    // one read-only `source_delta` call. No new storage import, write kind,
+    // schema or dependency pin.
     assert_eq!(
         inventory_digest(&dependency_surface),
-        "476a81b6398727206c611d8bb58b0e8a8fb0361abd1ceff0d9ba4e639833a3f8",
+        "7226f9c812cc3f908edd05601122fe340bba7ed7877122cd145e236a8c3806cb",
         "the complete tine-storage import/direct-call surface changed: {dependency_surface:#?}"
     );
 }

@@ -476,6 +476,10 @@ impl Graph {
         let Ok((entries, skipped)) = self.page_build_entries(&permit) else {
             return Outcome::Unavailable;
         };
+        let walk_order = entries
+            .iter()
+            .map(|entry| entry.rel_path.clone())
+            .collect::<Vec<_>>();
         let mut sources = Vec::with_capacity(entries.len());
         let mut retained = Vec::new();
         let mut failures = skipped;
@@ -535,20 +539,6 @@ impl Graph {
             });
             Outcome::Retry
         };
-        let Some(generation) = self.warm_generation_after_drift(read_at, structural, &sources)
-        else {
-            return abandoned();
-        };
-        if generation != read_at {
-            // Each of those publications queued an update; the queue takes
-            // the warm beside them and applies them after validating it.
-            crate::direct_projection::projection_diag(|| {
-                format!(
-                    "warm kept across generations {read_at}..{generation}: \
-                     only pages it read were published, at the revisions it read"
-                )
-            });
-        }
         crate::direct_projection::projection_diag(|| {
             format!(
                 "warm inventory read in {}ms pages={} retained={} failures={} text_mib={:.1}",
@@ -560,75 +550,189 @@ impl Graph {
             )
         });
         let parse_config = Arc::new(self.config.parse_config());
-        let attempt = projection.enqueue_warm(
-            generation,
-            sources,
-            retained,
-            Arc::clone(&parse_config),
-            text_bytes,
-        );
-        // From here the queue itself reports Indexing (or the refusal reason).
-        drop(in_flight);
-        let Some(attempt) = attempt else {
-            // Refused: the worker is gone or failed without a rebuild queued
-            // (nothing a retry changes), or the queue outranks this
-            // generation.
-            return if projection.worker_failed() || !projection.worker_available() {
-                Outcome::Unavailable
-            } else {
-                Outcome::Retry
+        // A stale image is repaired page by page at most this many times
+        // before the complete rebuild takes over: each repair re-validates,
+        // and a graph still changing underneath it gets the rebuild.
+        let mut repairs_left = 2usize;
+        let mut repair = None;
+        loop {
+            let Some((generation, published)) =
+                self.warm_generation_after_drift(read_at, structural, &sources)
+            else {
+                return abandoned();
             };
-        };
-        let outcome_started = std::time::Instant::now();
-        // Waiting on THIS attempt's verdict: a warm admitted after this one
-        // owns the queue, and its verdict is not ours to take (GH #543).
-        let outcome = projection.wait_warm_outcome(attempt);
-        crate::direct_projection::projection_diag(|| {
-            format!(
-                "warm validation returned {} after {}ms",
-                match &outcome {
-                    crate::direct_projection::WarmOutcome::Clean => "clean".to_owned(),
-                    crate::direct_projection::WarmOutcome::Superseded => "superseded".to_owned(),
-                    crate::direct_projection::WarmOutcome::Failed => "failed".to_owned(),
-                    crate::direct_projection::WarmOutcome::FreshBuildRequired =>
-                        "fresh-build-required".to_owned(),
-                },
-                outcome_started.elapsed().as_millis()
-            )
-        });
-        match outcome {
-            crate::direct_projection::WarmOutcome::Clean => {
-                self.publish_page_index_failures(generation, failures);
-                Outcome::Owned
+            // Validation leaves these pages as the image holds them, and the
+            // updates they published replace them after it (audit IT-03).
+            let mut published_pages = Vec::with_capacity(published.len());
+            for path in &published {
+                let rel_path = match sources.iter().find(|(entry, _)| &entry.path == path) {
+                    Some((entry, _)) => entry.rel_path.clone(),
+                    // A page created after the read: the walk never listed it.
+                    None => match self.entry_for_path(path) {
+                        Some(entry) => entry.rel_path,
+                        None => return abandoned(),
+                    },
+                };
+                published_pages.push(rel_path);
             }
-            crate::direct_projection::WarmOutcome::Superseded => {
-                // A captured parsed snapshot already owns readiness.
-                Outcome::Owned
+            if generation != read_at {
+                // Each of those publications queued an update; the queue takes
+                // the warm beside them and applies them after validating it.
+                crate::direct_projection::projection_diag(|| {
+                    format!(
+                        "warm kept across generations {read_at}..{generation}; \
+                         {} page(s) published since the read follow as updates",
+                        published.len()
+                    )
+                });
             }
-            crate::direct_projection::WarmOutcome::Failed => Outcome::Unavailable,
-            crate::direct_projection::WarmOutcome::FreshBuildRequired => Outcome::Retry,
+            let attempt = projection.enqueue_warm_with_repair(
+                generation,
+                sources.clone(),
+                retained.clone(),
+                published_pages,
+                walk_order.clone(),
+                repair.take(),
+                Arc::clone(&parse_config),
+                text_bytes,
+            );
+            let Some(attempt) = attempt else {
+                // Refused: the worker is gone or failed without a rebuild
+                // queued (nothing a retry changes), or the queue outranks this
+                // generation.
+                return if projection.worker_failed() || !projection.worker_available() {
+                    Outcome::Unavailable
+                } else {
+                    Outcome::Retry
+                };
+            };
+            let outcome_started = std::time::Instant::now();
+            // Waiting on THIS attempt's verdict: a warm admitted after this
+            // one owns the queue, and its verdict is not ours to take (GH #543).
+            let outcome = projection.wait_warm_outcome(attempt);
+            crate::direct_projection::projection_diag(|| {
+                format!(
+                    "warm validation returned {} after {}ms",
+                    match &outcome {
+                        crate::direct_projection::WarmOutcome::Clean => "clean".to_owned(),
+                        crate::direct_projection::WarmOutcome::Superseded =>
+                            "superseded".to_owned(),
+                        crate::direct_projection::WarmOutcome::Failed => "failed".to_owned(),
+                        crate::direct_projection::WarmOutcome::FreshBuildRequired =>
+                            "fresh-build-required".to_owned(),
+                        crate::direct_projection::WarmOutcome::Changed {
+                            replacements,
+                            deletions,
+                        } => format!(
+                            "changed replacements={} deletions={}",
+                            replacements.len(),
+                            deletions.len()
+                        ),
+                    },
+                    outcome_started.elapsed().as_millis()
+                )
+            });
+            match outcome {
+                crate::direct_projection::WarmOutcome::Clean => {
+                    drop(in_flight);
+                    self.publish_page_index_failures(generation, failures);
+                    return Outcome::Owned;
+                }
+                crate::direct_projection::WarmOutcome::Superseded => {
+                    // A captured parsed snapshot already owns readiness.
+                    return Outcome::Owned;
+                }
+                crate::direct_projection::WarmOutcome::Failed => return Outcome::Unavailable,
+                crate::direct_projection::WarmOutcome::FreshBuildRequired => {
+                    return Outcome::Retry;
+                }
+                crate::direct_projection::WarmOutcome::Changed {
+                    replacements,
+                    deletions,
+                } => {
+                    if repairs_left == 0 {
+                        return Outcome::Retry;
+                    }
+                    repairs_left -= 1;
+                    if cancelled() {
+                        return Outcome::Cancelled;
+                    }
+                    let Some(parsed) = self.parse_warm_repair(&permit, &mut sources, &replacements)
+                    else {
+                        return Outcome::Retry;
+                    };
+                    repair = Some(crate::direct_projection::WarmRepair {
+                        replacements: parsed,
+                        deletions,
+                    });
+                }
+            }
         }
     }
 
-    /// The generation a finished warm inventory read may be queued at, or
-    /// `None` when it must be read again.
+    /// Parse exactly the pages a warm validation named `Changed`, updating
+    /// their revisions in `sources` to the bytes parsed. `None` when one of
+    /// them cannot be read or parsed: the complete rebuild then owns it.
+    fn parse_warm_repair(
+        &self,
+        permit: &GraphTextWritePermit,
+        sources: &mut [(PageEntry, String)],
+        replacements: &[String],
+    ) -> Option<Vec<(PageEntry, Arc<Document>, String)>> {
+        let index = sources
+            .iter()
+            .enumerate()
+            .map(|(i, (entry, _))| (entry.rel_path.clone(), i))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut parsed = Vec::with_capacity(replacements.len());
+        for rel_path in replacements {
+            let i = *index.get(rel_path)?;
+            let entry = sources[i].0.clone();
+            let Ok(Some((content, _))) =
+                self.graph_text_read_optional_text_with_identity(permit, &entry.path)
+            else {
+                return None;
+            };
+            #[cfg(test)]
+            self.page_build_test
+                .repair_parses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Ok(Some((effective, document, revision))) =
+                isolate_page_parse(entry, &self.journal_format, |entry| {
+                    Some(self.parse_session_page_content(entry, &content))
+                })
+            else {
+                return None;
+            };
+            sources[i].1 = revision.clone();
+            parsed.push((effective, Arc::new(document), revision));
+        }
+        Some(parsed)
+    }
+
+    /// The generation a finished warm inventory read may be queued at, and
+    /// the pages published since the read at other bytes than it saw; `None`
+    /// when it must be read again.
     ///
     /// Opening a page publishes it even when its bytes are unchanged, and a
     /// launch opens today's journal while the warm is still reading. On a
     /// 10,000-page Windows graph that read takes seconds, and throwing it away
     /// for that publication sent every warm reopen to a whole-graph parse
-    /// (GH #543). A move is harmless when nothing structural happened and
-    /// every page this session has published carries exactly the revision
-    /// and parse configuration the warm read for it: the warm then describes
-    /// the current state. Anything else, including a record the warm cannot
-    /// match (a page it did not read, or one published before an external
-    /// change it saw), is treated as drift, as before.
+    /// (GH #543). An edited or new page published during the read did the
+    /// same (audit IT-03), although its publication queued the update that
+    /// brings the index to its current bytes. So the read survives any move
+    /// that is not structural: a publication at the revision the warm read is
+    /// benign, and every other published page is returned for validation to
+    /// leave as the image holds it, with its update applied after. A removal
+    /// or invalidation (structural) still discards the read: nothing queued
+    /// describes what it took away.
     fn warm_generation_after_drift(
         &self,
         read_at: u64,
         structural: u64,
         sources: &[(PageEntry, String)],
-    ) -> Option<u64> {
+    ) -> Option<(u64, std::collections::HashSet<PathBuf>)> {
+        use std::sync::atomic::Ordering;
         let read: std::collections::HashMap<&Path, &str> = sources
             .iter()
             .map(|(entry, revision)| (entry.path.as_path(), revision.as_str()))
@@ -636,7 +740,25 @@ impl Graph {
         // Every mover publishes its session record and bumps both counters
         // under the cache write lock, so this read lock sees them together.
         let _cache = self.cache.read().unwrap();
-        self.generation_after_benign_drift(read_at, structural, |path| read.get(path).copied())
+        let current = self.cache_gen.load(Ordering::Acquire);
+        if current == read_at {
+            return Some((current, std::collections::HashSet::new()));
+        }
+        if self.cache_structural_gen.load(Ordering::Acquire) != structural {
+            return None;
+        }
+        let config = self.config.parse_config().digest();
+        let published = self
+            .session_page_ids
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(path, ids)| {
+                ids.config != config || read.get(path.as_path()) != Some(&ids.revision.as_str())
+            })
+            .map(|(path, _)| path.clone())
+            .collect();
+        Some((current, published))
     }
 
     /// The shared rule behind `warm_generation_after_drift` and cold
@@ -788,6 +910,13 @@ impl Graph {
     }
 
     #[cfg(test)]
+    pub(crate) fn warm_repair_parses_test(&self) -> usize {
+        self.page_build_test
+            .repair_parses
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
     pub(crate) fn page_build_parses_test(&self) -> usize {
         self.page_build_test
             .parses
@@ -830,6 +959,13 @@ impl Graph {
 
     /// GH #543 test hook: pause the NEXT warm validation after it has read
     /// every page and before it checks whether the generation moved.
+    #[cfg(test)]
+    pub(crate) fn pause_next_page_publication_test(&self) -> Arc<PageBuildTestPause> {
+        let pause = Arc::new(PageBuildTestPause::new());
+        *self.page_build_test.upsert_published_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        pause
+    }
+
     #[cfg(test)]
     pub(crate) fn pause_next_warm_after_read_test(&self) -> Arc<PageBuildTestPause> {
         let pause = Arc::new(PageBuildTestPause::new());
@@ -902,6 +1038,14 @@ impl Graph {
         let mut previous_doc: Option<Arc<Document>> = None;
         let mut is_new_page = false;
         let mut identity_changed = false;
+        // Taken before the cache lock: attaching holds the projection slot
+        // while it reads the cache, so the slot is never locked under it.
+        let projection = self
+            .direct_projection
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(Arc::clone);
         let mut guard = self.cache.write().unwrap();
         let mut failures_guard = self.page_index_failures.write().unwrap();
         self.session_page_ids.write().unwrap().insert(
@@ -1013,8 +1157,37 @@ impl Graph {
                 )
             });
         *failures_guard = resulting_failures;
+        // The update is queued before the new generation can be observed. A
+        // warm that reads this generation keeps its inventory and leaves this
+        // page to its update (audit IT-03); queued after the lock, the warm
+        // could publish readiness at this generation with the page's old
+        // rows, and an answer cached at it would outlive the update.
+        let queued_under_lock = recovered_projection_snapshot.is_none()
+            && projection.as_ref().is_some_and(|projection| {
+                projection.enqueue_replace(
+                    newgen,
+                    evict_entry.clone(),
+                    Arc::clone(&evict_doc),
+                    projection_revision.clone(),
+                    Arc::new(self.config.parse_config()),
+                );
+                true
+            });
         drop(failures_guard);
         drop(guard);
+        #[cfg(test)]
+        {
+            let pause = self
+                .page_build_test
+                .upsert_published_pause
+                .lock()
+                .unwrap()
+                .take();
+            if let Some(pause) = pause {
+                pause.reached.wait();
+                pause.release.wait();
+            }
+        }
         // Same treatment for the physical page inventory, and for the same
         // reason as other generation-bound derived inventories. `list_pages` is keyed on raw
         // `cache_gen` equality, and its ONLY way to rebuild is to walk the graph
@@ -1087,7 +1260,7 @@ impl Graph {
         // session's inventory validated first (the projection's own rule).
         if let Some((pages, revisions)) = recovered_projection_snapshot {
             self.direct_projection_enqueue_full(newgen, pages, revisions, false, true);
-        } else {
+        } else if !queued_under_lock {
             self.direct_projection_enqueue_replace(
                 newgen,
                 evict_entry,

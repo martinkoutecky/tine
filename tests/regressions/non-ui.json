@@ -5216,6 +5216,66 @@
   "failBefore": "proven"
  },
  "notes": "GH #543 indexing audit IT-03 (queued-update half). Opening a page at launch queues an index update. enqueue_warm refused a warm whenever any update was queued, and the warm itself waited at most 2 s for the queue to drain; on the realistic 10k graph the worker had not taken three launch updates when the warm read finished at 1.4 s, so the warm was refused and the whole graph was parsed (full snapshot at +4.7 s). The worker already validates a warm and applies updates after it in one turn, so the queue now takes the warm beside updates at or below its generation and the drain wait is gone. If validation finds the stored index stale, the updates taken with the warm are requeued instead of dropped, so readiness is never published without them. The test holds the worker so an update stays queued at hand-over; it parsed 9 pages before the fix. A real edit during the warm still takes the parser path (the rest of IT-03). Evidence: tine-agents/evidence/gh550-batch/it03-warm-beside-deltas-fail-before.log."
+},
+{
+ "id": "REG-WARM-KEEPS-REAL-EDITS-AS-UPDATES-543",
+ "title": "Editing or creating a page during the launch-time index check does not send the graph to a whole-graph parse",
+ "family": "direct-files-performance",
+ "sources": {
+  "issues": [
+   543
+  ],
+  "commits": []
+ },
+ "platforms": [
+  "android",
+  "linux",
+  "windows",
+  "macos",
+  "ios"
+ ],
+ "layer": "rust-core",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/direct_projection_tests.rs::gh543_a_page_opened_during_the_warm_read_keeps_the_warm",
+   "crates/tine-core/src/direct_projection_tests.rs::a_page_the_walk_could_not_read_keeps_its_place_for_later_updates"
+  ],
+  "scenario": null,
+  "failBefore": "proven"
+ },
+ "notes": "GH #543 indexing audit IT-03 (real-edit half). A page edited or created after the warm read it published an update, but the warm treated any publication at other bytes as drift, abandoned its read and the whole graph was parsed (9 parses on a 9-page fixture). The warm now keeps its read across any non-structural move; pages this session published at bytes other than it read are passed as `published`, validation leaves their stored rows alone, and their queued updates are applied after it. A new page's update taken by the worker before the warm arrived could not be placed without an inventory and latched a fresh build (10 parses); it is now parked until the warm or full snapshot seeds the page order. Neighbour fixed in the same change: a page the walk could not read was appended to the page order, shifting every later page onto a position another stored page held, so the next ordinary edit failed the worker (UNIQUE pages.position) and rebuilt the index; the warm now seeds the walk's own order. Removals and invalidations still discard the read. Evidence: tine-agents/evidence/gh550-batch/it03-real-edit-fail-before*."
+},
+{
+ "id": "REG-STALE-REOPEN-REPAIRED-PAGE-BY-PAGE-543",
+ "title": "Reopening a graph after a few pages changed elsewhere re-indexes only those pages",
+ "family": "direct-files-performance",
+ "sources": {
+  "issues": [
+   543
+  ],
+  "commits": []
+ },
+ "platforms": [
+  "android",
+  "linux",
+  "windows",
+  "macos",
+  "ios"
+ ],
+ "layer": "rust-core",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/direct_projection_tests.rs::pages_changed_between_sessions_are_repaired_page_by_page",
+   "crates/tine-core/src/direct_projection_tests.rs::many_pages_changed_between_sessions_build_one_complete_fresh_image",
+   "crates/tine-core/src/direct_projection_tests.rs::gh550_launch_reads_of_changed_and_new_pages_settle_without_failing",
+   "crates/tine-core/src/direct_projection_tests.rs::an_incomplete_stale_snapshot_keeps_the_old_coherent_image_until_reconstruction_succeeds"
+  ],
+  "scenario": null,
+  "failBefore": "proven"
+ },
+ "notes": "GH #543 indexing audit IT-03 (between-sessions half; Martin chose bounded repair 2026-09-22). One page edited, added or deleted between sessions made warm validation return fresh-build-required, and the whole graph was parsed and relowered (17 whole-graph parses on the fixture; +20.3 s to ready on the realistic 10k graph). Validation now names the changed pages when the walk is complete and at most a quarter changed; exactly those are parsed and applied in one transaction with page order reconciled, then validated again before readiness. Neighbours fixed in the same change: a launch read of a new page queued positions from the walk order before the repair, collided on pages.position and failed the worker into a fresh build; and an update for bytes the repair already wrote was lowered twice. Evidence: tine-agents/evidence/gh550-batch/it03-between-sessions-fail-before.log."
 }
 ]
 }

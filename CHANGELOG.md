@@ -70,6 +70,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Reopening a graph after a few pages changed elsewhere (Syncthing, another
+  device, an external editor) no longer rebuilds the whole search and query
+  index: only the changed, added or deleted pages are re-indexed, and the index
+  is ready once that check is clean. A larger change still rebuilds it once
+  (GH #543).
+
 - Reopening a large graph no longer re-reads every page when a page is
   opened while Tine is still checking its search index. Opening today's
   journal during that check used to discard it and parse the whole graph,
@@ -96,6 +102,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Reopening a large graph no longer parses every page when pages opened at
   launch are still waiting to be recorded in the search index as its check
   finishes. The check now completes, and those pages are recorded after it
+  (GH #543).
+- Editing or creating a page while a large graph is being checked at launch
+  no longer throws the check away and parses every page: the change is
+  recorded in the search index after the check. An edit made after a page
+  the check could not read no longer breaks the index and forces a rebuild
   (GH #543).
 - Advanced queries written the way Logseq's documentation and many
   `config.edn` files write them now run: `[?b :block/marker "TODO"]`, a marker
