@@ -560,6 +560,39 @@ impl Graph {
         })
     }
 
+    /// GH #543 (IT-02): name-ownership evidence from the ready index, which
+    /// holds every page's effective (`title::`-aware) name at a validated
+    /// generation. Without it a graph that was never parsed -- every clean
+    /// reopen -- ran a whole-graph parse for its first creation, ahead of the
+    /// launch check when one was running. Like any graph-wide read this waits
+    /// for a launch check in flight. `None` when no ready index answers, or
+    /// when a published parse failure leaves an identity unknown; the caller
+    /// then falls back to the parsed evidence.
+    fn indexed_creation_evidence(&self) -> Option<DirectCreationEvidence> {
+        let (generation, entries) = self.direct_projection_page_inventory()?;
+        if !self.page_index_failures.read().unwrap().is_empty() {
+            return None;
+        }
+        let mut owners = std::collections::HashMap::with_capacity(entries.len());
+        let mut physical_paths = std::collections::HashSet::with_capacity(entries.len());
+        for entry in entries {
+            physical_paths.insert(entry.path.clone());
+            owners
+                .entry(page_cache_key(entry.kind, &entry.name))
+                .or_insert_with(Vec::new)
+                .push(entry);
+        }
+        Some(DirectCreationEvidence::Warm {
+            generation,
+            identity_index: Arc::new(EffectiveIdentityIndex {
+                generation: std::sync::atomic::AtomicU64::new(generation),
+                owners,
+                physical_paths,
+                failures: Vec::new(),
+            }),
+        })
+    }
+
     /// Bind creation to one coherent warm semantic-ownership generation. Cold
     /// evidence may own or join exactly one cache-build flight; the second read
     /// must be warm, and there is never a repair retry. Publication itself is
@@ -579,13 +612,16 @@ impl Graph {
                 generation,
                 identity_index,
             },
-            DirectCreationEvidence::Cold => {
-                let outcome = self.repair_page_cache_once(permit);
-                if !outcome.installed() {
-                    return Err(outcome.creation_error());
+            DirectCreationEvidence::Cold => match self.indexed_creation_evidence() {
+                Some(evidence) => evidence,
+                None => {
+                    let outcome = self.repair_page_cache_once(permit);
+                    if !outcome.installed() {
+                        return Err(outcome.creation_error());
+                    }
+                    self.direct_creation_evidence()?
                 }
-                self.direct_creation_evidence()?
-            }
+            },
         };
         let DirectCreationEvidence::Warm {
             generation,

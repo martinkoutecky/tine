@@ -28,7 +28,20 @@ impl Graph {
                 let entry_key = (entry.kind, crate::refs::page_key(&entry.name));
                 match built.entries.get_mut(&entry_key) {
                     Some(winner) => {
-                        if !is_date_stem_entry(winner) && is_date_stem_entry(&entry) {
+                        let prefer = match entry.kind {
+                            PageKind::Journal => {
+                                !is_date_stem_entry(winner) && is_date_stem_entry(&entry)
+                            }
+                            // The file named for the page beats a file that
+                            // claims its name through `title::`, which is also
+                            // the file `load_page_by_file_name` opens while
+                            // the page list is not yet available.
+                            PageKind::Page => {
+                                !self.is_file_named_page(&winner.name, &winner.path)
+                                    && self.is_file_named_page(&entry.name, &entry.path)
+                            }
+                        };
+                        if prefer {
                             *winner = entry;
                         }
                     }
@@ -82,6 +95,11 @@ impl Graph {
                 return Ok(Some(page));
             }
         }
+        if kind == PageKind::Page {
+            if let Some(page) = self.load_page_by_file_name(name)? {
+                return Ok(Some(page));
+            }
+        }
         if let Some(entry) = self.find_entry(name, kind) {
             return load(&entry);
         }
@@ -98,6 +116,57 @@ impl Graph {
             }
         }
         Ok(None)
+    }
+
+    /// Whether `path` is the file named for page `name`: the pages directory,
+    /// the name encoded in the graph's filename format, any text extension.
+    fn is_file_named_page(&self, name: &str, path: &Path) -> bool {
+        path.parent() == Some(self.pages_path().as_path())
+            && path.file_stem().and_then(|stem| stem.to_str())
+                == Some(encode_page_name(name, self.config.file_name_format).as_str())
+    }
+
+    /// GH #543 (IT-05): open a named page from the file named for it, without
+    /// the whole-graph page list `find_entry` builds. While the launch check
+    /// runs that list is not available, so a restored tab, the home page, a
+    /// favourite or a link waited for the whole check.
+    ///
+    /// Answers only when the answer is the one `find_entry` would give:
+    /// exactly one file is named for the page, and the page loaded from it
+    /// carries that name (a `title::` can rename it). `find_entry` prefers
+    /// such a file over any that claims the name through `title::`. Anything
+    /// else returns `None`, and the caller falls back to the page list.
+    fn load_page_by_file_name(&self, name: &str) -> io::Result<Option<PageDto>> {
+        let stem = encode_page_name(name, self.config.file_name_format);
+        if stem.is_empty() {
+            return Ok(None);
+        }
+        let permit = self.admit_retained_graph_text_writer()?;
+        let mut found = None;
+        for path in configured_text_variant_paths(&self.pages_path(), &stem) {
+            if self.graph_text_exists(&permit, &path)? {
+                if found.is_some() {
+                    return Ok(None);
+                }
+                found = Some(path);
+            }
+        }
+        drop(permit);
+        let Some(entry) = found.and_then(|path| self.entry_for_path(&path)) else {
+            return Ok(None);
+        };
+        if entry.kind != PageKind::Page {
+            return Ok(None);
+        }
+        let page = match self.load_page(&entry) {
+            Ok(page) => page,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let named_for_it = page.kind == PageKind::Page
+            && crate::refs::page_key(&page.name) == crate::refs::page_key(name)
+            && self.is_file_named_page(&page.name, &entry.path);
+        Ok(named_for_it.then_some(page))
     }
 
     /// GH #550: open a journal day from its date, without the whole-graph
