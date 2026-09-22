@@ -1561,9 +1561,13 @@ fn g_d_tine_storage_write_boundaries_are_pinned() {
     // order-turn write, now also used for the repair's single transaction) and
     // one read-only `source_delta` call. No new storage import, write kind,
     // schema or dependency pin.
+    // 2026-09-22: the B1 file-size cap moved direct_projection.rs's lowering
+    // functions verbatim into direct_projection/lowering.rs (`use super::*`).
+    // With that file's rows read as direct_projection.rs, the surface hashes
+    // to the digest above: paths moved, nothing else.
     assert_eq!(
         inventory_digest(&dependency_surface),
-        "7226f9c812cc3f908edd05601122fe340bba7ed7877122cd145e236a8c3806cb",
+        "8fe1b5cfb75356da03228f821253afa8c106c0b544338bee20a1b0cc47cd9883",
         "the complete tine-storage import/direct-call surface changed: {dependency_surface:#?}"
     );
 }

@@ -1027,8 +1027,7 @@ export function mockBackend(): Backend {
       };
     },
     async setGuideAnnounced(announced: boolean): Promise<void> {
-      mockGuideAnnounced = announced;
-      notifyGraphRebound(); // reaches refresh_graph in the real backend
+      mockGuideAnnounced = announced; // presentation-only: no rebind (GH #543)
     },
     async createGraph(_dir: string): Promise<string> {
       return "/mock/new-graph"; // no real scaffolding in the browser mock
@@ -1409,22 +1408,22 @@ export function mockBackend(): Backend {
     async setPreferredWorkflow(): Promise<void> {
       // no-op in the browser mock
     },
+    async setTimetrackingEnabled(): Promise<void> {
+      // Presentation-only: the real backend keeps the Graph (GH #543).
+    },
+    async setShowBrackets(): Promise<void> {
+      // Presentation-only: the real backend keeps the Graph (GH #543).
+    },
+    async setDocModeEnterForNewBlock(): Promise<void> {
+      // Presentation-only: the real backend keeps the Graph (GH #543).
+    },
+    async setLogicalOutdenting(): Promise<void> {
+      // Presentation-only: the real backend keeps the Graph (GH #543).
+    },
     // These settings reach `refresh_graph` in the real backend, which installs a
     // FRESH Graph with an empty editor-activation registry. Not a no-op even
     // here: a mock that silently omits a contract lets every test that uses it
     // prove the wrong thing. (GH #254 increment 3, round 15.)
-    async setTimetrackingEnabled(): Promise<void> {
-      notifyGraphRebound();
-    },
-    async setShowBrackets(): Promise<void> {
-      notifyGraphRebound();
-    },
-    async setDocModeEnterForNewBlock(): Promise<void> {
-      notifyGraphRebound();
-    },
-    async setLogicalOutdenting(): Promise<void> {
-      notifyGraphRebound();
-    },
     async setPreferredFormat(): Promise<void> {
       notifyGraphRebound();
     },

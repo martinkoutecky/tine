@@ -3,14 +3,20 @@ import type { IndexingProgress } from "../backend";
 import { graphEpoch } from "../ui";
 import { followIndexingProgress, indexingProgressLabel } from "../indexingProgress";
 
-/** A compact toolbar indicator for the launch-time index work (GH #543).
+/** A compact toolbar indicator for graph-sized index work (GH #543): the
+ *  launch pass and any later repair in the same graph session.
  *  The app stays usable meanwhile; this only says how long the wait is. */
 export function IndexingProgressBar() {
   const [progress, setProgress] = createSignal<IndexingProgress | null>(null);
   createEffect(on(graphEpoch, (epoch) => {
-    let live = true;
-    onCleanup(() => { live = false; });
-    void followIndexingProgress(epoch, (next) => { if (live) setProgress(next); });
+    const stop = new AbortController();
+    onCleanup(() => stop.abort());
+    void followIndexingProgress(
+      epoch,
+      (next) => { if (!stop.signal.aborted) setProgress(next); },
+      undefined,
+      stop.signal,
+    );
   }));
   return (
     <Show when={progress()}>

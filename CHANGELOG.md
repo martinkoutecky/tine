@@ -70,6 +70,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Opening or saving a page while another edit was still being indexed could
+  make the app read and parse the whole graph again, instead of waiting a
+  moment for that edit (GH #543).
+- If the search index was damaged, several searches failing at once could
+  rebuild it twice in a row (GH #543).
+- While one page file could not be read (for example a file still arriving
+  from a sync service), every page listing re-read and parsed the whole graph.
+  Only the unreadable file is re-checked now (GH #543).
+- Switching graphs, or changing a setting that reloads the graph (preferred
+  file format, default home page, journal title format, restoring a backup),
+  while that graph was still indexing could make Tine parse the whole old
+  graph for an answer nobody would see. Those reads now stop and are answered
+  by the graph that replaced it (GH #543).
+- The indexing bar showed only the indexing done at launch. If Tine later had
+  to rebuild the search index in the same session (for example after finding
+  it damaged), that rebuild ran with no indication. It now shows too
+  (GH #543).
+- Changing a display-only setting (bracket display, time tracking, logical
+  outdenting, document-mode Enter) or dismissing the Guide notice reloaded the
+  whole graph. On a first launch that restarted indexing from the beginning,
+  and it also cancelled a print in progress and closed an unsaved-edit
+  recovery. These settings now apply in place (GH #543).
+- If launch indexing failed, page aliases, block-reference counts and
+  reference-only page names never appeared for that session, and the indexing
+  indicator kept polling. Launch indexing now always reports that it ended,
+  whether or not it succeeded (GH #543).
+
 - Creating the first page or journal day after reopening a graph no longer
   reads and parses every page to check the name is free (416 ms and the whole
   graph held in memory on a 10,000-page graph, now 23 ms); the check uses the

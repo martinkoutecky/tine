@@ -409,7 +409,14 @@ may serve the older complete committed image; readiness at the exact current
 graph generation waits for reconciliation. Replacement construction admits no
 partial staged image. A clean same-config full capture reuses the healthy image
 without draining pinned readers, including when `with_pages` installs a parsed
-cache after a SQL-only warm reopen. A rebuild, failed write, or idle image this
+cache after a SQL-only warm reopen. A whole-graph derived read (page inventory, aliases,
+icons, journal days, block-ref counts) with no parsed cache waits while a warm,
+a turn in progress, or an edit queued on a validated image is coming, and
+parses the graph only when none is. Once the app replaces a graph (a switch or
+a refresh) it retires it: a display read still running on it (page list,
+aliases, icons, journal days, block-ref counts, templates, backlink filters)
+stops waiting, parses nothing, memoizes nothing, and is asked again of the
+replacement; reads that act on their answer keep their full answer. A rebuild, failed write, or idle image this
 session has never validated stays unavailable until repair. Under
 `TINE_DEBUG=1` (or `--debug`) the projection records bounded lifecycle facts on
 the runtime diagnostic channel; without the flag none are emitted. One app-private sidecar lease permits
@@ -646,7 +653,12 @@ already resident, recovery may enqueue it; otherwise recovery validates a
 complete source inventory from bytes and then captures one parsed snapshot for
 an unpublished bounded-batch reconstruction. Clearing readiness alone would
 strand the projection until another edit. Cancellation is excluded from repair
-because the drain or close deliberately removed the snapshot's subject.
+because the drain or close deliberately removed the snapshot's subject. A failed
+read that arrives while a fresh build already owns the image's replacement --
+one running, or a queued rebuild with its payload -- requests nothing: that
+build replaces the image the read failed on, and the query epoch moves only
+when it publishes, so a sibling read admitted before it would otherwise queue a
+second complete build behind it.
 
 Production queries construct no candidate-page plan and apply no
 selectivity cutoff. A simple query is parsed once; invalid input returns its

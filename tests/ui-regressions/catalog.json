@@ -11923,6 +11923,30 @@
         "failBefore": "proven"
       },
       "notes": "Reported for {{query (page-property tags gptpro)}}: List showed seven pages and the count 7, Table said \"No results\", and Search showed a summary group \"(none) 7\" beside a header count of 0. One answer, three producers. A page-anchored run returns `pages` and leaves `groups` EMPTY by construction (Macro.tsx fetchQueryOperation, the anchor === page branch), but only the List branch consulted pageRows(): the Table/Board branch rendered the BLOCK sheet from groups() and fell back to \"No results\", and the Search branch rendered blockSearchRows() over searchPresentationHits(), which is also built from groups(). The header count was a fourth derivation keyed on currentView(), which is why it read 0 in Search while the backend's own statistics fold (crates/tine-core/src/query/statistics.rs), the source of the summary panel, correctly reported 7 - every page row has no `state`, so all of them land in the null-key \"(none)\" group. Fix: a page-anchored answer routes to the ONE page renderer (QueryPageResults) in all four presentations - it already implemented search/list/table/board and was simply never reached - and total() chooses its row family from what the run RETURNED rather than from the presentation, so hide-when-empty and 'why empty?' stop misreading a non-empty page answer too. Evidence layer: render/unit; the backend answer is mocked, so this proves the view routing, not the engine's page-property matching. Fail-before PROVEN: the three new tests (tine.view:: table, board and search over a page-anchored answer) each rendered 0 page rows on the pre-fix tree."
+    },
+    {
+      "id": "UI-INDEXING-BAR-SHOWS-A-LATER-PASS-543",
+      "title": "The indexing bar also shows a graph-sized pass that starts after launch indexing has finished, in the same graph session",
+      "family": "direct-files-performance",
+      "sources": {
+        "issues": [
+          543
+        ],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "unit",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src/indexingProgress.test.ts"
+        ],
+        "scenario": null,
+        "failBefore": "proven"
+      },
+      "notes": "Audit finding IT-08. followIndexingProgress returned once the warm had finished and two polls were empty, and IndexingProgressBar restarts it only on a graph epoch change. A later whole-graph pass in the same session (a repair after a damaged index, which moves no epoch) therefore ran with no toolbar indication. The follower now keeps watching at a 5 s cadence after launch settles, gives a new pass the same 700 ms no-flash grace, skips polls while the window is hidden, and stops on component cleanup. Fail-before: 'shows a later pass in the same graph session' failed (building(400) never published). Evidence: tine-agents/evidence/gh550-batch/it08-later-pass-fail-before.log."
     }
   ]
 }

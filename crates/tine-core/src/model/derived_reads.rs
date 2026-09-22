@@ -3,7 +3,72 @@ use super::*;
 use crate::direct_projection::{derived_reads::DerivedSelection, DirectProjection};
 use std::collections::HashMap;
 
+/// Whether this thread is serving a display read, and whether retirement cut
+/// it short. See [`Graph::display_read`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DisplayRead {
+    Off,
+    On,
+    Skipped,
+}
+
+thread_local! {
+    static DISPLAY_READ: std::cell::Cell<DisplayRead> = const { std::cell::Cell::new(DisplayRead::Off) };
+}
+
 impl Graph {
+    /// The app no longer serves this graph: it was switched away from or
+    /// replaced by a refresh. Display reads still running on it stop waiting
+    /// and start no whole-graph parse; see [`Graph::display_read`] (GH #543).
+    pub fn retire(&self) {
+        self.retired
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(super) fn is_retired(&self) -> bool {
+        self.retired.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Run a read whose answer is only displayed. `None` means the graph was
+    /// retired and the answer would have needed a whole-graph parse of it;
+    /// the caller asks the graph that replaced it instead. Reads that act on
+    /// their answer (export, asset listing, creation checks) never go through
+    /// here and keep their full answer on a retired graph.
+    pub fn display_read<T>(&self, read: impl FnOnce() -> T) -> Option<T> {
+        if self.is_retired() {
+            return None;
+        }
+        let previous = DISPLAY_READ.with(|state| state.replace(DisplayRead::On));
+        let answer = read();
+        let skipped = DISPLAY_READ.with(|state| state.replace(previous)) == DisplayRead::Skipped;
+        if skipped && previous != DisplayRead::Off {
+            DISPLAY_READ.with(|state| state.set(DisplayRead::Skipped));
+        }
+        (!skipped).then_some(answer)
+    }
+
+    /// False once this thread's display read skipped a parse: its answer is
+    /// incomplete and must not be memoized, or a later read of this graph that
+    /// acts on its answer (export, creation) would be served the gap.
+    pub(super) fn answer_is_complete(&self) -> bool {
+        DISPLAY_READ.with(|state| state.get() != DisplayRead::Skipped)
+    }
+
+    /// True when a display read on a retired graph must not parse the graph;
+    /// records that its answer is incomplete.
+    pub(super) fn skip_display_parse(&self) -> bool {
+        if !self.is_retired() {
+            return false;
+        }
+        DISPLAY_READ.with(|state| {
+            if state.get() == DisplayRead::Off {
+                return false;
+            }
+            state.set(DisplayRead::Skipped);
+            true
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn open_page_during_next_derived_read_test(&self, path: Option<PathBuf>) {
         *self.page_build_test.derived_read_open_once.lock().unwrap() = path;

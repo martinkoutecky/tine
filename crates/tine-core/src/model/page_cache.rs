@@ -305,6 +305,9 @@ impl Graph {
             if let Some(snapshot) = snapshot {
                 return f(snapshot.as_slice());
             }
+            if self.skip_display_parse() {
+                return f(&[]);
+            }
             // Admission precedes flight ownership. Query callers retain their
             // historical retry semantics, while Direct creation uses the bounded
             // `repair_page_cache_once` entry point instead.
@@ -954,6 +957,19 @@ impl Graph {
     pub(crate) fn pause_next_warm_validation_test(&self) -> Arc<PageBuildTestPause> {
         let pause = Arc::new(PageBuildTestPause::new());
         *self.page_build_test.warm_validation_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        pause
+    }
+
+    /// GH #543 test hook: pause the NEXT public query whose read failed,
+    /// before it asks for repair.
+    #[cfg(test)]
+    pub(crate) fn pause_next_failed_read_repair_test(&self) -> Arc<PageBuildTestPause> {
+        let pause = Arc::new(PageBuildTestPause::new());
+        *self
+            .page_build_test
+            .failed_read_repair_pause
+            .lock()
+            .unwrap() = Some(Arc::clone(&pause));
         pause
     }
 

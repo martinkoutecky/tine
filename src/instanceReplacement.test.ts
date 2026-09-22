@@ -534,16 +534,28 @@ describe("replacing a loaded instance (GH #304)", () => {
     expect(graphBinding(), "setPreferredFormat reopens the graph").not.toBe(before);
 
     const afterFormat = graphBinding();
-    await backend().setLogicalOutdenting(true);
-    expect(graphBinding(), "setLogicalOutdenting reopens the graph").not.toBe(afterFormat);
-
-    const afterOutdenting = graphBinding();
     await backend().setDefaultHome("Home");
-    expect(graphBinding(), "setDefaultHome reopens the graph").not.toBe(afterOutdenting);
+    expect(graphBinding(), "setDefaultHome reopens the graph").not.toBe(afterFormat);
 
     const afterHome = graphBinding();
     await backend().restoreBackup("2026-08-10_12-00-00");
     expect(graphBinding(), "restoreBackup reopens the graph").not.toBe(afterHome);
+  });
+
+  it("keeps the binding for a presentation-only setting (GH #543)", async () => {
+    // These settings change nothing the core reads, so the backend keeps its
+    // Graph and its index. Announcing a rebind would abort a print, close an
+    // unsaved-edit recovery and retire every editor activation for a toggle.
+    const { graphBinding } = await import("./persistence");
+    const before = graphBinding();
+
+    await backend().setLogicalOutdenting(true);
+    await backend().setShowBrackets(false);
+    await backend().setTimetrackingEnabled(false);
+    await backend().setDocModeEnterForNewBlock(true);
+    await backend().setGuideAnnounced(true);
+
+    expect(graphBinding()).toBe(before);
   });
 
   it("abandons a save whose activation was minted by the previous binding", async () => {

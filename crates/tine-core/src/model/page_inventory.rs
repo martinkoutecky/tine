@@ -38,14 +38,60 @@ impl Graph {
                     .map(|(entry, _)| entry.clone())
                     .collect::<Vec<_>>()
             })
+        } else if let Some(entries) = self.cached_inventory_with_failures_revalidated(gen) {
+            entries
         } else {
             match self.exact_page_inventory_from_disk() {
                 Some(entries) => entries,
                 None => return Vec::new(),
             }
         };
-        *self.page_list_cache.write().unwrap() = Some((gen, entries.clone()));
+        if self.answer_is_complete() {
+            *self.page_list_cache.write().unwrap() = Some((gen, entries.clone()));
+        }
         entries
+    }
+
+    /// The listing after a known parse failure, from the parsed cache: its
+    /// healthy entries, minus every failed path, whose bytes are re-read to
+    /// confirm they still fail. The cache is current for every page the
+    /// watcher reconciled; only a failed path can hold a stale entry, and
+    /// that is exactly what the listing must drop.
+    ///
+    /// `None` -- take the exact whole-graph listing -- when there is no parsed
+    /// cache, a failure is not a readable-failing file (it now reads, is gone,
+    /// or names the scope), or the generation moved. Re-reading every page
+    /// on each watcher delivery of one still-unreadable file was a
+    /// whole-graph parse per event at 10k pages (GH #543, indexing audit
+    /// IT-07).
+    fn cached_inventory_with_failures_revalidated(
+        &self,
+        generation: u64,
+    ) -> Option<Vec<PageEntry>> {
+        let pages = self.cache.read().unwrap().clone()?;
+        let failures = self.page_index_failures.read().unwrap().clone();
+        let permit = self.admit_retained_graph_text_writer().ok()?;
+        for failure in &failures {
+            // A failure is a graph-relative path only when it names a file;
+            // scope and skip reasons ("<path>: <why>") do not.
+            let path = self.root.join(failure);
+            if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+                return None;
+            }
+            if self
+                .graph_text_read_optional_text_with_identity(&permit, &path)
+                .is_ok()
+            {
+                return None;
+            }
+        }
+        let failed = failures.iter().map(String::as_str).collect::<HashSet<_>>();
+        let entries = pages
+            .iter()
+            .filter(|(entry, _)| !failed.contains(entry.rel_path.as_str()))
+            .map(|(entry, _)| entry.clone())
+            .collect();
+        (self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == generation).then_some(entries)
     }
 
     /// Read and parse every graph-text file, exactly as it is on disk right
@@ -57,6 +103,9 @@ impl Graph {
     /// text scope itself could not be read; the caller then lists nothing, and
     /// the reason is left in `page_index_failures`.
     fn exact_page_inventory_from_disk(&self) -> Option<Vec<PageEntry>> {
+        if self.skip_display_parse() {
+            return None;
+        }
         let built = self.admit_retained_graph_text_writer().and_then(|permit| {
             let (entries, skipped) = self.graph_text_entries_and_skipped(&permit)?;
             let limits = graph_text_inventory_limits();

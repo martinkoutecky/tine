@@ -383,6 +383,9 @@ pub struct Graph {
     /// this mutex; joiners wait on the flight's own notification and therefore
     /// never wait while holding cache or index locks.
     page_build_flight: std::sync::Mutex<Option<Arc<PageBuildFlight>>>,
+    /// The app has replaced this graph (a switch or a refresh): a display read
+    /// still running on it must not start graph-sized work (GH #543).
+    retired: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     page_build_test: PageBuildTestState,
     /// Memoized reference results (backlinks and unlinked references), keyed by `(cache_gen, today)` so it self-invalidates on ANY

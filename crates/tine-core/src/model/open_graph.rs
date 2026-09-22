@@ -455,6 +455,7 @@ impl Graph {
             external_observation_instance: NEXT_EXTERNAL_OBSERVATION_INSTANCE
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             page_build_flight: std::sync::Mutex::new(None),
+            retired: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             page_build_test: PageBuildTestState::default(),
             derived_cache: RwLock::new(None),

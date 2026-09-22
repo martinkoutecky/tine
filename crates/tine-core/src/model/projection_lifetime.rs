@@ -330,8 +330,8 @@ impl Graph {
 
     /// Readiness for a whole-graph derived read (page list, aliases, property
     /// owners, block-ref counts). Beyond the short delta wait, a read that
-    /// finds a warm validation in flight and no parsed cache keeps waiting
-    /// for that warm: its only alternative is parsing every page, and on a
+    /// finds a warm validation or queued edits in flight and no parsed cache
+    /// keeps waiting for them: its only alternative is parsing every page, and on a
     /// warm reopen that parse queued a full snapshot which outranked the warm
     /// and doubled the time to a working search (GH #543). The warm finishes
     /// no later than such a parse would; if it gives up, the read falls back
@@ -350,13 +350,23 @@ impl Graph {
             if projection.wait_ready_at(generation) {
                 return Some(generation);
             }
-            let warming = matches!(
-                projection.progress_at(generation),
-                // `Busy`: the worker has taken the queued warm and is
+            // A replaced graph's reads are no longer anyone's to wait for.
+            if self.is_retired() {
+                return None;
+            }
+            let coming = match projection.progress_at(generation) {
+                // `Busy`: the worker has taken the queued warm or edit and is
                 // applying it.
-                ProjectionProgress::Working(Reason::Indexing | Reason::Busy)
-            );
-            if !warming || self.cache.read().unwrap().is_some() {
+                ProjectionProgress::Working(Reason::Indexing | Reason::Busy) => true,
+                // An edit queued behind a turn -- today's journal and a save at
+                // launch, behind a slow disk -- lands on a validated image and
+                // readiness follows. Parsing the graph instead reads every page
+                // to answer what one delta settles. Before validation the edit
+                // waits for an inventory, so it is not by itself coming.
+                ProjectionProgress::Working(Reason::PendingEdits) => projection.validated(),
+                _ => false,
+            };
+            if !coming || self.cache.read().unwrap().is_some() {
                 return projection.ready_at(generation).then_some(generation);
             }
             // Opening today's journal publishes it and moves the generation;

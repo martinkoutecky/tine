@@ -36,20 +36,58 @@ describe("indexing progress", () => {
 
   it("keeps following a build that outlives the warm and hides once it ends", async () => {
     // The warm finishes on the first poll while the fresh build runs on.
-    const { deps, polled } = scripted([building(0), building(5000), null, building(9000), null, null], { warmAfterPoll: 1 });
+    const { deps } = scripted([building(0), building(5000), null, building(9000), null, null], { warmAfterPoll: 1, epochChangesAfterPoll: 6 });
     const published: (IndexingProgress | null)[] = [];
     await followIndexingProgress(1, (p) => published.push(p), deps);
-    // One empty poll between passes does not end it; two in a row do.
-    expect(polled()).toBe(6);
-    expect(published).toContainEqual(building(9000));
+    // One empty poll between passes does not hide it; two in a row do.
+    expect(published[3]).toEqual(building(9000));
+    expect(published[4]).toBeNull();
     expect(published.at(-1)).toBeNull();
   });
 
   it("does not flash on a graph that finishes quickly", async () => {
-    const { deps } = scripted([building(1), null, null], { warmAfterPoll: 1 });
+    const { deps } = scripted([building(1), null, null], { warmAfterPoll: 1, epochChangesAfterPoll: 5 });
     const published: (IndexingProgress | null)[] = [];
     await followIndexingProgress(1, (p) => published.push(p), deps);
     expect(published.every((p) => p === null)).toBe(true);
+  });
+
+  it("shows a later pass in the same graph session (GH #543)", async () => {
+    // Launch settles (warm done, two empty polls); later a damaged-index
+    // repair rebuilds the whole graph without a graph switch.
+    const polls = [null, null, null, null, building(100), building(200), building(300), building(400), null, null];
+    const { deps } = scripted(polls, { warmAfterPoll: 1, epochChangesAfterPoll: polls.length });
+    const published: (IndexingProgress | null)[] = [];
+    await followIndexingProgress(1, (p) => published.push(p), deps);
+    expect(published).toContainEqual(building(400));
+    expect(published.at(-1)).toBeNull();
+  });
+
+  it("does not poll a hidden window once launch indexing has settled", async () => {
+    const { deps, polled } = scripted([null], { warmAfterPoll: 1 });
+    let sleeps = 0;
+    const sleep = deps.sleep;
+    let epoch = 1;
+    await followIndexingProgress(1, () => {}, {
+      ...deps,
+      epoch: () => epoch,
+      hidden: () => true,
+      async sleep(ms) { sleeps += 1; if (sleeps === 10) epoch = 2; await sleep(ms); },
+    });
+    // Two polls settle launch; the eight hidden sleeps after that poll nothing.
+    expect(polled()).toBe(2);
+  });
+
+  it("stops when its owner is cancelled", async () => {
+    const { deps, polled } = scripted([null], { warmAfterPoll: 1 });
+    const stop = new AbortController();
+    const sleep = deps.sleep;
+    let sleeps = 0;
+    await followIndexingProgress(1, () => {}, {
+      ...deps,
+      async sleep(ms) { sleeps += 1; if (sleeps === 4) stop.abort(); await sleep(ms); },
+    }, stop.signal);
+    expect(polled()).toBe(4);
   });
 
   it("stops when another graph is opened", async () => {

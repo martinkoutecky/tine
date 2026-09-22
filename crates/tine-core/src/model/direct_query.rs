@@ -202,6 +202,21 @@ impl Graph {
             },
             DirectAttempt::FailedRead(_) => true,
         };
+        #[cfg(test)]
+        if reset_before_rebuild {
+            // Bind first: an `if let` scrutinee would hold the guard across
+            // the pause.
+            let pause = self
+                .page_build_test
+                .failed_read_repair_pause
+                .lock()
+                .unwrap()
+                .take();
+            if let Some(pause) = pause {
+                pause.reached.wait();
+                pause.release.wait();
+            }
+        }
         if reset_before_rebuild {
             self.direct_projection_recover_after_failed_read();
         } else {
@@ -908,6 +923,17 @@ impl Graph {
                 // (GH #543). The warm in flight is the payload; let it finish.
                 crate::direct_projection::projection_diag(|| {
                     "repair skipped: a warm is already in flight".to_owned()
+                });
+                return;
+            }
+            if projection.fresh_build_owns_image() {
+                // Concurrent reads on a damaged image all fail, and the query
+                // epoch moves only when the rebuild publishes, so a sibling's
+                // failure arrives here while the first one's rebuild runs.
+                // That build replaces the image whole; requesting another
+                // would queue a second complete build behind it (IT-10).
+                crate::direct_projection::projection_diag(|| {
+                    "repair skipped: a fresh build already replaces this image".to_owned()
                 });
                 return;
             }

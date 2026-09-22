@@ -192,7 +192,7 @@ impl Graph {
             }
         }
         let (result, memo_eligible) = compute()?;
-        if !memo_eligible {
+        if !memo_eligible || !self.answer_is_complete() {
             return Ok(result);
         }
         let result_bytes = ref_groups_estimated_bytes(result.result.groups.as_slice())

@@ -53,6 +53,9 @@ impl Graph {
             built.mark_kind_loaded(PageKind::Page);
             built.mark_kind_loaded(PageKind::Journal);
 
+            if !self.answer_is_complete() {
+                return built.entries.get(&key).cloned();
+            }
             let found = {
                 let mut guard = self.find_entry_cache.write().unwrap();
                 match guard.as_mut() {

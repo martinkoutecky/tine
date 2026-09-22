@@ -1182,11 +1182,6 @@ const REBINDING_COMMANDS = new Set([
   "set_default_home",
   "set_journal_title_format",
   "set_preferred_format",
-  "set_timetracking_enabled",
-  "set_show_brackets",
-  "set_doc_mode_enter_for_new_block",
-  "set_logical_outdenting",
-  "set_guide_announced",
   "restore_backup",
 ]);
 

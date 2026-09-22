@@ -156,6 +156,8 @@ pub(super) struct PageBuildTestState {
     /// Pause one page publication right after it releases the cache lock,
     /// with its new generation observable, before it returns.
     pub(super) upsert_published_pause: std::sync::Mutex<Option<Arc<PageBuildTestPause>>>,
+    /// Pause one public query whose read failed, before it asks for repair.
+    pub(super) failed_read_repair_pause: std::sync::Mutex<Option<Arc<PageBuildTestPause>>>,
     pub(super) joined: std::sync::Mutex<usize>,
     pub(super) joined_changed: std::sync::Condvar,
     pub(super) force_warm_failure: std::sync::atomic::AtomicBool,

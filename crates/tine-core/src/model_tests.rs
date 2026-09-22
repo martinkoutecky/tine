@@ -4266,10 +4266,25 @@ fn watcher_parse_failure_cannot_republish_stale_warm_page_inventory() {
     let inventory = graph.list_pages();
     assert_eq!(inventory.len(), 1);
     assert_eq!(inventory[0].name, "Good");
-    assert!(
-        GRAPH_TEXT_CONTENT_READS.with(Cell::get) >= 2,
-        "a known watcher parse failure must force exact disk revalidation"
+    // GH #543 IT-07: the known failure is re-read from disk; the healthy
+    // sibling is not, so a single unreadable page costs one read per listing
+    // instead of a whole-graph reparse.
+    assert_eq!(
+        GRAPH_TEXT_CONTENT_READS.with(Cell::get),
+        1,
+        "a known watcher parse failure must revalidate exactly the failed path"
     );
+
+    // Repaired and delivered by the watcher: the page is listed again.
+    fs::write(&failed, "- repaired\n").unwrap();
+    graph.sync_file(&failed);
+    let mut names = graph
+        .list_pages()
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, vec!["Failed".to_owned(), "Good".to_owned()]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -15909,76 +15924,5 @@ mod journal_lookup;
 #[path = "model_tests_advanced_queries.rs"]
 mod advanced_queries;
 
-/// Opening an unchanged page during the cold parse publishes it and moves the
-/// cache generation. The parse must still install: discarding it made the
-/// next reader parse the whole graph again (GH #543).
-#[test]
-fn gh543_cold_parse_survives_an_unchanged_page_open() {
-    let dir = scratch("gh543-cold-parse-unchanged");
-    for index in 0..3 {
-        fs::write(
-            dir.join("pages").join(format!("Existing{index}.md")),
-            "- unchanged\n",
-        )
-        .unwrap();
-    }
-    let graph = Arc::new(Graph::open(&dir));
-    graph
-        .attach_direct_projection(dir.join("private/projection.sqlite"))
-        .unwrap();
-    let pause = Arc::new(PageBuildTestPause::new());
-    *graph.page_build_test.owner_pause.lock().unwrap() = Some(Arc::clone(&pause));
-    let warmer = {
-        let graph = Arc::clone(&graph);
-        std::thread::spawn(move || graph.warm_cache_cancellable(|| false))
-    };
-    pause.reached.wait();
-    let entry = graph
-        .entry_for_path(&dir.join("pages/Existing0.md"))
-        .unwrap();
-    graph.load_page(&entry).unwrap();
-    pause.release.wait();
-    let completed = warmer.join().unwrap();
-    *graph.page_build_test.owner_pause.lock().unwrap() = None;
-    let first_parses = graph.page_build_parses_test();
-    graph.with_pages(|_| ());
-    let total_parses = graph.page_build_parses_test();
-    graph
-        .wait_for_direct_projection_for_test(std::time::Duration::from_secs(5))
-        .unwrap();
-    graph.detach_direct_projection(std::time::Duration::from_secs(5));
-    let _ = fs::remove_dir_all(&dir);
-    assert!(completed, "the cold pass was discarded");
-    assert_eq!(total_parses, first_parses, "a second whole-graph parse ran");
-}
-
-/// An edit that lands after the cold parse read the page is real drift: the
-/// parse holds the old bytes and must not install over the edit.
-#[test]
-fn gh543_cold_parse_still_yields_to_an_edit_after_it_read_the_page() {
-    let dir = scratch("gh543-cold-parse-edited");
-    fs::write(dir.join("pages/Existing.md"), "- unchanged\n").unwrap();
-    let graph = Graph::open(&dir);
-    let permit = graph.admit_retained_graph_text_writer().unwrap();
-    let flight = PageBuildFlight::new(
-        graph.cache_generation(),
-        graph
-            .cache_structural_gen
-            .load(std::sync::atomic::Ordering::Acquire),
-    );
-    let built = graph.load_all_pages_with_permit(&permit);
-    drop(permit);
-    let entry = graph
-        .entry_for_path(&dir.join("pages/Existing.md"))
-        .unwrap();
-    let mut page = graph.load_page(&entry).unwrap();
-    let base = page.rev.clone().unwrap();
-    page.blocks[0].raw = "changed".into();
-    graph.save_page(&page, Some(&base)).unwrap();
-
-    assert_eq!(
-        graph.install_built(&flight, built),
-        PageCacheInstallOutcome::GenerationDrift
-    );
-    let _ = fs::remove_dir_all(&dir);
-}
+#[path = "model_tests_gh543_parse_passes.rs"]
+mod gh543_parse_passes;

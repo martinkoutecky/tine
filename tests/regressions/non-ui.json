@@ -5148,8 +5148,8 @@
  "status": "covered",
  "coverage": {
   "tests": [
-   "crates/tine-core/src/model_tests.rs::gh543_cold_parse_survives_an_unchanged_page_open",
-   "crates/tine-core/src/model_tests.rs::gh543_cold_parse_still_yields_to_an_edit_after_it_read_the_page"
+   "crates/tine-core/src/model_tests_gh543_parse_passes.rs::gh543_cold_parse_survives_an_unchanged_page_open",
+   "crates/tine-core/src/model_tests_gh543_parse_passes.rs::gh543_cold_parse_still_yields_to_an_edit_after_it_read_the_page"
   ],
   "scenario": null,
   "failBefore": "proven"
@@ -5332,6 +5332,179 @@
   "failBefore": "proven"
  },
  "notes": "GH #543 indexing audit IT-02. Name-only creation needs evidence that no other document owns the effective name. With no parsed cache (every clean reopen), direct_creation_proof ran repair_page_cache_once: a whole-graph parse and cache install on the save path, ahead of the launch warm when one ran (6 parses on the fixture; 10,000 parses and 416 ms on the realistic 10k graph). Evidence now comes from the ready index's effective page inventory, waiting for an in-flight launch check like other derived reads, and falls back to the parsed evidence only when no ready index answers or a parse failure is published. A name owned via title:: is still refused. Evidence: tine-agents/evidence/gh550-batch/it02-creation-fail-before.log, it02-creation-10k.md."
+},
+{
+ "id": "REG-LAUNCH-WARM-ALWAYS-SIGNALS-COMPLETION-543",
+ "title": "A failed launch index warm still releases aliases, ref counts and the progress indicator",
+ "family": "direct-files-performance",
+ "sources": {
+  "issues": [
+   543
+  ],
+  "commits": []
+ },
+ "platforms": [
+  "android",
+  "linux",
+  "windows",
+  "macos",
+  "ios"
+ ],
+ "layer": "rust-native",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "src-tauri/src/graph.rs::a_launch_warm_that_ends_uncancelled_always_signals_completion"
+  ],
+  "scenario": null,
+  "failBefore": "proven"
+ },
+ "notes": "GH #543 indexing audit IT-04 (completion half; the cold-discard half was fixed earlier by the page-open counter change and is covered by gh543_cold_parse_survives_an_unchanged_page_open). warm_cache_async returned without warm_done or warm-cache-done whenever warm_cache_cancellable reported false, including failure, and a panic ended the thread the same way. waitForWarmCache has no other terminal channel, so aliases, page identities, block-ref counts and followIndexingProgress waited for the rest of the session. settle_launch_warm now signals on every uncancelled end, including a panic, and stays silent only when cancelled (a newer warm owns the window). Not run: the native cold-open barrier journey the audit lists as a remaining probe. Evidence: tine-agents/evidence/gh550-batch/it04-completion-fail-before.log."
+},
+{
+ "id": "REG-PRESENTATION-SETTING-KEEPS-THE-INDEX-543",
+ "title": "Changing a display-only setting does not restart indexing or close the unsaved-edit recovery",
+ "family": "direct-files-performance",
+ "sources": {
+  "issues": [
+   543
+  ],
+  "commits": []
+ },
+ "platforms": [
+  "android",
+  "linux",
+  "windows",
+  "macos",
+  "ios"
+ ],
+ "layer": "rust-native",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "src-tauri/src/backend_command_parity.rs::presentation_settings_do_not_reopen_the_graph",
+   "src-tauri/src/state.rs::a_presentation_setting_keeps_the_graph_and_its_index",
+   "src/instanceReplacement.test.ts::keeps the binding for a presentation-only setting (GH #543)"
+  ],
+  "scenario": null,
+  "failBefore": "proven"
+ },
+ "notes": "GH #543 indexing audit IT-06. set_timetracking_enabled, set_show_brackets, set_doc_mode_enter_for_new_block, set_logical_outdenting and set_guide_announced wrote config and then ran refresh_graph, which retires the projection worker, reopens the Graph and starts a new launch check; on a first launch, dismissing the Guide toast discarded the whole cold index build. The frontend also rebound (aborting print, closing unsaved recovery). tine-core reads none of these five, so they now write config and update the slot's GraphMeta in place (GraphSlot::apply_presentation_setting). preferred_format, journal title format, default home and restore_backup still refresh because the core reads them. Evidence: tine-agents/evidence/gh550-batch/it06-presentation-settings-fail-before.log."
+},
+{
+ "id": "REG-FAILED-READ-DURING-REBUILD-QUEUES-NO-SECOND-BUILD-543",
+ "title": "A search that fails while the index is already being rebuilt does not queue a second full rebuild",
+ "family": "direct-files-performance",
+ "sources": {
+  "issues": [
+   543
+  ],
+  "commits": []
+ },
+ "platforms": [
+  "android",
+  "linux",
+  "windows",
+  "macos",
+  "ios"
+ ],
+ "layer": "rust-core",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/direct_projection_tests.rs::gh543_a_read_failing_during_a_fresh_build_does_not_queue_another"
+  ],
+  "scenario": null,
+  "failBefore": "proven"
+ },
+ "notes": "GH #543 indexing audit IT-10. Concurrent queries on a damaged index all fail; the first failure's repair starts a fresh build, and the query epoch moves only when that build publishes, so a sibling failure admitted before it still reached repair and queued another reset plus full payload: a second complete build after the first (at 10k pages, tens of seconds). direct_projection_repair now skips when a fresh build already owns the image (running, or a rebuild queued with its payload). Evidence: tine-agents/evidence/gh550-batch/it10-failed-read-during-fresh-build-fail-before.log."
+},
+{
+ "id": "REG-DERIVED-READ-BEHIND-QUEUED-EDIT-PARSES-NOTHING-543",
+ "title": "Launch reads that arrive while an edit is still being indexed do not parse the whole graph",
+ "family": "direct-files-performance",
+ "sources": {
+  "issues": [
+   543
+  ],
+  "commits": []
+ },
+ "platforms": [
+  "android",
+  "linux",
+  "windows",
+  "macos",
+  "ios"
+ ],
+ "layer": "rust-core",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/direct_projection_tests.rs::gh543_a_derived_read_behind_a_queued_edit_waits_instead_of_parsing"
+  ],
+  "scenario": null,
+  "failBefore": "proven"
+ },
+ "notes": "Found from Windows run 35719587395: a 100-page warm reopen showed one whole-graph parse offered as a full snapshot after a slow edit turn. wait_for_derived_read kept waiting only for a warm or a turn in progress; with an edit queued behind a turn it returned after the 250 ms delta wait, and with no parsed cache the page inventory, aliases, icons, journal days or block-ref counts parsed every page, then enqueued the parse as a full snapshot. Queued edits on a validated image now count as coming. Before validation they still do not (they wait for an inventory). Evidence: tine-agents/evidence/gh550-batch/derived-read-queued-edit-fail-before.log."
+},
+{
+ "id": "REG-UNREADABLE-PAGE-LISTING-PARSES-ONLY-THE-FAILED-PATH-543",
+ "title": "One unreadable page file does not make every page listing parse the whole graph",
+ "family": "direct-files-performance",
+ "sources": {
+  "issues": [
+   543
+  ],
+  "commits": []
+ },
+ "platforms": [
+  "android",
+  "linux",
+  "windows",
+  "macos",
+  "ios"
+ ],
+ "layer": "rust-core",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/model_tests_gh543_parse_passes.rs::gh543_listing_with_an_unreadable_page_does_not_reparse_healthy_pages",
+   "crates/tine-core/src/model_tests.rs::watcher_parse_failure_cannot_republish_stale_warm_page_inventory"
+  ],
+  "scenario": null,
+  "failBefore": "proven"
+ },
+ "notes": "Audit finding IT-07. With a known page-index failure, list_pages skipped the parsed cache and ran exact_page_inventory_from_disk, which reads and parses every page; the listing memo is dropped by every save and watcher event, so while one file stayed unreadable each listing cost a whole-graph parse. The listing now re-reads only the failed paths and, if they are all still unreadable and the generation is unchanged, answers from the parsed cache minus those paths; any failed path that became readable falls back to the exact disk inventory. Fail-before: 5 healthy-page parses per listing on the 6-page fixture, 0 after. Evidence: tine-agents/evidence/gh550-batch/it07-unreadable-listing-fail-before.log."
+},
+{
+ "id": "REG-REPLACED-GRAPH-READ-PARSES-NOTHING-543",
+ "title": "A read still waiting when its graph is switched or refreshed does not parse the old graph",
+ "family": "direct-files-performance",
+ "sources": {
+  "issues": [
+   543
+  ],
+  "commits": []
+ },
+ "platforms": [
+  "android",
+  "linux",
+  "windows",
+  "macos",
+  "ios"
+ ],
+ "layer": "rust-core",
+ "status": "covered",
+ "coverage": {
+  "tests": [
+   "crates/tine-core/src/direct_projection_tests.rs::gh543_a_display_read_on_a_retired_graph_parses_nothing",
+   "crates/tine-core/src/direct_projection_tests.rs::gh543_a_display_read_cut_short_leaves_no_memo_behind",
+   "src-tauri/src/state.rs::a_display_read_on_a_retired_graph_is_answered_by_its_replacement"
+  ],
+  "scenario": null,
+  "failBefore": "proven"
+ },
+ "notes": "Audit finding IT-09 (Martin chose option A, 2026-09-22). A derived read waiting on indexing when the app replaced its graph (switch, or a refresh from preferred format / default home / journal title format / restore backup) saw the projection stop, fell back to with_pages and parsed the whole retired graph: 5 of 5 fixture pages, graph-sized at 10k, competing with the replacement's cold index. Graph::retire (set on bind revocation, remove and refresh) makes display reads (commands list_pages, page_aliases, page_icons, block_ref_counts, list_templates, journal_content_days, backlink_filter_context, via state::display_read) stop waiting and skip the parse; the skipped answer is never memoized (page list, find-entry index, derived memo), and the command retries on the window's current graph. Reads that act on their answer (export, orphan assets, creation) are not display reads and keep the full answer. Fail-before: display read returned Some after retirement; memo test listed 0 of 5 pages. Evidence: tine-agents/evidence/gh550-batch/it09-*."
 }
 ]
 }

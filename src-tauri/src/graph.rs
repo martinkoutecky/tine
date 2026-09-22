@@ -1065,25 +1065,61 @@ pub(crate) fn warm_cache_async(
         {
             return;
         }
-        let completed = graph.warm_cache_cancellable(|| {
+        let cancelled = || {
             slot.background_cancelled.load(Ordering::Acquire)
                 || slot.warm_generation.load(Ordering::Acquire) != warm_generation
-        });
-        if !completed {
-            return;
-        }
-        let state: State<'_, AppState> = app.state();
-        let current = state.graphs.read().unwrap().slot(&window_label);
-        let still_current = current.as_ref().is_some_and(|current| {
-            current.binding_generation == slot.binding_generation
-                && current.root_key == slot.root_key
-        });
-        if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation {
-            current.unwrap().warm_done.store(true, Ordering::Release);
-            let _ = app.emit_to(&window_label, "warm-cache-done", ());
-        }
+        };
+        settle_launch_warm(
+            || graph.warm_cache_cancellable(cancelled),
+            cancelled,
+            || {
+                let state: State<'_, AppState> = app.state();
+                let current = state.graphs.read().unwrap().slot(&window_label);
+                let still_current = current.as_ref().is_some_and(|current| {
+                    current.binding_generation == slot.binding_generation
+                        && current.root_key == slot.root_key
+                });
+                if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation
+                {
+                    current.unwrap().warm_done.store(true, Ordering::Release);
+                    let _ = app.emit_to(&window_label, "warm-cache-done", ());
+                }
+            },
+        );
     });
     Ok(())
+}
+
+/// Run one launch warm and settle its completion signal. The signal is
+/// `warm-cache-done`: the frontend's alias, page-identity and block-ref-count
+/// fetches and the indexing progress bar wait for it, and nothing else ends
+/// that wait. A warm that ended for any reason other than cancellation --
+/// finished, failed, or panicked -- still sends it, and the waiting reads then
+/// take their ordinary route. Only a cancelled warm (graph switched or closed)
+/// stays silent, because a newer warm owns the window (GH #543, IT-04).
+fn settle_launch_warm(
+    warm: impl FnOnce() -> bool,
+    cancelled: impl Fn() -> bool,
+    finish: impl FnOnce(),
+) {
+    struct Settle<C: Fn() -> bool, F: FnOnce()> {
+        cancelled: C,
+        finish: Option<F>,
+    }
+    impl<C: Fn() -> bool, F: FnOnce()> Drop for Settle<C, F> {
+        fn drop(&mut self) {
+            if !(self.cancelled)() {
+                if let Some(finish) = self.finish.take() {
+                    finish();
+                }
+            }
+        }
+    }
+    let _settle = Settle {
+        cancelled,
+        finish: Some(finish),
+    };
+    let _completed = warm();
 }
 
 /// "Have the whole-graph derived caches finished warming for the current graph?"
@@ -1121,6 +1157,40 @@ pub(crate) fn indexing_progress(
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    /// GH #543 (IT-04): a launch warm that ended without being cancelled always
+    /// sends its completion signal. A failed warm used to return silently, and
+    /// the alias, page-identity and ref-count fetches and the indexing
+    /// progress poll waited for a signal that never came.
+    #[test]
+    fn a_launch_warm_that_ends_uncancelled_always_signals_completion() {
+        for (case, succeeds) in [("finished", true), ("failed", false)] {
+            let signalled = std::cell::Cell::new(false);
+            settle_launch_warm(|| succeeds, || false, || signalled.set(true));
+            assert!(signalled.get(), "{case}: no completion signal");
+        }
+
+        let signalled = std::sync::atomic::AtomicBool::new(false);
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            settle_launch_warm(
+                || panic!("warm panicked"),
+                || false,
+                || signalled.store(true, Ordering::Release),
+            )
+        }));
+        assert!(panicked.is_err());
+        assert!(
+            signalled.load(Ordering::Acquire),
+            "panicked: no completion signal"
+        );
+
+        let signalled = std::cell::Cell::new(false);
+        settle_launch_warm(|| false, || true, || signalled.set(true));
+        assert!(
+            !signalled.get(),
+            "cancelled: a newer warm owns the window's signal"
+        );
+    }
 
     use crate::test_support::rust_module_source;
 

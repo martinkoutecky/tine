@@ -1007,6 +1007,34 @@ mod tests {
         );
     }
 
+    /// GH #543 (indexing audit IT-06): a presentation-only setting must not
+    /// reopen the graph. `refresh_graph` retires the index worker and restarts
+    /// the launch check, and on a first launch that discarded the whole index
+    /// build for a toggle. Nothing in tine-core reads these settings; they go
+    /// through `GraphSlot::apply_presentation_setting`. A setting the core does
+    /// read (a new page's extension, the journal title format, the published
+    /// home page) still refreshes.
+    #[test]
+    fn presentation_settings_do_not_reopen_the_graph() {
+        let reopening = commands_that_reopen_the_graph();
+        let offenders: Vec<&str> = [
+            "set_timetracking_enabled",
+            "set_show_brackets",
+            "set_doc_mode_enter_for_new_block",
+            "set_logical_outdenting",
+            "set_guide_announced",
+        ]
+        .into_iter()
+        .filter(|command| reopening.contains(*command))
+        .collect();
+        assert!(
+            offenders.is_empty(),
+            "these presentation settings reach refresh_graph, which restarts \
+             indexing for a toggle; use GraphSlot::apply_presentation_setting \
+             (see set_show_brackets in commands.rs): {offenders:?}"
+        );
+    }
+
     /// Every registered command must be one the graph-reopening scan could see.
     /// If a rebinding command is ever registered under a name the scan does not
     /// produce, the guard above is checking a set that does not exist.

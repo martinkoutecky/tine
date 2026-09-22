@@ -4159,6 +4159,75 @@ fn bl1_loaded_runtime_id_can_miss_sql_without_a_parsed_cache() {
     release_projection(&graph);
 }
 
+/// GH #543: a whole-graph derived read that finds an edit still queued waits
+/// for the index to apply it; it does not parse the graph. The wait used to
+/// follow only a warm or a turn in progress, so an edit queued behind a slow
+/// turn -- today's journal plus a save at launch, on a slow disk -- sent page
+/// icons, journal days, block-ref counts and aliases to the parser: every page
+/// read and parsed, then offered back to the index as a full snapshot.
+#[test]
+fn gh543_a_derived_read_behind_a_queued_edit_waits_instead_of_parsing() {
+    let _serial = serialize_projection_tests();
+    let root = r6_graph("gh543-derived-read-behind-queued-edit");
+    let database = scratch("gh543-derived-read-behind-queued-edit-db").join("projection.sqlite");
+    {
+        let graph = Graph::open(&root);
+        graph.attach_direct_projection(database.clone()).unwrap();
+        graph.warm_cache();
+        wait_ready(&graph);
+        release_projection(&graph);
+    }
+    let graph = Arc::new(Graph::open(&root));
+    graph.attach_direct_projection(database.clone()).unwrap();
+    assert!(graph.warm_cache_cancellable(|| false));
+    wait_ready(&graph);
+    assert!(!graph.has_parsed_cache_test());
+    let parses = graph.page_build_parses_test();
+
+    // One edit's turn is held in the worker; a second edit queues behind it.
+    let edit = |name: &str, text: &str| {
+        let entry = graph
+            .list_pages()
+            .into_iter()
+            .find(|entry| entry.name == name)
+            .unwrap();
+        let mut page = graph.load_page(&entry).unwrap();
+        let revision = page.rev.clone();
+        page.blocks[0].raw = text.into();
+        (page, revision)
+    };
+    let (one, one_rev) = edit("one", "TODO one edited");
+    let (two, two_rev) = edit("two", "DONE two edited");
+    let (paused_tx, paused_rx) = mpsc::channel();
+    let (resume_tx, resume_rx) = mpsc::channel::<()>();
+    *BEFORE_APPLY_PENDING.lock().unwrap() = Some(Box::new(move || {
+        paused_tx.send(()).unwrap();
+        resume_rx.recv().unwrap();
+    }));
+    graph.save_page(&one, one_rev.as_deref()).unwrap();
+    paused_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    graph.save_page(&two, two_rev.as_deref()).unwrap();
+
+    let reader = std::thread::spawn({
+        let graph = Arc::clone(&graph);
+        move || graph.journal_content_days()
+    });
+    // Longer than the derived read's short wait for a delta.
+    std::thread::sleep(Duration::from_millis(600));
+    resume_tx.send(()).unwrap();
+    let days = reader.join().unwrap();
+
+    assert_eq!(days, vec![20260906]);
+    assert_eq!(
+        graph.page_build_parses_test(),
+        parses,
+        "a queued edit is coming; the derived read must wait for it, not parse the graph"
+    );
+    assert!(!graph.has_parsed_cache_test());
+    release_projection(&*graph);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn warm_reopen_parses_nothing_and_answers_from_sql() {
     let _serial = serialize_projection_tests();
@@ -7437,6 +7506,80 @@ fn cancellation_before_publication_keeps_the_old_image_and_discards_the_stage() 
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// GH #543 (indexing audit IT-10): a read that fails while a fresh build is
+/// already replacing the image owes no second build. Concurrent queries on a
+/// damaged image each fail; the first one's repair starts the rebuild, and the
+/// query epoch moves only when that build publishes, so a slower sibling
+/// failure still reached repair and queued another reset and full payload --
+/// a second complete build, sequential after the first.
+#[test]
+fn gh543_a_read_failing_during_a_fresh_build_does_not_queue_another() {
+    let _serial = serialize_projection_tests();
+    let root = r6_graph("gh543-failed-read-during-fresh-build");
+    let graph = Arc::new(Graph::open(&root));
+    graph
+        .attach_direct_projection(root.join("private/projection.sqlite"))
+        .unwrap();
+    graph.warm_cache();
+    wait_ready(&graph);
+    let projection = graph.direct_projection_test().unwrap();
+
+    // The slower sibling: its read fails, and it is held before repair.
+    let held = graph.pause_next_failed_read_repair_test();
+    graph.direct_projection_inject_read_failure_test();
+    let sibling = std::thread::spawn({
+        let graph = Arc::clone(&graph);
+        move || graph.run_query_bounded("(task TODO)", 100, 1 << 20)
+    });
+    held.reached.wait();
+
+    // The first failure repairs: a reset and a fresh build, held mid-build.
+    let reached = Arc::new(std::sync::Barrier::new(2));
+    let release = Arc::new(std::sync::Barrier::new(2));
+    *projection.shared.after_fresh_build_batch.lock().unwrap() = Some(Box::new({
+        let reached = Arc::clone(&reached);
+        let release = Arc::clone(&release);
+        move || {
+            reached.wait();
+            release.wait();
+        }
+    }));
+    graph.direct_projection_inject_read_failure_test();
+    assert!(matches!(
+        graph.run_query_bounded("(task TODO)", 100, 1 << 20),
+        Err(crate::query::QueryExecutionError::NotReady(_))
+    ));
+    reached.wait();
+
+    // The sibling's failure reaches repair while that build runs.
+    held.release.wait();
+    assert!(matches!(
+        sibling.join().unwrap(),
+        Err(crate::query::QueryExecutionError::NotReady(_))
+    ));
+    let queued = {
+        let pending = projection.shared.pending.lock().unwrap();
+        (pending.full.is_some(), pending.rebuild)
+    };
+    release.wait();
+    assert_eq!(
+        queued,
+        (false, false),
+        "the running fresh build replaces the image the sibling read failed on; \
+         (full payload queued, rebuild requested) must both stay false"
+    );
+    wait_ready(&graph);
+    assert_eq!(
+        graph
+            .run_query_bounded("(task TODO)", 100, 1 << 20)
+            .unwrap()
+            .total,
+        3
+    );
+    assert!(projection.close_and_wait_for_worker(Duration::from_secs(3)));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn cancellation_between_fresh_build_batches_discards_the_partial_stage() {
     let _serial = serialize_projection_tests();
@@ -9629,4 +9772,98 @@ fn gh543_a_page_list_before_the_scheduled_warm_starts_waits_for_it() {
     assert_eq!(graph.page_build_parses_test(), 0);
     release_projection(&graph);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn gh543_a_display_read_on_a_retired_graph_parses_nothing() {
+    let _serial = serialize_projection_tests();
+    let root = r6_graph("gh543-retired-display-read");
+    let database = scratch("gh543-retired-display-read-db").join("projection.sqlite");
+    {
+        let graph = Graph::open(&root);
+        graph.attach_direct_projection(database.clone()).unwrap();
+        graph.warm_cache();
+        wait_ready(&graph);
+        release_projection(&graph);
+    }
+    let graph = Arc::new(Graph::open(&root));
+    graph.attach_direct_projection(database.clone()).unwrap();
+    assert!(graph.warm_cache_cancellable(|| false));
+    wait_ready(&graph);
+    assert!(!graph.has_parsed_cache_test());
+    let parses = graph.page_build_parses_test();
+    let edit = |name: &str, text: &str| {
+        let entry = graph
+            .list_pages()
+            .into_iter()
+            .find(|entry| entry.name == name)
+            .unwrap();
+        let mut page = graph.load_page(&entry).unwrap();
+        let revision = page.rev.clone();
+        page.blocks[0].raw = text.into();
+        (page, revision)
+    };
+    let (one, one_rev) = edit("one", "TODO one edited");
+    let (two, two_rev) = edit("two", "DONE two edited");
+    let (paused_tx, paused_rx) = mpsc::channel();
+    let (resume_tx, resume_rx) = mpsc::channel::<()>();
+    *BEFORE_APPLY_PENDING.lock().unwrap() = Some(Box::new(move || {
+        let _ = paused_tx.send(());
+        let _ = resume_rx.recv();
+    }));
+    graph.save_page(&one, one_rev.as_deref()).unwrap();
+    paused_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    graph.save_page(&two, two_rev.as_deref()).unwrap();
+    let reader = std::thread::spawn({
+        let graph = Arc::clone(&graph);
+        move || graph.display_read(|| graph.journal_content_days())
+    });
+    std::thread::sleep(Duration::from_millis(400));
+    // The app replaces the graph (a refresh): it retires it, then detaches
+    // its projection.
+    graph.retire();
+    let detacher = std::thread::spawn({
+        let graph = Arc::clone(&graph);
+        move || graph.detach_direct_projection(Duration::from_secs(15))
+    });
+    std::thread::sleep(Duration::from_millis(200));
+    resume_tx.send(()).unwrap();
+    assert!(detacher.join().unwrap());
+    assert_eq!(
+        reader.join().unwrap(),
+        None,
+        "a display read cut short by retirement has no answer; the app asks the replacement"
+    );
+    assert_eq!(
+        graph.page_build_parses_test(),
+        parses,
+        "a display read on a replaced graph must not parse that graph"
+    );
+
+    // A read that acts on its answer is not a display read: on the same
+    // retired graph it still gets the complete answer.
+    assert_eq!(graph.journal_content_days(), vec![20260906]);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn gh543_a_display_read_cut_short_leaves_no_memo_behind() {
+    let root = r6_graph("gh543-retired-read-memo");
+    let graph = Graph::open(&root);
+    let expected = Graph::open(&root).list_pages().len();
+    assert!(expected > 0);
+    // Retired while the read runs: the listing and the name lookup built
+    // from it skip the parse and are incomplete.
+    let cut_short = graph.display_read(|| {
+        graph.retire();
+        let listed = graph.list_pages().len();
+        let found = graph.find_entry("one", PageKind::Page);
+        (listed, found)
+    });
+    assert!(cut_short.is_none());
+    // A read that acts on its answer then gets the whole graph, not a memo of
+    // the gap.
+    assert_eq!(graph.list_pages().len(), expected);
+    assert!(graph.find_entry("one", PageKind::Page).is_some());
+    let _ = std::fs::remove_dir_all(root);
 }
