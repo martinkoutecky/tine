@@ -532,6 +532,19 @@ async function firstResultAndReady(session, needle, budgetMs, { requireReady = t
   await browser.execute((q) => window.__wm.setQuery(q), needle);
   const deadline = session.t0 + budgetMs;
   let errorSince = null;
+  let typedAt = Date.now();
+  const retype = async (reason, s) => {
+    out.retries++;
+    (out.retryReasons ??= []).push({ atMs: Date.now() - session.t0, reason });
+    if (reason === "stuck" && !out.stuck) {
+      // Nothing shown at all (no rows, no status, no error, no "No matched
+      // results") long after the needle went in: keep the evidence.
+      out.stuck = { atMs: Date.now() - session.t0, snapshot: s, lastIpc: await browser.execute((q) => [...window.__wm.ipc].filter((x) => x.command === "run_graph_search" && x.source === q).slice(-3).map((x) => ({ ok: x.ok, ms: x.ms, error: x.error ?? null, blocks: x.summary?.blocks ?? null })), needle).catch(() => null) };
+      if (!REDACT) await browser.saveScreenshot(`${session.prefix}-stuck.png`).catch(() => {});
+    }
+    await browser.execute((q) => { window.__wm.setQuery(""); setTimeout(() => window.__wm.setQuery(q), 200); }, needle);
+    typedAt = Date.now();
+  };
   while (Date.now() < deadline) {
     const s = await pageState(browser);
     const now = Date.now();
@@ -558,15 +571,14 @@ async function firstResultAndReady(session, needle, budgetMs, { requireReady = t
       if (!out.errors.includes(s.error.slice(0, 200))) out.errors.push(s.error.slice(0, 200));
       errorSince ??= now;
       if (now - errorSince > 3000) {
-        out.retries++;
-        await browser.execute((q) => { window.__wm.setQuery(""); setTimeout(() => window.__wm.setQuery(q), 50); }, needle);
+        await retype("error", s);
         errorSince = null;
       }
     } else errorSince = null;
-    if (!s.blockRows && !s.pending && !s.error && s.noMatch && out.firstCompleteMs === null && now - session.t0 > 5000) {
+    if (out.firstCompleteMs === null && !s.blockRows && !s.pending && !s.error) {
       // An empty answer while the index builds: ask again as a user would.
-      out.retries++;
-      await browser.execute((q) => { window.__wm.setQuery(""); setTimeout(() => window.__wm.setQuery(q), 50); }, needle);
+      if (s.noMatch && now - session.t0 > 5000 && now - typedAt > 3000) await retype("no-match", s);
+      else if (!s.noMatch && now - typedAt > 10_000) await retype("stuck", s);
     }
     const doneResult = out.firstCompleteMs !== null;
     const doneReady = !requireReady || out.readyMs !== null;
