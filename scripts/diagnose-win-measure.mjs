@@ -483,6 +483,8 @@ async function closeSession(session, { clean = true } = {}) {
     spawnSync("taskkill", ["/PID", String(session.driver.pid), "/T", "/F"], { stdio: "ignore" });
   } else {
     if (!result.exited && session.pid) { try { process.kill(session.pid, "SIGKILL"); } catch {} }
+    // tauri-driver's WebKitWebDriver child outlives a SIGKILL of its parent.
+    spawnSync("pkill", ["-TERM", "-P", String(session.driver.pid)], { stdio: "ignore" });
     try { session.driver.kill("SIGKILL"); } catch {}
   }
   session.tail?.stop();
@@ -876,6 +878,26 @@ async function phaseRename(session, ctx) {
     el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: to }));
     return window.__wm.ipc.length;
   }, PROBE.renameTo);
+  // Backlinks-available recorder on the renamed page: the first moment its
+  // Linked References show a count with nothing loading or indexing.
+  await browser.execute((to) => {
+    const w = window.__wm;
+    const r = w.renameRefs = { at: null, count: null, states: [] };
+    const tick = () => {
+      if (r.at !== null) return;
+      const title = document.querySelector("h1.page-title")?.textContent?.trim();
+      const sec = document.querySelector(".linked-references");
+      const text = sec?.textContent ?? "";
+      const cnt = sec?.querySelector(".references-count")?.textContent?.trim() ?? null;
+      const busy = Boolean(sec?.querySelector(".references-loading")) || /indexing|waiting|loading/i.test(text);
+      const st = `${title === to}|${Boolean(sec)}|${cnt}|${busy}`;
+      if (r.states.at(-1)?.st !== st) r.states.push({ at: Date.now(), st });
+      if (title === to && cnt !== null && !busy) { r.at = Date.now(); r.count = cnt; return; }
+      setTimeout(tick, 100);
+    };
+    tick();
+    return true;
+  }, PROBE.renameTo);
   const counters0 = procCounters(session.pid);
   const t0 = Date.now();
   await browser.keys(["Enter"]);
@@ -889,6 +911,23 @@ async function phaseRename(session, ctx) {
     if (ipc && ipc.ok === false) break;
     await sleep(100);
   }
+  // Ctrl+K for the new name, asked as soon as the title shows it and again
+  // until the answer names the page: the time a user waits to find it.
+  const ctrlK = { found: false, asks: 0, enterToFoundMs: null, lastKeyToRenderMs: null, lastIpcMs: null, pages: null, timedOut: null };
+  try {
+    await openSwitcher(browser);
+    const askBy = t0 + BUDGET.renameMs;
+    while (Date.now() < askBy) {
+      const q = await measureQuery(browser, PROBE.renameTo, BUDGET.queryMs);
+      ctrlK.asks++;
+      ctrlK.lastKeyToRenderMs = round(q.keyToRenderMs); ctrlK.lastIpcMs = round(q.ipcMs); ctrlK.pages = q.summary?.pages ?? null; ctrlK.timedOut = q.timedOut;
+      if ((q.pageNames ?? []).includes(PROBE.renameTo) || (q.summary?.pageNames ?? []).includes(PROBE.renameTo)) { ctrlK.found = true; ctrlK.enterToFoundMs = Date.now() - t0; break; }
+      await sleep(500);
+    }
+    const oldQ = await measureQuery(browser, from, BUDGET.queryMs);
+    ctrlK.oldName = { exactPageRow: (oldQ.pageNames ?? []).includes(from), pages: oldQ.summary?.pages ?? null };
+    await closeSwitcher(browser);
+  } catch (error) { ctrlK.error = String(error).split("\n")[0].slice(0, 300); await closeSwitcher(browser).catch(() => {}); }
   // Disk quiescence: three identical snapshots one second apart.
   let after = snapshot(ctx.graph);
   let stable = 0;
@@ -909,15 +948,28 @@ async function phaseRename(session, ctx) {
     enterToTitleMs: uiMs, enterToLastFileWriteMs: Number.isFinite(lastWrite) ? round(lastWrite - t0) : null,
     filesChanged: d.changed.length, filesAdded: d.added.length, filesRemoved: d.removed.length,
     process: delta(counters0, counters1),
+    ctrlK: { keyToRenderMs: ctrlK.lastKeyToRenderMs, ipcMs: ctrlK.lastIpcMs, found: ctrlK.found, pages: ctrlK.pages, timedOut: ctrlK.timedOut, asks: ctrlK.asks, enterToFoundMs: ctrlK.enterToFoundMs, error: ctrlK.error ?? null },
+    ctrlKOldName: ctrlK.oldName ?? null,
   };
   try {
-    await openSwitcher(browser);
-    const q = await measureQuery(browser, PROBE.renameTo, BUDGET.queryMs);
-    out.ctrlK = { keyToRenderMs: round(q.keyToRenderMs), ipcMs: round(q.ipcMs), found: (q.pageNames ?? []).includes(PROBE.renameTo) || (q.summary?.pageNames ?? []).includes(PROBE.renameTo), pages: q.summary?.pages ?? null, timedOut: q.timedOut };
-    const oldQ = await measureQuery(browser, from, BUDGET.queryMs);
-    out.ctrlKOldName = { exactPageRow: (oldQ.pageNames ?? []).includes(from), pages: oldQ.summary?.pages ?? null };
-    await closeSwitcher(browser);
-  } catch (error) { out.ctrlK = { error: String(error).split("\n")[0].slice(0, 300) }; }
+    const refsBy = t0 + BUDGET.renameMs;
+    let r = null;
+    while (Date.now() < refsBy) {
+      r = await browser.execute(() => window.__wm.renameRefs);
+      if (r?.at) break;
+      await sleep(250);
+    }
+    const ipcOk = await browser.execute((to) => {
+      const x = window.__wm.ipc.find((i) => i.command === "get_backlinks" && i.source === to && i.ok === true && i.ms !== undefined);
+      const notReady = window.__wm.ipc.filter((i) => i.command === "get_backlinks" && i.source === to && i.ok === false).length;
+      return { end: x ? x.at + x.ms : null, blocks: x?.summary?.blocks ?? null, notReady };
+    }, PROBE.renameTo);
+    out.backlinks = {
+      enterToUiMs: r?.at ? r.at - t0 : null, uiCount: r?.count ?? null, expectedLinkBlocks: ctx.manifest.renameTarget.linkBlocks,
+      enterToFirstOkIpcMs: ipcOk.end ? round(ipcOk.end - t0) : null, ipcBlocks: ipcOk.blocks, notReadyAnswers: ipcOk.notReady,
+      states: (r?.states ?? []).slice(0, 12).map((x) => ({ ms: x.at - t0, st: x.st })),
+    };
+  } catch (error) { out.backlinks = { error: String(error).split("\n")[0].slice(0, 300) }; }
   return out;
 }
 

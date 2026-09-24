@@ -528,7 +528,7 @@ jobs:
         run: |
           $ids = @{}
           $ids['candidate'] = Get-Content apps/candidate/identity.json | ConvertFrom-Json
-          foreach ($v in @('0.6.985', '0.6.982')) {
+          foreach ($v in @('0.6.985', '0.6.982', '0.6.5')) {
             gh release download "v$v" -R martinkoutecky/tine -p "Tine_${v}_x64-portable.zip" -D "apps/dl-$v"
             Expand-Archive "apps/dl-$v/Tine_${v}_x64-portable.zip" "apps/v$v"
             $exe = @(Get-ChildItem "apps/v$v" -Recurse -Filter *.exe)
@@ -556,7 +556,7 @@ jobs:
           $graph = Get-ChildItem -Path $expanded -Directory -Recurse | Where-Object Name -eq "anon-test" | Select-Object -First 1
           if (-not $graph) { throw "anon-test graph directory is absent" }
           "TINE_295_PUBLIC_GRAPH=$($graph.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Measure candidate, v0.6.985 and v0.6.982 on ${{ matrix.graph }}
+      - name: Measure candidate, v0.6.985, v0.6.982 and v0.6.5 on ${{ matrix.graph }}
         timeout-minutes: 345
         continue-on-error: true
         shell: pwsh
@@ -566,7 +566,7 @@ jobs:
           TINE_MEASURE_WORK: ${{ runner.temp }}\win-measure-work
           TINE_MEASURE_WARMUP: '1'
         run: |
-          $env:TINE_MEASURE_APPS = "candidate=${{ github.workspace }}\apps\candidate\tine.exe;v0.6.985=$env:TINE_EXE_0_6_985;v0.6.982=$env:TINE_EXE_0_6_982"
+          $env:TINE_MEASURE_APPS = "candidate=${{ github.workspace }}\apps\candidate\tine.exe;v0.6.985=$env:TINE_EXE_0_6_985;v0.6.982=$env:TINE_EXE_0_6_982;v0.6.5=$env:TINE_EXE_0_6_5"
           node scripts/diagnose-win-measure.mjs
       - uses: actions/upload-artifact@v4
         if: always()
