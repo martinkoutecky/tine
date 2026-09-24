@@ -238,7 +238,9 @@ function installInstrumentation() {
     blockRows: document.querySelectorAll(".switcher-row.block-result").length,
     rows: document.querySelectorAll(".switcher-row").length,
     pending: texts('.switcher [role="status"], .switcher [data-search-index-building]').join(" | "),
-    error: texts('.switcher [role="alert"], .switcher .switcher-error').join(" | "),
+    // Never a top-level "error" key in an execute() result: WebdriverIO reads
+    // a truthy value.error as a failed command.
+    errorText: texts('.switcher [role="alert"], .switcher .switcher-error').join(" | "),
     noMatch: [...document.querySelectorAll(".switcher-empty")].some((n) => /No matched results/.test(n.textContent)),
     pageNames: [...document.querySelectorAll(".switcher-row:not(.block-result) .switcher-name")].map((n) => n.textContent.trim()).slice(0, 30),
     title: document.querySelector("h1.page-title")?.textContent?.trim() ?? null,
@@ -247,7 +249,7 @@ function installInstrumentation() {
   // event a paste produces), wait for the IPC answering exactly this needle,
   // then for the frame after the rows reflecting it are in the DOM.
   wm.measureQuery = async (q, timeoutMs) => {
-    if (!input()) return { error: "switcher input absent" };
+    if (!input()) return { errorText: "switcher input absent" };
     setValue("");
     const clearBy = performance.now() + 3000;
     while (performance.now() < clearBy) {
@@ -278,7 +280,7 @@ function installInstrumentation() {
       if (rec.ok) {
         const reflects = (rec.summary?.blocks ?? 0) > 0 ? s.blockRows > 0 : true;
         if (!s.pending && reflects) { settledAt = performance.now(); break; }
-      } else if (s.error) { settledAt = performance.now(); break; }
+      } else if (s.errorText) { settledAt = performance.now(); break; }
     }
     if (settledAt !== null) { await frame(); settledAt = performance.now(); }
     const calls = wm.ipc.slice(mark).filter((r) => r.command === "run_graph_search" && r.source === q);
@@ -286,7 +288,7 @@ function installInstrumentation() {
     return {
       q, timedOut: settledAt === null, keyToRenderMs: settledAt === null ? null : settledAt - t0,
       ipcMs: rec?.ms ?? null, ipcCalls: calls.length, ipcTotalMs: calls.reduce((a, r) => a + (r.ms ?? 0), 0),
-      ok: rec?.ok ?? null, error: rec?.error ?? (s.error || null), summary: rec?.summary ?? null,
+      ok: rec?.ok ?? null, errorText: rec?.error ?? (s.errorText || null), summary: rec?.summary ?? null,
       renderedBlockRows: s.blockRows, pending: s.pending || null, noMatch: s.noMatch, pageNames: s.pageNames,
     };
   };
@@ -502,18 +504,30 @@ async function openSwitcher(browser) {
 }
 
 async function closeSwitcher(browser) {
-  for (let i = 0; i < 3; i++) {
-    if (!(await browser.execute(() => Boolean(document.querySelector(".switcher-input"))))) return;
-    await browser.keys(["Escape"]);
-    await sleep(200);
+  for (let i = 0; i < 12; i++) {
+    const open = await browser.execute(() => Boolean(document.querySelector(".switcher-input, .switcher-overlay"))).catch(() => true);
+    if (!open) return true;
+    // Focus the input first so Escape reaches the switcher, then escalate to
+    // a backdrop mousedown (the switcher's outside-click close).
+    await browser.execute(() => document.querySelector(".switcher-input")?.focus()).catch(() => {});
+    await browser.keys(["Escape"]).catch(() => {});
+    await sleep(300);
+    if (i >= 3) {
+      await browser.execute(() => {
+        const o = document.querySelector(".switcher-overlay");
+        if (o) for (const t of ["mousedown", "mouseup", "click"]) o.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
+      }).catch(() => {});
+      await sleep(500);
+    }
   }
+  return false;
 }
 
 async function pageState(browser) {
   return browser.execute(() => {
     const w = window.__wm;
     return { warm: w.warm.at(-1)?.v ?? null, progress: w.progress.at(-1)?.v ?? null, ...w.snapshot() };
-  });
+  }).then((s) => ({ ...s, error: s.errorText }));
 }
 
 /** Index readiness as each build can report it. */
@@ -546,7 +560,16 @@ async function firstResultAndReady(session, needle, budgetMs, { requireReady = t
     typedAt = Date.now();
   };
   while (Date.now() < deadline) {
-    const s = await pageState(browser);
+    let s;
+    try { s = await pageState(browser); } catch (error) {
+      // Record and keep polling; reinstall the recorder if the page lost it.
+      const msg = `harness poll failed: ${String(error).split("\n")[0].slice(0, 200)}`;
+      if (!out.errors.includes(msg)) out.errors.push(msg);
+      const has = await browser.execute(() => Boolean(window.__wm)).catch(() => false);
+      if (!has) { await browser.execute(installInstrumentation).catch(() => {}); out.reinstalled = (out.reinstalled ?? 0) + 1; }
+      await sleep(500);
+      continue;
+    }
     const now = Date.now();
     if (out.readyMs === null && readyNow(session, s)) out.readyMs = now - session.t0;
     if (s.blockRows > 0 && out.firstAnyMs === null) out.firstAnyMs = now - session.t0;
@@ -578,7 +601,13 @@ async function firstResultAndReady(session, needle, budgetMs, { requireReady = t
     if (out.firstCompleteMs === null && !s.blockRows && !s.pending && !s.error) {
       // An empty answer while the index builds: ask again as a user would.
       if (s.noMatch && now - session.t0 > 5000 && now - typedAt > 3000) await retype("no-match", s);
-      else if (!s.noMatch && now - typedAt > 10_000) await retype("stuck", s);
+      else if (!s.noMatch && now - typedAt > 10_000) {
+        // Only when no search for the needle is still in flight: an old build
+        // may show no "Searching…" status while its IPC is simply slow.
+        const inFlight = await browser.execute((q) => window.__wm.ipc.some((x) => x.command === "run_graph_search" && x.source === q && x.ms === undefined), needle).catch(() => true);
+        if (!inFlight) await retype("stuck", s);
+        else out.silentWaitSeen = true;
+      }
     }
     const doneResult = out.firstCompleteMs !== null;
     const doneReady = !requireReady || out.readyMs !== null;
@@ -637,7 +666,7 @@ async function waitReady(session, budgetMs) {
 }
 
 async function measureQuery(browser, needle, timeoutMs) {
-  return browser.execute((q, t) => window.__wm.measureQuery(q, t), needle, timeoutMs);
+  return browser.execute((q, t) => window.__wm.measureQuery(q, t), needle, timeoutMs).then((r) => ({ ...r, error: r?.errorText ?? null }));
 }
 
 // ---------------------------------------------------------------------------
@@ -743,11 +772,11 @@ async function openAndMeasure(session, name, { unlinked = false, budgetMs = 120_
           count: document.querySelector(".unlinked-references .references-count")?.textContent?.trim() ?? null,
           loading: document.querySelector(".unlinked-references .references-loading")?.textContent?.trim() ?? null,
           groups: document.querySelectorAll(".unlinked-references .reference-group").length,
-          error: document.querySelector(".unlinked-references .reference-error, .unlinked-references [role=alert]")?.textContent?.trim() ?? null,
+          errorText: document.querySelector(".unlinked-references .reference-error, .unlinked-references [role=alert]")?.textContent?.trim() ?? null,
           now: performance.now(),
         }));
-        if ((s.count !== null && !s.loading) || s.error) {
-          unl = { fromClickMs: round(s.now - clickAt), count: s.count, groups: s.groups, error: s.error };
+        if ((s.count !== null && !s.loading) || s.errorText) {
+          unl = { fromClickMs: round(s.now - clickAt), count: s.count, groups: s.groups, error: s.errorText };
           break;
         }
         await sleep(100);
@@ -777,7 +806,7 @@ const ctxHasLinks = (name) => {
 async function phaseOpen(session, ctx) {
   const m = ctx.manifest;
   const out = {};
-  const attempt = async (key, fn) => { try { out[key] = await fn(); } catch (error) { out[key] = { error: String(error).split("\n")[0].slice(0, 300) }; } };
+  const attempt = async (key, fn) => { try { out[key] = await fn(); } catch (error) { out[key] = { error: String(error).split("\n")[0].slice(0, 300) }; await closeSwitcher(session.browser).catch(() => {}); } };
   if (m.hub) await attempt("hub", () => openAndMeasure(session, m.hub.name, { unlinked: true }));
   await attempt("small", () => openAndMeasure(session, PROBE.onePage));
   for (const u of m.unlinkedPages.filter((p) => p.label !== "hub")) {
@@ -975,7 +1004,12 @@ async function runApp(app, pristine, manifest) {
       save();
       return;
     }
-    for (const [name, fn] of phases) await runPhase(name, () => fn(session));
+    for (const [name, fn] of phases) {
+      // A previous phase that failed mid-query must not leave the switcher
+      // covering the next phase's controls.
+      await closeSwitcher(session.browser).catch(() => {});
+      await runPhase(name, () => fn(session));
+    }
     await dumpPage(session);
     record.closes[tag] = await closeSession(session);
     if (session.tail) writeJson(`${session.prefix}-stderr-lines.json`, session.tail.lines);
