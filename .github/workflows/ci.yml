@@ -509,7 +509,8 @@ jobs:
       fail-fast: false
       matrix:
         # diagnoseWinMeasure = every graph; diagnoseWinMeasure-<graph> = that one.
-        graph: ${{ fromJSON(startsWith(inputs.windows_test_name, 'diagnoseWinMeasure-') && format('["{0}"]', inputs.windows_test_name == 'diagnoseWinMeasure-real295' && 'real295' || (inputs.windows_test_name == 'diagnoseWinMeasure-realistic1k' && 'realistic1k' || 'realistic10k')) || '["real295","realistic1k","realistic10k"]') }}
+        # A ':phase,phase' suffix limits the phases (e.g. diagnoseWinMeasure:cold,edit).
+        graph: ${{ fromJSON(startsWith(inputs.windows_test_name, 'diagnoseWinMeasure-') && format('["{0}"]', startsWith(inputs.windows_test_name, 'diagnoseWinMeasure-real295') && 'real295' || (startsWith(inputs.windows_test_name, 'diagnoseWinMeasure-realistic1k') && 'realistic1k' || 'realistic10k')) || '["real295","realistic1k","realistic10k"]') }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -566,6 +567,8 @@ jobs:
           TINE_MEASURE_WORK: ${{ runner.temp }}\win-measure-work
           TINE_MEASURE_WARMUP: '1'
         run: |
+          $name = "${{ inputs.windows_test_name }}"
+          if ($name.Contains(':')) { $env:TINE_MEASURE_PHASES = $name.Split(':')[1] }
           $env:TINE_MEASURE_APPS = "candidate=${{ github.workspace }}\apps\candidate\tine.exe;v0.6.985=$env:TINE_EXE_0_6_985;v0.6.982=$env:TINE_EXE_0_6_982;v0.6.5=$env:TINE_EXE_0_6_5"
           node scripts/diagnose-win-measure.mjs
       - uses: actions/upload-artifact@v4

@@ -834,7 +834,18 @@ async function editOnce(session, graph, page, marker, file) {
   const idleA = procCounters(session.pid);
   await sleep(10_000);
   const idleB = procCounters(session.pid);
-  await target.click();
+  // Older builds raise sticky toasts (update available, CPU rendering) that
+  // cover the lower page; close them as a user would before clicking.
+  await browser.execute(() => { for (const b of document.querySelectorAll(".toast-sticky .toast-close, .toast .toast-close")) b.click(); }).catch(() => {});
+  await sleep(300);
+  await target.scrollIntoView({ block: "center" });
+  try { await target.click(); } catch (error) {
+    if (!/intercepted|not clickable/i.test(String(error))) throw error;
+    // Still covered: bring the block to the top of the viewport and retry.
+    await target.scrollIntoView({ block: "start" });
+    await sleep(200);
+    await target.click();
+  }
   await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
   await browser.keys(["End"]);
   const before = procCounters(session.pid);
