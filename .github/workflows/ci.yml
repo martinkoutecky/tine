@@ -392,7 +392,7 @@ jobs:
 
   windows-compile:
     name: Full CI / Windows core compile + integration smoke
-    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
+    if: github.event_name == 'workflow_dispatch' && !startsWith(inputs.windows_test_name, 'diagnoseWinMeasure') && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -460,6 +460,123 @@ jobs:
           }
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
+
+  # Diagnostic only (branch diagnose/windows-measure-*): build the real Windows
+  # app at this commit, then measure it against the released v0.6.985 and
+  # v0.6.982 portable apps on the SAME runner, one graph per job.
+  diagnose-win-measure-build:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && startsWith(inputs.windows_test_name, 'diagnoseWinMeasure')
+    name: Windows measure / build candidate app
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run build
+      - name: Build release app at this commit
+        run: cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Record candidate identity
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force candidate-app | Out-Null
+          Copy-Item target/release/tine.exe candidate-app/tine.exe
+          $hash = (Get-FileHash candidate-app/tine.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sha = git rev-parse HEAD
+          @{ sha = $sha; exeSha256 = $hash } | ConvertTo-Json | Out-File candidate-app/identity.json -Encoding utf8
+          Get-Content candidate-app/identity.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-measure-candidate-app
+          path: candidate-app
+          retention-days: 3
+
+  diagnose-win-measure:
+    needs: diagnose-win-measure-build
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && startsWith(inputs.windows_test_name, 'diagnoseWinMeasure')
+    name: Windows measure / ${{ matrix.graph }}
+    runs-on: windows-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        # diagnoseWinMeasure = every graph; diagnoseWinMeasure-<graph> = that one.
+        # A ':phase,phase' suffix limits the phases (e.g. diagnoseWinMeasure:cold,edit).
+        graph: ${{ fromJSON(startsWith(inputs.windows_test_name, 'diagnoseWinMeasure-') && format('["{0}"]', startsWith(inputs.windows_test_name, 'diagnoseWinMeasure-real295') && 'real295' || (startsWith(inputs.windows_test_name, 'diagnoseWinMeasure-realistic1k') && 'realistic1k' || 'realistic10k')) || '["real295","realistic1k","realistic10k"]') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: win-measure-candidate-app
+          path: apps/candidate
+      - name: Download released portable apps
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ids = @{}
+          $ids['candidate'] = Get-Content apps/candidate/identity.json | ConvertFrom-Json
+          foreach ($v in @('0.6.985', '0.6.982', '0.6.5')) {
+            gh release download "v$v" -R martinkoutecky/tine -p "Tine_${v}_x64-portable.zip" -D "apps/dl-$v"
+            Expand-Archive "apps/dl-$v/Tine_${v}_x64-portable.zip" "apps/v$v"
+            $exe = @(Get-ChildItem "apps/v$v" -Recurse -Filter *.exe)
+            if ($exe.Count -ne 1) { throw "Expected one exe in v$v, found $($exe.Count)" }
+            $h = (Get-FileHash $exe[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $ids["v$v"] = @{ exe = $exe[0].FullName; exeSha256 = $h }
+            "TINE_EXE_$($v.Replace('.', '_'))=$($exe[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          New-Item -ItemType Directory -Force test-results/win-measure | Out-Null
+          $ids | ConvertTo-Json -Depth 4 | Out-File test-results/win-measure/app-identities.json -Encoding utf8
+          Get-Content test-results/win-measure/app-identities.json
+      - shell: pwsh
+        run: ./scripts/install-windows-webview2-driver.ps1
+      - name: Fetch and authenticate the public GH 295 graph
+        if: matrix.graph == 'real295'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "anon-graph.zip"
+          $expanded = Join-Path $env:RUNNER_TEMP "anon-graph"
+          Invoke-WebRequest -Uri "https://github.com/user-attachments/files/30858092/anon-graph.zip" -OutFile $archive
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          $expected = "a4cc5eca0c08ac3e819dc490e3d48f545c207da742a670bf437a86a6d1b6aa24"
+          if ($actual -ne $expected) { throw "public graph digest mismatch: $actual" }
+          Expand-Archive -Path $archive -DestinationPath $expanded
+          $graph = Get-ChildItem -Path $expanded -Directory -Recurse | Where-Object Name -eq "anon-test" | Select-Object -First 1
+          if (-not $graph) { throw "anon-test graph directory is absent" }
+          "TINE_295_PUBLIC_GRAPH=$($graph.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Measure candidate, v0.6.985, v0.6.982 and v0.6.5 on ${{ matrix.graph }}
+        timeout-minutes: 345
+        continue-on-error: true
+        shell: pwsh
+        env:
+          TINE_MEASURE_GRAPH: ${{ matrix.graph }}
+          TINE_MEASURE_OUT: ${{ github.workspace }}\test-results\win-measure
+          TINE_MEASURE_WORK: ${{ runner.temp }}\win-measure-work
+          TINE_MEASURE_WARMUP: '1'
+        run: |
+          $name = "${{ inputs.windows_test_name }}"
+          if ($name.Contains(':')) { $env:TINE_MEASURE_PHASES = $name.Split(':')[1] }
+          $env:TINE_MEASURE_APPS = "candidate=${{ github.workspace }}\apps\candidate\tine.exe;v0.6.985=$env:TINE_EXE_0_6_985;v0.6.982=$env:TINE_EXE_0_6_982;v0.6.5=$env:TINE_EXE_0_6_5"
+          node scripts/diagnose-win-measure.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: win-measure-${{ matrix.graph }}
+          path: test-results/win-measure
+          retention-days: 3
 
   android-core-compile:
     name: Full CI / Android core compile
