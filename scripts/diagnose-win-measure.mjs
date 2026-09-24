@@ -66,6 +66,30 @@ fs.mkdirSync(WORK, { recursive: true });
 const log = (...parts) => console.log(`WM ${GRAPH_KIND}`, ...parts);
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const redact = (s) => (REDACT && typeof s === "string" ? `<${crypto.createHash("sha1").update(s).digest("hex").slice(0, 8)}>` : s);
+// Written evidence for real295 carries no anon-graph words: graph-derived
+// names and needles are hashed; the overlay's own probe strings stay legible.
+function writeJson(file, value) {
+  let text;
+  if (!REDACT) text = JSON.stringify(value, null, 1);
+  else {
+    const overlay = new Set(Object.values(PROBE).filter((v) => typeof v === "string"));
+    const keep = (v) => overlay.has(v) || /^(Probe |Ext |Renamed )/.test(v);
+    const scrub = (v) => (typeof v === "string" && !keep(v) ? redact(v) : v);
+    text = JSON.stringify(value, (k, v) => {
+      if (k === "pageNames" && Array.isArray(v)) return v.map(scrub);
+      if ((k === "title" || k === "source" || k === "target") && typeof v === "string") return scrub(v);
+      return v;
+    }, 1);
+    const m = CURRENT_MANIFEST;
+    const secrets = [m?.needles?.common, m?.hub?.name, m?.renameTarget?.name, ...(m?.unlinkedPages ?? []).map((u) => u.name)]
+      .filter((v) => typeof v === "string" && v.length > 1 && !keep(v));
+    for (const secret of secrets) {
+      const enc = JSON.stringify(secret).slice(1, -1);
+      text = text.split(enc).join(redact(secret));
+    }
+  }
+  fs.writeFileSync(file, text);
+}
 
 function percentile(values, q) {
   const v = values.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
@@ -409,7 +433,7 @@ async function dumpPage(session) {
       if (!w) return null;
       return { installedAt: w.installedAt, status: w.status, warm: w.warm, progress: w.progress, ipc: w.ipc.slice(-1500).map(({ start, end, ...r }) => r) };
     });
-    fs.writeFileSync(`${session.prefix}-page.json`, JSON.stringify(wm, null, 1));
+    writeJson(`${session.prefix}-page.json`, wm);
     return wm;
   } catch (error) {
     return { error: String(error).slice(0, 300) };
@@ -511,6 +535,7 @@ async function firstResultAndReady(session, needle, budgetMs, { requireReady = t
   while (Date.now() < deadline) {
     const s = await pageState(browser);
     const now = Date.now();
+    if (out.readyMs === null && readyNow(session, s)) out.readyMs = now - session.t0;
     if (s.blockRows > 0 && out.firstAnyMs === null) out.firstAnyMs = now - session.t0;
     if (s.blockRows > 0 && !s.pending && !s.error && out.firstCompleteMs === null) {
       out.firstCompleteMs = now - session.t0;
@@ -529,7 +554,6 @@ async function firstResultAndReady(session, needle, budgetMs, { requireReady = t
         await browser.execute((q) => window.__wm.setQuery(q), needle);
       }
     }
-    if (out.readyMs === null && readyNow(session, s)) out.readyMs = now - session.t0;
     if (s.error) {
       if (!out.errors.includes(s.error.slice(0, 200))) out.errors.push(s.error.slice(0, 200));
       errorSince ??= now;
@@ -918,7 +942,7 @@ async function runApp(app, pristine, manifest) {
   const record = { app: app.label, exeSha256: sha256(app.exe), graph: GRAPH_KIND, startedAt: new Date().toISOString(), phases: {}, closes: {} };
   const ctx = { manifest, graph: dirs.graph };
   const appDeadline = Date.now() + BUDGET.appMs;
-  const save = () => fs.writeFileSync(path.join(appOut, "record.json"), JSON.stringify(record, null, 2));
+  const save = () => writeJson(path.join(appOut, "record.json"), record);
   const runPhase = async (name, fn) => {
     if (!PHASES.has(name)) { record.phases[name] = { skipped: "not selected" }; return; }
     if (Date.now() > appDeadline) { record.phases[name] = { skipped: "per-app budget exhausted" }; return; }
@@ -942,7 +966,7 @@ async function runApp(app, pristine, manifest) {
     for (const [name, fn] of phases) await runPhase(name, () => fn(session));
     await dumpPage(session);
     record.closes[tag] = await closeSession(session);
-    if (session.tail) fs.writeFileSync(`${session.prefix}-stderr-lines.json`, JSON.stringify(session.tail.lines, null, 1));
+    if (session.tail) writeJson(`${session.prefix}-stderr-lines.json`, session.tail.lines);
     save();
   };
   await withSession("session1", [
@@ -970,7 +994,7 @@ async function main() {
   const t = Date.now();
   const manifest = await buildGraph({ kind: GRAPH_KIND, dest: pristine, publicGraph: process.env.TINE_295_PUBLIC_GRAPH });
   CURRENT_MANIFEST = manifest;
-  fs.writeFileSync(path.join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
+  writeJson(path.join(OUT, "manifest.json"), manifest);
   log("graph built", `${Date.now() - t}ms files=${manifest.files} blocks=${manifest.blocks} bytes=${manifest.bytes}`);
   if (process.env.TINE_MEASURE_WARMUP === "1") {
     try {
@@ -995,7 +1019,7 @@ async function main() {
     log("app", app.label, "begin");
     records.push(await runApp(app, pristine, manifest));
   }
-  fs.writeFileSync(path.join(OUT, "summary.json"), JSON.stringify({ graph: GRAPH_KIND, manifest, records }, null, 2));
+  writeJson(path.join(OUT, "summary.json"), { graph: GRAPH_KIND, manifest, records });
   log("finished");
 }
 
