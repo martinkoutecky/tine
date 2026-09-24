@@ -512,7 +512,23 @@ async function firstResultAndReady(session, needle, budgetMs, { requireReady = t
     const s = await pageState(browser);
     const now = Date.now();
     if (s.blockRows > 0 && out.firstAnyMs === null) out.firstAnyMs = now - session.t0;
-    if (s.blockRows > 0 && !s.pending && !s.error && out.firstCompleteMs === null) out.firstCompleteMs = now - session.t0;
+    if (s.blockRows > 0 && !s.pending && !s.error && out.firstCompleteMs === null) {
+      out.firstCompleteMs = now - session.t0;
+      // The answer shown first: is it the whole answer, or a partial one
+      // served while the index was still building?
+      out.firstAnswer = await browser.execute((q) => {
+        const r = [...window.__wm.ipc].reverse().find((x) => x.command === "run_graph_search" && x.source === q && x.summary);
+        return r ? { pages: r.summary.pages, blocks: r.summary.blocks, hasMore: r.summary.hasMore, diagnostics: r.summary.diagnostics } : null;
+      }, needle).catch(() => null);
+      if (out.readyMs === null && !out.earlyRare) {
+        // Completeness while still indexing: the rare overlay needle has
+        // exactly 6 blocks in every graph, so a smaller count is a partial
+        // answer the user would see as missing results.
+        const rare = await measureQuery(browser, PROBE.rare, 30_000).catch((e) => ({ error: String(e).slice(0, 200) }));
+        out.earlyRare = { atMs: Date.now() - session.t0, blocks: rare?.summary?.blocks ?? null, pending: rare?.pending ?? null, timedOut: rare?.timedOut ?? null, error: rare?.error ?? null, expected: 6 };
+        await browser.execute((q) => window.__wm.setQuery(q), needle);
+      }
+    }
     if (out.readyMs === null && readyNow(session, s)) out.readyMs = now - session.t0;
     if (s.error) {
       if (!out.errors.includes(s.error.slice(0, 200))) out.errors.push(s.error.slice(0, 200));
@@ -536,6 +552,12 @@ async function firstResultAndReady(session, needle, budgetMs, { requireReady = t
   out.timedOut = out.firstCompleteMs === null || (requireReady && out.readyMs === null);
   if (session.tail.readyAt) out.projectionReadyMs = session.tail.readyAt - session.t0;
   out.projectionReadyLine = session.tail.readyLine?.replace(/^.*projection /, "projection ") ?? null;
+  if (out.readyMs !== null) {
+    // The same needle asked again once ready: the reference answer the first
+    // one is compared against.
+    const again = await measureQuery(browser, needle, BUDGET.queryMs).catch((e) => ({ error: String(e).slice(0, 200) }));
+    out.afterReady = again?.summary ? { pages: again.summary.pages, blocks: again.summary.blocks, hasMore: again.summary.hasMore, ipcMs: again.ipcMs, keyToRenderMs: again.keyToRenderMs } : { error: again?.error ?? "no answer", timedOut: again?.timedOut ?? null };
+  }
   const final = await pageState(browser);
   out.finalBlockRows = final.blockRows;
   out.finalPending = final.pending || null;
