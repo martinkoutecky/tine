@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
 use tauri::{Manager, Runtime, State, WebviewWindow};
 use tine_store::model::Graph;
+use tine_store::Store;
 
 pub(crate) type WindowKey = String;
 
@@ -21,6 +22,9 @@ pub(crate) struct CaptureGraphBinding {
 
 pub(crate) struct GraphSlot {
     pub(crate) graph: Arc<Graph>,
+    pub(crate) store: Store,
+    /// Latest `((` request per transport lane for this window binding.
+    pub(crate) block_search_lanes: Mutex<HashMap<String, Arc<AtomicBool>>>,
     pub(crate) root_key: PathBuf,
     /// Unique lease for this exact window→graph binding. Frontend mutations carry
     /// it so an IPC queued before an in-place graph switch cannot execute against
@@ -36,8 +40,11 @@ pub(crate) struct GraphSlot {
 impl GraphSlot {
     pub(crate) fn new(graph: Graph, root_key: PathBuf) -> Self {
         static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
+        let graph = Arc::new(graph);
         Self {
-            graph: Arc::new(graph),
+            store: Store::from_legacy(Arc::clone(&graph)),
+            graph,
+            block_search_lanes: Mutex::new(HashMap::new()),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             warm_done: AtomicBool::new(false),
@@ -52,8 +59,11 @@ impl GraphSlot {
     /// generation here made every later command from that window stale after a
     /// config refresh, including autosaves.
     fn refreshed(graph: Graph, old: &GraphSlot) -> Self {
+        let graph = Arc::new(graph);
         Self {
-            graph: Arc::new(graph),
+            store: Store::from_legacy(Arc::clone(&graph)),
+            graph,
+            block_search_lanes: Mutex::new(HashMap::new()),
             root_key: old.root_key.clone(),
             binding_generation: old.binding_generation,
             warm_done: AtomicBool::new(old.warm_done.load(std::sync::atomic::Ordering::Acquire)),

@@ -85,6 +85,16 @@ fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
     }
 }
 
+/// Preorder walk that stops as soon as the bounded collector rejects a value.
+fn walk_until<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock) -> bool) -> bool {
+    for block in blocks {
+        if !f(block) || !walk_until(&block.children, f) {
+            return false;
+        }
+    }
+    true
+}
+
 type PathRefCounts = std::collections::HashMap<String, usize>;
 
 fn push_path_refs(block: &DocBlock, refs: &mut PathRefCounts) {
@@ -1027,7 +1037,7 @@ fn backlink_filter_entry(
 /// one rendered panel. This deliberately does not rerun backlink selection and
 /// cannot turn into a graph-sized arbitrary export: the request is ID-scoped,
 /// de-duplicated, and the response has both per-root and total byte ceilings.
-pub fn backlink_filter_context(
+pub(crate) fn backlink_filter_context(
     graph: &Graph,
     target: &str,
     targets: &[BacklinkFilterTarget],
@@ -2148,12 +2158,21 @@ pub(crate) fn search_cancellable(
     limit: usize,
     cancelled: impl Fn() -> bool,
 ) -> Vec<RefGroup> {
+    search_cancellable_result(graph, query, limit, cancelled).unwrap_or_default()
+}
+
+pub(crate) fn search_cancellable_result(
+    graph: &Graph,
+    query: &str,
+    limit: usize,
+    cancelled: impl Fn() -> bool,
+) -> Option<Vec<RefGroup>> {
     let plan = crate::query_plan::QueryPlan::block_search_literal(query, limit);
     let execution = plan.execute(graph, cancelled);
     if execution.cancelled {
-        Vec::new()
+        None
     } else {
-        crate::query_plan::block_hits_to_groups(execution.hits)
+        Some(crate::query_plan::block_hits_to_groups(execution.hits))
     }
 }
 
@@ -2231,12 +2250,7 @@ const INTERNAL_PROPS: &[&str] = &[
 
 /// Distinct property keys (each with its sorted distinct values) used across the
 /// graph. Drives the query builder's property-filter pickers.
-#[allow(dead_code)]
-pub(crate) fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
-    property_facets_bounded(graph, usize::MAX, usize::MAX).0
-}
-
-pub fn property_facets_bounded(
+pub(crate) fn property_facets_bounded(
     graph: &Graph,
     max_values: usize,
     max_bytes: usize,
@@ -2249,7 +2263,7 @@ pub fn property_facets_bounded(
     let facets = graph.with_pages(|pages| {
         let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (_entry, doc) in pages {
-            walk(&doc.roots, &mut |b| {
+            if !walk_until(&doc.roots, &mut |b| {
                 for (k, v) in b.properties() {
                     let k = property_key_norm(&k);
                     if INTERNAL_PROPS.iter().any(|p| property_key_norm(p) == k) {
@@ -2272,13 +2286,17 @@ pub fn property_facets_bounded(
                         .saturating_add(64);
                     if values >= max_values || next_bytes > max_bytes {
                         exceeded = true;
+                        return false;
                     } else {
                         values += 1;
                         bytes = next_bytes;
                         map.entry(k).or_default().insert(v);
                     }
                 }
-            });
+                true
+            }) {
+                break;
+            }
         }
         map.into_iter()
             .map(|(k, vs)| (k, vs.into_iter().collect()))
@@ -2325,7 +2343,7 @@ const OG_AUTOCOMPLETE_HIDDEN_PROPS: &[&str] = &[
     "done",
 ];
 
-pub fn autocomplete_property_facets_bounded(
+pub(crate) fn autocomplete_property_facets_bounded(
     graph: &Graph,
     max_items: usize,
     max_bytes: usize,
@@ -2345,7 +2363,7 @@ pub fn autocomplete_property_facets_bounded(
         .collect();
     let mut items = 0usize;
     let mut bytes = 0usize;
-    let mut exceeded = false;
+    let exceeded = std::cell::Cell::new(false);
 
     let facets = graph.with_pages(|pages| {
         let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -2358,7 +2376,7 @@ pub fn autocomplete_property_facets_bounded(
             if !map.contains_key(&key) {
                 let key_bytes = key.len().saturating_add(64);
                 if items >= max_items || bytes.saturating_add(key_bytes) > max_bytes {
-                    exceeded = true;
+                    exceeded.set(true);
                     return;
                 }
                 items += 1;
@@ -2372,7 +2390,7 @@ pub fn autocomplete_property_facets_bounded(
             }
             let value_bytes = value.len().saturating_add(64);
             if items >= max_items || bytes.saturating_add(value_bytes) > max_bytes {
-                exceeded = true;
+                exceeded.set(true);
                 return;
             }
             items += 1;
@@ -2383,19 +2401,31 @@ pub fn autocomplete_property_facets_bounded(
         for (_entry, doc) in pages {
             for (key, value) in page_facets(doc.pre_block.as_deref()).0 {
                 offer(key, value);
+                if exceeded.get() {
+                    break;
+                }
             }
-            walk(&doc.roots, &mut |block| {
+            if exceeded.get() {
+                break;
+            }
+            if !walk_until(&doc.roots, &mut |block| {
                 for (key, value) in block.properties() {
                     offer(key, value);
+                    if exceeded.get() {
+                        return false;
+                    }
                 }
-            });
+                true
+            }) {
+                break;
+            }
         }
 
         map.into_iter()
             .map(|(key, values)| (key, values.into_iter().collect()))
             .collect()
     });
-    (facets, exceeded)
+    (facets, exceeded.get())
 }
 
 #[cfg(test)]
@@ -2528,7 +2558,7 @@ pub(crate) fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefG
     resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
 }
 
-pub fn resolve_blocks_bounded(
+pub(crate) fn resolve_blocks_bounded(
     graph: &Graph,
     uuids: &[String],
     max_rows: usize,
@@ -2676,7 +2706,7 @@ struct SelectedExportQuery {
 /// export limit. Each relevant source document is scanned at most once and only
 /// references to the requested roots are retained while the graph snapshot is
 /// borrowed.
-pub fn export_query_subtrees(
+pub(crate) fn export_query_subtrees(
     graph: &Graph,
     specs: &[QueryExportSpec],
     max_queries: usize,
@@ -2850,14 +2880,6 @@ pub fn export_query_subtrees(
         results,
         omitted_queries: specs.len().saturating_sub(query_limit),
     }
-}
-
-/// Resolve one block for a hover/export consumer that explicitly needs a
-/// subtree. This compatibility wrapper applies the caller's node bound; native
-/// and export consumers use `preview_block_with_budget` to add a byte bound.
-#[allow(dead_code)]
-pub(crate) fn preview_block(graph: &Graph, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
-    preview_block_with_budget(graph, uuid, max_nodes, usize::MAX)
 }
 
 /// Node-and-byte-bounded preview used by IPC and static/export consumers. The
@@ -4364,7 +4386,7 @@ mod tests {
 
         let graph = Graph::open(&dir);
         assert_eq!(
-            property_facets(&graph),
+            property_facets_bounded(&graph, usize::MAX, usize::MAX).0,
             vec![(
                 "done-at".to_string(),
                 vec!["one".to_string(), "two".to_string()]
@@ -4616,7 +4638,9 @@ mod tests {
         assert!(graph.run_graph_search("-x", 8, 8, false).hits.is_empty());
 
         let scoped = graph_search_block_texts(graph.run_graph_search_latest_scoped(
-            "ctrlk-dsl-current-page",
+            &crate::store::Cancel(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            ))),
             "foo -x",
             8,
             8,
@@ -5564,7 +5588,7 @@ mod tests {
             "N requested nested ids must produce N DTO nodes, not N(N+1)/2"
         );
 
-        let preview = preview_block(&graph, &ids[0], 50).unwrap();
+        let preview = preview_block_with_budget(&graph, &ids[0], 50, usize::MAX).unwrap();
         assert_eq!(dto_nodes(&preview.group.blocks), 50);
         assert_eq!(preview.truncated, DEPTH - 50);
 

@@ -1,3 +1,27 @@
 # tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
 # Counts against 01-arrival.md budget A: <=35 Store+Transaction ops,
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
+enum store::FacetPolicy
+enum store::LoadError
+enum store::QueryError
+fn store::Store::whole_graph
+fn store::WholeGraph::backlink_filter_context
+fn store::WholeGraph::backlinks
+fn store::WholeGraph::block_ref_counts
+fn store::WholeGraph::block_referrers
+fn store::WholeGraph::blocks
+fn store::WholeGraph::complete_page_names
+fn store::WholeGraph::export_query_subtrees
+fn store::WholeGraph::find_blocks
+fn store::WholeGraph::journal_content_days
+fn store::WholeGraph::page_icons
+fn store::WholeGraph::preview_block
+fn store::WholeGraph::property_facets
+fn store::WholeGraph::rev
+fn store::WholeGraph::templates
+fn store::WholeGraph::unlinked_references
+struct store::Cancel
+struct store::GraphRev
+struct store::Store
+struct store::WholeGraph
+use crate::store::{Cancel,FacetPolicy,GraphRev,LoadError,QueryError,Store,WholeGraph}

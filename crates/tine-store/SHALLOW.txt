@@ -2,7 +2,7 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 125
+# ceiling: 114
 field model::Graph.config
 field model::Graph.root
 field onboarding::GuideCopyResult.copied_assets
@@ -31,10 +31,8 @@ fn model::Graph::asset_file_for_read
 fn model::Graph::asset_trash_stats
 fn model::Graph::assets_path
 fn model::Graph::backlinks
-fn model::Graph::backlinks_bounded
 fn model::Graph::block_ref_counts
 fn model::Graph::block_referrers
-fn model::Graph::block_referrers_bounded
 fn model::Graph::cache_generation
 fn model::Graph::custom_css
 fn model::Graph::delete_page
@@ -71,9 +69,7 @@ fn model::Graph::page_index_failures
 fn model::Graph::page_print_html
 fn model::Graph::page_source_file
 fn model::Graph::pages_path
-fn model::Graph::preview_block_with_budget
 fn model::Graph::publish_html
-fn model::Graph::quick_switch
 fn model::Graph::read_asset
 fn model::Graph::read_asset_limited
 fn model::Graph::read_highlights
@@ -96,16 +92,13 @@ fn model::Graph::run_query_bounded
 fn model::Graph::save_asset
 fn model::Graph::save_page
 fn model::Graph::search
-fn model::Graph::search_latest
 fn model::Graph::stream_asset_path
 fn model::Graph::sync_conflict_diff
 fn model::Graph::sync_file
-fn model::Graph::templates
 fn model::Graph::trash_asset
 fn model::Graph::trash_journal_file
 fn model::Graph::trash_sync_conflict
 fn model::Graph::unlinked_refs
-fn model::Graph::unlinked_refs_bounded
 fn model::Graph::warm_cache
 fn model::Graph::warm_cache_cancellable
 fn model::Graph::with_pages
@@ -118,12 +111,8 @@ fn onboarding::copy_guide_into_graph
 fn onboarding::create_demo_graph
 fn publish::page_print_html
 fn publish::publish_graph
-fn query::autocomplete_property_facets_bounded
-fn query::backlink_filter_context
-fn query::export_query_subtrees
-fn query::property_facets_bounded
 fn query::quick_switch
-fn query::resolve_blocks_bounded
+fn store::Store::from_legacy
 struct model::Graph
 struct onboarding::GuideCopyResult
 struct publish::PrintOpts

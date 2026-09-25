@@ -11,3 +11,5 @@ pub mod onboarding;
 pub mod publish;
 pub mod query;
 pub mod query_plan;
+pub mod store;
+pub use store::{Cancel, FacetPolicy, GraphRev, LoadError, QueryError, Store, WholeGraph};

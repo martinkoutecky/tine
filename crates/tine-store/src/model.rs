@@ -185,11 +185,6 @@ pub struct Graph {
     /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
     page_locks:
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
-    /// Per-UI-lane cancellation epochs for whole-graph text searches. Starting a
-    /// newer search makes its superseded prefix stop promptly.
-    search_lanes: std::sync::Mutex<
-        std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicU64>>,
-    >,
 }
 
 struct PageCacheIndex {
@@ -856,7 +851,6 @@ impl Graph {
             disk_revs: RwLock::new(std::collections::HashMap::new()),
             referenced_names_cache: RwLock::new(None),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
-            search_lanes: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -3396,7 +3390,7 @@ impl Graph {
         })
     }
 
-    pub fn backlinks_bounded(
+    pub(crate) fn backlinks_bounded(
         &self,
         target: &str,
         max_rows: usize,
@@ -3417,7 +3411,7 @@ impl Graph {
         })
     }
 
-    pub fn block_referrers_bounded(
+    pub(crate) fn block_referrers_bounded(
         &self,
         uuid: &str,
         max_rows: usize,
@@ -3483,7 +3477,7 @@ impl Graph {
         })
     }
 
-    pub fn unlinked_refs_bounded(
+    pub(crate) fn unlinked_refs_bounded(
         &self,
         target: &str,
         max_rows: usize,
@@ -3964,74 +3958,38 @@ impl Graph {
         .execute_with_explain(self, || false, explain)
     }
 
-    /// Interactive search lane: a newer request in the same lane cooperatively
-    /// cancels the older whole-graph scan. Separate lanes keep the Ctrl-K
-    /// switcher and in-editor block picker from canceling one another.
-    pub fn search_latest(&self, lane: &str, query: &str, limit: usize) -> Vec<RefGroup> {
-        use std::sync::atomic::Ordering;
-        let epoch = {
-            let mut lanes = self.search_lanes.lock().unwrap();
-            lanes
-                .entry(lane.to_owned())
-                .or_insert_with(|| Arc::new(std::sync::atomic::AtomicU64::new(0)))
-                .clone()
-        };
-        let mine = epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        crate::query::search_cancellable(self, query, limit, || {
-            epoch.load(Ordering::Acquire) != mine
-        })
-    }
-
-    /// Latest-wins combined graph search.  It shares the same lane epochs as the
-    /// legacy block-search adapter, so migrating a consumer cannot leave an older
-    /// request from either API running in that logical lane.
-    #[allow(dead_code)]
-    pub(crate) fn run_graph_search_latest(
-        &self,
-        lane: &str,
-        source: &str,
-        page_limit: usize,
-        block_limit: usize,
-        explain: bool,
-    ) -> tine_core::query_plan::QueryExecution {
-        self.run_graph_search_latest_scoped(lane, source, page_limit, block_limit, None, explain)
-    }
-
+    /// Combined graph search with caller-owned cancellation. Transport lanes
+    /// decide which prior flag to set; the graph has no transport state.
     pub fn run_graph_search_latest_scoped(
         &self,
-        lane: &str,
+        cancel: &crate::store::Cancel,
         source: &str,
         page_limit: usize,
         block_limit: usize,
         scope: Option<crate::query_plan::QueryPageScope>,
         explain: bool,
     ) -> tine_core::query_plan::QueryExecution {
-        use std::sync::atomic::Ordering;
-        let epoch = {
-            let mut lanes = self.search_lanes.lock().unwrap();
-            lanes
-                .entry(lane.to_owned())
-                .or_insert_with(|| Arc::new(std::sync::atomic::AtomicU64::new(0)))
-                .clone()
-        };
-        let mine = epoch.fetch_add(1, Ordering::AcqRel) + 1;
         match scope {
             Some(scope) => {
                 crate::query_plan::QueryPlan::friendly_for_page(source, block_limit, scope)
             }
             None => crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit),
         }
-        .execute_with_explain(self, || epoch.load(Ordering::Acquire) != mine, explain)
+        .execute_with_explain(
+            self,
+            || cancel.0.load(std::sync::atomic::Ordering::Acquire),
+            explain,
+        )
     }
 
     /// Fuzzy page-name matches for the quick switcher.
-    pub fn quick_switch(&self, query: &str, limit: usize) -> Vec<PageEntry> {
+    pub(crate) fn quick_switch(&self, query: &str, limit: usize) -> Vec<PageEntry> {
         crate::query::quick_switch(self, query, limit)
     }
 
     /// All `template:: <name>` templates across the graph, with the blocks to
     /// insert (ids and template properties stripped).
-    pub fn templates(&self) -> Vec<TemplateDto> {
+    pub(crate) fn templates(&self) -> Vec<TemplateDto> {
         crate::query::templates(self)
     }
 
@@ -4048,13 +4006,7 @@ impl Graph {
         crate::query::resolve_blocks(self, uuids)
     }
 
-    /// Resolve a bounded subtree for an explicitly expanded preview/export.
-    #[allow(dead_code)]
-    pub(crate) fn preview_block(&self, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
-        crate::query::preview_block(self, uuid, max_nodes)
-    }
-
-    pub fn preview_block_with_budget(
+    pub(crate) fn preview_block_with_budget(
         &self,
         uuid: &str,
         max_nodes: usize,
@@ -4066,14 +4018,6 @@ impl Graph {
     /// The graph's `logseq/custom.css`, if present (for user theming).
     pub fn custom_css(&self) -> String {
         std::fs::read_to_string(self.root.join("logseq").join("custom.css")).unwrap_or_default()
-    }
-
-    /// Property keys (with their distinct values) used across the graph, for the
-    /// query builder's property-filter autocomplete. Excludes internal/metadata
-    /// properties (id, collapsed, hl-*, …).
-    #[allow(dead_code)]
-    pub(crate) fn property_facets(&self) -> Vec<(String, Vec<String>)> {
-        crate::query::property_facets(self)
     }
 
     // ---- Assets & PDF highlights ----
@@ -8338,7 +8282,7 @@ mod tests {
         // the legacy quick_switch adapter. Its whole-graph inventory remains
         // deliberately separate from the filtered Journals feed.
         assert!(g
-            .run_graph_search_latest("future-feed-test", future_title, 8, 8, false)
+            .run_graph_search(future_title, 8, 8, false)
             .hits
             .iter()
             .any(|hit| matches!(hit,
@@ -8372,7 +8316,7 @@ mod tests {
             vec![Some(20300715), Some(20300714)]
         );
         assert!(g
-            .run_graph_search_latest("future-feed-test", future_title, 8, 8, false)
+            .run_graph_search(future_title, 8, 8, false)
             .hits
             .iter()
             .any(|hit| matches!(hit,

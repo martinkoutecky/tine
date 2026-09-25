@@ -6,12 +6,48 @@ use crate::state::{
     capture_quick_switch_slot, refresh_graph, slot_for_context, with_graph, AppState, GraphContext,
 };
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 use tine_core::date::JournalDate;
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
+use tine_store::{Cancel, FacetPolicy, QueryError, WholeGraph};
+
+fn whole_graph(state: &GraphContext<'_>) -> Result<WholeGraph, String> {
+    slot_for_context(state)?
+        .store
+        .whole_graph()
+        .map_err(|e| format!("graph load failed: {e:?}"))
+}
+
+fn query_error(error: QueryError) -> String {
+    match error {
+        QueryError::Cancelled => "cancelled".into(),
+        QueryError::Parse(reason) => reason,
+        QueryError::RequestTooLarge { what: "backlink filter roots", count, limit } =>
+            format!("too many backlink filter roots: {count} (limit: {limit})"),
+        QueryError::RequestTooLarge { what, count, limit } =>
+            format!("request-too-large: {count} {what} (limit: {limit})"),
+        QueryError::ExportRequestTooLarge { macros, bytes, macro_limit, byte_limit, processing_cap } =>
+            format!("query-export-request-too-large: {macros} macros / {bytes} bytes (request limits: {macro_limit} macros / {byte_limit} bytes; processing cap: {processing_cap} macros)"),
+        QueryError::ResultTooLarge { what: "property facets", .. } =>
+            "result-too-large: property facets exceed the construction budget".into(),
+        QueryError::ResultTooLarge { what: "resolved block-reference rows", count, .. } =>
+            format!("result-too-large: {count} resolved block-reference rows exceed the construction budget"),
+        QueryError::ResultTooLarge { what: "requested block references", count, limit, .. } =>
+            format!("result-too-large: {count} requested block references (limit: {limit})"),
+        QueryError::ResultTooLarge { what: "query export bytes", count, limit, .. } =>
+            format!("query-export-result-too-large: ~{count} bytes (limit: {limit} bytes)"),
+        QueryError::ResultTooLarge { what: "bridge matching blocks", count, bytes: Some(bytes), .. } =>
+            format!("result-too-large: {count} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"),
+        QueryError::ResultTooLarge { what: "matching blocks", count, .. } =>
+            format!("result-too-large: {count} matching blocks; narrow the query or add (sample N) (construction limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"),
+        QueryError::ResultTooLarge { what, count, limit, .. } =>
+            format!("result-too-large: {count} {what} (limit: {limit})"),
+    }
+}
 
 #[tauri::command]
 pub(crate) fn load_workspaces(
@@ -32,14 +68,6 @@ pub(crate) fn save_workspaces(
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
-const AUTOCOMPLETE_FACET_MAX_ITEMS: usize = 2_000;
-const AUTOCOMPLETE_FACET_MAX_BYTES: usize = 2 * 1024 * 1024;
-const QUERY_EXPORT_MAX_QUERIES: usize = 64;
-const QUERY_EXPORT_REQUEST_MAX_QUERIES: usize = 1_024;
-const QUERY_EXPORT_MAX_QUERY_BYTES: usize = 64 * 1024;
-const QUERY_EXPORT_MAX_ROOTS: usize = 50;
-const QUERY_EXPORT_MAX_NODES: usize = 2_000;
-const QUERY_EXPORT_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 fn validate_query_source(query: &str) -> Result<(), String> {
     if !tine_core::query::query_source_within_limit(query) {
@@ -55,6 +83,7 @@ fn validate_query_source(query: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
     let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
     let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
@@ -125,10 +154,11 @@ fn enforce_query_execution_budget(
 #[cfg(test)]
 mod result_bridge_budget_tests {
     use super::{
-        enforce_result_bridge_budget, validate_query_source, RESULT_BRIDGE_MAX_BYTES,
+        enforce_result_bridge_budget, query_error, validate_query_source, RESULT_BRIDGE_MAX_BYTES,
         RESULT_BRIDGE_MAX_ROWS,
     };
     use tine_core::{BlockDto, PageKind, RefGroup};
+    use tine_store::QueryError;
 
     fn group(blocks: Vec<BlockDto>) -> RefGroup {
         RefGroup {
@@ -167,6 +197,37 @@ mod result_bridge_budget_tests {
         assert!(validate_query_source(&nested)
             .unwrap_err()
             .starts_with("query-nesting-too-deep:"));
+    }
+
+    #[test]
+    fn moved_read_errors_keep_the_existing_wire_text() {
+        assert_eq!(
+            query_error(QueryError::RequestTooLarge {
+                what: "backlink filter roots",
+                count: 20_001,
+                limit: 20_000,
+            }),
+            "too many backlink filter roots: 20001 (limit: 20000)"
+        );
+        assert_eq!(
+            query_error(QueryError::ExportRequestTooLarge {
+                macros: 1_025,
+                bytes: 12,
+                macro_limit: 1_024,
+                byte_limit: 65_536,
+                processing_cap: 64,
+            }),
+            "query-export-request-too-large: 1025 macros / 12 bytes (request limits: 1024 macros / 65536 bytes; processing cap: 64 macros)"
+        );
+        assert_eq!(
+            query_error(QueryError::ResultTooLarge {
+                what: "bridge matching blocks",
+                count: 5,
+                limit: 20_000,
+                bytes: Some(33_554_433),
+            }),
+            "result-too-large: 5 matching blocks (~33554433 bytes); narrow the query or add (sample N) (limits: 20000 blocks / 33554432 bytes)"
+        );
     }
 }
 
@@ -593,16 +654,10 @@ pub(crate) async fn get_backlinks(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    let graph = Arc::clone(&slot_for_context(&state)?.graph);
-    tauri::async_runtime::spawn_blocking(move || {
-        bounded_groups_or_error(graph.backlinks_bounded(
-            &name,
-            RESULT_BRIDGE_MAX_ROWS,
-            RESULT_BRIDGE_MAX_BYTES,
-        ))
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let view = whole_graph(&state)?;
+    tauri::async_runtime::spawn_blocking(move || view.backlinks(&name).map_err(query_error))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -611,17 +666,10 @@ pub(crate) async fn get_backlink_filter_context(
     targets: Vec<BacklinkFilterTarget>,
     state: GraphContext<'_>,
 ) -> Result<BacklinkFilterContext, String> {
-    if targets.len() > RESULT_BRIDGE_MAX_ROWS {
-        return Err(format!(
-            "too many backlink filter roots: {} (limit: {RESULT_BRIDGE_MAX_ROWS})",
-            targets.len()
-        ));
-    }
-    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    let view = whole_graph(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        Ok(tine_store::query::backlink_filter_context(
-            &graph, &name, &targets,
-        ))
+        view.backlink_filter_context(&name, &targets)
+            .map_err(query_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -632,13 +680,9 @@ pub(crate) async fn get_unlinked_refs(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    let view = whole_graph(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        bounded_groups_or_error(graph.unlinked_refs_bounded(
-            &name,
-            RESULT_BRIDGE_MAX_ROWS,
-            RESULT_BRIDGE_MAX_BYTES,
-        ))
+        view.unlinked_references(&name).map_err(query_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -651,8 +695,8 @@ pub(crate) async fn get_unlinked_refs(
 pub(crate) async fn block_ref_counts(
     state: GraphContext<'_>,
 ) -> Result<Arc<std::collections::HashMap<String, usize>>, String> {
-    let graph = Arc::clone(&slot_for_context(&state)?.graph);
-    tauri::async_runtime::spawn_blocking(move || graph.block_ref_counts())
+    let view = whole_graph(&state)?;
+    tauri::async_runtime::spawn_blocking(move || view.block_ref_counts())
         .await
         .map_err(|error| error.to_string())
 }
@@ -664,13 +708,9 @@ pub(crate) fn block_referrers(
     uuid: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| {
-        bounded_groups_or_error(g.block_referrers_bounded(
-            &uuid,
-            RESULT_BRIDGE_MAX_ROWS,
-            RESULT_BRIDGE_MAX_BYTES,
-        ))
-    })
+    whole_graph(&state)?
+        .block_referrers(&uuid)
+        .map_err(query_error)
 }
 
 #[tauri::command]
@@ -765,55 +805,9 @@ pub(crate) fn export_query_subtrees(
     specs: Vec<tine_core::query::QueryExportSpec>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::QueryExportBatch, String> {
-    let query_bytes = specs.iter().fold(0usize, |total, spec| {
-        total
-            .saturating_add(spec.key.len())
-            .saturating_add(spec.query.len())
-    });
-    if specs.len() > QUERY_EXPORT_REQUEST_MAX_QUERIES || query_bytes > QUERY_EXPORT_MAX_QUERY_BYTES
-    {
-        return Err(format!(
-            "query-export-request-too-large: {} macros / {} bytes (request limits: {} macros / {} bytes; processing cap: {} macros)",
-            specs.len(),
-            query_bytes,
-            QUERY_EXPORT_REQUEST_MAX_QUERIES,
-            QUERY_EXPORT_MAX_QUERY_BYTES,
-            QUERY_EXPORT_MAX_QUERIES,
-        ));
-    }
-    with_graph(&state, |graph| {
-        let batch = tine_store::query::export_query_subtrees(
-            graph,
-            &specs,
-            QUERY_EXPORT_MAX_QUERIES,
-            QUERY_EXPORT_MAX_ROOTS,
-            QUERY_EXPORT_MAX_NODES,
-            QUERY_EXPORT_MAX_BYTES,
-        );
-        let bytes = batch
-            .results
-            .iter()
-            .map(|result| {
-                result.key.len()
-                    + result
-                        .groups
-                        .iter()
-                        .map(|group| {
-                            tine_core::model::ref_groups_estimated_bytes(std::slice::from_ref(
-                                group,
-                            ))
-                        })
-                        .sum::<usize>()
-                    + 128
-            })
-            .sum::<usize>();
-        if bytes > QUERY_EXPORT_MAX_BYTES {
-            return Err(format!(
-                "query-export-result-too-large: ~{bytes} bytes (limit: {QUERY_EXPORT_MAX_BYTES} bytes)"
-            ));
-        }
-        Ok(batch)
-    })
+    whole_graph(&state)?
+        .export_query_subtrees(&specs)
+        .map_err(query_error)
 }
 
 #[tauri::command]
@@ -826,14 +820,26 @@ pub(crate) async fn run_graph_search(
     scope: Option<tine_store::query_plan::QueryPageScope>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
-    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    let slot = slot_for_context(&state)?;
+    let graph = Arc::clone(&slot.graph);
+    let flag = Arc::new(AtomicBool::new(false));
+    if let Some(lane) = lane.as_ref() {
+        if let Some(previous) = slot
+            .block_search_lanes
+            .lock()
+            .unwrap()
+            .insert(lane.clone(), Arc::clone(&flag))
+        {
+            previous.store(true, Ordering::Release);
+        }
+    }
     let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
     let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
     // QueryExecution carries backward-defaulted per-category `has_more` bits;
     // returning it directly preserves those bits on the Tauri wire.
-    let execution = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
-        Some(lane) => graph.run_graph_search_latest_scoped(
-            lane,
+    let execution = tauri::async_runtime::spawn_blocking(move || match lane {
+        Some(_) => graph.run_graph_search_latest_scoped(
+            &Cancel(flag),
             &source,
             page_limit,
             block_limit,
@@ -876,29 +882,14 @@ pub(crate) fn query_facets(
     state: GraphContext<'_>,
     autocomplete: Option<bool>,
 ) -> Result<Vec<(String, Vec<String>)>, String> {
-    with_graph(&state, |g| {
-        if autocomplete.unwrap_or(false) {
-            // The editor's OG policy intentionally differs from query-builder
-            // facets; use a separately bounded collector without changing the
-            // default command behavior.
-            return Ok(tine_store::query::autocomplete_property_facets_bounded(
-                g,
-                AUTOCOMPLETE_FACET_MAX_ITEMS,
-                AUTOCOMPLETE_FACET_MAX_BYTES,
-            )
-            .0);
-        }
-        let (facets, exceeded) = tine_store::query::property_facets_bounded(
-            g,
-            RESULT_BRIDGE_MAX_ROWS,
-            RESULT_BRIDGE_MAX_BYTES,
-        );
-        if exceeded {
-            Err("result-too-large: property facets exceed the construction budget".into())
-        } else {
-            Ok(facets)
-        }
-    })
+    let policy = if autocomplete.unwrap_or(false) {
+        FacetPolicy::Truncated
+    } else {
+        FacetPolicy::Budgeted
+    };
+    whole_graph(&state)?
+        .property_facets(policy)
+        .map_err(query_error)
 }
 
 #[tauri::command]
@@ -911,7 +902,7 @@ pub(crate) fn page_icons(
     names: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    with_graph(&state, |g| Ok(g.page_icons(&names)))
+    Ok(whole_graph(&state)?.page_icons(&names))
 }
 
 #[tauri::command]
@@ -1045,15 +1036,28 @@ pub(crate) async fn search(
     lane: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
-    let graph = Arc::clone(&slot_for_context(&state)?.graph);
-    let limit = limit.min(RESULT_BRIDGE_MAX_ROWS);
-    let groups = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
-        Some(lane) => graph.search_latest(lane, &query, limit),
-        None => graph.search(&query, limit),
+    let slot = slot_for_context(&state)?;
+    let view = slot
+        .store
+        .whole_graph()
+        .map_err(|e| format!("graph load failed: {e:?}"))?;
+    let flag = Arc::new(AtomicBool::new(false));
+    if let Some(lane) = lane {
+        if let Some(previous) = slot
+            .block_search_lanes
+            .lock()
+            .unwrap()
+            .insert(lane, Arc::clone(&flag))
+        {
+            previous.store(true, Ordering::Release);
+        }
+    }
+    let groups = tauri::async_runtime::spawn_blocking(move || {
+        view.find_blocks(&query, limit, &Cancel(flag))
+            .map_err(query_error)
     })
     .await
-    .map_err(|e| e.to_string())?;
-    enforce_result_bridge_budget(&groups)?;
+    .map_err(|e| e.to_string())??;
     Ok(groups)
 }
 
@@ -1063,7 +1067,7 @@ pub(crate) fn quick_switch(
     limit: usize,
     state: GraphContext<'_>,
 ) -> Result<Vec<PageEntry>, String> {
-    with_graph(&state, |g| Ok(g.quick_switch(&query, limit)))
+    Ok(whole_graph(&state)?.complete_page_names(&query, limit))
 }
 
 fn capture_quick_switch_for(
@@ -1074,7 +1078,11 @@ fn capture_quick_switch_for(
     limit: usize,
 ) -> Result<Vec<PageEntry>, String> {
     let slot = capture_quick_switch_slot(state, caller, binding_generation)?;
-    Ok(slot.graph.quick_switch(query, limit.min(8)))
+    let view = slot
+        .store
+        .whole_graph()
+        .map_err(|e| format!("graph load failed: {e:?}"))?;
+    Ok(view.complete_page_names(query, limit.min(8)))
 }
 
 /// The sole graph-backed capability exposed to Quick Capture. It is deliberately
@@ -1206,12 +1214,12 @@ mod capture_quick_switch_tests {
 pub(crate) fn list_templates(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::TemplateDto>, String> {
-    with_graph(&state, |g| Ok(g.templates()))
+    Ok(whole_graph(&state)?.templates())
 }
 
 #[tauri::command]
 pub(crate) fn journal_content_days(state: GraphContext<'_>) -> Result<Vec<i64>, String> {
-    with_graph(&state, |g| Ok(g.journal_content_days()))
+    Ok(whole_graph(&state)?.journal_content_days())
 }
 
 #[tauri::command]
@@ -1219,13 +1227,11 @@ pub(crate) fn resolve_block(
     uuid: String,
     state: GraphContext<'_>,
 ) -> Result<Option<RefGroup>, String> {
-    with_graph(&state, |g| {
-        let group = g.resolve_block(&uuid);
-        if let Some(group) = &group {
-            enforce_result_bridge_budget(std::slice::from_ref(group))?;
-        }
-        Ok(group)
-    })
+    Ok(whole_graph(&state)?
+        .blocks(&[uuid])
+        .map_err(query_error)?
+        .pop()
+        .flatten())
 }
 
 #[tauri::command]
@@ -1233,25 +1239,7 @@ pub(crate) fn resolve_blocks(
     uuids: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<Option<RefGroup>>, String> {
-    if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
-        return Err(format!(
-            "result-too-large: {} requested block references (limit: {RESULT_BRIDGE_MAX_ROWS})",
-            uuids.len()
-        ));
-    }
-    with_graph(&state, |g| {
-        let (groups, exceeded, total) = tine_store::query::resolve_blocks_bounded(
-            g,
-            &uuids,
-            RESULT_BRIDGE_MAX_ROWS,
-            RESULT_BRIDGE_MAX_BYTES,
-        );
-        if exceeded {
-            Err(format!("result-too-large: {total} resolved block-reference rows exceed the construction budget"))
-        } else {
-            Ok(groups)
-        }
-    })
+    whole_graph(&state)?.blocks(&uuids).map_err(query_error)
 }
 
 /// Explicit, bounded subtree resolution for hover previews. Ordinary
@@ -1263,20 +1251,9 @@ pub(crate) fn preview_block(
     max_nodes: usize,
     state: GraphContext<'_>,
 ) -> Result<Option<tine_core::BlockPreview>, String> {
-    const MAX_PREVIEW_NODES: usize = 2_000;
-    with_graph(&state, |g| {
-        // Leave room for RefGroup/page/serializer overhead, then assert the
-        // shared bridge invariant as a second line of defense.
-        let preview = g.preview_block_with_budget(
-            &uuid,
-            max_nodes.clamp(1, MAX_PREVIEW_NODES),
-            RESULT_BRIDGE_MAX_BYTES.saturating_sub(4 * 1024),
-        );
-        if let Some(preview) = &preview {
-            enforce_result_bridge_budget(std::slice::from_ref(&preview.group))?;
-        }
-        Ok(preview)
-    })
+    whole_graph(&state)?
+        .preview_block(&uuid, max_nodes)
+        .map_err(query_error)
 }
 
 #[tauri::command]
