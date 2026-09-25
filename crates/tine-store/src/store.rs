@@ -51,7 +51,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::SystemTime;
 
 use crate::model::{classify_legacy_trash_entry, trash_dir_kind, trash_root, TrashEntryKind};
@@ -86,8 +86,109 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 pub struct Store {
     pub(crate) graph: Arc<Graph>,
     pub(crate) writer: std::sync::Mutex<()>,
+    load: Arc<LoadState>,
+    config_state: ConfigState,
+    journal_ids: Mutex<HashMap<Day, PageId>>,
     #[cfg(any(test, feature = "test-faults"))]
     pub(crate) faults: std::sync::Mutex<std::collections::HashSet<crate::transaction::FaultPoint>>,
+}
+
+struct LoadState {
+    cancelled: AtomicBool,
+    closed: AtomicBool,
+    status: Mutex<LoadStatus>,
+    ready: Condvar,
+}
+
+#[derive(Clone)]
+enum LoadStatus {
+    Loading,
+    Ready,
+    Failed(String),
+    Closed,
+}
+
+impl LoadState {
+    fn new(status: LoadStatus) -> Self {
+        Self {
+            cancelled: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            status: Mutex::new(status),
+            ready: Condvar::new(),
+        }
+    }
+}
+
+/// Consent supplied by the device for a graph's external assets directory.
+#[derive(Default)]
+pub struct OpenOptions {
+    pub approved_external_assets: Option<PathBuf>,
+}
+
+/// Canonical graph root and any external assets target. Inspection writes nothing.
+pub struct GraphAccessInspection {
+    pub root: PathBuf,
+    pub external_assets: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub enum OpenError {
+    NotAFolder(PathBuf),
+    Unresolvable {
+        path: PathBuf,
+        reason: String,
+    },
+    UnsafeLayout(String),
+    ExternalAssetsUnapproved {
+        current: PathBuf,
+    },
+    CreateFailed {
+        path: PathBuf,
+        cause: crate::IoError,
+    },
+    Io(crate::IoError),
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAFolder(path) => write!(f, "graph path is not a folder: {}", path.display()),
+            Self::Unresolvable { path, reason } => {
+                write!(
+                    f,
+                    "couldn't resolve graph path {}: {reason}",
+                    path.display()
+                )
+            }
+            Self::UnsafeLayout(message) => f.write_str(message),
+            Self::ExternalAssetsUnapproved { current } => write!(
+                f,
+                "external assets directory requires approval: {}",
+                current.display()
+            ),
+            Self::CreateFailed { path, cause } => write!(
+                f,
+                "couldn't create graph {}: {}",
+                path.display(),
+                cause.message
+            ),
+            Self::Io(error) => f.write_str(&error.message),
+        }
+    }
+}
+
+/// Effective config; unreadable config is already defaulted by legacy open.
+#[derive(Clone)]
+pub struct ConfigState {
+    pub config: Arc<tine_core::config::Config>,
+    pub problem: Option<crate::IoError>,
+}
+
+impl std::ops::Deref for ConfigState {
+    type Target = tine_core::config::Config;
+    fn deref(&self) -> &Self::Target {
+        &self.config
+    }
 }
 
 /// Trash categories. Legacy covers entries with no recognized recoverable type.
@@ -153,10 +254,167 @@ fn trash_entry_bytes(path: &std::path::Path) -> std::io::Result<u64> {
     Ok(bytes)
 }
 
+fn journal_ids_from_entries(graph: &Graph, entries: Vec<PageEntry>) -> HashMap<Day, PageId> {
+    let mut claimants: HashMap<Day, Vec<PageEntry>> = HashMap::new();
+    for entry in entries {
+        if entry.kind == PageKind::Journal {
+            if let Some(day) = entry.date_key {
+                claimants.entry(Day(day)).or_default().push(entry);
+            }
+        }
+    }
+    claimants
+        .into_iter()
+        .filter_map(|(day, mut entries)| {
+            entries
+                .sort_by(|a, b| crate::model::compare_page_claimants(a, b, &graph.journal_format));
+            entries.into_iter().next()?.rel_path.map(|id| (day, id))
+        })
+        .collect()
+}
+
 impl Store {
-    /// Current graph configuration. Interim borrowed immutable config; cost O(1).
-    pub fn config(&self) -> &tine_core::config::Config {
-        &self.graph.config
+    /// Resolve the graph root and external assets target without writing.
+    pub fn inspect(root: &Path) -> Result<GraphAccessInspection, OpenError> {
+        let canonical = fs::canonicalize(root).map_err(|error| OpenError::Unresolvable {
+            path: root.to_path_buf(),
+            reason: error.to_string(),
+        })?;
+        if !canonical.is_dir() {
+            return Err(OpenError::NotAFolder(canonical));
+        }
+        let external_assets = Graph::external_assets_target(&canonical)
+            .map_err(|error| OpenError::Io(error.into()))?;
+        Ok(GraphAccessInspection {
+            root: canonical,
+            external_assets,
+        })
+    }
+
+    /// Validate the v0.6.5 layout in its original order and start the load.
+    pub fn open(
+        root: &Path,
+        opts: OpenOptions,
+    ) -> Result<(Self, tine_core::model::GraphMeta, ConfigState), OpenError> {
+        let root = fs::canonicalize(root).map_err(|error| OpenError::Unresolvable {
+            path: root.to_path_buf(),
+            reason: error.to_string(),
+        })?;
+        if !root.is_dir() {
+            return Err(OpenError::NotAFolder(root));
+        }
+        let graph =
+            Graph::open_checked_with_assets(&root, opts.approved_external_assets.as_deref())
+                .map_err(|error| {
+                    let message = error.to_string();
+                    if let Some(current) =
+                        message.strip_prefix("external assets directory requires approval: ")
+                    {
+                        OpenError::ExternalAssetsUnapproved {
+                            current: PathBuf::from(current),
+                        }
+                    } else if error.kind() == std::io::ErrorKind::InvalidInput {
+                        OpenError::UnsafeLayout(message)
+                    } else {
+                        OpenError::Io(error.into())
+                    }
+                })?;
+        // Build the legacy filename inventory before returning; parsing remains
+        // in the cancellable worker below.
+        let journal_ids = journal_ids_from_entries(&graph, graph.list_pages());
+        let config_path = root.join("logseq/config.edn");
+        let problem = match fs::read_to_string(config_path) {
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => Some(error.into()),
+        };
+        let graph = Arc::new(graph);
+        let config = ConfigState {
+            config: Arc::new(graph.config.clone()),
+            problem,
+        };
+        let meta = tine_core::model::GraphMeta::from_config(
+            root.display().to_string(),
+            &config.config,
+            &graph.journal_format,
+        );
+        let load = Arc::new(LoadState::new(LoadStatus::Loading));
+        let worker_graph = Arc::clone(&graph);
+        let worker_load = Arc::clone(&load);
+        std::thread::spawn(move || {
+            let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loop {
+                let completed = worker_graph
+                    .warm_cache_cancellable(|| worker_load.cancelled.load(Ordering::Acquire));
+                if completed || worker_load.cancelled.load(Ordering::Acquire) {
+                    break completed;
+                }
+            }));
+            let mut status = worker_load.status.lock().unwrap();
+            if matches!(*status, LoadStatus::Loading) {
+                *status = if matches!(completed, Ok(true)) {
+                    LoadStatus::Ready
+                } else {
+                    LoadStatus::Failed("background graph load stopped".into())
+                };
+            }
+            worker_load.ready.notify_all();
+        });
+        Ok((
+            Self {
+                graph,
+                writer: Mutex::new(()),
+                load,
+                config_state: config.clone(),
+                journal_ids: Mutex::new(journal_ids),
+                #[cfg(any(test, feature = "test-faults"))]
+                faults: Mutex::new(std::collections::HashSet::new()),
+            },
+            meta,
+            config,
+        ))
+    }
+
+    /// Current graph configuration. Never waits.
+    pub fn config(&self) -> ConfigState {
+        self.config_state.clone()
+    }
+
+    /// Interim access for commands that have not moved to the store API.
+    #[doc(hidden)]
+    pub fn legacy(&self) -> &Graph {
+        &self.graph
+    }
+
+    /// Stop the background load and refuse later I/O. Idempotent.
+    pub fn close(&self) {
+        let _writer = self.writer.lock().unwrap();
+        self.load.closed.store(true, Ordering::Release);
+        self.load.cancelled.store(true, Ordering::Release);
+        *self.load.status.lock().unwrap() = LoadStatus::Closed;
+        self.load.ready.notify_all();
+    }
+
+    /// Stop background parsing for an unbound slot while its current users finish.
+    /// A later whole-graph question may build the cache on demand, as before.
+    /// Interim (not rev 5): leaves once refresh is `scan_refresh` and unbinding
+    /// can `close` (B7b).
+    #[doc(hidden)]
+    pub fn cancel_background_load(&self) {
+        self.load.cancelled.store(true, Ordering::Release);
+        let mut status = self.load.status.lock().unwrap();
+        if matches!(*status, LoadStatus::Loading) {
+            *status = LoadStatus::Ready;
+            self.load.ready.notify_all();
+        }
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.load.closed.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn refresh_journal_ids(&self) {
+        let found = journal_ids_from_entries(&self.graph, self.graph.list_pages());
+        *self.journal_ids.lock().unwrap() = found;
     }
 
     /// Resolve the canonical journal file for a day, or the preferred new file.
@@ -165,8 +423,13 @@ impl Store {
     pub fn journal_id(&self, day: Day) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
         let title = self.graph.journal_format.title(date);
-        if let Some(entry) = self.graph.find_entry(&title, PageKind::Journal) {
+        if self.is_closed() {
+            if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
+                return id.clone();
+            }
+        } else if let Some(entry) = self.graph.find_entry(&title, PageKind::Journal) {
             if let Some(id) = entry.rel_path {
+                self.journal_ids.lock().unwrap().insert(day, id.clone());
                 return id;
             }
         }
@@ -177,11 +440,18 @@ impl Store {
             self.graph.config.preferred_format.ext()
         ))
     }
-    /// Adopt the current graph without loading it. O(1). Removed in B7.
+    /// Adopt a legacy fixture without loading it.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn from_legacy(graph: Arc<Graph>) -> Self {
         Self {
+            config_state: ConfigState {
+                config: Arc::new(graph.config.clone()),
+                problem: None,
+            },
             graph,
             writer: std::sync::Mutex::new(()),
+            load: Arc::new(LoadState::new(LoadStatus::Ready)),
+            journal_ids: Mutex::new(HashMap::new()),
             #[cfg(any(test, feature = "test-faults"))]
             faults: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
@@ -189,6 +459,9 @@ impl Store {
 
     /// Resolve the exact file a DTO would save, including pinned stray pages.
     pub fn target_for_save(&self, doc: &PageDto) -> Result<PageId, SaveOutcome> {
+        if self.is_closed() {
+            return Err(SaveOutcome::Closed);
+        }
         let (path, _) = self.graph.save_target(doc).map_err(|error| match error {
             SaveTargetError::Twin => SaveOutcome::Twin {
                 existing: PageId::from(
@@ -213,6 +486,9 @@ impl Store {
 
     /// Save one page with the editor's baseline; no write occurs on refusal.
     pub fn save(&self, id: &PageId, base: SaveBase, doc: &PageDto) -> SaveOutcome {
+        if self.is_closed() {
+            return SaveOutcome::Closed;
+        }
         if doc.guide {
             return SaveOutcome::GuideEphemeral;
         }
@@ -253,6 +529,9 @@ impl Store {
 
     /// Count entries and bytes by kind in the recoverable trash. Cost: O(trash entries).
     pub fn trash_stats(&self) -> Result<Vec<(TrashKind, u64, u64)>, StoreError> {
+        if self.is_closed() {
+            return Err(StoreError::Closed);
+        }
         let trash = trash_root(&self.graph.root);
         let mut counts = [(0, 0); 5];
         let entries = match fs::read_dir(trash) {
@@ -300,6 +579,10 @@ impl Store {
     /// Other kinds stay recoverable. On error, returns counts already removed.
     /// Cost: O(asset trash entries + bytes).
     pub fn purge_asset_trash(&self) -> Result<(u64, u64), (StoreError, u64, u64)> {
+        let _writer = self.writer.lock().unwrap();
+        if self.is_closed() {
+            return Err((StoreError::Closed, 0, 0));
+        }
         let trash = trash_root(&self.graph.root);
         self.graph
             .ensure_write_target(&trash)
@@ -431,6 +714,9 @@ impl Store {
     /// must still remain inside the selected area. Callers requiring an existing
     /// regular file must check that separately.
     pub fn path_for_os_handoff(&self, file: &FileId) -> Result<PathBuf, StoreError> {
+        if self.is_closed() {
+            return Err(StoreError::Closed);
+        }
         let area = self.area_root(file)?;
         let (area, candidate) = if let Some(rel) = file.as_str().strip_prefix("assets/") {
             let approved = self.graph.assets_path();
@@ -530,6 +816,9 @@ impl Store {
     /// Open a validated file for streaming and return its length. The final
     /// component must not be a symlink. Cost: O(1) metadata.
     pub fn open_read(&self, file: &FileId) -> Result<(File, u64), StoreError> {
+        if self.is_closed() {
+            return Err(StoreError::Closed);
+        }
         self.validate_file(file)?;
         let path = self.path_for_os_handoff(file)?;
         let raw = if let Some(rel) = file.as_str().strip_prefix("assets/") {
@@ -559,6 +848,9 @@ impl Store {
     /// Hidden entries and symlinked directories are skipped; stat/list failures
     /// are reported in `unreadable`. An absent `under` is empty. Cost O(entries).
     pub fn scan_area(&self, area: Area, under: Option<&str>) -> Result<Listing, StoreError> {
+        if self.is_closed() {
+            return Err(StoreError::Closed);
+        }
         if let Some(rel) = under {
             self.file_id(area, rel)?;
         }
@@ -699,6 +991,9 @@ impl Store {
     /// differ from the cached copy (interim behavior, before immutable D3).
     /// Cost: O(page bytes + its blocks).
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
+        if self.is_closed() {
+            return Err(StoreError::Closed);
+        }
         if self.as_page(&id.file()).is_none() {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
@@ -754,10 +1049,22 @@ impl Store {
         })
     }
 
-    /// Get a live-cache read view and record its current generation. O(1).
-    /// This interim implementation has no load failure or wait; the first
-    /// question on the view may build the cache in O(P + B + disk).
+    /// Wait for the initial load, then get a live-cache read view.
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
+        let mut status = self.load.status.lock().unwrap();
+        while matches!(*status, LoadStatus::Loading) {
+            status = self.load.ready.wait(status).unwrap();
+        }
+        match &*status {
+            LoadStatus::Closed => return Err(LoadError::Closed),
+            LoadStatus::Failed(reason) => {
+                return Err(LoadError::Failed {
+                    reason: reason.clone(),
+                })
+            }
+            LoadStatus::Ready => {}
+            LoadStatus::Loading => unreachable!(),
+        }
         Ok(WholeGraph {
             graph: Arc::clone(&self.graph),
             rev: GraphRev(self.graph.cache_generation()),
@@ -803,7 +1110,7 @@ pub struct Listing {
     pub unreadable: Vec<(String, crate::IoError)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Day(pub i64);
 
 #[derive(Debug)]
@@ -1260,8 +1567,14 @@ impl WholeGraph {
 
     fn validated_page(&self, id: &PageId) -> Result<(), QueryError> {
         let store = Store {
+            config_state: ConfigState {
+                config: Arc::new(self.graph.config.clone()),
+                problem: None,
+            },
             graph: Arc::clone(&self.graph),
             writer: std::sync::Mutex::new(()),
+            load: Arc::new(LoadState::new(LoadStatus::Ready)),
+            journal_ids: Mutex::new(HashMap::new()),
             #[cfg(any(test, feature = "test-faults"))]
             faults: std::sync::Mutex::new(std::collections::HashSet::new()),
         };

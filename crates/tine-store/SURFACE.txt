@@ -2,12 +2,18 @@
 # Counts against 01-arrival.md budget A: <=35 Store+Transaction ops,
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
 enum store::Area
+enum store::OpenError
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
 enum transaction::TxOutcome
 enum transaction::Why
 field transaction::IoError.kind
+field store::ConfigState.config
+field store::ConfigState.problem
+field store::GraphAccessInspection.external_assets
+field store::GraphAccessInspection.root
+field store::OpenOptions.approved_external_assets
 field transaction::IoError.message
 field transaction::Rollback.kept_external
 field transaction::Rollback.undo_failed
@@ -63,6 +69,9 @@ field store::Listing.unreadable
 fn store::Store::as_page
 fn store::Store::file_id
 fn store::Store::config
+fn store::Store::close
+fn store::Store::inspect
+fn store::Store::open
 fn store::Store::journal_id
 fn store::Store::open_read
 fn store::Store::page
@@ -109,6 +118,9 @@ struct store::InventoryEntry
 struct store::PageRead
 struct store::SearchRequest
 struct store::Store
+struct store::ConfigState
+struct store::GraphAccessInspection
+struct store::OpenOptions
 struct store::WholeGraph
-use crate::store::{Area,Budget,Cancel,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphRev,Inventory,InventoryEntry,Listing,LoadError,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,TrashKind,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,Listing,LoadError,OpenError,OpenOptions,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,TrashKind,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}

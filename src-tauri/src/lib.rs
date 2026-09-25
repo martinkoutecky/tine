@@ -639,15 +639,14 @@ pub fn run() {
                 let state = app.state::<AppState>();
                 graph::load_graph_for_label(root, app.handle(), "main", &state)?;
                 let slot = state::slot_for_window(&state, "main")?;
-                let g = &slot.graph;
                 // These diagnostics build a whole-graph inventory on the cold-cache critical
                 // path to first paint, before warm_cache_async. The format! args
                 // are evaluated regardless of whether diag() ends up writing, so
                 // gate the whole block on debug to keep it off the 99% hot launch.
                 if debug_enabled() {
-                    let meta = g.meta();
-                    let jdir = g.journals_path();
-                    let pdir = g.pages_path();
+                    let meta = state::graph_meta(&slot);
+                    let journals = slot.store.scan_area(tine_store::Area::Journals, None).ok();
+                    let pages = slot.store.scan_area(tine_store::Area::Pages, None).ok();
                     let inventory = slot.store.whole_graph().ok().map(|view| view.inventory());
                     let physical: Vec<_> = inventory
                         .iter()
@@ -660,26 +659,24 @@ pub fn run() {
                             _ => Vec::new(),
                         })
                         .collect();
-                    let count_md = |is_journal: bool| {
-                        physical
-                            .iter()
-                            .filter(|(entry, id)| {
-                                entry.is_journal == is_journal && id.as_str().ends_with(".md")
-                            })
-                            .count()
-                    };
                     diag(format!("graph root: {}", meta.root));
                     diag(format!(
-                        "journals dir: {} (exists={}, .md files={:?})",
-                        jdir.display(),
-                        jdir.is_dir(),
-                        inventory.as_ref().map(|_| count_md(true))
+                        "journals dir: {} (.md files={:?})",
+                        meta.journals_dir,
+                        journals.as_ref().map(|listing| listing
+                            .files
+                            .iter()
+                            .filter(|entry| entry.rel.ends_with(".md"))
+                            .count())
                     ));
                     diag(format!(
-                        "pages dir: {} (exists={}, .md files={:?})",
-                        pdir.display(),
-                        pdir.is_dir(),
-                        inventory.as_ref().map(|_| count_md(false))
+                        "pages dir: {} (.md files={:?})",
+                        meta.pages_dir,
+                        pages.as_ref().map(|listing| listing
+                            .files
+                            .iter()
+                            .filter(|entry| entry.rel.ends_with(".md"))
+                            .count())
                     ));
                     diag(format!(
                         "journals recognized as dates: {} | total page entries: {}",

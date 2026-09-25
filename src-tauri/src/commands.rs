@@ -81,8 +81,11 @@ fn asset_handoff_target(slot: &GraphSlot, name: &str) -> Result<std::path::PathB
         .map_err(asset_error)?;
     let target = slot.store.path_for_os_handoff(&id).map_err(asset_error)?;
     let target = std::fs::canonicalize(target).map_err(|error| error.to_string())?;
-    let assets =
-        std::fs::canonicalize(slot.graph.assets_path()).map_err(|error| error.to_string())?;
+    let assets = tine_store::Store::inspect(&slot.root_key)
+        .map_err(|error| error.to_string())?
+        .external_assets
+        .unwrap_or_else(|| slot.root_key.join("assets"));
+    let assets = std::fs::canonicalize(assets).map_err(|error| error.to_string())?;
     if !target.starts_with(&assets) || !target.is_file() {
         return Err("invalid asset".into());
     }
@@ -93,7 +96,7 @@ fn page_handoff_target(slot: &GraphSlot, id: &PageId) -> Result<std::path::PathB
     if slot.store.as_page(&id.file()).is_none() {
         return Err("invalid page path".into());
     }
-    let lexical = slot.graph.root.join(id.as_str());
+    let lexical = slot.root_key.join(id.as_str());
     let target = match slot.store.path_for_os_handoff(&id.file()) {
         Ok(target) => target,
         // The old page opener admitted symlinks between pages/ and journals/
@@ -105,10 +108,11 @@ fn page_handoff_target(slot: &GraphSlot, id: &PageId) -> Result<std::path::PathB
     if !target.is_file() {
         return Err("page source is not a file".into());
     }
-    let pages =
-        std::fs::canonicalize(slot.graph.pages_path()).map_err(|error| error.to_string())?;
-    let journals =
-        std::fs::canonicalize(slot.graph.journals_path()).map_err(|error| error.to_string())?;
+    let meta = crate::state::graph_meta(slot);
+    let pages = std::fs::canonicalize(slot.root_key.join(meta.pages_dir))
+        .map_err(|error| error.to_string())?;
+    let journals = std::fs::canonicalize(slot.root_key.join(meta.journals_dir))
+        .map_err(|error| error.to_string())?;
     if !target.starts_with(&pages) && !target.starts_with(&journals) {
         return Err("page source escapes graph directories".into());
     }
@@ -118,7 +122,6 @@ fn page_handoff_target(slot: &GraphSlot, id: &PageId) -> Result<std::path::PathB
 #[cfg(test)]
 mod handoff_tests {
     use super::*;
-    use tine_store::model::Graph;
 
     #[test]
     fn open_targets_require_existing_regular_files() {
@@ -137,7 +140,9 @@ mod handoff_tests {
         std::fs::write(root.join("assets/good.bin"), b"good").unwrap();
         std::fs::create_dir(root.join("pages/Directory.md")).unwrap();
         std::fs::create_dir(root.join("assets/directory.bin")).unwrap();
-        let slot = GraphSlot::new(Graph::open(&root), root.clone());
+        let (store, _, _) =
+            tine_store::Store::open(&root, tine_store::OpenOptions::default()).unwrap();
+        let slot = GraphSlot::new(store, root.clone());
 
         assert_eq!(
             page_handoff_target(&slot, &PageId::from("pages/Good.md")).unwrap(),
@@ -599,9 +604,9 @@ mod inventory_adapter_tests {
         }
         let graph = Arc::new(Graph::open(&root));
         graph.warm_cache();
-        let view = tine_store::Store::from_legacy(Arc::clone(&graph))
-            .whole_graph()
-            .unwrap();
+        let (store, _, _) =
+            tine_store::Store::open(&root, tine_store::OpenOptions::default()).unwrap();
+        let view = store.whole_graph().unwrap();
         let inventory = view.inventory();
 
         let old_pages = graph.list_pages();
@@ -1529,7 +1534,6 @@ mod capture_quick_switch_tests {
     use std::path::PathBuf;
     use std::sync::atomic::AtomicU64;
     use std::sync::{Mutex, RwLock};
-    use tine_store::model::Graph;
 
     fn state_with_selected_graph() -> (AppState, PathBuf) {
         let base = std::env::temp_dir().join(format!(
@@ -1559,7 +1563,9 @@ mod capture_quick_switch_tests {
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),
         };
-        let selected_slot = Arc::new(GraphSlot::new(Graph::open(&selected), selected.clone()));
+        let (selected_store, _, _) =
+            tine_store::Store::open(&selected, tine_store::OpenOptions::default()).unwrap();
+        let selected_slot = Arc::new(GraphSlot::new(selected_store, selected.clone()));
         let generation = selected_slot.binding_generation;
         state
             .graphs
@@ -1573,7 +1579,12 @@ mod capture_quick_switch_tests {
             .unwrap()
             .bind(
                 "other".into(),
-                Arc::new(GraphSlot::new(Graph::open(&other), other)),
+                Arc::new(GraphSlot::new(
+                    tine_store::Store::open(&other, tine_store::OpenOptions::default())
+                        .unwrap()
+                        .0,
+                    other,
+                )),
             )
             .unwrap();
         state.bind_capture_graph("main".into(), generation);
@@ -2051,7 +2062,7 @@ pub(crate) fn open_page_file(
     let slot = slot_for_context(&state)?;
     let recorded_path = path.filter(|p| !p.trim().is_empty());
     let id = if let Some(path) = recorded_path {
-        if slot.graph.resolve_rel(&path).is_none() {
+        if slot.store.legacy().resolve_rel(&path).is_none() {
             return Err("invalid page path".into());
         }
         PageId::from(path)

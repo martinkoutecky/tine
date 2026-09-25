@@ -14,10 +14,10 @@ pub mod query_plan;
 pub mod store;
 pub mod transaction;
 pub use store::{
-    Area, Budget, Cancel, Day, FacetPolicy, FileEntry, FileId, FileMeta, FileRev, GraphRev,
-    Inventory, InventoryEntry, Listing, LoadError, PageId, PageRead, QueryDialect, QueryError,
-    QueryResult, Resolved, SaveBase, SaveOutcome, SearchRequest, Store, StoreError, TrashKind,
-    WholeGraph,
+    Area, Budget, Cancel, ConfigState, Day, FacetPolicy, FileEntry, FileId, FileMeta, FileRev,
+    GraphAccessInspection, GraphRev, Inventory, InventoryEntry, Listing, LoadError, OpenError,
+    OpenOptions, PageId, PageRead, QueryDialect, QueryError, QueryResult, Resolved, SaveBase,
+    SaveOutcome, SearchRequest, Store, StoreError, TrashKind, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;

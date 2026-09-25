@@ -2,13 +2,24 @@ use crate::backup::{backup_async, backup_graph_now};
 use crate::settings::{
     approved_external_assets, remember_external_assets_approval, remember_graph,
 };
-use crate::state::{canonical_graph_root, poke_watcher, slot_for_window, AppState, GraphSlot};
+use crate::state::{
+    canonical_graph_root, graph_meta, poke_watcher, slot_for_window, AppState, GraphSlot,
+};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tine_core::model::GraphMeta;
-use tine_store::model::Graph;
+use tine_store::{OpenError, OpenOptions, Store};
+
+pub(crate) fn open_error_text(error: OpenError, layout_prefix: bool) -> String {
+    let text = error.to_string();
+    if layout_prefix {
+        format!("unsafe graph layout: {text}")
+    } else {
+        text
+    }
+}
 
 /// Reset the warm flag for a new graph load and return the new warm generation
 /// (passed to `warm_cache_async`, which only reports done if still current).
@@ -98,7 +109,7 @@ pub(crate) fn capture_graph_binding(
 }
 
 struct LoadedGraph {
-    graph: Graph,
+    store: Store,
     meta: GraphMeta,
     launch_backup_done: bool,
 }
@@ -106,20 +117,18 @@ struct LoadedGraph {
 fn open_graph_for_load(
     root: &str,
     approved_assets: Option<&Path>,
-    take_launch_backup: impl FnOnce(&Graph) -> (usize, bool),
+    take_launch_backup: impl FnOnce(&Store) -> (usize, bool),
 ) -> Result<LoadedGraph, String> {
-    // The migration runs through a Store over the graph that will be served,
-    // so its cache sees the renamed files; the Store is dropped before return.
-    let graph = std::sync::Arc::new(
-        Graph::open_checked_with_assets(root, approved_assets)
-            .map_err(|e| format!("unsafe graph layout: {e}"))?,
-    );
-    let meta = graph.meta();
-    let migration_store = tine_store::Store::from_legacy(graph.clone());
-    let needs_migration =
-        tine_graph_features::journals::has_journal_filename_migrations(&migration_store);
+    let (store, meta, _) = Store::open(
+        Path::new(root),
+        OpenOptions {
+            approved_external_assets: approved_assets.map(Path::to_path_buf),
+        },
+    )
+    .map_err(|error| open_error_text(error, true))?;
+    let needs_migration = tine_graph_features::journals::has_journal_filename_migrations(&store);
     let (backup_n, backup_complete) = if needs_migration {
-        take_launch_backup(&graph)
+        take_launch_backup(&store)
     } else {
         (0, false)
     };
@@ -127,13 +136,10 @@ fn open_graph_for_load(
     if needs_migration && launch_backup_done {
         // Recover any journals mis-saved under their title (see method docs),
         // but only after the launch snapshot has captured the original names.
-        tine_graph_features::journals::migrate_journal_filenames(&migration_store);
+        tine_graph_features::journals::migrate_journal_filenames(&store);
     }
-    drop(migration_store);
-    let graph = std::sync::Arc::try_unwrap(graph)
-        .map_err(|_| "graph still shared after journal migration".to_string())?;
     Ok(LoadedGraph {
-        graph,
+        store,
         meta,
         launch_backup_done,
     })
@@ -157,7 +163,9 @@ pub(crate) fn inspect_graph_access(
     let root = resolve_root(&path)
         .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
     let root = canonical_graph_root(&root)?;
-    let external = Graph::external_assets_target(&root).map_err(|error| error.to_string())?;
+    let external = Store::inspect(&root)
+        .map_err(|error| open_error_text(error, false))?
+        .external_assets;
     let approved_target =
         approved_external_assets(&app, &root).and_then(|path| std::fs::canonicalize(path).ok());
     let approved = external
@@ -179,8 +187,9 @@ pub(crate) fn approve_external_assets(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let root = canonical_graph_root(&graph_root)?;
-    let live = Graph::external_assets_target(&root)
-        .map_err(|error| error.to_string())?
+    let live = Store::inspect(&root)
+        .map_err(|error| open_error_text(error, false))?
+        .external_assets
         .ok_or_else(|| "graph no longer uses an external assets directory".to_string())?;
     let submitted = std::fs::canonicalize(&assets_path)
         .map_err(|error| format!("couldn't resolve external assets path: {error}"))?;
@@ -217,7 +226,7 @@ pub(crate) fn load_graph_for_label(
         if owner == window_label {
             let slot = slot_for_window(&state, &owner)?;
             return Ok(LoadGraphResult::AlreadyCurrent {
-                meta: slot.graph.meta(),
+                meta: graph_meta(&slot),
                 binding_generation: slot.binding_generation,
             });
         }
@@ -243,13 +252,13 @@ pub(crate) fn load_graph_for_label(
     let root = root_key.display().to_string();
     let approved_assets = approved_external_assets(app, &root_key);
     let LoadedGraph {
-        graph,
+        store,
         meta,
         launch_backup_done,
-    } = open_graph_for_load(&root, approved_assets.as_deref(), |graph| {
-        backup_graph_now(app, graph, "")
+    } = open_graph_for_load(&root, approved_assets.as_deref(), |store| {
+        backup_graph_now(app, store, &root_key, "")
     })?;
-    let slot = Arc::new(GraphSlot::new(graph, root_key));
+    let slot = Arc::new(GraphSlot::new(store, root_key));
     let warm_generation = begin_warm_cache(&slot);
     state
         .graphs
@@ -455,11 +464,7 @@ pub(crate) fn warm_cache_async(
         {
             return;
         }
-        let completed = slot.graph.warm_cache_cancellable(|| {
-            slot.background_cancelled.load(Ordering::Acquire)
-                || slot.warm_generation.load(Ordering::Acquire) != warm_generation
-        });
-        if !completed {
+        if slot.store.whole_graph().is_err() {
             return;
         }
         let state: State<'_, AppState> = app.state();
@@ -492,6 +497,7 @@ pub(crate) fn warm_done(
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+    use tine_store::model::Graph;
 
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("tine-graph-{tag}-{}", std::process::id()));
@@ -545,8 +551,8 @@ mod tests {
         .unwrap();
         let backup = dir.join("backup");
 
-        let loaded = open_graph_for_load(dir.to_str().unwrap(), None, |g| {
-            copy_graph_text_dir(&g.journals_path(), &backup.join("journals"))
+        let loaded = open_graph_for_load(dir.to_str().unwrap(), None, |_store| {
+            copy_graph_text_dir(&dir.join("journals"), &backup.join("journals"))
         })
         .unwrap();
 
@@ -570,5 +576,21 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_error_adapter_keeps_legacy_layout_text() {
+        let dir = scratch("layout-error-text");
+        let outside = scratch("layout-outside");
+        std::fs::remove_dir(dir.join("pages")).unwrap();
+        std::os::unix::fs::symlink(outside.join("pages"), dir.join("pages")).unwrap();
+        let old = Graph::open_checked_with_assets(&dir, None).err().unwrap();
+        let new = open_graph_for_load(dir.to_str().unwrap(), None, |_| (0, false))
+            .err()
+            .unwrap();
+        assert_eq!(new, format!("unsafe graph layout: {old}"));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(outside);
     }
 }

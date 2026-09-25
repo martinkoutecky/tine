@@ -1151,6 +1151,14 @@ impl<'a> Transaction<'a> {
     pub fn commit(mut self) -> TxOutcome {
         let _writer = self.store.writer.lock().unwrap();
         let rev = || GraphRev(self.store.graph.cache_generation());
+        if self.store.is_closed() {
+            return TxOutcome::NotCommitted {
+                step: 0,
+                why: Why::Refused(Refusal::Closed),
+                rollback: Rollback::default(),
+                graph_rev: rev(),
+            };
+        }
         let starting_rev = self.store.graph.cache_generation();
         let mut names = Vec::new();
         for step in &self.steps {
@@ -1376,10 +1384,18 @@ impl<'a> Transaction<'a> {
                 rollback,
                 graph_rev: rev(),
             },
-            None => TxOutcome::Committed {
-                steps: results,
-                graph_rev: rev(),
-            },
+            None => {
+                if names.iter().any(|name| {
+                    name.as_str()
+                        .starts_with(&format!("{}/", self.store.graph.config.journals_dir))
+                }) {
+                    self.store.refresh_journal_ids();
+                }
+                TxOutcome::Committed {
+                    steps: results,
+                    graph_rev: rev(),
+                }
+            }
         }
     }
 }

@@ -21,7 +21,6 @@ pub(crate) struct CaptureGraphBinding {
 }
 
 pub(crate) struct GraphSlot {
-    pub(crate) graph: Arc<Graph>,
     pub(crate) store: Store,
     /// Latest `((` request per transport lane for this window binding.
     pub(crate) block_search_lanes: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -38,12 +37,10 @@ pub(crate) struct GraphSlot {
 }
 
 impl GraphSlot {
-    pub(crate) fn new(graph: Graph, root_key: PathBuf) -> Self {
+    pub(crate) fn new(store: Store, root_key: PathBuf) -> Self {
         static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
-        let graph = Arc::new(graph);
         Self {
-            store: Store::from_legacy(Arc::clone(&graph)),
-            graph,
+            store,
             block_search_lanes: Mutex::new(HashMap::new()),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -58,11 +55,9 @@ impl GraphSlot {
     /// assignment, not the particular in-memory `Graph` instance. Minting a new
     /// generation here made every later command from that window stale after a
     /// config refresh, including autosaves.
-    fn refreshed(graph: Graph, old: &GraphSlot) -> Self {
-        let graph = Arc::new(graph);
+    fn refreshed(store: Store, old: &GraphSlot) -> Self {
         Self {
-            store: Store::from_legacy(Arc::clone(&graph)),
-            graph,
+            store,
             block_search_lanes: Mutex::new(HashMap::new()),
             root_key: old.root_key.clone(),
             binding_generation: old.binding_generation,
@@ -73,6 +68,25 @@ impl GraphSlot {
             ),
             background_cancelled: AtomicBool::new(false),
         }
+    }
+}
+
+pub(crate) fn graph_meta(slot: &GraphSlot) -> tine_core::model::GraphMeta {
+    let config = slot.store.config();
+    let format = tine_core::date::JournalFormat::new(
+        config.journal_file_name_format.as_deref(),
+        config.journal_page_title_format.as_deref(),
+    );
+    tine_core::model::GraphMeta::from_config(
+        slot.root_key.display().to_string(),
+        &config.config,
+        &format,
+    )
+}
+
+impl Drop for GraphSlot {
+    fn drop(&mut self) {
+        self.store.close();
     }
 }
 
@@ -121,6 +135,7 @@ impl GraphRegistry {
             if old.binding_generation != slot.binding_generation || old.root_key != slot.root_key {
                 old.background_cancelled
                     .store(true, std::sync::atomic::Ordering::Release);
+                old.store.cancel_background_load();
             }
             self.by_root.remove(&old.root_key);
         }
@@ -132,6 +147,7 @@ impl GraphRegistry {
         let slot = self.by_window.remove(window)?;
         slot.background_cancelled
             .store(true, std::sync::atomic::Ordering::Release);
+        slot.store.cancel_background_load();
         self.by_root.remove(&slot.root_key);
         Some(slot)
     }
@@ -283,7 +299,7 @@ pub(crate) fn with_graph<T>(
     f: impl FnOnce(&Graph) -> Result<T, String>,
 ) -> Result<T, String> {
     let slot = slot_for_context(ctx)?;
-    f(&slot.graph)
+    f(slot.store.legacy())
 }
 
 pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
@@ -291,16 +307,15 @@ pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
     let old = slot_for_window(&ctx.state, &label)?;
     let approved =
         crate::settings::approved_external_assets(ctx.window.app_handle(), &old.root_key);
-    let graph = Arc::new(
-        Graph::open_checked_with_assets(&old.root_key, approved.as_deref())
-            .map_err(|e| e.to_string())?,
-    );
-    let migration_store = Store::from_legacy(graph.clone());
-    tine_graph_features::journals::migrate_journal_filenames(&migration_store);
-    drop(migration_store);
-    let graph = Arc::try_unwrap(graph)
-        .map_err(|_| "graph still shared after journal migration".to_string())?;
-    let replacement = Arc::new(GraphSlot::refreshed(graph, &old));
+    let (store, _, _) = Store::open(
+        &old.root_key,
+        tine_store::OpenOptions {
+            approved_external_assets: approved,
+        },
+    )
+    .map_err(|error| crate::graph::open_error_text(error, false))?;
+    tine_graph_features::journals::migrate_journal_filenames(&store);
+    let replacement = Arc::new(GraphSlot::refreshed(store, &old));
     ctx.state.graphs.write().unwrap().bind(label, replacement)?;
     poke_watcher(&ctx.state);
     Ok(())
@@ -319,7 +334,12 @@ mod tests {
     fn graph(root: &Path) -> Arc<GraphSlot> {
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::create_dir_all(root.join("journals")).unwrap();
-        Arc::new(GraphSlot::new(Graph::open(root), root.to_path_buf()))
+        Arc::new(GraphSlot::new(
+            Store::open(root, tine_store::OpenOptions::default())
+                .unwrap()
+                .0,
+            root.to_path_buf(),
+        ))
     }
 
     #[test]
@@ -378,7 +398,12 @@ mod tests {
         old.warm_generation
             .store(7, std::sync::atomic::Ordering::Release);
 
-        let replacement = GraphSlot::refreshed(Graph::open(&base), &old);
+        let replacement = GraphSlot::refreshed(
+            Store::open(&base, tine_store::OpenOptions::default())
+                .unwrap()
+                .0,
+            &old,
+        );
 
         assert_eq!(replacement.binding_generation, old.binding_generation);
         assert_eq!(replacement.root_key, old.root_key);
@@ -391,6 +416,40 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Acquire),
             7
         );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn old_slot_can_commit_during_same_root_refresh() {
+        let base = std::env::temp_dir().join(format!(
+            "tine-slot-overlap-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        let old = graph(&base);
+        let mut registry = GraphRegistry::default();
+        registry.bind("main".into(), Arc::clone(&old)).unwrap();
+        let new_store = Store::open(&base, tine_store::OpenOptions::default())
+            .unwrap()
+            .0;
+        let replacement = Arc::new(GraphSlot::refreshed(new_store, &old));
+        registry.bind("main".into(), replacement).unwrap();
+        let id = old
+            .store
+            .file_id(tine_store::Area::Pages, "DuringRefresh.md")
+            .unwrap();
+        let mut tx = old.store.transaction();
+        tx.create(&id, tine_store::Content::Bytes(b"- retained\n".to_vec()));
+        assert!(matches!(
+            tx.commit(),
+            tine_store::TxOutcome::Committed { .. }
+        ));
+        assert_eq!(
+            std::fs::read(base.join("pages/DuringRefresh.md")).unwrap(),
+            b"- retained\n"
+        );
+        drop(registry);
+        drop(old);
         let _ = std::fs::remove_dir_all(base);
     }
 

@@ -363,7 +363,11 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
             let live: HashSet<String> = entries.iter().map(|(label, _)| label.clone()).collect();
             graphs.retain(|label, _| live.contains(label));
             for (label, slot) in entries {
-                let dirs = [slot.graph.journals_path(), slot.graph.pages_path()];
+                let meta = crate::state::graph_meta(&slot);
+                let dirs = [
+                    slot.root_key.join(meta.journals_dir),
+                    slot.root_key.join(meta.pages_dir),
+                ];
                 match graphs.get_mut(&label) {
                     Some(current) if current.dirs == dirs => current.slot = slot,
                     _ => {
@@ -445,7 +449,7 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                 let need_full = event_need_full || !inotify || !full_owned.is_empty();
                 if need_full || !owned.is_empty() {
                     let (changes, conflicts_dirty, _) = reconcile_pending(
-                        &graph.slot.graph,
+                        graph.slot.store.legacy(),
                         &graph.dirs,
                         &mut graph.snap,
                         &owned,

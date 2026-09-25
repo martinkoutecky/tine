@@ -769,7 +769,7 @@ impl Graph {
     /// returned path is canonical and therefore suitable for showing to the user
     /// and binding a device-local approval. An in-graph directory (or a missing
     /// directory that Tine may create normally) returns `None`.
-    pub fn external_assets_target(root: impl AsRef<Path>) -> io::Result<Option<PathBuf>> {
+    pub(crate) fn external_assets_target(root: impl AsRef<Path>) -> io::Result<Option<PathBuf>> {
         let root = fs::canonicalize(root.as_ref())?;
         let assets = root.join("assets");
         match fs::symlink_metadata(&assets) {
@@ -2673,7 +2673,7 @@ impl Graph {
 
     /// Build graph-open caches while allowing a revoked window binding to stop
     /// between files and derived-map phases. Returns false when cancelled.
-    pub fn warm_cache_cancellable(&self, cancelled: impl Fn() -> bool) -> bool {
+    pub(crate) fn warm_cache_cancellable(&self, cancelled: impl Fn() -> bool) -> bool {
         if !self.warm_page_cache_cancellable(&cancelled) || cancelled() {
             return false;
         }

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::Manager;
-use tine_store::model::Graph;
+use tine_store::{Area, Store};
 
 // Snapshot the graph's markdown into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
@@ -21,7 +21,9 @@ const ASSET_RESTORE_RECOVERY_DIR: &str = ".tine-restore-recovery";
 static BACKUP_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
 pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
-    let source = BackupSource::from_graph(&slot.graph);
+    let Ok(source) = BackupSource::from_store(&slot.store, &slot.root_key) else {
+        return;
+    };
     std::thread::spawn(move || {
         // Defer the launch snapshot ~1s so its whole-graph file copy doesn't
         // contend for disk I/O with first-journal paint and the warm-cache parse
@@ -42,7 +44,7 @@ pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
         if slot.background_cancelled.load(Ordering::Acquire) {
             return;
         }
-        let _ = do_backup_source_cancellable(&app, source, "", &|| {
+        let _ = do_backup_source_cancellable(&app, &slot.store, source, "", &|| {
             slot.background_cancelled.load(Ordering::Acquire)
         }); // launch snapshot is best-effort
     });
@@ -50,10 +52,14 @@ pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
 
 pub(crate) fn backup_graph_now(
     app: &tauri::AppHandle,
-    graph: &Graph,
+    store: &Store,
+    root: &std::path::Path,
     suffix: &str,
 ) -> (usize, bool) {
-    do_backup_source(app, BackupSource::from_graph(graph), suffix)
+    let Ok(source) = BackupSource::from_store(store, root) else {
+        return (0, false);
+    };
+    do_backup_source(app, store, source, suffix)
 }
 
 /// Take one snapshot of the current graph now (synchronous). Returns the number
@@ -76,16 +82,27 @@ struct BackupSource {
 }
 
 impl BackupSource {
-    fn from_graph(g: &Graph) -> Self {
-        Self {
-            journals: g.journals_path(),
-            pages: g.pages_path(),
-            assets: g.assets_path(),
-            cfg: g.root.join("logseq").join("config.edn"),
-            root: g.root.clone(),
-            journals_dir: g.config.journals_dir.clone(),
-            pages_dir: g.config.pages_dir.clone(),
-        }
+    fn from_store(store: &Store, root: &std::path::Path) -> Result<Self, String> {
+        let config = store.config();
+        let root = root.to_path_buf();
+        let probe = store
+            .file_id(Area::Assets, "__tine_backup_probe__")
+            .map_err(|error| format!("unsafe assets directory: {error:?}"))?;
+        let assets = store
+            .path_for_os_handoff(&probe)
+            .map_err(|error| format!("unsafe assets directory: {error:?}"))?
+            .parent()
+            .ok_or("unsafe assets directory")?
+            .to_path_buf();
+        Ok(Self {
+            journals: root.join(&config.journals_dir),
+            pages: root.join(&config.pages_dir),
+            assets,
+            cfg: root.join("logseq").join("config.edn"),
+            root,
+            journals_dir: config.journals_dir.clone(),
+            pages_dir: config.pages_dir.clone(),
+        })
     }
 }
 
@@ -212,12 +229,81 @@ fn verify_snapshot(dir: &std::path::Path, manifest: &SnapshotManifest) -> bool {
         .unwrap_or(false)
 }
 
-fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) -> (usize, bool) {
+fn do_backup_source(
+    app: &tauri::AppHandle,
+    store: &Store,
+    source: BackupSource,
+    suffix: &str,
+) -> (usize, bool) {
     let _worker = BACKUP_WORK
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
         .unwrap();
-    do_backup_source_cancellable(app, source, suffix, &|| false)
+    do_backup_source_cancellable(app, store, source, suffix, &|| false)
+}
+
+fn copy_store_area(
+    store: &Store,
+    area: Area,
+    dest: &std::path::Path,
+    include: fn(&std::path::Path) -> bool,
+    cancelled: &dyn Fn() -> bool,
+) -> (usize, usize) {
+    if cancelled() {
+        return (0, 1);
+    }
+    if std::fs::create_dir_all(dest).is_err() {
+        return (0, 1);
+    }
+    let listing = match store.scan_area(area, None) {
+        Ok(listing) => listing,
+        Err(_) => return (0, 1),
+    };
+    let mut copied = 0;
+    let mut failed = listing
+        .unreadable
+        .iter()
+        .filter(|(_, error)| error.kind != std::io::ErrorKind::NotFound)
+        .count();
+    for entry in listing.files {
+        if cancelled() {
+            return (copied, failed + 1);
+        }
+        if !include(std::path::Path::new(&entry.rel)) {
+            continue;
+        }
+        let target = dest.join(&entry.rel);
+        let result = store.read(&entry.id, None).ok().and_then(|(bytes, _)| {
+            target
+                .parent()
+                .and_then(|parent| std::fs::create_dir_all(parent).ok())?;
+            std::fs::write(target, bytes).ok()
+        });
+        if result.is_some() {
+            copied += 1;
+        } else {
+            failed += 1;
+        }
+    }
+    (copied, failed)
+}
+
+fn count_store_text(store: &Store, area: Area) -> Option<usize> {
+    let listing = store.scan_area(area, None).ok()?;
+    if listing
+        .unreadable
+        .iter()
+        .any(|(_, error)| error.kind != std::io::ErrorKind::NotFound)
+    {
+        return None;
+    }
+    Some(
+        listing
+            .files
+            .iter()
+            .filter(|entry| is_graph_text(std::path::Path::new(&entry.rel)))
+            .count(),
+    )
 }
 
 struct PartialBackup {
@@ -251,6 +337,7 @@ fn cleanup_partial_backups(base: &std::path::Path) {
 
 fn do_backup_source_cancellable(
     app: &tauri::AppHandle,
+    store: &Store,
     source: BackupSource,
     suffix: &str,
     cancelled: &dyn Fn() -> bool,
@@ -295,28 +382,58 @@ fn do_backup_source_cancellable(
         path: dest.clone(),
         committed: false,
     };
-    let live_text_n = count_md_recursive_cancellable(&source.journals, cancelled)
-        + count_md_recursive_cancellable(&source.pages, cancelled);
-    if cancelled() {
+    let Some(live_text_n) = count_store_text(store, Area::Journals)
+        .and_then(|journals| count_store_text(store, Area::Pages).map(|pages| journals + pages))
+    else {
         return (0, false);
-    }
-    let (cj, fj) = copy_md_dir_cancellable(&source.journals, &dest.join("journals"), cancelled);
-    let (cp, fp) = copy_md_dir_cancellable(&source.pages, &dest.join("pages"), cancelled);
-    let (ca, fa) = copy_asset_sidecars_dir_cancellable(
-        &source.assets,
+    };
+    let (cj, fj) = copy_store_area(
+        store,
+        Area::Journals,
+        &dest.join("journals"),
+        is_graph_text,
+        cancelled,
+    );
+    let (cp, fp) = copy_store_area(
+        store,
+        Area::Pages,
+        &dest.join("pages"),
+        is_graph_text,
+        cancelled,
+    );
+    let (ca, fa) = copy_store_area(
+        store,
+        Area::Assets,
         &dest.join(dir_name(&source.assets)),
+        is_asset_sidecar,
         cancelled,
     );
     let mut n = cj + cp + ca;
     let mut failed = fj + fp + fa;
-    if !cancelled() && source.cfg.exists() {
-        let out = dest.join("logseq");
-        if std::fs::create_dir_all(&out).is_ok()
-            && std::fs::copy(&source.cfg, out.join("config.edn")).is_ok()
-        {
-            n += 1;
-        } else {
-            failed += 1;
+    if !cancelled() {
+        match store.scan_area(Area::Meta, None) {
+            Ok(listing) => {
+                failed += listing
+                    .unreadable
+                    .iter()
+                    .filter(|(_, error)| error.kind != std::io::ErrorKind::NotFound)
+                    .count();
+                if let Some(config) = listing.files.iter().find(|entry| entry.rel == "config.edn") {
+                    match store.read(&config.id, None) {
+                        Ok((bytes, _)) => {
+                            if std::fs::create_dir_all(dest.join("logseq")).is_ok()
+                                && std::fs::write(dest.join("logseq/config.edn"), bytes).is_ok()
+                            {
+                                n += 1;
+                            } else {
+                                failed += 1;
+                            }
+                        }
+                        _ => failed += 1,
+                    }
+                }
+            }
+            Err(_) => failed += 1,
         }
     }
     let complete = !cancelled() && failed == 0 && cj + cp == live_text_n;
@@ -383,15 +500,15 @@ pub(crate) fn set_backup_keep(
     })?;
     // Apply the new (possibly lower) cap to the current graph's snapshots now.
     let slot = slot_for_context(&state)?;
-    if let Some(base) = backup_base(&app, &slot.graph) {
+    if let Some(base) = backup_base(&app, &slot.root_key) {
         prune_backups(&base, keep);
     }
     Ok(())
 }
 
 /// The backup directory for the currently-open graph (`<app-data>/backups/<id>`).
-fn backup_base(app: &tauri::AppHandle, graph: &Graph) -> Option<PathBuf> {
-    backup_base_for_root(app, &graph.root)
+fn backup_base(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBuf> {
+    backup_base_for_root(app, root)
 }
 
 fn backup_base_for_root(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBuf> {
@@ -404,7 +521,7 @@ pub(crate) async fn list_backups(
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<Vec<BackupInfo>, String> {
-    let root = slot_for_context(&state)?.graph.root.clone();
+    let root = slot_for_context(&state)?.root_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let Some(base) = backup_base_for_root(&app, &root) else {
             return Vec::new();
@@ -506,12 +623,13 @@ pub(crate) async fn restore_backup(
     {
         return Err("invalid backup id".into());
     }
-    let source = BackupSource::from_graph(&slot_for_context(&state)?.graph);
+    let slot = slot_for_context(&state)?;
+    let source = BackupSource::from_store(&slot.store, &slot.root_key)?;
     let restore_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
         restore_from_backup_source(&stamp, &base, source, |source| {
-            do_backup_source(&restore_app, source.clone(), "pre-restore")
+            do_backup_source(&restore_app, &slot.store, source.clone(), "pre-restore")
         })
     })
     .await
@@ -1234,6 +1352,7 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) 
     copy_md_dir_cancellable(src, dest, &|| false)
 }
 
+#[cfg(test)]
 fn copy_md_dir_cancellable(
     src: &std::path::Path,
     dest: &std::path::Path,
@@ -1315,6 +1434,7 @@ fn copy_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> (us
     copy_asset_sidecars_dir_cancellable(src, dest, &|| false)
 }
 
+#[cfg(test)]
 fn copy_asset_sidecars_dir_cancellable(
     src: &std::path::Path,
     dest: &std::path::Path,
@@ -1433,6 +1553,56 @@ mod tests {
         assert_ne!(root_backup_id(&dash), root_backup_id(&underscore));
         assert_eq!(root_backup_id(&dash), root_backup_id(&dash));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_backup_reads_graph_files_through_store() {
+        let root = scratch("store-backup-read");
+        std::fs::create_dir_all(root.join("pages/nested")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::write(root.join("pages/nested/Note.md"), b"- note\n").unwrap();
+        std::fs::write(root.join("pages/Ignore.txt"), b"skip").unwrap();
+        let (store, _, _) = Store::open(&root, tine_store::OpenOptions::default()).unwrap();
+        let dest = root.join("backup-out");
+        assert_eq!(
+            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false),
+            (1, 0)
+        );
+        assert_eq!(
+            std::fs::read(dest.join("nested/Note.md")).unwrap(),
+            b"- note\n"
+        );
+        assert!(!dest.join("Ignore.txt").exists());
+        store.close();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_source_refuses_retargeted_external_assets() {
+        let root = scratch("retargeted-backup-assets");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        let first = root.with_extension("assets-first");
+        let second = root.with_extension("assets-second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::os::unix::fs::symlink(&first, root.join("assets")).unwrap();
+        let (store, _, _) = Store::open(
+            &root,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(first.clone()),
+            },
+        )
+        .unwrap();
+        assert!(BackupSource::from_store(&store, &root).is_ok());
+        std::fs::remove_file(root.join("assets")).unwrap();
+        std::os::unix::fs::symlink(&second, root.join("assets")).unwrap();
+        assert!(BackupSource::from_store(&store, &root).is_err());
+        store.close();
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(first);
+        let _ = std::fs::remove_dir_all(second);
     }
 
     #[test]
