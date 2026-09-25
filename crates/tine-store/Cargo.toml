@@ -30,5 +30,5 @@ syn = { version = "2", features = ["full"] }
 quote = "1"
 tine-core = { path = "../tine-core", features = ["test-counters"] }
 # Fault injection for tests/transaction.rs runs in the ordinary workspace test gate.
-tine-store = { path = ".", features = ["test-faults"] }
+tine-store = { path = ".", features = ["test-faults", "legacy-fixtures"] }
 pretty_assertions = "1"

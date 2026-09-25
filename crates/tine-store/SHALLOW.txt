@@ -2,7 +2,7 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 77
+# ceiling: 71
 field model::Graph.config
 field model::Graph.root
 field onboarding::GuideCopyResult.copied_assets
@@ -30,8 +30,6 @@ fn model::Graph::block_ref_counts
 fn model::Graph::block_referrers
 fn model::Graph::cache_generation
 fn model::Graph::custom_css
-fn model::Graph::delete_page
-fn model::Graph::delete_page_expected
 fn model::Graph::external_assets_target
 fn model::Graph::find_entry
 fn model::Graph::force_save_page
@@ -43,7 +41,6 @@ fn model::Graph::journals_path
 fn model::Graph::list_pages
 fn model::Graph::load_named
 fn model::Graph::load_page
-fn model::Graph::merge_pages
 fn model::Graph::meta
 fn model::Graph::open
 fn model::Graph::open_checked_with_assets
@@ -55,9 +52,6 @@ fn model::Graph::pages_path
 fn model::Graph::publish_html
 fn model::Graph::referenced_page_names
 fn model::Graph::rel_path
-fn model::Graph::rename_file_to_page
-fn model::Graph::rename_page
-fn model::Graph::rename_page_expected
 fn model::Graph::resolve_block
 fn model::Graph::resolve_blocks
 fn model::Graph::resolve_rel

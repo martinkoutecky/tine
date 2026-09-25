@@ -1106,10 +1106,15 @@ pub(crate) fn delete_page(
     expected_path: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.delete_page_expected(&name, kind, expected_path.as_deref())
-            .map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::pages::delete_page_expected(
+        &slot.store,
+        &name,
+        kind,
+        expected_path.as_deref(),
+        None,
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1119,11 +1124,15 @@ pub(crate) async fn rename_page(
     expected_path: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        graph
-            .rename_page_expected(&old, &new, expected_path.as_deref())
-            .map_err(|e| e.to_string())
+        tine_graph_features::pages::rename_page_expected(
+            &slot.store,
+            &old,
+            &new,
+            expected_path.as_deref(),
+        )
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2599,9 +2608,9 @@ pub(crate) fn get_page_by_path(
 /// normal round-tripping save path (#21).
 #[tauri::command]
 pub(crate) fn merge_pages(src: String, dst: String, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.merge_pages(&src, &dst).map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::pages::merge_pages(&slot.store, &src, &dst)
+        .map_err(|error| error.to_string())
 }
 
 /// Rescue a duplicate-day stray by moving it to a uniquely-named page
@@ -2612,10 +2621,9 @@ pub(crate) fn rename_file_to_page(
     new_name: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.rename_file_to_page(&path, &new_name)
-            .map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::pages::rename_file_to_page(&slot.store, &path, &new_name)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

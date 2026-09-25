@@ -79,6 +79,7 @@ impl SaveTargetError {
 
 /// The error for a path-addressed op (#21) whose graph-root-relative path is
 /// invalid — outside `journals/`/`pages/`, a traversal, or the wrong extension.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn bad_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
 }
@@ -209,7 +210,7 @@ pub struct Graph {
 }
 
 pub(crate) enum Withdrawal {
-    Exact,
+    Exact(PathBuf),
     ExternalLive,
     ExternalRecovery(PathBuf),
     Missing,
@@ -749,7 +750,7 @@ fn guide_twin_race_hook(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "legacy-fixtures"))]
 fn rename_source_remove_failpoint() -> io::Result<()> {
     Ok(())
 }
@@ -1663,6 +1664,7 @@ impl Graph {
     /// dst wins on a clash) so an alias/tags/icon isn't silently lost; src free-text
     /// in the pre-block is dropped. The src is trashed ONLY after `dst` is durably
     /// written.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn merge_pages(&self, src_rel: &str, dst_rel: &str) -> io::Result<()> {
         let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
         let dst = self.resolve_rel(dst_rel).ok_or_else(bad_path)?;
@@ -1776,6 +1778,7 @@ impl Graph {
     /// `new_name` already exists in EITHER extension (never clobbers) or the name is
     /// empty. Inbound references are NOT rewritten (a stray rarely has any); the
     /// file's own content is unchanged.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn rename_file_to_page(&self, src_rel: &str, new_name: &str) -> io::Result<()> {
         let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
         let name = new_name.trim();
@@ -2293,6 +2296,7 @@ impl Graph {
     /// Candidate paths for rename after validating the index covers the exact
     /// page-list/collision snapshot rename already collected. `None` means the
     /// caller must retain its correct whole-list scan.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn reference_candidate_paths_for_entries(
         &self,
         names_norm: &[String],
@@ -3073,6 +3077,7 @@ impl Graph {
     }
 
     /// Drop one page from the cache after deleting its file.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn cache_remove(&self, name: &str, kind: PageKind) {
         // A page delete is a page-set change (affects namespaces, exists-by-ref,
         // every backlink/query) — drop the whole derived cache.
@@ -3531,10 +3536,12 @@ impl Graph {
     /// every touched file, re-verifies each is unchanged since collection, commits,
     /// and rolls back every write on any failure. Aborts (no change) if a target
     /// name already exists or a touched file changed under us.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn rename_page(&self, old: &str, new: &str) -> io::Result<()> {
         self.rename_page_expected(old, new, None)
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn rename_page_expected(
         &self,
         old: &str,
@@ -3858,10 +3865,12 @@ impl Graph {
     /// never re-loaded) — so a delete that races an unseen external edit, or a
     /// simple misclick, is recoverable. If the trash move fails, the live file is
     /// left in place and the error is returned.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
         self.delete_page_expected(name, kind, None)
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn delete_page_expected(
         &self,
         name: &str,
@@ -3909,6 +3918,7 @@ impl Graph {
     /// Validate the snapshot captured by a page menu/title before any mutation.
     /// Even an exact path does not authorize choosing one logical duplicate: the
     /// semantics of rewriting `[[page]]` references remain ambiguous.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn validate_page_mutation_target(
         &self,
         name: &str,
@@ -5014,7 +5024,7 @@ impl Graph {
         self.withdraw_file_to_conflict_if(path, reason, |staged| {
             fs::read(staged).map(|bytes| bytes == expected)
         })
-        .map(|result| matches!(result, Withdrawal::Exact))
+        .map(|result| matches!(result, Withdrawal::Exact(_)))
     }
 
     pub(crate) fn transaction_withdraw_exact(
@@ -5090,7 +5100,7 @@ impl Graph {
             }
         };
         if equal {
-            return Ok(Withdrawal::Exact);
+            return Ok(Withdrawal::Exact(staged));
         }
         match move_file_noreplace(&staged, path) {
             Ok(()) => Ok(Withdrawal::ExternalLive),
@@ -6535,6 +6545,7 @@ pub(crate) fn trash_stamp() -> String {
     format!("{ms}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn move_to_trash(src: &Path, dest: &Path, trash: &Path) -> io::Result<()> {
     fs::create_dir_all(trash).map_err(|e| {
         io::Error::new(

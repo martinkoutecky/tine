@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::pdf::{Highlight, Position, Rect};
-use tine_graph_features::{assets, conflicts, journals, pdf};
-use tine_store::{model::Graph, Content, Day, FaultPoint, Store};
+use tine_graph_features::{assets, conflicts, journals, pages, pdf};
+use tine_store::{model::Graph, Area, Content, Day, FaultPoint, Store};
 
 fn disk_tree(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
     fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) {
@@ -59,6 +59,7 @@ fn source_scan_guard_clients_touch_no_path() {
         ("assets", include_str!("../src/assets.rs")),
         ("conflicts", include_str!("../src/conflicts.rs")),
         ("journals", include_str!("../src/journals.rs")),
+        ("pages", include_str!("../src/pages.rs")),
         ("pdf", include_str!("../src/pdf.rs")),
     ] {
         for forbidden in [
@@ -744,4 +745,357 @@ fn empty_sanitized_pdf_key_keeps_legacy_crop_location() {
         fs::read(a.join("assets/1_crop_5.png")).unwrap(),
         fs::read(b.join("assets/1_crop_5.png")).unwrap()
     );
+}
+
+fn put(root: &std::path::Path, rel: &str, body: &str) {
+    let path = root.join(rel);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, body).unwrap();
+}
+
+fn operation_result(result: &std::io::Result<()>, root: &std::path::Path) -> String {
+    match result {
+        Ok(()) => "ok".to_owned(),
+        Err(error) => format!("{:?}: {}", error.kind(), error)
+            .replace(&root.to_string_lossy().to_string(), "<root>"),
+    }
+}
+
+#[test]
+fn page_rename_matches_legacy_for_refs_namespace_alias_and_title() {
+    for (label, old_name, new_name, files, config) in [
+        (
+            "plain",
+            "x",
+            "Next Name",
+            vec![
+                ("pages/x.md", "- own [[x]]\n"),
+                ("pages/one.md", "- [[x]] #x #[[x]]\n"),
+                ("pages/two.md", "tags:: x, [[x]], #x\n- [[x]]\n"),
+                ("pages/three.org", "* [[x]] #x #[[x]]\n"),
+                ("journals/2026_06_18.md", "- [[x]]\n"),
+            ],
+            None,
+        ),
+        (
+            "namespace",
+            "a",
+            "b",
+            vec![
+                ("pages/a.md", "- [[a/child]]\n"),
+                ("pages/a___child.md", "- [[a]]\n"),
+                ("pages/ref.md", "- [[a/child]] [[a]]\n"),
+            ],
+            Some("{:file/name-format :triple-lowbar}"),
+        ),
+        (
+            "alias-title",
+            "Target",
+            "Changed",
+            vec![
+                (
+                    "pages/Target.md",
+                    "title:: Display Target\nalias:: Alternate\n- [[Target]]\n",
+                ),
+                ("pages/ref.md", "- [[Target]] [[Alternate]]\n"),
+            ],
+            None,
+        ),
+        (
+            "case-only",
+            "target",
+            "TARGET",
+            vec![("pages/target.md", "- [[target]]\n")],
+            None,
+        ),
+        (
+            "reference-only",
+            "Missing",
+            "Found",
+            vec![("pages/ref.md", "- [[Missing]] #Missing\n")],
+            None,
+        ),
+    ] {
+        let (a, _) = fixture(&format!("rename-{label}-new"));
+        let (b, _) = fixture(&format!("rename-{label}-old"));
+        for root in [&a, &b] {
+            for (rel, body) in &files {
+                put(root, rel, body);
+            }
+            if let Some(edn) = config {
+                put(root, "logseq/config.edn", edn);
+            }
+        }
+        let store = Store::from_legacy(Arc::new(Graph::open(&a)));
+        let old = Graph::open(&b);
+        let client = pages::rename_page_expected(&store, old_name, new_name, None);
+        let legacy = old.rename_page_expected(old_name, new_name, None);
+        assert_eq!(
+            operation_result(&client, &a),
+            operation_result(&legacy, &b),
+            "{label} return"
+        );
+        assert_eq!(disk_tree(&a), disk_tree(&b), "{label} disk");
+        if label == "plain" {
+            let moved = store.file_id(Area::Pages, "Next Name.md").unwrap();
+            let disk_rev = store.read(&moved, None).unwrap().1;
+            assert_eq!(
+                store.page(&store.as_page(&moved).unwrap()).unwrap().rev,
+                disk_rev
+            );
+        }
+        if label == "case-only" {
+            assert!(a.join("pages/target.md").exists());
+            assert!(!a.join("pages/TARGET.md").exists());
+        }
+    }
+}
+
+#[test]
+fn page_rename_refusals_match_legacy_and_keep_disk() {
+    for (label, files) in [
+        (
+            "target-exists",
+            vec![("pages/x.md", "- x\n"), ("pages/y.md", "- y\n")],
+        ),
+        (
+            "org-h1",
+            vec![
+                ("pages/x.md", "- x\n"),
+                ("pages/ref.org", "* Parent\n*** [[x]]\n"),
+            ],
+        ),
+    ] {
+        let (a, _) = fixture(&format!("rename-refusal-{label}-new"));
+        let (b, _) = fixture(&format!("rename-refusal-{label}-old"));
+        for root in [&a, &b] {
+            for (rel, body) in &files {
+                put(root, rel, body);
+            }
+        }
+        let store = Store::from_legacy(Arc::new(Graph::open(&a)));
+        let old = Graph::open(&b);
+        let before = disk_tree(&a);
+        let to = if label == "target-exists" { "y" } else { "z" };
+        let client = pages::rename_page_expected(&store, "x", to, None);
+        let legacy = old.rename_page_expected("x", to, None);
+        assert_eq!(
+            operation_result(&client, &a),
+            operation_result(&legacy, &b),
+            "{label} result"
+        );
+        assert_eq!(disk_tree(&a), before, "{label} client changed disk");
+        assert_eq!(disk_tree(&a), disk_tree(&b), "{label} legacy disk");
+    }
+}
+
+#[test]
+fn page_merge_delete_and_rescue_match_legacy_bytes() {
+    use tine_core::model::PageKind;
+    let (a, _) = fixture("page-operations-new");
+    let (b, _) = fixture("page-operations-old");
+    for root in [&a, &b] {
+        put(
+            root,
+            "pages/src.md",
+            "alias:: Alias\ntags:: shared\n- moved\n",
+        );
+        put(root, "pages/dst.md", "tags:: keep\n- kept\n");
+        put(root, "journals/Loose.md", "- rescued\n");
+        put(root, "pages/delete.md", "- gone\n");
+        put(root, "pages/ref.md", "- [[src]] and [[dst]]\n");
+    }
+    let store = Store::from_legacy(Arc::new(Graph::open(&a)));
+    let old = Graph::open(&b);
+    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    old.merge_pages("pages/src.md", "pages/dst.md").unwrap();
+    assert_eq!(disk_tree(&a), disk_tree(&b), "merge bytes");
+    pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued").unwrap();
+    old.rename_file_to_page("journals/Loose.md", "Rescued")
+        .unwrap();
+    assert_eq!(disk_tree(&a), disk_tree(&b), "rescue bytes");
+    let id = store.file_id(Area::Pages, "delete.md").unwrap();
+    let stale = store.read(&id, None).unwrap().1;
+    put(&a, "pages/delete.md", "- later\n");
+    put(&b, "pages/delete.md", "- later\n");
+    let before_delete = disk_tree(&a);
+    assert!(
+        pages::delete_page_expected(&store, "delete", PageKind::Page, None, Some(&stale)).is_err()
+    );
+    assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");
+    pages::delete_page_expected(&store, "delete", PageKind::Page, None, None).unwrap();
+    old.delete_page_expected("delete", PageKind::Page, None)
+        .unwrap();
+    assert_eq!(disk_tree(&a), disk_tree(&b), "delete bytes");
+}
+
+#[test]
+fn org_merge_and_binary_rescue_match_legacy() {
+    let (a, _) = fixture("org-merge-new");
+    let (b, _) = fixture("org-merge-old");
+    for root in [&a, &b] {
+        put(root, "pages/src.org", "* moved\n");
+        put(root, "pages/dst.org", "* kept\n");
+        put(root, "pages/ref.md", "- [[src]] [[dst]]\n");
+        fs::create_dir_all(root.join("journals")).unwrap();
+        fs::write(root.join("journals/Loose.md"), [0xff, 0xfe, 0x00]).unwrap();
+    }
+    let store = Store::from_legacy(Arc::new(Graph::open(&a)));
+    let old = Graph::open(&b);
+    let client = pages::merge_pages(&store, "pages/src.org", "pages/dst.org");
+    let legacy = old.merge_pages("pages/src.org", "pages/dst.org");
+    assert_eq!(operation_result(&client, &a), operation_result(&legacy, &b));
+    assert_eq!(disk_tree(&a), disk_tree(&b));
+    pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued").unwrap();
+    old.rename_file_to_page("journals/Loose.md", "Rescued")
+        .unwrap();
+    assert_eq!(disk_tree(&a), disk_tree(&b));
+}
+
+#[test]
+fn page_rename_retries_external_change_and_rolls_back_third_step_failure() {
+    let (a, _) = fixture("rename-fault-retry");
+    put(&a, "pages/x.md", "- [[x]]\n");
+    put(&a, "pages/one.md", "- [[x]]\n");
+    put(&a, "pages/two.md", "- [[x]]\n");
+    let store = Store::from_legacy(Arc::new(Graph::open(&a)));
+    store.inject_fault(FaultPoint::Stage2MismatchAt(1));
+    pages::rename_page_expected(&store, "x", "y", None).unwrap();
+    assert!(a.join("pages/y.md").exists());
+    assert_eq!(
+        fs::read(a.join("pages/two.md")).unwrap(),
+        b"external stage-2"
+    );
+    assert_eq!(fs::read(a.join("pages/one.md")).unwrap(), b"- [[y]]\n");
+    let (b, _) = fixture("rename-fault-rollback");
+    put(&b, "pages/x.md", "- [[x]]\n");
+    put(&b, "pages/one.md", "- [[x]]\n");
+    put(&b, "pages/two.md", "- [[x]]\n");
+    let store = Store::from_legacy(Arc::new(Graph::open(&b)));
+    let before = disk_tree(&b);
+    store.inject_fault(FaultPoint::MidStepIoAt(2));
+    assert!(pages::rename_page_expected(&store, "x", "y", None).is_err());
+    assert_eq!(disk_tree(&b), before, "failed commit changed disk");
+}
+
+/// OG `:block/refs` excludes `{{query}}` arguments, so a page that mentions the
+/// renamed page only inside a query is not a referrer and keeps its bytes. v0.6.5
+/// did this only with a warm reference index; its full-scan fallback rewrote them.
+#[test]
+fn page_rename_leaves_query_only_mentions_alone() {
+    let (a, _) = fixture("rename-query-only");
+    put(&a, "pages/x.md", "- body\n");
+    put(
+        &a,
+        "pages/query.md",
+        "- {{query (and (task TODO) [[x]])}}\n",
+    );
+    put(&a, "pages/ref.md", "- [[x]] and #x\n");
+    let store = Store::from_legacy(Arc::new(Graph::open(&a)));
+    pages::rename_page_expected(&store, "x", "y", None).unwrap();
+    assert_eq!(
+        fs::read(a.join("pages/query.md")).unwrap(),
+        b"- {{query (and (task TODO) [[x]])}}\n"
+    );
+    assert_eq!(
+        fs::read(a.join("pages/ref.md")).unwrap(),
+        b"- [[y]] and #y\n"
+    );
+    assert!(a.join("pages/y.md").exists() && !a.join("pages/x.md").exists());
+}
+
+/// Corpus acceptance for the pages client: on two copies of a real-shaped graph
+/// (`TINE_CORPUS`, e.g. the anonymized graph), rename a spread of pages with
+/// v0.6.5 and with the client and require identical return kinds and disk
+/// trees after each rename. Run with `--ignored`; never point it at a live graph.
+#[test]
+#[ignore]
+fn corpus_renames_match_legacy() {
+    let Ok(corpus) = std::env::var("TINE_CORPUS") else {
+        eprintln!("TINE_CORPUS unset; skipping");
+        return;
+    };
+    let copy = |label: &str| {
+        let (root, _) = fixture(label);
+        fs::remove_dir_all(&root).unwrap();
+        let status = std::process::Command::new("cp")
+            .args(["-a", &corpus])
+            .arg(&root)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        root
+    };
+    let new_root = copy("corpus-new");
+    let old_root = copy("corpus-old");
+    let store = Store::from_legacy(Arc::new(Graph::open(&new_root)));
+    let old = Graph::open(&old_root);
+    let names: Vec<String> = {
+        let graph = store.whole_graph().unwrap();
+        let mut names: Vec<String> = graph
+            .inventory()
+            .0
+            .iter()
+            .filter(|entry| !entry.is_journal)
+            .map(|entry| entry.name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let step = (names.len() / 25).max(1);
+    let mut renamed = 0;
+    for name in names.iter().step_by(step) {
+        let to = format!("{name} og-renamed");
+        let client = pages::rename_page_expected(&store, name, &to, None);
+        let legacy = old.rename_page_expected(name, &to, None);
+        assert_eq!(
+            client.as_ref().map_err(|e| e.kind()),
+            legacy.as_ref().map_err(|e| e.kind()),
+            "{name}: client {client:?} legacy {legacy:?}"
+        );
+        renamed += client.is_ok() as usize;
+        let (a, b) = (disk_tree(&new_root), disk_tree(&old_root));
+        if a != b {
+            let a: std::collections::BTreeMap<_, _> = a.into_iter().collect();
+            let b: std::collections::BTreeMap<_, _> = b.into_iter().collect();
+            let differing: Vec<&String> = a
+                .keys()
+                .chain(b.keys())
+                .filter(|rel| a.get(*rel) != b.get(*rel))
+                .collect();
+            // Deliberate difference: a content-unchanged move is a rename, so
+            // the client leaves no trash copy of the source. Accept exactly a
+            // legacy-only trash entry whose bytes are live in the client tree.
+            let only_redundant_trash = differing.iter().all(|rel| {
+                rel.starts_with("logseq/.tine-trash/")
+                    && a.get(*rel).is_none()
+                    && a.iter().any(|(live, bytes)| {
+                        !live.starts_with("logseq/") && Some(bytes) == b.get(*rel)
+                    })
+            });
+            assert!(
+                only_redundant_trash,
+                "disk differs after renaming {name}: {differing:?}"
+            );
+            // Align the trees so the next rename compares from equal states.
+            // (`disk_tree` drops the trash stamp: `dir/__name` is `dir/<stamp>__name`.)
+            for rel in differing {
+                let (dir, name) = rel.rsplit_once("/__").unwrap();
+                for entry in fs::read_dir(old_root.join(dir)).unwrap() {
+                    let path = entry.unwrap().path();
+                    let file = path.file_name().unwrap().to_string_lossy().into_owned();
+                    if file.ends_with(&format!("__{name}")) {
+                        fs::remove_file(&path).unwrap();
+                    }
+                }
+            }
+        }
+    }
+    eprintln!(
+        "renamed {renamed} of {} sampled pages",
+        names.len().div_ceil(step)
+    );
+    fs::remove_dir_all(&new_root).unwrap();
+    fs::remove_dir_all(&old_root).unwrap();
 }

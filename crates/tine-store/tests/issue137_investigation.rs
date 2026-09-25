@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tine_core::model::ReferenceKind;
 use tine_core::{PageKind, RefGroup};
+use tine_graph_features::pages;
 use tine_store::model::Graph;
 use tine_store::{PageId, Store};
 
@@ -259,13 +260,12 @@ fn issue232_merge_output_matches_destination_reload_identity() {
     let fixture = Fixture::new("merge-destination-identity");
     fixture.page("Source", "- moved one\n- moved two\n");
     fixture.page("Destination", "- kept\n");
-    let graph = fixture.graph();
+    let graph = Arc::new(fixture.graph());
     graph.warm_cache();
     let destination = graph.find_entry("Destination", PageKind::Page).unwrap();
 
-    graph
-        .merge_pages("pages/Source.md", "pages/Destination.md")
-        .unwrap();
+    let store = Store::from_legacy(Arc::clone(&graph));
+    pages::merge_pages(&store, "pages/Source.md", "pages/Destination.md").unwrap();
     let merged_ids = graph
         .load_page(&destination)
         .unwrap()

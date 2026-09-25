@@ -2,7 +2,7 @@
 //! saved back (the path a {{query}}-result edit takes).
 use std::sync::Arc;
 use tine_core::PageKind;
-use tine_graph_features::{assets, journals, pdf};
+use tine_graph_features::{assets, journals, pages, pdf};
 use tine_store::model::atomic_copy;
 use tine_store::model::Graph;
 use tine_store::Store;
@@ -598,7 +598,7 @@ fn highlight_write_is_not_seen_as_external_change() {
 fn list_pages_memo_reflects_new_and_deleted_pages() {
     let root = mk("listmemo");
     std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
     g.warm_cache();
     let names = |g: &Graph| {
         let mut v: Vec<String> = g.list_pages().into_iter().map(|e| e.name).collect();
@@ -623,7 +623,14 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     );
 
     // Delete A → memo must drop it.
-    g.delete_page("A", PageKind::Page).unwrap();
+    pages::delete_page_expected(
+        &Store::from_legacy(Arc::clone(&g)),
+        "A",
+        PageKind::Page,
+        None,
+        None,
+    )
+    .unwrap();
     assert!(
         !names(&g).contains(&"A".to_string()),
         "deleted page must disappear: {:?}",
@@ -636,9 +643,16 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
 fn delete_page_moves_to_trash_recoverable() {
     let root = mk("deltrash");
     std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
     g.warm_cache();
-    g.delete_page("Doomed", PageKind::Page).expect("delete");
+    pages::delete_page_expected(
+        &Store::from_legacy(Arc::clone(&g)),
+        "Doomed",
+        PageKind::Page,
+        None,
+        None,
+    )
+    .expect("delete");
 
     // Gone from pages/, no longer resolvable...
     assert!(!root.join("pages").join("Doomed.md").exists());
@@ -658,12 +672,17 @@ fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
     std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
     g.warm_cache();
 
-    let err = g
-        .delete_page("Doomed", PageKind::Page)
-        .expect_err("trash path is blocked");
+    let err = pages::delete_page_expected(
+        &Store::from_legacy(Arc::clone(&g)),
+        "Doomed",
+        PageKind::Page,
+        None,
+        None,
+    )
+    .expect_err("trash path is blocked");
     assert!(
         err.to_string().contains(".tine-trash"),
         "error should name the trash path: {err}"

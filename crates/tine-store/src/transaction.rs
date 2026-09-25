@@ -1003,7 +1003,12 @@ impl<'a> Transaction<'a> {
         }
     }
 
-    fn undo(&self, record: &Undo, rollback: &mut Rollback) {
+    fn undo<'b>(
+        &self,
+        record: &'b Undo,
+        rollback: &mut Rollback,
+        exact_copies: &mut Vec<(PathBuf, &'b Expected)>,
+    ) {
         let live = match self.path(&record.src) {
             Ok(path) => path,
             Err(error) => {
@@ -1051,7 +1056,17 @@ impl<'a> Transaction<'a> {
             };
             let withdrawn = result.is_ok();
             match result {
-                Ok(Withdrawal::Exact | Withdrawal::Missing) => {
+                Ok(Withdrawal::Exact(staged)) => {
+                    exact_copies.push((staged, record.new.as_ref().expect("undo expected")));
+                    if matches!(record.kind, UndoKind::Replace) {
+                        if let Some(old) = &record.old {
+                            if let Err(error) = atomic_write_new(&path, old) {
+                                rollback.undo_failed.push((id.clone(), error.into()));
+                            }
+                        }
+                    }
+                }
+                Ok(Withdrawal::Missing) => {
                     if matches!(record.kind, UndoKind::Replace) {
                         if let Some(old) = &record.old {
                             if let Err(error) = atomic_write_new(&path, old) {
@@ -1253,9 +1268,10 @@ impl<'a> Transaction<'a> {
             }
         }
         let mut rollback = Rollback::default();
+        let mut exact_copies = Vec::new();
         if failure.is_some() {
             for undo in done.iter().rev() {
-                self.undo(undo, &mut rollback);
+                self.undo(undo, &mut rollback, &mut exact_copies);
             }
         }
         for undo in &done {
@@ -1269,7 +1285,7 @@ impl<'a> Transaction<'a> {
             }
         }
         let mut changed_any = false;
-        for (name, baseline) in before {
+        for (name, baseline) in &before {
             let id = FileId::from(name.clone());
             let path = match self.path(&id) {
                 Ok(path) => path,
@@ -1302,18 +1318,53 @@ impl<'a> Transaction<'a> {
                 self.preserve_old(&id, baseline.as_ref().unwrap(), &mut rollback);
             }
             if self.page(&id) {
-                if now != baseline {
+                if now.as_ref() != baseline.as_ref() {
                     changed_any = true;
                     self.store.graph.transaction_publish_page(&path);
                 } else {
                     self.store.graph.transaction_clear_page_marker(&path);
                 }
-            } else if now != baseline {
+            } else if now.as_ref() != baseline.as_ref() {
                 changed_any = true;
             }
         }
         if changed_any && self.store.graph.cache_generation() == starting_rev {
             self.store.graph.transaction_bump_generation();
+        }
+        // A clean rollback needs no second copy of bytes written by this
+        // transaction. Keep every staged inode if recovery failed or an
+        // external writer won; otherwise verify the entire named baseline
+        // before discarding transaction-owned copies from conflict trash.
+        if failure.is_some()
+            && rollback.undo_failed.is_empty()
+            && rollback.kept_external.is_empty()
+            && before.iter().all(|(name, expected)| {
+                let Ok(path) = self.path(&FileId::from(name.clone())) else {
+                    return false;
+                };
+                match fs::read(path) {
+                    Ok(bytes) => expected.as_ref() == Some(&bytes),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => expected.is_none(),
+                    Err(_) => false,
+                }
+            })
+        {
+            for (copy, expected) in exact_copies {
+                let valid = self
+                    .path(&FileId::from(self.store.graph.rel_path(&copy)))
+                    .is_ok()
+                    && match expected {
+                        Expected::Bytes(bytes) => {
+                            fs::read(&copy).is_ok_and(|found| found == *bytes)
+                        }
+                        Expected::File(stage) => fs::read(&copy)
+                            .and_then(|found| fs::read(stage).map(|wanted| found == wanted))
+                            .unwrap_or(false),
+                    };
+                if valid {
+                    let _ = fs::remove_file(copy);
+                }
+            }
         }
         for temp in temps {
             let _ = fs::remove_file(temp);

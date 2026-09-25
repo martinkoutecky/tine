@@ -1184,6 +1184,37 @@ impl WholeGraph {
         Arc::new(Inventory(entries))
     }
 
+    /// Pages whose explicit references name any of `names` (page keys, compared
+    /// after `refs::page_key`). Explicit means OG's `:block/refs`: page refs,
+    /// tags, `tags::`-style properties and `{{embed}}`, but not the arguments of
+    /// `{{query}}` or other macros, so a page that mentions a name only inside a
+    /// query is not a referrer. The answer comes from this snapshot's parse, not
+    /// from disk. Cost O(matching postings) with a warm reference index, else
+    /// O(P + B) over the parsed snapshot.
+    pub fn explicit_referrers(&self, names: &[String]) -> Vec<PageId> {
+        let keys: Vec<String> = names
+            .iter()
+            .map(|name| tine_core::refs::page_key(name))
+            .collect();
+        let candidates = self
+            .graph
+            .reference_candidate_pages(&keys, tine_core::model::ReferenceKind::Explicit);
+        let mut ids: Vec<PageId> = candidates
+            .pages
+            .iter()
+            .filter(|(entry, doc)| {
+                candidates.indexed
+                    || crate::query::document_explicit_reference_names(entry, doc)
+                        .iter()
+                        .any(|name| keys.contains(name))
+            })
+            .map(|(entry, _)| PageId::from(self.graph.rel_path(&entry.path)))
+            .collect();
+        ids.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+        ids.dedup();
+        ids
+    }
+
     /// File modification time as currently observed. Cost O(1) metadata in
     /// this interim boundary; B7 will capture it in the snapshot.
     pub fn page_mtime(&self, id: &PageId) -> Option<std::time::SystemTime> {

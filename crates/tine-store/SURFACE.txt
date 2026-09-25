@@ -81,6 +81,7 @@ fn store::WholeGraph::block_ref_counts
 fn store::WholeGraph::block_referrers
 fn store::WholeGraph::blocks
 fn store::WholeGraph::complete_page_names
+fn store::WholeGraph::explicit_referrers
 fn store::WholeGraph::export_query_subtrees
 fn store::WholeGraph::find_blocks
 fn store::WholeGraph::inventory

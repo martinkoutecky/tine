@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tine_graph_features::conflicts;
+use tine_graph_features::{conflicts, pages};
 use tine_store::model::Graph;
 use tine_store::{PageId, SaveBase, SaveOutcome, Store};
 
@@ -282,7 +282,7 @@ fn search_cache_reflects_saves_and_deletes() {
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(root.join("pages").join("Seed.md"), "- a seed block\n").unwrap();
 
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
     // Warms the cache on first search.
     assert_eq!(g.search("zonkwort", 10).len(), 0, "token absent initially");
 
@@ -310,7 +310,14 @@ fn search_cache_reflects_saves_and_deletes() {
     assert_eq!(hits[0].page, "Fresh");
 
     // Deleting the page removes it from the cache too.
-    g.delete_page("Fresh", PageKind::Page).unwrap();
+    pages::delete_page_expected(
+        &Store::from_legacy(Arc::clone(&g)),
+        "Fresh",
+        PageKind::Page,
+        None,
+        None,
+    )
+    .unwrap();
     assert_eq!(
         g.search("zonkwort", 10).len(),
         0,
@@ -936,8 +943,14 @@ fn rename_page_moves_file_and_updates_refs() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
-    g.rename_page("Old Name", "New Name").unwrap();
+    let g = Arc::new(Graph::open(&root));
+    pages::rename_page_expected(
+        &Store::from_legacy(Arc::clone(&g)),
+        "Old Name",
+        "New Name",
+        None,
+    )
+    .unwrap();
 
     // File moved.
     assert!(!root.join("pages").join("Old Name.md").exists());
@@ -996,8 +1009,9 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
-    g.rename_page("Proj", "Renamed").unwrap();
+    let g = Arc::new(Graph::open(&root));
+    pages::rename_page_expected(&Store::from_legacy(Arc::clone(&g)), "Proj", "Renamed", None)
+        .unwrap();
 
     let p = root.join("pages");
     // Subtree moved.
@@ -1073,8 +1087,8 @@ fn rename_rewrites_bare_tags_property() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
-    g.rename_page("Old", "New").unwrap();
+    let g = Arc::new(Graph::open(&root));
+    pages::rename_page_expected(&Store::from_legacy(Arc::clone(&g)), "Old", "New", None).unwrap();
 
     assert!(!root.join("pages").join("Old.md").exists());
     assert!(root.join("pages").join("New.md").exists());
@@ -1098,9 +1112,9 @@ fn rename_aborts_on_target_collision_without_changes() {
     std::fs::write(root.join("pages").join("A.md"), "- a body [[B]]\n").unwrap();
     std::fs::write(root.join("pages").join("B.md"), "- b body\n").unwrap();
 
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
     assert!(
-        g.rename_page("A", "B").is_err(),
+        pages::rename_page_expected(&Store::from_legacy(Arc::clone(&g)), "A", "B", None).is_err(),
         "rename onto existing page must fail"
     );
     assert_eq!(
@@ -1128,8 +1142,9 @@ fn rename_ref_only_page_rewrites_refs_without_a_file() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
-    g.rename_page("Ghost", "Spirit").unwrap();
+    let g = Arc::new(Graph::open(&root));
+    pages::rename_page_expected(&Store::from_legacy(Arc::clone(&g)), "Ghost", "Spirit", None)
+        .unwrap();
 
     assert!(!root.join("pages").join("Ghost.md").exists());
     let r = std::fs::read_to_string(root.join("pages").join("Ref.md")).unwrap();
@@ -1946,11 +1961,17 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
     g.warm_cache();
     let _ = g.backlinks("Testtest"); // populate the derived cache, as the UI does
 
-    g.rename_page("Testtest", "TesttestTest").unwrap();
+    pages::rename_page_expected(
+        &Store::from_legacy(Arc::clone(&g)),
+        "Testtest",
+        "TesttestTest",
+        None,
+    )
+    .unwrap();
 
     let my = std::fs::read_to_string(root.join("pages").join("MyPage.md")).unwrap();
     let jr = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
@@ -1988,12 +2009,18 @@ fn rename_rewrites_nested_ref_in_open_page() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
     g.warm_cache();
     let _ = g.load_page(&g.find_entry("Tine", PageKind::Page).unwrap()); // simulate it being open
     let _ = g.backlinks("Testtest");
 
-    g.rename_page("Testtest", "TesttestTest").unwrap();
+    pages::rename_page_expected(
+        &Store::from_legacy(Arc::clone(&g)),
+        "Testtest",
+        "TesttestTest",
+        None,
+    )
+    .unwrap();
 
     let tine = std::fs::read_to_string(root.join("pages").join("Tine.md")).unwrap();
     assert!(
