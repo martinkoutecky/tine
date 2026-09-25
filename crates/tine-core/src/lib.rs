@@ -1,21 +1,19 @@
-//! tine-core: parsing, serialization, and the graph model for a
-//! Logseq-compatible outliner. Pure Rust, no GUI dependencies — fully unit
+//! tine-core: parsing, serialization, DTOs and pure evaluators for a
+//! Logseq-compatible outliner. Pure Rust, no file I/O (og batch 1: graph files
+//! belong to `tine-store`), no GUI dependencies — fully unit
 //! testable without the Tauri shell.
 
 pub mod config;
 pub mod date;
 pub mod doc;
 pub mod edn;
+pub mod guide;
 pub mod html_sanitize;
 pub mod logbook;
 pub mod model;
-pub mod onboarding;
 pub mod org;
 pub mod pdf;
-pub mod publish;
-pub mod query;
-pub mod query_plan;
-mod reference_evidence;
+pub mod reference_evidence;
 pub mod refs;
 pub mod render;
 pub mod search_query;
@@ -28,4 +26,4 @@ pub use lsdoc;
 pub use config::{Config, Workflow};
 pub use date::JournalDate;
 pub use doc::{DocBlock, Document};
-pub use model::{BlockDto, BlockPreview, Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
+pub use model::{BlockDto, BlockPreview, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};

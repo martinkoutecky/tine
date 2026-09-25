@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
-use tine_core::model::Graph;
-use tine_core::publish::publish_graph;
+use tine_store::model::Graph;
+use tine_store::publish::publish_graph;
 
 fn main() {
     let root = env::args_os()

@@ -14,7 +14,7 @@ const output = check ? path.join(temp, "demo") : checkedIn;
 
 const built = spawnSync(
   "cargo",
-  ["run", "--quiet", "-p", "tine-core", "--example", "build-demo-site", "--", output],
+  ["run", "--quiet", "-p", "tine-store", "--example", "build-demo-site", "--", output],
   { cwd: root, stdio: "inherit" },
 );
 if (built.status !== 0) process.exit(built.status ?? 1);

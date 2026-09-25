@@ -3,15 +3,15 @@
 //! task markers, and property filters. Advanced datalog (`[:find ...]`) is
 //! detected and reported as unsupported rather than crashed.
 
-use crate::date::JournalDate;
-use crate::doc::{property_key_norm, DocBlock, Document};
 use crate::model::{
     block_to_shallow_dto, BacklinkFilterContext, BacklinkFilterEntry, BacklinkFilterTarget,
     BlockDto, BlockPreview, Format, Graph, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence,
     ReferenceDiagnosticTrace, ReferenceDiagnostics, ReferenceKind, TemplateDto,
 };
-use crate::refs;
-use crate::search_query::Matcher;
+use tine_core::date::JournalDate;
+use tine_core::doc::{property_key_norm, DocBlock, Document};
+use tine_core::refs;
+use tine_core::search_query::Matcher;
 
 /// Query source crosses several boundaries (live macros, native IPC, static
 /// publication, and export). Keep one shared ceiling so no caller can make the
@@ -455,7 +455,7 @@ fn is_properties_only(raw: &str) -> bool {
         if line.trim().is_empty() {
             continue;
         }
-        if crate::doc::parse_property_line(line).is_none() {
+        if tine_core::doc::parse_property_line(line).is_none() {
             return false;
         }
         saw_prop = true;
@@ -490,7 +490,7 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     };
     let mut aliases = Vec::new();
     for line in text.lines() {
-        if let Some((k, v)) = crate::doc::parse_property_line(line) {
+        if let Some((k, v)) = tine_core::doc::parse_property_line(line) {
             let key = property_key_norm(&k);
             if key == "alias" || key == "aliases" {
                 let trimmed = v.trim();
@@ -668,7 +668,8 @@ fn org_property_line(line: &str) -> bool {
 fn page_property_raw(pre: &str, is_org: bool) -> String {
     pre.lines()
         .filter(|line| {
-            crate::doc::parse_property_line(line).is_some() || (is_org && org_property_line(line))
+            tine_core::doc::parse_property_line(line).is_some()
+                || (is_org && org_property_line(line))
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -744,9 +745,9 @@ fn block_reference_evidence(
     canonical: &str,
     names_norm: &[String],
     kind: ReferenceKind,
-    config: &crate::config::Config,
+    config: &tine_core::config::Config,
 ) -> Option<ReferenceBlockEvidence> {
-    let result = crate::reference_evidence::occurrences_of_kind_bounded(
+    let result = tine_core::reference_evidence::occurrences_of_kind_bounded(
         &block.raw,
         &block.projection().reference_source,
         canonical,
@@ -766,9 +767,9 @@ fn block_has_reference(
     block: &DocBlock,
     names_norm: &[String],
     kind: ReferenceKind,
-    config: &crate::config::Config,
+    config: &tine_core::config::Config,
 ) -> bool {
-    crate::reference_evidence::has_occurrence_kind(
+    tine_core::reference_evidence::has_occurrence_kind(
         &block.raw,
         &block.projection().reference_source,
         names_norm,
@@ -1262,7 +1263,7 @@ pub fn reference_diagnostics(graph: &Graph, target: &str) -> ReferenceDiagnostic
         for (entry, document) in pages {
             let self_page = refs::normalize(&entry.name) == excluded_page;
             let mut inspect = |block: &DocBlock| {
-                let occurrences = crate::reference_evidence::slow_occurrences(
+                let occurrences = tine_core::reference_evidence::slow_occurrences(
                     &block.raw,
                     block.is_org,
                     &canonical,
@@ -1313,7 +1314,7 @@ pub fn reference_diagnostics(graph: &Graph, target: &str) -> ReferenceDiagnostic
             .then_with(|| a.block_id.cmp(&b.block_id))
     });
     ReferenceDiagnostics {
-        engine_version: crate::reference_evidence::ENGINE_VERSION.to_string(),
+        engine_version: tine_core::reference_evidence::ENGINE_VERSION.to_string(),
         target: canonical,
         traces,
     }
@@ -1325,7 +1326,7 @@ fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) 
     let mut tags = Vec::new();
     if let Some(pre) = pre_block {
         for line in pre.lines() {
-            if let Some((k, v)) = crate::doc::parse_property_line(line) {
+            if let Some((k, v)) = tine_core::doc::parse_property_line(line) {
                 if property_key_norm(&k) == "tags" {
                     tags = v
                         .split(',')
@@ -1587,7 +1588,7 @@ pub(crate) fn page_affects_backlinks(
     // Scoped invalidation has no Graph/config parameter. Default-enabled matching
     // is conservative for disabled/excluded property pages (it may evict an
     // unaffected cache entry, but cannot retain a stale one).
-    let config = crate::config::Config::default();
+    let config = tine_core::config::Config::default();
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {
             block_reference_evidence(
@@ -1630,7 +1631,7 @@ pub(crate) fn page_affects_unlinked(
     doc: &Document,
 ) -> bool {
     let (canonical, names_norm, _) = equivalent_page_names(real_pages, aliases, target);
-    let config = crate::config::Config::default();
+    let config = tine_core::config::Config::default();
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {
             block_reference_evidence(
@@ -2248,7 +2249,7 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
             }
             // Fallback: visible text (the DTO carries no visible text; reparse, bounded
             // to sorted-result blocks via `sort_by_cached_key`).
-            let (_, visible) = crate::doc::block_sort_facets(&b.raw);
+            let (_, visible) = tine_core::doc::block_sort_facets(&b.raw);
             visible.lines().next().unwrap_or("").to_lowercase()
         }
     }
@@ -3625,7 +3626,7 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate, depth: usize) -
         // constant query string for every candidate block (perf Codex#7).
         Tok::Str(s) => {
             *pos += 1;
-            Some(Pred::Content(crate::search_query::canonical_fold(&s)))
+            Some(Pred::Content(tine_core::search_query::canonical_fold(&s)))
         }
         // Logseq's simple-query macros substitute parser-decoded arguments into
         // the query template. A quoted invocation argument can therefore arrive
@@ -3633,7 +3634,7 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate, depth: usize) -
         // silently discard.
         Tok::Word(s) => {
             *pos += 1;
-            Some(Pred::Content(crate::search_query::canonical_fold(&s)))
+            Some(Pred::Content(tine_core::search_query::canonical_fold(&s)))
         }
         Tok::LParen => {
             *pos += 1; // consume (
@@ -4640,7 +4641,7 @@ mod tests {
                         rel_path: (*rel_path).into(),
                         path: (*rel_path).into(),
                     },
-                    std::sync::Arc::new(crate::doc::parse(source)),
+                    std::sync::Arc::new(tine_core::doc::parse(source)),
                 )
             })
             .collect();
@@ -4952,7 +4953,7 @@ mod tests {
                         rel_path: rel_path.clone(),
                         path: rel_path.into(),
                     },
-                    std::sync::Arc::new(crate::doc::parse("- tied needle\n")),
+                    std::sync::Arc::new(tine_core::doc::parse("- tied needle\n")),
                 )
             })
             .collect();
@@ -5978,7 +5979,7 @@ mod tests {
         assert_eq!(RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get), 3);
 
         RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(0));
-        crate::reference_evidence::reset_occurrence_constructions();
+        tine_core::reference_evidence::reset_occurrence_constructions();
         let refs = backlinks_bounded(&graph, "Target", 2, usize::MAX);
         assert!(refs.exceeded);
         assert_eq!(refs.total, 12);
@@ -5990,7 +5991,7 @@ mod tests {
             2
         );
         assert_eq!(RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get), 2);
-        assert_eq!(crate::reference_evidence::occurrence_constructions(), 2);
+        assert_eq!(tine_core::reference_evidence::occurrence_constructions(), 2);
 
         RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(0));
         let sample = run_query_bounded(&graph, "(and (task TODO) (sample 1))", 20, usize::MAX);

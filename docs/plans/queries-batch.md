@@ -15,7 +15,7 @@ Three features, one subsystem:
 
 ## Subsystem map (verified Jul 6 2026)
 
-**Engine — `crates/tine-core/src/query.rs`:**
+**Engine — `crates/tine-store/src/query.rs`:**
 - `enum Pred` (~1143) mirrors the builder clauses: `PageRef, Task, Priority, Property,
   Scheduled, Deadline, Journal, Between(BetweenField,…), Page, Namespace, PageProperty,
   PageTags, Content, And/Or/Not, Sample(usize), SortBy(String,bool)`. `Sample`/`SortBy`

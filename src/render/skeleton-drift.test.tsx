@@ -13,7 +13,7 @@
 // Scope: the deterministic, synchronous body constructs. Excluded by design — images /
 // media / block-refs (async resource loads → jsdom can't resolve them) and properties
 // (Block.tsx draws those as chrome, not via the body renderer); the export's decoration
-// of those `data-*` hooks is covered in `crates/tine-core/src/publish.rs` tests instead.
+// of those `data-*` hooks is covered in `crates/tine-store/src/publish.rs` tests instead.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { render } from "solid-js/web";

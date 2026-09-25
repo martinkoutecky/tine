@@ -6,14 +6,14 @@
 //! block-query result contract.  The plan/result types are the seam that a
 //! durable query workspace can grow into later.
 
-use crate::doc::DocBlock;
 use crate::model::{BlockDto, Graph, PageEntry, PageKind};
-use crate::refs;
-use crate::search_query::{canonical_fold, Matcher, Term};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use tine_core::doc::DocBlock;
+use tine_core::refs;
+use tine_core::search_query::{canonical_fold, Matcher, Term};
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -1348,7 +1348,7 @@ fn execute_pages(
                     match_class,
                     matched_text,
                     matched_alias,
-                    tie_key: crate::refs::page_key(&name),
+                    tie_key: tine_core::refs::page_key(&name),
                     candidate: PageCandidate::Referenced(PageEntry {
                         name,
                         kind: PageKind::Page,

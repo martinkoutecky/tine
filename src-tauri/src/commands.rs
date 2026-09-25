@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 use tine_core::date::JournalDate;
-use tine_core::model::{
+use tine_store::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
 
@@ -42,14 +42,14 @@ const QUERY_EXPORT_MAX_NODES: usize = 2_000;
 const QUERY_EXPORT_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 fn validate_query_source(query: &str) -> Result<(), String> {
-    if !tine_core::query::query_source_within_limit(query) {
+    if !tine_store::query::query_source_within_limit(query) {
         return Err(format!(
             "query-too-large: query source is {} bytes (limit: {} bytes)",
             query.len(),
-            tine_core::query::QUERY_SOURCE_MAX_BYTES
+            tine_store::query::QUERY_SOURCE_MAX_BYTES
         ));
     }
-    if !tine_core::query::query_nesting_within_limit(query) {
+    if !tine_store::query::query_nesting_within_limit(query) {
         return Err("query-nesting-too-deep: simplify nested boolean clauses".to_string());
     }
     Ok(())
@@ -57,7 +57,7 @@ fn validate_query_source(query: &str) -> Result<(), String> {
 
 fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
     let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
-    let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
+    let bytes = tine_store::model::ref_groups_estimated_bytes(groups);
     if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
         return Err(format!(
             "result-too-large: {rows} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"
@@ -67,7 +67,7 @@ fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
 }
 
 fn bounded_groups_or_error(
-    result: tine_core::model::BoundedRefGroups,
+    result: tine_store::model::BoundedRefGroups,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
     if result.exceeded {
         return Err(format!(
@@ -79,9 +79,9 @@ fn bounded_groups_or_error(
 }
 
 fn enforce_query_execution_budget(
-    execution: &tine_core::query_plan::QueryExecution,
+    execution: &tine_store::query_plan::QueryExecution,
 ) -> Result<(), String> {
-    use tine_core::query_plan::QueryHit;
+    use tine_store::query_plan::QueryHit;
     let bytes = execution.hits.iter().fold(0usize, |total, hit| {
         total.saturating_add(match hit {
             QueryHit::Page {
@@ -106,7 +106,7 @@ fn enforce_query_execution_budget(
                 ..
             } => {
                 page.len()
-                    + tine_core::model::block_dto_estimated_bytes(block)
+                    + tine_store::model::block_dto_estimated_bytes(block)
                     + display_text.len()
                     + evidence.len() * 128
                     + 256
@@ -158,7 +158,7 @@ mod result_bridge_budget_tests {
 
     #[test]
     fn rejects_oversized_query_source_before_cache_or_parser() {
-        let source = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
+        let source = "x".repeat(tine_store::query::QUERY_SOURCE_MAX_BYTES + 1);
         assert!(validate_query_source(&source)
             .unwrap_err()
             .starts_with("query-too-large:"));
@@ -512,7 +512,7 @@ pub(crate) fn graph_source_files(
 }
 
 fn collect_graph_text(
-    g: &tine_core::model::Graph,
+    g: &tine_store::model::Graph,
     dir: &std::path::Path,
     max_bytes: u64,
     out: &mut Vec<GraphSourceFile>,
@@ -573,17 +573,17 @@ pub(crate) fn save_page(
 }
 
 #[tauri::command]
-pub(crate) fn guide_pages() -> Vec<tine_core::onboarding::GuidePage> {
-    tine_core::onboarding::bundled_guide_pages()
+pub(crate) fn guide_pages() -> Vec<tine_store::onboarding::GuidePage> {
+    tine_store::onboarding::bundled_guide_pages()
 }
 
 #[tauri::command]
 pub(crate) fn copy_guide_into_graph(
     title: String,
     state: GraphContext<'_>,
-) -> Result<tine_core::onboarding::GuideCopyResult, String> {
-    let result: Result<tine_core::onboarding::GuideCopyResult, String> = with_graph(&state, |g| {
-        tine_core::onboarding::copy_guide_into_graph(g, &title).map_err(|e| e.to_string())
+) -> Result<tine_store::onboarding::GuideCopyResult, String> {
+    let result: Result<tine_store::onboarding::GuideCopyResult, String> = with_graph(&state, |g| {
+        tine_store::onboarding::copy_guide_into_graph(g, &title).map_err(|e| e.to_string())
     });
     result
 }
@@ -619,7 +619,7 @@ pub(crate) async fn get_backlink_filter_context(
     }
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
     tauri::async_runtime::spawn_blocking(move || {
-        Ok(tine_core::query::backlink_filter_context(
+        Ok(tine_store::query::backlink_filter_context(
             &graph, &name, &targets,
         ))
     })
@@ -732,7 +732,7 @@ pub(crate) fn publish_html(state: GraphContext<'_>) -> Result<(String, usize), S
 #[tauri::command]
 pub(crate) fn page_print_html(
     name: String,
-    opts: tine_core::publish::PrintOpts,
+    opts: tine_store::publish::PrintOpts,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     with_graph(&state, |g| {
@@ -762,9 +762,9 @@ pub(crate) fn run_query(
 /// unrelated page content is never cloned across IPC or retained by the WebView.
 #[tauri::command]
 pub(crate) fn export_query_subtrees(
-    specs: Vec<tine_core::query::QueryExportSpec>,
+    specs: Vec<tine_store::query::QueryExportSpec>,
     state: GraphContext<'_>,
-) -> Result<tine_core::query::QueryExportBatch, String> {
+) -> Result<tine_store::query::QueryExportBatch, String> {
     let query_bytes = specs.iter().fold(0usize, |total, spec| {
         total
             .saturating_add(spec.key.len())
@@ -782,7 +782,7 @@ pub(crate) fn export_query_subtrees(
         ));
     }
     with_graph(&state, |graph| {
-        let batch = tine_core::query::export_query_subtrees(
+        let batch = tine_store::query::export_query_subtrees(
             graph,
             &specs,
             QUERY_EXPORT_MAX_QUERIES,
@@ -799,7 +799,7 @@ pub(crate) fn export_query_subtrees(
                         .groups
                         .iter()
                         .map(|group| {
-                            tine_core::model::ref_groups_estimated_bytes(std::slice::from_ref(
+                            tine_store::model::ref_groups_estimated_bytes(std::slice::from_ref(
                                 group,
                             ))
                         })
@@ -823,9 +823,9 @@ pub(crate) async fn run_graph_search(
     block_limit: usize,
     lane: Option<String>,
     explain: bool,
-    scope: Option<tine_core::query_plan::QueryPageScope>,
+    scope: Option<tine_store::query_plan::QueryPageScope>,
     state: GraphContext<'_>,
-) -> Result<tine_core::query_plan::QueryExecution, String> {
+) -> Result<tine_store::query_plan::QueryExecution, String> {
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
     let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
     let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
@@ -853,7 +853,7 @@ pub(crate) fn run_advanced_query(
     query: String,
     current_page: Option<String>,
     state: GraphContext<'_>,
-) -> Result<tine_core::query::AdvancedResult, String> {
+) -> Result<tine_store::query::AdvancedResult, String> {
     validate_query_source(&query)?;
     with_graph(&state, |g| {
         let (result, exceeded, total) = g.run_advanced_query_bounded_cached(
@@ -881,14 +881,14 @@ pub(crate) fn query_facets(
             // The editor's OG policy intentionally differs from query-builder
             // facets; use a separately bounded collector without changing the
             // default command behavior.
-            return Ok(tine_core::query::autocomplete_property_facets_bounded(
+            return Ok(tine_store::query::autocomplete_property_facets_bounded(
                 g,
                 AUTOCOMPLETE_FACET_MAX_ITEMS,
                 AUTOCOMPLETE_FACET_MAX_BYTES,
             )
             .0);
         }
-        let (facets, exceeded) = tine_core::query::property_facets_bounded(
+        let (facets, exceeded) = tine_store::query::property_facets_bounded(
             g,
             RESULT_BRIDGE_MAX_ROWS,
             RESULT_BRIDGE_MAX_BYTES,
@@ -1007,9 +1007,9 @@ pub(crate) fn set_start_of_week(n: u32, state: GraphContext<'_>) -> Result<(), S
 #[tauri::command]
 pub(crate) fn set_preferred_format(format: String, state: GraphContext<'_>) -> Result<(), String> {
     let fmt = if format.eq_ignore_ascii_case("org") {
-        tine_core::model::Format::Org
+        tine_store::model::Format::Org
     } else {
-        tine_core::model::Format::Md
+        tine_store::model::Format::Md
     };
     with_graph(&state, |g| {
         g.set_preferred_format(fmt).map_err(|e| e.to_string())
@@ -1098,7 +1098,7 @@ mod capture_quick_switch_tests {
     use std::path::PathBuf;
     use std::sync::atomic::AtomicU64;
     use std::sync::{Mutex, RwLock};
-    use tine_core::model::Graph;
+    use tine_store::model::Graph;
 
     fn state_with_selected_graph() -> (AppState, PathBuf) {
         let base = std::env::temp_dir().join(format!(
@@ -1205,7 +1205,7 @@ mod capture_quick_switch_tests {
 #[tauri::command]
 pub(crate) fn list_templates(
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::TemplateDto>, String> {
+) -> Result<Vec<tine_store::model::TemplateDto>, String> {
     with_graph(&state, |g| Ok(g.templates()))
 }
 
@@ -1240,7 +1240,7 @@ pub(crate) fn resolve_blocks(
         ));
     }
     with_graph(&state, |g| {
-        let (groups, exceeded, total) = tine_core::query::resolve_blocks_bounded(
+        let (groups, exceeded, total) = tine_store::query::resolve_blocks_bounded(
             g,
             &uuids,
             RESULT_BRIDGE_MAX_ROWS,
@@ -1983,7 +1983,7 @@ mod editor_argv_tests {
 #[tauri::command]
 pub(crate) fn list_orphan_assets(
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::AssetInfo>, String> {
+) -> Result<Vec<tine_store::model::AssetInfo>, String> {
     with_graph(&state, |g| Ok(g.orphan_assets()))
 }
 
@@ -1997,7 +1997,7 @@ pub(crate) fn trash_asset(name: String, state: GraphContext<'_>) -> Result<(), S
 #[tauri::command]
 pub(crate) fn asset_trash_stats(
     state: GraphContext<'_>,
-) -> Result<tine_core::model::TrashStats, String> {
+) -> Result<tine_store::model::TrashStats, String> {
     with_graph(&state, |g| Ok(g.asset_trash_stats()))
 }
 
@@ -2012,7 +2012,7 @@ pub(crate) fn empty_asset_trash(state: GraphContext<'_>) -> Result<u64, String> 
 #[tauri::command]
 pub(crate) fn list_journal_conflicts(
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::JournalConflict>, String> {
+) -> Result<Vec<tine_store::model::JournalConflict>, String> {
     with_graph(&state, |g| Ok(g.journal_conflicts()))
 }
 
@@ -2021,7 +2021,7 @@ pub(crate) fn list_journal_conflicts(
 #[tauri::command]
 pub(crate) fn list_sync_conflicts(
     state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::SyncConflict>, String> {
+) -> Result<Vec<tine_store::model::SyncConflict>, String> {
     with_graph(&state, |g| Ok(g.list_sync_conflicts()))
 }
 

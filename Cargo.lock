@@ -3953,16 +3953,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
-name = "slotmap"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
-dependencies = [
- "serde",
- "version_check",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4737,6 +4727,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tempfile",
  "tine-core",
+ "tine-store",
  "webkit2gtk",
  "x11",
 ]
@@ -4746,21 +4737,15 @@ name = "tine-core"
 version = "0.6.5"
 dependencies = [
  "ammonia",
- "cap-std",
  "chrono",
  "libc",
  "lsdoc",
  "pretty_assertions",
  "regex",
- "same-file",
  "serde",
  "serde_json",
- "sha2",
- "slotmap",
  "unicode-normalization",
- "unicode-segmentation",
  "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4769,6 +4754,27 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tine-store"
+version = "0.6.5"
+dependencies = [
+ "cap-std",
+ "libc",
+ "pretty_assertions",
+ "quote",
+ "regex",
+ "same-file",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.117",
+ "tine-core",
+ "unicode-normalization",
+ "unicode-segmentation",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

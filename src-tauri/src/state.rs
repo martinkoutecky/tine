@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
 use tauri::{Manager, Runtime, State, WebviewWindow};
-use tine_core::model::Graph;
+use tine_store::model::Graph;
 
 pub(crate) type WindowKey = String;
 

@@ -1,7 +1,7 @@
 //! Integration tests against the on-disk demo graph (standard layout).
 
 use std::path::PathBuf;
-use tine_core::Graph;
+use tine_store::model::Graph;
 
 fn demo_graph() -> Graph {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
@@ -2139,7 +2139,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
         .find(|r| format!("{:?}", r.kind) == "Removed")
         .expect("removed row");
 
-    assert_eq!(diff.base_rev, tine_core::model::content_rev(winner));
+    assert_eq!(diff.base_rev, tine_store::model::content_rev(winner));
     // Guard: decisions from the diff must not apply after the winner changes.
     let changed_winner = winner.replace("beta line here", "beta line NEW!");
     std::fs::write(pages.join("Foo.md"), &changed_winner).unwrap();
@@ -2195,8 +2195,8 @@ fn resolve_sync_conflict_merges_and_trashes() {
         (modified.id.clone(), "theirs".to_string()),
         (removed.id.clone(), "theirs".to_string()),
     ]);
-    let base = tine_core::model::content_rev(winner);
-    let conflict_rev = tine_core::model::content_rev(conflict);
+    let base = tine_store::model::content_rev(winner);
+    let conflict_rev = tine_store::model::content_rev(conflict);
     g.resolve_sync_conflict(
         win_rel,
         &conf_rel,

@@ -84,20 +84,20 @@ const OG_HIDDEN_BUILT_IN_PROPERTIES: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectedPageRef {
+pub struct ProjectedPageRef {
     pub name: String,
     pub range: Range<usize>,
     pub rule: &'static str,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ReferenceSourceProjection {
+pub struct ReferenceSourceProjection {
     pub explicit: Vec<ProjectedPageRef>,
     pub plain_ranges: Vec<Range<usize>>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct BoundedOccurrences {
+pub struct BoundedOccurrences {
     pub occurrences: Vec<ReferenceOccurrence>,
     pub total: usize,
     pub truncated: bool,
@@ -553,7 +553,7 @@ fn walk_blocks(
     }
 }
 
-pub(crate) fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProjection {
+pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
     walk_blocks(blocks, SpanMapper::block(raw), raw, is_org, &mut projection);
     projection.explicit.sort_by(|a, b| {
@@ -663,7 +663,7 @@ fn push_unique_bounded(
     if out.len() >= MAX_OCCURRENCES_PER_BLOCK {
         return false;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-counters"))]
     OCCURRENCE_CONSTRUCTIONS.with(|count| count.set(count.get().saturating_add(1)));
     out.push(ReferenceOccurrence {
         matched_name: matched_name.to_string(),
@@ -675,18 +675,18 @@ fn push_unique_bounded(
     true
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-counters"))]
 thread_local! {
     static OCCURRENCE_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(crate) fn reset_occurrence_constructions() {
+#[cfg(any(test, feature = "test-counters"))]
+pub fn reset_occurrence_constructions() {
     OCCURRENCE_CONSTRUCTIONS.with(|count| count.set(0));
 }
 
-#[cfg(test)]
-pub(crate) fn occurrence_constructions() -> usize {
+#[cfg(any(test, feature = "test-counters"))]
+pub fn occurrence_constructions() -> usize {
     OCCURRENCE_CONSTRUCTIONS.with(std::cell::Cell::get)
 }
 
@@ -707,7 +707,7 @@ fn projected_reference_matches(
         .any(|name| refs::same_page(name, &reference.name))
 }
 
-pub(crate) fn occurrences_of_kind_bounded(
+pub fn occurrences_of_kind_bounded(
     raw: &str,
     projection: &ReferenceSourceProjection,
     canonical: &str,
@@ -780,7 +780,7 @@ pub(crate) fn occurrences_of_kind_bounded(
     }
 }
 
-pub(crate) fn occurrences_of_kind(
+pub fn occurrences_of_kind(
     raw: &str,
     projection: &ReferenceSourceProjection,
     canonical: &str,
@@ -793,7 +793,7 @@ pub(crate) fn occurrences_of_kind(
 
 /// Cheap membership path used once a result construction budget is closed.
 /// It performs no occurrence/string construction and stops at the first hit.
-pub(crate) fn has_occurrence_kind(
+pub fn has_occurrence_kind(
     raw: &str,
     projection: &ReferenceSourceProjection,
     names_norm: &[String],
@@ -824,7 +824,7 @@ pub(crate) fn has_occurrence_kind(
     false
 }
 
-pub(crate) fn occurrences(
+pub fn occurrences(
     raw: &str,
     projection: &ReferenceSourceProjection,
     canonical: &str,
@@ -861,7 +861,7 @@ pub(crate) fn occurrences(
 
 /// Deliberately uncached parser path used by diagnostics/tests as a drift
 /// oracle for the memoized `DocBlock::projection` integration.
-pub(crate) fn slow_occurrences(
+pub fn slow_occurrences(
     raw: &str,
     is_org: bool,
     canonical: &str,

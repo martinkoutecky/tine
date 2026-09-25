@@ -2,12 +2,9 @@
 //! plus an index. Inline formatting, nested block lists, and `[[page]]` links
 //! become real anchors between the generated files.
 
-use crate::doc::{self, DocBlock};
 use crate::model::{BlockDto, Graph, PageKind, RefGroup};
-use crate::refs::block_id;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
-use lsdoc::ast::{Block, Inline, Url};
 #[cfg(not(target_os = "windows"))]
 use same_file::Handle as FileIdentity;
 use serde_json::json;
@@ -17,6 +14,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tine_core::doc::{self, DocBlock};
+use tine_core::lsdoc::ast::{Block, Inline, Url};
+use tine_core::refs::block_id;
 
 // `same_file::Handle` keeps its Windows handle open without FILE_SHARE_DELETE,
 // which makes MoveFileW reject the final stage rename. Keep a separately-opened
@@ -708,7 +708,7 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                 // DOMPurify pass — see html_sanitize). Handlers/`style`/`<script>`/
                 // `<iframe>` are stripped; the surviving markup is already safe, so it
                 // is pushed verbatim (NOT re-escaped).
-                out.push_str(&crate::html_sanitize::sanitize(&unescape(raw_esc)));
+                out.push_str(&tine_core::html_sanitize::sanitize(&unescape(raw_esc)));
             }
             continue;
         }
@@ -843,7 +843,7 @@ fn push_inlines(inlines: &[Inline], out: &mut String) {
     flatten_inlines(inlines, out);
 }
 
-fn flatten_list(items: &[lsdoc::ast::ListItem], out: &mut String) {
+fn flatten_list(items: &[tine_core::lsdoc::ast::ListItem], out: &mut String) {
     for it in items {
         if !it.name.is_empty() {
             push_inlines(&it.name, out);
@@ -908,7 +908,7 @@ fn ast_plain_text(blocks: &[Block]) -> String {
 /// Parse + property/planning-filter one block body the way `render_block` does — the
 /// shared front of the render and search-index paths (one lsdoc parse per call).
 fn body_blocks(raw: &str) -> Vec<Block> {
-    crate::doc::strip_planning_lines(crate::render::parse_block(raw, false), raw)
+    tine_core::doc::strip_planning_lines(tine_core::render::parse_block(raw, false), raw)
         .into_iter()
         .filter(|b| !matches!(b, Block::Properties { .. }))
         .collect()
@@ -1222,9 +1222,9 @@ struct Ctx<'a> {
 }
 
 /// lsdoc render options for a Markdown block body (the canonical skeleton the export decorates).
-fn md_opts() -> lsdoc::RenderOpts {
-    lsdoc::RenderOpts {
-        format: lsdoc::Format::Md,
+fn md_opts() -> tine_core::lsdoc::RenderOpts {
+    tine_core::lsdoc::RenderOpts {
+        format: tine_core::lsdoc::Format::Md,
     }
 }
 
@@ -1323,7 +1323,7 @@ fn emit_block_inner(raw: &str, out: &mut String, ctx: &Ctx, depth: u8) {
     });
     emit_header_facets(blk.marker(), blk.priority(), out);
     let body = decorate(
-        &lsdoc::render_html(&body_blocks(raw), &md_opts()),
+        &tine_core::lsdoc::render_html(&body_blocks(raw), &md_opts()),
         ctx,
         depth,
     );
@@ -1597,7 +1597,7 @@ fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
         let page = page.trim();
         if let Some(doc) = ctx
             .pages
-            .and_then(|pages| pages.get(&crate::refs::page_key(page)).copied())
+            .and_then(|pages| pages.get(&tine_core::refs::page_key(page)).copied())
         {
             return render_page_embed_doc(page, doc, ctx, depth);
         }
@@ -1696,7 +1696,7 @@ fn render_namespace(graph: &Graph, ns: &str, ctx: &Ctx) -> String {
 
 fn publish_page_allowed(ctx: &Ctx, page: &str) -> bool {
     ctx.pages
-        .is_none_or(|pages| pages.contains_key(&crate::refs::page_key(page)))
+        .is_none_or(|pages| pages.contains_key(&tine_core::refs::page_key(page)))
 }
 
 fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) -> String {
@@ -1794,7 +1794,7 @@ fn render_block(
         Some(BeginQueryInspection::Unsupported) => out.push_str(
             "<div class=\"query-unsupported begin-query-unsupported\" role=\"alert\">Unsupported BEGIN_QUERY.</div>",
         ),
-        None => out.push_str(&decorate(&lsdoc::render_html(&blocks, &md_opts()), ctx, 0)),
+        None => out.push_str(&decorate(&tine_core::lsdoc::render_html(&blocks, &md_opts()), ctx, 0)),
     }
     out.push_str("</div>");
     emit_trailer_facets(b.scheduled(), b.deadline(), &b.properties(), out);
@@ -2720,7 +2720,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut source_identity_counts: HashMap<String, usize> = HashMap::new();
     for page in &pages {
         *source_identity_counts
-            .entry(crate::refs::page_key(&page.name))
+            .entry(tine_core::refs::page_key(&page.name))
             .or_default() += 1;
     }
     let mut entries: Vec<_> = pages.iter().collect();
@@ -2742,7 +2742,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("org"))
         {
-            crate::org::parse_org(&content)
+            tine_core::org::parse_org(&content)
         } else {
             doc::parse(&content)
         };
@@ -2754,7 +2754,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
             continue;
         }
         if source_identity_counts
-            .get(&crate::refs::page_key(&e.name))
+            .get(&tine_core::refs::page_key(&e.name))
             .copied()
             .unwrap_or(0)
             != 1
@@ -2808,7 +2808,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
 
     let page_docs: HashMap<String, &doc::Document> = public
         .iter()
-        .map(|(name, _, parsed)| (crate::refs::page_key(name), parsed.as_ref()))
+        .map(|(name, _, parsed)| (tine_core::refs::page_key(name), parsed.as_ref()))
         .collect();
     let mut reverse_refs = ReverseRefIndex::new();
     for (name, _, parsed) in &public {
@@ -2937,7 +2937,11 @@ mod tests {
             query_cache: None,
             pages: None,
         };
-        decorate(&lsdoc::render_html(&body_blocks(raw), &md_opts()), &ctx, 0)
+        decorate(
+            &tine_core::lsdoc::render_html(&body_blocks(raw), &md_opts()),
+            &ctx,
+            0,
+        )
     }
     fn search_text(raw: &str) -> String {
         ast_plain_text(&body_blocks(raw))

@@ -1,0 +1,27 @@
+[package]
+name = "tine-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tine-core = { path = "../tine-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+sha2 = "0.10"
+regex = "1"
+libc = "0.2"
+cap-std = "4.0.2"
+same-file = "1.0.6"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+tine-core = { path = "../tine-core", features = ["test-counters"] }
+pretty_assertions = "1"

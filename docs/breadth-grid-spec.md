@@ -502,7 +502,7 @@ grid/board's "database of your bullets" promise is a **layer A–C** promise.
 Grounded facts (code study, Jul 3 2026):
 
 - **A — parse/load: lazy + paced warm.** `Graph::open()` parses nothing
-  (`crates/tine-core/src/model.rs:373-400`); the full parsed-page cache builds on
+  (`crates/tine-store/src/model.rs:373-400`); the full parsed-page cache builds on
   first graph-wide call (`with_pages`, `model.rs:1322-1347`) or via a background
   warm paced 2 ms/24 pages (`warm_cache`, `model.rs:1351-1411`). Tine avoids OG's
   boot tax by construction; the first query after startup pays the cache build.
@@ -554,7 +554,7 @@ Grounded facts (code study, Jul 3 2026):
 | property parsing | `isPropertyLine` `src/render/block.ts:31-38`; `pageProperties` `:44-81` | the property field kind (opt-in) |
 | pointer resizers | `src/App.tsx` content-row, `src/ui.ts:167` | generalize for grid tracks |
 | pointer reorder drag | `src/components/Block.tsx:122` (`beginDrag`) | basis for seam/cell drag |
-| **query engine (full-scan, shipped)** | `crates/tine-core/src/query.rs:210-284` (`run_query`/`run_pred`); memo `model.rs:266-271`, `:1675` | the kanban/table row source already exists — DSL covers markers/tags/props/bools |
+| **query engine (full-scan, shipped)** | `crates/tine-store/src/query.rs:210-284` (`run_query`/`run_pred`); memo `model.rs:266-271`, `:1675` | the kanban/table row source already exists — DSL covers markers/tags/props/bools |
 | lazy load + paced warm | `model.rs:373-400` (`Graph::open`), `:1322-1347` (`with_pages`), `:1351-1411` (`warm_cache`) | layer-A cost model; first query pays the cache build |
 | scoped query invalidation | `query.rs:286-300` | the reuse point for incremental facet indices (v2-if-measured) |
 | store mutation choke point | `store.ts` mutators (~10 fns, all via `setDoc`+`markDirty`) | clean hook for any frontend-side index maintenance |

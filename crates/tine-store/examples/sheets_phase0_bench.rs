@@ -5,7 +5,8 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use tine_core::{BlockDto, Graph, PageKind, RefGroup};
+use tine_core::{BlockDto, PageKind, RefGroup};
+use tine_store::model::Graph;
 
 const DEFAULT_SCALES: &[usize] = &[10_000, 50_000, 100_000, 200_000];
 const BLOCKS_PER_FILE: usize = 50;

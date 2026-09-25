@@ -4,7 +4,7 @@
 //! owned by lsdoc >= v0.5.4; this test pins the user-visible outcome — the page
 //! loads and stays searchable — against a future parser regression.
 
-use tine_core::Graph;
+use tine_store::model::Graph;
 
 #[test]
 fn gh221_malformed_html_fragment_indexes_without_panic() {

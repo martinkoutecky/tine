@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::Manager;
-use tine_core::model::Graph;
+use tine_store::model::Graph;
 
 // Snapshot the graph's markdown into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety

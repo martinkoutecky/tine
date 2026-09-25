@@ -74,7 +74,7 @@ jobs:
           npm test
 
       - name: Rust core tests
-        run: cargo test -p tine-core
+        run: cargo test -p tine-core -p tine-store
 
   test:
     name: Full CI / Linux tests and release contracts
@@ -146,7 +146,7 @@ jobs:
         run: npm test
 
       - name: Rust core tests
-        run: cargo test -p tine-core
+        run: cargo test -p tine-core -p tine-store
 
       - name: Standalone plugin template builds and conforms
         run: npm run plugin:template-check
@@ -176,7 +176,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Windows core tests (including junction filesystem behavior)
-        run: cargo test -p tine-core
+        run: cargo test -p tine-core -p tine-store
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
 
@@ -193,7 +193,7 @@ jobs:
         with:
           workspaces: ". -> target"
       - name: Android core compiles against Android libc declarations
-        run: cargo check -p tine-core --target aarch64-linux-android
+        run: cargo check -p tine-core -p tine-store --target aarch64-linux-android
 
   plugin-launch-e2e:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'

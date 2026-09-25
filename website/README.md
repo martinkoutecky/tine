@@ -47,7 +47,7 @@ those templates:
 
 ```sh
 source scripts/env.sh
-cargo run -q -p tine-core --example build-demo-site -- website/demo
+cargo run -q -p tine-store --example build-demo-site -- website/demo
 ```
 
 The example scaffolds the demo graph in a temp dir, publishes **all** its pages

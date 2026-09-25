@@ -2,7 +2,7 @@
 // filter tree, mutate it, and serialize back to DSL. Pure + unit-testable (no
 // DOM). Mirrors OG Logseq's handler/query/builder.cljs (from-dsl / ->dsl /
 // add/remove/wrap/unwrap) but scoped to the DSL subset Tine's engine actually
-// runs (see crates/tine-core/src/query.rs): page/tag refs, and/or/not, task,
+// runs (see crates/tine-store/src/query.rs): page/tag refs, and/or/not, task,
 // priority, property, scheduled, deadline, between.
 //
 // Single source of truth is the block's DSL text. The UI parses it to a tree,

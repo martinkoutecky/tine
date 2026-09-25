@@ -4,7 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tine_core::model::ReferenceKind;
-use tine_core::{Graph, PageKind, RefGroup};
+use tine_core::{PageKind, RefGroup};
+use tine_store::model::Graph;
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 

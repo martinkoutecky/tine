@@ -6,7 +6,8 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use tine_core::{Graph, PageKind, RefGroup};
+use tine_core::{PageKind, RefGroup};
+use tine_store::model::Graph;
 
 const DEFAULT_SCALES: &[usize] = &[2_000, 10_000, 20_000];
 const BLOCKS_PER_PAGE: usize = 5;
@@ -466,7 +467,7 @@ fn bench_switcher(root: &Path) -> io::Result<f64> {
     let mut durations = Vec::with_capacity(SWITCHER_RUNS);
     for _ in 0..SWITCHER_RUNS {
         let started = Instant::now();
-        let results = tine_core::query::quick_switch(&graph, "pa", 12);
+        let results = tine_store::query::quick_switch(&graph, "pa", 12);
         durations.push(started.elapsed());
         assert!(!results.is_empty(), "quick_switch returned no results");
         black_box(results.len());
@@ -498,7 +499,7 @@ fn bench_publish(root: &Path) -> io::Result<(f64, usize)> {
         let page_count = graph.with_pages(|pages| pages.len());
         black_box(page_count);
         let started = Instant::now();
-        let (out, count) = tine_core::publish::publish_graph(&graph)?;
+        let (out, count) = tine_store::publish::publish_graph(&graph)?;
         durations.push(started.elapsed());
         assert!(count > 0, "publish_graph returned no pages");
         publish_pages = count;

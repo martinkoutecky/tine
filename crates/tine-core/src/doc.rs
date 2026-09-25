@@ -62,7 +62,7 @@ pub struct DocBlock {
     /// from equality + serialization, and reset on clone. `pub(crate)` only so
     /// the constructors in sibling modules can initialize it empty.
     #[serde(skip)]
-    pub(crate) proj: std::sync::OnceLock<BlockProjection>,
+    pub proj: std::sync::OnceLock<BlockProjection>,
 }
 
 /// Memoized projection of a block's `raw`, so whole-graph scans (full-text
@@ -111,7 +111,7 @@ pub struct BlockProjection {
     /// Parser-owned source spans used by both linked and unlinked reference
     /// surfaces. Kept on the memoized projection so reference queries do not
     /// parse every block again.
-    pub(crate) reference_source: crate::reference_evidence::ReferenceSourceProjection,
+    pub reference_source: crate::reference_evidence::ReferenceSourceProjection,
 }
 
 impl BlockProjection {
@@ -494,7 +494,7 @@ fn inline_is_empty(i: &lsdoc::ast::Inline) -> bool {
 /// without deleting body content that shares their Paragraph (#75). A neighboring
 /// line break is removed only when the timestamp has no same-line body suffix;
 /// mid-text timestamps are untouched.
-pub(crate) fn strip_planning_lines(
+pub fn strip_planning_lines(
     mut blocks: Vec<lsdoc::ast::Block>,
     raw: &str,
 ) -> Vec<lsdoc::ast::Block> {
@@ -567,7 +567,7 @@ fn angle_after(slice: &str, ts: &str) -> Option<String> {
 /// DTO has no projection), off the one lsdoc recognizer. md mode: query-result
 /// sort keys are cosmetic, and an org `key::` here is format-agnostic exactly as
 /// the old line-scan was. Call once per block (decorate-sort), never per compare.
-pub(crate) fn block_sort_facets(raw: &str) -> (Vec<(String, String)>, String) {
+pub fn block_sort_facets(raw: &str) -> (Vec<(String, String)>, String) {
     let blocks = crate::render::parse_block(raw, false);
     let (_, _, _, properties) = header_facets(&blocks);
     let visible = visible_minus_properties(raw, &blocks);
@@ -621,11 +621,11 @@ fn visible_minus_properties(raw: &str, blocks: &[lsdoc::ast::Block]) -> String {
     out.trim_end_matches('\n').to_string()
 }
 
-pub(crate) fn property_key_norm(key: &str) -> String {
+pub fn property_key_norm(key: &str) -> String {
     key.trim().to_ascii_lowercase().replace([' ', '_'], "-")
 }
 
-pub(crate) fn parse_property_line(line: &str) -> Option<(String, String)> {
+pub fn parse_property_line(line: &str) -> Option<(String, String)> {
     // `key:: value` — key is letters/digits/_/-/. and at least one char.
     let idx = line.find("::")?;
     let key = line[..idx].trim();

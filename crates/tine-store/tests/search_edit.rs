@@ -1,7 +1,8 @@
 //! Regression: full-text search reflects a marker toggle once the edited page is
 //! saved back (the path a {{query}}-result edit takes).
-use tine_core::model::atomic_copy;
-use tine_core::{Graph, PageKind};
+use tine_core::PageKind;
+use tine_store::model::atomic_copy;
+use tine_store::model::Graph;
 
 fn mk(tag: &str) -> std::path::PathBuf {
     // Unique per test (pid + tag) so parallel tests don't share a dir.

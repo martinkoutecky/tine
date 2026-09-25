@@ -21,7 +21,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/query.rs",
+          "crates/tine-store/src/query.rs",
           "src/editor/queryBuilder.test.ts",
           "src/components/QueryMacro.test.tsx"
         ],
@@ -46,7 +46,7 @@
       "status": "closed",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs",
+          "crates/tine-store/src/model.rs",
           "src-tauri/src/settings.rs",
           "src/graph.test.tsx",
           "scripts/e2e-external-assets.mjs"
@@ -94,7 +94,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs"
+          "crates/tine-store/src/model.rs"
         ],
         "scenario": "pdf.highlight-pair-failure-atomicity",
         "failBefore": "proven"
@@ -115,8 +115,8 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs",
-          "crates/tine-core/src/onboarding.rs"
+          "crates/tine-store/src/model.rs",
+          "crates/tine-store/src/onboarding.rs"
         ],
         "scenario": "filesystem.absent-publish-no-replace",
         "failBefore": "source-proven"
@@ -137,8 +137,8 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs",
-          "crates/tine-core/src/onboarding.rs"
+          "crates/tine-store/src/model.rs",
+          "crates/tine-store/src/onboarding.rs"
         ],
         "scenario": "filesystem.guide-copy-containment",
         "failBefore": "source-proven"
@@ -180,7 +180,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs",
+          "crates/tine-store/src/model.rs",
           "src-tauri/src/commands.rs"
         ],
         "scenario": "references.count-index-scoped-invalidation",
@@ -202,7 +202,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs",
+          "crates/tine-store/src/model.rs",
           "src-tauri/src/settings.rs"
         ],
         "scenario": "settings.absent-publish-no-replace",
@@ -224,7 +224,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs"
+          "crates/tine-store/src/model.rs"
         ],
         "scenario": "guide.twin-withdraw-recovery",
         "failBefore": "proven"
@@ -245,7 +245,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs"
+          "crates/tine-store/src/model.rs"
         ],
         "scenario": "rename.rollback-destination-recovery",
         "failBefore": "proven"
@@ -266,7 +266,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/publish.rs"
+          "crates/tine-store/src/publish.rs"
         ],
         "scenario": "publish.public-macro-capability",
         "failBefore": "proven"
@@ -287,7 +287,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/publish.rs"
+          "crates/tine-store/src/publish.rs"
         ],
         "scenario": "publish.begin-query-execution-public-capability",
         "failBefore": "proven"
@@ -309,8 +309,8 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/publish.rs",
-          "crates/tine-core/src/model.rs"
+          "crates/tine-store/src/publish.rs",
+          "crates/tine-store/src/model.rs"
         ],
         "scenario": "publish.atomic-tree-replacement-and-bound-directories",
         "failBefore": "proven"
@@ -399,7 +399,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/query.rs",
+          "crates/tine-store/src/query.rs",
           "src-tauri/src/commands.rs",
           "src/components/ExportModal.queryBudget.test.tsx",
           "src/components/Block.embedHierarchy.test.tsx",
@@ -447,7 +447,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/publish.rs",
+          "crates/tine-store/src/publish.rs",
           "src/print.security.test.tsx",
           "scripts/e2e-print-security.mjs"
         ],
@@ -515,7 +515,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/publish.rs",
+          "crates/tine-store/src/publish.rs",
           "scripts/e2e-print-security.mjs"
         ],
         "scenario": "performance.print-image-per-file-and-cumulative-budget",
@@ -537,7 +537,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/publish.rs",
+          "crates/tine-store/src/publish.rs",
           "scripts/e2e-publish-security.mjs"
         ],
         "scenario": "publish.exact-source-capability-anchor-and-url-policy",
@@ -647,7 +647,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/query.rs",
+          "crates/tine-store/src/query.rs",
           "src-tauri/src/commands.rs"
         ],
         "scenario": "performance.result-family-construction-time-budgets",
@@ -669,10 +669,10 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/query.rs",
-          "crates/tine-core/src/model.rs",
+          "crates/tine-store/src/query.rs",
+          "crates/tine-store/src/model.rs",
           "src-tauri/src/commands.rs",
-          "crates/tine-core/src/publish.rs"
+          "crates/tine-store/src/publish.rs"
         ],
         "scenario": "performance.query-source-size-and-recursion-bounds",
         "failBefore": "source-proven"
@@ -694,8 +694,8 @@
       "coverage": {
         "tests": [
           "crates/tine-core/src/reference_evidence.rs",
-          "crates/tine-core/src/query.rs",
-          "crates/tine-core/src/model.rs"
+          "crates/tine-store/src/query.rs",
+          "crates/tine-store/src/model.rs"
         ],
         "scenario": "performance.bounded-result-evidence-and-scoped-family-cache",
         "failBefore": "source-proven"
@@ -719,7 +719,7 @@
       "coverage": {
         "tests": [
           "src-tauri/src/backup.rs",
-          "crates/tine-core/src/model.rs",
+          "crates/tine-store/src/model.rs",
           ".github/workflows/release.yml",
           "scripts/test-release-pipeline.mjs"
         ],
@@ -745,8 +745,8 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/tests/issue137_investigation.rs::issue137_alias_component_is_transitive_and_unions_duplicate_owners",
-          "crates/tine-core/tests/issue137_investigation.rs::issue137_fail_before_duplicate_alias_is_deterministic"
+          "crates/tine-store/tests/issue137_investigation.rs::issue137_alias_component_is_transitive_and_unions_duplicate_owners",
+          "crates/tine-store/tests/issue137_investigation.rs::issue137_fail_before_duplicate_alias_is_deterministic"
         ],
         "scenario": "references.alias-transitive-connected-component",
         "failBefore": "proven"
@@ -769,7 +769,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/tests/issue137_investigation.rs::issue137_fail_before_occurrence_count_is_not_silently_truncated",
+          "crates/tine-store/tests/issue137_investigation.rs::issue137_fail_before_occurrence_count_is_not_silently_truncated",
           "crates/tine-core/src/reference_evidence.rs::tests::occurrence_cap_reports_total_and_truncation",
           "src/components/UnlinkedReferences.test.tsx"
         ],
@@ -861,7 +861,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/model.rs::tests::search_cache_isolates_one_page_projection_panic"
+          "crates/tine-store/src/model.rs::tests::search_cache_isolates_one_page_projection_panic"
         ],
         "scenario": "search.page-panic-isolation-and-diagnostic",
         "failBefore": "proven"
@@ -884,7 +884,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/query_plan.rs::tests::page_alias_search_is_scoped_to_its_physical_owner"
+          "crates/tine-store/src/query_plan.rs::tests::page_alias_search_is_scoped_to_its_physical_owner"
         ],
         "scenario": "search.alias-owner-exact-safety-interop",
         "failBefore": "proven"
@@ -907,7 +907,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/query_plan.rs::tests::graph_search_reports_per_category_truncation"
+          "crates/tine-store/src/query_plan.rs::tests::graph_search_reports_per_category_truncation"
         ],
         "scenario": "search.per-category-result-truncation",
         "failBefore": "proven"
@@ -954,8 +954,8 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/query.rs",
-          "crates/tine-core/src/query_plan.rs"
+          "crates/tine-store/src/query.rs",
+          "crates/tine-store/src/query_plan.rs"
         ],
         "scenario": "search.autocomplete-treats-input-literally-not-as-dsl",
         "failBefore": "proven"
@@ -978,7 +978,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/src/query.rs"
+          "crates/tine-store/src/query.rs"
         ],
         "scenario": "search.page-topk-ties-stable-and-input-order-independent",
         "failBefore": "proven"
@@ -1003,7 +1003,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-core/tests/gh221_malformed_html.rs"
+          "crates/tine-store/tests/gh221_malformed_html.rs"
         ],
         "scenario": null,
         "failBefore": "proven"

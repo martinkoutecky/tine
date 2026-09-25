@@ -12,15 +12,15 @@
 //! demo self-contained under one directory, the emitted HTML is rewritten to
 //! `assets/<file>` and the graph's `assets/` is copied in alongside the pages.
 //!
-//! Usage: cargo run -q -p tine-core --example build-demo-site -- website/demo
+//! Usage: cargo run -q -p tine-store --example build-demo-site -- website/demo
 //! (Re-run after changing the demo templates in src/templates/.)
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tine_core::onboarding::create_demo_graph;
-use tine_core::publish::publish_graph;
-use tine_core::Graph;
+use tine_store::model::Graph;
+use tine_store::onboarding::create_demo_graph;
+use tine_store::publish::publish_graph;
 
 fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;

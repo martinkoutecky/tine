@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tine_core::model::Graph;
 use tine_core::pdf::{Highlight, Position, Rect};
+use tine_store::model::Graph;
 
 fn scratch(label: &str) -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);

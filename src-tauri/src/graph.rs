@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
-use tine_core::model::{Graph, GraphMeta};
+use tine_store::model::{Graph, GraphMeta};
 
 /// Reset the warm flag for a new graph load and return the new warm generation
 /// (passed to `warm_cache_async`, which only reports done if still current).
@@ -382,7 +382,7 @@ pub(crate) fn create_graph(dir: String) -> Result<String, String> {
         std::fs::create_dir(&cand).map_err(|e| format!("couldn't create folder: {e}"))?;
         cand
     };
-    tine_core::onboarding::create_demo_graph(&root)
+    tine_store::onboarding::create_demo_graph(&root)
         .map_err(|e| format!("couldn't create the demo graph: {e}"))?;
     Ok(root.display().to_string())
 }
