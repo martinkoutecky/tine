@@ -304,7 +304,7 @@ impl Store {
             return Err(OpenError::NotAFolder(root));
         }
         let graph =
-            Graph::open_checked_with_assets(&root, opts.approved_external_assets.as_deref())
+            Graph::open_checked_with_assets_inner(&root, opts.approved_external_assets.as_deref())
                 .map_err(|error| {
                     let message = error.to_string();
                     if let Some(current) =

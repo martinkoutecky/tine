@@ -1333,10 +1333,18 @@ pub(crate) fn page_icons(
     Ok(whole_graph(&state)?.page_icons(&names))
 }
 
+fn with_config_store<T>(
+    state: &GraphContext<'_>,
+    f: impl FnOnce(&tine_store::Store) -> Result<T, String>,
+) -> Result<T, String> {
+    let slot = slot_for_context(state)?;
+    f(&slot.store)
+}
+
 #[tauri::command]
 pub(crate) fn set_favorites(names: Vec<String>, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_favorites(&names).map_err(|e| e.to_string())
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_favorites(store, &names).map_err(|e| e.to_string())
     })
 }
 
@@ -1345,8 +1353,8 @@ pub(crate) fn set_preferred_workflow(
     workflow: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_preferred_workflow(&workflow)
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_preferred_workflow(store, &workflow)
             .map_err(|e| e.to_string())
     })
 }
@@ -1356,8 +1364,8 @@ pub(crate) fn set_timetracking_enabled(
     enabled: bool,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_timetracking_enabled(enabled)
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_timetracking_enabled(store, enabled)
             .map_err(|e| e.to_string())
     })?;
     refresh_graph(&state)?;
@@ -1366,8 +1374,8 @@ pub(crate) fn set_timetracking_enabled(
 
 #[tauri::command]
 pub(crate) fn set_show_brackets(enabled: bool, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_show_brackets(enabled).map_err(|e| e.to_string())
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_show_brackets(store, enabled).map_err(|e| e.to_string())
     })?;
     refresh_graph(&state)?;
     Ok(())
@@ -1378,8 +1386,8 @@ pub(crate) fn set_doc_mode_enter_for_new_block(
     enabled: bool,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_doc_mode_enter_for_new_block(enabled)
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_doc_mode_enter_for_new_block(store, enabled)
             .map_err(|e| e.to_string())
     })?;
     refresh_graph(&state)?;
@@ -1388,8 +1396,9 @@ pub(crate) fn set_doc_mode_enter_for_new_block(
 
 #[tauri::command]
 pub(crate) fn set_logical_outdenting(enabled: bool, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_logical_outdenting(enabled).map_err(|e| e.to_string())
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_logical_outdenting(store, enabled)
+            .map_err(|e| e.to_string())
     })?;
     refresh_graph(&state)?;
     Ok(())
@@ -1397,8 +1406,9 @@ pub(crate) fn set_logical_outdenting(enabled: bool, state: GraphContext<'_>) -> 
 
 #[tauri::command]
 pub(crate) fn set_guide_announced(announced: bool, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_guide_announced(announced).map_err(|e| e.to_string())
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_guide_announced(store, announced)
+            .map_err(|e| e.to_string())
     })?;
     refresh_graph(&state)?;
     Ok(())
@@ -1409,16 +1419,16 @@ pub(crate) fn set_default_journal_template(
     name: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_default_journal_template(name.as_deref())
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_default_journal_template(store, name.as_deref())
             .map_err(|e| e.to_string())
     })
 }
 
 #[tauri::command]
 pub(crate) fn set_start_of_week(n: u32, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_start_of_week(n).map_err(|e| e.to_string())
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_start_of_week(store, n).map_err(|e| e.to_string())
     })
 }
 
@@ -1430,8 +1440,8 @@ pub(crate) fn set_preferred_format(format: String, state: GraphContext<'_>) -> R
     } else {
         tine_core::model::Format::Md
     };
-    with_graph(&state, |g| {
-        g.set_preferred_format(fmt).map_err(|e| e.to_string())
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_preferred_format(store, fmt).map_err(|e| e.to_string())
     })?;
     refresh_graph(&state)?; // so new pages/journals use the new extension immediately
     Ok(())
@@ -1444,8 +1454,8 @@ pub(crate) fn set_journal_title_format(
     format: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.set_journal_page_title_format(&format)
+    with_config_store(&state, |store| {
+        tine_graph_features::config::set_journal_page_title_format(store, &format)
             .map_err(|e| e.to_string())
     })?;
     refresh_graph(&state)?; // pick up the new format + migrate any title-named journals
@@ -1454,7 +1464,9 @@ pub(crate) fn set_journal_title_format(
 
 #[tauri::command]
 pub(crate) fn read_custom_css(state: GraphContext<'_>) -> Result<String, String> {
-    with_graph(&state, |g| Ok(g.custom_css()))
+    with_config_store(&state, |store| {
+        Ok(tine_graph_features::config::custom_css(store))
+    })
 }
 
 #[tauri::command]

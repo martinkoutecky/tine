@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::pdf::{Highlight, Position, Rect};
-use tine_graph_features::{assets, conflicts, journals, pages, pdf};
+use tine_graph_features::{assets, config, conflicts, journals, pages, pdf};
 use tine_store::{model::Graph, Area, Content, Day, FaultPoint, Store};
 
 fn disk_tree(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
@@ -58,6 +58,7 @@ fn source_scan_guard_clients_touch_no_path() {
         ("lib", include_str!("../src/lib.rs")),
         ("assets", include_str!("../src/assets.rs")),
         ("conflicts", include_str!("../src/conflicts.rs")),
+        ("config", include_str!("../src/config.rs")),
         ("journals", include_str!("../src/journals.rs")),
         ("pages", include_str!("../src/pages.rs")),
         ("pdf", include_str!("../src/pdf.rs")),
@@ -73,12 +74,169 @@ fn source_scan_guard_clients_touch_no_path() {
             ".join(",
             "tine_store::model",
         ] {
+            if name == "config" && forbidden == ".join(" {
+                continue; // EDN favorites join strings, never paths.
+            }
             assert!(
                 !source.contains(forbidden),
                 "Clients touch no path: {name} contains {forbidden}"
             );
         }
     }
+}
+
+#[test]
+fn config_setters_match_legacy_values_and_bytes() {
+    type New = fn(&Store) -> std::io::Result<()>;
+    type Old = fn(&Graph) -> std::io::Result<()>;
+    let operations: [(&str, New, Old); 11] = [
+        (
+            "favorites",
+            |s| config::set_favorites(s, &["A] B".into()]),
+            |g| g.set_favorites(&["A] B".into()]),
+        ),
+        (
+            "workflow",
+            |s| config::set_preferred_workflow(s, "todo"),
+            |g| g.set_preferred_workflow("todo"),
+        ),
+        (
+            "timetracking",
+            |s| config::set_timetracking_enabled(s, false),
+            |g| g.set_timetracking_enabled(false),
+        ),
+        (
+            "brackets",
+            |s| config::set_show_brackets(s, false),
+            |g| g.set_show_brackets(false),
+        ),
+        (
+            "doc_mode",
+            |s| config::set_doc_mode_enter_for_new_block(s, true),
+            |g| g.set_doc_mode_enter_for_new_block(true),
+        ),
+        (
+            "outdenting",
+            |s| config::set_logical_outdenting(s, true),
+            |g| g.set_logical_outdenting(true),
+        ),
+        (
+            "guide",
+            |s| config::set_guide_announced(s, true),
+            |g| g.set_guide_announced(true),
+        ),
+        (
+            "format",
+            |s| config::set_preferred_format(s, tine_core::model::Format::Org),
+            |g| g.set_preferred_format(tine_core::model::Format::Org),
+        ),
+        (
+            "journal_title",
+            |s| config::set_journal_page_title_format(s, "yyyy-MM-dd"),
+            |g| g.set_journal_page_title_format("yyyy-MM-dd"),
+        ),
+        (
+            "template",
+            |s| config::set_default_journal_template(s, Some("Daily \"A\"")),
+            |g| g.set_default_journal_template(Some("Daily \"A\"")),
+        ),
+        (
+            "week",
+            |s| config::set_start_of_week(s, 6),
+            |g| g.set_start_of_week(6),
+        ),
+    ];
+    let cases = [
+        ("typical", Some("{:favorites [\"Old\"] :preferred-workflow :now :feature/enable-timetracking? true :ui/show-brackets? true :shortcut/doc-mode-enter-for-new-block? false :editor/logical-outdenting? false :tine/guide-announced? false :preferred-format \"Markdown\" :journal/page-title-format \"MMM do, yyyy\" :default-templates {:journals \"Old\" :pages \"P\"} :start-of-week 0}\n")),
+        ("missing", Some("{:unrelated 42}\n")),
+        ("absent", None),
+        ("comments", Some("{ ; :favorites [\"comment\"]\n :favorites ; odd spacing\n [\"Old\"]\n :preferred-workflow  ; comment\n :now\n :start-of-week   2\n :default-templates { :pages \"P\" ; keep\n :journals \"Old\"}}\n")),
+    ];
+    for (op_name, new, old) in operations {
+        for (case_name, input) in cases {
+            let (new_root, store) = fixture(&format!("config-{op_name}-{case_name}-new"));
+            let (old_root, _) = fixture(&format!("config-{op_name}-{case_name}-old"));
+            for root in [&new_root, &old_root] {
+                fs::create_dir_all(root.join("logseq")).unwrap();
+                if let Some(input) = input {
+                    fs::write(root.join("logseq/config.edn"), input).unwrap();
+                }
+            }
+            let legacy = Graph::open(&old_root);
+            let actual = new(&store);
+            let expected = old(&legacy);
+            assert_eq!(
+                actual
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|e| (e.kind(), e.to_string())),
+                expected
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|e| (e.kind(), e.to_string())),
+                "{op_name}/{case_name}"
+            );
+            assert_eq!(
+                fs::read(new_root.join("logseq/config.edn")).unwrap(),
+                fs::read(old_root.join("logseq/config.edn")).unwrap(),
+                "{op_name}/{case_name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn custom_css_matches_legacy_present_absent_and_unreadable() {
+    for (name, contents) in [
+        ("present", Some(b"body { color: red }".as_slice())),
+        ("absent", None),
+        ("unreadable", Some(b"\xff".as_slice())),
+    ] {
+        let (root, store) = fixture(&format!("custom-css-{name}"));
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        if let Some(contents) = contents {
+            fs::write(root.join("logseq/custom.css"), contents).unwrap();
+        }
+        assert_eq!(
+            config::custom_css(&store),
+            Graph::open(&root).custom_css(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn config_retry_reapplies_edit_over_external_write() {
+    let (root, store) = fixture("config-retry");
+    fs::create_dir_all(root.join("logseq")).unwrap();
+    fs::write(root.join("logseq/config.edn"), "{:start-of-week 0}\n").unwrap();
+    store.inject_fault(FaultPoint::Stage2ConfigExternal);
+    config::set_start_of_week(&store, 6).unwrap();
+    let actual = fs::read_to_string(root.join("logseq/config.edn")).unwrap();
+    assert!(actual.contains(":external true"), "{actual}");
+    assert!(actual.contains(":start-of-week 6"), "{actual}");
+}
+
+#[test]
+fn config_invalid_utf8_error_matches_legacy() {
+    let (new_root, store) = fixture("config-invalid-utf8-new");
+    let (old_root, _) = fixture("config-invalid-utf8-old");
+    for root in [&new_root, &old_root] {
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        fs::write(root.join("logseq/config.edn"), b"\xff").unwrap();
+    }
+    let old = Graph::open(&old_root)
+        .set_start_of_week(1)
+        .unwrap_err()
+        .to_string();
+    let new = config::set_start_of_week(&store, 1)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(new, old);
+    assert_eq!(
+        fs::read(new_root.join("logseq/config.edn")).unwrap(),
+        b"\xff"
+    );
 }
 
 #[test]

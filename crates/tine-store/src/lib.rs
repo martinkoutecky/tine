@@ -5,6 +5,7 @@
 //! `SHALLOW.txt` lists legacy public items awaiting later batches; the target
 //! interface is `og/batches/01-step1-interface.rs`.
 
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub mod config_edit;
 pub mod model;
 pub mod onboarding;

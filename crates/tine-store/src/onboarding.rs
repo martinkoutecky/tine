@@ -106,7 +106,7 @@ pub fn create_demo_graph(root: &Path) -> io::Result<()> {
     atomic_write_new(&logseq.join("config.edn"), CONFIG_EDN.as_bytes())?;
     atomic_write_new(&assets.join("quick-capture.png"), QUICK_CAPTURE_PNG)?;
 
-    let graph = Graph::open(root);
+    let graph = Graph::open_inner(root);
     for template in GUIDE_TEMPLATES {
         let path = graph.path_for(template.title, PageKind::Page);
         atomic_write_new(&path, template.markdown.as_bytes())?;

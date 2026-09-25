@@ -309,6 +309,7 @@ fn crumb_line(b: &DocBlock) -> String {
 /// Collect matching blocks across the graph, grouped by source page. Scans the
 /// graph's in-memory page cache (built once, kept in sync by edits) so no disk
 /// I/O or re-parsing happens per call.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn collect(
     graph: &Graph,
     keep: impl FnMut(&DocBlock) -> bool,
@@ -731,6 +732,7 @@ fn block_has_reference(
     )
 }
 
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn collect_reference_occurrences(
     graph: &Graph,
     canonical: &str,
@@ -876,6 +878,7 @@ fn collect_reference_occurrences_bounded(
     }
 }
 
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
@@ -1133,6 +1136,7 @@ pub(crate) fn backlink_filter_context(
 /// grouped by source page. Unlike page `backlinks`, this passes `exclude: None`,
 /// so a referrer on the *same page* as the target is included — matching OG's
 /// `get-block-referenced-blocks` (no self-page exclusion at the block level).
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
     let u = uuid.trim();
     if u.is_empty() {
@@ -1173,6 +1177,7 @@ pub(crate) fn block_referrers_bounded(
 /// Unlinked references: parser-visible plain occurrences outside explicit
 /// reference syntax. A block containing both kinds appears once in each surface,
 /// with the corresponding occurrence evidence.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
@@ -1225,6 +1230,7 @@ fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) 
     (props, tags)
 }
 
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
     run_query_bounded(graph, query_src, usize::MAX, usize::MAX).groups
 }
@@ -2132,6 +2138,7 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
 /// Literal fuzzy full-text autocomplete for the `((` block picker, grouped by
 /// page and capped at `limit` total blocks. Ctrl-K uses `run_graph_search*` and
 /// retains the shared search dialect through `QueryPlan::friendly*`.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
     search_cancellable(graph, query, limit, || false)
 }
@@ -2139,6 +2146,7 @@ pub(crate) fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> 
 /// Search with cooperative cancellation for interactive callers. The cheap
 /// callback is checked before each block projection, so a superseded rare-prefix
 /// scan does not finish walking a huge page in the background.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn search_cancellable(
     graph: &Graph,
     query: &str,
@@ -2496,6 +2504,7 @@ pub(crate) fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<Page
 /// Resolve a `((uuid))` block reference to a shallow identity/result row.
 /// Descendants are owned by the source page; explicit bounded consumers use
 /// `preview_block`.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
     // Jump to the owning page via the uuid index, falling back to a full scan if
     // the hint is missing or stale (so a lagging index can never give a wrong
@@ -2541,6 +2550,7 @@ pub(crate) fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
 /// absent) falls back to a SINGLE whole-graph scan. Match semantics + first-block-
 /// wins ordering are identical to `resolve_block`. Output is positional and
 /// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> {
     resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
 }

@@ -1,8 +1,7 @@
 //! Guarded multi-file writes for one graph. The interim cache publishes through
 //! the existing page upsert path; the B7 `Change` channel does not exist yet.
-//! The legacy graph stores config as an immutable field, so transactions that
-//! would change `logseq/config.edn` refuse in preflight until B7 can publish
-//! a matching config snapshot. Other non-page files publish a cache generation.
+//! Config clients write `logseq/config.edn` through guarded file steps; the
+//! command layer refreshes its graph binding after settings that need it.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
@@ -91,6 +90,7 @@ pub enum FaultPoint {
     Stage2Mismatch,
     Stage2MismatchAt(usize),
     Stage2ValidSidecar,
+    Stage2ConfigExternal,
     NoReplaceCollision,
     MidStepIo,
     MidStepIoAt(usize),
@@ -104,6 +104,7 @@ pub(crate) enum FaultPoint {
     Stage2Mismatch,
     Stage2MismatchAt(usize),
     Stage2ValidSidecar,
+    Stage2ConfigExternal,
     NoReplaceCollision,
     MidStepIo,
     MidStepIoAt(usize),
@@ -398,19 +399,17 @@ impl<'a> Transaction<'a> {
     }
 
     fn preflight(&self, step: &Step) -> Result<Prepared, Why> {
-        let touches_config = match step {
-            Step::Save { .. } | Step::Rewrite { .. } => false,
-            Step::Create { file, .. } | Step::Replace { file, .. } | Step::Trash { file, .. } => {
-                file.as_str() == "logseq/config.edn"
-            }
+        let unsupported_config_step = match step {
+            Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
             Step::Unique {
                 area, stem, ext, ..
             } => *area == Area::Meta && stem == "config" && ext == "edn",
             Step::Move { file, to, .. } => {
                 file.as_str() == "logseq/config.edn" || to.as_str() == "logseq/config.edn"
             }
+            _ => false,
         };
-        if touches_config {
+        if unsupported_config_step {
             return Err(Why::Refused(Refusal::InvalidTarget(
                 "config.edn requires live config publication (B7)".into(),
             )));
@@ -631,6 +630,9 @@ impl<'a> Transaction<'a> {
 
     fn verify(&self, file: &FileId, old: Option<&[u8]>, index: usize) -> Result<(), Why> {
         let path = self.path(file)?;
+        if fault(self.store, FaultPoint::Stage2ConfigExternal) {
+            atomic_write(&path, b"{:external true :start-of-week 1}\n").map_err(failed)?;
+        }
         if fault(self.store, FaultPoint::Stage2ValidSidecar) {
             let external = b"{:highlights [] :foreign \"external\"}";
             let result = if old.is_some() {

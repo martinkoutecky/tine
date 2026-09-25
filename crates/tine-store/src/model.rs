@@ -22,11 +22,12 @@ use tine_core::doc::{self, DocBlock, Document};
 use tine_core::model::AssetInfo;
 use tine_core::model::{
     is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BlockDto, BlockPreview,
-    BoundedRefGroups, Format, GraphMeta, PageDto, PageEntry, PageKind, RefGroup, ReferenceKind,
-    TemplateDto,
+    BoundedRefGroups, Format, PageDto, PageEntry, PageKind, ReferenceKind, TemplateDto,
 };
 #[cfg(any(test, feature = "legacy-fixtures"))]
-use tine_core::model::{sync_conflict_base, JournalConflict, JournalFile, SyncConflict};
+use tine_core::model::{
+    sync_conflict_base, GraphMeta, JournalConflict, JournalFile, RefGroup, SyncConflict,
+};
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use unicode_normalization::UnicodeNormalization;
 
@@ -762,7 +763,7 @@ impl Graph {
     /// binding must use this checked entry point.
     #[allow(dead_code)]
     pub(crate) fn open_checked(root: impl AsRef<Path>) -> io::Result<Graph> {
-        Self::open_checked_with_assets(root, None)
+        Self::open_checked_with_assets_inner(root, None)
     }
 
     /// Resolve an `assets` link/junction that lands outside the graph. The
@@ -792,11 +793,19 @@ impl Graph {
     /// boundary: an external `assets` link/junction is accepted only when its
     /// current canonical target exactly matches the caller's approved target.
     /// This makes a retargeted link fail closed instead of inheriting old trust.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn open_checked_with_assets(
         root: impl AsRef<Path>,
         approved_assets: Option<&Path>,
     ) -> io::Result<Graph> {
-        let mut graph = Self::open(root);
+        Self::open_checked_with_assets_inner(root, approved_assets)
+    }
+
+    pub(crate) fn open_checked_with_assets_inner(
+        root: impl AsRef<Path>,
+        approved_assets: Option<&Path>,
+    ) -> io::Result<Graph> {
+        let mut graph = Self::open_inner(root);
         validate_managed_dir(&graph.root, &graph.config.journals_dir, "journals")?;
         validate_managed_dir(&graph.root, &graph.config.pages_dir, "pages")?;
         validate_managed_dir(&graph.root, "logseq", "logseq")?;
@@ -871,7 +880,12 @@ impl Graph {
     }
 
     /// Open a graph directory, reading `logseq/config.edn` if present.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn open(root: impl AsRef<Path>) -> Graph {
+        Self::open_inner(root)
+    }
+
+    pub(crate) fn open_inner(root: impl AsRef<Path>) -> Graph {
         let root = root.as_ref().to_path_buf();
         let config = fs::read_to_string(root.join("logseq").join("config.edn"))
             .map(|s| Config::parse(&s))
@@ -916,7 +930,7 @@ impl Graph {
         for (entry, document) in &mut pages {
             assign_doc_runtime_ids(&mut Arc::make_mut(document).roots, entry.rel_path_str());
         }
-        let graph = Graph::open(root);
+        let graph = Graph::open_inner(root);
         let entries = pages.iter().map(|(entry, _)| entry.clone()).collect();
         let index = build_page_cache_index(&pages);
         let reference_index = ReferenceCandidateIndex::build(0, &pages);
@@ -942,6 +956,7 @@ impl Graph {
             .clone()
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn meta(&self) -> GraphMeta {
         GraphMeta::from_config(
             self.root.display().to_string(),
@@ -960,6 +975,7 @@ impl Graph {
 
     /// Pages skipped by the latest whole-graph search-cache build because their
     /// parse/projection panicked. Paths are graph-relative and safe to surface.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn page_index_failures(&self) -> Vec<String> {
         self.page_index_failures.read().unwrap().clone()
     }
@@ -1170,6 +1186,7 @@ impl Graph {
     }
 
     /// Journals sorted newest-first.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn journals_desc(&self) -> Vec<PageEntry> {
         // Prefer the warmed whole-graph cache — its PageEntry list is kept current
         // by cache_upsert/cache_remove, so we avoid a directory read + parse on
@@ -2013,6 +2030,7 @@ impl Graph {
 
     /// Load a page by name; returns `None` if it doesn't exist on disk. Falls
     /// back to alias resolution (`alias::`) for named pages.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn load_named(&self, name: &str, kind: PageKind) -> io::Result<Option<PageDto>> {
         // A file that vanished between listing and load (external delete) reports
         // NotFound from load_page — map it to "no page" rather than an error, so
@@ -2667,6 +2685,7 @@ impl Graph {
 
     /// Eagerly build the page cache plus graph-open derived maps (call once after
     /// opening, off the hot path).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn warm_cache(&self) {
         let _ = self.warm_cache_cancellable(|| false);
     }
@@ -3248,6 +3267,7 @@ impl Graph {
         result
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn derived_memo(
         &self,
         key: String,
@@ -3407,6 +3427,7 @@ impl Graph {
 
     /// Backlinks for a page: blocks across the graph that reference it,
     /// grouped by source page. Delegates to the query module (memoized).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn backlinks(&self, target: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("b\0{}", tine_core::refs::normalize(target)), || {
             crate::query::backlinks(self, target)
@@ -3428,6 +3449,7 @@ impl Graph {
     /// Block-level referrers for a block uuid: every block across the graph that
     /// references it, grouped by source page (memoized). Includes same-page
     /// referrers (see `query::block_referrers`).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn block_referrers(&self, uuid: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("br\0{}", uuid.trim()), || {
             crate::query::block_referrers(self, uuid)
@@ -3447,6 +3469,7 @@ impl Graph {
     }
 
     /// Evaluate a `{{query ...}}` body over the graph (memoized).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn run_query(&self, query_src: &str) -> Arc<Vec<RefGroup>> {
         if !tine_core::query::query_source_within_limit(query_src)
             || !tine_core::query::query_nesting_within_limit(query_src)
@@ -3494,6 +3517,7 @@ impl Graph {
 
     /// Unlinked references: plain-text mentions of a page that aren't links
     /// (memoized).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn unlinked_refs(&self, target: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("u\0{}", tine_core::refs::normalize(target)), || {
             crate::query::unlinked_refs(self, target)
@@ -3952,6 +3976,7 @@ impl Graph {
     }
 
     /// Full-text search across all blocks.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn search(&self, query: &str, limit: usize) -> Vec<RefGroup> {
         crate::query::search(self, query, limit)
     }
@@ -4024,6 +4049,7 @@ impl Graph {
     }
 
     /// Resolve a `((uuid))` block reference to its shallow identity row.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn resolve_block(&self, uuid: &str) -> Option<RefGroup> {
         crate::query::resolve_block(self, uuid)
     }
@@ -4032,6 +4058,7 @@ impl Graph {
     /// refs / embeds) — one IPC instead of N, and one graph pass instead of N:
     /// hinted ids are grouped + each hinted page scanned once, with a single
     /// whole-graph fallback for hint misses.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn resolve_blocks(&self, uuids: &[String]) -> Vec<Option<RefGroup>> {
         crate::query::resolve_blocks(self, uuids)
     }
@@ -4046,6 +4073,7 @@ impl Graph {
     }
 
     /// The graph's `logseq/custom.css`, if present (for user theming).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn custom_css(&self) -> String {
         std::fs::read_to_string(self.root.join("logseq").join("custom.css")).unwrap_or_default()
     }
@@ -5435,6 +5463,7 @@ impl Graph {
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
         if page.guide {
             #[cfg(debug_assertions)]
@@ -6699,6 +6728,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// in the destination dir, fsync it, then atomically rename into place. The temp
 /// is removed on any failure, and the directory entry is fsynced on success. The
 /// temp name is hidden (`.`-prefixed) so the orphan-asset scanner never lists it.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -6813,6 +6843,7 @@ pub(crate) fn atomic_copy_file_new(
 ///     read-modify-write can't clobber a concurrent one (audit M1/M2);
 ///   - `edit` returns the new full contents, or an `Err` to abort without writing;
 ///   - the commit is atomic (temp + fsync + rename), so a crash can't truncate it.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub(crate) fn atomic_update(
     path: &Path,
     lock: &std::sync::Mutex<()>,
@@ -6821,6 +6852,7 @@ pub(crate) fn atomic_update(
     atomic_update_with_hooks(path, lock, edit, |_| {}, |_| {})
 }
 
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn atomic_update_with_hooks(
     path: &Path,
     lock: &std::sync::Mutex<()>,

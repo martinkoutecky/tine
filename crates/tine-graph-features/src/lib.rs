@@ -4,6 +4,7 @@
 //! function. Callers need no graph path, lock, cache state, or write protocol.
 
 pub mod assets;
+pub mod config;
 pub mod conflicts;
 pub mod journals;
 pub mod pages;

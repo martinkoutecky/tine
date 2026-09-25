@@ -207,10 +207,19 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
         b"{:preferred-format :org}\n".to_vec(),
     );
     assert!(matches!(
+        committed(tx.commit())[0],
+        StepResult::Written { .. }
+    ));
+    assert_eq!(
+        f.bytes("logseq/config.edn").unwrap(),
+        b"{:preferred-format :org}\n"
+    );
+    let mut tx = f.store.transaction();
+    tx.trash(&config, f.rev(&config));
+    assert!(matches!(
         refused(tx.commit()).0,
         Why::Refused(Refusal::InvalidTarget(_))
     ));
-    assert_eq!(f.bytes("logseq/config.edn").unwrap(), b"{}\n");
     let mut tx = f.store.transaction();
     tx.replace(&x, f.rev(&x), b"new".to_vec())
         .create(&x, Content::Bytes(b"again".to_vec()));
