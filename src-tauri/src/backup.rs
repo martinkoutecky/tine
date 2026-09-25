@@ -585,7 +585,7 @@ pub(crate) async fn restore_backup(
     })
     .await
     .map_err(|error| error.to_string())??;
-    crate::state::refresh_graph(&state)
+    Ok(())
 }
 
 fn restore_from_backup_source(
@@ -866,6 +866,7 @@ mod tests {
             &root,
             tine_store::OpenOptions {
                 approved_external_assets: Some(first.clone()),
+                watch: Default::default(),
             },
         )
         .unwrap();

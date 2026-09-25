@@ -2,28 +2,22 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 24
+# ceiling: 18
 field model::Graph.config
 field model::Graph.root
 fn model::Graph::assets_path
 fn model::Graph::block_ref_counts
 fn model::Graph::cache_generation
 fn model::Graph::find_entry
-fn model::Graph::forget_file
 fn model::Graph::invalidate_cache
 fn model::Graph::journal_content_days
-fn model::Graph::journals_path
 fn model::Graph::list_pages
 fn model::Graph::load_page
 fn model::Graph::page_aliases
 fn model::Graph::page_icons
-fn model::Graph::pages_path
 fn model::Graph::referenced_page_names
 fn model::Graph::save_page
-fn model::Graph::sync_file
 fn model::Graph::with_pages
 fn model::content_rev
-fn store::Store::cancel_background_load
-fn store::Store::legacy
 fn store::Store::target_for_save
 struct model::Graph

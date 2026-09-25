@@ -27,6 +27,7 @@ fn graph(root: &Path, external_assets: Option<&Path>) -> Store {
         root,
         OpenOptions {
             approved_external_assets: external_assets.map(Path::to_path_buf),
+            watch: Default::default(),
         },
     )
     .unwrap()

@@ -102,10 +102,12 @@ pub struct Graph {
     /// directory. No other managed graph path may use this capability.
     assets_root: PathBuf,
     pub config: Config,
+    live_config: RwLock<Option<Arc<Config>>>,
     /// Journal date formats (filename + title) resolved from `config.edn`, used to
-    /// recognize journal files in the user's format and render new ones. Built once
-    /// at open (config changes need a reopen, as in OG).
+    /// recognize journal files in the user's format and render new ones. The
+    /// store installs a live override after open and refreshes it on config edits.
     pub(crate) journal_format: JournalFormat,
+    live_journal_format: RwLock<Option<JournalFormat>>,
     /// In-memory cache of every parsed page, keyed implicitly by position.
     /// Built once on first whole-graph query and kept in sync by edits, so
     /// search / backlinks / `{{query}}` scan memory instead of re-reading and
@@ -756,14 +758,74 @@ fn rename_source_remove_failpoint() -> io::Result<()> {
     Ok(())
 }
 
+pub(crate) enum CheckedOpenError {
+    ExternalAssetsUnapproved(PathBuf),
+    Io(io::Error),
+}
+
+impl CheckedOpenError {
+    fn into_io(self) -> io::Error {
+        match self {
+            Self::ExternalAssetsUnapproved(current) => io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "external assets directory requires approval: {}",
+                    current.display()
+                ),
+            ),
+            Self::Io(error) => error,
+        }
+    }
+}
+
+impl From<io::Error> for CheckedOpenError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
 impl Graph {
+    pub(crate) fn current_config(&self) -> Arc<Config> {
+        self.live_config
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| Arc::new(self.config.clone()))
+    }
+
+    pub(crate) fn current_journal_format(&self) -> JournalFormat {
+        self.live_journal_format
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| self.journal_format.clone())
+    }
+
+    pub(crate) fn reload_config(&self, config: Config) -> io::Result<()> {
+        validate_managed_dir(&self.root, &config.journals_dir, "journals")?;
+        validate_managed_dir(&self.root, &config.pages_dir, "pages")?;
+        let format = JournalFormat::new(
+            config.journal_file_name_format.as_deref(),
+            config.journal_page_title_format.as_deref(),
+        );
+        *self.live_config.write().unwrap() = Some(Arc::new(config));
+        *self.live_journal_format.write().unwrap() = Some(format);
+        self.invalidate_cache();
+        Ok(())
+    }
+
+    pub(crate) fn install_live_config(&self) {
+        *self.live_config.write().unwrap() = Some(Arc::new(self.config.clone()));
+        *self.live_journal_format.write().unwrap() = Some(self.journal_format.clone());
+    }
+
     /// Open a graph for use by the application, rejecting any configured page or
     /// journal directory that can escape the selected graph. `Graph::open` stays
     /// available for the many in-crate disposable fixtures, but runtime graph
     /// binding must use this checked entry point.
     #[allow(dead_code)]
     pub(crate) fn open_checked(root: impl AsRef<Path>) -> io::Result<Graph> {
-        Self::open_checked_with_assets_inner(root, None)
+        Self::open_checked_with_assets_inner(root, None).map_err(CheckedOpenError::into_io)
     }
 
     /// Resolve an `assets` link/junction that lands outside the graph. The
@@ -799,27 +861,21 @@ impl Graph {
         approved_assets: Option<&Path>,
     ) -> io::Result<Graph> {
         Self::open_checked_with_assets_inner(root, approved_assets)
+            .map_err(CheckedOpenError::into_io)
     }
 
     pub(crate) fn open_checked_with_assets_inner(
         root: impl AsRef<Path>,
         approved_assets: Option<&Path>,
-    ) -> io::Result<Graph> {
+    ) -> Result<Graph, CheckedOpenError> {
         let mut graph = Self::open_inner(root);
         validate_managed_dir(&graph.root, &graph.config.journals_dir, "journals")?;
         validate_managed_dir(&graph.root, &graph.config.pages_dir, "pages")?;
         validate_managed_dir(&graph.root, "logseq", "logseq")?;
         validate_managed_dir(&graph.root, "publish", "publish")?;
         if let Some(resolved) = Self::external_assets_target(&graph.root)? {
-            let approved = approved_assets.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!(
-                        "external assets directory requires approval: {}",
-                        resolved.display()
-                    ),
-                )
-            })?;
+            let approved = approved_assets
+                .ok_or_else(|| CheckedOpenError::ExternalAssetsUnapproved(resolved.clone()))?;
             let approved = fs::canonicalize(approved).map_err(|error| {
                 io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -834,7 +890,8 @@ impl Graph {
                         approved.display(),
                         resolved.display()
                     ),
-                ));
+                )
+                .into());
             }
             graph.assets_root = resolved;
         } else {
@@ -899,6 +956,8 @@ impl Graph {
             root,
             config,
             journal_format,
+            live_config: RwLock::new(None),
+            live_journal_format: RwLock::new(None),
             cache: RwLock::new(None),
             page_index_failures: RwLock::new(Vec::new()),
             cache_index: RwLock::new(None),
@@ -961,8 +1020,8 @@ impl Graph {
     pub fn meta(&self) -> GraphMeta {
         GraphMeta::from_config(
             self.root.display().to_string(),
-            &self.config,
-            &self.journal_format,
+            &self.current_config(),
+            &self.current_journal_format(),
         )
     }
 
@@ -981,12 +1040,12 @@ impl Graph {
         self.page_index_failures.read().unwrap().clone()
     }
 
-    pub fn journals_path(&self) -> PathBuf {
-        self.root.join(&self.config.journals_dir)
+    pub(crate) fn journals_path(&self) -> PathBuf {
+        self.root.join(&self.current_config().journals_dir)
     }
 
-    pub fn pages_path(&self) -> PathBuf {
-        self.root.join(&self.config.pages_dir)
+    pub(crate) fn pages_path(&self) -> PathBuf {
+        self.root.join(&self.current_config().pages_dir)
     }
 
     /// Graph-root-relative, forward-slashed path for an absolute file path inside
@@ -1010,14 +1069,17 @@ impl Graph {
         if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
             return None;
         }
-        let (base, tail_rel) =
-            if let Some(tail) = rel.strip_prefix(&format!("{}/", self.config.journals_dir)) {
-                (self.journals_path(), tail)
-            } else if let Some(tail) = rel.strip_prefix(&format!("{}/", self.config.pages_dir)) {
-                (self.pages_path(), tail)
-            } else {
-                return None;
-            };
+        let (base, tail_rel) = if let Some(tail) =
+            rel.strip_prefix(&format!("{}/", self.current_config().journals_dir))
+        {
+            (self.journals_path(), tail)
+        } else if let Some(tail) =
+            rel.strip_prefix(&format!("{}/", self.current_config().pages_dir))
+        {
+            (self.pages_path(), tail)
+        } else {
+            return None;
+        };
         // The remaining segments are the file's path UNDER that dir. Nested
         // sub-directories are allowed (#21) but the can't-escape-the-graph
         // invariant is kept lexically: every segment must be a plain name — no
@@ -1061,7 +1123,7 @@ impl Graph {
         if is_date_stem {
             return false;
         }
-        let canon = self.journal_format.file_stem(date);
+        let canon = self.current_journal_format().file_stem(date);
         let dir = self.journals_path();
         dir.join(format!("{canon}.md")).is_file() || dir.join(format!("{canon}.org")).is_file()
     }
@@ -1069,7 +1131,7 @@ impl Graph {
     /// The format (`Md`/`Org`) new pages and journals are created in, from
     /// `config.edn`'s `:preferred-format`. Existing files keep their own format.
     pub(crate) fn preferred_format(&self) -> Format {
-        self.config.preferred_format
+        self.current_config().preferred_format
     }
 
     /// List all pages and journals in the graph.
@@ -1081,24 +1143,24 @@ impl Graph {
             }
         }
         let mut entries = Vec::new();
-        let nf = self.config.file_name_format;
+        let nf = self.current_config().file_name_format;
         entries.extend(list_md(
             &self.journals_path(),
             PageKind::Journal,
-            &self.journal_format,
+            &self.current_journal_format(),
             nf,
-            &self.config.journals_dir,
+            &self.current_config().journals_dir,
         ));
         entries.extend(list_md(
             &self.pages_path(),
             PageKind::Page,
-            &self.journal_format,
+            &self.current_journal_format(),
             nf,
-            &self.config.pages_dir,
+            &self.current_config().pages_dir,
         ));
         // A duplicate-day journal (canonical + leftover title-named file) must show
         // once in quick-switch / All-Pages, not twice (both resolve to one page).
-        let entries = dedup_journal_days(entries, &self.journal_format);
+        let entries = dedup_journal_days(entries, &self.current_journal_format());
         *self.page_list_cache.write().unwrap() = Some((gen, entries.clone()));
         entries
     }
@@ -1202,9 +1264,9 @@ impl Graph {
             None => list_md(
                 &self.journals_path(),
                 PageKind::Journal,
-                &self.journal_format,
-                self.config.file_name_format,
-                &self.config.journals_dir,
+                &self.current_journal_format(),
+                self.current_config().file_name_format,
+                &self.current_config().journals_dir,
             )
             .into_iter()
             .filter(|e| e.date_key.is_some())
@@ -1214,7 +1276,7 @@ impl Graph {
         // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
         // page name, so otherwise the day renders twice. The stray stays visible
         // via journal_conflicts() for reconciliation.
-        let mut js = dedup_journal_days(raw, &self.journal_format);
+        let mut js = dedup_journal_days(raw, &self.current_journal_format());
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
@@ -1277,8 +1339,8 @@ impl Graph {
         // A title-named ("Jun 18th, 2026.md", "Thursday, 25-06-2026.org") or
         // otherwise non-stem journal file: normalize it to the graph's filename
         // format so it round-trips with OG and is recognized in the feed.
-        let d = self.journal_format.parse(stem)?;
-        let want = self.journal_format.file_stem(d);
+        let d = self.current_journal_format().parse(stem)?;
+        let want = self.current_journal_format().file_stem(d);
         if want == stem {
             return None; // already in the graph's filename format
         }
@@ -1323,8 +1385,8 @@ impl Graph {
             };
             // A date-stem file is canonical; otherwise try to parse its title.
             let canonical = JournalDate::from_file_stem(stem).is_some();
-            let date =
-                JournalDate::from_file_stem(stem).or_else(|| self.journal_format.parse(stem));
+            let date = JournalDate::from_file_stem(stem)
+                .or_else(|| self.current_journal_format().parse(stem));
             if let Some(d) = date {
                 by_date.entry(d.ordinal_key()).or_default().push((
                     format!("{stem}.{ext}"),
@@ -1373,7 +1435,7 @@ impl Graph {
                     .then_with(|| a.name.cmp(&b.name))
             });
             out.push(JournalConflict {
-                title: self.journal_format.title(date),
+                title: self.current_journal_format().title(date),
                 files: jfiles,
             });
         }
@@ -1412,11 +1474,13 @@ impl Graph {
                 let base_path = base_file.is_file().then(|| self.rel_path(&base_file));
                 let base_name = match kind {
                     PageKind::Journal => self
-                        .journal_format
+                        .current_journal_format()
                         .parse(base_stem)
-                        .map(|d| self.journal_format.title(d))
+                        .map(|d| self.current_journal_format().title(d))
                         .unwrap_or_else(|| base_stem.to_string()),
-                    PageKind::Page => decode_page_name(base_stem, self.config.file_name_format),
+                    PageKind::Page => {
+                        decode_page_name(base_stem, self.current_config().file_name_format)
+                    }
                 };
                 let tag = stem[base_stem.len()..]
                     .trim_matches(|c: char| c == '.' || c == ' ' || c == '(' || c == ')')
@@ -1810,7 +1874,7 @@ impl Graph {
             Some(e @ ("md" | "org")) => e.to_string(),
             _ => return Err(bad_path()),
         };
-        let enc = encode_page_name(name, self.config.file_name_format);
+        let enc = encode_page_name(name, self.current_config().file_name_format);
         let dir = self.pages_path();
         if dir.join(format!("{enc}.md")).exists() || dir.join(format!("{enc}.org")).exists() {
             return Err(io::Error::new(
@@ -1844,9 +1908,9 @@ impl Graph {
                     // journals_desc would drop it and the day would look empty. The
                     // extension follows the graph's :preferred-format.
                     let stem = self
-                        .journal_format
+                        .current_journal_format()
                         .parse(name)
-                        .map(|d| self.journal_format.file_stem(d))
+                        .map(|d| self.current_journal_format().file_stem(d))
                         .unwrap_or_else(|| name.to_string());
                     self.journals_path().join(format!("{stem}.{}", pref.ext()))
                 }),
@@ -1856,7 +1920,7 @@ impl Graph {
                 if let Some(entry) = self.find_entry(name, PageKind::Page) {
                     return entry.path;
                 }
-                let enc = encode_page_name(name, self.config.file_name_format);
+                let enc = encode_page_name(name, self.current_config().file_name_format);
                 let dir = self.pages_path();
                 dir.join(format!("{enc}.{}", pref.ext()))
             }
@@ -1881,7 +1945,7 @@ impl Graph {
         }
         let path = self.pages_path().join(format!(
             "{}.md",
-            encode_page_name(name, self.config.file_name_format)
+            encode_page_name(name, self.current_config().file_name_format)
         ));
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
@@ -1898,7 +1962,7 @@ impl Graph {
         guide_twin_race_hook(&path)?;
         let alt = self.pages_path().join(format!(
             "{}.org",
-            encode_page_name(name, self.config.file_name_format)
+            encode_page_name(name, self.current_config().file_name_format)
         ));
         if alt.exists() {
             // An Org twin appeared during publication. Withdraw only the exact
@@ -1945,13 +2009,16 @@ impl Graph {
         let (dir, stem) = match kind {
             PageKind::Page => (
                 self.pages_path(),
-                Some(encode_page_name(name, self.config.file_name_format)),
+                Some(encode_page_name(
+                    name,
+                    self.current_config().file_name_format,
+                )),
             ),
             PageKind::Journal => (
                 self.journals_path(),
-                self.journal_format
+                self.current_journal_format()
                     .parse(name)
-                    .map(|d| self.journal_format.file_stem(d)),
+                    .map(|d| self.current_journal_format().file_stem(d)),
             ),
         };
         match stem {
@@ -1989,22 +2056,23 @@ impl Graph {
                 PageKind::Page => self.pages_path(),
             };
             let rel_dir = match kind {
-                PageKind::Journal => &self.config.journals_dir,
-                PageKind::Page => &self.config.pages_dir,
+                PageKind::Journal => &self.current_config().journals_dir,
+                PageKind::Page => &self.current_config().pages_dir,
             };
             let mut built = FindEntryIndex::new();
             for entry in list_md(
                 &dir,
                 kind,
-                &self.journal_format,
-                self.config.file_name_format,
+                &self.current_journal_format(),
+                self.current_config().file_name_format,
                 rel_dir,
             ) {
                 let entry_key = (kind, tine_core::refs::page_key(&entry.name));
                 built.entries.entry(entry_key).or_default().push(entry);
             }
             for claimants in built.entries.values_mut() {
-                claimants.sort_by(|a, b| compare_page_claimants(a, b, &self.journal_format));
+                claimants
+                    .sort_by(|a, b| compare_page_claimants(a, b, &self.current_journal_format()));
             }
             built.mark_kind_loaded(kind);
 
@@ -2488,7 +2556,7 @@ impl Graph {
             // brand-new and silently RESURRECT the externally-deleted file. Evict
             // the stale entry and report NotFound; callers treat the page as
             // absent (the feed skips it, get_page returns None).
-            self.forget_file(&entry.path);
+            self.forget_file_internal(&entry.path);
             return Err(read.unwrap_err());
         }
         // A failed read must not fall through to a stale cached DTO.
@@ -3608,7 +3676,7 @@ impl Graph {
                 format!("{new}{suffix}")
             };
             // Keep the page's own format on rename (an .org page stays .org).
-            let encoded_new = encode_page_name(&new_name, self.config.file_name_format);
+            let encoded_new = encode_page_name(&new_name, self.current_config().file_name_format);
             let entry_format = Format::from_path(&entry.path);
             let new_path = self
                 .pages_path()
@@ -4938,8 +5006,11 @@ impl Graph {
         // identity. `starts_with` is a lexical prefix over path components, so a
         // file at `pages/x/foo.md` matches `pages/` but nothing outside it.
         if path.starts_with(self.journals_path()) {
-            let (name, date_key) = match self.journal_format.parse(stem) {
-                Some(d) => (self.journal_format.title(d), Some(d.ordinal_key())),
+            let (name, date_key) = match self.current_journal_format().parse(stem) {
+                Some(d) => (
+                    self.current_journal_format().title(d),
+                    Some(d.ordinal_key()),
+                ),
                 None => (stem.to_string(), None),
             };
             Some(PageEntry {
@@ -4951,7 +5022,7 @@ impl Graph {
             })
         } else if path.starts_with(self.pages_path()) {
             Some(PageEntry {
-                name: decode_page_name(stem, self.config.file_name_format),
+                name: decode_page_name(stem, self.current_config().file_name_format),
                 kind: PageKind::Page,
                 date_key: None,
                 rel_path: Some(self.rel_path(path).into()),
@@ -5186,7 +5257,12 @@ impl Graph {
     /// Returns the entry only if its parsed content actually differs from the
     /// cache (i.e. a real external change) — Tine's own writes keep the cache in
     /// sync, so they return None. No-op if the cache hasn't been built yet.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn sync_file(&self, path: &Path) -> Option<PageEntry> {
+        self.sync_file_internal(path)
+    }
+
+    pub(crate) fn sync_file_internal(&self, path: &Path) -> Option<PageEntry> {
         // Watch events are untrusted path inputs. Never follow a page symlink
         // (which could expose an arbitrary file outside the graph), and recheck
         // canonical containment immediately before the read to close rename /
@@ -5330,7 +5406,12 @@ impl Graph {
 
     /// Drop a file deleted on disk from the cache; returns the entry if it was
     /// cached (so the UI can react).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn forget_file(&self, path: &Path) -> Option<PageEntry> {
+        self.forget_file_internal(path)
+    }
+
+    pub(crate) fn forget_file_internal(&self, path: &Path) -> Option<PageEntry> {
         let own_delete = self
             .recent_writes
             .lock()
@@ -5512,7 +5593,7 @@ impl Graph {
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let _ = self.forget_file(path);
+                let _ = self.forget_file_internal(path);
             }
             Err(_) => self.invalidate_cache(),
         }

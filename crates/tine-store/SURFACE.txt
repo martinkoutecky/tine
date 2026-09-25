@@ -2,6 +2,9 @@
 # Counts against 01-arrival.md budget A: <=35 Store+Transaction ops,
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
 enum store::Area
+enum store::ChangeKind
+enum store::Origin
+enum store::WatchMode
 enum store::OpenError
 enum transaction::Content
 enum transaction::Refusal
@@ -14,6 +17,11 @@ field store::ConfigState.problem
 field store::GraphAccessInspection.external_assets
 field store::GraphAccessInspection.root
 field store::OpenOptions.approved_external_assets
+field store::OpenOptions.watch
+field store::Change.config_changed
+field store::Change.files
+field store::Change.graph_rev
+field store::Change.origin
 field transaction::IoError.message
 field transaction::Rollback.kept_external
 field transaction::Rollback.undo_failed
@@ -75,6 +83,12 @@ fn store::Store::close
 fn store::Store::create_graph
 fn store::Store::inspect
 fn store::Store::open
+fn store::Store::scan_refresh
+fn store::Store::set_watch_mode
+fn store::Store::subscribe
+fn store::Change::page
+fn store::Subscription::recv
+fn store::Subscription::try_recv
 fn store::Store::journal_id
 fn store::Store::open_read
 fn store::Store::page
@@ -148,8 +162,11 @@ struct store::PageRead
 struct store::SearchRequest
 struct store::Store
 struct store::ConfigState
+struct store::Change
+struct store::Closed
+struct store::Subscription
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,Closed,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,TrashKind,WatchMode,WholeGraph,}
 struct store::GraphAccessInspection
 struct store::OpenOptions
 struct store::WholeGraph
-use crate::store::{Area,Budget,Cancel,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,Listing,LoadError,OpenError,OpenOptions,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,TrashKind,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}

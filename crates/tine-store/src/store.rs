@@ -1,4 +1,19 @@
-//! Interim read boundary. `Store` owns the legacy graph. `page` reads and
+//! Store boundary. `Store` owns the graph, its watcher, publication queue and
+//! guarded writer. `open` validates the layout, lists pages and journals, then
+//! starts background parsing and the per-store watcher. Cost O(P metadata) on
+//! the caller; the load and watch run in the background. `subscribe` delivers
+//! every published generation in order with no replay or queue bound; a second
+//! subscription ends the first. Own commits and restore publish `Origin::Own`;
+//! watcher reconciliation and `scan_refresh` publish `Origin::External`.
+//! `set_watch_mode` changes between notify with a 200 ms debounce and a 3 s
+//! poll, with notify failure falling back to polling. `scan_refresh` reads
+//! metadata for all page files and config, then changed bytes, at cost
+//! O(P metadata + changed bytes). It reports `LoadError::Closed` after close or
+//! `Failed` for a lost root or unsafe config layout. `close` stops observation,
+//! waits for a writer, releases load waiters and ends the subscription. Callers
+//! need no watcher, cache, lock or file layout state.
+//!
+//! `page` reads and
 //! parses one page in O(page bytes + its blocks), updating the live cache when
 //! it observes an external edit. `read` returns raw bytes in O(file bytes),
 //! optionally bounded by `max_bytes`; `open_read` returns an open handle and
@@ -9,8 +24,9 @@
 //!
 //! Whole-graph questions below read the live cache. A first call can build
 //! that cache in O(P + B + disk). The selected reads are bounded here.
-//! `WholeGraph` does not yet pin an immutable generation: two calls on one view
-//! may observe different states. Immutable snapshots arrive with B7.
+//! `WholeGraph` still uses the interim live cache: two calls on one view may
+//! observe different states. The `GraphRev` on a view records the publication
+//! generation observed when it was acquired.
 //! `trash_stats` scans recoverable entries in O(trash entries), returning typed
 //! counts and bytes or an I/O error. `purge_asset_trash` irreversibly removes
 //! asset and legacy-asset entries in O(asset trash entries + metadata), leaving
@@ -54,13 +70,13 @@
 //! cancelled block search returns `Cancelled`, never a partial answer. Callers
 //! need no cache state, budget constants, lane IDs, or disk paths.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::SystemTime;
 
 use crate::model::{classify_legacy_trash_entry, trash_dir_kind, trash_root, TrashEntryKind};
@@ -75,7 +91,7 @@ pub use tine_core::model::{FileId, PageId};
 use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
 use tine_core::query_plan::QueryExecution;
 
-use crate::model::{Graph, SaveTargetError};
+use crate::model::{CheckedOpenError, Graph, SaveTargetError};
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -94,23 +110,31 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 /// the whole cache in O(P + B + disk) on first use.
 pub struct Store {
     pub(crate) graph: Arc<Graph>,
-    pub(crate) writer: std::sync::Mutex<()>,
+    pub(crate) writer: Arc<Mutex<()>>,
     load: Arc<LoadState>,
-    config_state: ConfigState,
-    journal_ids: Mutex<HashMap<Day, PageId>>,
+    config_state: Arc<RwLock<ConfigState>>,
+    journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
+    pub(crate) changes: Arc<ChangeFeed>,
+    pub(crate) watch: crate::watch::WatchHandle,
     #[cfg(any(test, feature = "test-faults"))]
     pub(crate) faults: std::sync::Mutex<std::collections::HashSet<crate::transaction::FaultPoint>>,
 }
 
-struct LoadState {
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+pub(crate) struct LoadState {
     cancelled: AtomicBool,
     closed: AtomicBool,
-    status: Mutex<LoadStatus>,
-    ready: Condvar,
+    pub(crate) status: Mutex<LoadStatus>,
+    pub(crate) ready: Condvar,
 }
 
 #[derive(Clone)]
-enum LoadStatus {
+pub(crate) enum LoadStatus {
     Loading,
     Ready,
     Failed(String),
@@ -132,6 +156,143 @@ impl LoadState {
 #[derive(Default)]
 pub struct OpenOptions {
     pub approved_external_assets: Option<PathBuf>,
+    pub watch: WatchMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WatchMode {
+    #[default]
+    Notify,
+    Poll,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    Own,
+    External,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeKind {
+    Created,
+    Modified,
+    Touched,
+    Removed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Change {
+    pub graph_rev: GraphRev,
+    pub origin: Origin,
+    pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+    pub config_changed: bool,
+    pages: Vec<(FileId, PageKind, String)>,
+}
+
+impl Change {
+    /// The graph page this external file change altered, named as the graph
+    /// names it (by `title::` if set; the name before removal for `Removed`).
+    /// `None` when the parsed document did not change, or the file is not a
+    /// graph page (a shadow journal, a conflict copy), as v0.6.5's watcher.
+    /// Not in rev 5: `ChangeKind` is byte-level, window events are page-level.
+    /// Cost O(files in this publication).
+    pub fn page(&self, file: &FileId) -> Option<(PageKind, &str)> {
+        self.pages
+            .iter()
+            .find(|(id, _, _)| id == file)
+            .map(|(_, kind, name)| (*kind, name.as_str()))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Closed;
+
+pub(crate) struct ChangeFeed {
+    state: Mutex<FeedState>,
+    ready: Condvar,
+}
+
+struct FeedState {
+    rev: u64,
+    subscription: u64,
+    queue: VecDeque<Change>,
+    closed: bool,
+}
+
+impl ChangeFeed {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(FeedState {
+                rev: 0,
+                subscription: 0,
+                queue: VecDeque::new(),
+                closed: false,
+            }),
+            ready: Condvar::new(),
+        }
+    }
+
+    pub(crate) fn publish(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        config_changed: bool,
+        pages: Vec<(FileId, PageKind, String)>,
+    ) -> GraphRev {
+        let mut state = self.state.lock().unwrap();
+        state.rev += 1;
+        let rev = GraphRev(state.rev);
+        if !state.closed {
+            state.queue.push_back(Change {
+                graph_rev: rev,
+                origin,
+                files,
+                config_changed,
+                pages,
+            });
+            self.ready.notify_all();
+        }
+        rev
+    }
+
+    pub(crate) fn rev(&self) -> GraphRev {
+        GraphRev(self.state.lock().unwrap().rev)
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.closed = true;
+        state.queue.clear();
+        self.ready.notify_all();
+    }
+}
+
+pub struct Subscription {
+    feed: Arc<ChangeFeed>,
+    number: u64,
+}
+
+impl Subscription {
+    pub fn recv(&self) -> Result<Change, Closed> {
+        let mut state = self.feed.state.lock().unwrap();
+        loop {
+            if state.closed || state.subscription != self.number {
+                return Err(Closed);
+            }
+            if let Some(change) = state.queue.pop_front() {
+                return Ok(change);
+            }
+            state = self.feed.ready.wait(state).unwrap();
+        }
+    }
+
+    pub fn try_recv(&self) -> Result<Option<Change>, Closed> {
+        let mut state = self.feed.state.lock().unwrap();
+        if state.closed || state.subscription != self.number {
+            return Err(Closed);
+        }
+        Ok(state.queue.pop_front())
+    }
 }
 
 /// Canonical graph root and any external assets target. Inspection writes nothing.
@@ -263,7 +424,10 @@ fn trash_entry_bytes(path: &std::path::Path) -> std::io::Result<u64> {
     Ok(bytes)
 }
 
-fn journal_ids_from_entries(graph: &Graph, entries: Vec<PageEntry>) -> HashMap<Day, PageId> {
+pub(crate) fn journal_ids_from_entries(
+    graph: &Graph,
+    entries: Vec<PageEntry>,
+) -> HashMap<Day, PageId> {
     let mut claimants: HashMap<Day, Vec<PageEntry>> = HashMap::new();
     for entry in entries {
         if entry.kind == PageKind::Journal {
@@ -275,8 +439,9 @@ fn journal_ids_from_entries(graph: &Graph, entries: Vec<PageEntry>) -> HashMap<D
     claimants
         .into_iter()
         .filter_map(|(day, mut entries)| {
-            entries
-                .sort_by(|a, b| crate::model::compare_page_claimants(a, b, &graph.journal_format));
+            entries.sort_by(|a, b| {
+                crate::model::compare_page_claimants(a, b, &graph.current_journal_format())
+            });
             entries.into_iter().next()?.rel_path.map(|id| (day, id))
         })
         .collect()
@@ -407,20 +572,18 @@ impl Store {
         }
         let graph =
             Graph::open_checked_with_assets_inner(&root, opts.approved_external_assets.as_deref())
-                .map_err(|error| {
-                    let message = error.to_string();
-                    if let Some(current) =
-                        message.strip_prefix("external assets directory requires approval: ")
-                    {
-                        OpenError::ExternalAssetsUnapproved {
-                            current: PathBuf::from(current),
-                        }
-                    } else if error.kind() == std::io::ErrorKind::InvalidInput {
-                        OpenError::UnsafeLayout(message)
-                    } else {
-                        OpenError::Io(error.into())
+                .map_err(|error| match error {
+                    CheckedOpenError::ExternalAssetsUnapproved(current) => {
+                        OpenError::ExternalAssetsUnapproved { current }
                     }
+                    CheckedOpenError::Io(error)
+                        if error.kind() == std::io::ErrorKind::InvalidInput =>
+                    {
+                        OpenError::UnsafeLayout(error.to_string())
+                    }
+                    CheckedOpenError::Io(error) => OpenError::Io(error.into()),
                 })?;
+        graph.install_live_config();
         // Build the legacy filename inventory before returning; parsing remains
         // in the cancellable worker below.
         let journal_ids = journal_ids_from_entries(&graph, graph.list_pages());
@@ -441,9 +604,32 @@ impl Store {
             &graph.journal_format,
         );
         let load = Arc::new(LoadState::new(LoadStatus::Loading));
+        let writer = Arc::new(Mutex::new(()));
+        let changes = Arc::new(ChangeFeed::new());
+        let journal_ids = Arc::new(Mutex::new(journal_ids));
+        let config_state = Arc::new(RwLock::new(config.clone()));
+        let watch = crate::watch::WatchHandle::start(
+            Arc::clone(&graph),
+            Arc::clone(&writer),
+            Arc::clone(&load),
+            Arc::clone(&changes),
+            Arc::clone(&journal_ids),
+            Arc::clone(&config_state),
+            opts.watch,
+        );
         let worker_graph = Arc::clone(&graph);
         let worker_load = Arc::clone(&load);
+        let worker_writer = Arc::clone(&writer);
+        let worker_changes = Arc::clone(&changes);
+        let worker_watch = watch.core_for_load();
+        let worker_watch_wake = watch.wake_for_load();
         std::thread::spawn(move || {
+            #[cfg(any(test, feature = "test-faults"))]
+            while worker_graph.root.join(".tine-test-pause-load").exists()
+                && !worker_load.cancelled.load(Ordering::Acquire)
+            {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
             let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loop {
                 let completed = worker_graph
                     .warm_cache_cancellable(|| worker_load.cancelled.load(Ordering::Acquire));
@@ -451,6 +637,10 @@ impl Store {
                     break completed;
                 }
             }));
+            let _writer = worker_writer.lock().unwrap();
+            if matches!(completed, Ok(true)) {
+                worker_watch.fill_revs();
+            }
             let mut status = worker_load.status.lock().unwrap();
             if matches!(*status, LoadStatus::Loading) {
                 *status = if matches!(completed, Ok(true)) {
@@ -458,16 +648,22 @@ impl Store {
                 } else {
                     LoadStatus::Failed("background graph load stopped".into())
                 };
+                if matches!(*status, LoadStatus::Ready) {
+                    worker_changes.publish(Origin::External, Vec::new(), false, Vec::new());
+                    let _ = worker_watch_wake.send(());
+                }
             }
             worker_load.ready.notify_all();
         });
         Ok((
             Self {
                 graph,
-                writer: Mutex::new(()),
+                writer,
                 load,
-                config_state: config.clone(),
-                journal_ids: Mutex::new(journal_ids),
+                config_state,
+                journal_ids,
+                changes,
+                watch,
                 #[cfg(any(test, feature = "test-faults"))]
                 faults: Mutex::new(std::collections::HashSet::new()),
             },
@@ -478,36 +674,51 @@ impl Store {
 
     /// Current graph configuration. Never waits.
     pub fn config(&self) -> ConfigState {
-        self.config_state.clone()
-    }
-
-    /// Interim access for commands that have not moved to the store API.
-    #[doc(hidden)]
-    pub fn legacy(&self) -> &Graph {
-        &self.graph
+        self.config_state.read().unwrap().clone()
     }
 
     /// Stop the background load and refuse later I/O. Idempotent.
     pub fn close(&self) {
+        self.watch.stop();
         let _writer = self.writer.lock().unwrap();
         self.load.closed.store(true, Ordering::Release);
         self.load.cancelled.store(true, Ordering::Release);
         *self.load.status.lock().unwrap() = LoadStatus::Closed;
         self.load.ready.notify_all();
+        self.changes.close();
     }
 
-    /// Stop background parsing for an unbound slot while its current users finish.
-    /// A later whole-graph question may build the cache on demand, as before.
-    /// Interim (not rev 5): leaves once refresh is `scan_refresh` and unbinding
-    /// can `close` (B7b).
-    #[doc(hidden)]
-    pub fn cancel_background_load(&self) {
-        self.load.cancelled.store(true, Ordering::Release);
-        let mut status = self.load.status.lock().unwrap();
-        if matches!(*status, LoadStatus::Loading) {
-            *status = LoadStatus::Ready;
-            self.load.ready.notify_all();
+    pub fn subscribe(&self) -> Subscription {
+        let mut state = self.changes.state.lock().unwrap();
+        state.subscription += 1;
+        state.queue.clear();
+        self.changes.ready.notify_all();
+        Subscription {
+            feed: Arc::clone(&self.changes),
+            number: state.subscription,
         }
+    }
+
+    pub fn set_watch_mode(&self, mode: WatchMode) {
+        if !self.is_closed() {
+            self.watch.set_mode(mode);
+        }
+    }
+
+    pub fn scan_refresh(&self) -> Result<(), LoadError> {
+        self.watch.scan_refresh()
+    }
+
+    pub(crate) fn publish_own(
+        &self,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+    ) -> GraphRev {
+        let ids: Vec<FileId> = files.iter().map(|(id, _, _)| id.clone()).collect();
+        self.watch.note_own(&ids);
+        let config_changed = ids.iter().any(|id| id.as_str() == "logseq/config.edn");
+        self.refresh_journal_ids();
+        self.changes
+            .publish(Origin::Own, files, config_changed, Vec::new())
     }
 
     pub(crate) fn is_closed(&self) -> bool {
@@ -524,36 +735,48 @@ impl Store {
     /// from journal names on first use (O(journal entries)); warm lookup O(1).
     pub fn journal_id(&self, day: Day) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
-        let title = self.graph.journal_format.title(date);
-        if self.is_closed() {
-            if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
-                return id.clone();
-            }
-        } else if let Some(entry) = self.graph.find_entry(&title, PageKind::Journal) {
-            if let Some(id) = entry.rel_path {
-                self.journal_ids.lock().unwrap().insert(day, id.clone());
-                return id;
-            }
+        if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
+            return id.clone();
         }
         PageId::from(format!(
             "{}/{}.{}",
-            self.graph.config.journals_dir,
-            self.graph.journal_format.file_stem(date),
-            self.graph.config.preferred_format.ext()
+            self.graph.current_config().journals_dir,
+            self.graph.current_journal_format().file_stem(date),
+            self.graph.current_config().preferred_format.ext()
         ))
     }
     /// Adopt a legacy fixture without loading it.
     #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn from_legacy(graph: Arc<Graph>) -> Self {
+        graph.install_live_config();
+        let writer = Arc::new(Mutex::new(()));
+        let load = Arc::new(LoadState::new(LoadStatus::Ready));
+        let changes = Arc::new(ChangeFeed::new());
+        let journal_ids = Arc::new(Mutex::new(journal_ids_from_entries(
+            &graph,
+            graph.list_pages(),
+        )));
+        let config_state = Arc::new(RwLock::new(ConfigState {
+            config: Arc::new(graph.config.clone()),
+            problem: None,
+        }));
+        let watch = crate::watch::WatchHandle::start(
+            Arc::clone(&graph),
+            Arc::clone(&writer),
+            Arc::clone(&load),
+            Arc::clone(&changes),
+            Arc::clone(&journal_ids),
+            Arc::clone(&config_state),
+            WatchMode::Notify,
+        );
         Self {
-            config_state: ConfigState {
-                config: Arc::new(graph.config.clone()),
-                problem: None,
-            },
+            config_state,
             graph,
-            writer: std::sync::Mutex::new(()),
-            load: Arc::new(LoadState::new(LoadStatus::Ready)),
-            journal_ids: Mutex::new(HashMap::new()),
+            writer,
+            load,
+            journal_ids,
+            changes,
+            watch,
             #[cfg(any(test, feature = "test-faults"))]
             faults: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
@@ -746,8 +969,8 @@ impl Store {
             return Err(StoreError::InvalidTarget(rel.into()));
         }
         let directory = match area {
-            Area::Pages => &self.graph.config.pages_dir,
-            Area::Journals => &self.graph.config.journals_dir,
+            Area::Pages => &self.graph.current_config().pages_dir,
+            Area::Journals => &self.graph.current_config().journals_dir,
             Area::Assets => "assets",
             Area::Meta => "logseq",
             Area::Trash => "logseq/.tine-trash",
@@ -760,8 +983,8 @@ impl Store {
     pub fn as_page(&self, file: &FileId) -> Option<PageId> {
         self.validate_file(file).ok()?;
         let path = file.as_str();
-        if !path.starts_with(&format!("{}/", self.graph.config.pages_dir))
-            && !path.starts_with(&format!("{}/", self.graph.config.journals_dir))
+        if !path.starts_with(&format!("{}/", self.graph.current_config().pages_dir))
+            && !path.starts_with(&format!("{}/", self.graph.current_config().journals_dir))
         {
             return None;
         }
@@ -789,8 +1012,8 @@ impl Store {
         {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
-        if !path.starts_with(&format!("{}/", self.graph.config.pages_dir))
-            && !path.starts_with(&format!("{}/", self.graph.config.journals_dir))
+        if !path.starts_with(&format!("{}/", self.graph.current_config().pages_dir))
+            && !path.starts_with(&format!("{}/", self.graph.current_config().journals_dir))
             && !path.starts_with("assets/")
             && !path.starts_with("logseq/")
         {
@@ -802,10 +1025,11 @@ impl Store {
     fn area_root(&self, file: &FileId) -> Result<PathBuf, StoreError> {
         self.validate_file(file)?;
         let path = file.as_str();
-        let area = if path.starts_with(&format!("{}/", self.graph.config.pages_dir)) {
-            self.graph.config.pages_dir.as_str()
-        } else if path.starts_with(&format!("{}/", self.graph.config.journals_dir)) {
-            self.graph.config.journals_dir.as_str()
+        let config = self.graph.current_config();
+        let area = if path.starts_with(&format!("{}/", config.pages_dir)) {
+            config.pages_dir.as_str()
+        } else if path.starts_with(&format!("{}/", config.journals_dir)) {
+            config.journals_dir.as_str()
         } else {
             path.split('/').next().unwrap_or_default()
         };
@@ -957,8 +1181,11 @@ impl Store {
             self.file_id(area, rel)?;
         }
         let root = match area {
-            Area::Pages => self.graph.root.join(&self.graph.config.pages_dir),
-            Area::Journals => self.graph.root.join(&self.graph.config.journals_dir),
+            Area::Pages => self.graph.root.join(&self.graph.current_config().pages_dir),
+            Area::Journals => self
+                .graph
+                .root
+                .join(&self.graph.current_config().journals_dir),
             Area::Assets => {
                 let live = match fs::canonicalize(self.graph.root.join("assets")) {
                     Ok(path) => path,
@@ -1045,7 +1272,9 @@ impl Store {
                                         std::path::Path::new(&rel)
                                             .file_stem()
                                             .and_then(|stem| stem.to_str())
-                                            .and_then(|stem| store.graph.journal_format.parse(stem))
+                                            .and_then(|stem| {
+                                                store.graph.current_journal_format().parse(stem)
+                                            })
                                             .map(|date| Day(date.ordinal_key()))
                                     } else {
                                         None
@@ -1055,12 +1284,17 @@ impl Store {
                                             .file_stem()
                                             .and_then(|stem| stem.to_str())
                                             .is_some_and(|stem| {
-                                                store.graph.journal_format.parse(stem).is_some_and(
-                                                    |date| {
-                                                        store.graph.journal_format.file_stem(date)
+                                                store
+                                                    .graph
+                                                    .current_journal_format()
+                                                    .parse(stem)
+                                                    .is_some_and(|date| {
+                                                        store
+                                                            .graph
+                                                            .current_journal_format()
+                                                            .file_stem(date)
                                                             == stem
-                                                    },
-                                                )
+                                                    })
                                             }),
                                     id,
                                     area,
@@ -1169,7 +1403,7 @@ impl Store {
         }
         Ok(WholeGraph {
             graph: Arc::clone(&self.graph),
-            rev: GraphRev(self.graph.cache_generation()),
+            rev: self.changes.rev(),
         })
     }
 }
@@ -1688,20 +1922,22 @@ impl WholeGraph {
     }
 
     fn validated_page(&self, id: &PageId) -> Result<(), QueryError> {
-        let store = Store {
-            config_state: ConfigState {
-                config: Arc::new(self.graph.config.clone()),
-                problem: None,
-            },
-            graph: Arc::clone(&self.graph),
-            writer: std::sync::Mutex::new(()),
-            load: Arc::new(LoadState::new(LoadStatus::Ready)),
-            journal_ids: Mutex::new(HashMap::new()),
-            #[cfg(any(test, feature = "test-faults"))]
-            faults: std::sync::Mutex::new(std::collections::HashSet::new()),
-        };
-        let file = id.file();
-        if store.as_page(&file).is_none() {
+        let path = id.as_str();
+        let valid_area = path.starts_with(&format!("{}/", self.graph.current_config().pages_dir))
+            || path.starts_with(&format!("{}/", self.graph.current_config().journals_dir));
+        let valid_name = !path.contains('\\')
+            && !path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+            && matches!(
+                Path::new(path).extension().and_then(|ext| ext.to_str()),
+                Some("md" | "org")
+            )
+            && Path::new(path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| !tine_core::model::is_sync_conflict(stem));
+        if !valid_area || !valid_name {
             return Err(QueryError::InvalidTarget(id.as_str().to_owned()));
         }
         Ok(())

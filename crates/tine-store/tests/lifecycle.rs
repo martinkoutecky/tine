@@ -36,6 +36,7 @@ fn compare_checked_open(root: &Path, approved: Option<&Path>) {
         root,
         OpenOptions {
             approved_external_assets: approved.map(Path::to_path_buf),
+            watch: Default::default(),
         },
     )
     .map(|(store, _, _)| {
@@ -140,6 +141,7 @@ fn close_releases_load_waiter_and_refuses_commit() {
     for i in 0..1200 {
         std::fs::write(fixture.root().join(format!("pages/{i}.md")), "- load\n").unwrap();
     }
+    std::fs::write(fixture.root().join(".tine-test-pause-load"), "").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
     let store = Arc::new(store);
     let waiter = Arc::clone(&store);
@@ -149,7 +151,6 @@ fn close_releases_load_waiter_and_refuses_commit() {
         waiter.whole_graph().map(|_| ())
     });
     started.recv().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(5));
     store.close();
     store.close();
     assert!(matches!(waiting.join().unwrap(), Err(LoadError::Closed)));
@@ -178,11 +179,11 @@ fn whole_graph_taken_before_close_keeps_answering() {
 }
 
 #[test]
-fn revoked_binding_stops_load_without_closing_old_commands() {
-    let fixture = Fixture::new("cancel-load");
+fn same_root_scan_keeps_old_commands_open() {
+    let fixture = Fixture::new("scan-load");
     std::fs::write(fixture.root().join("pages/A.md"), "- before\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
-    store.cancel_background_load();
+    store.scan_refresh().unwrap();
     assert!(store.whole_graph().is_ok());
     let id = store.file_id(Area::Pages, "AfterCancel.md").unwrap();
     let mut tx = store.transaction();

@@ -3,7 +3,7 @@ use crate::debug::diag;
 #[cfg(desktop)]
 use crate::platform::{open_page_source, opener_command, reveal_page_source};
 use crate::state::{
-    capture_quick_switch_slot, refresh_graph, slot_for_context, AppState, GraphContext, GraphSlot,
+    capture_quick_switch_slot, slot_for_context, AppState, GraphContext, GraphSlot,
 };
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1308,7 +1308,6 @@ pub(crate) fn set_timetracking_enabled(
         tine_graph_features::config::set_timetracking_enabled(store, enabled)
             .map_err(|e| e.to_string())
     })?;
-    refresh_graph(&state)?;
     Ok(())
 }
 
@@ -1317,7 +1316,6 @@ pub(crate) fn set_show_brackets(enabled: bool, state: GraphContext<'_>) -> Resul
     with_config_store(&state, |store| {
         tine_graph_features::config::set_show_brackets(store, enabled).map_err(|e| e.to_string())
     })?;
-    refresh_graph(&state)?;
     Ok(())
 }
 
@@ -1330,7 +1328,6 @@ pub(crate) fn set_doc_mode_enter_for_new_block(
         tine_graph_features::config::set_doc_mode_enter_for_new_block(store, enabled)
             .map_err(|e| e.to_string())
     })?;
-    refresh_graph(&state)?;
     Ok(())
 }
 
@@ -1340,7 +1337,6 @@ pub(crate) fn set_logical_outdenting(enabled: bool, state: GraphContext<'_>) -> 
         tine_graph_features::config::set_logical_outdenting(store, enabled)
             .map_err(|e| e.to_string())
     })?;
-    refresh_graph(&state)?;
     Ok(())
 }
 
@@ -1350,7 +1346,6 @@ pub(crate) fn set_guide_announced(announced: bool, state: GraphContext<'_>) -> R
         tine_graph_features::config::set_guide_announced(store, announced)
             .map_err(|e| e.to_string())
     })?;
-    refresh_graph(&state)?;
     Ok(())
 }
 
@@ -1383,7 +1378,6 @@ pub(crate) fn set_preferred_format(format: String, state: GraphContext<'_>) -> R
     with_config_store(&state, |store| {
         tine_graph_features::config::set_preferred_format(store, fmt).map_err(|e| e.to_string())
     })?;
-    refresh_graph(&state)?; // so new pages/journals use the new extension immediately
     Ok(())
 }
 
@@ -1398,7 +1392,8 @@ pub(crate) fn set_journal_title_format(
         tine_graph_features::config::set_journal_page_title_format(store, &format)
             .map_err(|e| e.to_string())
     })?;
-    refresh_graph(&state)?; // pick up the new format + migrate any title-named journals
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::journals::migrate_journal_filenames(&slot.store);
     Ok(())
 }
 
@@ -1509,7 +1504,6 @@ mod capture_quick_switch_tests {
         let state = AppState {
             graphs: RwLock::new(GraphRegistry::default()),
             graph_load: Mutex::new(()),
-            watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(Some("main".into())),
             capture_graph: Mutex::new(None),
             #[cfg(desktop)]

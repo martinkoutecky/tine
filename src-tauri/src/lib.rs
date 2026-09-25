@@ -69,7 +69,7 @@ use std::sync::{Mutex, RwLock};
 #[cfg(desktop)]
 use tauri::Emitter;
 use tauri::Manager;
-use watcher::{get_watch_mode, set_watch_mode, start_watcher};
+use watcher::{get_watch_mode, set_watch_mode};
 
 #[cfg(desktop)]
 const MAIN_WINDOW_REVEAL_FALLBACK_MS: u64 = 3_000;
@@ -597,7 +597,6 @@ pub fn run() {
                 }
                 tauri::WindowEvent::Destroyed => {
                     state.graphs.write().unwrap().remove(label);
-                    state::poke_watcher(&state);
                     if state.graphs.read().unwrap().len() == 0 {
                         #[cfg(target_os = "linux")]
                         platform::kill_webkit_children();
@@ -610,7 +609,6 @@ pub fn run() {
         .manage(AppState {
             graphs: RwLock::new(state::GraphRegistry::default()),
             graph_load: Mutex::new(()),
-            watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(None),
             capture_graph: Mutex::new(None),
             #[cfg(desktop)]
@@ -698,7 +696,6 @@ pub fn run() {
                 diag("NO graph root resolved — set TINE_GRAPH=/path/to/graph");
             }
             // Watch for external changes (reads whichever graph is current).
-            start_watcher(app.handle().clone());
             diag("setup() done — watcher started, handing off to webview");
             // Spell checking (WebKitGTK): apply the persisted prefs to every window.
             // Default ON (matches Logseq); languages empty ⇒ OS locale; listing

@@ -2,9 +2,7 @@ use crate::backup::{backup_async, backup_graph_now};
 use crate::settings::{
     approved_external_assets, remember_external_assets_approval, remember_graph,
 };
-use crate::state::{
-    canonical_graph_root, graph_meta, poke_watcher, slot_for_window, AppState, GraphSlot,
-};
+use crate::state::{canonical_graph_root, graph_meta, slot_for_window, AppState, GraphSlot};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -117,12 +115,14 @@ struct LoadedGraph {
 fn open_graph_for_load(
     root: &str,
     approved_assets: Option<&Path>,
+    watch: tine_store::WatchMode,
     take_launch_backup: impl FnOnce(&Store) -> (usize, bool),
 ) -> Result<LoadedGraph, String> {
     let (store, meta, _) = Store::open(
         Path::new(root),
         OpenOptions {
             approved_external_assets: approved_assets.map(Path::to_path_buf),
+            watch,
         },
     )
     .map_err(|error| open_error_text(error, true))?;
@@ -255,9 +255,12 @@ pub(crate) fn load_graph_for_label(
         store,
         meta,
         launch_backup_done,
-    } = open_graph_for_load(&root, approved_assets.as_deref(), |store| {
-        backup_graph_now(app, store, &root_key, "")
-    })?;
+    } = open_graph_for_load(
+        &root,
+        approved_assets.as_deref(),
+        crate::watcher::watch_mode(app),
+        |store| backup_graph_now(app, store, &root_key, ""),
+    )?;
     let slot = Arc::new(GraphSlot::new(store, root_key));
     let warm_generation = begin_warm_cache(&slot);
     state
@@ -266,7 +269,7 @@ pub(crate) fn load_graph_for_label(
         .unwrap()
         .bind(window_label.to_string(), slot.clone())?;
     state.note_focused(window_label);
-    poke_watcher(&state);
+    crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     if !launch_backup_done {
         backup_async(app.clone(), slot.clone());
     }
@@ -338,7 +341,6 @@ pub(crate) async fn open_graph_window(
                 }
                 Err(error) => {
                     state.graphs.write().unwrap().remove(&label);
-                    poke_watcher(&state);
                     return Err(format!("couldn't create graph window: {error}"));
                 }
             }
@@ -545,10 +547,11 @@ mod tests {
         .unwrap();
         let backup = dir.join("backup");
 
-        let loaded = open_graph_for_load(dir.to_str().unwrap(), None, |_store| {
-            copy_graph_text_dir(&dir.join("journals"), &backup.join("journals"))
-        })
-        .unwrap();
+        let loaded =
+            open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), |_store| {
+                copy_graph_text_dir(&dir.join("journals"), &backup.join("journals"))
+            })
+            .unwrap();
 
         assert!(loaded.launch_backup_done, "pre-migration backup ran");
         assert!(
@@ -580,9 +583,11 @@ mod tests {
         std::fs::remove_dir(dir.join("pages")).unwrap();
         std::os::unix::fs::symlink(outside.join("pages"), dir.join("pages")).unwrap();
         let old = Graph::open_checked_with_assets(&dir, None).err().unwrap();
-        let new = open_graph_for_load(dir.to_str().unwrap(), None, |_| (0, false))
-            .err()
-            .unwrap();
+        let new = open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), |_| {
+            (0, false)
+        })
+        .err()
+        .unwrap();
         assert_eq!(new, format!("unsafe graph layout: {old}"));
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(outside);

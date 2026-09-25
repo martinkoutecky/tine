@@ -20,6 +20,7 @@ cap-std = "4.0.2"
 same-file = "1.0.6"
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
+notify = "6"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }

@@ -1,7 +1,7 @@
-//! Guarded multi-file writes for one graph. The interim cache publishes through
-//! the existing page upsert path; the B7 `Change` channel does not exist yet.
-//! Config clients write `logseq/config.edn` through guarded file steps; the
-//! command layer refreshes its graph binding after settings that need it.
+//! Guarded multi-file writes for one graph. The cache updates through the
+//! existing page upsert path; after the final disk state is known, a changed
+//! transaction publishes one Own `Change`. Config writes reload the live
+//! config and journal format before that publication.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
@@ -14,7 +14,9 @@ use crate::model::{
     atomic_copy_file_new, atomic_copy_new, atomic_write, atomic_write_new, move_file_noreplace,
     trash_stamp, Withdrawal,
 };
-use crate::store::{Area, FileId, FileRev, GraphRev, PageId, SaveBase, Store, StoreError};
+use crate::store::{
+    Area, ChangeKind, FileId, FileRev, GraphRev, PageId, SaveBase, Store, StoreError,
+};
 
 pub enum Content {
     Bytes(Vec<u8>),
@@ -691,17 +693,24 @@ impl<'a> Transaction<'a> {
 
     fn trash_id(&self, file: &FileId) -> FileId {
         let rel = file.as_str();
-        let page_area = rel.starts_with(&format!("{}/", self.store.graph.config.pages_dir))
-            || rel.starts_with(&format!("{}/", self.store.graph.config.journals_dir));
+        let page_area = rel
+            .starts_with(&format!("{}/", self.store.graph.current_config().pages_dir))
+            || rel.starts_with(&format!(
+                "{}/",
+                self.store.graph.current_config().journals_dir
+            ));
         let stem = Path::new(rel)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("");
         let kind = if page_area && tine_core::model::is_sync_conflict(stem) {
             "conflicts"
-        } else if rel.starts_with(&format!("{}/", self.store.graph.config.pages_dir)) {
+        } else if rel.starts_with(&format!("{}/", self.store.graph.current_config().pages_dir)) {
             "pages"
-        } else if rel.starts_with(&format!("{}/", self.store.graph.config.journals_dir)) {
+        } else if rel.starts_with(&format!(
+            "{}/",
+            self.store.graph.current_config().journals_dir
+        )) {
             "journals"
         } else if rel.starts_with("assets/") {
             "assets"
@@ -1152,7 +1161,7 @@ impl<'a> Transaction<'a> {
 
     pub fn commit(mut self) -> TxOutcome {
         let _writer = self.store.writer.lock().unwrap();
-        let rev = || GraphRev(self.store.graph.cache_generation());
+        let rev = || self.store.changes.rev();
         if self.store.is_closed() {
             return TxOutcome::NotCommitted {
                 step: 0,
@@ -1295,6 +1304,7 @@ impl<'a> Transaction<'a> {
             }
         }
         let mut changed_any = false;
+        let mut published = Vec::new();
         for (name, baseline) in &before {
             let id = FileId::from(name.clone());
             let path = match self.path(&id) {
@@ -1327,6 +1337,18 @@ impl<'a> Transaction<'a> {
                 }
                 self.preserve_old(&id, baseline.as_ref().unwrap(), &mut rollback);
             }
+            if now.as_ref() != baseline.as_ref() {
+                let kind = match (baseline, &now) {
+                    (None, Some(_)) => ChangeKind::Created,
+                    (Some(_), None) => ChangeKind::Removed,
+                    _ => ChangeKind::Modified,
+                };
+                published.push((
+                    id.clone(),
+                    kind,
+                    now.as_ref().map(|bytes| FileRev::from_bytes(bytes)),
+                ));
+            }
             if self.page(&id) {
                 if now.as_ref() != baseline.as_ref() {
                     changed_any = true;
@@ -1341,6 +1363,11 @@ impl<'a> Transaction<'a> {
         if changed_any && self.store.graph.cache_generation() == starting_rev {
             self.store.graph.transaction_bump_generation();
         }
+        let published_rev = if published.is_empty() {
+            self.store.changes.rev()
+        } else {
+            self.store.publish_own(published)
+        };
         // A clean rollback needs no second copy of bytes written by this
         // transaction. Keep every staged inode if recovery failed or an
         // external writer won; otherwise verify the entire named baseline
@@ -1384,20 +1411,12 @@ impl<'a> Transaction<'a> {
                 step,
                 why,
                 rollback,
-                graph_rev: rev(),
+                graph_rev: published_rev,
             },
-            None => {
-                if names.iter().any(|name| {
-                    name.as_str()
-                        .starts_with(&format!("{}/", self.store.graph.config.journals_dir))
-                }) {
-                    self.store.refresh_journal_ids();
-                }
-                TxOutcome::Committed {
-                    steps: results,
-                    graph_rev: rev(),
-                }
-            }
+            None => TxOutcome::Committed {
+                steps: results,
+                graph_rev: published_rev,
+            },
         }
     }
 }

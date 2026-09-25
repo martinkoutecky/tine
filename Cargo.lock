@@ -4711,7 +4711,6 @@ dependencies = [
  "gdkwayland-sys",
  "gtk",
  "libc",
- "notify",
  "same-file",
  "serde",
  "serde_json",
@@ -4776,6 +4775,7 @@ version = "0.6.5"
 dependencies = [
  "cap-std",
  "libc",
+ "notify",
  "pretty_assertions",
  "quote",
  "regex",

@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
-use tauri::{Manager, Runtime, State, WebviewWindow};
+use tauri::{Runtime, State, WebviewWindow};
 use tine_store::Store;
 
 pub(crate) type WindowKey = String;
@@ -45,26 +44,6 @@ impl GraphSlot {
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             warm_done: AtomicBool::new(false),
             warm_generation: AtomicU64::new(0),
-            background_cancelled: AtomicBool::new(false),
-        }
-    }
-
-    /// Re-open the graph object for the same window/root without revoking the
-    /// frontend's lease. A binding generation identifies a window -> graph-root
-    /// assignment, not the particular in-memory `Graph` instance. Minting a new
-    /// generation here made every later command from that window stale after a
-    /// config refresh, including autosaves.
-    fn refreshed(store: Store, old: &GraphSlot) -> Self {
-        Self {
-            store,
-            block_search_lanes: Mutex::new(HashMap::new()),
-            root_key: old.root_key.clone(),
-            binding_generation: old.binding_generation,
-            warm_done: AtomicBool::new(old.warm_done.load(std::sync::atomic::Ordering::Acquire)),
-            warm_generation: AtomicU64::new(
-                old.warm_generation
-                    .load(std::sync::atomic::Ordering::Acquire),
-            ),
             background_cancelled: AtomicBool::new(false),
         }
     }
@@ -128,13 +107,11 @@ impl GraphRegistry {
             }
         }
         if let Some(old) = self.by_window.insert(window.clone(), slot.clone()) {
-            // A same-root refresh replaces only the in-memory Graph object and
-            // preserves the frontend binding lease. Let its already-running
-            // warm/backup finish; a real graph switch revokes the old source.
+            // A graph switch revokes the old binding. Same-root scans keep the
+            // slot and never pass through the registry.
             if old.binding_generation != slot.binding_generation || old.root_key != slot.root_key {
                 old.background_cancelled
                     .store(true, std::sync::atomic::Ordering::Release);
-                old.store.cancel_background_load();
             }
             self.by_root.remove(&old.root_key);
         }
@@ -146,7 +123,6 @@ impl GraphRegistry {
         let slot = self.by_window.remove(window)?;
         slot.background_cancelled
             .store(true, std::sync::atomic::Ordering::Release);
-        slot.store.cancel_background_load();
         self.by_root.remove(&slot.root_key);
         Some(slot)
     }
@@ -157,7 +133,6 @@ pub(crate) struct AppState {
     // Serializes open/switch/window-create decisions. Existing commands never
     // take this lock, so a slow graph open cannot stall another graph's editor.
     pub(crate) graph_load: Mutex<()>,
-    pub(crate) watch_ctl: Mutex<Option<Sender<()>>>,
     pub(crate) last_focused: Mutex<Option<WindowKey>>,
     pub(crate) capture_graph: Mutex<Option<CaptureGraphBinding>>,
     #[cfg(desktop)]
@@ -293,31 +268,6 @@ pub(crate) fn capture_quick_switch_slot(
     Ok(slot)
 }
 
-pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
-    let label = ctx.window.label().to_string();
-    let old = slot_for_window(&ctx.state, &label)?;
-    let approved =
-        crate::settings::approved_external_assets(ctx.window.app_handle(), &old.root_key);
-    let (store, _, _) = Store::open(
-        &old.root_key,
-        tine_store::OpenOptions {
-            approved_external_assets: approved,
-        },
-    )
-    .map_err(|error| crate::graph::open_error_text(error, false))?;
-    tine_graph_features::journals::migrate_journal_filenames(&store);
-    let replacement = Arc::new(GraphSlot::refreshed(store, &old));
-    ctx.state.graphs.write().unwrap().bind(label, replacement)?;
-    poke_watcher(&ctx.state);
-    Ok(())
-}
-
-pub(crate) fn poke_watcher(state: &AppState) {
-    if let Some(tx) = state.watch_ctl.lock().unwrap().as_ref() {
-        let _ = tx.send(());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,7 +288,6 @@ mod tests {
         let state = AppState {
             graphs: RwLock::new(GraphRegistry::default()),
             graph_load: Mutex::new(()),
-            watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(Some("graph-1".into())),
             capture_graph: Mutex::new(None),
             #[cfg(desktop)]
@@ -355,7 +304,6 @@ mod tests {
         let state = AppState {
             graphs: RwLock::new(GraphRegistry::default()),
             graph_load: Mutex::new(()),
-            watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(Some("main".into())),
             capture_graph: Mutex::new(None),
             #[cfg(desktop)]
@@ -389,21 +337,14 @@ mod tests {
         old.warm_generation
             .store(7, std::sync::atomic::Ordering::Release);
 
-        let replacement = GraphSlot::refreshed(
-            Store::open(&base, tine_store::OpenOptions::default())
-                .unwrap()
-                .0,
-            &old,
-        );
+        let binding = old.binding_generation;
+        old.store.scan_refresh().unwrap();
 
-        assert_eq!(replacement.binding_generation, old.binding_generation);
-        assert_eq!(replacement.root_key, old.root_key);
-        assert!(replacement
-            .warm_done
-            .load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(old.binding_generation, binding);
+        assert_eq!(old.root_key, base);
+        assert!(old.warm_done.load(std::sync::atomic::Ordering::Acquire));
         assert_eq!(
-            replacement
-                .warm_generation
+            old.warm_generation
                 .load(std::sync::atomic::Ordering::Acquire),
             7
         );
@@ -420,11 +361,11 @@ mod tests {
         let old = graph(&base);
         let mut registry = GraphRegistry::default();
         registry.bind("main".into(), Arc::clone(&old)).unwrap();
-        let new_store = Store::open(&base, tine_store::OpenOptions::default())
-            .unwrap()
-            .0;
-        let replacement = Arc::new(GraphSlot::refreshed(new_store, &old));
-        registry.bind("main".into(), replacement).unwrap();
+        old.store.scan_refresh().unwrap();
+        assert_eq!(
+            registry.slot("main").unwrap().binding_generation,
+            old.binding_generation
+        );
         let id = old
             .store
             .file_id(tine_store::Area::Pages, "DuringRefresh.md")

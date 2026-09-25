@@ -62,15 +62,15 @@ impl Store {
     /// verified files. Retires replaced and extra text into same-filesystem
     /// recovery roots, then copies by no-replace. Holds the writer mutex.
     /// Cost O(input bytes + live text entries). A partial failure returns its
-    /// completed count and recovery locations. The interim cache revision is
-    /// invalidated after a changed restore; B7b will publish a pinned snapshot.
+    /// completed count and recovery locations. A changed restore invalidates
+    /// the interim cache and publishes one Own change for its final disk state.
     pub fn restore(&self, mut files: Vec<RestoreFile>) -> Result<RestoreReport, RestoreFailed> {
         let _writer = self.writer.lock().unwrap();
         let mut done = RestoreReport {
             restored: 0,
             recovery: Vec::new(),
             kept_external: Vec::new(),
-            graph_rev: GraphRev(self.graph.cache_generation()),
+            graph_rev: self.changes.rev(),
         };
         if self.is_closed() {
             return Err(fail(
@@ -111,11 +111,18 @@ impl Store {
                 Err(error) => return Err(fail("restore", error, done)),
             }
         }
+        let baseline = self.watch.restore_baseline();
         let root_path = self.graph.root.clone();
         let assets_path = self.graph.assets_path();
         for (label, path) in [
-            ("journals", root_path.join(&self.graph.config.journals_dir)),
-            ("pages", root_path.join(&self.graph.config.pages_dir)),
+            (
+                "journals",
+                root_path.join(&self.graph.current_config().journals_dir),
+            ),
+            (
+                "pages",
+                root_path.join(&self.graph.current_config().pages_dir),
+            ),
             ("config", root_path.join("logseq/config.edn")),
         ] {
             if let Err(error) = ensure_target_within_root(&root_path, &path) {
@@ -169,13 +176,13 @@ impl Store {
             (
                 Area::Journals,
                 "restore journals failed",
-                self.graph.config.journals_dir.as_str(),
+                self.graph.current_config().journals_dir.as_str(),
                 "journals",
             ),
             (
                 Area::Pages,
                 "restore pages failed",
-                self.graph.config.pages_dir.as_str(),
+                self.graph.current_config().pages_dir.as_str(),
                 "pages",
             ),
             (Area::Assets, "restore asset sidecars failed", "", ""),
@@ -215,7 +222,7 @@ impl Store {
                     }
                     if changed {
                         self.graph.invalidate_cache();
-                        done.graph_rev = GraphRev(self.graph.cache_generation());
+                        done.graph_rev = self.watch.publish_restore(&baseline);
                     }
                     return Err(fail(phase, error, done));
                 }
@@ -238,7 +245,7 @@ impl Store {
             ) {
                 if changed {
                     self.graph.invalidate_cache();
-                    done.graph_rev = GraphRev(self.graph.cache_generation());
+                    done.graph_rev = self.watch.publish_restore(&baseline);
                 }
                 return Err(fail(phase, error, done));
             }
@@ -248,7 +255,7 @@ impl Store {
             if let Err(error) = real_parent(&graph.root, Path::new("logseq"), true) {
                 if changed {
                     self.graph.invalidate_cache();
-                    done.graph_rev = GraphRev(self.graph.cache_generation());
+                    done.graph_rev = self.watch.publish_restore(&baseline);
                 }
                 return Err(fail("couldn't prepare live config directory", error, done));
             }
@@ -258,7 +265,7 @@ impl Store {
                 Err(error) => {
                     if changed {
                         self.graph.invalidate_cache();
-                        done.graph_rev = GraphRev(self.graph.cache_generation());
+                        done.graph_rev = self.watch.publish_restore(&baseline);
                     }
                     return Err(fail("recover current config failed", error, done));
                 }
@@ -271,7 +278,7 @@ impl Store {
                 }
                 if changed {
                     self.graph.invalidate_cache();
-                    done.graph_rev = GraphRev(self.graph.cache_generation());
+                    done.graph_rev = self.watch.publish_restore(&baseline);
                 }
                 return Err(fail("restore config failed", error, done));
             }
@@ -281,7 +288,7 @@ impl Store {
         if changed {
             self.graph.invalidate_cache();
         }
-        done.graph_rev = GraphRev(self.graph.cache_generation());
+        done.graph_rev = self.watch.publish_restore(&baseline);
         Ok(done)
     }
 }
