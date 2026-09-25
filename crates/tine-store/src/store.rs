@@ -24,6 +24,11 @@
 //! the scaffold and seed by no-replace create. Cost O(siblings probed + seed
 //! bytes). Invalid folders and partial creation failures are typed `OpenError`s;
 //! callers need no folder naming or scaffold protocol.
+//! `restore` takes verified open backup files and replaces graph text by
+//! no-replace publication, retiring replaced and extra files into recovery on
+//! each live filesystem. Cost O(input bytes + live text entries). It reports
+//! completed work and recovery locations on a partial failure; callers need no
+//! graph layout, recovery path, or file move protocol.
 //!
 //! `target_for_save` resolves a DTO's pinned path or current name. Name lookup
 //! may build the graph cache on first use (O(P + B + disk)); a warm absent or

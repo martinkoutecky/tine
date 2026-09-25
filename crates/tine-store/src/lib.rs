@@ -13,9 +13,11 @@ pub mod onboarding;
 pub mod publish;
 pub mod query;
 pub mod query_plan;
+pub mod restore;
 pub mod store;
 pub mod transaction;
 pub use publish::{PublishFailed, PublishReceipt, SiteWriter};
+pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
 pub use store::{
     Area, Budget, Cancel, ConfigState, Day, FacetPolicy, FileEntry, FileId, FileMeta, FileRev,
     GraphAccessInspection, GraphRev, Inventory, InventoryEntry, Listing, LoadError, OpenError,
