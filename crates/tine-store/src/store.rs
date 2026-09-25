@@ -1,6 +1,14 @@
-//! Interim whole-graph read boundary. `Store` owns the legacy graph for this
-//! batch; all questions below read its live cache. A first call can build that
-//! cache in O(P + B + disk). The selected reads are bounded inside this module.
+//! Interim read boundary. `Store` owns the legacy graph. `page` reads and
+//! parses one page in O(page bytes + its blocks), updating the live cache when
+//! it observes an external edit. `read` returns raw bytes in O(file bytes),
+//! optionally bounded by `max_bytes`; `open_read` returns an open handle and
+//! length in O(1) metadata; `path_for_os_handoff` validates an absolute path
+//! for an OS opener in O(1) metadata. Invalid identities, missing files,
+//! undecodable pages, oversized reads, and I/O errors are typed `StoreError`s.
+//! Callers need no cache state, disk layout, or path for file reads.
+//!
+//! Whole-graph questions below read the live cache. A first call can build
+//! that cache in O(P + B + disk). The selected reads are bounded here.
 //! `WholeGraph` does not yet pin an immutable generation: two calls on one view
 //! may observe different states. Immutable snapshots arrive with B7.
 //!
@@ -17,13 +25,16 @@
 //! need no cache state, budget constants, lane IDs, or disk paths.
 
 use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tine_core::model::{
-    BacklinkFilterContext, BacklinkFilterTarget, BlockPreview, BoundedRefGroups, PageEntry,
-    PageKind, RefGroup, TemplateDto,
+    BacklinkFilterContext, BacklinkFilterTarget, BlockPreview, BoundedRefGroups, PageDto,
+    PageEntry, PageKind, RefGroup, TemplateDto,
 };
 pub use tine_core::model::{FileId, PageId};
 use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
@@ -74,11 +85,18 @@ impl Store {
     pub fn as_page(&self, file: &FileId) -> Option<PageId> {
         self.validate_file(file).ok()?;
         let path = file.as_str();
-        let area = path.split('/').next()?;
-        if area != self.graph.config.pages_dir && area != self.graph.config.journals_dir {
+        if !path.starts_with(&format!("{}/", self.graph.config.pages_dir))
+            && !path.starts_with(&format!("{}/", self.graph.config.journals_dir))
+        {
             return None;
         }
         let stem = std::path::Path::new(path).file_stem()?.to_str()?;
+        if !matches!(
+            std::path::Path::new(path).extension()?.to_str(),
+            Some("md" | "org")
+        ) {
+            return None;
+        }
         if tine_core::model::is_sync_conflict(stem) {
             return None;
         }
@@ -96,15 +114,190 @@ impl Store {
         {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
-        let area = path.split('/').next().unwrap_or_default();
-        if area == self.graph.config.pages_dir || area == self.graph.config.journals_dir {
-            if self.graph.resolve_rel(path).is_none() {
-                return Err(StoreError::InvalidTarget(path.to_owned()));
-            }
-        } else if area != "assets" && area != "logseq" {
+        if !path.starts_with(&format!("{}/", self.graph.config.pages_dir))
+            && !path.starts_with(&format!("{}/", self.graph.config.journals_dir))
+            && !path.starts_with("assets/")
+            && !path.starts_with("logseq/")
+        {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
         Ok(())
+    }
+
+    fn area_root(&self, file: &FileId) -> Result<PathBuf, StoreError> {
+        self.validate_file(file)?;
+        let path = file.as_str();
+        let area = if path.starts_with(&format!("{}/", self.graph.config.pages_dir)) {
+            self.graph.config.pages_dir.as_str()
+        } else if path.starts_with(&format!("{}/", self.graph.config.journals_dir)) {
+            self.graph.config.journals_dir.as_str()
+        } else {
+            path.split('/').next().unwrap_or_default()
+        };
+        Ok(self.graph.root.join(area))
+    }
+
+    /// A validated OS path. A missing final file is allowed; existing ancestors
+    /// must still remain inside the selected area. Callers requiring an existing
+    /// regular file must check that separately.
+    pub fn path_for_os_handoff(&self, file: &FileId) -> Result<PathBuf, StoreError> {
+        let area = self.area_root(file)?;
+        let (area, candidate) = if let Some(rel) = file.as_str().strip_prefix("assets/") {
+            let approved = self.graph.assets_path();
+            let live =
+                fs::canonicalize(self.graph.root.join("assets")).map_err(StoreError::from_io)?;
+            if live != approved {
+                return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
+            }
+            (approved.clone(), approved.join(rel))
+        } else {
+            (area, self.graph.root.join(file.as_str()))
+        };
+        let area_canonical = fs::canonicalize(&area).map_err(StoreError::from_io)?;
+        let mut existing = candidate.as_path();
+        loop {
+            match fs::symlink_metadata(existing) {
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    existing = existing
+                        .parent()
+                        .ok_or_else(|| StoreError::InvalidTarget(file.as_str().to_owned()))?;
+                }
+                Err(error) => return Err(StoreError::from_io(error)),
+            }
+        }
+        let resolved = fs::canonicalize(existing).map_err(StoreError::from_io)?;
+        if !resolved.starts_with(&area_canonical) {
+            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
+        }
+        let suffix = candidate
+            .strip_prefix(existing)
+            .expect("candidate ancestor");
+        if suffix.as_os_str().is_empty() {
+            Ok(resolved)
+        } else {
+            Ok(resolved.join(suffix))
+        }
+    }
+
+    /// Read one file's bytes, with an optional limit checked before and after
+    /// reading. Cost: O(file bytes).
+    pub fn read(
+        &self,
+        file: &FileId,
+        max_bytes: Option<u64>,
+    ) -> Result<(Vec<u8>, FileRev), StoreError> {
+        let path = self.path_for_os_handoff(file)?;
+        let mut input = File::open(path).map_err(StoreError::from_io)?;
+        let meta = input.metadata().map_err(StoreError::from_io)?;
+        if !meta.is_file() {
+            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
+        }
+        let len = meta.len();
+        if let Some(limit) = max_bytes {
+            if len > limit {
+                return Err(StoreError::TooLarge { limit, len });
+            }
+        }
+        let mut bytes = Vec::new();
+        input.read_to_end(&mut bytes).map_err(StoreError::from_io)?;
+        if let Some(limit) = max_bytes {
+            if bytes.len() as u64 > limit {
+                return Err(StoreError::TooLarge {
+                    limit,
+                    len: bytes.len() as u64,
+                });
+            }
+        }
+        let rev = FileRev::from_bytes(&bytes);
+        Ok((bytes, rev))
+    }
+
+    /// Open a validated file for streaming and return its length. The final
+    /// component must not be a symlink. Cost: O(1) metadata.
+    pub fn open_read(&self, file: &FileId) -> Result<(File, u64), StoreError> {
+        self.validate_file(file)?;
+        let path = self.path_for_os_handoff(file)?;
+        let raw = if let Some(rel) = file.as_str().strip_prefix("assets/") {
+            self.graph.assets_path().join(rel)
+        } else {
+            self.graph.root.join(file.as_str())
+        };
+        if fs::symlink_metadata(&raw)
+            .map_err(StoreError::from_io)?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(StoreError::InvalidTarget(format!(
+                "symlink:{}",
+                file.as_str()
+            )));
+        }
+        let input = File::open(path).map_err(StoreError::from_io)?;
+        let meta = input.metadata().map_err(StoreError::from_io)?;
+        if !meta.is_file() {
+            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
+        }
+        Ok((input, meta.len()))
+    }
+
+    /// Read and parse one page. This can advance the live cache when its bytes
+    /// differ from the cached copy (interim behavior, before immutable D3).
+    /// Cost: O(page bytes + its blocks).
+    pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
+        if self.as_page(&id.file()).is_none() {
+            return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
+        }
+        // v0.6.5's page walker never indexes a symlinked page file (it could
+        // expose a file outside the graph), so no listing hands out such an
+        // id; refuse one here too. Ancestors must stay inside the area. The
+        // read itself uses the lexical path, which is the page's identity.
+        let path = self.graph.root.join(id.as_str());
+        self.path_for_os_handoff(&id.file())?;
+        if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
+        }
+        let entry = self
+            .graph
+            .entry_for_path(&path)
+            .ok_or_else(|| StoreError::InvalidTarget(id.as_str().to_owned()))?;
+        let canonical = self
+            .graph
+            .find_entry(&entry.name, entry.kind)
+            .is_some_and(|found| found.path == path);
+        let doc = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if canonical {
+                self.graph.load_page(&entry).map(Some)
+            } else {
+                self.graph.load_by_validated_path(&path)
+            }
+        }))
+        .map_err(|panic| {
+            let reason = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_else(|| "page parser panicked".to_owned());
+            StoreError::Unparseable(reason)
+        })?
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::InvalidData {
+                StoreError::Undecodable
+            } else {
+                StoreError::from_io(error)
+            }
+        })?
+        .ok_or(StoreError::NotFound)?;
+        let rev = FileRev(doc.rev.clone().ok_or(StoreError::NotFound)?);
+        let read_only = doc
+            .read_only
+            .then(|| "Org file does not round-trip".to_owned());
+        Ok(PageRead {
+            id: id.clone(),
+            doc,
+            rev,
+            read_only,
+        })
     }
 
     /// Get a live-cache read view and record its current generation. O(1).
@@ -132,22 +325,62 @@ pub struct Day(pub i64);
 
 #[derive(Debug)]
 pub enum StoreError {
-    /// Reserved for B4 single-file reads.
     NotFound,
     InvalidTarget(String),
-    /// Reserved for B4 single-file reads.
     Undecodable,
-    /// Reserved for B4 single-file reads.
     Unparseable(String),
-    /// Reserved for B4 single-file reads.
     TooLarge {
         limit: u64,
         len: u64,
     },
-    /// Reserved for B4 single-file reads.
     Io(std::io::Error),
     /// Reserved for B7 lifecycle.
     Closed,
+}
+
+impl StoreError {
+    fn from_io(error: std::io::Error) -> Self {
+        match error.kind() {
+            std::io::ErrorKind::NotFound => Self::NotFound,
+            _ => Self::Io(error),
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn invalid_data_io_error_is_not_a_page_decode_error() {
+    let error = std::io::Error::new(std::io::ErrorKind::InvalidData, "unrelated I/O data");
+    assert!(matches!(StoreError::from_io(error), StoreError::Io(_)));
+}
+
+/// Opaque FNV-1a/64 content revision with the v0.6.5 hex string on the wire.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FileRev(String);
+
+impl FileRev {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Self(format!("{hash:016x}"))
+    }
+}
+
+impl From<FileRev> for String {
+    fn from(rev: FileRev) -> Self {
+        rev.0
+    }
+}
+
+pub struct PageRead {
+    pub id: PageId,
+    pub doc: PageDto,
+    pub rev: FileRev,
+    pub read_only: Option<String>,
 }
 
 pub enum Resolved {

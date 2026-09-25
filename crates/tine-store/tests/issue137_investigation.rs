@@ -3,9 +3,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tine_core::model::ReferenceKind;
 use tine_core::{PageKind, RefGroup};
 use tine_store::model::Graph;
+use tine_store::{PageId, Store};
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
@@ -223,7 +225,8 @@ fn issue232_runtime_ids_distinguish_structure_and_physical_owner() {
     fixture.nested_page("client-b", "Foo", "- same\n");
     let graph = fixture.graph();
 
-    let identity = graph.load_by_path("pages/Identity.md").unwrap().unwrap();
+    let store = Store::from_legacy(Arc::new(fixture.graph()));
+    let identity = store.page(&PageId::from("pages/Identity.md")).unwrap().doc;
     let ids = identity
         .blocks
         .iter()
@@ -240,14 +243,14 @@ fn issue232_runtime_ids_distinguish_structure_and_physical_owner() {
     assert_eq!(resolved.blocks[0].raw.lines().next(), Some("unique"));
     assert_eq!(resolved.blocks[0].id, identity.blocks[2].id);
 
-    let a = graph
-        .load_by_path("pages/client-a/Foo.md")
+    let a = store
+        .page(&PageId::from("pages/client-a/Foo.md"))
         .unwrap()
-        .unwrap();
-    let b = graph
-        .load_by_path("pages/client-b/Foo.md")
+        .doc;
+    let b = store
+        .page(&PageId::from("pages/client-b/Foo.md"))
         .unwrap()
-        .unwrap();
+        .doc;
     assert_ne!(a.blocks[0].id, b.blocks[0].id);
 }
 

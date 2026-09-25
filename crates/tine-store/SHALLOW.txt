@@ -2,7 +2,7 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 105
+# ceiling: 99
 field model::Graph.config
 field model::Graph.root
 field onboarding::GuideCopyResult.copied_assets
@@ -24,7 +24,6 @@ fn config_edit::Graph::set_preferred_workflow
 fn config_edit::Graph::set_show_brackets
 fn config_edit::Graph::set_start_of_week
 fn config_edit::Graph::set_timetracking_enabled
-fn model::Graph::asset_file_for_read
 fn model::Graph::asset_trash_stats
 fn model::Graph::assets_path
 fn model::Graph::backlinks
@@ -50,7 +49,6 @@ fn model::Graph::journals_desc
 fn model::Graph::journals_path
 fn model::Graph::list_pages
 fn model::Graph::list_sync_conflicts
-fn model::Graph::load_by_path
 fn model::Graph::load_named
 fn model::Graph::load_page
 fn model::Graph::merge_pages
@@ -64,11 +62,8 @@ fn model::Graph::page_aliases
 fn model::Graph::page_icons
 fn model::Graph::page_index_failures
 fn model::Graph::page_print_html
-fn model::Graph::page_source_file
 fn model::Graph::pages_path
 fn model::Graph::publish_html
-fn model::Graph::read_asset
-fn model::Graph::read_asset_limited
 fn model::Graph::read_highlights
 fn model::Graph::read_journal_file
 fn model::Graph::referenced_page_names
@@ -84,7 +79,6 @@ fn model::Graph::run_query
 fn model::Graph::save_asset
 fn model::Graph::save_page
 fn model::Graph::search
-fn model::Graph::stream_asset_path
 fn model::Graph::sync_conflict_diff
 fn model::Graph::sync_file
 fn model::Graph::trash_asset

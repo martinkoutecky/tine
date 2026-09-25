@@ -3,7 +3,6 @@
 //! asset on every request. Responses are capped to 1 MiB, so even a malformed or
 //! range-less request can never make the app read a multi-gigabyte media file.
 
-use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use tauri::http::{header, Request, Response, StatusCode};
 use tauri::{Manager, Runtime, UriSchemeContext};
@@ -96,14 +95,14 @@ pub(crate) fn respond<R: Runtime>(
     if slot.binding_generation != binding {
         return response(StatusCode::FORBIDDEN, Vec::new());
     }
-    let Ok(path) = slot.graph.stream_asset_path(name) else {
+    if name.is_empty() || name.contains('/') || name.contains('\\') {
+        return response(StatusCode::NOT_FOUND, Vec::new());
+    }
+    let Ok(id) = slot.store.file_id(tine_store::Area::Assets, name) else {
         return response(StatusCode::NOT_FOUND, Vec::new());
     };
-    let Ok(mut file) = File::open(path) else {
+    let Ok((mut file, len)) = slot.store.open_read(&id) else {
         return response(StatusCode::NOT_FOUND, Vec::new());
-    };
-    let Ok(len) = file.metadata().map(|metadata| metadata.len()) else {
-        return response(StatusCode::INTERNAL_SERVER_ERROR, Vec::new());
     };
     if len == 0 {
         return Response::builder()

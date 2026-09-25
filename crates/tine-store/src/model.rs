@@ -956,15 +956,14 @@ impl Graph {
         if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
             return None;
         }
-        let mut parts = rel.split('/');
-        let dir = parts.next()?;
-        let base = if dir == self.config.journals_dir {
-            self.journals_path()
-        } else if dir == self.config.pages_dir {
-            self.pages_path()
-        } else {
-            return None;
-        };
+        let (base, tail_rel) =
+            if let Some(tail) = rel.strip_prefix(&format!("{}/", self.config.journals_dir)) {
+                (self.journals_path(), tail)
+            } else if let Some(tail) = rel.strip_prefix(&format!("{}/", self.config.pages_dir)) {
+                (self.pages_path(), tail)
+            } else {
+                return None;
+            };
         // The remaining segments are the file's path UNDER that dir. Nested
         // sub-directories are allowed (#21) but the can't-escape-the-graph
         // invariant is kept lexically: every segment must be a plain name — no
@@ -973,7 +972,7 @@ impl Graph {
         // provably stays within `base`; there must be at least one segment (a bare
         // `pages` is a dir, not a file).
         let mut tail = PathBuf::new();
-        for seg in parts {
+        for seg in tail_rel.split('/') {
             if seg.is_empty() || seg == "." || seg == ".." {
                 return None;
             }
@@ -990,42 +989,6 @@ impl Graph {
             Some("md") | Some("org") => Some(abs),
             _ => None,
         }
-    }
-
-    /// Resolve the exact on-disk source file for an explicit user file action.
-    /// A loaded page's recorded relative path always wins (including nested and
-    /// duplicate-name files); a newly saved page without a refreshed path may
-    /// fall back to normal name resolution. The final canonical-file check keeps
-    /// symlinks from escaping the managed pages/journals directories.
-    pub fn page_source_file(
-        &self,
-        name: &str,
-        kind: PageKind,
-        recorded_path: Option<&str>,
-    ) -> io::Result<PathBuf> {
-        let candidate = recorded_path
-            .filter(|path| !path.trim().is_empty())
-            .map(|path| {
-                self.resolve_rel(path)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))
-            })
-            .unwrap_or_else(|| Ok(self.path_for(name, kind)))?;
-        let canonical = candidate.canonicalize()?;
-        if !canonical.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "page source is not a file",
-            ));
-        }
-        let pages = self.pages_path().canonicalize()?;
-        let journals = self.journals_path().canonicalize()?;
-        if !canonical.starts_with(&pages) && !canonical.starts_with(&journals) {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "page source escapes graph directories",
-            ));
-        }
-        Ok(canonical)
     }
 
     /// Whether a journal file is a "shadow": a non-date-stem file (e.g. a leftover
@@ -2456,7 +2419,9 @@ impl Graph {
             self.forget_file(&entry.path);
             return Err(read.unwrap_err());
         }
-        let rev = read.as_ref().ok().map(|s| content_rev(s));
+        // A failed read must not fall through to a stale cached DTO.
+        let content = read?;
+        let rev = Some(content_rev(&content));
         // Serve from the cache if it's ALREADY built, but never trigger a build
         // here: a cold-cache `with_pages` would synchronously parse the entire
         // graph just to return one page, making first paint scale with graph size
@@ -2466,22 +2431,19 @@ impl Graph {
         // benign: id:: ref targets are stable, and live-ref views fall back to a
         // read-only render for an unmatched uuid, never losing edits.)
         if let Some(mut dto) = self.peek_cached_page(entry) {
-            if let Ok(c) = &read {
-                dto.read_only = read_only_org(&entry.path, c);
-            }
+            dto.read_only = read_only_org(&entry.path, &content);
             dto.rev = rev;
-            dto.path = self.rel_path(&entry.path);
+            dto.path = Some(self.rel_path(&entry.path).into());
             return Ok(dto);
         }
         // Cache miss: parse the bytes we already read (propagate the original read
         // error if it failed).
-        let content = read?;
         let mut doc = parse_doc(&entry.path, &content);
         assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
         let mut dto = page_dto(entry, &doc);
         dto.read_only = read_only_org(&entry.path, &content);
         dto.rev = rev;
-        dto.path = self.rel_path(&entry.path);
+        dto.path = Some(self.rel_path(&entry.path).into());
         Ok(dto)
     }
 
@@ -2493,10 +2455,17 @@ impl Graph {
     /// cache slot for that `(kind,name)` holds the CANONICAL file, so a cache lookup
     /// here would serve the wrong file's content. Returns `Ok(None)` if the path is
     /// invalid (see [`resolve_rel`]) or the file is gone.
-    pub fn load_by_path(&self, rel: &str) -> io::Result<Option<PageDto>> {
+    #[cfg(test)]
+    pub(crate) fn load_by_path(&self, rel: &str) -> io::Result<Option<PageDto>> {
         let Some(abs) = self.resolve_rel(rel) else {
             return Ok(None);
         };
+        self.load_by_validated_path(&abs)
+    }
+
+    /// Parse a path whose graph-relative identity was validated by the caller.
+    /// Store page reads use this for lexical page symlinks as well as strays.
+    pub(crate) fn load_by_validated_path(&self, abs: &Path) -> io::Result<Option<PageDto>> {
         let Some(entry) = self.entry_for_path(&abs) else {
             return Ok(None);
         };
@@ -2510,7 +2479,7 @@ impl Graph {
         let mut dto = page_dto(&entry, &doc);
         dto.read_only = read_only_org(&abs, &content);
         dto.rev = Some(content_rev(&content));
-        dto.path = self.rel_path(&abs);
+        dto.path = Some(self.rel_path(&abs).into());
         Ok(Some(dto))
     }
 
@@ -4154,14 +4123,14 @@ impl Graph {
     }
 
     /// Read raw bytes of an asset (e.g. a PDF) for the viewer.
-    pub fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
+    pub(crate) fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
         fs::read(self.asset_file_for_read(name)?)
     }
 
     /// Resolve an existing top-level regular asset through the canonical asset
     /// capability. A symlink may point elsewhere inside that approved root, but
     /// can never turn a read/open into access outside it.
-    pub fn asset_file_for_read(&self, name: &str) -> io::Result<PathBuf> {
+    pub(crate) fn asset_file_for_read(&self, name: &str) -> io::Result<PathBuf> {
         top_level_asset_name(name)?;
         let assets = fs::canonicalize(self.assets_path())?;
         let path = fs::canonicalize(self.assets_path().join(name))?;
@@ -4171,25 +4140,10 @@ impl Graph {
         Ok(path)
     }
 
-    /// Canonical, regular-file path for the native asset protocol. This is used
-    /// for audio/video so WebView range requests read at most a small chunk
-    /// instead of copying a multi-gigabyte file through Rust Vec → IPC → Blob.
-    pub fn stream_asset_path(&self, name: &str) -> io::Result<PathBuf> {
-        top_level_asset_name(name)?;
-        let candidate = self.assets_path().join(name);
-        if fs::symlink_metadata(&candidate)?.file_type().is_symlink() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "asset symlinks cannot be streamed",
-            ));
-        }
-        self.asset_file_for_read(name)
-    }
-
     /// Read an asset only if its current on-disk size is within `max_bytes`.
     /// The post-read check closes the metadata/read race if another process grows
     /// the file between those operations.
-    pub fn read_asset_limited(&self, name: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
+    pub(crate) fn read_asset_limited(&self, name: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
         top_level_asset_name(name)?;
         let path = self.asset_file_for_read(name)?;
         let metadata = fs::metadata(&path)?;
@@ -4205,7 +4159,7 @@ impl Graph {
                 format!("asset exceeds {} byte limit", max_bytes),
             ));
         }
-        let bytes = fs::read(path)?;
+        let bytes = self.read_asset(name)?;
         if bytes.len() as u64 > max_bytes {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -5295,7 +5249,7 @@ impl Graph {
     /// path by name and caches as before. Errors on an invalid pinned path (escapes
     /// the graph) or a `.md`+`.org` twin (ambiguous identity, M1).
     fn save_target(&self, page: &PageDto) -> io::Result<(PathBuf, bool)> {
-        if !page.path.is_empty() {
+        if let Some(id) = &page.path {
             // The page knows its own file (every loaded page carries its path).
             // Write THERE — that's how a duplicate-day stray saves to its own file
             // instead of being re-resolved by name to the canonical one. It still
@@ -5303,7 +5257,7 @@ impl Graph {
             // title-named journal coexisting with a canonical date-stem file): a
             // shadow's cache slot belongs to the canonical, so it stays out.
             let path = self
-                .resolve_rel(&page.path)
+                .resolve_rel(id.as_str())
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))?;
             let cache = self.path_is_cacheable(&path);
             return Ok((path, cache));
@@ -6094,7 +6048,7 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         rev: None,
         format: Format::from_path(&entry.path),
         read_only: false,
-        path: String::new(),
+        path: None,
         guide: false,
     }
 }
@@ -8292,7 +8246,8 @@ mod tests {
         assert!(!g.search("future-search-sentinel", 8).is_empty());
         assert_eq!(g.path_for(future_title, PageKind::Journal), future);
         assert_eq!(
-            g.page_source_file(future_title, PageKind::Journal, None)
+            crate::store::Store::from_legacy(std::sync::Arc::new(Graph::open(&dir)))
+                .path_for_os_handoff(&crate::store::PageId::from(g.rel_path(&future)).file())
                 .unwrap(),
             future.canonicalize().unwrap()
         );
@@ -8598,7 +8553,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: true,
-            path: String::new(),
+            path: None,
             guide: true,
         };
 
@@ -8698,7 +8653,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
-            path: String::new(),
+            path: None,
             guide: false,
         };
         assert!(g.save_page(&page, None).is_err(), "save refused on twin");
@@ -8989,7 +8944,7 @@ mod tests {
             rev: None,
             format: Format::Org,
             read_only: false,
-            path: String::new(),
+            path: None,
             guide: false,
         };
         g.save_page(&page, None).unwrap();
@@ -9260,7 +9215,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
-            path: String::new(),
+            path: None,
             guide: false,
         };
         g.save_page(&page, None).unwrap();
@@ -9326,7 +9281,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
-            path: String::new(),
+            path: None,
             guide: false,
         };
         g.save_page(&dto, loaded.rev.as_deref())
@@ -9524,7 +9479,7 @@ mod tests {
                 rev: None,
                 format,
                 read_only: false,
-                path: String::new(),
+                path: None,
                 guide: false,
             };
             g.save_page(&page, None).unwrap();
@@ -10143,7 +10098,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
-            path: String::new(),
+            path: None,
             guide: false,
         }
     }
@@ -10785,18 +10740,25 @@ mod tests {
         fs::write(&canonical, "- canonical\n").unwrap();
         fs::write(&nested, "- nested\n").unwrap();
         let g = Graph::open(&dir);
+        let store = crate::store::Store::from_legacy(std::sync::Arc::new(Graph::open(&dir)));
 
         assert_eq!(
-            g.page_source_file("Note", PageKind::Page, Some("pages/client-a/Note.md"))
+            store
+                .path_for_os_handoff(&crate::store::PageId::from("pages/client-a/Note.md").file())
                 .unwrap(),
             nested.canonicalize().unwrap()
         );
         assert_eq!(
-            g.page_source_file("Note", PageKind::Page, None).unwrap(),
+            store
+                .path_for_os_handoff(
+                    &crate::store::PageId::from(g.rel_path(&g.path_for("Note", PageKind::Page)))
+                        .file()
+                )
+                .unwrap(),
             canonical.canonicalize().unwrap()
         );
-        assert!(g
-            .page_source_file("Note", PageKind::Page, Some("assets/Note.md"))
+        assert!(store
+            .path_for_os_handoff(&crate::store::PageId::from("assets/Note.md").file())
             .is_err());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -11070,7 +11032,7 @@ mod tests {
             format: Format::Md,
             rev: None,
             read_only: false,
-            path: String::new(),
+            path: None,
             guide: false,
         };
         assert!(g.save_page(&page, None).is_err());
@@ -11090,7 +11052,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(by_name.blocks[0].raw, "canonical body");
-        assert_eq!(by_name.path, "journals/2026_06_26.org");
+        assert_eq!(
+            by_name.path.as_ref().unwrap().as_str(),
+            "journals/2026_06_26.org"
+        );
 
         // By path → the STRAY's own content, even though it shares the (kind,name).
         let stray = g
@@ -11098,7 +11063,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stray.blocks[0].raw, "stray body");
-        assert_eq!(stray.path, "journals/Friday, 26-06-2026.org");
+        assert_eq!(
+            stray.path.as_ref().unwrap().as_str(),
+            "journals/Friday, 26-06-2026.org"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -11150,7 +11118,7 @@ mod tests {
             .load_by_path("journals/Friday, 26-06-2026.org")
             .unwrap()
             .unwrap();
-        p.path = "../escape.md".into();
+        p.path = Some("../escape.md".into());
         assert!(
             g.save_page(&p, p.rev.as_deref()).is_err(),
             "save must refuse an out-of-graph path"
@@ -11191,7 +11159,7 @@ mod tests {
             .unwrap()
             .expect("open nested page by name");
         assert_eq!(dto.blocks[0].raw, "nestedsentinel body");
-        assert_eq!(dto.path, "pages/client-a/foo.md");
+        assert_eq!(dto.path.as_ref().unwrap().as_str(), "pages/client-a/foo.md");
 
         // Indexed for full-text search (the cache folded it in via list_pages).
         assert!(
@@ -11216,7 +11184,7 @@ mod tests {
         g.warm_cache();
 
         let mut dto = g.load_named("foo", PageKind::Page).unwrap().unwrap();
-        assert_eq!(dto.path, "pages/client-a/foo.md");
+        assert_eq!(dto.path.as_ref().unwrap().as_str(), "pages/client-a/foo.md");
         dto.blocks[0].raw = "after".into();
         g.save_page(&dto, dto.rev.as_deref()).unwrap();
 
@@ -11255,8 +11223,8 @@ mod tests {
         let mut b = g.load_by_path("pages/client-b/foo.md").unwrap().unwrap();
         assert_eq!(a.name, "foo");
         assert_eq!(b.name, "foo");
-        assert_eq!(a.path, "pages/client-a/foo.md");
-        assert_eq!(b.path, "pages/client-b/foo.md");
+        assert_eq!(a.path.as_ref().unwrap().as_str(), "pages/client-a/foo.md");
+        assert_eq!(b.path.as_ref().unwrap().as_str(), "pages/client-b/foo.md");
 
         a.blocks[0].raw = "after a".into();
         b.blocks[0].raw = "after b".into();
@@ -11328,10 +11296,7 @@ mod tests {
         );
         let non_winner_loaded = g.load_page(&non_winner_entry).unwrap();
         assert_eq!(non_winner_loaded.blocks[0].raw, "nested saved sentinel");
-        assert_eq!(
-            non_winner_loaded.path,
-            non_winner_entry.rel_path.clone().unwrap()
-        );
+        assert_eq!(non_winner_loaded.path, non_winner_entry.rel_path.clone());
 
         let cached = g.with_pages(|pages| {
             pages

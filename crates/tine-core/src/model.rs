@@ -469,8 +469,8 @@ pub struct PageDto {
     /// with the canonical file — saves to its own file instead of being re-resolved
     /// by name to the canonical one (#21). Empty for a brand-new page with no file
     /// yet; then save resolves the path by name, exactly as before.
-    #[serde(default)]
-    pub path: String,
+    #[serde(default, with = "optional_page_path")]
+    pub path: Option<PageId>,
     /// True for bundled in-app Guide pages. Guide pages are ephemeral/read-only
     /// virtual pages and must never be persisted into the user's graph by the
     /// normal save/writeback path.

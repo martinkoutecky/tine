@@ -10,6 +10,10 @@ enum store::QueryError
 enum store::QueryResult
 enum store::Resolved
 enum store::StoreError
+field store::PageRead.doc
+field store::PageRead.id
+field store::PageRead.read_only
+field store::PageRead.rev
 field store::SearchRequest.block_limit
 field store::SearchRequest.explain
 field store::SearchRequest.page_limit
@@ -17,6 +21,10 @@ field store::SearchRequest.text
 field store::SearchRequest.within
 fn store::Store::as_page
 fn store::Store::file_id
+fn store::Store::open_read
+fn store::Store::page
+fn store::Store::path_for_os_handoff
+fn store::Store::read
 fn store::Store::whole_graph
 fn store::QueryError::bridge_matching_blocks
 fn store::QueryError::bridge_search_hits
@@ -40,9 +48,11 @@ fn store::WholeGraph::templates
 fn store::WholeGraph::unlinked_references
 struct store::Cancel
 struct store::Day
+struct store::FileRev
 struct store::GraphRev
+struct store::PageRead
 struct store::SearchRequest
 struct store::Store
 struct store::WholeGraph
-use crate::store::{Area,Budget,Cancel,Day,FacetPolicy,FileId,GraphRev,LoadError,PageId,QueryDialect,QueryError,QueryResult,Resolved,SearchRequest,Store,StoreError,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Day,FacetPolicy,FileId,FileRev,GraphRev,LoadError,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SearchRequest,Store,StoreError,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}

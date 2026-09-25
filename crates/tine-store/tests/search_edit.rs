@@ -329,7 +329,7 @@ fn new_journal_appears_in_journals_desc_via_cache() {
         rev: None,
         format: Default::default(),
         read_only: false,
-        path: String::new(),
+        path: None,
         guide: false,
     };
     g.save_page(&dto, None).expect("save new journal");
@@ -609,7 +609,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     b.name = "B".into();
     b.title = "B".into();
     b.rev = None;
-    b.path = String::new();
+    b.path = None;
     g.save_page(&b, None).unwrap();
     assert!(
         names(&g).contains(&"B".to_string()),
@@ -901,7 +901,7 @@ fn new_journal_saved_with_date_stem_not_title() {
         rev: None,
         format: Default::default(),
         read_only: false,
-        path: String::new(),
+        path: None,
         guide: false,
     };
     g.save_page(&dto, None).expect("save new journal");

@@ -4,6 +4,7 @@ use crate::debug::diag;
 use crate::platform::{open_page_source, opener_command, reveal_page_source};
 use crate::state::{
     capture_quick_switch_slot, refresh_graph, slot_for_context, with_graph, AppState, GraphContext,
+    GraphSlot,
 };
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,9 +15,154 @@ use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
 use tine_store::{
-    Budget, Cancel, FacetPolicy, QueryDialect, QueryError, QueryResult, Resolved, SearchRequest,
-    WholeGraph,
+    Area, Budget, Cancel, FacetPolicy, PageId, QueryDialect, QueryError, QueryResult, Resolved,
+    SearchRequest, StoreError, WholeGraph,
 };
+
+fn page_dto(read: tine_store::PageRead) -> PageDto {
+    let mut doc = read.doc;
+    doc.rev = Some(read.rev.into());
+    doc.read_only = read.read_only.is_some();
+    doc.path = Some(read.id);
+    doc
+}
+
+fn store_error(error: StoreError) -> String {
+    match error {
+        StoreError::NotFound => std::io::ErrorKind::NotFound.to_string(),
+        StoreError::InvalidTarget(_) => "invalid page path".into(),
+        StoreError::Undecodable => "stream did not contain valid UTF-8".into(),
+        StoreError::Unparseable(reason) => reason,
+        StoreError::TooLarge { limit, .. } => format!("asset exceeds {limit} byte limit"),
+        StoreError::Io(error) => error.to_string(),
+        StoreError::Closed => "store closed".into(),
+    }
+}
+
+fn asset_error(error: StoreError) -> String {
+    match error {
+        StoreError::NotFound => std::io::Error::from_raw_os_error(2).to_string(),
+        StoreError::InvalidTarget(_) => "invalid asset".into(),
+        StoreError::TooLarge { limit, .. } => format!("asset exceeds {limit} byte limit"),
+        other => store_error(other),
+    }
+}
+
+fn stream_asset_error(error: StoreError) -> String {
+    match error {
+        StoreError::InvalidTarget(reason) if reason.starts_with("symlink:") => {
+            "asset symlinks cannot be streamed".into()
+        }
+        other => asset_error(other),
+    }
+}
+
+fn asset_handoff_target(slot: &GraphSlot, name: &str) -> Result<std::path::PathBuf, String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err("bad asset name".into());
+    }
+    let id = slot
+        .store
+        .file_id(Area::Assets, name)
+        .map_err(asset_error)?;
+    let target = slot.store.path_for_os_handoff(&id).map_err(asset_error)?;
+    let target = std::fs::canonicalize(target).map_err(|error| error.to_string())?;
+    let assets =
+        std::fs::canonicalize(slot.graph.assets_path()).map_err(|error| error.to_string())?;
+    if !target.starts_with(&assets) || !target.is_file() {
+        return Err("invalid asset".into());
+    }
+    Ok(target)
+}
+
+fn page_handoff_target(slot: &GraphSlot, id: &PageId) -> Result<std::path::PathBuf, String> {
+    if slot.store.as_page(&id.file()).is_none() {
+        return Err("invalid page path".into());
+    }
+    let lexical = slot.graph.root.join(id.as_str());
+    let target = match slot.store.path_for_os_handoff(&id.file()) {
+        Ok(target) => target,
+        // The old page opener admitted symlinks between pages/ and journals/
+        // and reported its own escape error for symlinks outside both.
+        Err(StoreError::InvalidTarget(_)) => lexical,
+        Err(error) => return Err(store_error(error)),
+    };
+    let target = std::fs::canonicalize(target).map_err(|error| error.to_string())?;
+    if !target.is_file() {
+        return Err("page source is not a file".into());
+    }
+    let pages =
+        std::fs::canonicalize(slot.graph.pages_path()).map_err(|error| error.to_string())?;
+    let journals =
+        std::fs::canonicalize(slot.graph.journals_path()).map_err(|error| error.to_string())?;
+    if !target.starts_with(&pages) && !target.starts_with(&journals) {
+        return Err("page source escapes graph directories".into());
+    }
+    Ok(target)
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+    use tine_store::model::Graph;
+
+    #[test]
+    fn open_targets_require_existing_regular_files() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-handoff-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for area in ["pages", "journals", "assets"] {
+            std::fs::create_dir_all(root.join(area)).unwrap();
+        }
+        std::fs::write(root.join("pages/Good.md"), "- good\n").unwrap();
+        std::fs::write(root.join("assets/good.bin"), b"good").unwrap();
+        std::fs::create_dir(root.join("pages/Directory.md")).unwrap();
+        std::fs::create_dir(root.join("assets/directory.bin")).unwrap();
+        let slot = GraphSlot::new(Graph::open(&root), root.clone());
+
+        assert_eq!(
+            page_handoff_target(&slot, &PageId::from("pages/Good.md")).unwrap(),
+            root.join("pages/Good.md")
+        );
+        assert_eq!(
+            asset_handoff_target(&slot, "good.bin").unwrap(),
+            root.join("assets/good.bin")
+        );
+        assert!(page_handoff_target(&slot, &PageId::from("pages/Missing.md")).is_err());
+        assert!(asset_handoff_target(&slot, "missing.bin").is_err());
+        assert_eq!(
+            page_handoff_target(&slot, &PageId::from("pages/Directory.md")).unwrap_err(),
+            "page source is not a file"
+        );
+        assert_eq!(
+            asset_handoff_target(&slot, "directory.bin").unwrap_err(),
+            "invalid asset"
+        );
+
+        #[cfg(unix)]
+        {
+            let outside = root.with_extension("outside.md");
+            std::fs::write(&outside, "- outside\n").unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("pages/Escape.md")).unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("assets/escape.bin")).unwrap();
+            assert_eq!(
+                page_handoff_target(&slot, &PageId::from("pages/Escape.md")).unwrap_err(),
+                "page source escapes graph directories"
+            );
+            assert_eq!(
+                asset_handoff_target(&slot, "escape.bin").unwrap_err(),
+                "invalid asset"
+            );
+            std::fs::remove_file(outside).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
 
 fn whole_graph(state: &GraphContext<'_>) -> Result<WholeGraph, String> {
     slot_for_context(state)?
@@ -372,15 +518,27 @@ pub(crate) fn journal_feed_page(
     before_day: Option<i64>,
     state: GraphContext<'_>,
 ) -> Result<JournalFeedPage, String> {
-    with_graph(&state, |g| {
+    let slot = slot_for_context(&state)?;
+    let g = &slot.graph;
+    {
         let as_of_day = JournalDate::today().ordinal_key();
         let entries = g.feed_journals_desc_through(JournalDate::from_ordinal(as_of_day));
         collect_journal_feed_page(entries, limit, before_day, as_of_day, |entry| {
             // A journal deleted from disk between inventory and load is skipped,
             // but its day still advances the cursor in the helper above.
-            g.load_page(entry)
+            let id = entry.rel_path.as_ref().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing journal path")
+            })?;
+            slot.store
+                .page(id)
+                .map(page_dto)
+                .map_err(|error| match error {
+                    StoreError::NotFound => std::io::Error::from(std::io::ErrorKind::NotFound),
+                    StoreError::Io(error) => error,
+                    other => std::io::Error::other(store_error(other)),
+                })
         })
-    })
+    }
 }
 
 #[cfg(test)]
@@ -534,9 +692,22 @@ pub(crate) fn get_page(
     kind: PageKind,
     state: GraphContext<'_>,
 ) -> Result<Option<PageDto>, String> {
-    with_graph(&state, |g| {
-        g.load_named(&name, kind).map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    let resolved = slot
+        .store
+        .whole_graph()
+        .map_err(|e| format!("{e:?}"))?
+        .resolve(&name, kind == PageKind::Journal);
+    let id = match resolved {
+        Resolved::Existing { id, .. } => id,
+        Resolved::Alias { owners } => owners.into_iter().next().ok_or("alias has no owner")?,
+        Resolved::Absent { .. } => return Ok(None),
+    };
+    match slot.store.page(&id) {
+        Ok(read) => Ok(Some(page_dto(read))),
+        Err(StoreError::NotFound) => Ok(None),
+        Err(error) => Err(store_error(error)),
+    }
 }
 
 /// One raw source file of the open graph, for the in-app lsdoc↔mldoc diff panel.
@@ -1301,15 +1472,18 @@ pub(crate) fn read_asset(
     // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
     // serialized element-by-element and re-parsed on the JS side — the frontend
     // receives an ArrayBuffer directly.
-    with_graph(&state, |g| {
-        max_bytes
-            .map_or_else(
-                || g.read_asset(&name),
-                |limit| g.read_asset_limited(&name, limit),
-            )
-            .map(tauri::ipc::Response::new)
-            .map_err(|e| e.to_string())
-    })
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err("bad asset name".into());
+    }
+    let slot = slot_for_context(&state)?;
+    let file = slot
+        .store
+        .file_id(Area::Assets, &name)
+        .map_err(asset_error)?;
+    slot.store
+        .read(&file, max_bytes)
+        .map(|(bytes, _)| tauri::ipc::Response::new(bytes))
+        .map_err(asset_error)
 }
 
 /// Validate one graph media file and return its top-level asset name for the
@@ -1318,9 +1492,14 @@ pub(crate) fn read_asset(
 #[tauri::command]
 pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    slot.graph
-        .stream_asset_path(&name)
-        .map_err(|e| e.to_string())?;
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err("bad asset name".into());
+    }
+    let id = slot
+        .store
+        .file_id(Area::Assets, &name)
+        .map_err(asset_error)?;
+    slot.store.open_read(&id).map_err(stream_asset_error)?;
     Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
@@ -1578,9 +1757,8 @@ pub(crate) fn read_text_file(path: String) -> Result<String, String> {
 /// (canonicalized) so a crafted name can't open a file outside the graph.
 #[tauri::command]
 pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
-    let target = with_graph(&state, |g| {
-        g.asset_file_for_read(&name).map_err(|e| e.to_string())
-    })?;
+    let slot = slot_for_context(&state)?;
+    let target = asset_handoff_target(&slot, &name)?;
     #[cfg(desktop)]
     {
         #[cfg(target_os = "linux")]
@@ -1618,11 +1796,26 @@ pub(crate) fn open_page_file(
     reveal: bool,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    let target = with_graph(&state, |graph| {
-        graph
-            .page_source_file(&name, kind, path.as_deref())
-            .map_err(|error| error.to_string())
-    })?;
+    let slot = slot_for_context(&state)?;
+    let recorded_path = path.filter(|p| !p.trim().is_empty());
+    let id = if let Some(path) = recorded_path {
+        if slot.graph.resolve_rel(&path).is_none() {
+            return Err("invalid page path".into());
+        }
+        PageId::from(path)
+    } else {
+        match slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("{e:?}"))?
+            .resolve(&name, kind == PageKind::Journal)
+        {
+            Resolved::Existing { id, .. } => id,
+            Resolved::Alias { owners } => owners.into_iter().next().ok_or("alias has no owner")?,
+            Resolved::Absent { id } => id,
+        }
+    };
+    let target = page_handoff_target(&slot, &id)?;
     #[cfg(desktop)]
     {
         if reveal {
@@ -1656,9 +1849,8 @@ pub(crate) fn edit_asset_external(
     command: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    let target = with_graph(&state, |g| {
-        g.asset_file_for_read(&name).map_err(|e| e.to_string())
-    })?;
+    let slot = slot_for_context(&state)?;
+    let target = asset_handoff_target(&slot, &name)?;
     #[cfg(desktop)]
     {
         let target_str = target.to_string_lossy().to_string();
@@ -2119,7 +2311,12 @@ pub(crate) fn get_page_by_path(
     path: String,
     state: GraphContext<'_>,
 ) -> Result<Option<PageDto>, String> {
-    with_graph(&state, |g| g.load_by_path(&path).map_err(|e| e.to_string()))
+    let slot = slot_for_context(&state)?;
+    match slot.store.page(&PageId::from(path)) {
+        Ok(read) => Ok(Some(page_dto(read))),
+        Err(StoreError::NotFound | StoreError::InvalidTarget(_)) => Ok(None),
+        Err(error) => Err(store_error(error)),
+    }
 }
 
 /// Reconcile a duplicate-day pair: append the blocks of `src` to `dst`, then trash

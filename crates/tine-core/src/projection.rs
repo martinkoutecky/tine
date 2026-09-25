@@ -143,7 +143,7 @@ pub fn markdown_page_dto(name: &str, title: &str, markdown: &str) -> PageDto {
         rev: None,
         format: Format::Md,
         read_only: false,
-        path: String::new(),
+        path: None,
         guide: false,
     }
 }
