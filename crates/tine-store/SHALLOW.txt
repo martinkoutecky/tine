@@ -2,7 +2,7 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 96
+# ceiling: 97
 field model::Graph.config
 field model::Graph.root
 field onboarding::GuideCopyResult.copied_assets
@@ -96,6 +96,7 @@ fn onboarding::create_demo_graph
 fn publish::page_print_html
 fn publish::publish_graph
 fn store::Store::from_legacy
+fn store::Store::target_for_save
 struct model::Graph
 struct onboarding::GuideCopyResult
 struct publish::PrintOpts

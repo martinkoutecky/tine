@@ -17,6 +17,17 @@
 //! other kinds intact. On an error it returns completed removal counts and
 //! bytes. Callers need no trash layout or legacy name classifier.
 //!
+//! `target_for_save` resolves a DTO's pinned path or current name. Name lookup
+//! may build the graph cache on first use (O(P + B + disk)); a warm absent or
+//! alias lookup still scans O(aliases). Aliases keep their own prospective file.
+//! `save` repeats that lookup, then writes exactly the supplied `PageId` in
+//! O(page bytes + its blocks), with a guard before
+//! serialization and an exact byte recheck before rename. It keeps the legacy
+//! formatting, no-op, org, preamble, and cache rules. Conflicts, deletion,
+//! read-only pages, twins, invalid targets, and I/O are typed outcomes; the
+//! caller keeps unsaved edits on any refusal. No caller manages page locks,
+//! cache state, or the write protocol.
+//!
 //! Questions and costs after cache construction (`P` pages, `B` blocks):
 //! `rev` O(1); `backlinks`, `unlinked_references`, `block_referrers`,
 //! `block_ref_counts`, `find_blocks`, `property_facets`, and `templates` O(B)
@@ -48,7 +59,7 @@ pub use tine_core::model::{FileId, PageId};
 use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
 use tine_core::query_plan::QueryExecution;
 
-use crate::model::Graph;
+use crate::model::{Graph, SaveTargetError};
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -136,6 +147,69 @@ impl Store {
     /// Adopt the current graph without loading it. O(1). Removed in B7.
     pub fn from_legacy(graph: Arc<Graph>) -> Self {
         Self { graph }
+    }
+
+    /// Resolve the exact file a DTO would save, including pinned stray pages.
+    pub fn target_for_save(&self, doc: &PageDto) -> Result<PageId, SaveOutcome> {
+        let (path, _) = self.graph.save_target(doc).map_err(|error| match error {
+            SaveTargetError::Twin => SaveOutcome::Twin {
+                existing: PageId::from(
+                    self.graph
+                        .rel_path(&self.graph.path_for(&doc.name, doc.kind)),
+                ),
+            },
+            SaveTargetError::InvalidTarget(message) => SaveOutcome::InvalidTarget(message.into()),
+        })?;
+        if doc.path.is_none() {
+            match self
+                .whole_graph()
+                .expect("interim Store view is always available")
+                .resolve(&doc.name, doc.kind == PageKind::Journal)
+            {
+                Resolved::Existing { id, .. } | Resolved::Absent { id } => return Ok(id),
+                Resolved::Alias { .. } => {}
+            }
+        }
+        Ok(PageId::from(self.graph.rel_path(&path)))
+    }
+
+    /// Save one page with the editor's baseline; no write occurs on refusal.
+    pub fn save(&self, id: &PageId, base: SaveBase, doc: &PageDto) -> SaveOutcome {
+        if doc.guide {
+            return SaveOutcome::GuideEphemeral;
+        }
+        let target = match self.target_for_save(doc) {
+            Ok(target) => target,
+            Err(error) => return error,
+        };
+        if *id != target {
+            return SaveOutcome::InvalidTarget("invalid page path".into());
+        }
+        let path = self.graph.root.join(id.as_str());
+        let cache = self.graph.path_is_cacheable(&path);
+        let baseline = match &base {
+            SaveBase::Existing(rev) => Some(rev.0.as_str()),
+            SaveBase::CreateNew => None,
+        };
+        match self.graph.save_at(doc, &path, cache, baseline) {
+            Ok((rev, true)) => SaveOutcome::Saved(FileRev(rev)),
+            Ok((rev, false)) => SaveOutcome::Unchanged(FileRev(rev)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                match self.read(&id.file(), None) {
+                    Ok((_, disk)) => SaveOutcome::Conflict { disk },
+                    Err(StoreError::NotFound) => SaveOutcome::Deleted,
+                    Err(StoreError::Io(error)) => SaveOutcome::Io(error),
+                    Err(other) => SaveOutcome::Io(std::io::Error::other(format!("{other:?}"))),
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    && error.to_string() == "org file is read-only (does not round-trip)" =>
+            {
+                SaveOutcome::ReadOnly(error.to_string())
+            }
+            Err(error) => SaveOutcome::Io(error),
+        }
     }
 
     /// Count entries and bytes by kind in the recoverable trash. Cost: O(trash entries).
@@ -548,6 +622,40 @@ impl From<FileRev> for String {
     fn from(rev: FileRev) -> Self {
         rev.0
     }
+}
+
+impl From<String> for FileRev {
+    fn from(rev: String) -> Self {
+        Self(rev)
+    }
+}
+
+/// The file revision the edit is based on, or a request to create a new file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SaveBase {
+    Existing(FileRev),
+    CreateNew,
+}
+
+/// Result of one guarded page save. A refusal never authorizes dropping edits.
+#[derive(Debug)]
+pub enum SaveOutcome {
+    Saved(FileRev),
+    Unchanged(FileRev),
+    Conflict {
+        disk: FileRev,
+    },
+    Deleted,
+    ReadOnly(String),
+    Twin {
+        existing: PageId,
+    },
+    InvalidTarget(String),
+    Io(std::io::Error),
+    /// Reserved for the B7 store lifecycle.
+    Closed,
+    /// Interim bundled-guide result; guide pages have no disk identity.
+    GuideEphemeral,
 }
 
 pub struct PageRead {

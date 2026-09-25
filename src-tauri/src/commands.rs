@@ -16,7 +16,7 @@ use tine_core::model::{
 };
 use tine_store::{
     Area, Budget, Cancel, FacetPolicy, Inventory, PageId, QueryDialect, QueryError, QueryResult,
-    Resolved, SearchRequest, StoreError, TrashKind, WholeGraph,
+    Resolved, SaveBase, SaveOutcome, SearchRequest, StoreError, TrashKind, WholeGraph,
 };
 
 fn page_dto(read: tine_store::PageRead) -> PageDto {
@@ -948,20 +948,48 @@ pub(crate) fn save_page(
     force: Option<bool>,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
-    with_graph(&state, |g| {
-        let res = if force.unwrap_or(false) {
-            g.force_save_page(&page)
-        } else {
-            g.save_page(&page, base_rev.as_deref())
-        };
-        res.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                "conflict".to_string()
-            } else {
-                e.to_string()
+    let slot = slot_for_context(&state)?;
+    if page.guide {
+        return save_outcome_to_wire(SaveOutcome::GuideEphemeral, &page);
+    }
+    let id = match slot.store.target_for_save(&page) {
+        Ok(id) => id,
+        Err(outcome) => return save_outcome_to_wire(outcome, &page),
+    };
+    let base = if force.unwrap_or(false) {
+        // Interim keep-mine: the banner shows no disk version yet. Read the
+        // current one, then let BOTH save guards reject any later external edit.
+        // Never turn unreadable or undecodable bytes into overwrite permission.
+        match slot.store.read(&id.file(), None) {
+            Ok((bytes, rev)) => {
+                std::str::from_utf8(&bytes)
+                    .map_err(|_| "stream did not contain valid UTF-8".to_string())?;
+                SaveBase::Existing(rev)
             }
-        })
-    })
+            Err(StoreError::NotFound) => SaveBase::CreateNew,
+            Err(error) => return Err(store_error(error)),
+        }
+    } else {
+        base_rev
+            .map(|rev| SaveBase::Existing(rev.into()))
+            .unwrap_or(SaveBase::CreateNew)
+    };
+    save_outcome_to_wire(slot.store.save(&id, base, &page), &page)
+}
+
+fn save_outcome_to_wire(outcome: SaveOutcome, page: &PageDto) -> Result<String, String> {
+    match outcome {
+        SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => Ok(rev.into()),
+        SaveOutcome::Conflict { .. } | SaveOutcome::Deleted => Err("conflict".into()),
+        SaveOutcome::ReadOnly(reason) | SaveOutcome::InvalidTarget(reason) => Err(reason),
+        SaveOutcome::Twin { .. } => Err(format!(
+            "\"{}\" exists as both a .md and a .org file — remove one (e.g. in Logseq) to edit it in Tine",
+            page.name
+        )),
+        SaveOutcome::Io(error) => Err(error.to_string()),
+        SaveOutcome::Closed => Err("store closed".into()),
+        SaveOutcome::GuideEphemeral => Ok("guide-ephemeral".into()),
+    }
 }
 
 #[tauri::command]

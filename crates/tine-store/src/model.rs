@@ -55,6 +55,20 @@ fn twin_error(name: &str) -> io::Error {
     )
 }
 
+pub(crate) enum SaveTargetError {
+    Twin,
+    InvalidTarget(&'static str),
+}
+
+impl SaveTargetError {
+    fn into_io(self, name: &str) -> io::Error {
+        match self {
+            Self::Twin => twin_error(name),
+            Self::InvalidTarget(message) => io::Error::new(io::ErrorKind::InvalidInput, message),
+        }
+    }
+}
+
 /// The error for a path-addressed op (#21) whose graph-root-relative path is
 /// invalid — outside `journals/`/`pages/`, a traversal, or the wrong extension.
 fn bad_path() -> io::Error {
@@ -1592,7 +1606,7 @@ impl Graph {
     /// Whether a file participates in the `(kind,name)` page cache. False only for a
     /// shadow journal (a title-named duplicate of a canonical date-stem file, #21),
     /// whose cache slot belongs to the canonical file.
-    fn path_is_cacheable(&self, path: &Path) -> bool {
+    pub(crate) fn path_is_cacheable(&self, path: &Path) -> bool {
         if let Some(entry) = self.entry_for_path(path) {
             if entry.kind == PageKind::Journal {
                 if let Some(date) = entry
@@ -5201,7 +5215,7 @@ impl Graph {
     /// stray there would make name-resolution serve it). A normal page resolves its
     /// path by name and caches as before. Errors on an invalid pinned path (escapes
     /// the graph) or a `.md`+`.org` twin (ambiguous identity, M1).
-    fn save_target(&self, page: &PageDto) -> io::Result<(PathBuf, bool)> {
+    pub(crate) fn save_target(&self, page: &PageDto) -> Result<(PathBuf, bool), SaveTargetError> {
         if let Some(id) = &page.path {
             // The page knows its own file (every loaded page carries its path).
             // Write THERE — that's how a duplicate-day stray saves to its own file
@@ -5211,19 +5225,18 @@ impl Graph {
             // shadow's cache slot belongs to the canonical, so it stays out.
             let path = self
                 .resolve_rel(id.as_str())
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))?;
+                .ok_or(SaveTargetError::InvalidTarget("invalid page path"))?;
             let cache = self.path_is_cacheable(&path);
             return Ok((path, cache));
         }
         // M1: refuse to write an ambiguous page (both .md and .org on disk) — we
         // can't tell which file the editor's content belongs to.
         if self.has_twin(&page.name, page.kind) {
-            return Err(twin_error(&page.name));
+            return Err(SaveTargetError::Twin);
         }
         let path = self.path_for(&page.name, page.kind);
         if !path_stays_within_root(&self.root, &path) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+            return Err(SaveTargetError::InvalidTarget(
                 "page path escapes graph root",
             ));
         }
@@ -5235,12 +5248,32 @@ impl Graph {
     /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
     /// so the caller can surface it and keep the in-memory edits.
     pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
+        self.save_with_base(page, base_rev).map(|(rev, _)| rev)
+    }
+
+    pub(crate) fn save_with_base(
+        &self,
+        page: &PageDto,
+        base_rev: Option<&str>,
+    ) -> io::Result<(String, bool)> {
         if page.guide {
             #[cfg(debug_assertions)]
             eprintln!("attempted to persist an ephemeral bundled Guide page");
-            return Ok("guide-ephemeral".into());
+            return Ok(("guide-ephemeral".into(), false));
         }
-        let (path, cache) = self.save_target(page)?;
+        let (path, cache) = self
+            .save_target(page)
+            .map_err(|error| error.into_io(&page.name))?;
+        self.save_at(page, &path, cache, base_rev)
+    }
+
+    pub(crate) fn save_at(
+        &self,
+        page: &PageDto,
+        path: &Path,
+        cache: bool,
+        base_rev: Option<&str>,
+    ) -> io::Result<(String, bool)> {
         // Serialize against any other writer of THIS page (a PDF highlight write
         // of the same `hls__` page, or another save) for the whole
         // read→conflict-check→write→cache_upsert, so neither can clobber the other
@@ -5288,7 +5321,9 @@ impl Graph {
             eprintln!("attempted to force-persist an ephemeral bundled Guide page");
             return Ok("guide-ephemeral".into());
         }
-        let (path, cache) = self.save_target(page)?;
+        let (path, cache) = self
+            .save_target(page)
+            .map_err(|error| error.into_io(&page.name))?;
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
         // "Keep mine" resolves a content conflict, but it must not turn an I/O or
@@ -5297,6 +5332,7 @@ impl Graph {
         // recheck = false: "keep mine" overwrites unconditionally. Same locked path
         // is threaded into write_page (M2) so a forced save can't land on a twin.
         self.write_page(page, &path, existing.as_deref(), false, cache)
+            .map(|(rev, _)| rev)
     }
 
     /// Write a page to `path` (already resolved + locked by the caller), reproducing
@@ -5309,7 +5345,7 @@ impl Graph {
         existing: Option<&str>,
         recheck: bool,
         cache: bool,
-    ) -> io::Result<String> {
+    ) -> io::Result<(String, bool)> {
         // (A new journal's `path` was named by `path_for` using the graph's
         // `:journal/file-name-format` — so custom-format graphs create the correct
         // file for the day instead of a misplaced default-named duplicate.)
@@ -5492,7 +5528,7 @@ impl Graph {
         }
         // The new baseline rev = hash of exactly what's now on disk (the content we
         // serialized, or the identical existing bytes on a no-op) — no re-read.
-        Ok(rev)
+        Ok((rev, changed))
     }
 }
 

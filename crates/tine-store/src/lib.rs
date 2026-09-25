@@ -14,6 +14,6 @@ pub mod query_plan;
 pub mod store;
 pub use store::{
     Area, Budget, Cancel, Day, FacetPolicy, FileId, FileRev, GraphRev, Inventory, InventoryEntry,
-    LoadError, PageId, PageRead, QueryDialect, QueryError, QueryResult, Resolved, SearchRequest,
-    Store, StoreError, TrashKind, WholeGraph,
+    LoadError, PageId, PageRead, QueryDialect, QueryError, QueryResult, Resolved, SaveBase,
+    SaveOutcome, SearchRequest, Store, StoreError, TrashKind, WholeGraph,
 };

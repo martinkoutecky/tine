@@ -1,7 +1,9 @@
 //! Integration tests against the on-disk demo graph (standard layout).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use tine_store::model::Graph;
+use tine_store::{PageId, SaveBase, SaveOutcome, Store};
 
 fn demo_graph() -> Graph {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
@@ -521,28 +523,35 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
 
 #[test]
 fn save_refuses_to_clobber_external_change() {
-    use tine_core::model::PageKind;
-
     let root = std::env::temp_dir().join(format!("tine-conflict-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
 
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
+    let store = Store::from_legacy(Arc::clone(&g));
+    let id = PageId::from("pages/N.md");
     // Build the cache (Tine now "knows" N = "- one"), then load it for editing.
     g.search("one", 10);
-    let dto = g.load_named("N", PageKind::Page).unwrap().unwrap();
+    let read = store.page(&id).unwrap();
+    let dto = read.doc;
 
     // An external writer (another app / Syncthing) changes the file.
     std::fs::write(&path, "- EXTERNAL EDIT").unwrap();
 
     // Saving the now-stale page must fail with a conflict and NOT overwrite.
-    let err = g.save_page(&dto, dto.rev.as_deref()).unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(read.rev), &dto),
+        SaveOutcome::Conflict { .. }
+    ));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "- EXTERNAL EDIT");
 
     // "Keep mine" force-saves over it.
-    g.force_save_page(&dto).unwrap();
+    let (_, disk_rev) = store.read(&id.file(), None).unwrap();
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(disk_rev), &dto),
+        SaveOutcome::Saved(_)
+    ));
     assert!(std::fs::read_to_string(&path).unwrap().contains("one"));
 
     std::fs::remove_dir_all(&root).ok();
@@ -550,21 +559,24 @@ fn save_refuses_to_clobber_external_change() {
 
 #[test]
 fn save_conflicts_when_file_deleted_externally() {
-    use tine_core::model::PageKind;
     let root = std::env::temp_dir().join(format!("tine-del-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
+    let store = Store::from_legacy(Arc::clone(&g));
+    let id = PageId::from("pages/N.md");
     g.search("one", 10); // warm cache
-    let dto = g.load_named("N", PageKind::Page).unwrap().unwrap();
+    let read = store.page(&id).unwrap();
 
     // The file is deleted on disk (Syncthing / Logseq) after we loaded it.
     std::fs::remove_file(&path).unwrap();
 
     // Saving must conflict, NOT silently resurrect the deleted note.
-    let err = g.save_page(&dto, dto.rev.as_deref()).unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+        SaveOutcome::Deleted
+    ));
     assert!(
         !path.exists(),
         "deleted file must stay deleted on a conflicting save"
