@@ -7,7 +7,9 @@ use std::path::Path;
 use tine_core::org;
 
 fn main() {
-    let dir = std::env::args().nth(1).expect("usage: roundtrip_org_dir <dir>");
+    let dir = std::env::args()
+        .nth(1)
+        .expect("usage: roundtrip_org_dir <dir>");
     let mut total = 0usize;
     let mut read_only = 0usize;
     walk(Path::new(&dir), &mut |path, content| {
@@ -17,7 +19,10 @@ fn main() {
             println!("NOT ROUND-TRIPPING (read-only in Tine): {}", path.display());
         }
     });
-    println!("\n{total} org files | {read_only} read-only | {} round-trip clean", total - read_only);
+    println!(
+        "\n{total} org files | {read_only} read-only | {} round-trip clean",
+        total - read_only
+    );
 }
 
 fn walk(dir: &Path, f: &mut impl FnMut(&Path, &String)) {

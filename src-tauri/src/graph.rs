@@ -453,13 +453,10 @@ pub(crate) fn warm_cache_async(
             return;
         }
         let state: State<'_, AppState> = app.state();
-        let current = state
-            .graphs
-            .read()
-            .unwrap()
-            .slot(&window_label);
+        let current = state.graphs.read().unwrap().slot(&window_label);
         let still_current = current.as_ref().is_some_and(|current| {
-            current.binding_generation == slot.binding_generation && current.root_key == slot.root_key
+            current.binding_generation == slot.binding_generation
+                && current.root_key == slot.root_key
         });
         if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation {
             current.unwrap().warm_done.store(true, Ordering::Release);

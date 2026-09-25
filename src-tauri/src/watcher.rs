@@ -537,7 +537,10 @@ mod tests {
             attrs: Default::default(),
         });
 
-        assert!(!pending.need_full, "Tine's own temp rename must not request a full scan");
+        assert!(
+            !pending.need_full,
+            "Tine's own temp rename must not request a full scan"
+        );
         assert_eq!(pending.paths, HashSet::from([page]));
     }
 

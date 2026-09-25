@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 #[cfg(target_os = "android")]
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 #[cfg(target_os = "android")]
 use tauri::{
     plugin::{Builder, PluginApi, PluginHandle, TauriPlugin},

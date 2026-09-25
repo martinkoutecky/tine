@@ -5,9 +5,9 @@
 // the frontend inserts the media ref.
 // Mirrors android_folder_picker.rs. Non-android targets get erroring stubs so the
 // desktop build links and the JS calls fail gracefully.
-use serde::{Deserialize, Serialize};
 #[cfg(target_os = "android")]
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 #[cfg(target_os = "android")]
 use tauri::{
     plugin::{Builder, PluginApi, PluginHandle, TauriPlugin},

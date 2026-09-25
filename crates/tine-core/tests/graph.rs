@@ -462,9 +462,7 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
             ":tine.col-aggregates: prop:occurrence=sum;prop:severity=max",
             ":tine.col-aggregates: prop:OCC=sum;prop:severity=max",
         );
-    owner.children[0].raw = owner.children[0]
-        .raw
-        .replace(":occurrence: 2", ":OCC: 2");
+    owner.children[0].raw = owner.children[0].raw.replace(":occurrence: 2", ":OCC: 2");
     graph
         .save_page(&page, page.rev.as_deref())
         .expect("guarded Org save");
@@ -493,14 +491,21 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
         .unwrap()
         .expect("reparsed org sheet");
     assert_eq!(reopened.format, Format::Org);
-    assert!(!reopened.read_only, "renamed Org bytes must remain writable");
+    assert!(
+        !reopened.read_only,
+        "renamed Org bytes must remain writable"
+    );
     assert_eq!(reopened.blocks[0].raw, page.blocks[0].raw);
-    assert_eq!(reopened.blocks[0].children[0].raw, page.blocks[0].children[0].raw);
+    assert_eq!(
+        reopened.blocks[0].children[0].raw,
+        page.blocks[0].children[0].raw
+    );
     assert!(
         reopened.blocks[0]
             .properties
             .iter()
-            .any(|(key, value)| key.eq_ignore_ascii_case("tine.fields") && value.contains("OCC=number")),
+            .any(|(key, value)| key.eq_ignore_ascii_case("tine.fields")
+                && value.contains("OCC=number")),
         "fresh parser recognizes the renamed schema"
     );
     assert!(

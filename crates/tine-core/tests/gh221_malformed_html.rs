@@ -29,5 +29,8 @@ fn gh221_malformed_html_fragment_indexes_without_panic() {
 
     assert!(!dto.blocks.is_empty(), "page has no blocks");
     assert_eq!(exec.hits.len(), 1, "block must be searchable");
-    assert!(failures.is_empty(), "page excluded from index: {failures:?}");
+    assert!(
+        failures.is_empty(),
+        "page excluded from index: {failures:?}"
+    );
 }

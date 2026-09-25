@@ -2656,7 +2656,8 @@ impl Graph {
                         for (path, projection) in &index.pages {
                             let mut any_name = false;
                             for name in names_norm {
-                                let Some(maybe) = projection.signature.may_contain_name(name) else {
+                                let Some(maybe) = projection.signature.may_contain_name(name)
+                                else {
                                     safe = false;
                                     break;
                                 };
@@ -2720,11 +2721,7 @@ impl Graph {
                     full_page_count,
                 };
             };
-            if self
-                .cache_gen
-                .load(std::sync::atomic::Ordering::Acquire)
-                == generation
-            {
+            if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == generation {
                 return ReferenceCandidatePages {
                     pages: selected,
                     indexed: true,
@@ -2742,9 +2739,7 @@ impl Graph {
 
     pub(crate) fn reference_real_page_names(&self) -> Option<crate::query::RealPageNames> {
         self.with_pages(|_| ());
-        let generation = self
-            .cache_gen
-            .load(std::sync::atomic::Ordering::Acquire);
+        let generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         let guard = self.reference_candidate_index.read().unwrap();
         let index = guard.as_ref()?;
         if !index.complete || index.generation != generation {
@@ -2759,11 +2754,7 @@ impl Graph {
                     .map(|(path, name)| (key.clone(), (path.clone(), name.clone())))
             })
             .collect();
-        (self
-            .cache_gen
-            .load(std::sync::atomic::Ordering::Acquire)
-            == generation)
-            .then_some(names)
+        (self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == generation).then_some(names)
     }
 
     /// Candidate paths for rename after validating the index covers the exact
@@ -2775,16 +2766,16 @@ impl Graph {
         entries: &[PageEntry],
     ) -> Option<std::collections::BTreeSet<PathBuf>> {
         self.with_pages(|_| ());
-        let generation = self
-            .cache_gen
-            .load(std::sync::atomic::Ordering::Acquire);
+        let generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         let paths = {
             let guard = self.reference_candidate_index.read().unwrap();
             let index = guard.as_ref()?;
             if !index.complete
                 || index.generation != generation
                 || index.pages.len() != entries.len()
-                || entries.iter().any(|entry| !index.pages.contains_key(&entry.path))
+                || entries
+                    .iter()
+                    .any(|entry| !index.pages.contains_key(&entry.path))
             {
                 return None;
             }
@@ -2815,11 +2806,7 @@ impl Graph {
                 return None;
             }
         }
-        (self
-            .cache_gen
-            .load(std::sync::atomic::Ordering::Acquire)
-            == generation)
-            .then_some(paths)
+        (self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == generation).then_some(paths)
     }
 
     /// `block uuid → # of distinct referrer blocks`, over the whole graph, via a
@@ -3090,9 +3077,7 @@ impl Graph {
         // Publish cache + revs atomically under the cache lock (cache → disk_revs
         // order), so no reader observes a fresh rev paired with a stale cache.
         let mut guard = self.cache.write().unwrap();
-        let generation = self
-            .cache_gen
-            .load(std::sync::atomic::Ordering::Acquire);
+        let generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         let reference_index = ReferenceCandidateIndex::build(generation, &pages);
         *guard = Some(Arc::new(pages));
         *self.page_index_failures.write().unwrap() = failures;
@@ -3407,27 +3392,13 @@ impl Graph {
             let mut g = self.derived_cache.write().unwrap();
             let Some(dc) = g.as_mut() else {
                 drop(g);
-                self.scope_advanced_invalidation(
-                    entry,
-                    previous_doc,
-                    doc,
-                    newgen,
-                    scoped,
-                    today,
-                );
+                self.scope_advanced_invalidation(entry, previous_doc, doc, newgen, scoped, today);
                 return;
             };
             if !scoped || dc.today != today {
                 *g = None; // full invalidate (alias/page-set/cold-cache, or day rollover)
                 drop(g);
-                self.scope_advanced_invalidation(
-                    entry,
-                    previous_doc,
-                    doc,
-                    newgen,
-                    scoped,
-                    today,
-                );
+                self.scope_advanced_invalidation(entry, previous_doc, doc, newgen, scoped, today);
                 return;
             }
             let mut removed_bytes = 0usize;
@@ -3445,24 +3416,20 @@ impl Graph {
                     return false;
                 }
                 let page_affects = |candidate: &Document| match key.split_once('\0') {
-                    Some(("b", target)) => {
-                        crate::query::page_affects_backlinks(
-                            &real_pages,
-                            &aliases,
-                            target,
-                            entry,
-                            candidate,
-                        )
-                    }
-                    Some(("u", target)) => {
-                        crate::query::page_affects_unlinked(
-                            &real_pages,
-                            &aliases,
-                            target,
-                            entry,
-                            candidate,
-                        )
-                    }
+                    Some(("b", target)) => crate::query::page_affects_backlinks(
+                        &real_pages,
+                        &aliases,
+                        target,
+                        entry,
+                        candidate,
+                    ),
+                    Some(("u", target)) => crate::query::page_affects_unlinked(
+                        &real_pages,
+                        &aliases,
+                        target,
+                        entry,
+                        candidate,
+                    ),
                     Some(("br", uuid)) => {
                         crate::query::page_affects_block_referrers(uuid, candidate)
                     }
@@ -3505,14 +3472,7 @@ impl Graph {
             dc.lru.retain(|key| dc.results.contains_key(key));
             dc.gen = newgen; // survivors are valid for the post-bump generation
         }
-        self.scope_advanced_invalidation(
-            entry,
-            previous_doc,
-            doc,
-            newgen,
-            scoped,
-            today,
-        );
+        self.scope_advanced_invalidation(entry, previous_doc, doc, newgen, scoped, today);
     }
 
     fn scope_advanced_invalidation(
@@ -3534,9 +3494,11 @@ impl Graph {
         }
         let mut removed_bytes = 0usize;
         advanced.results.retain(|key, (result, result_bytes)| {
-            if result.result.groups.iter().any(|group| {
-                crate::refs::same_page(&group.page, &entry.name)
-            })
+            if result
+                .result
+                .groups
+                .iter()
+                .any(|group| crate::refs::same_page(&group.page, &entry.name))
             {
                 removed_bytes = removed_bytes.saturating_add(*result_bytes);
                 return false;
@@ -3556,17 +3518,15 @@ impl Graph {
                 (None, None)
             };
             let page_affects = |candidate: &Document| {
-                page_key
-                    .zip(query_src)
-                    .is_none_or(|(page_key, query_src)| {
-                        let current_page = page_key.strip_prefix("p:");
-                        crate::query::page_affects_advanced_query(
-                            query_src,
-                            current_page,
-                            entry,
-                            candidate,
-                        )
-                    })
+                page_key.zip(query_src).is_none_or(|(page_key, query_src)| {
+                    let current_page = page_key.strip_prefix("p:");
+                    crate::query::page_affects_advanced_query(
+                        query_src,
+                        current_page,
+                        entry,
+                        candidate,
+                    )
+                })
             };
             let affects = page_affects(doc) || previous_doc.is_some_and(page_affects);
             if affects {
@@ -3610,9 +3570,8 @@ impl Graph {
                 revs.remove(&path);
             }
         }
-        *self.cache_index.write().unwrap() = guard
-            .as_ref()
-            .map(|pages| build_page_cache_index(pages));
+        *self.cache_index.write().unwrap() =
+            guard.as_ref().map(|pages| build_page_cache_index(pages));
         // Bump AFTER the removal is published (under the cache lock), so a reader
         // that loads the new gen is guaranteed to see the page gone — see the
         // gen-after-content note in cache_upsert.
@@ -3923,10 +3882,9 @@ impl Graph {
         max_bytes: usize,
     ) -> BoundedRefGroups {
         let normalized = crate::refs::normalize(target);
-        self.derived_memo_bounded(
-            format!("B\0{max_rows}\0{max_bytes}\0{normalized}"),
-            || crate::query::backlinks_bounded(self, target, max_rows, max_bytes),
-        )
+        self.derived_memo_bounded(format!("B\0{max_rows}\0{max_bytes}\0{normalized}"), || {
+            crate::query::backlinks_bounded(self, target, max_rows, max_bytes)
+        })
     }
 
     /// Block-level referrers for a block uuid: every block across the graph that
@@ -3945,10 +3903,9 @@ impl Graph {
         max_bytes: usize,
     ) -> BoundedRefGroups {
         let uuid = uuid.trim();
-        self.derived_memo_bounded(
-            format!("R\0{max_rows}\0{max_bytes}\0{uuid}"),
-            || crate::query::block_referrers_bounded(self, uuid, max_rows, max_bytes),
-        )
+        self.derived_memo_bounded(format!("R\0{max_rows}\0{max_bytes}\0{uuid}"), || {
+            crate::query::block_referrers_bounded(self, uuid, max_rows, max_bytes)
+        })
     }
 
     /// Evaluate a `{{query ...}}` body over the graph (memoized).
@@ -3978,10 +3935,9 @@ impl Graph {
                 exceeded: false,
             };
         }
-        self.derived_memo_bounded(
-            format!("Q\0{max_rows}\0{max_bytes}\0{query_src}"),
-            || crate::query::run_query_bounded(self, query_src, max_rows, max_bytes),
-        )
+        self.derived_memo_bounded(format!("Q\0{max_rows}\0{max_bytes}\0{query_src}"), || {
+            crate::query::run_query_bounded(self, query_src, max_rows, max_bytes)
+        })
     }
 
     /// Evaluate an advanced (datalog-subset) query, returning the matched groups
@@ -4005,7 +3961,6 @@ impl Graph {
         })
     }
 
-
     pub fn unlinked_refs_bounded(
         &self,
         target: &str,
@@ -4013,10 +3968,9 @@ impl Graph {
         max_bytes: usize,
     ) -> BoundedRefGroups {
         let normalized = crate::refs::normalize(target);
-        self.derived_memo_bounded(
-            format!("U\0{max_rows}\0{max_bytes}\0{normalized}"),
-            || crate::query::unlinked_refs_bounded(self, target, max_rows, max_bytes),
-        )
+        self.derived_memo_bounded(format!("U\0{max_rows}\0{max_bytes}\0{normalized}"), || {
+            crate::query::unlinked_refs_bounded(self, target, max_rows, max_bytes)
+        })
     }
 
     /// Explicit, uncached target-scoped trace of the exact reference engine.
@@ -6108,10 +6062,9 @@ impl Graph {
         let need_cache_update = cache
             && (changed || {
                 let guard = self.cache.read().unwrap();
-                guard.as_ref().is_some_and(|pages| {
-                    self.cached_page_index_for_path(pages, &path)
-                        .is_none()
-                })
+                guard
+                    .as_ref()
+                    .is_some_and(|pages| self.cached_page_index_for_path(pages, &path).is_none())
             });
         if need_cache_update {
             // For a brand-new journal, derive its date_key from the name so it's
@@ -6205,8 +6158,7 @@ fn first_root_is_promotable_page_header(doc: &Document) -> bool {
     first.children.is_empty()
         && page_header_properties_only(&first.raw)
         && !first.raw.split('\n').any(|line| {
-            page_header_property_line(line)
-                .is_some_and(|(key, _)| key.eq_ignore_ascii_case("id"))
+            page_header_property_line(line).is_some_and(|(key, _)| key.eq_ignore_ascii_case("id"))
         })
 }
 
@@ -6229,10 +6181,7 @@ fn promote_first_root_page_header(doc: &mut Document) {
 /// original slots first, and remaining slots cover ordinary edits. Only an
 /// excess proposed outline line is newly unproven. There is no implicit repair;
 /// contradictory structure is rejected before bytes or cache can change.
-fn newly_reclassified_page_property_line(
-    existing: &str,
-    proposed: &Document,
-) -> Option<String> {
+fn newly_reclassified_page_property_line(existing: &str, proposed: &Document) -> Option<String> {
     // The general data-preservation guard is intentionally a little broader
     // than Tine's editable property grammar: Logseq graphs can contain Unicode
     // or plugin-defined keys that Tine does not expose in its settings panel,
@@ -6282,8 +6231,7 @@ fn newly_reclassified_page_property_line(
     // Cancel exact matches as a multiset so the diagnostic identifies a truly
     // excess proposal line even in the presence of duplicates. Any remaining
     // existing slots then cover changed/reordered pre-existing outline lines.
-    let mut exact_slots: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
+    let mut exact_slots: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for line in &existing_outline {
         *exact_slots.entry(*line).or_default() += 1;
     }
@@ -6665,7 +6613,10 @@ fn normalized_runtime_owner(owner: &str) -> String {
             _ => parts.push(part),
         }
     }
-    assert!(!parts.is_empty(), "runtime identity owner must not be empty");
+    assert!(
+        !parts.is_empty(),
+        "runtime identity owner must not be empty"
+    );
     parts.join("/")
 }
 
@@ -6697,8 +6648,7 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
     for (sibling_index, block) in blocks.iter_mut().enumerate() {
         // Hierarchical derivation is equivalent to hashing the full sibling-index
         // path, while doing constant work per node (O(blocks)).
-        let structural =
-            deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes());
+        let structural = deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes());
         if block.uuid.is_empty() {
             block.uuid = structural.to_string();
         }
@@ -8033,14 +7983,21 @@ mod tests {
     #[test]
     fn reference_candidate_index_tracks_every_cache_seam_and_falls_back_safely() {
         let dir = scratch("reference-candidate-index");
-        fs::write(dir.join("pages/Target.md"), "alias:: Alias\n\n- target body\n").unwrap();
+        fs::write(
+            dir.join("pages/Target.md"),
+            "alias:: Alias\n\n- target body\n",
+        )
+        .unwrap();
         let source_path = dir.join("pages/Source.md");
         fs::write(&source_path, "- [[Alias]] and plain Target\n").unwrap();
         fs::write(dir.join("pages/Irrelevant.md"), "- unrelated\n").unwrap();
         let g = Graph::open(&dir);
         g.warm_cache();
 
-        let names = vec![crate::refs::page_key("Target"), crate::refs::page_key("Alias")];
+        let names = vec![
+            crate::refs::page_key("Target"),
+            crate::refs::page_key("Alias"),
+        ];
         let explicit = g.reference_candidate_pages(&names, ReferenceKind::Explicit);
         assert!(explicit.indexed);
         assert!(candidate_paths(&explicit).contains(&"pages/Source.md".to_string()));
@@ -8048,12 +8005,13 @@ mod tests {
         let plain = g.reference_candidate_pages(&names, ReferenceKind::Plain);
         assert!(plain.indexed);
         assert!(candidate_paths(&plain).contains(&"pages/Source.md".to_string()));
-        let unicode_fallback = g.reference_candidate_pages(
-            &[crate::refs::page_key("Café")],
-            ReferenceKind::Plain,
-        );
+        let unicode_fallback =
+            g.reference_candidate_pages(&[crate::refs::page_key("Café")], ReferenceKind::Plain);
         assert!(!unicode_fallback.indexed);
-        assert_eq!(unicode_fallback.pages.len(), unicode_fallback.full_page_count);
+        assert_eq!(
+            unicode_fallback.pages.len(),
+            unicode_fallback.full_page_count
+        );
         assert_reference_candidates_equal_full_scan(&g, "Target", &names, ReferenceKind::Explicit);
         assert_reference_candidates_equal_full_scan(&g, "Target", &names, ReferenceKind::Plain);
         assert_indexed_reference_results_equal_full_scan(&g, "Target");
@@ -8063,10 +8021,14 @@ mod tests {
         let mut source = g.load_named("Source", PageKind::Page).unwrap().unwrap();
         source.blocks[0].raw = "nothing here".into();
         g.save_page(&source, source.rev.as_deref()).unwrap();
-        assert!(!candidate_paths(&g.reference_candidate_pages(&names, ReferenceKind::Explicit))
-            .contains(&"pages/Source.md".to_string()));
-        assert!(!candidate_paths(&g.reference_candidate_pages(&names, ReferenceKind::Plain))
-            .contains(&"pages/Source.md".to_string()));
+        assert!(
+            !candidate_paths(&g.reference_candidate_pages(&names, ReferenceKind::Explicit))
+                .contains(&"pages/Source.md".to_string())
+        );
+        assert!(
+            !candidate_paths(&g.reference_candidate_pages(&names, ReferenceKind::Plain))
+                .contains(&"pages/Source.md".to_string())
+        );
         assert_reference_candidates_equal_full_scan(&g, "Target", &names, ReferenceKind::Explicit);
         assert_reference_candidates_equal_full_scan(&g, "Target", &names, ReferenceKind::Plain);
         assert_indexed_reference_results_equal_full_scan(&g, "Target");
@@ -8074,8 +8036,10 @@ mod tests {
         // Watcher-equivalent physical replace is an upsert at the same seam.
         fs::write(&source_path, "- [[Target]] plus Target\n").unwrap();
         assert!(g.sync_file(&source_path).is_some());
-        assert!(candidate_paths(&g.reference_candidate_pages(&names, ReferenceKind::Explicit))
-            .contains(&"pages/Source.md".to_string()));
+        assert!(
+            candidate_paths(&g.reference_candidate_pages(&names, ReferenceKind::Explicit))
+                .contains(&"pages/Source.md".to_string())
+        );
         assert_reference_candidates_equal_full_scan(&g, "Target", &names, ReferenceKind::Explicit);
         assert_reference_candidates_equal_full_scan(&g, "Target", &names, ReferenceKind::Plain);
         assert_indexed_reference_results_equal_full_scan(&g, "Target");
@@ -8092,8 +8056,10 @@ mod tests {
         fs::write(&source_path, "- [[Alias]] and Target again\n").unwrap();
         g.invalidate_cache();
         g.warm_cache();
-        assert!(candidate_paths(&g.reference_candidate_pages(&names, ReferenceKind::Explicit))
-            .contains(&"pages/Source.md".to_string()));
+        assert!(
+            candidate_paths(&g.reference_candidate_pages(&names, ReferenceKind::Explicit))
+                .contains(&"pages/Source.md".to_string())
+        );
         assert_reference_candidates_equal_full_scan(&g, "Target", &names, ReferenceKind::Explicit);
         assert_reference_candidates_equal_full_scan(&g, "Target", &names, ReferenceKind::Plain);
         assert_indexed_reference_results_equal_full_scan(&g, "Target");
@@ -8227,7 +8193,10 @@ mod tests {
         let entries = g.list_pages();
         let workers = page_cache_worker_count();
         assert!(workers > 1, "test must exercise the parallel cache build");
-        assert!(entries.len() >= 64, "test must cross the parallel threshold");
+        assert!(
+            entries.len() >= 64,
+            "test must cross the parallel threshold"
+        );
         let per = (entries.len() + workers - 1) / workers;
         assert!(per >= 2, "a worker shard must contain a sibling page");
 
@@ -8235,11 +8204,7 @@ mod tests {
         // guaranteeing both are in the first worker shard on every filesystem.
         let bad = &entries[0];
         let sibling = &entries[1];
-        fs::write(
-            &bad.path,
-            format!("- {TEST_PAGE_PARSE_PANIC_SENTINEL}\n"),
-        )
-        .unwrap();
+        fs::write(&bad.path, format!("- {TEST_PAGE_PARSE_PANIC_SENTINEL}\n")).unwrap();
         let needle = "uniquesameshardsibling";
         fs::write(&sibling.path, format!("- {needle}\n")).unwrap();
         let sibling_path = sibling.rel_path.clone();
@@ -8942,43 +8907,85 @@ mod tests {
         fs::write(dir.join("journals/14-07-2030.md"), "- past sentinel\n").unwrap();
         let g = Graph::open(&dir);
         let future_title = "Wednesday, 17-07-2030";
-        assert_eq!(g.journals_desc().len(), 3, "raw inventory retains future journals");
-        let feed = g.feed_journals_desc_through(JournalDate { year: 2030, month: 7, day: 15 });
-        assert_eq!(feed.iter().map(|e| e.date_key).collect::<Vec<_>>(), vec![Some(20300715), Some(20300714)]);
-        let future_entry = g.journals_desc().into_iter().find(|e| e.date_key == Some(20300717)).unwrap();
-        assert_eq!(future_entry.path, future);
-        assert_eq!(g.load_page(&future_entry).unwrap().blocks[0].raw, "future-search-sentinel");
-        assert!(g.list_pages().iter().any(|e| e.path == future));
-        assert_eq!(g.find_entry(future_title, PageKind::Journal).unwrap().path, future);
         assert_eq!(
-            g.load_named(future_title, PageKind::Journal).unwrap().unwrap().blocks[0].raw,
+            g.journals_desc().len(),
+            3,
+            "raw inventory retains future journals"
+        );
+        let feed = g.feed_journals_desc_through(JournalDate {
+            year: 2030,
+            month: 7,
+            day: 15,
+        });
+        assert_eq!(
+            feed.iter().map(|e| e.date_key).collect::<Vec<_>>(),
+            vec![Some(20300715), Some(20300714)]
+        );
+        let future_entry = g
+            .journals_desc()
+            .into_iter()
+            .find(|e| e.date_key == Some(20300717))
+            .unwrap();
+        assert_eq!(future_entry.path, future);
+        assert_eq!(
+            g.load_page(&future_entry).unwrap().blocks[0].raw,
+            "future-search-sentinel"
+        );
+        assert!(g.list_pages().iter().any(|e| e.path == future));
+        assert_eq!(
+            g.find_entry(future_title, PageKind::Journal).unwrap().path,
+            future
+        );
+        assert_eq!(
+            g.load_named(future_title, PageKind::Journal)
+                .unwrap()
+                .unwrap()
+                .blocks[0]
+                .raw,
             "future-search-sentinel"
         );
         // Ctrl-K uses the current combined latest-wins graph-search path, not
         // the legacy quick_switch adapter. Its whole-graph inventory remains
         // deliberately separate from the filtered Journals feed.
-        assert!(g.run_graph_search_latest("future-feed-test", future_title, 8, 8, false)
-            .hits.iter().any(|hit| matches!(hit,
+        assert!(g
+            .run_graph_search_latest("future-feed-test", future_title, 8, 8, false)
+            .hits
+            .iter()
+            .any(|hit| matches!(hit,
                 crate::query_plan::QueryHit::Page { page, .. } if page.path == future
             )));
         assert!(!g.search("future-search-sentinel", 8).is_empty());
         assert_eq!(g.path_for(future_title, PageKind::Journal), future);
         assert_eq!(
-            g.page_source_file(future_title, PageKind::Journal, None).unwrap(),
+            g.page_source_file(future_title, PageKind::Journal, None)
+                .unwrap(),
             future.canonicalize().unwrap()
         );
-        assert_eq!(fs::read(&future).unwrap(), future_bytes, "feed/list/search performed no write");
+        assert_eq!(
+            fs::read(&future).unwrap(),
+            future_bytes,
+            "feed/list/search performed no write"
+        );
 
         // The warmed cache retains exactly the cold membership/order and later
         // whole-graph lookups still see the excluded future page.
         g.warm_cache();
         assert_eq!(
-            g.feed_journals_desc_through(JournalDate { year: 2030, month: 7, day: 15 })
-                .iter().map(|e| e.date_key).collect::<Vec<_>>(),
+            g.feed_journals_desc_through(JournalDate {
+                year: 2030,
+                month: 7,
+                day: 15
+            })
+            .iter()
+            .map(|e| e.date_key)
+            .collect::<Vec<_>>(),
             vec![Some(20300715), Some(20300714)]
         );
-        assert!(g.run_graph_search_latest("future-feed-test", future_title, 8, 8, false)
-            .hits.iter().any(|hit| matches!(hit,
+        assert!(g
+            .run_graph_search_latest("future-feed-test", future_title, 8, 8, false)
+            .hits
+            .iter()
+            .any(|hit| matches!(hit,
                 crate::query_plan::QueryHit::Page { page, .. } if page.path == future
             )));
         let _ = fs::remove_dir_all(&dir);
@@ -9000,22 +9007,45 @@ mod tests {
         future.blocks[0].raw = "future after warm cache".into();
         g.save_page(&future, None).unwrap();
 
-        let cutoff = JournalDate { year: 2030, month: 7, day: 15 };
+        let cutoff = JournalDate {
+            year: 2030,
+            month: 7,
+            day: 15,
+        };
         assert_eq!(
-            g.feed_journals_desc_through(cutoff).iter().map(|e| e.date_key).collect::<Vec<_>>(),
+            g.feed_journals_desc_through(cutoff)
+                .iter()
+                .map(|e| e.date_key)
+                .collect::<Vec<_>>(),
             vec![Some(20300715), Some(20300714)],
             "guarded save/cache-upsert must not leak a future day into warm feed membership"
         );
-        assert!(g.load_named("Jul 17th, 2030", PageKind::Journal).unwrap().is_some());
+        assert!(g
+            .load_named("Jul 17th, 2030", PageKind::Journal)
+            .unwrap()
+            .is_some());
         assert!(g.list_pages().iter().any(|e| e.name == "Jul 17th, 2030"));
 
         // The raw inventory retains duplicate future files for conflict discovery,
         // while date deduplication still leaves no future feed row at all.
         fs::write(dir.join("journals/2030_07_17.org"), "* future twin\n").unwrap();
         let duplicate = Graph::open(&dir);
-        assert_eq!(duplicate.journals_desc().iter().filter(|e| e.date_key == Some(20300717)).count(), 1);
-        assert!(duplicate.feed_journals_desc_through(cutoff).iter().all(|e| e.date_key != Some(20300717)));
-        assert!(!duplicate.journal_conflicts().is_empty(), "future duplicate remains discoverable outside feed");
+        assert_eq!(
+            duplicate
+                .journals_desc()
+                .iter()
+                .filter(|e| e.date_key == Some(20300717))
+                .count(),
+            1
+        );
+        assert!(duplicate
+            .feed_journals_desc_through(cutoff)
+            .iter()
+            .all(|e| e.date_key != Some(20300717)));
+        assert!(
+            !duplicate.journal_conflicts().is_empty(),
+            "future duplicate remains discoverable outside feed"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9760,9 +9790,7 @@ mod tests {
             ),
         ] {
             for forced in [false, true] {
-                let dir = scratch(&format!(
-                    "page-property-firewall-changed-{shape}-{forced}"
-                ));
+                let dir = scratch(&format!("page-property-firewall-changed-{shape}-{forced}"));
                 let path = dir.join("pages").join("Property.md");
                 fs::write(&path, original).unwrap();
                 let g = Graph::open(&dir);
@@ -9911,10 +9939,16 @@ mod tests {
             .load_named("Property Authoring", PageKind::Page)
             .unwrap()
             .unwrap();
-        assert_eq!(warm.pre_block.as_deref(), Some("alias:: book\n\nklíč:: hodnota"));
+        assert_eq!(
+            warm.pre_block.as_deref(),
+            Some("alias:: book\n\nklíč:: hodnota")
+        );
         assert_eq!(warm.blocks.len(), 1);
         assert_eq!(warm.blocks[0].raw, "Reading list");
-        assert_eq!(warm.blocks[0].id, "body", "normalization changed the body root identity");
+        assert_eq!(
+            warm.blocks[0].id, "body",
+            "normalization changed the body root identity"
+        );
         drop(g);
         let cold = Graph::open(&dir)
             .load_named("Property Authoring", PageKind::Page)
@@ -9938,8 +9972,14 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "title:: The Nazi Mind\ntags:: books\n").unwrap();
         let g = Graph::open(&dir);
-        let loaded = g.load_named("The Nazi Mind", PageKind::Page).unwrap().unwrap();
-        assert_eq!(loaded.pre_block.as_deref(), Some("title:: The Nazi Mind\ntags:: books"));
+        let loaded = g
+            .load_named("The Nazi Mind", PageKind::Page)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loaded.pre_block.as_deref(),
+            Some("title:: The Nazi Mind\ntags:: books")
+        );
         assert!(loaded.blocks.is_empty());
 
         let dto = PageDto {
@@ -9965,7 +10005,9 @@ mod tests {
 
     #[test]
     fn page_header_authoring_is_bounded_and_preserves_existing_preambles() {
-        assert!(page_header_properties_only("alias:: book\n\ne\u{301}/plugin.key::value"));
+        assert!(page_header_properties_only(
+            "alias:: book\n\ne\u{301}/plugin.key::value"
+        ));
         for invalid in [
             " alias:: x",
             "#alias:: x",
@@ -9974,7 +10016,10 @@ mod tests {
             "```\nalias:: x\n```",
             "alias:: x\n",
         ] {
-            assert!(!page_header_properties_only(invalid), "accepted {invalid:?}");
+            assert!(
+                !page_header_properties_only(invalid),
+                "accepted {invalid:?}"
+            );
         }
 
         // A headerless CRLF page can add a canonical header; both the warm cache
@@ -10052,31 +10097,87 @@ mod tests {
                 "later",
                 Format::Md,
                 vec![
-                    BlockDto { id: "body".into(), raw: "Body".into(), ..Default::default() },
-                    BlockDto { id: "prop".into(), raw: "alias:: book".into(), ..Default::default() },
+                    BlockDto {
+                        id: "body".into(),
+                        raw: "Body".into(),
+                        ..Default::default()
+                    },
+                    BlockDto {
+                        id: "prop".into(),
+                        raw: "alias:: book".into(),
+                        ..Default::default()
+                    },
                 ],
             ),
-            ("mixed", Format::Md, vec![BlockDto { id: "mixed".into(), raw: "alias:: book\nprose".into(), ..Default::default() }]),
-            ("fenced", Format::Md, vec![BlockDto { id: "fenced".into(), raw: "```\nalias:: book\n```".into(), ..Default::default() }]),
-            ("empty", Format::Md, vec![BlockDto { id: "empty".into(), raw: "".into(), ..Default::default() }]),
+            (
+                "mixed",
+                Format::Md,
+                vec![BlockDto {
+                    id: "mixed".into(),
+                    raw: "alias:: book\nprose".into(),
+                    ..Default::default()
+                }],
+            ),
+            (
+                "fenced",
+                Format::Md,
+                vec![BlockDto {
+                    id: "fenced".into(),
+                    raw: "```\nalias:: book\n```".into(),
+                    ..Default::default()
+                }],
+            ),
+            (
+                "empty",
+                Format::Md,
+                vec![BlockDto {
+                    id: "empty".into(),
+                    raw: "".into(),
+                    ..Default::default()
+                }],
+            ),
             (
                 "childful",
                 Format::Md,
                 vec![BlockDto {
                     id: "parent".into(),
                     raw: "alias:: book".into(),
-                    children: vec![BlockDto { id: "child".into(), raw: "Child".into(), ..Default::default() }],
+                    children: vec![BlockDto {
+                        id: "child".into(),
+                        raw: "Child".into(),
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 }],
             ),
-            ("id-bearing", Format::Md, vec![BlockDto { id: "durable".into(), raw: "id:: 11111111-1111-4111-8111-111111111111".into(), ..Default::default() }]),
-            ("org", Format::Org, vec![BlockDto { id: "org".into(), raw: "alias:: book".into(), ..Default::default() }]),
+            (
+                "id-bearing",
+                Format::Md,
+                vec![BlockDto {
+                    id: "durable".into(),
+                    raw: "id:: 11111111-1111-4111-8111-111111111111".into(),
+                    ..Default::default()
+                }],
+            ),
+            (
+                "org",
+                Format::Org,
+                vec![BlockDto {
+                    id: "org".into(),
+                    raw: "alias:: book".into(),
+                    ..Default::default()
+                }],
+            ),
         ];
         for (label, format, blocks) in cases {
             let dir = scratch(&format!("page-property-negative-{label}"));
             if format == Format::Org {
                 fs::create_dir_all(dir.join("logseq")).unwrap();
-                fs::write(dir.join("logseq").join("config.edn"), "{:preferred-format \"Org\"}\n").unwrap();
+                fs::write(
+                    dir.join("logseq").join("config.edn"),
+                    "{:preferred-format \"Org\"}\n",
+                )
+                .unwrap();
             }
             let g = Graph::open(&dir);
             let page = PageDto {
@@ -10092,15 +10193,17 @@ mod tests {
                 guide: false,
             };
             g.save_page(&page, None).unwrap();
-            let reopened = g
-                .load_named(&page.name, PageKind::Page)
-                .unwrap()
-                .unwrap();
+            let reopened = g.load_named(&page.name, PageKind::Page).unwrap().unwrap();
             assert!(reopened.pre_block.is_none(), "promoted unsafe case {label}");
-            assert_eq!(reopened.blocks.len(), blocks.len(), "changed root count for {label}");
+            assert_eq!(
+                reopened.blocks.len(),
+                blocks.len(),
+                "changed root count for {label}"
+            );
             if label == "id-bearing" {
                 assert!(
-                    g.resolve_block("11111111-1111-4111-8111-111111111111").is_some(),
+                    g.resolve_block("11111111-1111-4111-8111-111111111111")
+                        .is_some(),
                     "ID-bearing root lost addressability"
                 );
             }
@@ -10894,11 +10997,7 @@ mod tests {
         // This is the graph-authored shape that previously overflowed the Rust
         // stack when a persisted query macro rendered. Keep it below the byte
         // ceiling so the independent nesting guard is the reason it fails shut.
-        let nested = format!(
-            "{}(task TODO){}",
-            "(and ".repeat(1_000),
-            ")".repeat(1_000)
-        );
+        let nested = format!("{}(task TODO){}", "(and ".repeat(1_000), ")".repeat(1_000));
         assert!(crate::query::query_source_within_limit(&nested));
         assert!(!crate::query::query_nesting_within_limit(&nested));
         let simple = g.run_query_bounded(&nested, 20_000, 32 * 1024 * 1024);
@@ -10972,11 +11071,7 @@ mod tests {
         assert!(Arc::ptr_eq(&bounded_first, &bounded_after_unrelated));
 
         notes.pre_block = Some("alias:: Renamed Scratch\n".into());
-        let rev = g
-            .load_named("Notes", PageKind::Page)
-            .unwrap()
-            .unwrap()
-            .rev;
+        let rev = g.load_named("Notes", PageKind::Page).unwrap().unwrap().rev;
         g.save_page(&notes, rev.as_deref()).unwrap();
         let after_alias_change = g.run_advanced_query_cached(q, None);
         assert!(
@@ -11030,8 +11125,7 @@ mod tests {
         let mut notes = g.load_named("Notes", PageKind::Page).unwrap().unwrap();
         notes.blocks[0].raw = "still an ordinary note".into();
         g.save_page(&notes, notes.rev.as_deref()).unwrap();
-        let after_unrelated =
-            g.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
+        let after_unrelated = g.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
         assert!(
             Arc::ptr_eq(&first.groups, &after_unrelated.groups),
             "an unrelated edit must retain the scoped bounded-query memo"
@@ -11040,8 +11134,7 @@ mod tests {
         let mut tasks = g.load_named("Tasks", PageKind::Page).unwrap().unwrap();
         tasks.blocks[0].raw = "DONE ship".into();
         g.save_page(&tasks, tasks.rev.as_deref()).unwrap();
-        let after_affected =
-            g.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
+        let after_affected = g.run_query_bounded("(task TODO)", 20_000, 32 * 1024 * 1024);
         assert!(!Arc::ptr_eq(&first.groups, &after_affected.groups));
         assert!(after_affected.groups.is_empty());
         let _ = fs::remove_dir_all(&dir);
@@ -11082,18 +11175,21 @@ mod tests {
         assert!(Arc::ptr_eq(&first_backlink.groups, &after_backlink.groups));
         assert!(Arc::ptr_eq(&first_unlinked.groups, &after_unlinked.groups));
 
-        let mut referrer = g
-            .load_named("Referrer", PageKind::Page)
-            .unwrap()
-            .unwrap();
+        let mut referrer = g.load_named("Referrer", PageKind::Page).unwrap().unwrap();
         referrer.blocks[0].raw = "No longer a referrer".into();
         g.save_page(&referrer, referrer.rev.as_deref()).unwrap();
         let affected_block = g.block_referrers_bounded(TARGET, 20_000, 32 * 1024 * 1024);
         let affected_backlink = g.backlinks_bounded("Target", 20_000, 32 * 1024 * 1024);
         let affected_unlinked = g.unlinked_refs_bounded("Target", 20_000, 32 * 1024 * 1024);
         assert!(!Arc::ptr_eq(&first_block.groups, &affected_block.groups));
-        assert!(!Arc::ptr_eq(&first_backlink.groups, &affected_backlink.groups));
-        assert!(!Arc::ptr_eq(&first_unlinked.groups, &affected_unlinked.groups));
+        assert!(!Arc::ptr_eq(
+            &first_backlink.groups,
+            &affected_backlink.groups
+        ));
+        assert!(!Arc::ptr_eq(
+            &first_unlinked.groups,
+            &affected_unlinked.groups
+        ));
         assert_eq!(affected_block.total, 0);
         assert_eq!(affected_backlink.total, 0);
         assert_eq!(affected_unlinked.total, 0);
@@ -11103,11 +11199,7 @@ mod tests {
     #[test]
     fn scoped_reference_invalidation_uses_real_page_before_colliding_alias() {
         let dir = scratch("reference-invalidation-real-page-first");
-        fs::write(
-            dir.join("pages").join("X.md"),
-            "alias:: Q\n\n- real X\n",
-        )
-        .unwrap();
+        fs::write(dir.join("pages").join("X.md"), "alias:: Q\n\n- real X\n").unwrap();
         fs::write(
             dir.join("pages").join("Y.md"),
             "alias:: X\n\n- alias owner\n",
@@ -11122,10 +11214,7 @@ mod tests {
         assert!(!first_linked.iter().any(|group| group.page == "Source"));
         assert!(!first_unlinked.iter().any(|group| group.page == "Source"));
 
-        let mut source = g
-            .load_named("Source", PageKind::Page)
-            .unwrap()
-            .unwrap();
+        let mut source = g.load_named("Source", PageKind::Page).unwrap().unwrap();
         source.blocks[0].raw = "Q and [[Q]]".into();
         g.save_page(&source, source.rev.as_deref()).unwrap();
 
@@ -11253,8 +11342,16 @@ mod tests {
             derived.as_ref().unwrap().results.len(),
             DERIVED_CACHE_MAX_ENTRIES
         );
-        assert!(!derived.as_ref().unwrap().results.contains_key(&oversized_key));
-        assert!(!advanced.as_ref().unwrap().results.contains_key(&oversized_key));
+        assert!(!derived
+            .as_ref()
+            .unwrap()
+            .results
+            .contains_key(&oversized_key));
+        assert!(!advanced
+            .as_ref()
+            .unwrap()
+            .results
+            .contains_key(&oversized_key));
         assert_eq!(
             advanced.as_ref().unwrap().results.len(),
             DERIVED_CACHE_MAX_ENTRIES
@@ -11859,7 +11956,11 @@ mod tests {
         let logical_winner = g
             .find_entry("Exact Storage Twin", PageKind::Page)
             .expect("one duplicate is the stable name winner");
-        let non_winner_path = if logical_winner.path == flat { &nested } else { &flat };
+        let non_winner_path = if logical_winner.path == flat {
+            &nested
+        } else {
+            &flat
+        };
         let non_winner_entry = g
             .entry_for_path(non_winner_path)
             .expect("non-winning duplicate is addressable by path");

@@ -613,7 +613,9 @@ fn patience_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)>
     use std::collections::HashMap;
     let mut theirs_keys: HashMap<u64, (usize, usize)> = HashMap::new();
     for (j, block) in theirs.iter().enumerate() {
-        let entry = theirs_keys.entry(anchor_fingerprint(block)).or_insert((j, 0));
+        let entry = theirs_keys
+            .entry(anchor_fingerprint(block))
+            .or_insert((j, 0));
         entry.1 += 1;
     }
     let mut mine_counts: HashMap<u64, usize> = HashMap::new();
@@ -626,10 +628,8 @@ fn patience_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)>
         .filter_map(|(i, block)| {
             let key = anchor_fingerprint(block);
             let &(j, theirs_count) = theirs_keys.get(&key)?;
-            (mine_counts.get(&key) == Some(&1)
-                && theirs_count == 1
-                && anchor_eq(block, &theirs[j]))
-            .then_some((i, j))
+            (mine_counts.get(&key) == Some(&1) && theirs_count == 1 && anchor_eq(block, &theirs[j]))
+                .then_some((i, j))
         })
         .collect();
     let mut tails: Vec<usize> = Vec::new();
@@ -645,7 +645,9 @@ fn patience_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)>
             tails[pos] = idx;
         }
     }
-    let Some(&last) = tails.last() else { return Vec::new() };
+    let Some(&last) = tails.last() else {
+        return Vec::new();
+    };
     let mut chain = Vec::with_capacity(tails.len());
     let mut cursor = last;
     loop {
@@ -726,9 +728,20 @@ mod tests {
             .collect();
         let rows = diff_blocks(&mine, &theirs);
         assert_eq!(rows.len(), 2200);
-        assert_eq!(rows.iter().filter(|row| row.kind == RowKind::Added).count(), 1100);
-        assert_eq!(rows.iter().filter(|row| row.kind == RowKind::Removed).count(), 1100);
-        assert_eq!(merge_blocks(&mine, &theirs, &std::collections::HashMap::new()), mine);
+        assert_eq!(
+            rows.iter().filter(|row| row.kind == RowKind::Added).count(),
+            1100
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind == RowKind::Removed)
+                .count(),
+            1100
+        );
+        assert_eq!(
+            merge_blocks(&mine, &theirs, &std::collections::HashMap::new()),
+            mine
+        );
     }
 
     #[test]

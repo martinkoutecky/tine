@@ -149,8 +149,11 @@ pub fn apply_marker_transition_at(
         return clock_in_at(raw, format, with_seconds, now);
     }
 
-    let should_clock_out = matches!((old_marker, new_marker), (Some("doing"), "todo") | (Some("now"), "later"))
-        || (matches!(old_marker, Some("now") | Some("doing")) && new_marker == "done");
+    let should_clock_out = matches!(
+        (old_marker, new_marker),
+        (Some("doing"), "todo") | (Some("now"), "later")
+    ) || (matches!(old_marker, Some("now") | Some("doing"))
+        && new_marker == "done");
     if should_clock_out {
         return clock_out_at(raw, with_seconds, now);
     }
@@ -232,7 +235,11 @@ pub fn format_compact_duration(seconds: u64) -> String {
 fn insert_logbook_line(raw: &str, format: LogbookFormat, value: &str) -> String {
     let lines: Vec<&str> = raw.split('\n').collect();
     let title = lines.first().copied().unwrap_or("");
-    let body = if lines.len() > 1 { &lines[1..] } else { &[][..] };
+    let body = if lines.len() > 1 {
+        &lines[1..]
+    } else {
+        &[][..]
+    };
     let scheduled: Vec<&str> = lines
         .iter()
         .copied()
@@ -255,7 +262,11 @@ fn insert_logbook_line(raw: &str, format: LogbookFormat, value: &str) -> String 
     out.extend(deadline.into_iter().map(str::to_string));
 
     if let Some((start, end)) = logbook_bounds(&body_without_timestamps) {
-        out.extend(body_without_timestamps[..start].iter().map(|s| (*s).to_string()));
+        out.extend(
+            body_without_timestamps[..start]
+                .iter()
+                .map(|s| (*s).to_string()),
+        );
         out.push(body_without_timestamps[start].to_string());
         out.extend(
             body_without_timestamps[start + 1..end]
@@ -264,7 +275,11 @@ fn insert_logbook_line(raw: &str, format: LogbookFormat, value: &str) -> String 
         );
         out.push(value.to_string());
         out.push(body_without_timestamps[end].to_string());
-        out.extend(body_without_timestamps[end + 1..].iter().map(|s| (*s).to_string()));
+        out.extend(
+            body_without_timestamps[end + 1..]
+                .iter()
+                .map(|s| (*s).to_string()),
+        );
         return out.join("\n").trim_end().to_string();
     }
 
@@ -288,7 +303,10 @@ fn insert_logbook_line(raw: &str, format: LogbookFormat, value: &str) -> String 
 fn leading_properties_end(lines: &[&str], format: LogbookFormat) -> usize {
     match format {
         LogbookFormat::Org => {
-            if !lines.first().is_some_and(|line| is_drawer_start(line, "PROPERTIES")) {
+            if !lines
+                .first()
+                .is_some_and(|line| is_drawer_start(line, "PROPERTIES"))
+            {
                 return 0;
             }
             for (i, line) in lines.iter().enumerate().skip(1) {
@@ -434,7 +452,12 @@ fn parse_timestamp_seconds(ts: &str, with_seconds: bool) -> Option<i64> {
     if with_seconds && time.matches(':').count() != 2 {
         return None;
     }
-    Some(days_from_civil(year, month, day)? * 86_400 + (hour as i64) * 3_600 + (minute as i64) * 60 + second as i64)
+    Some(
+        days_from_civil(year, month, day)? * 86_400
+            + (hour as i64) * 3_600
+            + (minute as i64) * 60
+            + second as i64,
+    )
 }
 
 fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
@@ -469,9 +492,7 @@ fn parse_span_seconds(span: &str) -> Option<u64> {
     match parts.as_slice() {
         [h, m] => Some(h.parse::<u64>().ok()? * 3_600 + m.parse::<u64>().ok()? * 60),
         [h, m, s] => Some(
-            h.parse::<u64>().ok()? * 3_600
-                + m.parse::<u64>().ok()? * 60
-                + s.parse::<u64>().ok()?,
+            h.parse::<u64>().ok()? * 3_600 + m.parse::<u64>().ok()? * 60 + s.parse::<u64>().ok()?,
         ),
         _ => None,
     }
@@ -481,8 +502,24 @@ fn parse_span_seconds(span: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
-    fn ts(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32, weekday: u32) -> TimestampParts {
-        TimestampParts { year, month, day, weekday, hour, minute, second }
+    fn ts(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+        weekday: u32,
+    ) -> TimestampParts {
+        TimestampParts {
+            year,
+            month,
+            day,
+            weekday,
+            hour,
+            minute,
+            second,
+        }
     }
 
     #[test]
@@ -521,7 +558,12 @@ mod tests {
     #[test]
     fn appends_to_existing_logbook_without_reformatting_existing_rows() {
         let raw = "TODO Ship\n:LOGBOOK:\nCLOCK: [2026-06-24 Wed 08:00:00]--[2026-06-24 Wed 08:10:00] =>  00:10:00\n:END:\nBody";
-        let out = clock_in_at(raw, LogbookFormat::Markdown, true, ts(2026, 6, 25, 9, 0, 0, 4));
+        let out = clock_in_at(
+            raw,
+            LogbookFormat::Markdown,
+            true,
+            ts(2026, 6, 25, 9, 0, 0, 4),
+        );
         assert_eq!(
             out,
             "TODO Ship\n:LOGBOOK:\nCLOCK: [2026-06-24 Wed 08:00:00]--[2026-06-24 Wed 08:10:00] =>  00:10:00\nCLOCK: [2026-06-25 Thu 09:00:00]\n:END:\nBody"
@@ -530,7 +572,8 @@ mod tests {
 
     #[test]
     fn org_insert_places_logbook_after_properties_drawer() {
-        let raw = "TODO Ship\nSCHEDULED: <2026-06-25 Thu>\n:PROPERTIES:\n:owner: martin\n:END:\nBody";
+        let raw =
+            "TODO Ship\nSCHEDULED: <2026-06-25 Thu>\n:PROPERTIES:\n:owner: martin\n:END:\nBody";
         let out = clock_in_at(raw, LogbookFormat::Org, true, ts(2026, 6, 25, 9, 0, 0, 4));
         assert_eq!(
             out,
@@ -573,7 +616,10 @@ mod tests {
                 true,
                 now,
             );
-            assert!(out.contains("CLOCK: [2026-06-25 Thu 09:00:00]"), "{old:?}->{new:?}: {out}");
+            assert!(
+                out.contains("CLOCK: [2026-06-25 Thu 09:00:00]"),
+                "{old:?}->{new:?}: {out}"
+            );
         }
 
         let running = "DOING Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 08:00:00]\n:END:";
@@ -592,7 +638,10 @@ mod tests {
                 true,
                 now,
             );
-            assert!(out.contains("--[2026-06-25 Thu 09:00:00] =>  01:00:00"), "{old:?}->{new:?}: {out}");
+            assert!(
+                out.contains("--[2026-06-25 Thu 09:00:00] =>  01:00:00"),
+                "{old:?}->{new:?}: {out}"
+            );
         }
 
         let with_logbook = "DOING Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 08:00:00]--[2026-06-25 Thu 08:30:00] =>  00:30:00\n:END:";

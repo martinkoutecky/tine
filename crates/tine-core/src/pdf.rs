@@ -271,11 +271,7 @@ pub fn parse_pdf_state(edn_str: &str) -> PdfState {
 
 /// Update only OG's `:extra` view fields while retaining highlights and all
 /// foreign root/extra fields. Invalid existing EDN fails closed (`None`).
-pub fn write_pdf_view_state(
-    existing_edn: &str,
-    page: i64,
-    scale: f64,
-) -> Option<String> {
+pub fn write_pdf_view_state(existing_edn: &str, page: i64, scale: f64) -> Option<String> {
     if page < 1 || !scale.is_finite() || scale <= 0.0 {
         return None;
     }
@@ -297,7 +293,10 @@ pub fn write_pdf_view_state(
     };
     deep_merge(
         &mut extra,
-        vec![(kw("page"), Edn::Int(page)), (kw("scale"), Edn::Float(scale))],
+        vec![
+            (kw("page"), Edn::Int(page)),
+            (kw("scale"), Edn::Float(scale)),
+        ],
     );
     if let Some((_, value)) = pairs
         .iter_mut()
@@ -627,18 +626,16 @@ fn refresh_annotation(mut block: DocBlock, h: &Highlight, format: Format) -> Doc
     let mut lines: Vec<String> = block
         .raw
         .lines()
-        .map(|line| {
-            match block_property_key(line, format) {
-                Some(k) if k == "hl-color" => {
-                    saw_color = true;
-                    property_line("hl-color", &h.color, format)
-                }
-                Some(k) if k == "hl-page" => {
-                    saw_page = true;
-                    property_line("hl-page", h.page, format)
-                }
-                _ => line.to_string(),
+        .map(|line| match block_property_key(line, format) {
+            Some(k) if k == "hl-color" => {
+                saw_color = true;
+                property_line("hl-color", &h.color, format)
             }
+            Some(k) if k == "hl-page" => {
+                saw_page = true;
+                property_line("hl-page", h.page, format)
+            }
+            _ => line.to_string(),
         })
         .collect();
     // If the metadata lines were missing (hand-edited file), add them before id::.
@@ -962,13 +959,19 @@ mod tests {
             crate::model::Format::Org,
         );
         let org = crate::org::serialize_org(&doc);
-        assert!(org.contains("#+FILE: [[../assets/my-book.pdf][My Book]]"), "{org}");
+        assert!(
+            org.contains("#+FILE: [[../assets/my-book.pdf][My Book]]"),
+            "{org}"
+        );
         assert!(org.contains("#+FILE-PATH: ../assets/my-book.pdf"), "{org}");
         assert!(org.contains("* some highlighted text"), "{org}");
         assert!(org.contains(":PROPERTIES:"), "{org}");
         assert!(org.contains(":hl-page: 42"), "{org}");
         assert!(org.contains(":ls-type: annotation"), "{org}");
-        assert!(org.contains(":id: 5e8f9c7b-1234-5678-abcd-ef1234567890"), "{org}");
+        assert!(
+            org.contains(":id: 5e8f9c7b-1234-5678-abcd-ef1234567890"),
+            "{org}"
+        );
         assert!(crate::org::org_round_trips(&org));
         let parsed = crate::org::parse_org(&org);
         assert_eq!(parsed.roots[0].property("hl-page").as_deref(), Some("42"));

@@ -368,7 +368,11 @@ mod tests {
             assert!(org_round_trips(src), "org drawer must round-trip: {src:?}");
             let doc = parse_org(src);
             let b = &doc.roots[0];
-            assert_eq!(b.property("id").as_deref(), Some(*id), "id read back: {src:?}");
+            assert_eq!(
+                b.property("id").as_deref(),
+                Some(*id),
+                "id read back: {src:?}"
+            );
             assert!(
                 !b.visible_text().contains(":PROPERTIES:") && !b.visible_text().contains(":id:"),
                 "drawer must be hidden from visible body: {src:?} -> {:?}",
