@@ -16,7 +16,7 @@ use tine_core::model::{
 };
 use tine_store::{
     Area, Budget, Cancel, FacetPolicy, PageId, QueryDialect, QueryError, QueryResult, Resolved,
-    SearchRequest, StoreError, WholeGraph,
+    SearchRequest, StoreError, TrashKind, WholeGraph,
 };
 
 fn page_dto(read: tine_store::PageRead) -> PageDto {
@@ -2203,13 +2203,39 @@ pub(crate) fn trash_asset(name: String, state: GraphContext<'_>) -> Result<(), S
 pub(crate) fn asset_trash_stats(
     state: GraphContext<'_>,
 ) -> Result<tine_core::model::TrashStats, String> {
-    with_graph(&state, |g| Ok(g.asset_trash_stats()))
+    let mut stats = tine_core::model::TrashStats::default();
+    for (kind, count, bytes) in slot_for_context(&state)?
+        .store
+        .trash_stats()
+        .map_err(store_error)?
+    {
+        match kind {
+            TrashKind::Asset => {
+                stats.count = count;
+                stats.bytes = bytes;
+            }
+            TrashKind::Page => stats.pages = count,
+            TrashKind::Journal => stats.journals = count,
+            TrashKind::Conflict => stats.conflicts = count,
+            TrashKind::Legacy => stats.other = count,
+        }
+    }
+    Ok(stats)
 }
 
 /// Permanently delete everything in the asset trash; returns files removed.
 #[tauri::command]
 pub(crate) fn empty_asset_trash(state: GraphContext<'_>) -> Result<u64, String> {
-    with_graph(&state, |g| g.empty_asset_trash().map_err(|e| e.to_string()))
+    slot_for_context(&state)?
+        .store
+        .purge_asset_trash()
+        .map(|(count, _)| count)
+        .map_err(|(error, count, bytes)| {
+            format!(
+                "{} ({count} entries, {bytes} bytes already removed)",
+                store_error(error)
+            )
+        })
 }
 
 /// Journal days that resolve to more than one file (e.g. a date-stem file plus a

@@ -10,6 +10,7 @@ enum store::QueryError
 enum store::QueryResult
 enum store::Resolved
 enum store::StoreError
+enum store::TrashKind
 field store::PageRead.doc
 field store::PageRead.id
 field store::PageRead.read_only
@@ -25,6 +26,8 @@ fn store::Store::open_read
 fn store::Store::page
 fn store::Store::path_for_os_handoff
 fn store::Store::read
+fn store::Store::trash_stats
+fn store::Store::purge_asset_trash
 fn store::Store::whole_graph
 fn store::QueryError::bridge_matching_blocks
 fn store::QueryError::bridge_search_hits
@@ -54,5 +57,5 @@ struct store::PageRead
 struct store::SearchRequest
 struct store::Store
 struct store::WholeGraph
-use crate::store::{Area,Budget,Cancel,Day,FacetPolicy,FileId,FileRev,GraphRev,LoadError,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SearchRequest,Store,StoreError,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Day,FacetPolicy,FileId,FileRev,GraphRev,LoadError,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SearchRequest,Store,StoreError,TrashKind,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}

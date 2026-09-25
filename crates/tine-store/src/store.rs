@@ -11,6 +11,11 @@
 //! that cache in O(P + B + disk). The selected reads are bounded here.
 //! `WholeGraph` does not yet pin an immutable generation: two calls on one view
 //! may observe different states. Immutable snapshots arrive with B7.
+//! `trash_stats` scans recoverable entries in O(trash entries), returning typed
+//! counts and bytes or an I/O error. `purge_asset_trash` irreversibly removes
+//! asset and legacy-asset entries in O(asset trash entries + metadata), leaving
+//! other kinds intact. On an error it returns completed removal counts and
+//! bytes. Callers need no trash layout or legacy name classifier.
 //!
 //! Questions and costs after cache construction (`P` pages, `B` blocks):
 //! `rev` O(1); `backlinks`, `unlinked_references`, `block_referrers`,
@@ -30,6 +35,8 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+use crate::model::{classify_legacy_trash_entry, trash_dir_kind, trash_root, TrashEntryKind};
 
 use serde::{Deserialize, Serialize};
 use tine_core::model::{
@@ -61,10 +68,176 @@ pub struct Store {
     graph: Arc<Graph>,
 }
 
+/// Trash categories. Legacy covers entries with no recognized recoverable type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrashKind {
+    Asset,
+    Page,
+    Journal,
+    Conflict,
+    Legacy,
+}
+
+impl From<TrashEntryKind> for TrashKind {
+    fn from(kind: TrashEntryKind) -> Self {
+        match kind {
+            TrashEntryKind::Asset => Self::Asset,
+            TrashEntryKind::Page => Self::Page,
+            TrashEntryKind::Journal => Self::Journal,
+            TrashEntryKind::Conflict => Self::Conflict,
+            TrashEntryKind::Other => Self::Legacy,
+        }
+    }
+}
+
+fn add_trash_count(counts: &mut [(u64, u64); 5], kind: TrashKind, bytes: u64) {
+    let index = match kind {
+        TrashKind::Asset => 0,
+        TrashKind::Page => 1,
+        TrashKind::Journal => 2,
+        TrashKind::Conflict => 3,
+        TrashKind::Legacy => 4,
+    };
+    counts[index].0 += 1;
+    counts[index].1 += bytes;
+}
+
+fn trash_counts(counts: [(u64, u64); 5]) -> Vec<(TrashKind, u64, u64)> {
+    [
+        TrashKind::Asset,
+        TrashKind::Page,
+        TrashKind::Journal,
+        TrashKind::Conflict,
+        TrashKind::Legacy,
+    ]
+    .into_iter()
+    .zip(counts)
+    .map(|(kind, (count, bytes))| (kind, count, bytes))
+    .collect()
+}
+
+fn trash_entry_bytes(path: &std::path::Path) -> std::io::Result<u64> {
+    let kind = fs::symlink_metadata(path)?.file_type();
+    if kind.is_file() {
+        return Ok(fs::metadata(path)?.len());
+    }
+    if !kind.is_dir() {
+        return Ok(0);
+    }
+    let mut bytes = 0;
+    for child in fs::read_dir(path)? {
+        bytes += trash_entry_bytes(&child?.path())?;
+    }
+    Ok(bytes)
+}
+
 impl Store {
     /// Adopt the current graph without loading it. O(1). Removed in B7.
     pub fn from_legacy(graph: Arc<Graph>) -> Self {
         Self { graph }
+    }
+
+    /// Count entries and bytes by kind in the recoverable trash. Cost: O(trash entries).
+    pub fn trash_stats(&self) -> Result<Vec<(TrashKind, u64, u64)>, StoreError> {
+        let trash = trash_root(&self.graph.root);
+        let mut counts = [(0, 0); 5];
+        let entries = match fs::read_dir(trash) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(trash_counts(counts))
+            }
+            Err(error) => return Err(StoreError::from_io(error)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(StoreError::from_io)?;
+            let kind = entry.file_type().map_err(StoreError::from_io)?;
+            if kind.is_dir() {
+                if let Some(typed) = trash_dir_kind(&entry.path()) {
+                    for child in fs::read_dir(entry.path()).map_err(StoreError::from_io)? {
+                        let child = child.map_err(StoreError::from_io)?;
+                        let file_type = child.file_type().map_err(StoreError::from_io)?;
+                        let bytes = if file_type.is_file() {
+                            child.metadata().map_err(StoreError::from_io)?.len()
+                        } else {
+                            0
+                        };
+                        add_trash_count(&mut counts, TrashKind::from(typed), bytes);
+                    }
+                } else {
+                    add_trash_count(&mut counts, TrashKind::Legacy, 0);
+                }
+            } else {
+                let bytes = if kind.is_file() {
+                    entry.metadata().map_err(StoreError::from_io)?.len()
+                } else {
+                    0
+                };
+                add_trash_count(
+                    &mut counts,
+                    TrashKind::from(classify_legacy_trash_entry(&entry.path(), kind)),
+                    bytes,
+                );
+            }
+        }
+        Ok(trash_counts(counts))
+    }
+
+    /// Permanently remove asset and legacy-asset entries, including directories.
+    /// Other kinds stay recoverable. On error, returns counts already removed.
+    /// Cost: O(asset trash entries + bytes).
+    pub fn purge_asset_trash(&self) -> Result<(u64, u64), (StoreError, u64, u64)> {
+        let trash = trash_root(&self.graph.root);
+        self.graph
+            .ensure_write_target(&trash)
+            .map_err(|error| (StoreError::from_io(error), 0, 0))?;
+        let mut removed = (0, 0);
+        let entries = match fs::read_dir(trash) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(removed),
+            Err(error) => return Err((StoreError::from_io(error), 0, 0)),
+        };
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
+            if file_type.is_dir() {
+                if trash_dir_kind(&entry.path()) != Some(TrashEntryKind::Asset) {
+                    continue;
+                }
+                let assets = fs::read_dir(entry.path())
+                    .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
+                for asset in assets {
+                    let asset = asset
+                        .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
+                    let kind = asset
+                        .file_type()
+                        .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
+                    let bytes = trash_entry_bytes(&asset.path())
+                        .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
+                    let result = if kind.is_dir() {
+                        fs::remove_dir_all(asset.path())
+                    } else {
+                        fs::remove_file(asset.path())
+                    };
+                    result.map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
+                    removed.0 += 1;
+                    removed.1 += bytes;
+                }
+            } else if classify_legacy_trash_entry(&entry.path(), file_type) == TrashEntryKind::Asset
+            {
+                let bytes = entry
+                    .metadata()
+                    .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?
+                    .len();
+                fs::remove_file(entry.path())
+                    .map_err(|error| (StoreError::from_io(error), removed.0, removed.1))?;
+                removed.0 += 1;
+                removed.1 += bytes;
+            }
+        }
+        Ok(removed)
     }
 
     /// Type a file name within one configured graph area. Validation repeats

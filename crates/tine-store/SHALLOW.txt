@@ -2,7 +2,7 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 99
+# ceiling: 97
 field model::Graph.config
 field model::Graph.root
 field onboarding::GuideCopyResult.copied_assets
@@ -24,7 +24,6 @@ fn config_edit::Graph::set_preferred_workflow
 fn config_edit::Graph::set_show_brackets
 fn config_edit::Graph::set_start_of_week
 fn config_edit::Graph::set_timetracking_enabled
-fn model::Graph::asset_trash_stats
 fn model::Graph::assets_path
 fn model::Graph::backlinks
 fn model::Graph::block_ref_counts
@@ -33,7 +32,6 @@ fn model::Graph::cache_generation
 fn model::Graph::custom_css
 fn model::Graph::delete_page
 fn model::Graph::delete_page_expected
-fn model::Graph::empty_asset_trash
 fn model::Graph::external_assets_target
 fn model::Graph::feed_journals_desc_through
 fn model::Graph::find_entry
