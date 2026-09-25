@@ -183,6 +183,7 @@ enum UndoKind {
     Replace,
     Create,
     Move,
+    Rename,
     Trash,
 }
 
@@ -303,6 +304,13 @@ impl<'a> Transaction<'a> {
             .path_for_os_handoff(file)
             .map_err(|error| match error {
                 StoreError::InvalidTarget(message) => Why::Refused(Refusal::InvalidTarget(message)),
+                StoreError::Io(error)
+                    if file.as_str().starts_with("logseq/.tine-trash/")
+                        && error.kind() == io::ErrorKind::NotADirectory =>
+                {
+                    let target = self.store.graph.root.join(file.as_str());
+                    failed_trash_dir(error, target.parent().unwrap_or(&target))
+                }
                 StoreError::Io(error) => Why::Failed(error.into()),
                 other => Why::Refused(Refusal::InvalidTarget(format!("{other:?}"))),
             })?;
@@ -319,7 +327,9 @@ impl<'a> Transaction<'a> {
         self.store.as_page(file).is_some()
     }
 
-    fn twin(&self, file: &FileId) -> Result<(), Why> {
+    /// `moving_from`: a move's source. It claims the same name or day as the
+    /// destination only because it is the file being moved, so it is no twin.
+    fn twin(&self, file: &FileId, moving_from: Option<&FileId>) -> Result<(), Why> {
         let Some(id) = self.store.as_page(file) else {
             return Ok(());
         };
@@ -328,7 +338,11 @@ impl<'a> Transaction<'a> {
             return Ok(());
         };
         if let Some(existing) = self.store.graph.find_entry(&entry.name, entry.kind) {
-            if existing.path != path {
+            let is_source = match moving_from {
+                Some(source) => existing.path == self.path(source)?,
+                None => false,
+            };
+            if existing.path != path && !is_source {
                 return Err(Why::Refused(Refusal::Twin {
                     existing: PageId::from(self.store.graph.rel_path(&existing.path)),
                 }));
@@ -409,7 +423,7 @@ impl<'a> Transaction<'a> {
                 }
                 if matches!(base, SaveBase::CreateNew) {
                     self.absent(&file)?;
-                    self.twin(&file)?;
+                    self.twin(&file, None)?;
                 }
                 let target = self
                     .store
@@ -465,7 +479,7 @@ impl<'a> Transaction<'a> {
                 }
                 self.path(file)?;
                 self.absent(file)?;
-                self.twin(file)?;
+                self.twin(file, None)?;
                 if self.page(file)
                     && matches!(content, Content::Bytes(bytes) if std::str::from_utf8(bytes).is_err())
                 {
@@ -588,7 +602,7 @@ impl<'a> Transaction<'a> {
                 }
                 let old = self.stage(file, expected)?;
                 self.absent(to)?;
-                self.twin(to)?;
+                self.twin(to, Some(file))?;
                 let new = match renames {
                     Some(map) => rewrite(&old, &self.path(to)?, map)?,
                     None => old.clone(),
@@ -884,6 +898,42 @@ impl<'a> Transaction<'a> {
                 if let Some(parent) = dst.parent() {
                     fs::create_dir_all(parent).map_err(failed)?;
                 }
+                if new.as_slice() == old {
+                    // Content unchanged: a guarded no-replace rename, so no copy
+                    // of the source is left in the trash. Undo withdraws the
+                    // destination and writes the baseline back under `src`.
+                    undo.kind = UndoKind::Rename;
+                    undo.new = Some(Expected::Bytes(old.to_vec()));
+                    if self.page(dst_id) {
+                        self.store.graph.transaction_note_page(&dst, old);
+                    }
+                    if self.page(&plan.src) {
+                        self.store.graph.transaction_note_delete(&src);
+                    }
+                    self.fault_collision(&dst);
+                    move_file_noreplace(&src, &dst)
+                        .map_err(|error| collision(dst_id, error, &dst))?;
+                    undo.created = true;
+                    sync_move_dirs(&src, &dst);
+                    self.fault_mid_step(index)?;
+                    self.fault_twin(dst_id);
+                    if let Some(twin) = self.disk_twin(dst_id)? {
+                        return Err(Why::Conflict {
+                            file: twin.clone(),
+                            disk: disk_rev(&self.path(&twin)?),
+                        });
+                    }
+                    if fs::read(&dst).map_err(failed)? != old {
+                        return Err(Why::Conflict {
+                            file: plan.src.clone(),
+                            disk: disk_rev(&dst),
+                        });
+                    }
+                    return Ok(StepResult::Moved {
+                        to: dst_id.clone(),
+                        rev: FileRev::from_bytes(old),
+                    });
+                }
                 if self.page(dst_id) {
                     self.store.graph.transaction_note_page(&dst, new);
                 }
@@ -902,7 +952,7 @@ impl<'a> Transaction<'a> {
                 let trash_id = self.trash_id(&plan.src);
                 let trash = self.path(&trash_id)?;
                 if let Some(parent) = trash.parent() {
-                    fs::create_dir_all(parent).map_err(failed)?;
+                    fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
                 }
                 undo.trash = Some(trash_id.clone());
                 if self.page(&plan.src) {
@@ -929,7 +979,7 @@ impl<'a> Transaction<'a> {
                 let trash_id = self.trash_id(&plan.src);
                 let trash = self.path(&trash_id)?;
                 if let Some(parent) = trash.parent() {
-                    fs::create_dir_all(parent).map_err(failed)?;
+                    fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
                 }
                 undo.trash = Some(trash_id.clone());
                 if self.page(&plan.src) {
@@ -999,6 +1049,7 @@ impl<'a> Transaction<'a> {
                     .graph
                     .withdraw_file_to_conflict_if_matching_file(&path, stage, "tx-undo"),
             };
+            let withdrawn = result.is_ok();
             match result {
                 Ok(Withdrawal::Exact | Withdrawal::Missing) => {
                     if matches!(record.kind, UndoKind::Replace) {
@@ -1021,6 +1072,18 @@ impl<'a> Transaction<'a> {
                     ));
                 }
                 Err(error) => rollback.undo_failed.push((id.clone(), error.into())),
+            }
+            // A rename left nothing under the source name: put the baseline
+            // back there. If a third party took that name, the sweep in
+            // `commit` preserves the baseline in recovery.
+            if withdrawn && matches!(record.kind, UndoKind::Rename) {
+                if let Some(old) = &record.old {
+                    if let Err(error) = atomic_write_new(&live, old) {
+                        rollback
+                            .undo_failed
+                            .push((record.src.clone(), error.into()));
+                    }
+                }
             }
         }
         if record.moved {
@@ -1272,6 +1335,16 @@ impl<'a> Transaction<'a> {
 
 fn failed(error: io::Error) -> Why {
     Why::Failed(error.into())
+}
+
+fn failed_trash_dir(error: io::Error, parent: &Path) -> Why {
+    Why::Failed(IoError {
+        kind: error.kind(),
+        message: format!(
+            "could not create trash directory {}: {error}",
+            parent.display()
+        ),
+    })
 }
 
 fn sync_move_dirs(source: &Path, destination: &Path) {

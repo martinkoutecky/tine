@@ -4,8 +4,38 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::pdf::{Highlight, Position, Rect};
-use tine_graph_features::{assets, pdf};
-use tine_store::{model::Graph, Content, FaultPoint, Store};
+use tine_graph_features::{assets, conflicts, journals, pdf};
+use tine_store::{model::Graph, Content, Day, FaultPoint, Store};
+
+fn disk_tree(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                walk(root, &path, out);
+            } else {
+                let mut rel = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if rel.contains("/.tine-trash/") {
+                    if let Some((prefix, name)) = rel.rsplit_once("__") {
+                        if let Some((parent, _)) = prefix.rsplit_once('/') {
+                            rel = format!("{parent}/__{name}");
+                        }
+                    }
+                }
+                out.push((rel, fs::read(path).unwrap()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out.sort();
+    out
+}
 
 fn fixture(label: &str) -> (PathBuf, Store) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -27,6 +57,8 @@ fn source_scan_guard_clients_touch_no_path() {
     for (name, source) in [
         ("lib", include_str!("../src/lib.rs")),
         ("assets", include_str!("../src/assets.rs")),
+        ("conflicts", include_str!("../src/conflicts.rs")),
+        ("journals", include_str!("../src/journals.rs")),
         ("pdf", include_str!("../src/pdf.rs")),
     ] {
         for forbidden in [
@@ -46,6 +78,202 @@ fn source_scan_guard_clients_touch_no_path() {
             );
         }
     }
+}
+
+#[test]
+fn conflict_clients_match_legacy_values_and_disk_bytes() {
+    use std::collections::HashMap;
+    let (new_root, store) = fixture("conflict-matrix-new");
+    let (old_root, _) = fixture("conflict-matrix-old");
+    let conflict_name = "Foo.sync-conflict-20260705-120000-ABCDEFG.md";
+    for root in [&new_root, &old_root] {
+        fs::create_dir_all(root.join("journals")).unwrap();
+        fs::write(root.join("pages/Foo.md"), "- mine\n").unwrap();
+        fs::write(root.join("pages").join(conflict_name), "- theirs\n").unwrap();
+    }
+    let old = Graph::open(&old_root);
+    assert_eq!(
+        serde_json::to_value(conflicts::list_sync_conflicts(&store)).unwrap(),
+        serde_json::to_value(old.list_sync_conflicts()).unwrap(),
+    );
+    let conflict = format!("pages/{conflict_name}");
+    let new_diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", &conflict)
+        .unwrap()
+        .unwrap();
+    let old_diff = old
+        .sync_conflict_diff("pages/Foo.md", &conflict)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&new_diff).unwrap(),
+        serde_json::to_value(&old_diff).unwrap()
+    );
+    conflicts::resolve_sync_conflict(
+        &store,
+        "pages/Foo.md",
+        &conflict,
+        &HashMap::new(),
+        &new_diff.base_rev,
+        &new_diff.conflict_rev,
+        "union",
+    )
+    .unwrap();
+    old.resolve_sync_conflict(
+        "pages/Foo.md",
+        &conflict,
+        &HashMap::new(),
+        &old_diff.base_rev,
+        &old_diff.conflict_rev,
+        "union",
+    )
+    .unwrap();
+    assert_eq!(disk_tree(&new_root), disk_tree(&old_root));
+
+    // The separate discard operation preserves the same bytes too.
+    for root in [&new_root, &old_root] {
+        fs::write(root.join("pages").join(conflict_name), "- next\n").unwrap();
+    }
+    conflicts::trash_sync_conflict(&store, &conflict).unwrap();
+    old.trash_sync_conflict(&conflict).unwrap();
+    assert_eq!(disk_tree(&new_root), disk_tree(&old_root));
+}
+
+#[test]
+fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
+    let (new_root, store) = fixture("journal-matrix-new");
+    let (old_root, _) = fixture("journal-matrix-old");
+    for root in [&new_root, &old_root] {
+        fs::create_dir_all(root.join("journals")).unwrap();
+        for (name, body) in [
+            ("2026_06_18.md", "- canonical\n"),
+            ("Jun 18th, 2026.org", "- duplicate\n"),
+            ("Jun 19th, 2026.md", "- migrate\n"),
+            ("Jun 20th, 2026.md", "- occupied\n"),
+            ("2026_06_20.md", "- keeper\n"),
+        ] {
+            fs::write(root.join("journals").join(name), body).unwrap();
+        }
+    }
+    let old = Graph::open(&old_root);
+    let new_feed = journals::feed_journals_desc_through(&store, Day(20260620));
+    let old_feed =
+        old.feed_journals_desc_through(tine_core::date::JournalDate::from_ordinal(20260620));
+    assert_eq!(
+        new_feed.iter().map(|(day, _)| day.0).collect::<Vec<_>>(),
+        old_feed
+            .iter()
+            .map(|entry| entry.date_key.unwrap())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        serde_json::to_value(journals::journal_conflicts(&store)).unwrap(),
+        serde_json::to_value(old.journal_conflicts()).unwrap()
+    );
+    assert_eq!(
+        journals::read_journal_file(&store, "Jun 18th, 2026.org").unwrap(),
+        old.read_journal_file("Jun 18th, 2026.org").unwrap()
+    );
+    assert_eq!(
+        journals::has_journal_filename_migrations(&store),
+        old.has_journal_filename_migrations()
+    );
+    // One deliberate difference: v0.6.5 renamed `Jun 18th, 2026.org` to
+    // `2026_06_18.org` beside `2026_06_18.md`, creating an md/org twin. The
+    // twin rule refuses that move, so the title-named duplicate stays as it was
+    // (still listed by `journal_conflicts`). Every other file matches.
+    assert_eq!(
+        journals::migrate_journal_filenames(&store) + 1,
+        old.migrate_journal_filenames()
+    );
+    assert!(new_root.join("journals/Jun 20th, 2026.md").exists());
+    assert!(new_root.join("journals/Jun 18th, 2026.org").exists());
+    assert!(!new_root.join("journals/2026_06_18.org").exists());
+    fs::rename(
+        old_root.join("journals/2026_06_18.org"),
+        old_root.join("journals/Jun 18th, 2026.org"),
+    )
+    .unwrap();
+    assert_eq!(disk_tree(&new_root), disk_tree(&old_root));
+    journals::trash_journal_file(&store, "Jun 20th, 2026.md").unwrap();
+    old.trash_journal_file("Jun 20th, 2026.md").unwrap();
+    assert_eq!(disk_tree(&new_root), disk_tree(&old_root));
+}
+
+#[test]
+fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
+    use std::collections::HashMap;
+    let (root, store) = fixture("resolve-external");
+    fs::write(root.join("pages/Foo.md"), "- mine\n").unwrap();
+    let conflict = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
+    fs::write(root.join(conflict), "- theirs\n").unwrap();
+    let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", conflict)
+        .unwrap()
+        .unwrap();
+    store.inject_fault(FaultPoint::Stage2MismatchAt(1));
+    assert!(conflicts::resolve_sync_conflict(
+        &store,
+        "pages/Foo.md",
+        conflict,
+        &HashMap::new(),
+        &diff.base_rev,
+        &diff.conflict_rev,
+        "union"
+    )
+    .is_err());
+    assert_eq!(fs::read(root.join("pages/Foo.md")).unwrap(), b"- mine\n");
+    assert_eq!(fs::read(root.join(conflict)).unwrap(), b"external stage-2");
+}
+
+#[test]
+fn resolve_preblock_keep_choices_match_legacy_bytes() {
+    use std::collections::HashMap;
+    for choice in ["mine", "theirs"] {
+        let (new_root, store) = fixture(&format!("choice-{choice}-new"));
+        let (old_root, _) = fixture(&format!("choice-{choice}-old"));
+        let conflict = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
+        for root in [&new_root, &old_root] {
+            fs::write(root.join("pages/Foo.md"), "alias:: mine\n- shared\n").unwrap();
+            fs::write(root.join(conflict), "alias:: theirs\n- shared\n").unwrap();
+        }
+        let old = Graph::open(&old_root);
+        let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", conflict)
+            .unwrap()
+            .unwrap();
+        conflicts::resolve_sync_conflict(
+            &store,
+            "pages/Foo.md",
+            conflict,
+            &HashMap::new(),
+            &diff.base_rev,
+            &diff.conflict_rev,
+            choice,
+        )
+        .unwrap();
+        old.resolve_sync_conflict(
+            "pages/Foo.md",
+            conflict,
+            &HashMap::new(),
+            &diff.base_rev,
+            &diff.conflict_rev,
+            choice,
+        )
+        .unwrap();
+        assert_eq!(disk_tree(&new_root), disk_tree(&old_root), "{choice}");
+    }
+}
+
+#[test]
+fn failed_journal_repair_restores_legacy_filename() {
+    let (root, store) = fixture("journal-repair-rollback");
+    fs::create_dir_all(root.join("journals")).unwrap();
+    fs::write(root.join("journals/Jun 18th, 2026.md"), "- preserve\n").unwrap();
+    store.inject_fault(FaultPoint::MidStepIoAt(0));
+    assert_eq!(journals::migrate_journal_filenames(&store), 0);
+    assert_eq!(
+        fs::read(root.join("journals/Jun 18th, 2026.md")).unwrap(),
+        b"- preserve\n"
+    );
+    assert!(!root.join("journals/2026_06_18.md").exists());
 }
 
 #[test]

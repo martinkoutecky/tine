@@ -57,6 +57,7 @@ use std::time::SystemTime;
 use crate::model::{classify_legacy_trash_entry, trash_dir_kind, trash_root, TrashEntryKind};
 
 use serde::{Deserialize, Serialize};
+use tine_core::date::JournalDate;
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, BlockPreview, BoundedRefGroups, PageDto,
     PageEntry, PageKind, RefGroup, TemplateDto,
@@ -153,6 +154,29 @@ fn trash_entry_bytes(path: &std::path::Path) -> std::io::Result<u64> {
 }
 
 impl Store {
+    /// Current graph configuration. Interim borrowed immutable config; cost O(1).
+    pub fn config(&self) -> &tine_core::config::Config {
+        &self.graph.config
+    }
+
+    /// Resolve the canonical journal file for a day, or the preferred new file.
+    /// Interim implementation uses the legacy claimant index, which can build
+    /// from journal names on first use (O(journal entries)); warm lookup O(1).
+    pub fn journal_id(&self, day: Day) -> PageId {
+        let date = JournalDate::from_ordinal(day.0);
+        let title = self.graph.journal_format.title(date);
+        if let Some(entry) = self.graph.find_entry(&title, PageKind::Journal) {
+            if let Some(id) = entry.rel_path {
+                return id;
+            }
+        }
+        PageId::from(format!(
+            "{}/{}.{}",
+            self.graph.config.journals_dir,
+            self.graph.journal_format.file_stem(date),
+            self.graph.config.preferred_format.ext()
+        ))
+    }
     /// Adopt the current graph without loading it. O(1). Removed in B7.
     pub fn from_legacy(graph: Arc<Graph>) -> Self {
         Self {
@@ -623,6 +647,27 @@ impl Store {
                             if let Ok(id) = store.file_id(area, &rel) {
                                 out.files.push(FileEntry {
                                     page: store.as_page(&id),
+                                    day: if area == Area::Journals {
+                                        std::path::Path::new(&rel)
+                                            .file_stem()
+                                            .and_then(|stem| stem.to_str())
+                                            .and_then(|stem| store.graph.journal_format.parse(stem))
+                                            .map(|date| Day(date.ordinal_key()))
+                                    } else {
+                                        None
+                                    },
+                                    date_stem: area == Area::Journals
+                                        && std::path::Path::new(&rel)
+                                            .file_stem()
+                                            .and_then(|stem| stem.to_str())
+                                            .is_some_and(|stem| {
+                                                store.graph.journal_format.parse(stem).is_some_and(
+                                                    |date| {
+                                                        store.graph.journal_format.file_stem(date)
+                                                            == stem
+                                                    },
+                                                )
+                                            }),
                                     id,
                                     area,
                                     rel,
@@ -736,6 +781,10 @@ pub struct FileEntry {
     pub area: Area,
     pub rel: String,
     pub page: Option<PageId>,
+    /// Parsed journal day under configured and fallback formats; cost O(1).
+    pub day: Option<Day>,
+    /// Whether the stem is the configured filename form; cost O(1).
+    pub date_stem: bool,
     pub meta: Option<FileMeta>,
 }
 

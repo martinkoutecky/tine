@@ -5,6 +5,36 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Decode a page filename according to the graph's Logseq naming format.
+/// Cost O(stem bytes); malformed percent escapes are preserved.
+pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> String {
+    let encoded = match fmt {
+        crate::config::FileNameFormat::Legacy => stem.to_owned(),
+        crate::config::FileNameFormat::TripleLowbar => stem.replace("___", "/"),
+    };
+    let bytes = encoded.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let nibble = |byte| match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                b'A'..=b'F' => Some(byte - b'A' + 10),
+                _ => None,
+            };
+            if let (Some(high), Some(low)) = (nibble(bytes[index + 1]), nibble(bytes[index + 2])) {
+                output.push((high << 4) | low);
+                index += 3;
+                continue;
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PageKind {

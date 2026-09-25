@@ -2,7 +2,7 @@
 //! saved back (the path a {{query}}-result edit takes).
 use std::sync::Arc;
 use tine_core::PageKind;
-use tine_graph_features::{assets, pdf};
+use tine_graph_features::{assets, journals, pdf};
 use tine_store::model::atomic_copy;
 use tine_store::model::Graph;
 use tine_store::Store;
@@ -687,11 +687,9 @@ fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
     std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
     let journal = root.join("journals").join("2026_06_20.md");
     std::fs::write(&journal, "- journal body\n").unwrap();
-    let g = Graph::open(&root);
-
-    let err = g
-        .trash_journal_file("2026_06_20.md")
-        .expect_err("trash path is blocked");
+    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
+    let err =
+        journals::trash_journal_file(&store, "2026_06_20.md").expect_err("trash path is blocked");
     assert!(
         err.to_string().contains(".tine-trash"),
         "error should name the trash path: {err}"
@@ -936,8 +934,8 @@ fn migrate_renames_title_named_journal_files() {
         "- TODO recovered\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    let n = g.migrate_journal_filenames();
+    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
+    let n = journals::migrate_journal_filenames(&store);
     assert_eq!(n, 1);
     assert!(
         root.join("journals").join("2026_06_18.md").exists(),
@@ -948,6 +946,7 @@ fn migrate_renames_title_named_journal_files() {
         "title file gone"
     );
     // Content preserved + now visible.
+    let g = Graph::open(&root);
     assert!(g.journals_desc().iter().any(|e| e.name == "Jun 18th, 2026"));
     let _ = std::fs::remove_dir_all(&root);
 }

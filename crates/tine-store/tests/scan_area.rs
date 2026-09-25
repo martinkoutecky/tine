@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tine_store::{model::Graph, Area, Store};
+use tine_store::{model::Graph, Area, Day, Store};
 
 fn fixture() -> (PathBuf, Store) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -93,4 +93,75 @@ fn referenced_assets_keeps_raw_decoded_and_nested_first_segment() {
     for name in ["my%20file.png", "my file.png", "pdfkey", "pdfkey/crop.png"] {
         assert!(names.contains(name), "{name}");
     }
+}
+
+#[test]
+fn journal_scan_and_canonical_id_follow_configured_format() {
+    let (root, store) = fixture();
+    for name in ["2026_06_18.md", "Jun 18th, 2026.org", "notes.txt"] {
+        fs::write(root.join("journals").join(name), b"- body\n").unwrap();
+    }
+    fs::write(root.join("pages/2026_06_18.md"), b"- page\n").unwrap();
+    let listing = store.scan_area(Area::Journals, None).unwrap();
+    let dated = listing
+        .files
+        .iter()
+        .find(|entry| entry.rel == "2026_06_18.md")
+        .unwrap();
+    assert_eq!(dated.day, Some(Day(20260618)));
+    assert!(dated.date_stem);
+    let titled = listing
+        .files
+        .iter()
+        .find(|entry| entry.rel == "Jun 18th, 2026.org")
+        .unwrap();
+    assert_eq!(titled.day, Some(Day(20260618)));
+    assert!(!titled.date_stem);
+    assert_eq!(
+        listing
+            .files
+            .iter()
+            .find(|entry| entry.rel == "notes.txt")
+            .unwrap()
+            .day,
+        None
+    );
+    assert_eq!(
+        store.scan_area(Area::Pages, None).unwrap().files[0].day,
+        None
+    );
+    assert_eq!(
+        store.journal_id(Day(20260618)).as_str(),
+        "journals/2026_06_18.md"
+    );
+
+    fs::write(
+        root.join("logseq/config.edn"),
+        b"{:journal/file-name-format \"yyyy-MM-dd\"}",
+    )
+    .unwrap();
+    fs::write(root.join("journals/2026-06-19.org"), b"- custom\n").unwrap();
+    fs::write(root.join("journals/Jun 19th, 2026.md"), b"- title\n").unwrap();
+    let custom = Store::from_legacy(Arc::new(Graph::open(&root)));
+    let listing = custom.scan_area(Area::Journals, None).unwrap();
+    assert!(
+        listing
+            .files
+            .iter()
+            .find(|entry| entry.rel == "2026-06-19.org")
+            .unwrap()
+            .date_stem
+    );
+    assert!(
+        !listing
+            .files
+            .iter()
+            .find(|entry| entry.rel == "Jun 19th, 2026.md")
+            .unwrap()
+            .date_stem
+    );
+    assert_eq!(
+        custom.journal_id(Day(20260619)).as_str(),
+        "journals/2026-06-19.org"
+    );
 }

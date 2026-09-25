@@ -10,3 +10,4 @@ tine-store = { path = "../tine-store" }
 
 [dev-dependencies]
 tine-store = { path = "../tine-store", features = ["legacy-fixtures", "test-faults"] }
+serde_json = { workspace = true }

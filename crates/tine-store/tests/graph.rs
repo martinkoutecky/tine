@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use tine_graph_features::conflicts;
 use tine_store::model::Graph;
 use tine_store::{PageId, SaveBase, SaveOutcome, Store};
 
@@ -2016,17 +2017,17 @@ fn trash_sync_conflict_refuses_real_pages() {
     let conflict = "Real.sync-conflict-20260705-120000-ABCDEFG.md";
     std::fs::write(pages.join(conflict), "- other device\n").unwrap();
 
-    let g = Graph::open(&root);
+    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
     // Refuses a genuine page — never trashes real data.
-    assert!(g.trash_sync_conflict("pages/Real.md").is_err());
+    assert!(conflicts::trash_sync_conflict(&store, "pages/Real.md").is_err());
     assert!(pages.join("Real.md").exists(), "real page must survive");
     // Trashes an actual conflict copy.
-    g.trash_sync_conflict(&format!("pages/{conflict}")).unwrap();
+    conflicts::trash_sync_conflict(&store, &format!("pages/{conflict}")).unwrap();
     assert!(
         !pages.join(conflict).exists(),
         "conflict copy should be gone"
     );
-    assert!(g.list_sync_conflicts().is_empty());
+    assert!(conflicts::list_sync_conflicts(&store).is_empty());
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -2082,6 +2083,7 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
     .unwrap();
 
     let g = Graph::open(&root);
+    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
 
     // The conflict copies must NOT appear as pages/journals.
     let names: Vec<String> = g.list_pages().into_iter().map(|p| p.name).collect();
@@ -2095,7 +2097,7 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
     );
 
     // They ARE surfaced by list_sync_conflicts, each pointing at its winner.
-    let mut conflicts = g.list_sync_conflicts();
+    let mut conflicts = conflicts::list_sync_conflicts(&store);
     conflicts.sort_by(|a, b| a.base_name.cmp(&b.base_name));
     assert_eq!(conflicts.len(), 2, "conflicts: {conflicts:?}");
     let foo = conflicts
@@ -2131,13 +2133,12 @@ fn resolve_sync_conflict_merges_and_trashes() {
     let conflict_name = "Foo.sync-conflict-20260705-120000-ABCDEFG.md";
     std::fs::write(pages.join(conflict_name), conflict).unwrap();
 
-    let g = Graph::open(&root);
+    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
     let win_rel = "pages/Foo.md";
     let conf_rel = format!("pages/{conflict_name}");
 
     // Diff to discover the row ids.
-    let diff = g
-        .sync_conflict_diff(win_rel, &conf_rel)
+    let diff = conflicts::sync_conflict_diff(&store, win_rel, &conf_rel)
         .unwrap()
         .expect("a diff");
     let modified = diff
@@ -2155,16 +2156,16 @@ fn resolve_sync_conflict_merges_and_trashes() {
     // Guard: decisions from the diff must not apply after the winner changes.
     let changed_winner = winner.replace("beta line here", "beta line NEW!");
     std::fs::write(pages.join("Foo.md"), &changed_winner).unwrap();
-    let err = g
-        .resolve_sync_conflict(
-            win_rel,
-            &conf_rel,
-            &HashMap::new(),
-            &diff.base_rev,
-            &diff.conflict_rev,
-            "union",
-        )
-        .unwrap_err();
+    let err = conflicts::resolve_sync_conflict(
+        &store,
+        win_rel,
+        &conf_rel,
+        &HashMap::new(),
+        &diff.base_rev,
+        &diff.conflict_rev,
+        "union",
+    )
+    .unwrap_err();
     assert_eq!(
         err.kind(),
         std::io::ErrorKind::AlreadyExists,
@@ -2181,16 +2182,16 @@ fn resolve_sync_conflict_merges_and_trashes() {
     // an old copy could silently merge after a sync tool rewrites that copy.
     let changed_conflict = conflict.replace("beta line there", "beta line LATER");
     std::fs::write(pages.join(conflict_name), &changed_conflict).unwrap();
-    let err = g
-        .resolve_sync_conflict(
-            win_rel,
-            &conf_rel,
-            &HashMap::new(),
-            &diff.base_rev,
-            &diff.conflict_rev,
-            "union",
-        )
-        .unwrap_err();
+    let err = conflicts::resolve_sync_conflict(
+        &store,
+        win_rel,
+        &conf_rel,
+        &HashMap::new(),
+        &diff.base_rev,
+        &diff.conflict_rev,
+        "union",
+    )
+    .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(
         std::fs::read_to_string(pages.join(conflict_name)).unwrap(),
@@ -2209,7 +2210,8 @@ fn resolve_sync_conflict_merges_and_trashes() {
     ]);
     let base = tine_store::model::content_rev(winner);
     let conflict_rev = tine_store::model::content_rev(conflict);
-    g.resolve_sync_conflict(
+    conflicts::resolve_sync_conflict(
+        &store,
         win_rel,
         &conf_rel,
         &decisions,
@@ -2235,7 +2237,10 @@ fn resolve_sync_conflict_merges_and_trashes() {
         !pages.join(conflict_name).exists(),
         "conflict copy not moved"
     );
-    assert!(g.list_sync_conflicts().is_empty(), "conflict still listed");
+    assert!(
+        conflicts::list_sync_conflicts(&store).is_empty(),
+        "conflict still listed"
+    );
     let trash = root.join("logseq").join(".tine-trash").join("conflicts");
     let trashed: Vec<_> = std::fs::read_dir(&trash).unwrap().flatten().collect();
     assert!(

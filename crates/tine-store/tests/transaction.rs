@@ -576,3 +576,65 @@ fn opposite_name_order_serializes_without_deadlock() {
         ));
     }
 }
+
+/// A move whose content does not change is a no-replace rename: nothing is
+/// left in the trash on success, and undo restores the source name.
+#[test]
+fn unchanged_move_is_a_rename_without_trash_copy() {
+    let f = Fixture::new();
+    f.put("pages/A.md", b"- a\n");
+    let a = f.id(Area::Pages, "A.md");
+    let b = f.id(Area::Pages, "B.md");
+    let mut tx = f.store.transaction();
+    tx.move_file(&a, f.rev(&a), &b, None);
+    let steps = committed(tx.commit());
+    assert!(matches!(&steps[0], StepResult::Moved { to, .. } if *to == b));
+    assert!(f.bytes("pages/A.md").is_none());
+    assert_eq!(f.bytes("pages/B.md").unwrap(), b"- a\n");
+    assert!(!f.root.join("logseq/.tine-trash").exists());
+}
+
+#[cfg(feature = "test-faults")]
+mod rename_faults {
+    use super::*;
+    use tine_store::FaultPoint;
+
+    fn two_steps(f: &Fixture) -> TxOutcome {
+        f.put("assets/a.bin", b"old a");
+        f.put("assets/c.bin", b"old c");
+        let a = f.id(Area::Assets, "a.bin");
+        let b = f.id(Area::Assets, "b.bin");
+        let c = f.id(Area::Assets, "c.bin");
+        let mut tx = f.store.transaction();
+        tx.move_file(&a, f.rev(&a), &b, None);
+        tx.trash(&c, f.rev(&c));
+        tx.commit()
+    }
+
+    #[test]
+    fn later_failure_renames_back() {
+        let f = Fixture::new();
+        f.store.inject_fault(FaultPoint::MidStepIoAt(1));
+        let (why, rollback) = refused(two_steps(&f));
+        assert!(matches!(why, Why::Failed(_)), "{why:?}");
+        assert!(rollback.kept_external.is_empty() && rollback.undo_failed.is_empty());
+        assert_eq!(f.bytes("assets/a.bin").unwrap(), b"old a");
+        assert!(f.bytes("assets/b.bin").is_none());
+        assert_eq!(f.bytes("assets/c.bin").unwrap(), b"old c");
+    }
+
+    #[test]
+    fn third_party_write_during_undo_keeps_both_versions() {
+        let f = Fixture::new();
+        f.store.inject_fault(FaultPoint::MidStepIoAt(1));
+        f.store.inject_fault(FaultPoint::UndoLiveWrite);
+        let (_, rollback) = refused(two_steps(&f));
+        assert_eq!(f.bytes("assets/a.bin").unwrap(), b"old a");
+        assert_eq!(f.bytes("assets/b.bin").unwrap(), b"external during undo");
+        assert!(rollback
+            .kept_external
+            .iter()
+            .any(|(id, _)| id.as_str() == "assets/b.bin"));
+        assert_eq!(f.bytes("assets/c.bin").unwrap(), b"old c");
+    }
+}

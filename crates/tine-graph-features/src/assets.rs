@@ -125,9 +125,11 @@ pub fn trash_asset(store: &Store, name: &str) -> io::Result<()> {
         }
         tx_error(outcome).map_err(|error| {
             if error.kind() == io::ErrorKind::NotADirectory {
+                let message = error.to_string();
+                let cause = message.rsplit(": ").next().unwrap_or(&message);
                 io::Error::new(
                     error.kind(),
-                    format!("could not create trash directory logseq/.tine-trash/assets: {error}"),
+                    format!("could not create trash directory logseq/.tine-trash/assets: {cause}"),
                 )
             } else {
                 error

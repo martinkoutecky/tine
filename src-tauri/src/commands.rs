@@ -626,15 +626,22 @@ pub(crate) struct JournalFeedPage {
     as_of_day: i64,
 }
 
+struct FeedEntry {
+    #[cfg(test)]
+    name: String,
+    date_key: Option<i64>,
+    rel_path: Option<tine_store::PageId>,
+}
+
 fn collect_journal_feed_page<F>(
-    entries: Vec<PageEntry>,
+    entries: Vec<FeedEntry>,
     limit: usize,
     before_day: Option<i64>,
     as_of_day: i64,
     mut load: F,
 ) -> Result<JournalFeedPage, String>
 where
-    F: FnMut(&PageEntry) -> Result<PageDto, std::io::Error>,
+    F: FnMut(&FeedEntry) -> Result<PageDto, std::io::Error>,
 {
     // A zero limit is authoritative: do not scan/load the feed merely to
     // discover that the caller requested no rows. No cursor advances because
@@ -689,10 +696,20 @@ pub(crate) fn journal_feed_page(
     state: GraphContext<'_>,
 ) -> Result<JournalFeedPage, String> {
     let slot = slot_for_context(&state)?;
-    let g = &slot.graph;
     {
         let as_of_day = JournalDate::today().ordinal_key();
-        let entries = g.feed_journals_desc_through(JournalDate::from_ordinal(as_of_day));
+        let entries = tine_graph_features::journals::feed_journals_desc_through(
+            &slot.store,
+            tine_store::Day(as_of_day),
+        )
+        .into_iter()
+        .map(|(day, id)| FeedEntry {
+            #[cfg(test)]
+            name: String::new(),
+            date_key: Some(day.0),
+            rel_path: Some(id),
+        })
+        .collect();
         collect_journal_feed_page(entries, limit, before_day, as_of_day, |entry| {
             // A journal deleted from disk between inventory and load is skipped,
             // but its day still advances the cursor in the helper above.
@@ -714,18 +731,14 @@ pub(crate) fn journal_feed_page(
 #[cfg(test)]
 mod journal_feed_tests {
     use super::*;
-    use std::path::PathBuf;
-
-    fn entry(day: i64) -> PageEntry {
-        PageEntry {
+    fn entry(day: i64) -> FeedEntry {
+        FeedEntry {
             name: day.to_string(),
-            kind: PageKind::Journal,
             date_key: Some(day),
             rel_path: None,
-            path: PathBuf::new(),
         }
     }
-    fn dto(entry: &PageEntry) -> PageDto {
+    fn dto(entry: &FeedEntry) -> PageDto {
         serde_json::from_value(serde_json::json!({
             "name": entry.name, "kind": "journal", "title": entry.name,
             "pre_block": null, "blocks": []
@@ -2477,7 +2490,10 @@ pub(crate) fn empty_asset_trash(state: GraphContext<'_>) -> Result<u64, String> 
 pub(crate) fn list_journal_conflicts(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::JournalConflict>, String> {
-    with_graph(&state, |g| Ok(g.journal_conflicts()))
+    let slot = slot_for_context(&state)?;
+    Ok(tine_graph_features::journals::journal_conflicts(
+        &slot.store,
+    ))
 }
 
 /// Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
@@ -2486,7 +2502,10 @@ pub(crate) fn list_journal_conflicts(
 pub(crate) fn list_sync_conflicts(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::SyncConflict>, String> {
-    with_graph(&state, |g| Ok(g.list_sync_conflicts()))
+    let slot = slot_for_context(&state)?;
+    Ok(tine_graph_features::conflicts::list_sync_conflicts(
+        &slot.store,
+    ))
 }
 
 /// Block-level diff of a sync-conflict copy against its winner (both graph-root-
@@ -2497,10 +2516,9 @@ pub(crate) fn sync_conflict_diff(
     conflict: String,
     state: GraphContext<'_>,
 ) -> Result<Option<tine_core::sync_diff::SyncConflictDiff>, String> {
-    with_graph(&state, |g| {
-        g.sync_conflict_diff(&winner, &conflict)
-            .map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::conflicts::sync_conflict_diff(&slot.store, &winner, &conflict)
+        .map_err(|e| e.to_string())
 }
 
 /// Resolve a sync-conflict copy: merge it into its winner per the user's per-row
@@ -2517,22 +2535,22 @@ pub(crate) fn resolve_sync_conflict(
     pre_choice: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.resolve_sync_conflict(
-            &winner,
-            &conflict,
-            &decisions,
-            &base_rev,
-            &conflict_rev,
-            pre_choice.as_deref().unwrap_or("union"),
-        )
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                "conflict".to_string()
-            } else {
-                e.to_string()
-            }
-        })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::conflicts::resolve_sync_conflict(
+        &slot.store,
+        &winner,
+        &conflict,
+        &decisions,
+        &base_rev,
+        &conflict_rev,
+        pre_choice.as_deref().unwrap_or("union"),
+    )
+    .map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            "conflict".to_string()
+        } else {
+            e.to_string()
+        }
     })
 }
 
@@ -2540,26 +2558,24 @@ pub(crate) fn resolve_sync_conflict(
 /// trash). Refuses anything that isn't a conflict copy.
 #[tauri::command]
 pub(crate) fn trash_sync_conflict(conflict: String, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.trash_sync_conflict(&conflict).map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::conflicts::trash_sync_conflict(&slot.store, &conflict)
+        .map_err(|e| e.to_string())
 }
 
 /// Move one journal file (by exact filename) to the recoverable trash.
 #[tauri::command]
 pub(crate) fn trash_journal_file(name: String, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.trash_journal_file(&name).map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::journals::trash_journal_file(&slot.store, &name).map_err(|e| e.to_string())
 }
 
 /// Raw contents of one journal file (by exact filename) — for inspecting a
 /// duplicate day's files before reconciling.
 #[tauri::command]
 pub(crate) fn read_journal_file(name: String, state: GraphContext<'_>) -> Result<String, String> {
-    with_graph(&state, |g| {
-        g.read_journal_file(&name).map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::journals::read_journal_file(&slot.store, &name).map_err(|e| e.to_string())
 }
 
 /// Load a page from a SPECIFIC file by its graph-root-relative path — lets the UI

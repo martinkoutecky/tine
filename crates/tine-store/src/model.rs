@@ -14,15 +14,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::RwLock;
 use tine_core::config::{Config, FileNameFormat};
-use tine_core::date::{JournalDate, JournalFormat};
+#[cfg(any(test, feature = "legacy-fixtures"))]
+use tine_core::date::JournalDate;
+use tine_core::date::JournalFormat;
 use tine_core::doc::{self, DocBlock, Document};
 #[cfg(any(test, feature = "legacy-fixtures"))]
 use tine_core::model::AssetInfo;
 use tine_core::model::{
-    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, sync_conflict_base,
-    BlockDto, BlockPreview, BoundedRefGroups, Format, GraphMeta, JournalConflict, JournalFile,
-    PageDto, PageEntry, PageKind, RefGroup, ReferenceKind, SyncConflict, TemplateDto,
+    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BlockDto, BlockPreview,
+    BoundedRefGroups, Format, GraphMeta, PageDto, PageEntry, PageKind, RefGroup, ReferenceKind,
+    TemplateDto,
 };
+#[cfg(any(test, feature = "legacy-fixtures"))]
+use tine_core::model::{sync_conflict_base, JournalConflict, JournalFile, SyncConflict};
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use unicode_normalization::UnicodeNormalization;
 
@@ -500,18 +504,26 @@ fn build_page_cache_index(pages: &[(PageEntry, Arc<Document>)]) -> PageCacheInde
     PageCacheIndex { by_name, by_path }
 }
 
-fn is_date_stem_entry(entry: &PageEntry) -> bool {
+fn is_date_stem_entry(entry: &PageEntry, fmt: &JournalFormat) -> bool {
     entry
         .path
         .file_stem()
         .and_then(|s| s.to_str())
-        .is_some_and(|s| tine_core::date::JournalDate::from_file_stem(s).is_some())
+        .is_some_and(|stem| {
+            entry.date_key.is_some_and(|day| {
+                fmt.file_stem(tine_core::date::JournalDate::from_ordinal(day)) == stem
+            })
+        })
 }
 
 /// One ordering for every name/day claimant in the legacy cache and store view.
-pub(crate) fn compare_page_claimants(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
+pub(crate) fn compare_page_claimants(
+    a: &PageEntry,
+    b: &PageEntry,
+    fmt: &JournalFormat,
+) -> std::cmp::Ordering {
     let date_rank =
-        |entry: &PageEntry| entry.kind == PageKind::Journal && is_date_stem_entry(entry);
+        |entry: &PageEntry| entry.kind == PageKind::Journal && is_date_stem_entry(entry, fmt);
     date_rank(b)
         .cmp(&date_rank(a))
         .then_with(|| {
@@ -1068,7 +1080,7 @@ impl Graph {
         ));
         // A duplicate-day journal (canonical + leftover title-named file) must show
         // once in quick-switch / All-Pages, not twice (both resolve to one page).
-        let entries = dedup_journal_days(entries);
+        let entries = dedup_journal_days(entries, &self.journal_format);
         *self.page_list_cache.write().unwrap() = Some((gen, entries.clone()));
         entries
     }
@@ -1183,13 +1195,14 @@ impl Graph {
         // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
         // page name, so otherwise the day renders twice. The stray stays visible
         // via journal_conflicts() for reconciliation.
-        let mut js = dedup_journal_days(raw);
+        let mut js = dedup_journal_days(raw, &self.journal_format);
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
 
     /// Feed membership is narrower than the raw journal inventory: future
     /// journals remain directly reachable graph pages, but are not in Journals.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn feed_journals_desc_through(&self, cutoff: JournalDate) -> Vec<PageEntry> {
         let cutoff = cutoff.ordinal_key();
         self.journals_desc()
@@ -1216,6 +1229,7 @@ impl Graph {
     /// parsed back to a date, so it drops out of the feed and the day looks
     /// empty. Rename such files to their stem — but only when the stem file
     /// doesn't already exist (never clobber/merge). Returns how many were fixed.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn has_journal_filename_migrations(&self) -> bool {
         let dir = self.journals_path();
         let Ok(rd) = fs::read_dir(&dir) else {
@@ -1230,6 +1244,7 @@ impl Graph {
         false
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn journal_filename_migration_target(&self, p: &std::path::Path) -> Option<PathBuf> {
         // Both formats — an org graph's title-named journals are `.org`.
         let ext = match p.extension().and_then(|x| x.to_str()) {
@@ -1255,6 +1270,7 @@ impl Graph {
         Some(target)
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn migrate_journal_filenames(&self) -> usize {
         let dir = self.journals_path();
         let Ok(rd) = fs::read_dir(&dir) else { return 0 };
@@ -1273,6 +1289,7 @@ impl Graph {
     /// Journal days that resolve to more than one file — the migration leaves these
     /// alone (it never clobbers), so they're reported for the user to reconcile.
     /// Each file gets a one-line preview and a `canonical` flag (date-stem name).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn journal_conflicts(&self) -> Vec<JournalConflict> {
         let dir = self.journals_path();
         let mut by_date: std::collections::BTreeMap<i64, Vec<(String, PathBuf, bool)>> =
@@ -1350,6 +1367,7 @@ impl Graph {
     /// one-line preview — everything the conflicts panel needs to offer a merge.
     /// These files are deliberately excluded from `list_pages`/the cache
     /// (see [`is_sync_conflict`]); this is the ONLY place they're surfaced.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn list_sync_conflicts(&self) -> Vec<SyncConflict> {
         let mut out = Vec::new();
         for (dir, kind) in [
@@ -1422,6 +1440,7 @@ impl Graph {
     /// copy is deliberately not in the page cache — and aligns the two block trees
     /// (see [`tine_core::sync_diff`]). This is a READ; nothing is written. `Ok(None)`
     /// if either path is invalid or the file is gone.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn sync_conflict_diff(
         &self,
         winner_rel: &str,
@@ -1467,6 +1486,7 @@ impl Graph {
     /// the conflict defines that the winner doesn't, so an `alias::`/`tags::` from
     /// the other device isn't dropped; org keeps the winner's, gated by the
     /// firewall).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn resolve_sync_conflict(
         &self,
         winner_rel: &str,
@@ -1559,6 +1579,7 @@ impl Graph {
     /// "I've reviewed it, the winner is fine, discard the copy" affordance). Guards
     /// that the target actually IS a conflict copy so this can never trash a real
     /// page. Recoverable in `logseq/.tine-trash` (ADR 0007).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn trash_sync_conflict(&self, conflict_rel: &str) -> io::Result<()> {
         let conf = self.resolve_rel(conflict_rel).ok_or_else(bad_path)?;
         if !path_is_sync_conflict(&conf) {
@@ -1580,6 +1601,7 @@ impl Graph {
     /// Raw contents of ONE journal file (by exact filename) — lets the UI show a
     /// duplicate day's individual files (which can't be navigated to separately,
     /// as pages are keyed by date) so the user can inspect before reconciling.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn read_journal_file(&self, name: &str) -> io::Result<String> {
         if name.is_empty() || name.contains('/') || name.contains('\\') {
             return Err(io::Error::new(
@@ -1593,6 +1615,7 @@ impl Graph {
     /// Move ONE journal file (by its exact filename) to the recoverable trash —
     /// the affordance for reconciling a duplicate day. Refuses a path separator so
     /// it can't reach outside `journals/`.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn trash_journal_file(&self, name: &str) -> io::Result<()> {
         if name.is_empty() || name.contains('/') || name.contains('\\') {
             return Err(io::Error::new(
@@ -1958,7 +1981,7 @@ impl Graph {
                 built.entries.entry(entry_key).or_default().push(entry);
             }
             for claimants in built.entries.values_mut() {
-                claimants.sort_by(compare_page_claimants);
+                claimants.sort_by(|a, b| compare_page_claimants(a, b, &self.journal_format));
             }
             built.mark_kind_loaded(kind);
 
@@ -6017,14 +6040,14 @@ fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
 /// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
 /// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
 /// the input order are preserved.
-fn dedup_journal_days(entries: Vec<PageEntry>) -> Vec<PageEntry> {
+fn dedup_journal_days(entries: Vec<PageEntry>, fmt: &JournalFormat) -> Vec<PageEntry> {
     let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let mut out: Vec<PageEntry> = Vec::new();
     for e in entries {
         match e.date_key {
             Some(k) if e.kind == PageKind::Journal => {
                 if let Some(&i) = idx_of.get(&k) {
-                    if compare_page_claimants(&e, &out[i]).is_lt() {
+                    if compare_page_claimants(&e, &out[i], fmt).is_lt() {
                         out[i] = e;
                     }
                 } else {
@@ -6128,6 +6151,7 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
 /// `alias::`/`tags::`/`icon::`. Free text in `theirs`' pre-block is dropped (rare;
 /// the conflict copy is trashed-recoverable). Mirrors the property-carry in
 /// [`Graph::merge_pages`].
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn union_pre(mine: Option<&str>, theirs: Option<&str>) -> Option<String> {
     let mine = mine.unwrap_or("");
     let Some(theirs) = theirs else {
@@ -6269,10 +6293,7 @@ fn encode_page_name(name: &str, fmt: FileNameFormat) -> String {
 /// (`util.cljs:153-160`), so an encoded literal `___` (stored `%5F%5F%5F`)
 /// survives instead of being turned into a separator.
 fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
-    match fmt {
-        FileNameFormat::Legacy => percent_decode(stem),
-        FileNameFormat::TripleLowbar => percent_decode(&stem.replace("___", "/")),
-    }
+    tine_core::model::decode_page_name(stem, fmt)
 }
 
 /// Decode `%XX` percent-escapes (UTF-8 aware, like JS `decodeURIComponent`). An
@@ -7657,7 +7678,7 @@ mod tests {
         .collect();
         matches
             .iter()
-            .find(|e| is_date_stem_entry(e))
+            .find(|e| is_date_stem_entry(e, &g.journal_format))
             .or_else(|| matches.first())
             .cloned()
     }

@@ -108,10 +108,16 @@ fn open_graph_for_load(
     approved_assets: Option<&Path>,
     take_launch_backup: impl FnOnce(&Graph) -> (usize, bool),
 ) -> Result<LoadedGraph, String> {
-    let graph = Graph::open_checked_with_assets(root, approved_assets)
-        .map_err(|e| format!("unsafe graph layout: {e}"))?;
+    // The migration runs through a Store over the graph that will be served,
+    // so its cache sees the renamed files; the Store is dropped before return.
+    let graph = std::sync::Arc::new(
+        Graph::open_checked_with_assets(root, approved_assets)
+            .map_err(|e| format!("unsafe graph layout: {e}"))?,
+    );
     let meta = graph.meta();
-    let needs_migration = graph.has_journal_filename_migrations();
+    let migration_store = tine_store::Store::from_legacy(graph.clone());
+    let needs_migration =
+        tine_graph_features::journals::has_journal_filename_migrations(&migration_store);
     let (backup_n, backup_complete) = if needs_migration {
         take_launch_backup(&graph)
     } else {
@@ -121,8 +127,11 @@ fn open_graph_for_load(
     if needs_migration && launch_backup_done {
         // Recover any journals mis-saved under their title (see method docs),
         // but only after the launch snapshot has captured the original names.
-        graph.migrate_journal_filenames();
+        tine_graph_features::journals::migrate_journal_filenames(&migration_store);
     }
+    drop(migration_store);
+    let graph = std::sync::Arc::try_unwrap(graph)
+        .map_err(|_| "graph still shared after journal migration".to_string())?;
     Ok(LoadedGraph {
         graph,
         meta,

@@ -2,7 +2,7 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 87
+# ceiling: 77
 field model::Graph.config
 field model::Graph.root
 field onboarding::GuideCopyResult.copied_assets
@@ -33,23 +33,18 @@ fn model::Graph::custom_css
 fn model::Graph::delete_page
 fn model::Graph::delete_page_expected
 fn model::Graph::external_assets_target
-fn model::Graph::feed_journals_desc_through
 fn model::Graph::find_entry
 fn model::Graph::force_save_page
 fn model::Graph::forget_file
-fn model::Graph::has_journal_filename_migrations
 fn model::Graph::invalidate_cache
-fn model::Graph::journal_conflicts
 fn model::Graph::journal_content_days
 fn model::Graph::journals_desc
 fn model::Graph::journals_path
 fn model::Graph::list_pages
-fn model::Graph::list_sync_conflicts
 fn model::Graph::load_named
 fn model::Graph::load_page
 fn model::Graph::merge_pages
 fn model::Graph::meta
-fn model::Graph::migrate_journal_filenames
 fn model::Graph::open
 fn model::Graph::open_checked_with_assets
 fn model::Graph::page_aliases
@@ -58,7 +53,6 @@ fn model::Graph::page_index_failures
 fn model::Graph::page_print_html
 fn model::Graph::pages_path
 fn model::Graph::publish_html
-fn model::Graph::read_journal_file
 fn model::Graph::referenced_page_names
 fn model::Graph::rel_path
 fn model::Graph::rename_file_to_page
@@ -67,14 +61,10 @@ fn model::Graph::rename_page_expected
 fn model::Graph::resolve_block
 fn model::Graph::resolve_blocks
 fn model::Graph::resolve_rel
-fn model::Graph::resolve_sync_conflict
 fn model::Graph::run_query
 fn model::Graph::save_page
 fn model::Graph::search
-fn model::Graph::sync_conflict_diff
 fn model::Graph::sync_file
-fn model::Graph::trash_journal_file
-fn model::Graph::trash_sync_conflict
 fn model::Graph::unlinked_refs
 fn model::Graph::warm_cache
 fn model::Graph::warm_cache_cancellable

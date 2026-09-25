@@ -291,9 +291,15 @@ pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
     let old = slot_for_window(&ctx.state, &label)?;
     let approved =
         crate::settings::approved_external_assets(ctx.window.app_handle(), &old.root_key);
-    let graph = Graph::open_checked_with_assets(&old.root_key, approved.as_deref())
-        .map_err(|e| e.to_string())?;
-    graph.migrate_journal_filenames();
+    let graph = Arc::new(
+        Graph::open_checked_with_assets(&old.root_key, approved.as_deref())
+            .map_err(|e| e.to_string())?,
+    );
+    let migration_store = Store::from_legacy(graph.clone());
+    tine_graph_features::journals::migrate_journal_filenames(&migration_store);
+    drop(migration_store);
+    let graph = Arc::try_unwrap(graph)
+        .map_err(|_| "graph still shared after journal migration".to_string())?;
     let replacement = Arc::new(GraphSlot::refreshed(graph, &old));
     ctx.state.graphs.write().unwrap().bind(label, replacement)?;
     poke_watcher(&ctx.state);
