@@ -66,11 +66,11 @@ pub(crate) struct QueryBranch {
 /// otherwise kind plus Logseq's canonical page identity selects the document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryPageScope {
-    pub name: String,
-    pub page_kind: PageKind,
+pub(crate) struct QueryPageScope {
+    pub(crate) name: String,
+    pub(crate) page_kind: PageKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
+    pub(crate) path: Option<String>,
 }
 
 /// Compiled friendly graph-search plan.  Regexes are compiled once and kept off
@@ -806,16 +806,15 @@ impl ScoredBlock<'_> {
         let quality = self.relevance.cmp_quality(&other.relevance);
         quality == Ordering::Greater
             || (quality == Ordering::Equal
-                && (self.page.rel_path.as_str(), self.index)
-                    < (other.page.rel_path.as_str(), other.index))
+                && (self.page.rel_path_str(), self.index)
+                    < (other.page.rel_path_str(), other.index))
     }
 }
 
 impl PartialEq for ScoredBlock<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.relevance.cmp_quality(&other.relevance) == Ordering::Equal
-            && (self.page.rel_path.as_str(), self.index)
-                == (other.page.rel_path.as_str(), other.index)
+            && (self.page.rel_path_str(), self.index) == (other.page.rel_path_str(), other.index)
     }
 }
 impl Eq for ScoredBlock<'_> {}
@@ -828,8 +827,7 @@ impl Ord for ScoredBlock<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         // Max-heap root is the WORST retained candidate, ready for eviction.
         other.relevance.cmp_quality(&self.relevance).then_with(|| {
-            (self.page.rel_path.as_str(), self.index)
-                .cmp(&(other.page.rel_path.as_str(), other.index))
+            (self.page.rel_path_str(), self.index).cmp(&(other.page.rel_path_str(), other.index))
         })
     }
 }
@@ -1171,7 +1169,7 @@ fn execute_pages(
             return None;
         }
         let aliases = aliases_by_owner
-            .get(&page.rel_path)
+            .get(page.rel_path_str())
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         if let Some((base_score, match_class, matched_text, matched_alias)) =
@@ -1186,7 +1184,7 @@ fn execute_pages(
                     match_class,
                     matched_text,
                     matched_alias,
-                    tie_key: page.rel_path.clone(),
+                    tie_key: page.rel_path_str().to_owned(),
                     candidate: PageCandidate::File(index),
                 },
             );
@@ -1222,7 +1220,7 @@ fn execute_pages(
                         name,
                         kind: PageKind::Page,
                         date_key: None,
-                        rel_path: String::new(),
+                        rel_path: None,
                         path: std::path::PathBuf::new(),
                     }),
                 },
@@ -1320,7 +1318,7 @@ fn execute_blocks(
             }
             if let Some(scope) = &plan.page_scope {
                 let selected = match scope.path.as_deref() {
-                    Some(path) => entry.rel_path == path,
+                    Some(path) => entry.rel_path_str() == path,
                     None => {
                         entry.kind == scope.page_kind && refs::same_page(&entry.name, &scope.name)
                     }
@@ -1346,8 +1344,8 @@ fn execute_blocks(
                         || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
                             relevance.cmp_quality(&worst.relevance) == Ordering::Greater
                                 || (relevance.cmp_quality(&worst.relevance) == Ordering::Equal
-                                    && (entry.rel_path.as_str(), candidate_index)
-                                        < (worst.page.rel_path.as_str(), worst.index))
+                                    && (entry.rel_path_str(), candidate_index)
+                                        < (worst.page.rel_path_str(), worst.index))
                         });
                     if retain {
                         push_block(
@@ -1375,7 +1373,7 @@ fn execute_blocks(
         let mut winners = heap.into_vec();
         winners.sort_by(|a, b| {
             b.relevance.cmp_quality(&a.relevance).then_with(|| {
-                (a.page.rel_path.as_str(), a.index).cmp(&(b.page.rel_path.as_str(), b.index))
+                (a.page.rel_path_str(), a.index).cmp(&(b.page.rel_path_str(), b.index))
             })
         });
         Some((
@@ -1398,7 +1396,7 @@ fn execute_blocks(
                     QueryHit::Block {
                         page: winner.page.name.clone(),
                         kind: winner.page.kind,
-                        path: winner.page.rel_path.clone(),
+                        path: winner.page.rel_path.clone().unwrap(),
                         block: dto,
                         display_text: projection.visible.clone(),
                         evidence: matched.evidence,
@@ -1828,7 +1826,9 @@ mod tests {
                     match_class,
                     matched_alias,
                     ..
-                } if !page.rel_path.is_empty() => Some((page.rel_path, match_class, matched_alias)),
+                } if page.rel_path.is_some() => {
+                    Some((page.rel_path_str().to_owned(), match_class, matched_alias))
+                }
                 QueryHit::Page { .. } => None,
                 QueryHit::Block { .. } => None,
             })
@@ -1853,7 +1853,9 @@ mod tests {
                     match_class,
                     matched_alias,
                     ..
-                } if !page.rel_path.is_empty() => Some((page.rel_path, match_class, matched_alias)),
+                } if page.rel_path.is_some() => {
+                    Some((page.rel_path_str().to_owned(), match_class, matched_alias))
+                }
                 QueryHit::Page { .. } => None,
                 QueryHit::Block { .. } => None,
             })
@@ -1956,12 +1958,12 @@ mod tests {
             QueryHit::Page { page, .. } if page.name == "Opdf Notes" => Some(page),
             _ => None,
         });
-        assert_eq!(file_hit.unwrap().rel_path, "pages/Opdf Notes.md");
+        assert_eq!(file_hit.unwrap().rel_path_str(), "pages/Opdf Notes.md");
         let virtual_hit = pages.hits.iter().find_map(|hit| match hit {
             QueryHit::Page { page, .. } if page.name == "Virtual Opdf" => Some(page),
             _ => None,
         });
-        assert_eq!(virtual_hit.unwrap().rel_path, "");
+        assert_eq!(virtual_hit.unwrap().rel_path, None);
 
         let execution = graph.run_graph_search("foo -draft OR ready", 10, 10, true);
         let blocks = execution
@@ -2120,7 +2122,7 @@ mod tests {
                 name: "🧠 Foo".into(),
                 kind: PageKind::Page,
                 date_key: None,
-                rel_path: "pages/Foo.md".into(),
+                rel_path: Some("pages/Foo.md".into()),
                 path: std::path::PathBuf::new(),
             },
             display_text: "🧠 Foo".into(),

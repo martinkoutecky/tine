@@ -2,7 +2,7 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 114
+# ceiling: 105
 field model::Graph.config
 field model::Graph.root
 field onboarding::GuideCopyResult.copied_assets
@@ -13,9 +13,6 @@ field onboarding::GuideCopyResult.skipped_pages
 field publish::PrintOpts.expand_collapsed
 field publish::PrintOpts.font_px
 field publish::PrintOpts.margin_mm
-field query_plan::QueryPageScope.name
-field query_plan::QueryPageScope.page_kind
-field query_plan::QueryPageScope.path
 fn config_edit::Graph::set_default_journal_template
 fn config_edit::Graph::set_doc_mode_enter_for_new_block
 fn config_edit::Graph::set_favorites
@@ -83,12 +80,7 @@ fn model::Graph::resolve_block
 fn model::Graph::resolve_blocks
 fn model::Graph::resolve_rel
 fn model::Graph::resolve_sync_conflict
-fn model::Graph::run_advanced_query_bounded_cached
-fn model::Graph::run_graph_search
-fn model::Graph::run_graph_search_latest_scoped
-fn model::Graph::run_graph_search_scoped
 fn model::Graph::run_query
-fn model::Graph::run_query_bounded
 fn model::Graph::save_asset
 fn model::Graph::save_page
 fn model::Graph::search
@@ -116,4 +108,3 @@ fn store::Store::from_legacy
 struct model::Graph
 struct onboarding::GuideCopyResult
 struct publish::PrintOpts
-struct query_plan::QueryPageScope

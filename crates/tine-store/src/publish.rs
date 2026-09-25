@@ -2748,7 +2748,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
             doc::parse(&content)
         };
         let is_public = all_public || page_is_public(parsed.pre_block.as_deref());
-        tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, &e.rel_path);
+        tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, e.rel_path_str());
         let parsed = Arc::new(parsed);
         snapshot_pages.push((e.clone(), Arc::clone(&parsed)));
         if !is_public {
@@ -3383,7 +3383,7 @@ mod tests {
         for entry in graph.list_pages() {
             let content = fs::read_to_string(&entry.path).unwrap();
             let mut parsed = doc::parse(&content);
-            tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, &entry.rel_path);
+            tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, entry.rel_path_str());
             snapshot_pages.push((entry, Arc::new(parsed)));
         }
         let snapshot = PublicationGraphSnapshot::new(snapshot_pages).unwrap();

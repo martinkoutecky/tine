@@ -1,6 +1,6 @@
 //! Pure query result data shared by the store and clients.
 
-use crate::model::{BlockDto, PageEntry, PageKind};
+use crate::model::{BlockDto, PageEntry, PageId, PageKind};
 use serde::{Deserialize, Serialize};
 
 /// Text field tested by a text predicate.
@@ -110,7 +110,7 @@ pub enum QueryHit {
         kind: PageKind,
         /// Graph-root-relative physical owner of this result. Block ids and page
         /// names are not unique enough to recover it after a duplicate-name hit.
-        path: String,
+        path: PageId,
         block: BlockDto,
         /// Exact lsdoc-projected visible text indexed by `evidence.spans`.
         display_text: String,

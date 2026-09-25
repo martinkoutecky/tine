@@ -477,7 +477,7 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     aliases
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn sorted_alias_owners(
     mut owned: Vec<(std::path::PathBuf, String, String)>,
 ) -> Vec<(String, String)> {
@@ -490,19 +490,6 @@ fn sorted_alias_owners(
         .collect()
 }
 
-#[allow(dead_code)]
-pub(crate) fn page_aliases(graph: &Graph) -> Vec<(String, String)> {
-    graph.with_pages(|pages| {
-        let mut owned = Vec::new();
-        for (entry, doc) in pages {
-            for alias in document_aliases(doc) {
-                owned.push((entry.path.clone(), alias, entry.name.clone()));
-            }
-        }
-        sorted_alias_owners(owned)
-    })
-}
-
 pub(crate) fn page_aliases_with_owners(graph: &Graph) -> Vec<(String, String, String)> {
     graph.with_pages(|pages| {
         let mut owned = Vec::new();
@@ -512,7 +499,7 @@ pub(crate) fn page_aliases_with_owners(graph: &Graph) -> Vec<(String, String, St
                     entry.path.clone(),
                     alias,
                     entry.name.clone(),
-                    entry.rel_path.clone(),
+                    entry.rel_path_str().to_owned(),
                 ));
             }
         }
@@ -1628,7 +1615,7 @@ pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
 /// predicates already exist. Unrecognized clauses (custom rules, `[?e ?a ?v]`
 /// joins, `:view`/`:result-transform`) are listed in `ignored` and skipped, never
 /// guessed (a wrong result is worse than "unsupported").
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn run_advanced_query(
     graph: &Graph,
     query_src: &str,
@@ -4494,7 +4481,7 @@ mod tests {
     fn quick_switch_fingerprint(entries: Vec<PageEntry>) -> Vec<(String, PageKind, String)> {
         entries
             .into_iter()
-            .map(|e| (e.name, e.kind, e.rel_path))
+            .map(|e| (e.name.clone(), e.kind, e.rel_path_str().to_owned()))
             .collect()
     }
 
@@ -4507,7 +4494,7 @@ mod tests {
                         name: (*name).into(),
                         kind: PageKind::Page,
                         date_key: None,
-                        rel_path: (*rel_path).into(),
+                        rel_path: Some((*rel_path).into()),
                         path: (*rel_path).into(),
                     },
                     std::sync::Arc::new(tine_core::doc::parse(source)),
@@ -4677,7 +4664,7 @@ mod tests {
             assert_eq!(result.len(), 1);
             assert_eq!(result[0].name, "alx");
             assert!(
-                result[0].rel_path.is_empty(),
+                result[0].rel_path.is_none(),
                 "winner must be reference-only"
             );
         }
@@ -4821,7 +4808,7 @@ mod tests {
                         name: name.into(),
                         kind: PageKind::Page,
                         date_key: None,
-                        rel_path: rel_path.clone(),
+                        rel_path: Some(rel_path.clone().into()),
                         path: rel_path.into(),
                     },
                     std::sync::Arc::new(tine_core::doc::parse("- tied needle\n")),

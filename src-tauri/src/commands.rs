@@ -13,7 +13,10 @@ use tine_core::date::JournalDate;
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
-use tine_store::{Cancel, FacetPolicy, QueryError, WholeGraph};
+use tine_store::{
+    Budget, Cancel, FacetPolicy, QueryDialect, QueryError, QueryResult, Resolved, SearchRequest,
+    WholeGraph,
+};
 
 fn whole_graph(state: &GraphContext<'_>) -> Result<WholeGraph, String> {
     slot_for_context(state)?
@@ -26,26 +29,45 @@ fn query_error(error: QueryError) -> String {
     match error {
         QueryError::Cancelled => "cancelled".into(),
         QueryError::Parse(reason) => reason,
-        QueryError::RequestTooLarge { what: "backlink filter roots", count, limit } =>
+        QueryError::InvalidTarget(_) => "invalid page path".into(),
+        QueryError::RequestTooLarge { what: Budget::BacklinkFilterRoots, count, limit } =>
             format!("too many backlink filter roots: {count} (limit: {limit})"),
         QueryError::RequestTooLarge { what, count, limit } =>
-            format!("request-too-large: {count} {what} (limit: {limit})"),
+            format!("request-too-large: {count} {} (limit: {limit})", budget_text(what)),
         QueryError::ExportRequestTooLarge { macros, bytes, macro_limit, byte_limit, processing_cap } =>
             format!("query-export-request-too-large: {macros} macros / {bytes} bytes (request limits: {macro_limit} macros / {byte_limit} bytes; processing cap: {processing_cap} macros)"),
-        QueryError::ResultTooLarge { what: "property facets", .. } =>
+        QueryError::ResultTooLarge { what: Budget::PropertyFacets, .. } =>
             "result-too-large: property facets exceed the construction budget".into(),
-        QueryError::ResultTooLarge { what: "resolved block-reference rows", count, .. } =>
+        QueryError::ResultTooLarge { what: Budget::ResolvedBlockRows, count, .. } =>
             format!("result-too-large: {count} resolved block-reference rows exceed the construction budget"),
-        QueryError::ResultTooLarge { what: "requested block references", count, limit, .. } =>
+        QueryError::ResultTooLarge { what: Budget::RequestedBlockRefs, count, limit, .. } =>
             format!("result-too-large: {count} requested block references (limit: {limit})"),
-        QueryError::ResultTooLarge { what: "query export bytes", count, limit, .. } =>
+        QueryError::ResultTooLarge { what: Budget::ExportBytes, count, limit, .. } =>
             format!("query-export-result-too-large: ~{count} bytes (limit: {limit} bytes)"),
-        QueryError::ResultTooLarge { what: "bridge matching blocks", count, bytes: Some(bytes), .. } =>
-            format!("result-too-large: {count} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"),
-        QueryError::ResultTooLarge { what: "matching blocks", count, .. } =>
-            format!("result-too-large: {count} matching blocks; narrow the query or add (sample N) (construction limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"),
+        QueryError::ResultTooLarge { what: Budget::BridgeMatchingBlocks, count, limit, bytes: Some(bytes), byte_limit } =>
+            format!("result-too-large: {count} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {limit} blocks / {byte_limit} bytes)"),
+        QueryError::ResultTooLarge { what: Budget::MatchingBlocks, count, limit, byte_limit, .. } =>
+            format!("result-too-large: {count} matching blocks; narrow the query or add (sample N) (construction limits: {limit} blocks / {byte_limit} bytes)"),
+        QueryError::ResultTooLarge { what: Budget::AdvancedQueryMatches, count, .. } =>
+            format!("result-too-large: {count} advanced-query matches; narrow the query"),
+        QueryError::ResultTooLarge { what: Budget::SearchHits, count, limit, bytes: Some(bytes), byte_limit } =>
+            format!("result-too-large: {count} search hits (~{bytes} bytes); narrow the search (limits: {limit} hits / {byte_limit} bytes)"),
         QueryError::ResultTooLarge { what, count, limit, .. } =>
-            format!("result-too-large: {count} {what} (limit: {limit})"),
+            format!("result-too-large: {count} {} (limit: {limit})", budget_text(what)),
+    }
+}
+
+fn budget_text(what: Budget) -> &'static str {
+    match what {
+        Budget::BacklinkFilterRoots => "backlink filter roots",
+        Budget::MatchingBlocks => "matching blocks",
+        Budget::BridgeMatchingBlocks => "bridge matching blocks",
+        Budget::RequestedBlockRefs => "requested block references",
+        Budget::ResolvedBlockRows => "resolved block-reference rows",
+        Budget::ExportBytes => "query export bytes",
+        Budget::PropertyFacets => "property facets",
+        Budget::AdvancedQueryMatches => "advanced-query matches",
+        Budget::SearchHits => "search hits",
     }
 }
 
@@ -66,9 +88,6 @@ pub(crate) fn save_workspaces(
     crate::settings::save_workspaces(data, app, state)
 }
 
-const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
-const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
-
 fn validate_query_source(query: &str) -> Result<(), String> {
     if !tine_core::query::query_source_within_limit(query) {
         return Err(format!(
@@ -87,24 +106,10 @@ fn validate_query_source(query: &str) -> Result<(), String> {
 fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
     let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
     let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
-    if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
-        return Err(format!(
-            "result-too-large: {rows} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"
-        ));
+    if let Some(error) = QueryError::bridge_matching_blocks(rows, bytes) {
+        return Err(query_error(error));
     }
     Ok(())
-}
-
-fn bounded_groups_or_error(
-    result: tine_core::model::BoundedRefGroups,
-) -> Result<Arc<Vec<RefGroup>>, String> {
-    if result.exceeded {
-        return Err(format!(
-            "result-too-large: {} matching blocks; narrow the query or add (sample N) (construction limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)",
-            result.total
-        ));
-    }
-    Ok(result.groups)
 }
 
 fn enforce_query_execution_budget(
@@ -121,7 +126,7 @@ fn enforce_query_execution_budget(
                 ..
             } => {
                 page.name.len()
-                    + page.rel_path.len()
+                    + page.rel_path_str().len()
                     + display_text.len()
                     + matched_alias.as_ref().map_or(0, String::len)
                     + evidence.len() * 128
@@ -142,23 +147,17 @@ fn enforce_query_execution_budget(
             }
         })
     });
-    if execution.hits.len() > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
-        return Err(format!(
-            "result-too-large: {} search hits (~{bytes} bytes); narrow the search (limits: {RESULT_BRIDGE_MAX_ROWS} hits / {RESULT_BRIDGE_MAX_BYTES} bytes)",
-            execution.hits.len()
-        ));
+    if let Some(error) = QueryError::bridge_search_hits(execution.hits.len(), bytes) {
+        return Err(query_error(error));
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod result_bridge_budget_tests {
-    use super::{
-        enforce_result_bridge_budget, query_error, validate_query_source, RESULT_BRIDGE_MAX_BYTES,
-        RESULT_BRIDGE_MAX_ROWS,
-    };
+    use super::{enforce_result_bridge_budget, query_error, validate_query_source};
     use tine_core::{BlockDto, PageKind, RefGroup};
-    use tine_store::QueryError;
+    use tine_store::{Budget, QueryError};
 
     fn group(blocks: Vec<BlockDto>) -> RefGroup {
         RefGroup {
@@ -171,7 +170,7 @@ mod result_bridge_budget_tests {
 
     #[test]
     fn rejects_oversized_result_count_before_ipc() {
-        let groups = [group(vec![BlockDto::default(); RESULT_BRIDGE_MAX_ROWS + 1])];
+        let groups = [group(vec![BlockDto::default(); 20_001])];
         assert!(enforce_result_bridge_budget(&groups)
             .unwrap_err()
             .starts_with("result-too-large:"));
@@ -180,7 +179,7 @@ mod result_bridge_budget_tests {
     #[test]
     fn rejects_oversized_result_bytes_before_ipc() {
         let mut block = BlockDto::default();
-        block.raw = "x".repeat(RESULT_BRIDGE_MAX_BYTES + 1);
+        block.raw = "x".repeat(33_554_433);
         assert!(enforce_result_bridge_budget(&[group(vec![block])])
             .unwrap_err()
             .starts_with("result-too-large:"));
@@ -203,7 +202,7 @@ mod result_bridge_budget_tests {
     fn moved_read_errors_keep_the_existing_wire_text() {
         assert_eq!(
             query_error(QueryError::RequestTooLarge {
-                what: "backlink filter roots",
+                what: Budget::BacklinkFilterRoots,
                 count: 20_001,
                 limit: 20_000,
             }),
@@ -221,12 +220,17 @@ mod result_bridge_budget_tests {
         );
         assert_eq!(
             query_error(QueryError::ResultTooLarge {
-                what: "bridge matching blocks",
+                what: Budget::BridgeMatchingBlocks,
                 count: 5,
                 limit: 20_000,
                 bytes: Some(33_554_433),
+                byte_limit: 33_554_432,
             }),
             "result-too-large: 5 matching blocks (~33554433 bytes); narrow the query or add (sample N) (limits: 20000 blocks / 33554432 bytes)"
+        );
+        assert_eq!(
+            query_error(QueryError::bridge_search_hits(20_001, 10).unwrap()),
+            "result-too-large: 20001 search hits (~10 bytes); narrow the search (limits: 20000 hits / 33554432 bytes)"
         );
     }
 }
@@ -389,7 +393,7 @@ mod journal_feed_tests {
             name: day.to_string(),
             kind: PageKind::Journal,
             date_key: Some(day),
-            rel_path: String::new(),
+            rel_path: None,
             path: PathBuf::new(),
         }
     }
@@ -788,13 +792,13 @@ pub(crate) fn run_query(
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
     validate_query_source(&query)?;
-    with_graph(&state, |g| {
-        bounded_groups_or_error(g.run_query_bounded(
-            &query,
-            RESULT_BRIDGE_MAX_ROWS,
-            RESULT_BRIDGE_MAX_BYTES,
-        ))
-    })
+    match whole_graph(&state)?
+        .query(&query, QueryDialect::Simple, None)
+        .map_err(query_error)?
+    {
+        QueryResult::Simple(groups) => Ok(groups),
+        QueryResult::Advanced(_) => unreachable!(),
+    }
 }
 
 /// Resolve every query macro in one Copy / Export session under one cumulative
@@ -810,6 +814,15 @@ pub(crate) fn export_query_subtrees(
         .map_err(query_error)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QueryPageScope {
+    name: String,
+    page_kind: PageKind,
+    #[serde(default)]
+    path: Option<String>,
+}
+
 #[tauri::command]
 pub(crate) async fn run_graph_search(
     source: String,
@@ -817,11 +830,14 @@ pub(crate) async fn run_graph_search(
     block_limit: usize,
     lane: Option<String>,
     explain: bool,
-    scope: Option<tine_store::query_plan::QueryPageScope>,
+    scope: Option<QueryPageScope>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let slot = slot_for_context(&state)?;
-    let graph = Arc::clone(&slot.graph);
+    let view = slot
+        .store
+        .whole_graph()
+        .map_err(|e| format!("graph load failed: {e:?}"))?;
     let flag = Arc::new(AtomicBool::new(false));
     if let Some(lane) = lane.as_ref() {
         if let Some(previous) = slot
@@ -833,23 +849,39 @@ pub(crate) async fn run_graph_search(
             previous.store(true, Ordering::Release);
         }
     }
-    let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
-    let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
+    let within = scope.map(|scope| match scope.path {
+        Some(path) => tine_store::PageId::from(path),
+        None => match view.resolve(&scope.name, scope.page_kind == PageKind::Journal) {
+            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
+            Resolved::Alias { owners } => owners.into_iter().next().expect("alias has an owner"),
+        },
+    });
+    let request = SearchRequest {
+        text: source,
+        within,
+        page_limit,
+        block_limit,
+        explain,
+    };
     // QueryExecution carries backward-defaulted per-category `has_more` bits;
     // returning it directly preserves those bits on the Tauri wire.
-    let execution = tauri::async_runtime::spawn_blocking(move || match lane {
-        Some(_) => graph.run_graph_search_latest_scoped(
-            &Cancel(flag),
-            &source,
-            page_limit,
-            block_limit,
-            scope,
-            explain,
-        ),
-        None => graph.run_graph_search_scoped(&source, page_limit, block_limit, scope, explain),
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    let execution =
+        tauri::async_runtime::spawn_blocking(move || view.search(&request, &Cancel(flag)))
+            .await
+            .map_err(|e| e.to_string())?;
+    let execution = match execution {
+        Ok(execution) => execution,
+        Err(QueryError::Cancelled) => tine_core::query_plan::QueryExecution {
+            hits: Vec::new(),
+            diagnostics: Vec::new(),
+            explanation: tine_core::query_plan::QueryExplanation {
+                branches: Vec::new(),
+            },
+            has_more: tine_core::query_plan::QueryHasMore::default(),
+            cancelled: true,
+        },
+        Err(error) => return Err(query_error(error)),
+    };
     enforce_query_execution_budget(&execution)?;
     Ok(execution)
 }
@@ -861,20 +893,20 @@ pub(crate) fn run_advanced_query(
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::AdvancedResult, String> {
     validate_query_source(&query)?;
-    with_graph(&state, |g| {
-        let (result, exceeded, total) = g.run_advanced_query_bounded_cached(
-            &query,
-            current_page.as_deref(),
-            RESULT_BRIDGE_MAX_ROWS,
-            RESULT_BRIDGE_MAX_BYTES,
-        );
-        if exceeded {
-            return Err(format!(
-                "result-too-large: {total} advanced-query matches; narrow the query"
-            ));
-        }
-        Ok(result)
-    })
+    let view = whole_graph(&state)?;
+    let current_id = current_page
+        .as_deref()
+        .map(|name| match view.resolve(name, false) {
+            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
+            Resolved::Alias { owners } => owners.into_iter().next().expect("alias has an owner"),
+        });
+    match view
+        .query(&query, QueryDialect::Advanced, current_id.as_ref())
+        .map_err(query_error)?
+    {
+        QueryResult::Advanced(result) => Ok(result),
+        QueryResult::Simple(_) => unreachable!(),
+    }
 }
 
 #[tauri::command]
@@ -1219,7 +1251,11 @@ pub(crate) fn list_templates(
 
 #[tauri::command]
 pub(crate) fn journal_content_days(state: GraphContext<'_>) -> Result<Vec<i64>, String> {
-    Ok(whole_graph(&state)?.journal_content_days())
+    Ok(whole_graph(&state)?
+        .journal_content_days()
+        .into_iter()
+        .map(|day| day.0)
+        .collect())
 }
 
 #[tauri::command]

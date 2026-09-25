@@ -3,12 +3,35 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use tine_core::model::{BacklinkFilterTarget, PageKind};
+use tine_core::model::{BacklinkFilterTarget, PageEntry, PageKind};
 use tine_core::query::QueryExportSpec;
 use tine_store::model::Graph;
-use tine_store::{Cancel, FacetPolicy, QueryError, Store};
+use tine_store::{
+    Area, Cancel, FacetPolicy, PageId, QueryDialect, QueryError, QueryResult, Resolved,
+    SearchRequest, Store, StoreError,
+};
 
 struct Fixture(std::path::PathBuf);
+
+#[test]
+fn page_entry_empty_path_keeps_legacy_wire_form() {
+    let entry = PageEntry {
+        name: "Virtual".into(),
+        kind: PageKind::Page,
+        date_key: None,
+        rel_path: None,
+        path: std::path::PathBuf::new(),
+    };
+    let value = serde_json::to_value(&entry).unwrap();
+    assert_eq!(value["path"], "");
+    let decoded: PageEntry = serde_json::from_value(value).unwrap();
+    assert!(decoded.rel_path.is_none());
+    let real: PageEntry = serde_json::from_str(
+        r#"{"name":"Real","kind":"page","date_key":null,"path":"pages/Real.md"}"#,
+    )
+    .unwrap();
+    assert_eq!(real.rel_path.unwrap().as_str(), "pages/Real.md");
+}
 
 impl Fixture {
     fn new() -> Self {
@@ -109,7 +132,9 @@ fn all_whole_graph_questions_use_the_public_view() {
     assert!(view.templates().iter().any(|t| t.name == "Example"));
     let icons = view.page_icons(&["Source".into()]);
     assert_eq!(icons.get("Source").map(String::as_str), Some("⭐"));
-    assert!(view.journal_content_days().contains(&20260925));
+    assert!(view
+        .journal_content_days()
+        .contains(&tine_store::Day(20260925)));
 }
 
 #[test]
@@ -135,4 +160,161 @@ fn bounded_and_cancelled_answers_are_typed() {
         fresh.backlinks("Target"),
         Err(QueryError::ResultTooLarge { .. })
     ));
+}
+
+#[test]
+fn identity_resolution_and_wire_paths() {
+    let fixture = Fixture::new();
+    std::fs::write(fixture.0.join("pages/a.org"), "- org twin\n").unwrap();
+    std::fs::write(fixture.0.join("pages/a.md"), "- md twin\n").unwrap();
+    std::fs::write(
+        fixture.0.join("pages/AliasOwner.md"),
+        "alias:: Shortcut\n\n- owner\n",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.0.join("journals/2026_09_25.org"),
+        "- journal twin\n",
+    )
+    .unwrap();
+    let store = Store::from_legacy(Arc::new(Graph::open(&fixture.0)));
+    let view = store.whole_graph().unwrap();
+    let Resolved::Existing { id, others } = view.resolve("a", false) else {
+        panic!("a must exist")
+    };
+    assert_eq!(serde_json::to_string(&id).unwrap(), "\"pages/a.md\"");
+    assert_eq!(
+        others[0].file(),
+        store.file_id(Area::Pages, "a.org").unwrap()
+    );
+    let file = id.file();
+    assert_eq!(serde_json::to_string(&file).unwrap(), "\"pages/a.md\"");
+    assert_eq!(
+        serde_json::from_str::<tine_store::FileId>("\"pages/a.md\"").unwrap(),
+        file
+    );
+    let decoded: PageId = serde_json::from_str("\"pages/a.md\"").unwrap();
+    assert_eq!(decoded, id);
+    let Resolved::Existing { id, others } = view.resolve("Sep 25th, 2026", true) else {
+        panic!("journal must exist")
+    };
+    assert_eq!(id.as_str(), "journals/2026_09_25.md");
+    assert_eq!(others[0].as_str(), "journals/2026_09_25.org");
+    let Resolved::Alias { owners } = view.resolve("Shortcut", false) else {
+        panic!("alias must resolve")
+    };
+    assert_eq!(owners[0].as_str(), "pages/AliasOwner.md");
+    let Resolved::Absent { id } = view.resolve("Missing", false) else {
+        panic!("missing must be absent")
+    };
+    assert_eq!(id.as_str(), "pages/Missing.md");
+}
+
+#[test]
+fn query_and_scoped_search_use_page_identity() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.0.join("pages/Named.md"),
+        "title:: Display Title\nalias:: Shortcut\n\n- TODO exact owner\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(fixture.0.join("pages/archive")).unwrap();
+    std::fs::write(
+        fixture.0.join("pages/archive/Named.md"),
+        "- TODO archived duplicate\n",
+    )
+    .unwrap();
+    let graph = Arc::new(Graph::open(&fixture.0));
+    let view = Store::from_legacy(Arc::clone(&graph))
+        .whole_graph()
+        .unwrap();
+    let QueryResult::Simple(groups) = view
+        .query("(task TODO)", QueryDialect::Simple, None)
+        .unwrap()
+    else {
+        panic!("simple result")
+    };
+    assert!(!groups.is_empty());
+    for name in ["Named", "Shortcut"] {
+        let id = match view.resolve(name, false) {
+            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
+            Resolved::Alias { owners } => owners[0].clone(),
+        };
+        let QueryResult::Advanced(actual) = view
+            .query(
+                "[:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]",
+                QueryDialect::Advanced,
+                Some(&id),
+            )
+            .unwrap()
+        else {
+            panic!("advanced result")
+        };
+        let QueryResult::Advanced(expected) = view
+            .query(
+                "[:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]",
+                QueryDialect::Advanced,
+                None,
+            )
+            .unwrap()
+        else {
+            panic!("advanced result")
+        };
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+    }
+    let within = PageId::from("pages/archive/Named.md");
+    let search = view
+        .search(
+            &SearchRequest {
+                text: "archived".into(),
+                within: Some(within.clone()),
+                page_limit: 10,
+                block_limit: 10,
+                explain: false,
+            },
+            &Cancel(Arc::new(AtomicBool::new(false))),
+        )
+        .unwrap();
+    assert!(search.hits.iter().all(
+        |hit| matches!(hit, tine_core::query_plan::QueryHit::Block { path, .. } if path == &within)
+    ));
+    assert!(!search.hits.is_empty());
+    let cancelled = view.search(
+        &SearchRequest {
+            text: "archived".into(),
+            within: Some(within),
+            page_limit: 10,
+            block_limit: 10,
+            explain: false,
+        },
+        &Cancel(Arc::new(AtomicBool::new(true))),
+    );
+    assert!(matches!(cancelled, Err(QueryError::Cancelled)));
+    for bad in ["../x.md", "pages/../../x.md", "/tmp/x.md"] {
+        let id = PageId::from(bad);
+        assert!(matches!(
+            view.query("(task TODO)", QueryDialect::Simple, Some(&id)),
+            Err(QueryError::InvalidTarget(_))
+        ));
+        assert!(matches!(
+            view.search(
+                &SearchRequest {
+                    text: "x".into(),
+                    within: Some(id),
+                    page_limit: 1,
+                    block_limit: 1,
+                    explain: false
+                },
+                &Cancel(Arc::new(AtomicBool::new(false)))
+            ),
+            Err(QueryError::InvalidTarget(_))
+        ));
+        assert!(matches!(
+            Store::from_legacy(Arc::clone(&graph)).file_id(Area::Pages, bad),
+            Err(StoreError::InvalidTarget(_))
+        ));
+    }
 }

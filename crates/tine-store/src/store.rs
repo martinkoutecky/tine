@@ -23,9 +23,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, BlockPreview, BoundedRefGroups, PageEntry,
-    RefGroup, TemplateDto,
+    PageKind, RefGroup, TemplateDto,
 };
-use tine_core::query::{QueryExportBatch, QueryExportSpec};
+pub use tine_core::model::{FileId, PageId};
+use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
+use tine_core::query_plan::QueryExecution;
 
 use crate::model::Graph;
 
@@ -54,6 +56,57 @@ impl Store {
         Self { graph }
     }
 
+    /// Type a file name within one configured graph area. Validation repeats
+    /// whenever an id is used, including after deserialization.
+    pub fn file_id(&self, area: Area, rel: &str) -> Result<FileId, StoreError> {
+        let directory = match area {
+            Area::Pages => &self.graph.config.pages_dir,
+            Area::Journals => &self.graph.config.journals_dir,
+            Area::Assets => "assets",
+            Area::Meta => "logseq",
+            Area::Trash => "logseq/.tine-trash",
+        };
+        let id = FileId::from(format!("{directory}/{rel}"));
+        self.validate_file(&id)?;
+        Ok(id)
+    }
+
+    pub fn as_page(&self, file: &FileId) -> Option<PageId> {
+        self.validate_file(file).ok()?;
+        let path = file.as_str();
+        let area = path.split('/').next()?;
+        if area != self.graph.config.pages_dir && area != self.graph.config.journals_dir {
+            return None;
+        }
+        let stem = std::path::Path::new(path).file_stem()?.to_str()?;
+        if tine_core::model::is_sync_conflict(stem) {
+            return None;
+        }
+        Some(PageId::from(path))
+    }
+
+    fn validate_file(&self, file: &FileId) -> Result<(), StoreError> {
+        let path = file.as_str();
+        if path.is_empty()
+            || path.starts_with('/')
+            || path.contains('\\')
+            || path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err(StoreError::InvalidTarget(path.to_owned()));
+        }
+        let area = path.split('/').next().unwrap_or_default();
+        if area == self.graph.config.pages_dir || area == self.graph.config.journals_dir {
+            if self.graph.resolve_rel(path).is_none() {
+                return Err(StoreError::InvalidTarget(path.to_owned()));
+            }
+        } else if area != "assets" && area != "logseq" {
+            return Err(StoreError::InvalidTarget(path.to_owned()));
+        }
+        Ok(())
+    }
+
     /// Get a live-cache read view and record its current generation. O(1).
     /// This interim implementation has no load failure or wait; the first
     /// question on the view may build the cache in O(P + B + disk).
@@ -63,6 +116,59 @@ impl Store {
             rev: GraphRev(self.graph.cache_generation()),
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Area {
+    Pages,
+    Journals,
+    Assets,
+    Meta,
+    Trash,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Day(pub i64);
+
+#[derive(Debug)]
+pub enum StoreError {
+    /// Reserved for B4 single-file reads.
+    NotFound,
+    InvalidTarget(String),
+    /// Reserved for B4 single-file reads.
+    Undecodable,
+    /// Reserved for B4 single-file reads.
+    Unparseable(String),
+    /// Reserved for B4 single-file reads.
+    TooLarge {
+        limit: u64,
+        len: u64,
+    },
+    /// Reserved for B4 single-file reads.
+    Io(std::io::Error),
+    /// Reserved for B7 lifecycle.
+    Closed,
+}
+
+pub enum Resolved {
+    Existing { id: PageId, others: Vec<PageId> },
+    Alias { owners: Vec<PageId> },
+    Absent { id: PageId },
+}
+pub struct SearchRequest {
+    pub text: String,
+    pub within: Option<PageId>,
+    pub page_limit: usize,
+    pub block_limit: usize,
+    pub explain: bool,
+}
+pub enum QueryDialect {
+    Simple,
+    Advanced,
+}
+pub enum QueryResult {
+    Simple(Arc<Vec<RefGroup>>),
+    Advanced(AdvancedResult),
 }
 
 /// Cache generation seen at `whole_graph()`. It is not a consistency guard.
@@ -95,9 +201,10 @@ pub enum LoadError {
 /// A whole-graph request failed before returning a partial answer.
 #[derive(Debug)]
 pub enum QueryError {
+    InvalidTarget(String),
     /// Request exceeds the store's fixed input budget.
     RequestTooLarge {
-        what: &'static str,
+        what: Budget,
         count: usize,
         limit: usize,
     },
@@ -112,15 +219,57 @@ pub enum QueryError {
     },
     /// Evaluation reached the store's fixed result budget.
     ResultTooLarge {
-        what: &'static str,
+        what: Budget,
         count: usize,
         limit: usize,
         bytes: Option<usize>,
+        byte_limit: usize,
     },
     /// Query syntax error (reserved for later batches).
     Parse(String),
     /// Caller set the cancellation flag; no partial answer is returned.
     Cancelled,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Budget {
+    BacklinkFilterRoots,
+    MatchingBlocks,
+    BridgeMatchingBlocks,
+    RequestedBlockRefs,
+    ResolvedBlockRows,
+    ExportBytes,
+    PropertyFacets,
+    AdvancedQueryMatches,
+    SearchHits,
+}
+
+impl QueryError {
+    /// Check the final transport estimate after the adapter has assembled groups.
+    pub fn bridge_matching_blocks(rows: usize, bytes: usize) -> Option<Self> {
+        (rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES).then_some(
+            Self::ResultTooLarge {
+                what: Budget::BridgeMatchingBlocks,
+                count: rows,
+                limit: RESULT_BRIDGE_MAX_ROWS,
+                bytes: Some(bytes),
+                byte_limit: RESULT_BRIDGE_MAX_BYTES,
+            },
+        )
+    }
+
+    /// Check the final transport estimate after search serialization fields are known.
+    pub fn bridge_search_hits(hits: usize, bytes: usize) -> Option<Self> {
+        (hits > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES).then_some(
+            Self::ResultTooLarge {
+                what: Budget::SearchHits,
+                count: hits,
+                limit: RESULT_BRIDGE_MAX_ROWS,
+                bytes: Some(bytes),
+                byte_limit: RESULT_BRIDGE_MAX_BYTES,
+            },
+        )
+    }
 }
 
 /// Caller-owned cancellation flag, checked before each search page and block.
@@ -142,13 +291,14 @@ pub struct WholeGraph {
     rev: GraphRev,
 }
 
-fn bounded(result: BoundedRefGroups, what: &'static str) -> Result<Arc<Vec<RefGroup>>, QueryError> {
+fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>, QueryError> {
     if result.exceeded {
         Err(QueryError::ResultTooLarge {
             what,
             count: result.total,
             limit: RESULT_BRIDGE_MAX_ROWS,
             bytes: None,
+            byte_limit: RESULT_BRIDGE_MAX_BYTES,
         })
     } else {
         Ok(result.groups)
@@ -156,6 +306,129 @@ fn bounded(result: BoundedRefGroups, what: &'static str) -> Result<Arc<Vec<RefGr
 }
 
 impl WholeGraph {
+    /// Resolve a name using the configured file naming rules. Real files win
+    /// before aliases; all claimants share the same deterministic order.
+    pub fn resolve(&self, name: &str, is_journal: bool) -> Resolved {
+        let kind = if is_journal {
+            PageKind::Journal
+        } else {
+            PageKind::Page
+        };
+        let entries = self.graph.find_claimants(name, kind);
+        if !entries.is_empty() {
+            let mut ids = entries
+                .into_iter()
+                .map(|entry| entry.rel_path.expect("file claimant has a path"));
+            return Resolved::Existing {
+                id: ids.next().unwrap(),
+                others: ids.collect(),
+            };
+        }
+        if !is_journal {
+            let owners: Vec<_> = self
+                .graph
+                .page_aliases_with_owners()
+                .into_iter()
+                .filter(|(alias, _, _)| tine_core::refs::same_page(alias, name))
+                .map(|(_, _, path)| PageId::from(path))
+                .collect();
+            if !owners.is_empty() {
+                return Resolved::Alias { owners };
+            }
+        }
+        Resolved::Absent {
+            id: PageId::from(self.graph.rel_path(&self.graph.path_for(name, kind))),
+        }
+    }
+
+    fn validated_page(&self, id: &PageId) -> Result<(), QueryError> {
+        let store = Store {
+            graph: Arc::clone(&self.graph),
+        };
+        let file = id.file();
+        if store.as_page(&file).is_none() {
+            return Err(QueryError::InvalidTarget(id.as_str().to_owned()));
+        }
+        Ok(())
+    }
+
+    /// Execute one query macro with the same bounded evaluator as v0.6.5.
+    /// The current evaluator ignores the current page; the id is validated.
+    pub fn query(
+        &self,
+        source: &str,
+        dialect: QueryDialect,
+        current_page: Option<&PageId>,
+    ) -> Result<QueryResult, QueryError> {
+        if let Some(id) = current_page {
+            self.validated_page(id)?;
+        }
+        match dialect {
+            QueryDialect::Simple => bounded(
+                self.graph.run_query_bounded(
+                    source,
+                    RESULT_BRIDGE_MAX_ROWS,
+                    RESULT_BRIDGE_MAX_BYTES,
+                ),
+                Budget::MatchingBlocks,
+            )
+            .map(QueryResult::Simple),
+            QueryDialect::Advanced => {
+                let (result, exceeded, total) = self.graph.run_advanced_query_bounded_cached(
+                    source,
+                    None,
+                    RESULT_BRIDGE_MAX_ROWS,
+                    RESULT_BRIDGE_MAX_BYTES,
+                );
+                if exceeded {
+                    Err(QueryError::ResultTooLarge {
+                        what: Budget::AdvancedQueryMatches,
+                        count: total,
+                        limit: RESULT_BRIDGE_MAX_ROWS,
+                        bytes: None,
+                        byte_limit: RESULT_BRIDGE_MAX_BYTES,
+                    })
+                } else {
+                    Ok(QueryResult::Advanced(result))
+                }
+            }
+        }
+    }
+
+    /// Graph search, including an exact file scope and caller cancellation.
+    pub fn search(
+        &self,
+        req: &SearchRequest,
+        cancel: &Cancel,
+    ) -> Result<QueryExecution, QueryError> {
+        let scope = match &req.within {
+            Some(id) => {
+                self.validated_page(id)?;
+                Some(crate::query_plan::QueryPageScope {
+                    name: String::new(),
+                    page_kind: PageKind::Page,
+                    path: Some(id.as_str().to_owned()),
+                })
+            }
+            None => None,
+        };
+        let page_limit = req.page_limit.min(RESULT_BRIDGE_MAX_ROWS);
+        let block_limit = req.block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
+        let result = self.graph.run_graph_search_latest_scoped(
+            cancel,
+            &req.text,
+            page_limit,
+            block_limit,
+            scope,
+            req.explain,
+        );
+        if result.cancelled {
+            Err(QueryError::Cancelled)
+        } else {
+            Ok(result)
+        }
+    }
+
     /// Cache generation at acquisition, O(1); later reads may see newer data.
     pub fn rev(&self) -> GraphRev {
         self.rev
@@ -166,7 +439,7 @@ impl WholeGraph {
         bounded(
             self.graph
                 .backlinks_bounded(name, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES),
-            "matching blocks",
+            Budget::MatchingBlocks,
         )
     }
 
@@ -175,7 +448,7 @@ impl WholeGraph {
         bounded(
             self.graph
                 .unlinked_refs_bounded(name, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES),
-            "matching blocks",
+            Budget::MatchingBlocks,
         )
     }
 
@@ -188,7 +461,7 @@ impl WholeGraph {
     ) -> Result<BacklinkFilterContext, QueryError> {
         if targets.len() > RESULT_BRIDGE_MAX_ROWS {
             return Err(QueryError::RequestTooLarge {
-                what: "backlink filter roots",
+                what: Budget::BacklinkFilterRoots,
                 count: targets.len(),
                 limit: RESULT_BRIDGE_MAX_ROWS,
             });
@@ -205,10 +478,11 @@ impl WholeGraph {
     pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
         if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
             return Err(QueryError::ResultTooLarge {
-                what: "requested block references",
+                what: Budget::RequestedBlockRefs,
                 count: uuids.len(),
                 limit: RESULT_BRIDGE_MAX_ROWS,
                 bytes: None,
+                byte_limit: RESULT_BRIDGE_MAX_BYTES,
             });
         }
         let (groups, exceeded, total) = crate::query::resolve_blocks_bounded(
@@ -219,10 +493,11 @@ impl WholeGraph {
         );
         if exceeded {
             Err(QueryError::ResultTooLarge {
-                what: "resolved block-reference rows",
+                what: Budget::ResolvedBlockRows,
                 count: total,
                 limit: RESULT_BRIDGE_MAX_ROWS,
                 bytes: None,
+                byte_limit: RESULT_BRIDGE_MAX_BYTES,
             })
         } else {
             Ok(groups)
@@ -247,10 +522,11 @@ impl WholeGraph {
             let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
             if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
                 return Err(QueryError::ResultTooLarge {
-                    what: "bridge matching blocks",
+                    what: Budget::BridgeMatchingBlocks,
                     count: rows,
                     limit: RESULT_BRIDGE_MAX_ROWS,
                     bytes: Some(bytes),
+                    byte_limit: RESULT_BRIDGE_MAX_BYTES,
                 });
             }
         }
@@ -265,7 +541,7 @@ impl WholeGraph {
                 RESULT_BRIDGE_MAX_ROWS,
                 RESULT_BRIDGE_MAX_BYTES,
             ),
-            "matching blocks",
+            Budget::MatchingBlocks,
         )
     }
 
@@ -299,10 +575,11 @@ impl WholeGraph {
         let bytes = tine_core::model::ref_groups_estimated_bytes(&groups);
         if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
             Err(QueryError::ResultTooLarge {
-                what: "bridge matching blocks",
+                what: Budget::BridgeMatchingBlocks,
                 count: rows,
                 limit: RESULT_BRIDGE_MAX_ROWS,
                 bytes: Some(bytes),
+                byte_limit: RESULT_BRIDGE_MAX_BYTES,
             })
         } else {
             Ok(groups)
@@ -353,10 +630,11 @@ impl WholeGraph {
             .sum::<usize>();
         if bytes > QUERY_EXPORT_MAX_BYTES {
             Err(QueryError::ResultTooLarge {
-                what: "query export bytes",
+                what: Budget::ExportBytes,
                 count: bytes,
                 limit: QUERY_EXPORT_MAX_BYTES,
                 bytes: Some(bytes),
+                byte_limit: RESULT_BRIDGE_MAX_BYTES,
             })
         } else {
             Ok(batch)
@@ -378,10 +656,11 @@ impl WholeGraph {
                 );
                 if exceeded {
                     Err(QueryError::ResultTooLarge {
-                        what: "property facets",
+                        what: Budget::PropertyFacets,
                         count: 0,
                         limit: RESULT_BRIDGE_MAX_ROWS,
                         bytes: None,
+                        byte_limit: RESULT_BRIDGE_MAX_BYTES,
                     })
                 } else {
                     Ok(facets)
@@ -406,9 +685,12 @@ impl WholeGraph {
         self.graph.page_icons(names)
     }
 
-    /// Journal days with content, O(journals + their blocks). Interim `i64`
-    /// wire day is retained until the Day identity migration.
-    pub fn journal_content_days(&self) -> Vec<i64> {
-        self.graph.journal_content_days()
+    /// Journal days with content, O(journals + their blocks).
+    pub fn journal_content_days(&self) -> Vec<Day> {
+        self.graph
+            .journal_content_days()
+            .into_iter()
+            .map(Day)
+            .collect()
     }
 }

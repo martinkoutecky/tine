@@ -79,6 +79,91 @@ pub fn path_is_sync_conflict(path: &Path) -> bool {
         .is_some_and(is_sync_conflict)
 }
 
+/// Opaque graph-root-relative file identity. Validation belongs to the store.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FileId(String);
+impl From<String> for FileId {
+    fn from(wire: String) -> Self {
+        Self(wire)
+    }
+}
+impl FileId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Page file identity with the v0.6.5 path string on the wire.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PageId(String);
+impl From<String> for PageId {
+    fn from(wire: String) -> Self {
+        Self(wire)
+    }
+}
+impl From<&str> for PageId {
+    fn from(wire: &str) -> Self {
+        Self::from(wire.to_owned())
+    }
+}
+impl From<PageId> for String {
+    fn from(id: PageId) -> Self {
+        id.0
+    }
+}
+impl PartialEq<str> for PageId {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+impl PartialEq<&str> for PageId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+impl PartialEq<String> for PageId {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
+    }
+}
+impl PartialEq<PageId> for String {
+    fn eq(&self, other: &PageId) -> bool {
+        *self == other.0
+    }
+}
+impl std::fmt::Display for PageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::ops::Deref for PageId {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+impl AsRef<str> for PageId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+impl PageId {
+    pub fn file(&self) -> FileId {
+        FileId::from(self.0.clone())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 /// Lightweight entry for the page list / sidebar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageEntry {
@@ -88,10 +173,38 @@ pub struct PageEntry {
     pub date_key: Option<i64>,
     /// Graph-root-relative path exposed to the frontend so duplicate basenames
     /// can be opened by file, not by ambiguous `(kind,name)`.
-    #[serde(rename = "path", default)]
-    pub rel_path: String,
+    #[serde(rename = "path", default, with = "optional_page_path")]
+    pub rel_path: Option<PageId>,
     #[serde(skip)]
     pub path: PathBuf,
+}
+
+impl PageEntry {
+    pub fn rel_path_str(&self) -> &str {
+        self.rel_path.as_ref().map_or("", PageId::as_str)
+    }
+}
+
+mod optional_page_path {
+    use super::PageId;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        value: &Option<PageId>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value
+            .as_ref()
+            .map_or("", PageId::as_str)
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<PageId>, D::Error> {
+        let wire = String::deserialize(deserializer)?;
+        Ok((!wire.is_empty()).then(|| PageId::from(wire)))
+    }
 }
 
 /// A block as sent to / received from the frontend.

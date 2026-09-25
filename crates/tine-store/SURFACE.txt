@@ -1,10 +1,25 @@
 # tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
 # Counts against 01-arrival.md budget A: <=35 Store+Transaction ops,
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
+enum store::Area
+enum store::Budget
 enum store::FacetPolicy
 enum store::LoadError
+enum store::QueryDialect
 enum store::QueryError
+enum store::QueryResult
+enum store::Resolved
+enum store::StoreError
+field store::SearchRequest.block_limit
+field store::SearchRequest.explain
+field store::SearchRequest.page_limit
+field store::SearchRequest.text
+field store::SearchRequest.within
+fn store::Store::as_page
+fn store::Store::file_id
 fn store::Store::whole_graph
+fn store::QueryError::bridge_matching_blocks
+fn store::QueryError::bridge_search_hits
 fn store::WholeGraph::backlink_filter_context
 fn store::WholeGraph::backlinks
 fn store::WholeGraph::block_ref_counts
@@ -17,11 +32,17 @@ fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::page_icons
 fn store::WholeGraph::preview_block
 fn store::WholeGraph::property_facets
+fn store::WholeGraph::query
+fn store::WholeGraph::resolve
 fn store::WholeGraph::rev
+fn store::WholeGraph::search
 fn store::WholeGraph::templates
 fn store::WholeGraph::unlinked_references
 struct store::Cancel
+struct store::Day
 struct store::GraphRev
+struct store::SearchRequest
 struct store::Store
 struct store::WholeGraph
-use crate::store::{Cancel,FacetPolicy,GraphRev,LoadError,QueryError,Store,WholeGraph}
+use crate::store::{Area,Budget,Cancel,Day,FacetPolicy,FileId,GraphRev,LoadError,PageId,QueryDialect,QueryError,QueryResult,Resolved,SearchRequest,Store,StoreError,WholeGraph,}
+use store::tine_core::model::{FileId,PageId}

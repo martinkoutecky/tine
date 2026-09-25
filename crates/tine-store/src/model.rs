@@ -484,6 +484,20 @@ fn is_date_stem_entry(entry: &PageEntry) -> bool {
         .is_some_and(|s| tine_core::date::JournalDate::from_file_stem(s).is_some())
 }
 
+/// One ordering for every name/day claimant in the legacy cache and store view.
+pub(crate) fn compare_page_claimants(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
+    let date_rank =
+        |entry: &PageEntry| entry.kind == PageKind::Journal && is_date_stem_entry(entry);
+    date_rank(b)
+        .cmp(&date_rank(a))
+        .then_with(|| {
+            let md = |entry: &PageEntry| entry.path.extension().is_some_and(|ext| ext == "md");
+            md(b).cmp(&md(a))
+        })
+        .then_with(|| a.path.file_name().cmp(&b.path.file_name()))
+        .then_with(|| a.path.cmp(&b.path))
+}
+
 /// Gen+today-tagged cache of derived scan results. Reset wholesale whenever the
 /// tag no longer matches — so every entry is always consistent with the current
 /// graph state (no per-entry invalidation to get wrong).
@@ -547,7 +561,7 @@ fn prune_result_cache<T>(
 }
 
 struct FindEntryIndex {
-    entries: std::collections::HashMap<(PageKind, String), PageEntry>,
+    entries: std::collections::HashMap<(PageKind, String), Vec<PageEntry>>,
     pages_loaded: bool,
     journals_loaded: bool,
 }
@@ -863,7 +877,7 @@ impl Graph {
         mut pages: Vec<(PageEntry, Arc<Document>)>,
     ) -> Graph {
         for (entry, document) in &mut pages {
-            assign_doc_runtime_ids(&mut Arc::make_mut(document).roots, &entry.rel_path);
+            assign_doc_runtime_ids(&mut Arc::make_mut(document).roots, entry.rel_path_str());
         }
         let graph = Graph::open(root);
         let entries = pages.iter().map(|(entry, _)| entry.clone()).collect();
@@ -1529,7 +1543,7 @@ impl Graph {
             pre_block,
             roots: merged_roots,
         };
-        assign_doc_runtime_ids(&mut merged.roots, &win_entry.rel_path);
+        assign_doc_runtime_ids(&mut merged.roots, win_entry.rel_path_str());
         let dto = page_dto(&win_entry, &merged);
         let win_cacheable = self.path_is_cacheable(&win);
         // Stage-before-commit (L5): move the conflict copy out first, then write the
@@ -1707,7 +1721,7 @@ impl Graph {
             }
         }
         merged.roots.extend(src_doc.roots);
-        assign_doc_runtime_ids(&mut merged.roots, &dst_entry.rel_path);
+        assign_doc_runtime_ids(&mut merged.roots, dst_entry.rel_path_str());
         let dto = page_dto(&dst_entry, &merged);
         let dst_cacheable = self.path_is_cacheable(&dst);
         // L5: stage `src` into the trash BEFORE committing the merged `dst`. The old
@@ -1790,9 +1804,7 @@ impl Graph {
         let pref = self.preferred_format();
         match kind {
             PageKind::Journal => self
-                .journals_desc()
-                .into_iter()
-                .find(|e| tine_core::refs::same_page(&e.name, name))
+                .find_entry(name, PageKind::Journal)
                 .map(|e| e.path)
                 .unwrap_or_else(|| {
                     // New journal: name it by its date stem in the graph's filename
@@ -1808,22 +1820,14 @@ impl Graph {
                     self.journals_path().join(format!("{stem}.{}", pref.ext()))
                 }),
             PageKind::Page => {
-                // Resolve to an EXISTING file (any format) so a save updates it in
-                // place rather than creating a second file in the other extension;
-                // a brand-new page is created in the graph's preferred format.
-                // Cheap `exists()` probes (the common hit needs one), no dir scan.
+                // Use the same winner as named reads and WholeGraph::resolve.
+                // A brand-new page uses the preferred format.
+                if let Some(entry) = self.find_entry(name, PageKind::Page) {
+                    return entry.path;
+                }
                 let enc = encode_page_name(name, self.config.file_name_format);
                 let dir = self.pages_path();
-                let primary = dir.join(format!("{enc}.{}", pref.ext()));
-                if primary.exists() {
-                    return primary;
-                }
-                let alt_ext = if pref == Format::Org { "md" } else { "org" };
-                let alt = dir.join(format!("{enc}.{alt_ext}"));
-                if alt.exists() {
-                    return alt;
-                }
-                primary
+                dir.join(format!("{enc}.{}", pref.ext()))
             }
         }
     }
@@ -1934,12 +1938,16 @@ impl Graph {
     /// first (which could mismatch the save target and raise a phantom conflict).
     /// The stray is reached by path via `load_by_path`.
     pub fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
+        self.find_claimants(name, kind).into_iter().next()
+    }
+
+    pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
         let key = (kind, tine_core::refs::page_key(name));
         loop {
             let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
             if let Some((g, index)) = self.find_entry_cache.read().unwrap().as_ref() {
                 if *g == gen && index.has_kind(kind) {
-                    return index.entries.get(&key).cloned();
+                    return index.entries.get(&key).cloned().unwrap_or_default();
                 }
             }
 
@@ -1960,16 +1968,10 @@ impl Graph {
                 rel_dir,
             ) {
                 let entry_key = (kind, tine_core::refs::page_key(&entry.name));
-                match built.entries.get_mut(&entry_key) {
-                    Some(winner) => {
-                        if !is_date_stem_entry(winner) && is_date_stem_entry(&entry) {
-                            *winner = entry;
-                        }
-                    }
-                    None => {
-                        built.entries.insert(entry_key, entry);
-                    }
-                }
+                built.entries.entry(entry_key).or_default().push(entry);
+            }
+            for claimants in built.entries.values_mut() {
+                claimants.sort_by(compare_page_claimants);
             }
             built.mark_kind_loaded(kind);
 
@@ -1981,10 +1983,10 @@ impl Graph {
                             index.entries.extend(built.entries);
                             index.mark_kind_loaded(kind);
                         }
-                        index.entries.get(&key).cloned()
+                        index.entries.get(&key).cloned().unwrap_or_default()
                     }
                     _ => {
-                        let found = built.entries.get(&key).cloned();
+                        let found = built.entries.get(&key).cloned().unwrap_or_default();
                         *guard = Some((gen, built));
                         found
                     }
@@ -2475,7 +2477,7 @@ impl Graph {
         // error if it failed).
         let content = read?;
         let mut doc = parse_doc(&entry.path, &content);
-        assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
+        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
         let mut dto = page_dto(entry, &doc);
         dto.read_only = read_only_org(&entry.path, &content);
         dto.rev = rev;
@@ -2504,7 +2506,7 @@ impl Graph {
             Err(e) => return Err(e),
         };
         let mut doc = parse_doc(&abs, &content);
-        assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
+        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
         let mut dto = page_dto(&entry, &doc);
         dto.read_only = read_only_org(&abs, &content);
         dto.rev = Some(content_rev(&content));
@@ -2763,7 +2765,7 @@ impl Graph {
         // Fill runtime ids for any block that lacks one (e.g. PDF-highlight writes)
         // from this physical owner. Blocks saved from the frontend already carry
         // live ids, which are deliberately kept through the in-memory save path.
-        assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
+        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
         // Only the alias map needs dropping when an `alias::` was added/changed/
         // removed — invalidating on every save would make a normal edit an O(P)
         // alias rescan on the next navigation.
@@ -3303,7 +3305,7 @@ impl Graph {
         result
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn advanced_memo(
         &self,
         key: String,
@@ -3317,7 +3319,7 @@ impl Graph {
         .result
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn run_advanced_query_cached(
         &self,
         query_src: &str,
@@ -3339,7 +3341,7 @@ impl Graph {
         })
     }
 
-    pub fn run_advanced_query_bounded_cached(
+    pub(crate) fn run_advanced_query_bounded_cached(
         &self,
         query_src: &str,
         current_page: Option<&str>,
@@ -3435,7 +3437,7 @@ impl Graph {
         })
     }
 
-    pub fn run_query_bounded(
+    pub(crate) fn run_query_bounded(
         &self,
         query_src: &str,
         max_rows: usize,
@@ -3458,7 +3460,7 @@ impl Graph {
     /// Evaluate an advanced (datalog-subset) query, returning the matched groups
     /// plus which clauses ran vs were ignored. Memoized by query text, effective
     /// current page, cache generation, and today.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn run_advanced_query(
         &self,
         query_src: &str,
@@ -3931,7 +3933,8 @@ impl Graph {
     /// Execute the typed, combined graph-search plan (page names + block text).
     /// Commands and page creation remain frontend providers and are deliberately
     /// outside this graph query result.
-    pub fn run_graph_search(
+    #[cfg(test)]
+    pub(crate) fn run_graph_search(
         &self,
         source: &str,
         page_limit: usize,
@@ -3941,7 +3944,8 @@ impl Graph {
         self.run_graph_search_scoped(source, page_limit, block_limit, None, explain)
     }
 
-    pub fn run_graph_search_scoped(
+    #[cfg(test)]
+    pub(crate) fn run_graph_search_scoped(
         &self,
         source: &str,
         page_limit: usize,
@@ -3960,7 +3964,7 @@ impl Graph {
 
     /// Combined graph search with caller-owned cancellation. Transport lanes
     /// decide which prior flag to set; the graph has no transport state.
-    pub fn run_graph_search_latest_scoped(
+    pub(crate) fn run_graph_search_latest_scoped(
         &self,
         cancel: &crate::store::Cancel,
         source: &str,
@@ -4563,7 +4567,7 @@ impl Graph {
                 name,
                 kind: PageKind::Page,
                 date_key: None,
-                rel_path: self.rel_path(&page_path),
+                rel_path: Some(self.rel_path(&page_path).into()),
                 path: page_path.clone(),
             };
             self.cache_upsert(entry, page_doc, page_rev.clone());
@@ -4856,7 +4860,7 @@ impl Graph {
             name,
             kind: PageKind::Page,
             date_key: None,
-            rel_path: self.rel_path(&page_path),
+            rel_path: Some(self.rel_path(&page_path).into()),
             path: page_path.clone(),
         });
         self.cache_upsert(entry, page_doc, page_rev.clone());
@@ -4942,7 +4946,7 @@ impl Graph {
                 name,
                 kind: PageKind::Journal,
                 date_key,
-                rel_path: self.rel_path(path),
+                rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
             })
         } else if path.starts_with(self.pages_path()) {
@@ -4950,7 +4954,7 @@ impl Graph {
                 name: decode_page_name(stem, self.config.file_name_format),
                 kind: PageKind::Page,
                 date_key: None,
-                rel_path: self.rel_path(path),
+                rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
             })
         } else {
@@ -5550,7 +5554,7 @@ impl Graph {
                     name: page.name.clone(),
                     kind: page.kind,
                     date_key,
-                    rel_path: self.rel_path(&path),
+                    rel_path: Some(self.rel_path(&path).into()),
                     path: path.clone(),
                 }
             });
@@ -5821,7 +5825,7 @@ fn parse_page_content(e: &PageEntry, content: &str) -> (Document, String) {
     if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL) {
         panic!("deterministic test sentinel for a page projection panic");
     }
-    assign_doc_runtime_ids(&mut d.roots, &e.rel_path);
+    assign_doc_runtime_ids(&mut d.roots, e.rel_path_str());
     (d, rev)
 }
 
@@ -5842,7 +5846,7 @@ fn isolate_page_parse(
                 "Tine search index skipped page {:?}: page parse/projection panicked: {detail}",
                 e.rel_path
             );
-            Err(e.rel_path)
+            Err(e.rel_path_str().to_owned())
         }
     }
 }
@@ -5917,19 +5921,13 @@ fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
 /// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
 /// the input order are preserved.
 fn dedup_journal_days(entries: Vec<PageEntry>) -> Vec<PageEntry> {
-    let is_canonical = |e: &PageEntry| {
-        e.path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .is_some_and(|s| JournalDate::from_file_stem(s).is_some())
-    };
     let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let mut out: Vec<PageEntry> = Vec::new();
     for e in entries {
         match e.date_key {
             Some(k) if e.kind == PageKind::Journal => {
                 if let Some(&i) = idx_of.get(&k) {
-                    if is_canonical(&e) && !is_canonical(&out[i]) {
+                    if compare_page_claimants(&e, &out[i]).is_lt() {
                         out[i] = e;
                     }
                 } else {
@@ -5983,7 +5981,7 @@ fn list_md(
             name,
             kind,
             date_key,
-            rel_path: rel_under_dir(rel_dir, dir, &path),
+            rel_path: Some(rel_under_dir(rel_dir, dir, &path).into()),
             path,
         });
     });
@@ -7239,7 +7237,7 @@ mod tests {
             .map(|(entry, _)| entry.rel_path.clone())
             .collect::<Vec<_>>();
         paths.sort();
-        paths
+        paths.into_iter().map(|path| path.unwrap().into()).collect()
     }
 
     fn assert_reference_candidates_equal_full_scan(
@@ -7541,8 +7539,8 @@ mod tests {
         fs::write(&bad.path, format!("- {TEST_PAGE_PARSE_PANIC_SENTINEL}\n")).unwrap();
         let needle = "uniquesameshardsibling";
         fs::write(&sibling.path, format!("- {needle}\n")).unwrap();
-        let sibling_path = sibling.rel_path.clone();
-        let bad_path = bad.rel_path.clone();
+        let sibling_path = sibling.rel_path.clone().unwrap();
+        let bad_path = bad.rel_path.clone().unwrap();
 
         let execution = g.run_graph_search(needle, 0, 8, false);
         assert!(
@@ -7567,7 +7565,10 @@ mod tests {
                 hit,
                 tine_core::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
             )));
-        assert_eq!(g.page_index_failures(), vec![bad.rel_path.clone()]);
+        assert_eq!(
+            g.page_index_failures(),
+            vec![bad.rel_path.clone().unwrap().to_string()]
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -7689,7 +7690,7 @@ mod tests {
         let journal = g
             .find_entry("Friday, 26-06-2026", PageKind::Journal)
             .unwrap();
-        assert_eq!(journal.rel_path, "journals/2026_06_26.org");
+        assert_eq!(journal.rel_path_str(), "journals/2026_06_26.org");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -7844,7 +7845,7 @@ mod tests {
                 name: "B".to_string(),
                 kind: PageKind::Page,
                 date_key: None,
-                rel_path: "pages/B.md".to_string(),
+                rel_path: Some("pages/B.md".into()),
                 path: path.clone(),
             };
             write_graph.cache_upsert(entry, parse_doc(&path, content), content_rev(content));
@@ -7903,7 +7904,7 @@ mod tests {
             name: "A".to_string(),
             kind: PageKind::Page,
             date_key: None,
-            rel_path: "pages/A.md".to_string(),
+            rel_path: Some("pages/A.md".into()),
             path: path.clone(),
         };
         g.cache_upsert(
@@ -11181,7 +11182,7 @@ mod tests {
             .find(|e| e.kind == PageKind::Page && e.name == "foo")
             .expect("nested page listed by basename");
         assert_eq!(g.rel_path(&entry.path), "pages/client-a/foo.md");
-        assert_eq!(entry.rel_path, "pages/client-a/foo.md");
+        assert_eq!(entry.rel_path_str(), "pages/client-a/foo.md");
 
         // Openable by name (find_entry resolves via the recursive scan), and the
         // DTO carries the nested path so a later save round-trips in place.
@@ -11305,7 +11306,7 @@ mod tests {
         // have been warmed. The name winner must remain stable while the other
         // physical owner receives its own cached document and revision.
         let mut non_winner = g
-            .load_by_path(&non_winner_entry.rel_path)
+            .load_by_path(non_winner_entry.rel_path_str())
             .unwrap()
             .expect("non-winning duplicate loads by path");
         non_winner.blocks[0].raw = "nested saved sentinel".into();
@@ -11327,7 +11328,10 @@ mod tests {
         );
         let non_winner_loaded = g.load_page(&non_winner_entry).unwrap();
         assert_eq!(non_winner_loaded.blocks[0].raw, "nested saved sentinel");
-        assert_eq!(non_winner_loaded.path, non_winner_entry.rel_path);
+        assert_eq!(
+            non_winner_loaded.path,
+            non_winner_entry.rel_path.clone().unwrap()
+        );
 
         let cached = g.with_pages(|pages| {
             pages
@@ -11347,9 +11351,9 @@ mod tests {
         for (needle, path) in [
             (
                 winner_original.trim_start_matches("- ").trim_end(),
-                logical_winner.rel_path.as_str(),
+                logical_winner.rel_path_str(),
             ),
-            ("nested saved sentinel", non_winner_entry.rel_path.as_str()),
+            ("nested saved sentinel", non_winner_entry.rel_path_str()),
         ] {
             assert!(
                 g.run_graph_search(needle, 0, 8, false).hits.iter().any(|hit| matches!(

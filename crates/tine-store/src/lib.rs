@@ -12,4 +12,7 @@ pub mod publish;
 pub mod query;
 pub mod query_plan;
 pub mod store;
-pub use store::{Cancel, FacetPolicy, GraphRev, LoadError, QueryError, Store, WholeGraph};
+pub use store::{
+    Area, Budget, Cancel, Day, FacetPolicy, FileId, GraphRev, LoadError, PageId, QueryDialect,
+    QueryError, QueryResult, Resolved, SearchRequest, Store, StoreError, WholeGraph,
+};
