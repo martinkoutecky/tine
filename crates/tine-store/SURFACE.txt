@@ -20,6 +20,10 @@ field store::SearchRequest.explain
 field store::SearchRequest.page_limit
 field store::SearchRequest.text
 field store::SearchRequest.within
+field store::InventoryEntry.name
+field store::InventoryEntry.target
+field store::InventoryEntry.is_journal
+field store::InventoryEntry.day
 fn store::Store::as_page
 fn store::Store::file_id
 fn store::Store::open_read
@@ -39,8 +43,10 @@ fn store::WholeGraph::blocks
 fn store::WholeGraph::complete_page_names
 fn store::WholeGraph::export_query_subtrees
 fn store::WholeGraph::find_blocks
+fn store::WholeGraph::inventory
 fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::page_icons
+fn store::WholeGraph::page_mtime
 fn store::WholeGraph::preview_block
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::query
@@ -53,9 +59,11 @@ struct store::Cancel
 struct store::Day
 struct store::FileRev
 struct store::GraphRev
+struct store::Inventory
+struct store::InventoryEntry
 struct store::PageRead
 struct store::SearchRequest
 struct store::Store
 struct store::WholeGraph
-use crate::store::{Area,Budget,Cancel,Day,FacetPolicy,FileId,FileRev,GraphRev,LoadError,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SearchRequest,Store,StoreError,TrashKind,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Day,FacetPolicy,FileId,FileRev,GraphRev,Inventory,InventoryEntry,LoadError,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SearchRequest,Store,StoreError,TrashKind,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}

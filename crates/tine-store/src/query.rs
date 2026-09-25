@@ -2487,7 +2487,7 @@ fn finish_quick_switch_top(
 
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
-pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> {
+pub(crate) fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> {
     let plan = crate::query_plan::QueryPlan::legacy_page_search(query, limit);
     let execution = plan.execute(graph, || false);
     crate::query_plan::page_hits_to_entries(execution.hits)

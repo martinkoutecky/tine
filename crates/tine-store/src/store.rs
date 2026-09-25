@@ -29,7 +29,8 @@
 //! cancelled block search returns `Cancelled`, never a partial answer. Callers
 //! need no cache state, budget constants, lane IDs, or disk paths.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::PathBuf;
@@ -561,6 +562,16 @@ pub enum Resolved {
     Alias { owners: Vec<PageId> },
     Absent { id: PageId },
 }
+/// Physical names, aliases, and names that occur only in references, sorted by
+/// the graph's page identity key. Physical entries retain every file claimant.
+pub struct InventoryEntry {
+    pub name: String,
+    pub target: Resolved,
+    pub is_journal: bool,
+    pub day: Option<Day>,
+}
+
+pub struct Inventory(pub Vec<InventoryEntry>);
 pub struct SearchRequest {
     pub text: String,
     pub within: Option<PageId>,
@@ -712,6 +723,96 @@ fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>,
 }
 
 impl WholeGraph {
+    /// Names and file claimants for the graph. Cost O(P + aliases + referenced
+    /// names); the interim graph may refresh its live directory index.
+    pub fn inventory(&self) -> Arc<Inventory> {
+        let mut entries = Vec::new();
+        let mut visited = HashSet::new();
+        let mut claimed_names = HashSet::new();
+        for page in self.graph.list_pages() {
+            let key = tine_core::refs::page_key(&page.name);
+            if !visited.insert((page.kind, key.clone())) {
+                continue;
+            }
+            let mut by_name: HashMap<String, Vec<PageId>> = HashMap::new();
+            for claimant in self.graph.find_claimants(&page.name, page.kind) {
+                if let Some(id) = claimant.rel_path {
+                    by_name.entry(claimant.name).or_default().push(id);
+                }
+            }
+            for (name, mut ids) in by_name {
+                claimed_names.insert(tine_core::refs::page_key(&name));
+                let id = ids.remove(0);
+                entries.push(InventoryEntry {
+                    name,
+                    target: Resolved::Existing { id, others: ids },
+                    is_journal: page.kind == PageKind::Journal,
+                    day: page.date_key.map(Day),
+                });
+            }
+        }
+        let references = self.graph.referenced_page_names();
+        let reference_spelling: HashMap<_, _> = references
+            .iter()
+            .map(|name| (tine_core::refs::page_key(name), name.as_str()))
+            .collect();
+        // One entry per alias name, owners sorted by path (rev 5
+        // `Resolved::Alias`). An alias that is also a file's name is kept:
+        // v0.6.5 `page_aliases` listed it; `resolve` still prefers the file.
+        let mut alias_owners: BTreeMap<String, (String, Vec<PageId>)> = BTreeMap::new();
+        for (alias, _, owner) in self.graph.page_aliases_with_owners() {
+            let key = tine_core::refs::page_key(&alias);
+            let spelling = reference_spelling
+                .get(&key)
+                .copied()
+                .unwrap_or(&alias)
+                .to_owned();
+            let slot = alias_owners
+                .entry(key)
+                .or_insert_with(|| (spelling, Vec::new()));
+            let owner = PageId::from(owner);
+            if !slot.1.contains(&owner) {
+                slot.1.push(owner);
+            }
+        }
+        let alias_names: HashSet<String> = alias_owners.keys().cloned().collect();
+        for (_, (name, mut owners)) in alias_owners {
+            owners.sort();
+            entries.push(InventoryEntry {
+                name,
+                target: Resolved::Alias { owners },
+                is_journal: false,
+                day: None,
+            });
+        }
+        for name in references {
+            let key = tine_core::refs::page_key(&name);
+            if claimed_names.contains(&key) || alias_names.contains(&key) {
+                continue;
+            }
+            entries.push(InventoryEntry {
+                target: self.resolve(&name, false),
+                name,
+                is_journal: false,
+                day: None,
+            });
+        }
+        entries.sort_by(|a, b| {
+            tine_core::refs::page_key(&a.name)
+                .cmp(&tine_core::refs::page_key(&b.name))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        Arc::new(Inventory(entries))
+    }
+
+    /// File modification time as currently observed. Cost O(1) metadata in
+    /// this interim boundary; B7 will capture it in the snapshot.
+    pub fn page_mtime(&self, id: &PageId) -> Option<std::time::SystemTime> {
+        std::fs::metadata(self.graph.root.join(id.as_str()))
+            .and_then(|m| m.modified())
+            .ok()
+    }
+
     /// Resolve a name using the configured file naming rules. Real files win
     /// before aliases; all claimants share the same deterministic order.
     pub fn resolve(&self, name: &str, is_journal: bool) -> Resolved {

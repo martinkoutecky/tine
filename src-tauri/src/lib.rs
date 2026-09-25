@@ -640,8 +640,7 @@ pub fn run() {
                 graph::load_graph_for_label(root, app.handle(), "main", &state)?;
                 let slot = state::slot_for_window(&state, "main")?;
                 let g = &slot.graph;
-                // These diagnostics enumerate dirs AND force a whole-graph cache
-                // build (journals_desc()/list_pages()) — on the cold-cache critical
+                // These diagnostics build a whole-graph inventory on the cold-cache critical
                 // path to first paint, before warm_cache_async. The format! args
                 // are evaluated regardless of whether diag() ends up writing, so
                 // gate the whole block on debug to keep it off the 99% hot launch.
@@ -649,44 +648,54 @@ pub fn run() {
                     let meta = g.meta();
                     let jdir = g.journals_path();
                     let pdir = g.pages_path();
-                    let count_md = |d: &std::path::Path| {
-                        std::fs::read_dir(d)
-                            .map(|rd| {
-                                rd.flatten()
-                                    .filter(|e| {
-                                        e.path().extension().and_then(|x| x.to_str()) == Some("md")
-                                    })
-                                    .count()
+                    let inventory = slot.store.whole_graph().ok().map(|view| view.inventory());
+                    let physical: Vec<_> = inventory
+                        .iter()
+                        .flat_map(|items| &items.0)
+                        .flat_map(|entry| match &entry.target {
+                            tine_store::Resolved::Existing { id, others } => std::iter::once(id)
+                                .chain(others.iter())
+                                .map(|id| (entry, id))
+                                .collect::<Vec<_>>(),
+                            _ => Vec::new(),
+                        })
+                        .collect();
+                    let count_md = |is_journal: bool| {
+                        physical
+                            .iter()
+                            .filter(|(entry, id)| {
+                                entry.is_journal == is_journal && id.as_str().ends_with(".md")
                             })
-                            .ok()
+                            .count()
                     };
                     diag(format!("graph root: {}", meta.root));
                     diag(format!(
                         "journals dir: {} (exists={}, .md files={:?})",
                         jdir.display(),
                         jdir.is_dir(),
-                        count_md(&jdir)
+                        inventory.as_ref().map(|_| count_md(true))
                     ));
                     diag(format!(
                         "pages dir: {} (exists={}, .md files={:?})",
                         pdir.display(),
                         pdir.is_dir(),
-                        count_md(&pdir)
+                        inventory.as_ref().map(|_| count_md(false))
                     ));
                     diag(format!(
                         "journals recognized as dates: {} | total page entries: {}",
-                        g.journals_desc().len(),
-                        g.list_pages().len()
+                        physical
+                            .iter()
+                            .filter(|(entry, _)| entry.is_journal && entry.day.is_some())
+                            .count(),
+                        physical.len()
                     ));
-                    if let Ok(rd) = std::fs::read_dir(&jdir) {
-                        let sample: Vec<String> = rd
-                            .flatten()
-                            .filter_map(|e| e.file_name().into_string().ok())
-                            .filter(|n| n.ends_with(".md"))
-                            .take(3)
-                            .collect();
-                        diag(format!("sample journal files: {sample:?}"));
-                    }
+                    let sample: Vec<_> = physical
+                        .iter()
+                        .filter(|(entry, id)| entry.is_journal && id.as_str().ends_with(".md"))
+                        .filter_map(|(_, id)| id.as_str().rsplit('/').next())
+                        .take(3)
+                        .collect();
+                    diag(format!("sample journal files: {sample:?}"));
                 }
             } else {
                 diag("NO graph root resolved — set TINE_GRAPH=/path/to/graph");

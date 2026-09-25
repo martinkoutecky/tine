@@ -15,8 +15,8 @@ use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
 use tine_store::{
-    Area, Budget, Cancel, FacetPolicy, PageId, QueryDialect, QueryError, QueryResult, Resolved,
-    SearchRequest, StoreError, TrashKind, WholeGraph,
+    Area, Budget, Cancel, FacetPolicy, Inventory, PageId, QueryDialect, QueryError, QueryResult,
+    Resolved, SearchRequest, StoreError, TrashKind, WholeGraph,
 };
 
 fn page_dto(read: tine_store::PageRead) -> PageDto {
@@ -440,12 +440,168 @@ mod asset_ingress_tests {
 
 #[tauri::command]
 pub(crate) fn list_pages(state: GraphContext<'_>) -> Result<Vec<PageEntry>, String> {
-    with_graph(&state, |g| Ok(g.list_pages()))
+    Ok(list_pages_from_inventory(&whole_graph(&state)?.inventory()))
 }
 
 #[tauri::command]
 pub(crate) fn referenced_page_names(state: GraphContext<'_>) -> Result<Vec<String>, String> {
-    with_graph(&state, |g| Ok(g.referenced_page_names()))
+    Ok(referenced_names_from_inventory(
+        &whole_graph(&state)?.inventory(),
+    ))
+}
+
+fn list_pages_from_inventory(inventory: &Inventory) -> Vec<PageEntry> {
+    let mut rows = Vec::new();
+    for entry in &inventory.0 {
+        if let Resolved::Existing { id, others } = &entry.target {
+            let ids: Vec<&PageId> = if entry.is_journal {
+                vec![id]
+            } else {
+                std::iter::once(id).chain(others).collect()
+            };
+            for id in ids {
+                rows.push(PageEntry {
+                    name: entry.name.clone(),
+                    kind: if entry.is_journal {
+                        PageKind::Journal
+                    } else {
+                        PageKind::Page
+                    },
+                    date_key: entry.day.map(|day| day.0),
+                    rel_path: Some(id.clone()),
+                    path: std::path::PathBuf::new(), // skipped by PageEntry's IPC serializer
+                });
+            }
+        }
+    }
+    rows
+}
+
+fn referenced_names_from_inventory(inventory: &Inventory) -> Vec<String> {
+    // pages.ts adds physical names first and drops case-folded collisions.
+    // Alias property values counted as references in v0.6.5, so include aliases.
+    // page_key also applies NFC, trim, and one boundary slash, so names at
+    // those edges can differ from the previous frontend-visible union.
+    inventory
+        .0
+        .iter()
+        .filter_map(|entry| match &entry.target {
+            Resolved::Absent { .. } | Resolved::Alias { .. } => Some(entry.name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn aliases_from_inventory(inventory: &Inventory) -> Vec<(String, String)> {
+    let names: std::collections::HashMap<&str, &str> = inventory
+        .0
+        .iter()
+        .filter_map(|entry| {
+            if let Resolved::Existing { id, others } = &entry.target {
+                Some(
+                    std::iter::once(id)
+                        .chain(others)
+                        .map(|id| (id.as_str(), entry.name.as_str())),
+                )
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect();
+    let mut rows = Vec::new();
+    for entry in &inventory.0 {
+        if let Resolved::Alias { owners } = &entry.target {
+            for owner in owners {
+                if let Some(name) = names.get(owner.as_str()) {
+                    rows.push((owner.as_str(), entry.name.as_str(), *name));
+                }
+            }
+        }
+    }
+    rows.sort_by(|a, b| {
+        a.0.cmp(b.0)
+            .then_with(|| tine_core::refs::page_key(a.1).cmp(&tine_core::refs::page_key(b.1)))
+    });
+    rows.into_iter()
+        .map(|(_, alias, owner)| (tine_core::refs::page_key(alias), owner.to_owned()))
+        .collect()
+}
+
+#[cfg(test)]
+mod inventory_adapter_tests {
+    use super::*;
+    use tine_store::model::Graph;
+
+    fn sorted_pages(pages: Vec<PageEntry>) -> Vec<String> {
+        let mut rows: Vec<_> = pages
+            .into_iter()
+            .map(|page| serde_json::to_string(&page).unwrap())
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    fn visible_names(pages: Vec<PageEntry>, references: Vec<String>) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut names = Vec::new();
+        for name in pages.into_iter().map(|page| page.name).chain(references) {
+            if seen.insert(name.to_lowercase()) {
+                names.push(name);
+            }
+        }
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn inventory_adapters_match_legacy_fixture() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-inventory-adapter-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for dir in ["pages/nested", "journals"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        for (path, body) in [
+            (
+                "pages/Alpha.md",
+                "title:: Display Alpha\nalias:: Shared\n- [[Only Linked]]\n",
+            ),
+            (
+                "pages/Beta.org",
+                "#+TITLE: Display Beta\nalias:: Shared\n* [[Only Linked]]\n",
+            ),
+            ("pages/nested/Alpha.org", "* nested twin\n"),
+            ("pages/Team%2FChild.md", "- [[Another Ref]]\n"),
+            ("journals/2026_06_26.md", "- canonical\n"),
+            ("journals/Jun 26th, 2026.org", "* duplicate day\n"),
+        ] {
+            std::fs::write(root.join(path), body).unwrap();
+        }
+        let graph = Arc::new(Graph::open(&root));
+        graph.warm_cache();
+        let view = tine_store::Store::from_legacy(Arc::clone(&graph))
+            .whole_graph()
+            .unwrap();
+        let inventory = view.inventory();
+
+        let old_pages = graph.list_pages();
+        let new_pages = list_pages_from_inventory(&inventory);
+        let old_multiset = sorted_pages(old_pages.clone());
+        let new_multiset = sorted_pages(new_pages.clone());
+        assert_eq!(old_multiset, new_multiset);
+        assert_eq!(graph.page_aliases(), aliases_from_inventory(&inventory));
+        assert_eq!(
+            visible_names(old_pages, graph.referenced_page_names()),
+            visible_names(new_pages, referenced_names_from_inventory(&inventory))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[derive(Serialize)]
@@ -1097,7 +1253,7 @@ pub(crate) fn query_facets(
 
 #[tauri::command]
 pub(crate) fn page_aliases(state: GraphContext<'_>) -> Result<Vec<(String, String)>, String> {
-    with_graph(&state, |g| Ok(g.page_aliases()))
+    Ok(aliases_from_inventory(&whole_graph(&state)?.inventory()))
 }
 
 #[tauri::command]

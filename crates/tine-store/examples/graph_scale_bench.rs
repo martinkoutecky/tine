@@ -461,13 +461,14 @@ fn bench_find_entry(root: &Path, names: &[String]) -> io::Result<(f64, f64)> {
 }
 
 fn bench_switcher(root: &Path) -> io::Result<f64> {
-    let graph = Graph::open(root);
+    let graph = std::sync::Arc::new(Graph::open(root));
     let page_count = graph.with_pages(|pages| pages.len());
     black_box(page_count);
+    let view = tine_store::Store::from_legacy(graph).whole_graph().unwrap();
     let mut durations = Vec::with_capacity(SWITCHER_RUNS);
     for _ in 0..SWITCHER_RUNS {
         let started = Instant::now();
-        let results = tine_store::query::quick_switch(&graph, "pa", 12);
+        let results = view.complete_page_names("pa", 12);
         durations.push(started.elapsed());
         assert!(!results.is_empty(), "quick_switch returned no results");
         black_box(results.len());
