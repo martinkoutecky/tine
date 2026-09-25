@@ -4757,6 +4757,7 @@ version = "0.6.5"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "tine-core",
  "tine-store",
 ]

@@ -3,8 +3,7 @@ use crate::debug::diag;
 #[cfg(desktop)]
 use crate::platform::{open_page_source, opener_command, reveal_page_source};
 use crate::state::{
-    capture_quick_switch_slot, refresh_graph, slot_for_context, with_graph, AppState, GraphContext,
-    GraphSlot,
+    capture_quick_switch_slot, refresh_graph, slot_for_context, AppState, GraphContext, GraphSlot,
 };
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1104,7 +1103,8 @@ mod graph_wide_command_boundary_tests {
 
 #[tauri::command]
 pub(crate) fn publish_html(state: GraphContext<'_>) -> Result<(String, usize), String> {
-    with_graph(&state, |g| g.publish_html().map_err(|e| e.to_string()))
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::publish::publish_html(&slot.store).map_err(|error| error.to_string())
 }
 
 /// Render one page to a self-contained HTML document (assets inlined, no sidebar)
@@ -1113,14 +1113,13 @@ pub(crate) fn publish_html(state: GraphContext<'_>) -> Result<(String, usize), S
 #[tauri::command]
 pub(crate) fn page_print_html(
     name: String,
-    opts: tine_store::publish::PrintOpts,
+    opts: tine_graph_features::print::PrintOpts,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
-    with_graph(&state, |g| {
-        g.page_print_html(&name, opts)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "no-page".to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::print::page_print_html(&slot.store, &name, opts)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "no-page".to_string())
 }
 
 #[tauri::command]

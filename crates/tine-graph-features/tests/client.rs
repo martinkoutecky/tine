@@ -63,6 +63,9 @@ fn source_scan_guard_clients_touch_no_path() {
         ("pages", include_str!("../src/pages.rs")),
         ("pdf", include_str!("../src/pdf.rs")),
         ("guide", include_str!("../src/guide.rs")),
+        ("print", include_str!("../src/print.rs")),
+        ("publish", include_str!("../src/publish.rs")),
+        ("render", include_str!("../src/render.rs")),
     ] {
         for forbidden in [
             "std::fs",
@@ -75,8 +78,8 @@ fn source_scan_guard_clients_touch_no_path() {
             ".join(",
             "tine_store::model",
         ] {
-            if name == "config" && forbidden == ".join(" {
-                continue; // EDN favorites join strings, never paths.
+            if matches!(name, "config" | "render") && forbidden == ".join(" {
+                continue; // EDN, rendered text and embedded JavaScript join strings.
             }
             if name == "guide" && forbidden == "std::path" {
                 continue; // Public API accepts the device parent folder for graph creation.

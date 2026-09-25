@@ -10,6 +10,9 @@ pub mod guide;
 pub mod journals;
 pub mod pages;
 pub mod pdf;
+pub mod print;
+pub mod publish;
+mod render;
 pub mod sources;
 
 use std::io;

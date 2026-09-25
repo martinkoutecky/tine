@@ -5,7 +5,6 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
 use tauri::{Manager, Runtime, State, WebviewWindow};
-use tine_store::model::Graph;
 use tine_store::Store;
 
 pub(crate) type WindowKey = String;
@@ -292,14 +291,6 @@ pub(crate) fn capture_quick_switch_slot(
         return Err("stale-graph-binding".into());
     }
     Ok(slot)
-}
-
-pub(crate) fn with_graph<T>(
-    ctx: &GraphContext<'_>,
-    f: impl FnOnce(&Graph) -> Result<T, String>,
-) -> Result<T, String> {
-    let slot = slot_for_context(ctx)?;
-    f(slot.store.legacy())
 }
 
 pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {

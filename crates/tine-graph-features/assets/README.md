@@ -1,6 +1,6 @@
 # Vendored export assets
 
-Static assets bundled into the published HTML export by `src/publish.rs`
+Static assets bundled into the published HTML export by `src/render.rs`
 (`include_str!`-ed and written into the `publish/` output directory).
 
 ## `fuse.min.js`

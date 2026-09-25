@@ -8,7 +8,9 @@ license.workspace = true
 tine-core = { path = "../tine-core" }
 tine-store = { path = "../tine-store" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tine-store = { path = "../tine-store", features = ["legacy-fixtures", "test-faults"] }
 serde_json = { workspace = true }
+sha2 = "0.10"

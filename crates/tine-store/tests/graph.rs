@@ -261,7 +261,8 @@ fn publishes_only_public_pages() {
     std::fs::write(root.join("pages").join("Secret.md"), "- private notes\n").unwrap();
 
     let g = Graph::open(&root);
-    let (dir, n) = g.publish_html().unwrap();
+    let store = Store::from_legacy(Arc::new(g));
+    let (dir, n) = tine_graph_features::publish::publish_html(&store).unwrap();
     assert_eq!(n, 1, "only the public page is published");
     let p = std::fs::read_to_string(format!("{dir}/shared.html")).unwrap();
     assert!(p.contains("<h1 class=\"page\">Shared</h1>"));

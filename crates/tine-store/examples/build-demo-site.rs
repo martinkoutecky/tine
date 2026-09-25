@@ -17,10 +17,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tine_graph_features::guide::create_demo_graph;
+use tine_graph_features::publish::publish_html;
 use tine_store::model::Graph;
-use tine_store::publish::publish_graph;
+use tine_store::Store;
 
 fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
@@ -52,7 +54,8 @@ fn main() {
 
     let mut graph = Graph::open(&tmp);
     graph.config.all_pages_public = true;
-    let (publish_dir, count) = publish_graph(&graph).expect("publish demo graph");
+    let store = Store::from_legacy(Arc::new(graph));
+    let (publish_dir, count) = publish_html(&store).expect("publish demo graph");
     let publish_dir = PathBuf::from(publish_dir);
 
     // Fresh output dir = the published pages, with self-contained asset paths.

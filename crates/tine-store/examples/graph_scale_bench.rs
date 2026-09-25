@@ -500,7 +500,8 @@ fn bench_publish(root: &Path) -> io::Result<(f64, usize)> {
         let page_count = graph.with_pages(|pages| pages.len());
         black_box(page_count);
         let started = Instant::now();
-        let (out, count) = tine_store::publish::publish_graph(&graph)?;
+        let store = tine_store::Store::from_legacy(std::sync::Arc::new(graph));
+        let (out, count) = tine_graph_features::publish::publish_html(&store)?;
         durations.push(started.elapsed());
         assert!(count > 0, "publish_graph returned no pages");
         publish_pages = count;

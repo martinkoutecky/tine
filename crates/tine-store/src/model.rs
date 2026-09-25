@@ -923,6 +923,7 @@ impl Graph {
     /// snapshot. The empty `root` is only a fail-closed fallback: whole-graph
     /// consumers use the preinstalled cache and page list, so they can never
     /// mix these documents with a later revision from the live graph.
+    #[cfg(test)]
     pub(crate) fn from_page_snapshot(
         root: impl AsRef<Path>,
         mut pages: Vec<(PageEntry, Arc<Document>)>,
@@ -3538,21 +3539,6 @@ impl Graph {
         })
     }
 
-    /// Export the whole graph to static HTML under `<root>/publish/`.
-    pub fn publish_html(&self) -> io::Result<(String, usize)> {
-        crate::publish::publish_graph(self)
-    }
-
-    /// Render a single page to a self-contained HTML document for print-to-PDF
-    /// (assets inlined, no sidebar/scripts). `Ok(None)` if the page doesn't exist.
-    pub fn page_print_html(
-        &self,
-        name: &str,
-        opts: crate::publish::PrintOpts,
-    ) -> io::Result<Option<String>> {
-        crate::publish::page_print_html(self, name, opts)
-    }
-
     /// Rename a page, OG-style. Moves its file to the new name and rewrites every
     /// reference across pages AND journals — inline `[[old]]`/`#old`, the page's
     /// OWN self/sibling refs, and bare `tags:: old` property refs — and CASCADES
@@ -4166,6 +4152,7 @@ impl Graph {
     }
 
     /// Read raw bytes of an asset (e.g. a PDF) for the viewer.
+    #[cfg(test)]
     pub(crate) fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
         fs::read(self.asset_file_for_read(name)?)
     }
@@ -4173,6 +4160,7 @@ impl Graph {
     /// Resolve an existing top-level regular asset through the canonical asset
     /// capability. A symlink may point elsewhere inside that approved root, but
     /// can never turn a read/open into access outside it.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub(crate) fn asset_file_for_read(&self, name: &str) -> io::Result<PathBuf> {
         top_level_asset_name(name)?;
         let assets = fs::canonicalize(self.assets_path())?;
@@ -4186,6 +4174,7 @@ impl Graph {
     /// Read an asset only if its current on-disk size is within `max_bytes`.
     /// The post-read check closes the metadata/read race if another process grows
     /// the file between those operations.
+    #[cfg(test)]
     pub(crate) fn read_asset_limited(&self, name: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
         top_level_asset_name(name)?;
         let path = self.asset_file_for_read(name)?;
@@ -5896,6 +5885,7 @@ fn newly_reclassified_page_property_line(existing: &str, proposed: &Document) ->
 /// `assets/` (defense-in-depth; mirrors `trash_asset`). `create_new` already
 /// blocks overwriting an existing file, so the realistic pre-guard outcome was a
 /// stray file, not corruption — but reject it outright anyway.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn top_level_asset_name(name: &str) -> io::Result<()> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err(io::Error::new(
