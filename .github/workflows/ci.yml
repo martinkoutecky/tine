@@ -392,7 +392,7 @@ jobs:
 
   windows-compile:
     name: Full CI / Windows core compile + integration smoke
-    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_test_name != 'diagnoseWinBuild' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -460,6 +460,44 @@ jobs:
           }
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
+
+  # Diagnostic only (branch diagnose/gh594-ellis-debug-build): a portable
+  # Windows test build for one reporter, with a launcher that turns on --debug.
+  diagnose-win-build:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnoseWinBuild'
+    name: Windows test build / portable app
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run build
+      - name: Build release app at this commit
+        run: cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force tine-debug-build | Out-Null
+          Copy-Item target/release/tine.exe tine-debug-build/tine.exe
+          "@echo off`r`nstart `"`" `"%~dp0tine.exe`" --debug`r`n" | Out-File tine-debug-build/Tine-debug.cmd -Encoding ascii
+          $hash = (Get-FileHash tine-debug-build/tine.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sha = git rev-parse HEAD
+          "commit $sha`r`ntine.exe sha256 $hash`r`n" | Out-File tine-debug-build/BUILD.txt -Encoding ascii
+          Get-Content tine-debug-build/BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tine-gh594-debug-build
+          path: tine-debug-build
+          retention-days: 14
 
   android-core-compile:
     name: Full CI / Android core compile
