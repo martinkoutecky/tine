@@ -16,6 +16,10 @@
 //! asset and legacy-asset entries in O(asset trash entries + metadata), leaving
 //! other kinds intact. On an error it returns completed removal counts and
 //! bytes. Callers need no trash layout or legacy name classifier.
+//! `scan_area` lists regular files in O(entries), sorted by area-relative name,
+//! and reports stat/list failures. `WholeGraph::referenced_assets` walks page
+//! text in O(B) on the interim live view. Clients compare these answers without
+//! opening graph paths.
 //!
 //! `target_for_save` resolves a DTO's pinned path or current name. Name lookup
 //! may build the graph cache on first use (O(P + B + disk)); a warm absent or
@@ -45,9 +49,10 @@ use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::model::{classify_legacy_trash_entry, trash_dir_kind, trash_root, TrashEntryKind};
 
@@ -405,8 +410,16 @@ impl Store {
         let area = self.area_root(file)?;
         let (area, candidate) = if let Some(rel) = file.as_str().strip_prefix("assets/") {
             let approved = self.graph.assets_path();
-            let live =
-                fs::canonicalize(self.graph.root.join("assets")).map_err(StoreError::from_io)?;
+            let lexical = self.graph.root.join("assets");
+            let live = match fs::canonicalize(&lexical) {
+                Ok(path) => path,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound && approved == lexical =>
+                {
+                    lexical
+                }
+                Err(error) => return Err(StoreError::from_io(error)),
+            };
             if live != approved {
                 return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
             }
@@ -414,7 +427,20 @@ impl Store {
         } else {
             (area, self.graph.root.join(file.as_str()))
         };
-        let area_canonical = fs::canonicalize(&area).map_err(StoreError::from_io)?;
+        let (area_canonical, area_missing) = match fs::canonicalize(&area) {
+            Ok(path) => (path, false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let root = fs::canonicalize(&self.graph.root).map_err(StoreError::from_io)?;
+                (
+                    root.join(
+                        area.strip_prefix(&self.graph.root)
+                            .map_err(|_| StoreError::InvalidTarget(file.as_str().to_owned()))?,
+                    ),
+                    true,
+                )
+            }
+            Err(error) => return Err(StoreError::from_io(error)),
+        };
         let mut existing = candidate.as_path();
         loop {
             match fs::symlink_metadata(existing) {
@@ -428,7 +454,10 @@ impl Store {
             }
         }
         let resolved = fs::canonicalize(existing).map_err(StoreError::from_io)?;
-        if !resolved.starts_with(&area_canonical) {
+        if !candidate.starts_with(&area)
+            || (!resolved.starts_with(&area_canonical)
+                && !(area_missing && area_canonical.starts_with(&resolved)))
+        {
             return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
         }
         let suffix = candidate
@@ -500,6 +529,125 @@ impl Store {
             return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
         }
         Ok((input, meta.len()))
+    }
+
+    /// Recursively list regular files in one area, sorted by area-relative name.
+    /// Hidden entries and symlinked directories are skipped; stat/list failures
+    /// are reported in `unreadable`. An absent `under` is empty. Cost O(entries).
+    pub fn scan_area(&self, area: Area, under: Option<&str>) -> Result<Listing, StoreError> {
+        if let Some(rel) = under {
+            self.file_id(area, rel)?;
+        }
+        let root = match area {
+            Area::Pages => self.graph.root.join(&self.graph.config.pages_dir),
+            Area::Journals => self.graph.root.join(&self.graph.config.journals_dir),
+            Area::Assets => {
+                let live = match fs::canonicalize(self.graph.root.join("assets")) {
+                    Ok(path) => path,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(Listing::default())
+                    }
+                    Err(error) => return Err(StoreError::from_io(error)),
+                };
+                if live != self.graph.assets_path() {
+                    return Err(StoreError::InvalidTarget("assets".into()));
+                }
+                live
+            }
+            Area::Meta | Area::Trash => self.graph.root.join("logseq"),
+        };
+        let root = if area == Area::Trash {
+            root.join(".tine-trash")
+        } else {
+            root
+        };
+        let start = if let Some(rel) = under {
+            let dir = self.file_id(area, rel)?;
+            if fs::symlink_metadata(root.join(rel)).is_ok_and(|meta| meta.file_type().is_symlink())
+            {
+                return Ok(Listing::default());
+            }
+            self.path_for_os_handoff(&dir)?
+        } else {
+            root.clone()
+        };
+        let mut listing = Listing::default();
+        fn walk(store: &Store, area: Area, root: &Path, dir: &Path, out: &mut Listing) {
+            let entries = match fs::read_dir(dir) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    out.unreadable.push((
+                        dir.strip_prefix(root)
+                            .unwrap_or(dir)
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                        error.into(),
+                    ));
+                    return;
+                }
+            };
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        out.unreadable.push((String::new(), error.into()));
+                        continue;
+                    }
+                };
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if name.starts_with('.') {
+                    continue;
+                }
+                let path = entry.path();
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if area == Area::Meta && rel != "config.edn" && rel != "custom.css" {
+                    continue;
+                }
+                let ty = match entry.file_type() {
+                    Ok(ty) => ty,
+                    Err(error) => {
+                        out.unreadable.push((rel, error.into()));
+                        continue;
+                    }
+                };
+                if ty.is_dir() {
+                    walk(store, area, root, &path, out);
+                } else if ty.is_file() {
+                    match entry.metadata() {
+                        Ok(meta) => {
+                            if let Ok(id) = store.file_id(area, &rel) {
+                                out.files.push(FileEntry {
+                                    page: store.as_page(&id),
+                                    id,
+                                    area,
+                                    rel,
+                                    meta: Some(FileMeta {
+                                        len: meta.len(),
+                                        mtime: meta.modified().ok(),
+                                    }),
+                                });
+                            }
+                        }
+                        Err(error) => out.unreadable.push((rel, error.into())),
+                    }
+                }
+            }
+        }
+        match fs::symlink_metadata(&start) {
+            Ok(_) => walk(self, area, &root, &start, &mut listing),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => listing
+                .unreadable
+                .push((under.unwrap_or("").to_owned(), error.into())),
+        }
+        listing.files.sort_by(|a, b| a.rel.cmp(&b.rel));
+        listing.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(listing)
     }
 
     /// Read and parse one page. This can advance the live cache when its bytes
@@ -579,6 +727,31 @@ pub enum Area {
     Assets,
     Meta,
     Trash,
+}
+
+/// One listed file. `rel` is the exact name within its area; metadata is
+/// present only when the file could be statted. Cost O(1) to inspect.
+pub struct FileEntry {
+    pub id: FileId,
+    pub area: Area,
+    pub rel: String,
+    pub page: Option<PageId>,
+    pub meta: Option<FileMeta>,
+}
+
+/// Metadata observed during a scan. Modification time may be unavailable.
+/// Cost O(1) to inspect.
+pub struct FileMeta {
+    pub len: u64,
+    pub mtime: Option<SystemTime>,
+}
+
+/// Files found by `scan_area`; unreadable entries retain their area-relative
+/// names and I/O errors. Cost O(files + unreadable entries) to inspect.
+#[derive(Default)]
+pub struct Listing {
+    pub files: Vec<FileEntry>,
+    pub unreadable: Vec<(String, crate::IoError)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -861,6 +1034,25 @@ fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>,
 }
 
 impl WholeGraph {
+    /// Asset names mentioned in page preambles or blocks, including decoded URL
+    /// spellings and the first segment of nested image references. Cost
+    /// O(P + B + disk) on the first live-cache build, O(B) thereafter; the
+    /// interim view rescans the loaded blocks on every call.
+    pub fn referenced_assets(&self) -> Arc<HashSet<String>> {
+        let mut names = HashSet::new();
+        self.graph.with_pages(|pages| {
+            for (_, doc) in pages {
+                if let Some(pre) = &doc.pre_block {
+                    crate::model::collect_asset_refs(pre, &mut names);
+                }
+                for block in &doc.roots {
+                    crate::model::collect_block_asset_refs(block, &mut names);
+                }
+            }
+        });
+        Arc::new(names)
+    }
+
     /// Names and file claimants for the graph. Cost O(P + aliases + referenced
     /// names); the interim graph may refresh its live directory index.
     pub fn inventory(&self) -> Arc<Inventory> {

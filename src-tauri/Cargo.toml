@@ -46,6 +46,7 @@ libc = "0.2"
 dirs = "6"
 tine-core = { path = "../crates/tine-core" }
 tine-store = { path = "../crates/tine-store" }
+tine-graph-features = { path = "../crates/tine-graph-features" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,9 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use tine_core::pdf::{Highlight, Position, Rect};
-use tine_store::model::Graph;
+use tine_graph_features::pdf;
+use tine_store::{model::Graph, Store};
+
+fn store(root: &Path) -> Store {
+    Store::from_legacy(Arc::new(Graph::open(root)))
+}
 
 fn scratch(label: &str) -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -67,24 +73,29 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     .unwrap();
     let failed = area("11111111-1111-1111-1111-111111111111", 1001);
     seed_sidecar(&failed_root, &[failed.clone()]);
-    let failed_graph = Graph::open(&failed_root);
-    failed_graph
-        .write_pdf_area_image(
-            "paper.pdf",
-            failed.page,
-            &failed.id,
-            failed.image.unwrap(),
-            b"png",
-        )
-        .unwrap();
+    let failed_graph = store(&failed_root);
+    pdf::write_pdf_area_image(
+        &failed_graph,
+        "paper.pdf",
+        failed.page,
+        &failed.id,
+        failed.image.unwrap(),
+        b"png",
+    )
+    .unwrap();
     fs::write(
         failed_root.join("pages").join("hls__paper.org"),
         "* a\n*** c\n",
     )
     .unwrap();
-    assert!(failed_graph
-        .write_highlights("paper.pdf", "Paper", &[], std::slice::from_ref(&failed.id))
-        .is_err());
+    assert!(pdf::write_highlights(
+        &failed_graph,
+        "paper.pdf",
+        "Paper",
+        &[],
+        std::slice::from_ref(&failed.id)
+    )
+    .is_err());
     assert!(
         area_path(&failed_root, &failed).exists(),
         "failed pair must leave PNG untouched"
@@ -94,24 +105,24 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     let removed = area("22222222-2222-2222-2222-222222222222", 2002);
     let keeper = area("33333333-3333-3333-3333-333333333333", 2002);
     seed_sidecar(&shared_root, &[removed.clone(), keeper.clone()]);
-    let shared_graph = Graph::open(&shared_root);
-    shared_graph
-        .write_pdf_area_image(
-            "paper.pdf",
-            removed.page,
-            &removed.id,
-            removed.image.unwrap(),
-            b"png",
-        )
-        .unwrap();
-    shared_graph
-        .write_highlights(
-            "paper.pdf",
-            "Paper",
-            std::slice::from_ref(&keeper),
-            &[removed.id.clone(), keeper.id.clone()],
-        )
-        .unwrap();
+    let shared_graph = store(&shared_root);
+    pdf::write_pdf_area_image(
+        &shared_graph,
+        "paper.pdf",
+        removed.page,
+        &removed.id,
+        removed.image.unwrap(),
+        b"png",
+    )
+    .unwrap();
+    pdf::write_highlights(
+        &shared_graph,
+        "paper.pdf",
+        "Paper",
+        std::slice::from_ref(&keeper),
+        &[removed.id.clone(), keeper.id.clone()],
+    )
+    .unwrap();
     assert!(
         area_path(&shared_root, &removed).exists(),
         "a shared image stamp must keep the PNG"
@@ -120,19 +131,24 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
     let success_root = scratch("successful-pair");
     let deleted = area("44444444-4444-4444-4444-444444444444", 3003);
     seed_sidecar(&success_root, &[deleted.clone()]);
-    let success_graph = Graph::open(&success_root);
-    success_graph
-        .write_pdf_area_image(
-            "paper.pdf",
-            deleted.page,
-            &deleted.id,
-            deleted.image.unwrap(),
-            b"png",
-        )
-        .unwrap();
-    success_graph
-        .write_highlights("paper.pdf", "Paper", &[], std::slice::from_ref(&deleted.id))
-        .unwrap();
+    let success_graph = store(&success_root);
+    pdf::write_pdf_area_image(
+        &success_graph,
+        "paper.pdf",
+        deleted.page,
+        &deleted.id,
+        deleted.image.unwrap(),
+        b"png",
+    )
+    .unwrap();
+    pdf::write_highlights(
+        &success_graph,
+        "paper.pdf",
+        "Paper",
+        &[],
+        std::slice::from_ref(&deleted.id),
+    )
+    .unwrap();
     assert!(
         !area_path(&success_root, &deleted).exists(),
         "successful pair must move the PNG"

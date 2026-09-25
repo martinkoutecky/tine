@@ -6,6 +6,7 @@ license.workspace = true
 
 [features]
 test-faults = []
+legacy-fixtures = []
 
 [dependencies]
 tine-core = { path = "../tine-core" }
@@ -24,6 +25,7 @@ unicode-segmentation = "1"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+tine-graph-features = { path = "../tine-graph-features" }
 syn = { version = "2", features = ["full"] }
 quote = "1"
 tine-core = { path = "../tine-core", features = ["test-counters"] }

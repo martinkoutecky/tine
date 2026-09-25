@@ -7,17 +7,21 @@
 //! locators; persisted `id::` values remain a separate external reference identity.
 
 use std::fs;
-use std::io::{self, Read, Seek, Write};
+#[cfg(any(test, feature = "legacy-fixtures"))]
+use std::io::Seek;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::RwLock;
 use tine_core::config::{Config, FileNameFormat};
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::doc::{self, DocBlock, Document};
+#[cfg(any(test, feature = "legacy-fixtures"))]
+use tine_core::model::AssetInfo;
 use tine_core::model::{
     is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, sync_conflict_base,
-    AssetInfo, BlockDto, BlockPreview, BoundedRefGroups, Format, GraphMeta, JournalConflict,
-    JournalFile, PageDto, PageEntry, PageKind, RefGroup, ReferenceKind, SyncConflict, TemplateDto,
+    BlockDto, BlockPreview, BoundedRefGroups, Format, GraphMeta, JournalConflict, JournalFile,
+    PageDto, PageEntry, PageKind, RefGroup, ReferenceKind, SyncConflict, TemplateDto,
 };
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use unicode_normalization::UnicodeNormalization;
@@ -4025,6 +4029,7 @@ impl Graph {
     /// media". Conservative: scans every block's `raw` + page `pre_block` for any
     /// `assets/<name>` mention; skips subdirectories (PDF area-image stores) and
     /// `.edn`/dotfiles (sidecars, not media) so nothing in use is ever flagged.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn orphan_assets(&self) -> Vec<AssetInfo> {
         let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
         self.with_pages(|pages| {
@@ -4077,6 +4082,7 @@ impl Graph {
     /// Move an asset file to `logseq/.tine-trash` (recoverable), never a hard
     /// delete by default. Refuses any name with a path separator (top-level
     /// assets only) so it can't reach outside `assets/`.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn trash_asset(&self, name: &str) -> io::Result<()> {
         if name.is_empty() || name.contains('/') || name.contains('\\') {
             return Err(io::Error::new(
@@ -4145,6 +4151,7 @@ impl Graph {
 
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
         let assets = self.assets_path();
         self.ensure_asset_write_target(&assets)?;
@@ -4168,6 +4175,7 @@ impl Graph {
 
     /// Copy a file into `assets/`, returning the stored filename. De-duplicates
     /// against existing assets (never overwrites one already referenced by notes).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn import_asset(&self, src: &Path, name: Option<&str>) -> io::Result<String> {
         // Desired stored name (a timestamped name from the frontend), else the
         // source basename. `reserve_asset` still dedups same-name collisions.
@@ -4202,6 +4210,7 @@ impl Graph {
     /// Stream an already-open native capture into `assets/` without ever
     /// materializing it as a bridge/base64 value. The source handle is the
     /// capability validated by the native caller; collision retries rewind it.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn import_asset_file(
         &self,
         src: &mut fs::File,
@@ -4237,6 +4246,7 @@ impl Graph {
     /// **Non-dedup on purpose:** the filename IS the stable link from the `.edn`
     /// entry to the file, so a re-save must overwrite in place rather than rename
     /// on collision (which `reserve_asset` would do, breaking the link).
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn write_pdf_area_image(
         &self,
         pdf_filename: &str,
@@ -4270,6 +4280,7 @@ impl Graph {
     /// is already committed, so a cleanup failure must not make the frontend
     /// restore stale state. Any sidecar change before or immediately after a move
     /// aborts cleanup, rolling that move back when possible.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn trash_deleted_pdf_area_images(
         &self,
         source_key: &str,
@@ -4351,10 +4362,12 @@ impl Graph {
     /// `legacy_asset_key` exists, read that instead (it is migrated forward to
     /// the new key on the next `write_highlights`). This keeps highlights made
     /// by pre-launch Tine builds from disappearing after the key change.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn read_highlights(&self, pdf_filename: &str) -> Vec<tine_core::pdf::Highlight> {
         self.read_pdf_state(pdf_filename).highlights
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn read_pdf_state(&self, pdf_filename: &str) -> tine_core::pdf::PdfState {
         let key = tine_core::pdf::asset_key(pdf_filename);
         let s = self
@@ -4375,6 +4388,7 @@ impl Graph {
             .unwrap_or_default()
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn existing_hls_page_path(&self, key: &str) -> io::Result<Option<PathBuf>> {
         let name = tine_core::pdf::hls_page_name(key);
         let md = self.pages_path().join(format!("{name}.md"));
@@ -4389,6 +4403,7 @@ impl Graph {
         }
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn hls_page_path(&self, pdf_filename: &str, key: &str) -> io::Result<PathBuf> {
         if let Some(existing) = self.existing_hls_page_path(key)? {
             return Ok(existing);
@@ -4416,6 +4431,7 @@ impl Graph {
         )))
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn pdf_sidecar_for_update(&self, pdf_filename: &str) -> io::Result<PathBuf> {
         let key = tine_core::pdf::asset_key(pdf_filename);
         let primary = self.assets_path().join(format!("{key}.edn"));
@@ -4436,6 +4452,7 @@ impl Graph {
     /// sidecars/pages are read without being rewritten; only missing artifacts are
     /// created. Old Tine-key artifacts remain in place until the established
     /// edit-time migration path can carry their notes forward safely.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn open_pdf(
         &self,
         pdf_filename: &str,
@@ -4508,6 +4525,7 @@ impl Graph {
     /// with highlight writes so an in-app highlight update cannot race this
     /// read-modify-write; external writers are handled by the same bounded
     /// compare/retry discipline.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn write_pdf_view_state(
         &self,
         pdf_filename: &str,
@@ -4556,6 +4574,7 @@ impl Graph {
         ))
     }
 
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn asset_key_in_use_by_pdf(&self, candidate_key: &str) -> bool {
         let Ok(entries) = fs::read_dir(self.assets_path()) else {
             return false;
@@ -4576,6 +4595,7 @@ impl Graph {
     /// `base_ids` are the highlight ids the editor LOADED (its baseline) — used for
     /// a 3-way merge so a highlight the user deleted is honored while one added
     /// externally (e.g. by OG between load and write) is still preserved.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub fn write_highlights(
         &self,
         pdf_filename: &str,
@@ -4920,6 +4940,7 @@ impl Graph {
     /// bytes this call published; a later external edit is never knowingly
     /// replaced. A newly-created sidecar is moved to recoverable conflict trash
     /// rather than hard-deleted.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     fn rollback_highlight_sidecar(
         &self,
         path: &Path,
@@ -5825,6 +5846,7 @@ fn top_level_asset_name(name: &str) -> io::Result<()> {
 /// real edit produces a minimal diff instead of flipping every line (Syncthing
 /// churn vs a Windows editor). New files stay LF. Shared by write_page +
 /// write_highlights so the two can't drift on it.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn serialize_pdf_hls_page(
     path: &Path,
     document: &Document,
@@ -5863,6 +5885,7 @@ fn read_optional_text(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn validate_highlight_edn(raw: &str) -> io::Result<()> {
     if raw.trim().is_empty() {
         return Ok(());
@@ -5943,11 +5966,13 @@ const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_PANIC__";
 /// `flow.drawio_1.svg` (a naive last-dot split), which would still end in `.svg`
 /// but no longer match `\.drawio\.svg$` and silently lose the editor button
 /// (GH #38). Longest match wins; case-insensitive.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 const COMPOUND_ASSET_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.png"];
 
 /// Split an asset filename into (stem, extension) for de-dup counter insertion,
 /// preserving known compound extensions (see `COMPOUND_ASSET_EXTS`). Falls back
 /// to a last-dot split for ordinary single extensions.
+#[cfg(any(test, feature = "legacy-fixtures"))]
 fn split_asset_stem_ext(name: &str) -> (String, String) {
     let lower = name.to_ascii_lowercase();
     for ext in COMPOUND_ASSET_EXTS {
@@ -6292,7 +6317,7 @@ fn hex_nibble(c: u8) -> Option<u8> {
 /// (mis-truncating it would make `orphan_assets` flag a file that IS in use). The
 /// first path segment is added too, so a PDF area-image ref (`assets/<key>/p.png`)
 /// marks `<key>` as in use.
-fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) {
+pub(crate) fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) {
     let mut rest = text;
     while let Some(i) = rest.find("assets/") {
         let after = &rest[i + "assets/".len()..];
@@ -6330,7 +6355,7 @@ fn insert_asset_ref(into: &mut std::collections::HashSet<String>, raw: &str) {
     into.insert(raw.to_string());
 }
 
-fn collect_block_asset_refs(b: &DocBlock, into: &mut std::collections::HashSet<String>) {
+pub(crate) fn collect_block_asset_refs(b: &DocBlock, into: &mut std::collections::HashSet<String>) {
     collect_asset_refs(&b.raw, into);
     for c in &b.children {
         collect_block_asset_refs(c, into);
@@ -10874,8 +10899,8 @@ mod tests {
             canonical.canonicalize().unwrap()
         );
         assert!(store
-            .path_for_os_handoff(&crate::store::PageId::from("assets/Note.md").file())
-            .is_err());
+            .as_page(&crate::store::PageId::from("assets/Note.md").file())
+            .is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 

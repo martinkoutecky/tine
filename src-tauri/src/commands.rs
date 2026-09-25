@@ -19,6 +19,20 @@ use tine_store::{
     Resolved, SaveBase, SaveOutcome, SearchRequest, StoreError, TrashKind, WholeGraph,
 };
 
+fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
+    error.to_string().replace(
+        "logseq/.tine-trash/assets",
+        &slot
+            .root_key
+            .join("logseq/.tine-trash/assets")
+            .display()
+            .to_string(),
+    )
+}
+fn feature_pdf_error(error: std::io::Error) -> String {
+    error.to_string()
+}
+
 fn page_dto(read: tine_store::PageRead) -> PageDto {
     let mut doc = read.doc;
     doc.rev = Some(read.rev.into());
@@ -1817,10 +1831,38 @@ pub(crate) fn import_asset(
     name: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
-    with_graph(&state, |g| {
-        g.import_asset(std::path::Path::new(&path), name.as_deref())
-            .map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    let source_path = std::path::Path::new(&path);
+    let chosen = name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            source_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| "bad source filename".to_string())?;
+    if chosen.is_empty()
+        || chosen == "."
+        || chosen == ".."
+        || chosen.contains('/')
+        || chosen.contains('\\')
+    {
+        return Err("bad asset name".into());
+    }
+    let source =
+        std::fs::File::open(source_path).map_err(|error| feature_asset_error(error, &slot))?;
+    tine_graph_features::assets::import_asset(
+        &slot.store,
+        &chosen,
+        tine_store::Content::Stream {
+            source,
+            max_bytes: u64::MAX,
+        },
+    )
+    .map_err(|error| feature_asset_error(error, &slot))
 }
 
 /// Import a bounded Android photo or voice memo by native cache-file capability.
@@ -1890,12 +1932,16 @@ pub(crate) fn import_native_capture(
             max_bytes / (1024 * 1024)
         ));
     }
-    let mut capture = capture.into_std();
-    let stored = with_graph(&state, |graph| {
-        graph
-            .import_asset_file(&mut capture, &name, max_bytes)
-            .map_err(|error| error.to_string())
-    })?;
+    let slot = slot_for_context(&state)?;
+    let stored = tine_graph_features::assets::import_asset_file(
+        &slot.store,
+        &name,
+        tine_store::Content::Stream {
+            source: capture.into_std(),
+            max_bytes,
+        },
+    )
+    .map_err(|error| feature_asset_error(error, &slot))?;
     // The graph asset is authoritative now. Cleanup failure is harmless cache
     // litter and must not make the frontend omit the already-durable reference.
     let _ = cache_dir.remove_file(filename);
@@ -2373,13 +2419,16 @@ mod editor_argv_tests {
 pub(crate) fn list_orphan_assets(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::AssetInfo>, String> {
-    with_graph(&state, |g| Ok(g.orphan_assets()))
+    let slot = slot_for_context(&state)?;
+    Ok(tine_graph_features::assets::orphan_assets(&slot.store))
 }
 
 /// Move an orphaned asset to the recoverable trash.
 #[tauri::command]
 pub(crate) fn trash_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
-    with_graph(&state, |g| g.trash_asset(&name).map_err(|e| e.to_string()))
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::assets::trash_asset(&slot.store, &name)
+        .map_err(|error| feature_asset_error(error, &slot))
 }
 
 /// Count + total bytes in the recoverable asset trash.
@@ -2560,9 +2609,9 @@ pub(crate) fn save_asset(
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let bytes = decode_asset_b64(&bytes_b64)?;
-    with_graph(&state, |g| {
-        g.save_asset(&name, &bytes).map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::assets::save_asset(&slot.store, &name, &bytes)
+        .map_err(|error| feature_asset_error(error, &slot))
 }
 
 #[tauri::command]
@@ -2570,7 +2619,8 @@ pub(crate) fn read_highlights(
     pdf: String,
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::pdf::Highlight>, String> {
-    with_graph(&state, |g| Ok(g.read_highlights(&pdf)))
+    let slot = slot_for_context(&state)?;
+    Ok(tine_graph_features::pdf::read_highlights(&slot.store, &pdf))
 }
 
 #[tauri::command]
@@ -2579,9 +2629,8 @@ pub(crate) fn open_pdf(
     label: String,
     state: GraphContext<'_>,
 ) -> Result<tine_core::pdf::PdfState, String> {
-    with_graph(&state, |g| {
-        g.open_pdf(&pdf, &label).map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::pdf::open_pdf(&slot.store, &pdf, &label).map_err(feature_pdf_error)
 }
 
 #[tauri::command]
@@ -2592,10 +2641,9 @@ pub(crate) fn write_highlights(
     base_ids: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.write_highlights(&pdf, &label, &highlights, &base_ids)
-            .map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::pdf::write_highlights(&slot.store, &pdf, &label, &highlights, &base_ids)
+        .map_err(feature_pdf_error)
 }
 
 #[tauri::command]
@@ -2605,10 +2653,9 @@ pub(crate) fn write_pdf_view_state(
     scale: f64,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_graph(&state, |g| {
-        g.write_pdf_view_state(&pdf, page, scale)
-            .map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::pdf::write_pdf_view_state(&slot.store, &pdf, page, scale)
+        .map_err(feature_pdf_error)
 }
 
 #[tauri::command]
@@ -2621,8 +2668,7 @@ pub(crate) fn save_pdf_area_image(
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let bytes = decode_asset_b64(&bytes_b64)?;
-    with_graph(&state, |g| {
-        g.write_pdf_area_image(&pdf, page, &id, stamp, &bytes)
-            .map_err(|e| e.to_string())
-    })
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::pdf::write_pdf_area_image(&slot.store, &pdf, page, &id, stamp, &bytes)
+        .map_err(feature_pdf_error)
 }

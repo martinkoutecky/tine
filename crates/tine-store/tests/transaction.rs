@@ -192,7 +192,7 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
         Why::Refused(Refusal::InvalidTarget(_))
     ));
     let mut tx = f.store.transaction();
-    tx.create_unique(Area::Assets, "../bad", "png", Content::Bytes(vec![1]));
+    tx.create_unique(Area::Assets, "../bad", ".png", Content::Bytes(vec![1]));
     assert!(matches!(
         refused(tx.commit()).0,
         Why::Refused(Refusal::InvalidTarget(_))
@@ -219,7 +219,12 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
         Why::Refused(Refusal::RepeatedFile(_))
     ));
     let mut tx = f.store.transaction();
-    tx.create_unique(Area::Assets, "y", "bin", Content::Bytes(b"unique".to_vec()));
+    tx.create_unique(
+        Area::Assets,
+        "y",
+        ".bin",
+        Content::Bytes(b"unique".to_vec()),
+    );
     tx.create(&y, Content::Bytes(b"fixed".to_vec()));
     assert!(matches!(
         refused(tx.commit()).0,
@@ -306,7 +311,7 @@ fn unique_names_and_stream_limit() {
     f.put("assets/x.png", b"old");
     f.put("assets/x_1.png", b"old1");
     let mut tx = f.store.transaction();
-    tx.create_unique(Area::Assets, "x", "png", Content::Bytes(b"new".to_vec()));
+    tx.create_unique(Area::Assets, "x", ".png", Content::Bytes(b"new".to_vec()));
     match &committed(tx.commit())[0] {
         StepResult::Written { file, .. } => assert_eq!(file.as_str(), "assets/x_2.png"),
         other => panic!("{other:?}"),
@@ -320,7 +325,7 @@ fn unique_names_and_stream_limit() {
     tx.create_unique(
         Area::Assets,
         "large",
-        "bin",
+        ".bin",
         Content::Stream {
             source: File::open(source).unwrap(),
             max_bytes: 4,
@@ -488,7 +493,7 @@ mod faults {
                     tx.create_unique(
                         Area::Assets,
                         "unique",
-                        "bin",
+                        ".bin",
                         Content::Bytes(b"new".to_vec()),
                     );
                 }

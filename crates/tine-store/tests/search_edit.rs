@@ -1,8 +1,11 @@
 //! Regression: full-text search reflects a marker toggle once the edited page is
 //! saved back (the path a {{query}}-result edit takes).
+use std::sync::Arc;
 use tine_core::PageKind;
+use tine_graph_features::{assets, pdf};
 use tine_store::model::atomic_copy;
 use tine_store::model::Graph;
+use tine_store::Store;
 
 fn mk(tag: &str) -> std::path::PathBuf {
     // Unique per test (pid + tag) so parallel tests don't share a dir.
@@ -473,7 +476,7 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
 fn write_highlights_preserves_externally_added_ones() {
     use tine_core::pdf::{Highlight, Position, Rect};
     let root = mk("hlmerge");
-    let g = Graph::open(&root);
+    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
     let mk_hl = |id: &str, text: &str| {
         let r = Rect {
             top: 0.0,
@@ -496,15 +499,14 @@ fn write_highlights_preserves_externally_added_ones() {
             image: None,
         }
     };
-    let ids = |g: &Graph| -> std::collections::HashSet<String> {
-        g.read_highlights("paper.pdf")
+    let ids = |store: &Store| -> std::collections::HashSet<String> {
+        pdf::read_highlights(store, "paper.pdf")
             .into_iter()
             .map(|h| h.id)
             .collect()
     };
     // Tine writes H1 (no baseline yet).
-    g.write_highlights("paper.pdf", "Paper", &[mk_hl("H1", "one")], &[])
-        .unwrap();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[mk_hl("H1", "one")], &[]).unwrap();
     // An external editor (OG) adds H2 to the same EDN.
     let edn_path = root
         .join("assets")
@@ -513,7 +515,8 @@ fn write_highlights_preserves_externally_added_ones() {
     both.push(mk_hl("H2", "two"));
     std::fs::write(&edn_path, tine_core::pdf::write_highlights(&both, "")).unwrap();
     // Tine, baseline [H1], adds H3 and writes — H2 (external) must NOT be dropped.
-    g.write_highlights(
+    pdf::write_highlights(
+        &store,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
@@ -521,21 +524,22 @@ fn write_highlights_preserves_externally_added_ones() {
     )
     .unwrap();
     assert!(
-        ids(&g).is_superset(&["H1", "H2", "H3"].map(String::from).into_iter().collect()),
+        ids(&store).is_superset(&["H1", "H2", "H3"].map(String::from).into_iter().collect()),
         "got {:?}",
-        ids(&g)
+        ids(&store)
     );
 
     // Now DELETE H2: baseline is everything currently on disk; current omits H2.
-    let base: Vec<String> = ids(&g).into_iter().collect();
-    g.write_highlights(
+    let base: Vec<String> = ids(&store).into_iter().collect();
+    pdf::write_highlights(
+        &store,
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
         &base,
     )
     .unwrap();
-    let after = ids(&g);
+    let after = ids(&store);
     assert!(
         !after.contains("H2"),
         "deleted highlight must stay deleted: {after:?}"
@@ -554,8 +558,9 @@ fn highlight_write_is_not_seen_as_external_change() {
     // against it — post-write, disk_revs reflects the write and suppresses the poll.
     use tine_core::pdf::{asset_key, hls_page_name, Highlight, Position, Rect};
     let root = mk("hlself");
-    let g = Graph::open(&root);
+    let g = Arc::new(Graph::open(&root));
     g.search("x", 10); // build the cache
+    let store = Store::from_legacy(Arc::clone(&g));
 
     let r = Rect {
         top: 0.0,
@@ -577,7 +582,7 @@ fn highlight_write_is_not_seen_as_external_change() {
         text: Some("noted".into()),
         image: None,
     };
-    g.write_highlights("paper.pdf", "Paper", &[h], &[]).unwrap();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]).unwrap();
 
     let hls_path = root
         .join("pages")
@@ -707,11 +712,9 @@ fn trash_asset_errors_when_trash_path_is_file_and_keeps_source() {
     std::fs::write(root.join("logseq").join(".tine-trash"), "not a dir").unwrap();
     let asset = root.join("assets").join("clip.png");
     std::fs::write(&asset, b"asset bytes").unwrap();
-    let g = Graph::open(&root);
+    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
 
-    let err = g
-        .trash_asset("clip.png")
-        .expect_err("trash path is blocked");
+    let err = assets::trash_asset(&store, "clip.png").expect_err("trash path is blocked");
     assert!(
         err.to_string().contains(".tine-trash"),
         "error should name the trash path: {err}"

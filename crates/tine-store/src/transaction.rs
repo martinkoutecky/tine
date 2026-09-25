@@ -90,6 +90,7 @@ pub enum TxOutcome {
 pub enum FaultPoint {
     Stage2Mismatch,
     Stage2MismatchAt(usize),
+    Stage2ValidSidecar,
     NoReplaceCollision,
     MidStepIo,
     MidStepIoAt(usize),
@@ -102,6 +103,7 @@ pub enum FaultPoint {
 pub(crate) enum FaultPoint {
     Stage2Mismatch,
     Stage2MismatchAt(usize),
+    Stage2ValidSidecar,
     NoReplaceCollision,
     MidStepIo,
     MidStepIoAt(usize),
@@ -229,6 +231,9 @@ impl<'a> Transaction<'a> {
         self
     }
 
+    /// Create an area file with v0.6.5 asset collision naming. `ext` is the
+    /// suffix returned by `split_asset_stem_ext` (including its leading dot),
+    /// or empty for extensionless names. Cost O(file bytes + collisions).
     pub fn create_unique(
         &mut self,
         area: Area,
@@ -482,20 +487,20 @@ impl<'a> Transaction<'a> {
                 ext,
                 content,
             } => {
-                if stem.is_empty()
-                    || ext.is_empty()
-                    || ext.contains('.')
-                    || ext.contains('/')
-                    || ext.contains('\\')
+                let first = format!("{stem}{ext}");
+                if first.is_empty()
+                    || first == "."
+                    || first == ".."
+                    || first.contains('/')
+                    || first.contains('\\')
+                    || (!ext.is_empty() && !ext.starts_with('.'))
                 {
-                    return Err(Why::Refused(Refusal::InvalidTarget(format!(
-                        "{stem}.{ext}"
-                    ))));
+                    return Err(Why::Refused(Refusal::InvalidTarget(format!("{stem}{ext}"))));
                 }
                 let file = self
                     .store
-                    .file_id(*area, &format!("{stem}.{ext}"))
-                    .map_err(|_| Why::Refused(Refusal::InvalidTarget(format!("{stem}.{ext}"))))?;
+                    .file_id(*area, &first)
+                    .map_err(|_| Why::Refused(Refusal::InvalidTarget(first.clone())))?;
                 if *area == Area::Trash
                     || (*area == Area::Meta && file.as_str().contains("/.tine-"))
                 {
@@ -512,9 +517,9 @@ impl<'a> Transaction<'a> {
                 }
                 for index in 0usize.. {
                     let rel = if index == 0 {
-                        format!("{stem}.{ext}")
+                        first.clone()
                     } else {
-                        format!("{stem}_{index}.{ext}")
+                        format!("{stem}_{index}{ext}")
                     };
                     let candidate = self
                         .store
@@ -612,6 +617,15 @@ impl<'a> Transaction<'a> {
 
     fn verify(&self, file: &FileId, old: Option<&[u8]>, index: usize) -> Result<(), Why> {
         let path = self.path(file)?;
+        if fault(self.store, FaultPoint::Stage2ValidSidecar) {
+            let external = b"{:highlights [] :foreign \"external\"}";
+            let result = if old.is_some() {
+                atomic_write(&path, external)
+            } else {
+                atomic_write_new(&path, external)
+            };
+            result.map_err(failed)?;
+        }
         if fault(self.store, FaultPoint::Stage2Mismatch)
             || fault(self.store, FaultPoint::Stage2MismatchAt(index))
         {
@@ -786,9 +800,9 @@ impl<'a> Transaction<'a> {
                 for attempt in 0usize.. {
                     let file = if unique {
                         let rel = if attempt == 0 {
-                            format!("{stem}.{ext}")
+                            format!("{stem}{ext}")
                         } else {
-                            format!("{stem}_{attempt}.{ext}")
+                            format!("{stem}_{attempt}{ext}")
                         };
                         self.store
                             .file_id(area, &rel)

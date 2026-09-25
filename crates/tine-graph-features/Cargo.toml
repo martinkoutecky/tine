@@ -1,0 +1,12 @@
+[package]
+name = "tine-graph-features"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tine-core = { path = "../tine-core" }
+tine-store = { path = "../tine-store" }
+
+[dev-dependencies]
+tine-store = { path = "../tine-store", features = ["legacy-fixtures", "test-faults"] }
