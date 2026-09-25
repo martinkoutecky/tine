@@ -4773,6 +4773,7 @@ dependencies = [
  "sha2",
  "syn 2.0.117",
  "tine-core",
+ "tine-store",
  "unicode-normalization",
  "unicode-segmentation",
  "uuid",

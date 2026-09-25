@@ -200,6 +200,13 @@ pub struct Graph {
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
 }
 
+pub(crate) enum Withdrawal {
+    Exact,
+    ExternalLive,
+    ExternalRecovery(PathBuf),
+    Missing,
+}
+
 struct PageCacheIndex {
     by_name: std::collections::HashMap<(PageKind, String), usize>,
     by_path: std::collections::HashMap<PathBuf, usize>,
@@ -827,7 +834,7 @@ impl Graph {
     /// Asset writes have their own capability boundary. Keeping this separate
     /// from `ensure_write_target` means approving external assets cannot widen a
     /// page/config/publish write into the same directory.
-    fn ensure_asset_write_target(&self, target: &Path) -> io::Result<()> {
+    pub(crate) fn ensure_asset_write_target(&self, target: &Path) -> io::Result<()> {
         if self.assets_root == self.root.join("assets") {
             return self.ensure_write_target(target);
         }
@@ -908,7 +915,7 @@ impl Graph {
     /// section. The `page_locks` map mutex is released before the per-page lock is
     /// taken, so callers never serialize on the map. Opportunistically prunes
     /// entries no caller still holds (strong_count == 1) to bound growth.
-    fn page_lock(&self, path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+    pub(crate) fn page_lock(&self, path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
         let mut map = self.page_locks.lock().unwrap();
         if map.len() >= 64 {
             map.retain(|_, v| std::sync::Arc::strong_count(v) > 1);
@@ -4954,17 +4961,68 @@ impl Graph {
     /// conflict trash. Exact expected bytes stay there as the withdrawn copy; a
     /// different inode is restored if the live name is free, or retained in
     /// recovery if another writer has already recreated the name.
-    fn withdraw_file_to_conflict_if_exact(
+    pub(crate) fn withdraw_file_to_conflict_if_exact(
         &self,
         path: &Path,
         expected: &[u8],
         reason: &str,
     ) -> io::Result<bool> {
+        self.withdraw_file_to_conflict_if(path, reason, |staged| {
+            fs::read(staged).map(|bytes| bytes == expected)
+        })
+        .map(|result| matches!(result, Withdrawal::Exact))
+    }
+
+    pub(crate) fn transaction_withdraw_exact(
+        &self,
+        path: &Path,
+        expected: &[u8],
+        reason: &str,
+    ) -> io::Result<Withdrawal> {
+        self.withdraw_file_to_conflict_if(path, reason, |staged| {
+            fs::read(staged).map(|bytes| bytes == expected)
+        })
+    }
+
+    pub(crate) fn withdraw_file_to_conflict_if_matching_file(
+        &self,
+        path: &Path,
+        expected: &Path,
+        reason: &str,
+    ) -> io::Result<Withdrawal> {
+        self.withdraw_file_to_conflict_if(path, reason, |staged| {
+            let mut left = fs::File::open(staged)?;
+            let mut right = fs::File::open(expected)?;
+            let mut l = [0u8; 64 * 1024];
+            let mut r = [0u8; 64 * 1024];
+            loop {
+                let ln = left.read(&mut l)?;
+                let rn = right.read(&mut r)?;
+                if ln != rn || l[..ln] != r[..rn] {
+                    return Ok(false);
+                }
+                if ln == 0 {
+                    return Ok(true);
+                }
+            }
+        })
+    }
+
+    fn withdraw_file_to_conflict_if(
+        &self,
+        path: &Path,
+        reason: &str,
+        matches: impl FnOnce(&Path) -> io::Result<bool>,
+    ) -> io::Result<Withdrawal> {
         withdrawal_race_hook(path)?;
         if fs::symlink_metadata(path).is_err_and(|error| error.kind() == io::ErrorKind::NotFound) {
-            return Ok(false);
+            return Ok(Withdrawal::Missing);
         }
-        self.ensure_write_target(path)?;
+        if path.starts_with(&self.assets_root) {
+            self.ensure_asset_write_target(path)?;
+        } else {
+            self.ensure_write_target(path)?;
+        }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
         self.ensure_write_target(&trash)?;
         fs::create_dir_all(&trash)?;
@@ -4975,24 +5033,26 @@ impl Graph {
         let staged = trash.join(format!("{}__{reason}__{name}", trash_stamp()));
         match move_file_noreplace(path, &staged) {
             Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Withdrawal::Missing)
+            }
             Err(error) => return Err(error),
         }
-        let staged_bytes = match fs::read(&staged) {
-            Ok(bytes) => bytes,
+        let equal = match matches(&staged) {
+            Ok(equal) => equal,
             Err(error) => {
                 let _ = move_file_noreplace(&staged, path);
                 return Err(error);
             }
         };
-        if staged_bytes == expected {
-            return Ok(true);
+        if equal {
+            return Ok(Withdrawal::Exact);
         }
         match move_file_noreplace(&staged, path) {
-            Ok(()) => Ok(false),
+            Ok(()) => Ok(Withdrawal::ExternalLive),
             // A new live winner appeared after staging. Keeping the displaced
             // inode in conflict trash preserves both versions.
-            Err(_) if path.exists() => Ok(false),
+            Err(_) if path.exists() => Ok(Withdrawal::ExternalRecovery(staged)),
             Err(error) => Err(error),
         }
     }
@@ -5197,6 +5257,12 @@ impl Graph {
     /// Drop a file deleted on disk from the cache; returns the entry if it was
     /// cached (so the UI can react).
     pub fn forget_file(&self, path: &Path) -> Option<PageEntry> {
+        let own_delete = self
+            .recent_writes
+            .lock()
+            .unwrap()
+            .remove(path)
+            .is_some_and(|rev| rev == "<tx-deleted>");
         let entry = self.entry_for_path(path)?;
         let was_cached = {
             let guard = self.cache.read().unwrap();
@@ -5205,7 +5271,7 @@ impl Graph {
                 .is_some_and(|c| self.cached_page_index_for_path(c, &entry.path).is_some())
         };
         self.cache_remove_path(&entry);
-        was_cached.then_some(entry)
+        (was_cached && !own_delete).then_some(entry)
     }
 
     /// Resolve the file a save writes to, and whether it participates in the
@@ -5335,17 +5401,66 @@ impl Graph {
             .map(|(rev, _)| rev)
     }
 
-    /// Write a page to `path` (already resolved + locked by the caller), reproducing
-    /// `existing`'s formatting, and return the new on-disk content rev (computed from
-    /// what was written — no extra read).
-    fn write_page(
+    pub(crate) fn prepare_page_bytes(
         &self,
         page: &PageDto,
         path: &Path,
         existing: Option<&str>,
-        recheck: bool,
-        cache: bool,
-    ) -> io::Result<(String, bool)> {
+    ) -> io::Result<Vec<u8>> {
+        self.prepare_page_content(page, path, existing)
+            .map(|(content, _)| content.into_bytes())
+    }
+
+    pub(crate) fn transaction_note_page(&self, path: &Path, bytes: &[u8]) {
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            self.note_self_write(path, content_rev(text));
+        }
+    }
+
+    pub(crate) fn transaction_note_delete(&self, path: &Path) {
+        self.note_self_write(path, "<tx-deleted>".into());
+    }
+
+    pub(crate) fn transaction_publish_page(&self, path: &Path) {
+        match fs::read_to_string(path) {
+            Ok(content) => {
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.sync_file_content(path, &content, false)
+                }))
+                .is_err()
+                {
+                    self.invalidate_cache();
+                    self.page_index_failures
+                        .write()
+                        .unwrap()
+                        .push(self.rel_path(path));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let _ = self.forget_file(path);
+            }
+            Err(_) => self.invalidate_cache(),
+        }
+        *self.page_list_cache.write().unwrap() = None;
+        *self.find_entry_cache.write().unwrap() = None;
+        self.recent_writes.lock().unwrap().remove(path);
+    }
+
+    pub(crate) fn transaction_clear_page_marker(&self, path: &Path) {
+        self.recent_writes.lock().unwrap().remove(path);
+    }
+
+    pub(crate) fn transaction_bump_generation(&self) {
+        self.cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    fn prepare_page_content(
+        &self,
+        page: &PageDto,
+        path: &Path,
+        existing: Option<&str>,
+    ) -> io::Result<(String, Document)> {
         // (A new journal's `path` was named by `path_for` using the graph's
         // `:journal/file-name-format` — so custom-format graphs create the correct
         // file for the day instead of a misplaced default-named duplicate.)
@@ -5454,6 +5569,20 @@ impl Graph {
                 tine_core::org::serialize_org_detect(&doc, existing)
             }
         };
+        Ok((content, doc))
+    }
+    /// Write a page to `path` (already resolved + locked by the caller), reproducing
+    /// `existing`'s formatting, and return the new on-disk content rev (computed from
+    /// what was written — no extra read).
+    fn write_page(
+        &self,
+        page: &PageDto,
+        path: &Path,
+        existing: Option<&str>,
+        recheck: bool,
+        cache: bool,
+    ) -> io::Result<(String, bool)> {
+        let (content, doc) = self.prepare_page_content(page, path, existing)?;
         // No-op save: identical bytes already on disk (e.g. focus/blur with no real
         // edit, or a forced flush of an unchanged page). Skip the write, the
         // watcher record, AND — crucially — the cache update below.
@@ -5498,7 +5627,7 @@ impl Graph {
                     kind: page.kind,
                     date_key,
                     rel_path: Some(self.rel_path(&path).into()),
-                    path: path.clone(),
+                    path: path.to_path_buf(),
                 }
             });
             // H4: for org, the on-disk bytes are authoritative. If the user typed a
@@ -6349,7 +6478,7 @@ fn legacy_name_is_asset(name: &str) -> bool {
     )
 }
 
-fn trash_stamp() -> String {
+pub(crate) fn trash_stamp() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static SEQ: AtomicU64 = AtomicU64::new(0);

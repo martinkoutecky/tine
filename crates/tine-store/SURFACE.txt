@@ -2,6 +2,29 @@
 # Counts against 01-arrival.md budget A: <=35 Store+Transaction ops,
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
 enum store::Area
+enum transaction::Content
+enum transaction::Refusal
+enum transaction::StepResult
+enum transaction::TxOutcome
+enum transaction::Why
+field transaction::IoError.kind
+field transaction::IoError.message
+field transaction::Rollback.kept_external
+field transaction::Rollback.undo_failed
+fn transaction::Store::transaction
+fn transaction::Transaction::commit
+fn transaction::Transaction::create
+fn transaction::Transaction::create_unique
+fn transaction::Transaction::move_file
+fn transaction::Transaction::replace
+fn transaction::Transaction::rewrite_refs
+fn transaction::Transaction::save_page
+fn transaction::Transaction::trash
+struct transaction::IoError
+struct transaction::RenameMap
+struct transaction::Rollback
+struct transaction::Transaction
+use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TxOutcome,Why,}
 enum store::Budget
 enum store::FacetPolicy
 enum store::LoadError

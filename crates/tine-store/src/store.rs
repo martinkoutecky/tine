@@ -20,13 +20,14 @@
 //! `target_for_save` resolves a DTO's pinned path or current name. Name lookup
 //! may build the graph cache on first use (O(P + B + disk)); a warm absent or
 //! alias lookup still scans O(aliases). Aliases keep their own prospective file.
-//! `save` repeats that lookup, then writes exactly the supplied `PageId` in
-//! O(page bytes + its blocks), with a guard before
-//! serialization and an exact byte recheck before rename. It keeps the legacy
-//! formatting, no-op, org, preamble, and cache rules. Conflicts, deletion,
-//! read-only pages, twins, invalid targets, and I/O are typed outcomes; the
-//! caller keeps unsaved edits on any refusal. No caller manages page locks,
-//! cache state, or the write protocol.
+//! `transaction` collects named file steps. Commit preflights all steps before
+//! writing, applies them under sorted path locks, and undoes a failed apply into
+//! recoverable trash. Its cost is O(bytes of named files + affected page blocks).
+//! `save` is one `save_page` step: it writes exactly the supplied `PageId`,
+//! preserving legacy formatting, no-op, Org, preamble, and cache rules. Its
+//! cost is O(page bytes + its blocks). Conflicts, deletion, read-only pages,
+//! twins, invalid targets, and I/O are typed outcomes; callers keep unsaved
+//! edits on refusal. No caller manages page locks, cache state, or paths.
 //!
 //! Questions and costs after cache construction (`P` pages, `B` blocks):
 //! `rev` O(1); `backlinks`, `unlinked_references`, `block_referrers`,
@@ -77,7 +78,10 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 /// Interim owner of a legacy graph. Constructing it is O(1); reads can build
 /// the whole cache in O(P + B + disk) on first use.
 pub struct Store {
-    graph: Arc<Graph>,
+    pub(crate) graph: Arc<Graph>,
+    pub(crate) writer: std::sync::Mutex<()>,
+    #[cfg(any(test, feature = "test-faults"))]
+    pub(crate) faults: std::sync::Mutex<std::collections::HashSet<crate::transaction::FaultPoint>>,
 }
 
 /// Trash categories. Legacy covers entries with no recognized recoverable type.
@@ -146,7 +150,12 @@ fn trash_entry_bytes(path: &std::path::Path) -> std::io::Result<u64> {
 impl Store {
     /// Adopt the current graph without loading it. O(1). Removed in B7.
     pub fn from_legacy(graph: Arc<Graph>) -> Self {
-        Self { graph }
+        Self {
+            graph,
+            writer: std::sync::Mutex::new(()),
+            #[cfg(any(test, feature = "test-faults"))]
+            faults: std::sync::Mutex::new(std::collections::HashSet::new()),
+        }
     }
 
     /// Resolve the exact file a DTO would save, including pinned stray pages.
@@ -178,37 +187,38 @@ impl Store {
         if doc.guide {
             return SaveOutcome::GuideEphemeral;
         }
-        let target = match self.target_for_save(doc) {
-            Ok(target) => target,
-            Err(error) => return error,
-        };
-        if *id != target {
-            return SaveOutcome::InvalidTarget("invalid page path".into());
-        }
-        let path = self.graph.root.join(id.as_str());
-        let cache = self.graph.path_is_cacheable(&path);
-        let baseline = match &base {
-            SaveBase::Existing(rev) => Some(rev.0.as_str()),
-            SaveBase::CreateNew => None,
-        };
-        match self.graph.save_at(doc, &path, cache, baseline) {
-            Ok((rev, true)) => SaveOutcome::Saved(FileRev(rev)),
-            Ok((rev, false)) => SaveOutcome::Unchanged(FileRev(rev)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                match self.read(&id.file(), None) {
-                    Ok((_, disk)) => SaveOutcome::Conflict { disk },
-                    Err(StoreError::NotFound) => SaveOutcome::Deleted,
-                    Err(StoreError::Io(error)) => SaveOutcome::Io(error),
-                    Err(other) => SaveOutcome::Io(std::io::Error::other(format!("{other:?}"))),
+        let mut tx = self.transaction();
+        tx.save_page(id, base, doc);
+        match tx.commit() {
+            crate::TxOutcome::Committed { mut steps, .. } => match steps.remove(0) {
+                crate::StepResult::Written { rev, .. } => SaveOutcome::Saved(rev),
+                crate::StepResult::Unchanged { rev, .. } => SaveOutcome::Unchanged(rev),
+                _ => unreachable!("save_page result"),
+            },
+            crate::TxOutcome::NotCommitted { why, .. } => match why {
+                crate::Why::Conflict {
+                    file,
+                    disk: Some(disk),
+                } if file != id.file() => SaveOutcome::Conflict { disk },
+                crate::Why::Conflict {
+                    disk: Some(disk), ..
+                } => SaveOutcome::Conflict { disk },
+                crate::Why::Conflict { disk: None, .. } => SaveOutcome::Deleted,
+                crate::Why::Refused(crate::Refusal::ReadOnly(reason)) => {
+                    SaveOutcome::ReadOnly(reason)
                 }
-            }
-            Err(error)
-                if error.kind() == std::io::ErrorKind::PermissionDenied
-                    && error.to_string() == "org file is read-only (does not round-trip)" =>
-            {
-                SaveOutcome::ReadOnly(error.to_string())
-            }
-            Err(error) => SaveOutcome::Io(error),
+                crate::Why::Refused(crate::Refusal::Twin { existing }) => {
+                    SaveOutcome::Twin { existing }
+                }
+                crate::Why::Refused(crate::Refusal::InvalidTarget(reason)) => {
+                    SaveOutcome::InvalidTarget(reason)
+                }
+                crate::Why::Refused(crate::Refusal::Closed) => SaveOutcome::Closed,
+                crate::Why::Refused(other) => SaveOutcome::InvalidTarget(format!("{other:?}")),
+                crate::Why::Failed(error) => {
+                    SaveOutcome::Io(std::io::Error::new(error.kind, error.message))
+                }
+            },
         }
     }
 
@@ -318,6 +328,9 @@ impl Store {
     /// Type a file name within one configured graph area. Validation repeats
     /// whenever an id is used, including after deserialization.
     pub fn file_id(&self, area: Area, rel: &str) -> Result<FileId, StoreError> {
+        if area == Area::Meta && rel.starts_with(".tine-") {
+            return Err(StoreError::InvalidTarget(rel.into()));
+        }
         let directory = match area {
             Area::Pages => &self.graph.config.pages_dir,
             Area::Journals => &self.graph.config.journals_dir,
@@ -351,7 +364,7 @@ impl Store {
         Some(PageId::from(path))
     }
 
-    fn validate_file(&self, file: &FileId) -> Result<(), StoreError> {
+    pub(crate) fn validate_file(&self, file: &FileId) -> Result<(), StoreError> {
         let path = file.as_str();
         if path.is_empty()
             || path.starts_with('/')
@@ -608,13 +621,30 @@ fn invalid_data_io_error_is_not_a_page_decode_error() {
 pub struct FileRev(String);
 
 impl FileRev {
-    fn from_bytes(bytes: &[u8]) -> Self {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Self {
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
         for byte in bytes {
             hash ^= u64::from(*byte);
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
         Self(format!("{hash:016x}"))
+    }
+
+    pub(crate) fn from_file(path: &std::path::Path) -> std::io::Result<Self> {
+        let mut file = File::open(path)?;
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let count = file.read(&mut buf)?;
+            if count == 0 {
+                break;
+            }
+            for byte in &buf[..count] {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        Ok(Self(format!("{hash:016x}")))
     }
 }
 
@@ -700,7 +730,7 @@ pub enum QueryResult {
 /// Ordered and serialized as a decimal string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct GraphRev(u64);
+pub struct GraphRev(pub(crate) u64);
 
 impl TryFrom<String> for GraphRev {
     type Error = std::num::ParseIntError;
@@ -959,6 +989,9 @@ impl WholeGraph {
     fn validated_page(&self, id: &PageId) -> Result<(), QueryError> {
         let store = Store {
             graph: Arc::clone(&self.graph),
+            writer: std::sync::Mutex::new(()),
+            #[cfg(any(test, feature = "test-faults"))]
+            faults: std::sync::Mutex::new(std::collections::HashSet::new()),
         };
         let file = id.file();
         if store.as_page(&file).is_none() {
