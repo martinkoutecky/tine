@@ -2,14 +2,9 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 42
+# ceiling: 34
 field model::Graph.config
 field model::Graph.root
-field onboarding::GuideCopyResult.copied_assets
-field onboarding::GuideCopyResult.created
-field onboarding::GuideCopyResult.created_pages
-field onboarding::GuideCopyResult.name
-field onboarding::GuideCopyResult.skipped_pages
 field publish::PrintOpts.expand_collapsed
 field publish::PrintOpts.font_px
 field publish::PrintOpts.margin_mm
@@ -35,13 +30,10 @@ fn model::Graph::save_page
 fn model::Graph::sync_file
 fn model::Graph::with_pages
 fn model::content_rev
-fn onboarding::copy_guide_into_graph
-fn onboarding::create_demo_graph
 fn publish::page_print_html
 fn publish::publish_graph
 fn store::Store::cancel_background_load
 fn store::Store::legacy
 fn store::Store::target_for_save
 struct model::Graph
-struct onboarding::GuideCopyResult
 struct publish::PrintOpts

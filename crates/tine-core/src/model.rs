@@ -5,6 +5,18 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Encode a page title as a file stem using the graph's configured Logseq format.
+pub fn encode_page_name(name: &str, fmt: crate::config::FileNameFormat) -> String {
+    match fmt {
+        crate::config::FileNameFormat::Legacy => name.replace('/', "%2F"),
+        crate::config::FileNameFormat::TripleLowbar => name
+            .replace("___", "%5F%5F%5F")
+            .replace("_/", "%5F/")
+            .replace("/_", "/%5F")
+            .replace('/', "___"),
+    }
+}
+
 /// Decode a page filename according to the graph's Logseq naming format.
 /// Cost O(stem bytes); malformed percent escapes are preserved.
 pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> String {

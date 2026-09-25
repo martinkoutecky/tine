@@ -1033,11 +1033,10 @@ pub(crate) fn guide_pages() -> Vec<tine_core::guide::GuidePage> {
 pub(crate) fn copy_guide_into_graph(
     title: String,
     state: GraphContext<'_>,
-) -> Result<tine_store::onboarding::GuideCopyResult, String> {
-    let result: Result<tine_store::onboarding::GuideCopyResult, String> = with_graph(&state, |g| {
-        tine_store::onboarding::copy_guide_into_graph(g, &title).map_err(|e| e.to_string())
-    });
-    result
+) -> Result<tine_graph_features::guide::GuideCopyResult, String> {
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::guide::copy_guide_into_graph(&slot.store, &title)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

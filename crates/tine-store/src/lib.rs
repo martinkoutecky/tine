@@ -8,6 +8,7 @@
 #[cfg(any(test, feature = "legacy-fixtures"))]
 pub mod config_edit;
 pub mod model;
+#[cfg(any(test, feature = "legacy-fixtures"))]
 pub mod onboarding;
 pub mod publish;
 pub mod query;

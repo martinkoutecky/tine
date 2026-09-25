@@ -746,7 +746,7 @@ fn guide_twin_race_hook(path: &Path) -> io::Result<()> {
     })
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "legacy-fixtures"))]
 fn guide_twin_race_hook(_path: &Path) -> io::Result<()> {
     Ok(())
 }
@@ -1869,6 +1869,7 @@ impl Graph {
     ///
     /// Returns `true` when a file was created and `false` when an existing page
     /// won. Existing content is never overwritten.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub(crate) fn create_markdown_page_if_absent(
         &self,
         name: &str,
@@ -1919,6 +1920,7 @@ impl Graph {
     /// Create one named top-level asset without replacing an existing file. The
     /// approved asset capability is revalidated at the actual write target so a
     /// managed-directory symlink/junction swap cannot redirect this creation.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub(crate) fn create_asset_if_absent(&self, name: &str, bytes: &[u8]) -> io::Result<bool> {
         top_level_asset_name(name)?;
         let path = self.assets_path().join(name);
@@ -5043,6 +5045,7 @@ impl Graph {
     /// conflict trash. Exact expected bytes stay there as the withdrawn copy; a
     /// different inode is restored if the live name is free, or retained in
     /// recovery if another writer has already recreated the name.
+    #[cfg(any(test, feature = "legacy-fixtures"))]
     pub(crate) fn withdraw_file_to_conflict_if_exact(
         &self,
         path: &Path,
@@ -6315,16 +6318,7 @@ pub fn content_rev(s: &str) -> String {
 /// the `_`-adjacency / literal-`___` disambiguation. Exotic reserved-char and
 /// Windows-reserved-name rules are not yet mirrored (rare).
 fn encode_page_name(name: &str, fmt: FileNameFormat) -> String {
-    match fmt {
-        FileNameFormat::Legacy => name.replace('/', "%2F"),
-        FileNameFormat::TripleLowbar => name
-            // Disambiguate underscores that would otherwise be ambiguous after
-            // `/`→`___` (OG `fs.cljs:99-103`), THEN map the separator.
-            .replace("___", "%5F%5F%5F")
-            .replace("_/", "%5F/")
-            .replace("/_", "/%5F")
-            .replace('/', "___"),
-    }
+    tine_core::model::encode_page_name(name, fmt)
 }
 
 /// Inverse of [`encode_page_name`]. Legacy: percent-decode (`%2F`→`/`).

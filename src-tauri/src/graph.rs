@@ -368,12 +368,6 @@ pub(crate) enum LoadGraphResult {
     },
 }
 
-fn dir_is_empty(p: &Path) -> bool {
-    std::fs::read_dir(p)
-        .map(|mut it| it.next().is_none())
-        .unwrap_or(false)
-}
-
 /// Create a brand-new demo graph (the onboarding "Create a new graph" path) and
 /// return its root path for the frontend to open. Scaffolds in `dir` if that
 /// folder is empty; otherwise creates a fresh `tine-demo` subfolder so we never
@@ -385,24 +379,24 @@ pub(crate) fn create_graph(dir: String) -> Result<String, String> {
     if dir.is_empty() {
         return Err("no folder was chosen".into());
     }
-    let base = Path::new(dir);
-    if !base.is_dir() {
-        return Err(format!("{dir} is not a folder"));
-    }
-    let root = if dir_is_empty(base) {
-        base.to_path_buf()
-    } else {
-        let mut cand = base.join("tine-demo");
-        let mut n = 2;
-        while cand.exists() {
-            cand = base.join(format!("tine-demo-{n}"));
-            n += 1;
-        }
-        std::fs::create_dir(&cand).map_err(|e| format!("couldn't create folder: {e}"))?;
-        cand
-    };
-    tine_store::onboarding::create_demo_graph(&root)
-        .map_err(|e| format!("couldn't create the demo graph: {e}"))?;
+    let root =
+        tine_graph_features::guide::create_demo_graph(Path::new(dir)).map_err(
+            |error| match error {
+                OpenError::NotAFolder(_) => format!("{dir} is not a folder"),
+                OpenError::CreateFailed { path, cause }
+                    if path.parent() == Some(Path::new(dir))
+                        && path.file_name().is_some_and(|name| {
+                            name.to_string_lossy().starts_with("tine-demo")
+                        }) =>
+                {
+                    format!("couldn't create folder: {}", cause.message)
+                }
+                OpenError::CreateFailed { cause, .. } | OpenError::Io(cause) => {
+                    format!("couldn't create the demo graph: {}", cause.message)
+                }
+                other => format!("couldn't create the demo graph: {other}"),
+            },
+        )?;
     Ok(root.display().to_string())
 }
 

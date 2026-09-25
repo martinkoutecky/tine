@@ -6,6 +6,7 @@
 pub mod assets;
 pub mod config;
 pub mod conflicts;
+pub mod guide;
 pub mod journals;
 pub mod pages;
 pub mod pdf;

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::pdf::{Highlight, Position, Rect};
-use tine_graph_features::{assets, config, conflicts, journals, pages, pdf};
+use tine_graph_features::{assets, config, conflicts, guide, journals, pages, pdf};
 use tine_store::{model::Graph, Area, Content, Day, FaultPoint, Store};
 
 fn disk_tree(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
@@ -62,6 +62,7 @@ fn source_scan_guard_clients_touch_no_path() {
         ("journals", include_str!("../src/journals.rs")),
         ("pages", include_str!("../src/pages.rs")),
         ("pdf", include_str!("../src/pdf.rs")),
+        ("guide", include_str!("../src/guide.rs")),
     ] {
         for forbidden in [
             "std::fs",
@@ -77,12 +78,129 @@ fn source_scan_guard_clients_touch_no_path() {
             if name == "config" && forbidden == ".join(" {
                 continue; // EDN favorites join strings, never paths.
             }
+            if name == "guide" && forbidden == "std::path" {
+                continue; // Public API accepts the device parent folder for graph creation.
+            }
             assert!(
                 !source.contains(forbidden),
                 "Clients touch no path: {name} contains {forbidden}"
             );
         }
     }
+}
+
+#[test]
+fn guide_creation_matches_legacy_tree_and_folder_choice() {
+    use tine_store::onboarding::create_demo_graph as old_create;
+    let (empty, _) = fixture("demo-empty-new");
+    let (old, _) = fixture("demo-empty-old");
+    fs::remove_dir(empty.join("pages")).unwrap();
+    fs::remove_dir(empty.join("assets")).unwrap();
+    assert_eq!(guide::create_demo_graph(&empty).unwrap(), empty);
+    old_create(&old).unwrap();
+    assert_eq!(disk_tree(&empty), disk_tree(&old));
+
+    let (parent, _) = fixture("demo-parent");
+    fs::write(parent.join("keep"), b"keep").unwrap();
+    let first = guide::create_demo_graph(&parent).unwrap();
+    assert_eq!(first, parent.join("tine-demo"));
+    assert_eq!(disk_tree(&first), disk_tree(&old));
+    let second = guide::create_demo_graph(&parent).unwrap();
+    assert_eq!(second, parent.join("tine-demo-2"));
+    assert_eq!(disk_tree(&second), disk_tree(&old));
+    assert_eq!(fs::read(parent.join("keep")).unwrap(), b"keep");
+
+    let file = parent.join("file");
+    fs::write(&file, b"x").unwrap();
+    assert!(matches!(
+        Store::create_graph(&file, &[]),
+        Err(tine_store::OpenError::NotAFolder(_))
+    ));
+    assert!(matches!(
+        Store::create_graph(std::path::Path::new(""), &[]),
+        Err(tine_store::OpenError::NotAFolder(_))
+    ));
+
+    let (collision, _) = fixture("demo-collision");
+    let duplicate = [
+        (
+            Area::Meta,
+            "config.edn".to_string(),
+            b"{:custom true}\n".to_vec(),
+        ),
+        (Area::Assets, "same.bin".to_string(), b"first".to_vec()),
+        (Area::Assets, "same.bin".to_string(), b"second".to_vec()),
+    ];
+    assert!(matches!(
+        Store::create_graph(&collision, &duplicate),
+        Err(tine_store::OpenError::CreateFailed { .. })
+    ));
+    assert_eq!(
+        fs::read(collision.join("tine-demo/assets/same.bin")).unwrap(),
+        b"first"
+    );
+    assert_eq!(
+        fs::read(collision.join("tine-demo/logseq/config.edn")).unwrap(),
+        b"{:custom true}\n"
+    );
+}
+
+#[test]
+fn guide_copy_matches_legacy_independent_steps() {
+    use tine_store::onboarding::copy_guide_into_graph as old_copy;
+    for case in ["empty", "page", "asset", "asset_dir"] {
+        let (new_root, store) = fixture(&format!("guide-{case}-new"));
+        let (old_root, _) = fixture(&format!("guide-{case}-old"));
+        if case == "page" {
+            let name = tine_core::guide::guide_copy_page_name("Features/Sheets");
+            let file = format!(
+                "{}.md",
+                tine_core::model::encode_page_name(
+                    &name,
+                    tine_core::config::Config::default().file_name_format
+                )
+            );
+            for root in [&new_root, &old_root] {
+                fs::write(root.join("pages").join(&file), b"existing").unwrap();
+            }
+        }
+        if case == "asset" {
+            for root in [&new_root, &old_root] {
+                fs::write(root.join("assets/quick-capture.png"), b"existing").unwrap();
+            }
+        }
+        if case == "asset_dir" {
+            for root in [&new_root, &old_root] {
+                fs::create_dir(root.join("assets/quick-capture.png")).unwrap();
+            }
+        }
+        let old_graph = Graph::open(&old_root);
+        let actual = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
+        let expected = old_copy(&old_graph, "Features/Sheets").unwrap();
+        if case == "page" {
+            assert!(actual
+                .skipped_pages
+                .contains(&tine_core::guide::guide_copy_page_name("Features/Sheets")));
+        }
+        if case == "asset" || case == "asset_dir" {
+            assert!(!actual
+                .copied_assets
+                .contains(&"quick-capture.png".to_string()));
+        }
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap(),
+            "{case}"
+        );
+        assert_eq!(disk_tree(&new_root), disk_tree(&old_root), "{case}");
+    }
+    let (_, store) = fixture("guide-unknown");
+    assert_eq!(
+        guide::copy_guide_into_graph(&store, "missing")
+            .unwrap_err()
+            .to_string(),
+        "unknown bundled guide page"
+    );
 }
 
 #[test]

@@ -20,6 +20,10 @@
 //! and reports stat/list failures. `WholeGraph::referenced_assets` walks page
 //! text in O(B) on the interim live view. Clients compare these answers without
 //! opening graph paths.
+//! `create_graph` selects an empty parent or first unused demo child and writes
+//! the scaffold and seed by no-replace create. Cost O(siblings probed + seed
+//! bytes). Invalid folders and partial creation failures are typed `OpenError`s;
+//! callers need no folder naming or scaffold protocol.
 //!
 //! `target_for_save` resolves a DTO's pinned path or current name. Name lookup
 //! may build the graph cache on first use (O(P + B + disk)); a warm absent or
@@ -274,6 +278,99 @@ fn journal_ids_from_entries(graph: &Graph, entries: Vec<PageEntry>) -> HashMap<D
 }
 
 impl Store {
+    /// Scaffold a graph in an empty parent, or in the first unused tine-demo
+    /// child. Cost O(siblings probed + seed bytes). Partial failures leave the
+    /// created files in place and identify the failing path.
+    pub fn create_graph(
+        parent: &Path,
+        seed: &[(Area, String, Vec<u8>)],
+    ) -> Result<PathBuf, OpenError> {
+        if parent.as_os_str().is_empty() || !parent.is_dir() {
+            return Err(OpenError::NotAFolder(parent.to_path_buf()));
+        }
+        let failed = |path: &Path, error: std::io::Error| OpenError::CreateFailed {
+            path: path.to_path_buf(),
+            cause: error.into(),
+        };
+        let empty = fs::read_dir(parent)
+            .map_err(|error| failed(parent, error))?
+            .next()
+            .is_none();
+        let root = if empty {
+            parent.to_path_buf()
+        } else {
+            let mut number = 1usize;
+            loop {
+                let name = if number == 1 {
+                    "tine-demo".to_string()
+                } else {
+                    format!("tine-demo-{number}")
+                };
+                let candidate = parent.join(name);
+                match fs::create_dir(&candidate) {
+                    Ok(()) => break candidate,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        number = number.checked_add(1).ok_or_else(|| {
+                            failed(
+                                &candidate,
+                                std::io::Error::other("no unused demo folder name"),
+                            )
+                        })?;
+                    }
+                    Err(error) => return Err(failed(&candidate, error)),
+                }
+            }
+        };
+        for area in ["logseq", "pages", "journals", "assets"] {
+            let dir = root.join(area);
+            fs::create_dir_all(&dir).map_err(|error| failed(&dir, error))?;
+        }
+        let config = root.join("logseq/config.edn");
+        let supplied_config = seed
+            .iter()
+            .find(|(area, rel, _)| *area == Area::Meta && rel == "config.edn");
+        let config_bytes = supplied_config
+            .map(|(_, _, bytes)| bytes.as_slice())
+            .unwrap_or(tine_core::guide::CONFIG_EDN.as_bytes());
+        crate::model::atomic_write_new(&config, config_bytes)
+            .map_err(|error| failed(&config, error))?;
+        let mut used_config_seed = false;
+        for (area, rel, bytes) in seed {
+            if *area == Area::Meta && rel == "config.edn" && !used_config_seed {
+                used_config_seed = true;
+                continue;
+            }
+            if rel.is_empty()
+                || rel.split('/').any(|part| {
+                    part.is_empty() || part == "." || part == ".." || part.contains('\\')
+                })
+            {
+                return Err(failed(
+                    &root,
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid seed file name"),
+                ));
+            }
+            let base = match area {
+                Area::Pages => root.join("pages"),
+                Area::Journals => root.join("journals"),
+                Area::Assets => root.join("assets"),
+                Area::Meta => root.join("logseq"),
+                Area::Trash => {
+                    return Err(failed(
+                        &root,
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid seed area"),
+                    ))
+                }
+            };
+            let path = base.join(rel);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|error| failed(parent, error))?;
+            }
+            crate::model::atomic_write_new(&path, bytes).map_err(|error| failed(&path, error))?;
+        }
+        Ok(root)
+    }
+
     /// Resolve the graph root and external assets target without writing.
     pub fn inspect(root: &Path) -> Result<GraphAccessInspection, OpenError> {
         let canonical = fs::canonicalize(root).map_err(|error| OpenError::Unresolvable {
