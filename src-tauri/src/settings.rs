@@ -44,7 +44,7 @@ pub(crate) fn native_frame_active() -> bool {
     init_native_frame_active()
 }
 /// Serializes ALL device-settings (tine-settings.json) writers; every `set_*` below
-/// goes through `update_settings`, which routes to the shared `tine_core` atomic_update
+/// goes through `update_settings`, which routes to the device settings atomic_update
 /// (audit M1): the JSON is read-modify-written under this lock + atomically (temp +
 /// fsync + rename), so a crash can't truncate it, a concurrent `set_*` can't clobber
 /// another's key, and a transient read error aborts instead of resetting all prefs.
@@ -58,7 +58,7 @@ pub(crate) fn update_settings_strict_at(
     path: &std::path::Path,
     mutate: impl Fn(&mut serde_json::Value) -> Result<(), String>,
 ) -> Result<(), String> {
-    tine_store::model::atomic_update(path, &SETTINGS_LOCK, |content| {
+    crate::device_io::atomic_update(path, &SETTINGS_LOCK, |content| {
         let mut json: serde_json::Value = serde_json::from_str(content)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
         if !json.is_object() {
@@ -86,7 +86,7 @@ pub(crate) fn update_settings(
     mutate: impl Fn(&mut serde_json::Value),
 ) -> Result<(), String> {
     let p = settings_path(app).ok_or("no app-data dir")?;
-    tine_store::model::atomic_update(&p, &SETTINGS_LOCK, |content| {
+    crate::device_io::atomic_update(&p, &SETTINGS_LOCK, |content| {
         let mut json: serde_json::Value =
             serde_json::from_str(content).unwrap_or_else(|_| serde_json::json!({}));
         mutate(&mut json);

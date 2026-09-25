@@ -6,7 +6,6 @@
 //! editing tree (see plan). File-backed runtime UUIDs are deterministic structural
 //! locators; persisted `id::` values remain a separate external reference identity.
 
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -15,9 +14,14 @@ use std::sync::RwLock;
 use tine_core::config::{Config, FileNameFormat};
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::doc::{self, DocBlock, Document};
-pub use tine_core::model::*;
+use tine_core::model::{
+    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, sync_conflict_base,
+    AssetInfo, BlockDto, BlockPreview, BoundedRefGroups, Format, GraphMeta, JournalConflict,
+    JournalFile, PageDto, PageEntry, PageKind, RefGroup, ReferenceKind, SyncConflict, TemplateDto,
+    TrashStats,
+};
+use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use unicode_normalization::UnicodeNormalization;
-use uuid::Uuid;
 
 /// Whether `path` is a page file Tine reads (markdown or org).
 fn is_page_file(path: &Path) -> bool {
@@ -78,7 +82,7 @@ pub struct Graph {
     /// Journal date formats (filename + title) resolved from `config.edn`, used to
     /// recognize journal files in the user's format and render new ones. Built once
     /// at open (config changes need a reopen, as in OG).
-    pub journal_format: JournalFormat,
+    pub(crate) journal_format: JournalFormat,
     /// In-memory cache of every parsed page, keyed implicitly by position.
     /// Built once on first whole-graph query and kept in sync by edits, so
     /// search / backlinks / `{{query}}` scan memory instead of re-reading and
@@ -508,7 +512,7 @@ struct AdvancedCache {
 
 #[derive(Clone)]
 struct CachedAdvancedResult {
-    result: Arc<crate::query::AdvancedResult>,
+    result: Arc<tine_core::query::AdvancedResult>,
     total: usize,
     exceeded: bool,
 }
@@ -525,60 +529,6 @@ fn result_cache_key_estimated_bytes(key: &str) -> usize {
     // The HashMap owns one key and the LRU owns another. Account both copies so
     // a result with an enormous query source cannot bypass the payload budget.
     key.len().saturating_mul(2).saturating_add(128)
-}
-
-pub fn block_dto_estimated_bytes(block: &BlockDto) -> usize {
-    block.id.len()
-        + block.raw.len()
-        + block.breadcrumb.iter().map(String::len).sum::<usize>()
-        + block.tags.iter().map(String::len).sum::<usize>()
-        + block
-            .properties
-            .iter()
-            .map(|(key, value)| key.len() + value.len())
-            .sum::<usize>()
-        + block
-            .children
-            .iter()
-            .map(block_dto_estimated_bytes)
-            .sum::<usize>()
-        + 128
-}
-
-/// Conservative owned-memory estimate for a result payload. Tauri commands use
-/// this before serialization as a second guard beside the row cap; derived
-/// caches use the same accounting so transport and retention budgets cannot
-/// drift apart.
-pub fn ref_groups_estimated_bytes(groups: &[RefGroup]) -> usize {
-    groups
-        .iter()
-        .map(|group| {
-            group.page.len()
-                + group
-                    .blocks
-                    .iter()
-                    .map(block_dto_estimated_bytes)
-                    .sum::<usize>()
-                + group
-                    .evidence
-                    .iter()
-                    .map(|evidence| {
-                        evidence.block_id.len()
-                            + evidence
-                                .occurrences
-                                .iter()
-                                .map(|occurrence| {
-                                    occurrence.matched_name.len()
-                                        + occurrence.canonical.len()
-                                        + occurrence.rule.len()
-                                        + std::mem::size_of::<ReferenceOccurrence>()
-                                })
-                                .sum::<usize>()
-                    })
-                    .sum::<usize>()
-                + std::mem::size_of::<RefGroup>()
-        })
-        .sum()
 }
 
 fn touch_lru(lru: &mut std::collections::VecDeque<String>, key: &str) {
@@ -764,7 +714,8 @@ impl Graph {
     /// journal directory that can escape the selected graph. `Graph::open` stays
     /// available for the many in-crate disposable fixtures, but runtime graph
     /// binding must use this checked entry point.
-    pub fn open_checked(root: impl AsRef<Path>) -> io::Result<Graph> {
+    #[allow(dead_code)]
+    pub(crate) fn open_checked(root: impl AsRef<Path>) -> io::Result<Graph> {
         Self::open_checked_with_assets(root, None)
     }
 
@@ -947,35 +898,11 @@ impl Graph {
     }
 
     pub fn meta(&self) -> GraphMeta {
-        GraphMeta {
-            root: self.root.display().to_string(),
-            journals_dir: self.config.journals_dir.clone(),
-            pages_dir: self.config.pages_dir.clone(),
-            preferred_workflow: match self.config.preferred_workflow {
-                tine_core::config::Workflow::Todo => "todo".into(),
-                tine_core::config::Workflow::Now => "now".into(),
-            },
-            shortcuts: self.config.shortcuts.clone(),
-            start_of_week: self.config.start_of_week,
-            block_hidden_properties: self.config.block_hidden_properties.clone(),
-            default_journal_template: self.config.default_journal_template.clone(),
-            favorites: self.config.favorites.clone(),
-            journal_page_title_format: self.journal_format.title_format().to_string(),
-            journal_file_name_format: self.journal_format.file_format().to_string(),
-            preferred_format: self.config.preferred_format.ext().to_string(),
-            macros: self.config.macros.clone(),
-            enable_timetracking: self.config.enable_timetracking,
-            show_brackets: self.config.show_brackets,
-            doc_mode_enter_for_new_block: self.config.doc_mode_enter_for_new_block,
-            logical_outdenting: self.config.logical_outdenting,
-            logbook_with_second_support: self.config.logbook.with_second_support,
-            logbook_enabled_in_timestamped_blocks: self
-                .config
-                .logbook
-                .enabled_in_timestamped_blocks,
-            logbook_enabled_in_all_blocks: self.config.logbook.enabled_in_all_blocks,
-            guide_announced: self.config.guide_announced,
-        }
+        GraphMeta::from_config(
+            self.root.display().to_string(),
+            &self.config,
+            &self.journal_format,
+        )
     }
 
     /// Current cache generation — bumped on every cache-mutating page change, and
@@ -1116,7 +1043,7 @@ impl Graph {
 
     /// The format (`Md`/`Org`) new pages and journals are created in, from
     /// `config.edn`'s `:preferred-format`. Existing files keep their own format.
-    pub fn preferred_format(&self) -> Format {
+    pub(crate) fn preferred_format(&self) -> Format {
         self.config.preferred_format
     }
 
@@ -1274,10 +1201,6 @@ impl Graph {
             .into_iter()
             .filter(|entry| entry.date_key.is_some_and(|day| day <= cutoff))
             .collect()
-    }
-
-    pub fn feed_journals_desc(&self) -> Vec<PageEntry> {
-        self.feed_journals_desc_through(JournalDate::today())
     }
 
     /// Journal `date_key`s (yyyymmdd) whose page has real content — i.e. at
@@ -1918,7 +1841,11 @@ impl Graph {
     ///
     /// Returns `true` when a file was created and `false` when an existing page
     /// won. Existing content is never overwritten.
-    pub fn create_markdown_page_if_absent(&self, name: &str, content: &str) -> io::Result<bool> {
+    pub(crate) fn create_markdown_page_if_absent(
+        &self,
+        name: &str,
+        content: &str,
+    ) -> io::Result<bool> {
         if self.find_entry(name, PageKind::Page).is_some() {
             return Ok(false);
         }
@@ -2168,7 +2095,7 @@ impl Graph {
     /// The page that owns a block uuid / `id::`, via a `cache_gen`-keyed index, or
     /// `None` if unknown. A hint only — callers must verify (the index can lag a
     /// concurrent edit). O(graph) to (re)build once per cache change, then O(1).
-    pub fn block_page_hint(&self, uuid: &str) -> Option<String> {
+    pub(crate) fn block_page_hint(&self, uuid: &str) -> Option<String> {
         use std::sync::atomic::Ordering;
         let gen = self.cache_gen.load(Ordering::Acquire);
         if let Some((idx_gen, map)) = self.block_index.read().unwrap().as_ref() {
@@ -2589,14 +2516,6 @@ impl Graph {
         dto.rev = Some(content_rev(&content));
         dto.path = self.rel_path(&abs);
         Ok(Some(dto))
-    }
-
-    /// Read and parse a page file into a [`Document`].
-    pub fn read_document(&self, entry: &PageEntry) -> io::Result<Document> {
-        let content = fs::read_to_string(&entry.path)?;
-        let mut doc = parse_doc(&entry.path, &content);
-        assign_doc_runtime_ids(&mut doc.roots, &entry.rel_path);
-        Ok(doc)
     }
 
     /// Read+parse every page from disk (skipping unreadable files). Used to build
@@ -3332,7 +3251,7 @@ impl Graph {
     fn advanced_memo_bounded(
         &self,
         key: String,
-        compute: impl FnOnce() -> (crate::query::AdvancedResult, bool, usize),
+        compute: impl FnOnce() -> (tine_core::query::AdvancedResult, bool, usize),
     ) -> CachedAdvancedResult {
         use std::sync::atomic::Ordering;
         let gen = self.cache_gen.load(Ordering::Acquire);
@@ -3390,11 +3309,12 @@ impl Graph {
         result
     }
 
+    #[allow(dead_code)]
     fn advanced_memo(
         &self,
         key: String,
-        compute: impl FnOnce() -> crate::query::AdvancedResult,
-    ) -> Arc<crate::query::AdvancedResult> {
+        compute: impl FnOnce() -> tine_core::query::AdvancedResult,
+    ) -> Arc<tine_core::query::AdvancedResult> {
         self.advanced_memo_bounded(key, || {
             let result = compute();
             let total = result.groups.iter().map(|group| group.blocks.len()).sum();
@@ -3403,15 +3323,16 @@ impl Graph {
         .result
     }
 
+    #[allow(dead_code)]
     fn run_advanced_query_cached(
         &self,
         query_src: &str,
         current_page: Option<&str>,
-    ) -> Arc<crate::query::AdvancedResult> {
-        if !crate::query::query_source_within_limit(query_src) {
+    ) -> Arc<tine_core::query::AdvancedResult> {
+        if !tine_core::query::query_source_within_limit(query_src) {
             return Arc::new(crate::query::rejected_advanced_query("query-too-large"));
         }
-        if !crate::query::query_nesting_within_limit(query_src) {
+        if !tine_core::query::query_nesting_within_limit(query_src) {
             return Arc::new(crate::query::rejected_advanced_query(
                 "query-nesting-too-deep",
             ));
@@ -3430,15 +3351,15 @@ impl Graph {
         current_page: Option<&str>,
         max_rows: usize,
         max_bytes: usize,
-    ) -> (crate::query::AdvancedResult, bool, usize) {
-        if !crate::query::query_source_within_limit(query_src) {
+    ) -> (tine_core::query::AdvancedResult, bool, usize) {
+        if !tine_core::query::query_source_within_limit(query_src) {
             return (
                 crate::query::rejected_advanced_query("query-too-large"),
                 false,
                 0,
             );
         }
-        if !crate::query::query_nesting_within_limit(query_src) {
+        if !tine_core::query::query_nesting_within_limit(query_src) {
             return (
                 crate::query::rejected_advanced_query("query-nesting-too-deep"),
                 false,
@@ -3510,8 +3431,8 @@ impl Graph {
 
     /// Evaluate a `{{query ...}}` body over the graph (memoized).
     pub fn run_query(&self, query_src: &str) -> Arc<Vec<RefGroup>> {
-        if !crate::query::query_source_within_limit(query_src)
-            || !crate::query::query_nesting_within_limit(query_src)
+        if !tine_core::query::query_source_within_limit(query_src)
+            || !tine_core::query::query_nesting_within_limit(query_src)
         {
             return Arc::new(Vec::new());
         }
@@ -3526,8 +3447,8 @@ impl Graph {
         max_rows: usize,
         max_bytes: usize,
     ) -> BoundedRefGroups {
-        if !crate::query::query_source_within_limit(query_src)
-            || !crate::query::query_nesting_within_limit(query_src)
+        if !tine_core::query::query_source_within_limit(query_src)
+            || !tine_core::query::query_nesting_within_limit(query_src)
         {
             return BoundedRefGroups {
                 groups: Arc::new(Vec::new()),
@@ -3543,11 +3464,12 @@ impl Graph {
     /// Evaluate an advanced (datalog-subset) query, returning the matched groups
     /// plus which clauses ran vs were ignored. Memoized by query text, effective
     /// current page, cache generation, and today.
-    pub fn run_advanced_query(
+    #[allow(dead_code)]
+    pub(crate) fn run_advanced_query(
         &self,
         query_src: &str,
         current_page: Option<&str>,
-    ) -> crate::query::AdvancedResult {
+    ) -> tine_core::query::AdvancedResult {
         self.run_advanced_query_cached(query_src, current_page)
             .as_ref()
             .clone()
@@ -3571,12 +3493,6 @@ impl Graph {
         self.derived_memo_bounded(format!("U\0{max_rows}\0{max_bytes}\0{normalized}"), || {
             crate::query::unlinked_refs_bounded(self, target, max_rows, max_bytes)
         })
-    }
-
-    /// Explicit, uncached target-scoped trace of the exact reference engine.
-    /// Intended for local diagnostics; callers must anonymize before export.
-    pub fn reference_diagnostics(&self, target: &str) -> ReferenceDiagnostics {
-        crate::query::reference_diagnostics(self, target)
     }
 
     /// Export the whole graph to static HTML under `<root>/publish/`.
@@ -4027,7 +3943,7 @@ impl Graph {
         page_limit: usize,
         block_limit: usize,
         explain: bool,
-    ) -> crate::query_plan::QueryExecution {
+    ) -> tine_core::query_plan::QueryExecution {
         self.run_graph_search_scoped(source, page_limit, block_limit, None, explain)
     }
 
@@ -4038,7 +3954,7 @@ impl Graph {
         block_limit: usize,
         scope: Option<crate::query_plan::QueryPageScope>,
         explain: bool,
-    ) -> crate::query_plan::QueryExecution {
+    ) -> tine_core::query_plan::QueryExecution {
         match scope {
             Some(scope) => {
                 crate::query_plan::QueryPlan::friendly_for_page(source, block_limit, scope)
@@ -4069,14 +3985,15 @@ impl Graph {
     /// Latest-wins combined graph search.  It shares the same lane epochs as the
     /// legacy block-search adapter, so migrating a consumer cannot leave an older
     /// request from either API running in that logical lane.
-    pub fn run_graph_search_latest(
+    #[allow(dead_code)]
+    pub(crate) fn run_graph_search_latest(
         &self,
         lane: &str,
         source: &str,
         page_limit: usize,
         block_limit: usize,
         explain: bool,
-    ) -> crate::query_plan::QueryExecution {
+    ) -> tine_core::query_plan::QueryExecution {
         self.run_graph_search_latest_scoped(lane, source, page_limit, block_limit, None, explain)
     }
 
@@ -4088,7 +4005,7 @@ impl Graph {
         block_limit: usize,
         scope: Option<crate::query_plan::QueryPageScope>,
         explain: bool,
-    ) -> crate::query_plan::QueryExecution {
+    ) -> tine_core::query_plan::QueryExecution {
         use std::sync::atomic::Ordering;
         let epoch = {
             let mut lanes = self.search_lanes.lock().unwrap();
@@ -4132,7 +4049,8 @@ impl Graph {
     }
 
     /// Resolve a bounded subtree for an explicitly expanded preview/export.
-    pub fn preview_block(&self, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
+    #[allow(dead_code)]
+    pub(crate) fn preview_block(&self, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
         crate::query::preview_block(self, uuid, max_nodes)
     }
 
@@ -4153,7 +4071,8 @@ impl Graph {
     /// Property keys (with their distinct values) used across the graph, for the
     /// query builder's property-filter autocomplete. Excludes internal/metadata
     /// properties (id, collapsed, hl-*, …).
-    pub fn property_facets(&self) -> Vec<(String, Vec<String>)> {
+    #[allow(dead_code)]
+    pub(crate) fn property_facets(&self) -> Vec<(String, Vec<String>)> {
         crate::query::property_facets(self)
     }
 
@@ -5060,7 +4979,7 @@ impl Graph {
 
     /// Map an on-disk `.md` path to its page entry (journal or page), or None if
     /// it isn't in the graph's journals/pages dirs.
-    pub fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
+    pub(crate) fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
         if !is_page_file(path) {
             return None;
         }
@@ -6208,129 +6127,6 @@ fn doc_has_content(blocks: &[DocBlock]) -> bool {
     })
 }
 
-/// Versioned namespace for file-mode runtime block locators. These UUIDs are
-/// store/UI keys only: persisted `id::` remains the external `((id))` identity.
-const FILE_BLOCK_RUNTIME_NAMESPACE_V1: Uuid =
-    Uuid::from_u128(0x1e0c_5a13_9b42_5da4_a73c_0be5_8f6a_2320);
-
-fn normalized_runtime_owner(owner: &str) -> String {
-    let owner = owner.replace('\\', "/");
-    let mut parts = Vec::new();
-    for part in owner.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => panic!("runtime identity owner must be graph-relative"),
-            _ => parts.push(part),
-        }
-    }
-    assert!(
-        !parts.is_empty(),
-        "runtime identity owner must not be empty"
-    );
-    parts.join("/")
-}
-
-fn deterministic_runtime_uuid(namespace: Uuid, name: &[u8]) -> Uuid {
-    let mut hasher = Sha256::new();
-    hasher.update(namespace.as_bytes());
-    hasher.update((name.len() as u64).to_be_bytes());
-    hasher.update(name);
-    let digest = hasher.finalize();
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    // RFC 9562 variant + version 8 (application-defined deterministic UUID).
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    Uuid::from_bytes(bytes)
-}
-
-fn runtime_owner_namespace(domain: &str, owner: &str) -> Uuid {
-    let owner = normalized_runtime_owner(owner);
-    let mut name = Vec::with_capacity(domain.len() + owner.len() + 16);
-    name.extend_from_slice(&(domain.len() as u64).to_be_bytes());
-    name.extend_from_slice(domain.as_bytes());
-    name.extend_from_slice(&(owner.len() as u64).to_be_bytes());
-    name.extend_from_slice(owner.as_bytes());
-    deterministic_runtime_uuid(FILE_BLOCK_RUNTIME_NAMESPACE_V1, &name)
-}
-
-fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
-    for (sibling_index, block) in blocks.iter_mut().enumerate() {
-        // Hierarchical derivation is equivalent to hashing the full sibling-index
-        // path, while doing constant work per node (O(blocks)).
-        let structural = deterministic_runtime_uuid(parent, &(sibling_index as u64).to_be_bytes());
-        if block.uuid.is_empty() {
-            block.uuid = structural.to_string();
-        }
-        assign_runtime_ids_rec(&mut block.children, structural);
-    }
-}
-
-/// Seed missing runtime keys for a graph-backed document from its normalized,
-/// graph-relative physical owner. Existing live keys survive ordinary saves.
-pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
-    let owner = runtime_owner_namespace("file-block-runtime-v1", owner_rel_path);
-    assign_runtime_ids_rec(roots, owner);
-}
-
-fn assign_virtual_doc_runtime_ids(roots: &mut [DocBlock], domain: &str, owner: &str) {
-    let owner = runtime_owner_namespace(domain, owner);
-    assign_runtime_ids_rec(roots, owner);
-}
-
-fn block_runtime_id(b: &DocBlock) -> String {
-    assert!(
-        !b.uuid.is_empty(),
-        "DocBlock must have an explicit runtime owner before DTO projection"
-    );
-    b.uuid.clone()
-}
-
-/// Convert a parsed (cached) block to a DTO, carrying its stable uuid as the id.
-pub fn block_to_dto(b: &DocBlock) -> BlockDto {
-    BlockDto {
-        id: block_runtime_id(b),
-        raw: b.raw.clone(),
-        collapsed: b.collapsed(),
-        children: b.children.iter().map(block_to_dto).collect(),
-        breadcrumb: Vec::new(),
-        page_property: false,
-        // All header facets off the one lsdoc projection (marker/priority/heading/
-        // properties/scheduled/deadline) — priority is header-position only, matching
-        // the chip, so a loaded block never shows a priority the edit path wouldn't.
-        marker: b.marker().map(str::to_string),
-        priority: b.priority().map(str::to_string),
-        heading_level: b.heading_level(),
-        scheduled: b.scheduled().map(str::to_string),
-        deadline: b.deadline().map(str::to_string),
-        tags: b.tags(),
-        properties: b.properties(),
-    }
-}
-
-/// Convert one block to the result-row wire shape. Result membership is about
-/// block identity, raw text, and facets; descendants belong to the source page
-/// and are hydrated once per page by live consumers. Keeping this constructor
-/// separate makes it difficult to accidentally reintroduce overlapping subtree
-/// amplification in queries, references, search, or batched resolution.
-pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
-    BlockDto {
-        id: block_runtime_id(b),
-        raw: b.raw.clone(),
-        collapsed: b.collapsed(),
-        children: Vec::new(),
-        breadcrumb: Vec::new(),
-        page_property: false,
-        marker: b.marker().map(str::to_string),
-        priority: b.priority().map(str::to_string),
-        heading_level: b.heading_level(),
-        scheduled: b.scheduled().map(str::to_string),
-        deadline: b.deadline().map(str::to_string),
-        tags: b.tags(),
-        properties: b.properties(),
-    }
-}
-
 /// Convert a frontend DTO subtree back to a doc block, preserving the frontend's
 /// block id as the node uuid so the cache and the frontend agree on identity.
 fn dto_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
@@ -6355,26 +6151,6 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         blocks: doc.roots.iter().map(block_to_dto).collect(),
         rev: None,
         format: Format::from_path(&entry.path),
-        read_only: false,
-        path: String::new(),
-        guide: false,
-    }
-}
-
-/// Build a Markdown page DTO from raw Logseq Markdown without touching disk.
-/// Used by the bundled in-app Guide so it reuses the same document parser and
-/// DTO projection as normal graph pages.
-pub fn markdown_page_dto(name: &str, title: &str, markdown: &str) -> PageDto {
-    let mut doc = doc::parse(markdown);
-    assign_virtual_doc_runtime_ids(&mut doc.roots, "bundled-markdown-v1", name);
-    PageDto {
-        name: name.to_string(),
-        kind: PageKind::Page,
-        title: title.to_string(),
-        pre_block: doc.pre_block.clone(),
-        blocks: doc.roots.iter().map(block_to_dto).collect(),
-        rev: None,
-        format: Format::Md,
         read_only: false,
         path: String::new(),
         guide: false,
@@ -6931,7 +6707,7 @@ pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
 /// concurrently. Used by restore after the previous live inode has been moved to
 /// recovery: a sync writer that recreates the live name wins and the restore
 /// aborts instead of clobbering it.
-pub fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
+pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
@@ -6965,7 +6741,11 @@ pub fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
 /// enforcing a byte ceiling during the stream. This is the native-capture path:
 /// it avoids reopening an attacker-replaceable pathname and avoids whole-value
 /// Android/IPC/base64 amplification.
-pub fn atomic_copy_file_new(input: &mut fs::File, dst: &Path, max_bytes: u64) -> io::Result<()> {
+pub(crate) fn atomic_copy_file_new(
+    input: &mut fs::File,
+    dst: &Path,
+    max_bytes: u64,
+) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
@@ -7011,7 +6791,7 @@ pub fn atomic_copy_file_new(input: &mut fs::File, dst: &Path, max_bytes: u64) ->
 ///     read-modify-write can't clobber a concurrent one (audit M1/M2);
 ///   - `edit` returns the new full contents, or an `Err` to abort without writing;
 ///   - the commit is atomic (temp + fsync + rename), so a crash can't truncate it.
-pub fn atomic_update(
+pub(crate) fn atomic_update(
     path: &Path,
     lock: &std::sync::Mutex<()>,
     edit: impl Fn(&str) -> io::Result<String>,
@@ -7824,7 +7604,7 @@ mod tests {
         assert!(
             execution.hits.iter().any(|hit| matches!(
                 hit,
-                crate::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
+                tine_core::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
             )),
             "a normal same-shard sibling must remain searchable"
         );
@@ -7841,7 +7621,7 @@ mod tests {
             .iter()
             .any(|hit| matches!(
                 hit,
-                crate::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
+                tine_core::query_plan::QueryHit::Block { path, .. } if path == &sibling_path
             )));
         assert_eq!(g.page_index_failures(), vec![bad.rel_path.clone()]);
         let _ = fs::remove_dir_all(&dir);
@@ -8562,7 +8342,7 @@ mod tests {
             .hits
             .iter()
             .any(|hit| matches!(hit,
-                crate::query_plan::QueryHit::Page { page, .. } if page.path == future
+                tine_core::query_plan::QueryHit::Page { page, .. } if page.path == future
             )));
         assert!(!g.search("future-search-sentinel", 8).is_empty());
         assert_eq!(g.path_for(future_title, PageKind::Journal), future);
@@ -8596,7 +8376,7 @@ mod tests {
             .hits
             .iter()
             .any(|hit| matches!(hit,
-                crate::query_plan::QueryHit::Page { page, .. } if page.path == future
+                tine_core::query_plan::QueryHit::Page { page, .. } if page.path == future
             )));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -10609,8 +10389,8 @@ mod tests {
         // stack when a persisted query macro rendered. Keep it below the byte
         // ceiling so the independent nesting guard is the reason it fails shut.
         let nested = format!("{}(task TODO){}", "(and ".repeat(1_000), ")".repeat(1_000));
-        assert!(crate::query::query_source_within_limit(&nested));
-        assert!(!crate::query::query_nesting_within_limit(&nested));
+        assert!(tine_core::query::query_source_within_limit(&nested));
+        assert!(!tine_core::query::query_nesting_within_limit(&nested));
         let simple = g.run_query_bounded(&nested, 20_000, 32 * 1024 * 1024);
         assert!(simple.groups.is_empty());
         assert!(g.derived_cache.read().unwrap().is_none());
@@ -10932,7 +10712,7 @@ mod tests {
         let g = Graph::open(&dir);
         for i in 0..(DERIVED_CACHE_MAX_ENTRIES + 20) {
             let _ = g.derived_memo(format!("test\0{i}"), Vec::new);
-            let _ = g.advanced_memo(format!("test\0{i}"), || crate::query::AdvancedResult {
+            let _ = g.advanced_memo(format!("test\0{i}"), || tine_core::query::AdvancedResult {
                 groups: Vec::new(),
                 ran: Vec::new(),
                 ignored: Vec::new(),
@@ -10941,7 +10721,7 @@ mod tests {
         }
         let oversized_key = "x".repeat(DERIVED_CACHE_MAX_ENTRY_BYTES / 2 + 1);
         let _ = g.derived_memo(oversized_key.clone(), Vec::new);
-        let _ = g.advanced_memo(oversized_key.clone(), || crate::query::AdvancedResult {
+        let _ = g.advanced_memo(oversized_key.clone(), || tine_core::query::AdvancedResult {
             groups: Vec::new(),
             ran: Vec::new(),
             ignored: Vec::new(),
@@ -11630,7 +11410,7 @@ mod tests {
             assert!(
                 g.run_graph_search(needle, 0, 8, false).hits.iter().any(|hit| matches!(
                     hit,
-                    crate::query_plan::QueryHit::Block { path: hit_path, .. } if hit_path == path
+                    tine_core::query_plan::QueryHit::Block { path: hit_path, .. } if hit_path == path
                 )),
                 "search hit for {needle:?} must retain its physical owner {path:?}"
             );

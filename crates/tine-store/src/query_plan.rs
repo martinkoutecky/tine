@@ -6,12 +6,17 @@
 //! block-query result contract.  The plan/result types are the seam that a
 //! durable query workspace can grow into later.
 
-use crate::model::{BlockDto, Graph, PageEntry, PageKind};
+use crate::model::Graph;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use tine_core::doc::DocBlock;
+use tine_core::model::{PageEntry, PageKind};
+use tine_core::query_plan::{
+    ExplainNode, MatchEvidence, MatchSpan, ObjectiveMatchClass, QueryDiagnostic, QueryExecution,
+    QueryExplanation, QueryHasMore, QueryHit, TextField, TextMatchMode,
+};
 use tine_core::refs;
 use tine_core::search_query::{canonical_fold, Matcher, Term};
 use unicode_normalization::UnicodeNormalization;
@@ -22,89 +27,25 @@ const MAX_EVIDENCE_SPANS: usize = 32;
 /// The entity kind a query-plan branch selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum QueryTarget {
+pub(crate) enum QueryTarget {
     Pages,
     Blocks,
 }
 
-/// Text field tested by a text predicate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TextField {
-    PageName,
-    VisibleContent,
-}
-
-/// Matching is explicit in the plan.  In particular, a fuzzy page-name match
-/// never makes block-content predicates fuzzy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TextMatchMode {
-    Contains,
-    Phrase,
-    Regex,
-    Fuzzy,
-}
-
-/// Explainable objective relevance. Variant order is deliberately not used for
-/// ranking; `rank()` below is the single ordering contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObjectiveMatchClass {
-    Exact,
-    Prefix,
-    Substring,
-    Fuzzy,
-    BodyEvidence,
-}
-
-impl ObjectiveMatchClass {
-    fn rank(self) -> i32 {
-        match self {
-            Self::Exact => 5,
-            Self::Prefix => 4,
-            Self::Substring => 3,
-            Self::Fuzzy => 2,
-            Self::BodyEvidence => 1,
-        }
-    }
-}
-
-/// Browser-facing offsets are UTF-16 code-unit offsets (the unit used by JS
-/// string slicing and DOM selection), not Rust/regex byte offsets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MatchSpan {
-    pub start: usize,
-    pub end: usize,
-}
-
-/// One positive clause's reason for accepting an entity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MatchEvidence {
-    pub clause_id: u32,
-    pub field: TextField,
-    pub mode: TextMatchMode,
-    pub spans: Vec<MatchSpan>,
-    /// Predicate-local relevance.  Only fuzzy predicates currently populate it;
-    /// final page ranking is carried on the page hit.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub score: Option<i32>,
-}
-
 /// A typed text predicate in the shared plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TextPredicate {
-    pub clause_id: u32,
-    pub field: TextField,
-    pub mode: TextMatchMode,
-    pub value: String,
+pub(crate) struct TextPredicate {
+    pub(crate) clause_id: u32,
+    pub(crate) field: TextField,
+    pub(crate) mode: TextMatchMode,
+    pub(crate) value: String,
 }
 
 /// Boolean query expression.  A successful NOT contributes no positive match
 /// evidence, which keeps "why did this match?" explanations honest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum QueryExpr {
+pub(crate) enum QueryExpr {
     Text(TextPredicate),
     And(Vec<QueryExpr>),
     Or(Vec<QueryExpr>),
@@ -114,10 +55,10 @@ pub enum QueryExpr {
 
 /// One independently limited entity branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueryBranch {
-    pub target: QueryTarget,
-    pub predicate: QueryExpr,
-    pub limit: usize,
+pub(crate) struct QueryBranch {
+    pub(crate) target: QueryTarget,
+    pub(crate) predicate: QueryExpr,
+    pub(crate) limit: usize,
 }
 
 /// One routed page used to scope a block-search plan. A supplied relative path
@@ -132,88 +73,12 @@ pub struct QueryPageScope {
     pub path: Option<String>,
 }
 
-/// Stable diagnostic codes let the frontend localize/rephrase messages later.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueryDiagnostic {
-    pub code: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub span: Option<MatchSpan>,
-}
-
-/// A cheap declarative explanation tree.  Per-candidate counts/timings can be
-/// layered on later without changing query membership or match evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExplainNode {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub clause_id: Option<u32>,
-    pub description: String,
-    pub children: Vec<ExplainNode>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueryExplanation {
-    pub branches: Vec<ExplainNode>,
-}
-
-/// Result-only entity union.  Match metadata intentionally does not live on
-/// `BlockDto`, because that DTO also crosses the write boundary.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "entity", rename_all = "snake_case")]
-pub enum QueryHit {
-    Page {
-        page: PageEntry,
-        display_text: String,
-        evidence: Vec<MatchEvidence>,
-        score: i32,
-        match_class: ObjectiveMatchClass,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        matched_alias: Option<String>,
-    },
-    Block {
-        page: String,
-        kind: PageKind,
-        /// Graph-root-relative physical owner of this result. Block ids and page
-        /// names are not unique enough to recover it after a duplicate-name hit.
-        path: String,
-        block: BlockDto,
-        /// Exact lsdoc-projected visible text indexed by `evidence.spans`.
-        display_text: String,
-        evidence: Vec<MatchEvidence>,
-        /// Objective block relevance. The match class is the primary band;
-        /// this score summarizes boundary, offset, length, and occurrence
-        /// quality inside that band.
-        score: i32,
-        match_class: ObjectiveMatchClass,
-    },
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct QueryHasMore {
-    #[serde(default)]
-    pub pages: bool,
-    #[serde(default)]
-    pub blocks: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueryExecution {
-    pub hits: Vec<QueryHit>,
-    pub diagnostics: Vec<QueryDiagnostic>,
-    pub explanation: QueryExplanation,
-    /// Per-category top-k truncation, detected during the existing candidate scan.
-    #[serde(default)]
-    pub has_more: QueryHasMore,
-    /// A cancelled latest-wins lane returns no partial results.
-    pub cancelled: bool,
-}
-
 /// Compiled friendly graph-search plan.  Regexes are compiled once and kept off
 /// the wire; the public expression remains inspectable/serializable.
 #[derive(Debug, Clone)]
-pub struct QueryPlan {
-    pub branches: Vec<QueryBranch>,
-    pub diagnostics: Vec<QueryDiagnostic>,
+pub(crate) struct QueryPlan {
+    pub(crate) branches: Vec<QueryBranch>,
+    pub(crate) diagnostics: Vec<QueryDiagnostic>,
     page_scope: Option<QueryPageScope>,
     // Ctrl-K keeps the literal trimmed launcher source so a multi-word page
     // title/alias can retain the objective Exact class. The parsed AND terms
@@ -227,7 +92,7 @@ impl QueryPlan {
     /// Ctrl-K graph providers: fuzzy page names for a single bare term, but
     /// ordinary contains/phrase/regex semantics for block content.  Multi-term
     /// and operator searches use the same boolean grammar on both entity kinds.
-    pub fn friendly(query: &str, page_limit: usize, block_limit: usize) -> Self {
+    pub(crate) fn friendly(query: &str, page_limit: usize, block_limit: usize) -> Self {
         let matcher = Matcher::parse(query);
         let mut next_id = 1;
         let mut regexes = HashMap::new();
@@ -283,7 +148,11 @@ impl QueryPlan {
 
     /// Current-page search is a block-only execution profile of the same typed
     /// friendly plan—not a frontend filter over whole-graph results.
-    pub fn friendly_for_page(query: &str, block_limit: usize, scope: QueryPageScope) -> Self {
+    pub(crate) fn friendly_for_page(
+        query: &str,
+        block_limit: usize,
+        scope: QueryPageScope,
+    ) -> Self {
         let mut plan = Self::block_search(query, block_limit);
         plan.page_scope = Some(scope);
         plan
@@ -292,7 +161,7 @@ impl QueryPlan {
     /// Explicit page-name fuzzy plan for normal-query frontends and tests.  This
     /// constructor makes the opt-in visible in the typed IR; it never changes the
     /// default behavior of existing block queries.
-    pub fn page_name_fuzzy(value: impl Into<String>, limit: usize) -> Self {
+    pub(crate) fn page_name_fuzzy(value: impl Into<String>, limit: usize) -> Self {
         let value = value.into();
         Self {
             branches: vec![QueryBranch {
@@ -313,7 +182,7 @@ impl QueryPlan {
     }
 
     /// Existing block-search API expressed as one typed branch.
-    pub fn block_search(query: &str, limit: usize) -> Self {
+    pub(crate) fn block_search(query: &str, limit: usize) -> Self {
         let matcher = Matcher::parse(query);
         let mut next_id = 1;
         let mut regexes = HashMap::new();
@@ -354,7 +223,7 @@ impl QueryPlan {
     /// Literal block autocomplete for the `((` picker. OG rev 6e7afa8eb's
     /// `search.cljs:block-search`/`fuzzy-search` normalizes the whole query as
     /// one literal term. Blank input has no candidates.
-    pub fn block_search_literal(query: &str, limit: usize) -> Self {
+    pub(crate) fn block_search_literal(query: &str, limit: usize) -> Self {
         let branches = if query.is_empty() {
             Vec::new()
         } else {
@@ -383,11 +252,11 @@ impl QueryPlan {
     /// `search.cljs:page-search`/`exact-matched?`; the whole normalized query is
     /// one ordered-subsequence term, not Ctrl-K's AND/OR/negation/regex DSL.
     /// Blank input therefore keeps the established all-pages candidate listing.
-    pub fn legacy_page_search(query: &str, limit: usize) -> Self {
+    pub(crate) fn legacy_page_search(query: &str, limit: usize) -> Self {
         Self::page_name_fuzzy(query, limit)
     }
 
-    pub fn explanation(&self) -> QueryExplanation {
+    pub(crate) fn explanation(&self) -> QueryExplanation {
         QueryExplanation {
             branches: self
                 .branches
@@ -406,11 +275,11 @@ impl QueryPlan {
 
     /// Execute all graph-backed branches.  Cancellation is checked between page
     /// candidates and before every block projection; no partial result escapes.
-    pub fn execute(&self, graph: &Graph, cancelled: impl Fn() -> bool) -> QueryExecution {
+    pub(crate) fn execute(&self, graph: &Graph, cancelled: impl Fn() -> bool) -> QueryExecution {
         self.execute_with_explain(graph, cancelled, true)
     }
 
-    pub fn execute_with_explain(
+    pub(crate) fn execute_with_explain(
         &self,
         graph: &Graph,
         cancelled: impl Fn() -> bool,
@@ -1524,7 +1393,7 @@ fn execute_blocks(
                     // Search hits are result identities, not independent copies
                     // of their entire descendant trees. The source page owns the
                     // hierarchy and live consumers hydrate it once per page.
-                    let mut dto = crate::model::block_to_shallow_dto(winner.block);
+                    let mut dto = tine_core::projection::block_to_shallow_dto(winner.block);
                     dto.breadcrumb = winner.breadcrumb;
                     QueryHit::Block {
                         page: winner.page.name.clone(),
@@ -1547,8 +1416,8 @@ fn execute_blocks(
 /// search/query consumers. Hits arrive in global relevance order; only contiguous
 /// hits from the same page are coalesced, so flattening the groups preserves that
 /// order even when a page appears in more than one group.
-pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<crate::model::RefGroup> {
-    let mut groups: Vec<crate::model::RefGroup> = Vec::new();
+pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<tine_core::model::RefGroup> {
+    let mut groups: Vec<tine_core::model::RefGroup> = Vec::new();
     for hit in hits {
         let QueryHit::Block {
             page, kind, block, ..
@@ -1562,7 +1431,7 @@ pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<crate::model::Ref
                 continue;
             }
         }
-        groups.push(crate::model::RefGroup {
+        groups.push(tine_core::model::RefGroup {
             page,
             kind,
             blocks: vec![block],
@@ -1629,7 +1498,7 @@ mod tests {
         (dir, graph)
     }
 
-    fn block_fingerprint(groups: Vec<crate::model::RefGroup>) -> Vec<(String, String)> {
+    fn block_fingerprint(groups: Vec<tine_core::model::RefGroup>) -> Vec<(String, String)> {
         groups
             .into_iter()
             .flat_map(|group| {

@@ -1,0 +1,207 @@
+//! Durable writes for the device settings file outside graph roots.
+
+use std::fs;
+use std::io::{self, Write};
+use std::path::Path;
+
+/// Atomically move one file without ever replacing an existing destination.
+/// Platform-native no-replace rename semantics ensure the source name and inode
+/// cannot be swapped between a check and an unlink.
+pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let src = std::ffi::CString::new(src.as_os_str().as_bytes())?;
+        let dest = std::ffi::CString::new(dest.as_os_str().as_bytes())?;
+        // Atomic move + create-if-absent. Call the syscall directly: Android's
+        // bionic `renameat2` wrapper is only exported from API 30, whereas
+        // `syscall` is available from API 1. A wrapper reference here survived
+        // the first GH #192 fix in backup.rs and still prevented the complete
+        // native library from loading on Android 9. Whichever inode currently
+        // owns `src` at the syscall boundary is moved intact, so the safety and
+        // errno contracts remain unchanged.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                src.as_ptr(),
+                libc::AT_FDCWD,
+                dest.as_ptr(),
+                libc::RENAME_NOREPLACE as libc::c_uint,
+            )
+        };
+        return (result == 0)
+            .then_some(())
+            .ok_or_else(io::Error::last_os_error);
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let src = std::ffi::CString::new(src.as_os_str().as_bytes())?;
+        let dest = std::ffi::CString::new(dest.as_os_str().as_bytes())?;
+        let result = unsafe { libc::renamex_np(src.as_ptr(), dest.as_ptr(), libc::RENAME_EXCL) };
+        return (result == 0)
+            .then_some(())
+            .ok_or_else(io::Error::last_os_error);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let mut src: Vec<u16> = src.as_os_str().encode_wide().collect();
+        let mut dest: Vec<u16> = dest.as_os_str().encode_wide().collect();
+        src.push(0);
+        dest.push(0);
+        // MoveFileW fails when the destination already exists (unlike Rust's
+        // cross-platform `rename` contract, which permits replacement).
+        let result = unsafe {
+            windows_sys::Win32::Storage::FileSystem::MoveFileW(src.as_ptr(), dest.as_ptr())
+        };
+        return (result != 0)
+            .then_some(())
+            .ok_or_else(io::Error::last_os_error);
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows"
+    )))]
+    {
+        let _ = (src, dest);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "atomic no-replace move is unavailable on this platform",
+        ))
+    }
+}
+
+/// Atomically publish a newly-created file without clobbering a destination that
+/// appeared after the caller's collision check. The payload is fsynced in a
+/// same-directory temp, then atomically renamed into the final name only if absent.
+pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{fname}.{}.{}.new.tmp", std::process::id(), seq));
+    let res = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        move_file_noreplace(&tmp, path)?;
+        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
+}
+
+/// Atomic write: write to a temp file in the same directory, then rename. The
+/// temp name is unique per write (pid + sequence) so two concurrent writers to
+/// the same path (e.g. an autosave and a highlight/rename rewrite) can't truncate
+/// each other's temp; the rename is still atomic. The temp is removed if the
+/// write fails, so a unique name never leaks an orphan behind.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{fname}.{}.{seq}.tmp", std::process::id()));
+    let res = (|| {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp); // never leave a temp behind on failure
+    } else {
+        // Persist the rename itself: fsync the directory so a crash right after the
+        // write can't lose the new directory entry (the rename) on some
+        // filesystems. Best-effort — not all platforms allow fsync on a dir.
+        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+    }
+    res
+}
+
+/// Read–modify–write a small text file (config.edn, device settings) under a lock,
+/// committed via [`atomic_write`]. The ONE guarded path every settings writer goes
+/// through, so the discipline is uniform rather than re-derived per call site:
+///   - a MISSING file is the empty document `{}`, but any OTHER read error
+///     (permission, NFS stale handle, transient I/O) ABORTS — otherwise `edit` would
+///     rebuild the whole file from `{}` and destroy every other key (audit H2);
+///   - the `lock` serializes concurrent writers to the same logical file so a
+///     read-modify-write can't clobber a concurrent one (audit M1/M2);
+///   - `edit` returns the new full contents, or an `Err` to abort without writing;
+///   - the commit is atomic (temp + fsync + rename), so a crash can't truncate it.
+pub(crate) fn atomic_update(
+    path: &Path,
+    lock: &std::sync::Mutex<()>,
+    edit: impl Fn(&str) -> io::Result<String>,
+) -> io::Result<()> {
+    atomic_update_with_hooks(path, lock, edit, |_| {}, |_| {})
+}
+
+fn atomic_update_with_hooks(
+    path: &Path,
+    lock: &std::sync::Mutex<()>,
+    edit: impl Fn(&str) -> io::Result<String>,
+    before_recheck: impl Fn(usize),
+    before_publish: impl Fn(usize),
+) -> io::Result<()> {
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    for attempt in 0..4 {
+        let baseline = match fs::read_to_string(path) {
+            Ok(s) => Some(s),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        let next = edit(baseline.as_deref().unwrap_or("{}\n"))?;
+        // CONFIG_LOCK serializes Tine writers, but Logseq/Syncthing do not take
+        // it. Re-read immediately before publish and retry the key-local edit on
+        // their new bytes instead of overwriting an external update with our stale
+        // full-file copy.
+        before_recheck(attempt);
+        let current = match fs::read_to_string(path) {
+            Ok(s) => Some(s),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        if current != baseline {
+            continue;
+        }
+        before_publish(attempt);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let published = if baseline.is_none() {
+            atomic_write_new(path, next.as_bytes())
+        } else {
+            atomic_write(path, next.as_bytes())
+        };
+        match published {
+            Ok(()) => return Ok(()),
+            Err(error) if baseline.is_none() && error.kind() == io::ErrorKind::AlreadyExists => {
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::WouldBlock,
+        "config changed repeatedly during update",
+    ))
+}

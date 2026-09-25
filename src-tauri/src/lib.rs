@@ -9,6 +9,7 @@ mod app_identity;
 mod backup;
 mod commands;
 mod debug;
+mod device_io;
 mod graph;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;

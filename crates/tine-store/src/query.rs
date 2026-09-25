@@ -3,73 +3,27 @@
 //! task markers, and property filters. Advanced datalog (`[:find ...]`) is
 //! detected and reported as unsupported rather than crashed.
 
-use crate::model::{
-    block_to_shallow_dto, BacklinkFilterContext, BacklinkFilterEntry, BacklinkFilterTarget,
-    BlockDto, BlockPreview, Format, Graph, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence,
-    ReferenceDiagnosticTrace, ReferenceDiagnostics, ReferenceKind, TemplateDto,
-};
+use crate::model::Graph;
 use tine_core::date::JournalDate;
 use tine_core::doc::{property_key_norm, DocBlock, Document};
+use tine_core::model::{
+    BacklinkFilterContext, BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, BlockPreview,
+    Format, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence, ReferenceKind, TemplateDto,
+};
+use tine_core::projection::block_to_shallow_dto;
+use tine_core::query::{
+    is_advanced, query_nesting_within_limit, query_source_within_limit, AdvancedResult,
+    QueryExportBatch, QueryExportResult, QueryExportSpec,
+};
 use tine_core::refs;
 use tine_core::search_query::Matcher;
-
-/// Query source crosses several boundaries (live macros, native IPC, static
-/// publication, and export). Keep one shared ceiling so no caller can make the
-/// parser or its cache key proportional to an unbounded graph-authored string.
-pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
 const QUERY_NESTING_MAX: usize = 64;
 
-pub fn query_source_within_limit(source: &str) -> bool {
-    source.len() <= QUERY_SOURCE_MAX_BYTES
-}
-
-/// Iterative, string/comment-aware guard before either recursive DSL parser.
-/// Count parentheses because those are the only delimiters that construct
-/// recursive predicates; brackets/braces are scanned iteratively as data.
-pub fn query_nesting_within_limit(source: &str) -> bool {
-    let semicolon_comments = is_advanced(source);
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut in_comment = false;
-    for byte in source.bytes() {
-        if in_comment {
-            if byte == b'\n' {
-                in_comment = false;
-            }
-            continue;
-        }
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match byte {
-            b';' if semicolon_comments => in_comment = true,
-            b'"' => in_string = true,
-            b'(' => {
-                depth = depth.saturating_add(1);
-                if depth > QUERY_NESTING_MAX {
-                    return false;
-                }
-            }
-            b')' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    true
-}
-
 #[derive(Debug, Clone)]
-pub struct BoundedGroups {
-    pub groups: Vec<RefGroup>,
-    pub total: usize,
-    pub exceeded: bool,
+pub(crate) struct BoundedGroups {
+    pub(crate) groups: Vec<RefGroup>,
+    pub(crate) total: usize,
+    pub(crate) exceeded: bool,
 }
 
 struct ConstructionBudget {
@@ -385,7 +339,7 @@ fn collect_bounded(
                 if let Some(property_ref) = keep_page_properties(entry, pre) {
                     if budget.admit_estimated(
                         &entry.name,
-                        crate::model::block_dto_estimated_bytes(&property_ref),
+                        tine_core::model::block_dto_estimated_bytes(&property_ref),
                     ) {
                         matched.push(property_ref);
                     }
@@ -513,6 +467,7 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     aliases
 }
 
+#[allow(dead_code)]
 fn sorted_alias_owners(
     mut owned: Vec<(std::path::PathBuf, String, String)>,
 ) -> Vec<(String, String)> {
@@ -525,7 +480,8 @@ fn sorted_alias_owners(
         .collect()
 }
 
-pub fn page_aliases(graph: &Graph) -> Vec<(String, String)> {
+#[allow(dead_code)]
+pub(crate) fn page_aliases(graph: &Graph) -> Vec<(String, String)> {
     graph.with_pages(|pages| {
         let mut owned = Vec::new();
         for (entry, doc) in pages {
@@ -835,7 +791,7 @@ fn collect_reference_occurrences_bounded(
                 {
                     let mut dto = block_to_shallow_dto(&block);
                     dto.page_property = true;
-                    let estimated = crate::model::block_dto_estimated_bytes(&dto)
+                    let estimated = tine_core::model::block_dto_estimated_bytes(&dto)
                         .saturating_add(reference_evidence_estimated_bytes(&hit));
                     if budget.admit_estimated(&entry.name, estimated) {
                         blocks.push(dto);
@@ -923,7 +879,7 @@ fn collect_reference_occurrences_bounded(
     }
 }
 
-pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
+pub(crate) fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
     collect_reference_occurrences(
@@ -935,7 +891,7 @@ pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     )
 }
 
-pub fn backlinks_bounded(
+pub(crate) fn backlinks_bounded(
     graph: &Graph,
     target: &str,
     max_rows: usize,
@@ -1180,7 +1136,7 @@ pub fn backlink_filter_context(
 /// grouped by source page. Unlike page `backlinks`, this passes `exclude: None`,
 /// so a referrer on the *same page* as the target is included — matching OG's
 /// `get-block-referenced-blocks` (no self-page exclusion at the block level).
-pub fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
+pub(crate) fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
     let u = uuid.trim();
     if u.is_empty() {
         return Vec::new();
@@ -1193,7 +1149,7 @@ pub fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
     )
 }
 
-pub fn block_referrers_bounded(
+pub(crate) fn block_referrers_bounded(
     graph: &Graph,
     uuid: &str,
     max_rows: usize,
@@ -1220,7 +1176,7 @@ pub fn block_referrers_bounded(
 /// Unlinked references: parser-visible plain occurrences outside explicit
 /// reference syntax. A block containing both kinds appears once in each surface,
 /// with the corresponding occurrence evidence.
-pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
+pub(crate) fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
     collect_reference_occurrences(
@@ -1232,7 +1188,7 @@ pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     )
 }
 
-pub fn unlinked_refs_bounded(
+pub(crate) fn unlinked_refs_bounded(
     graph: &Graph,
     target: &str,
     max_rows: usize,
@@ -1249,75 +1205,6 @@ pub fn unlinked_refs_bounded(
         max_rows,
         max_bytes,
     )
-}
-
-/// Target-scoped trace for bug reports. Membership comes from the exact same
-/// occurrence engine as the panels; the deliberately uncached parser path makes
-/// projection-cache drift visible. No launcher history is read or returned.
-pub fn reference_diagnostics(graph: &Graph, target: &str) -> ReferenceDiagnostics {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
-    let excluded_page = refs::page_key(&self_page);
-    let mut traces = graph.with_pages(|pages| {
-        let mut traces = Vec::new();
-        for (entry, document) in pages {
-            let self_page = refs::normalize(&entry.name) == excluded_page;
-            let mut inspect = |block: &DocBlock| {
-                let occurrences = tine_core::reference_evidence::slow_occurrences(
-                    &block.raw,
-                    block.is_org,
-                    &canonical,
-                    &names_norm,
-                    &graph.config,
-                );
-                let raw_lower = block.raw.to_lowercase();
-                let textual_candidate = names_norm.iter().any(|name| raw_lower.contains(name));
-                if occurrences.is_empty() && !textual_candidate {
-                    return;
-                }
-                let explicit = occurrences
-                    .iter()
-                    .any(|occurrence| occurrence.kind == ReferenceKind::Explicit);
-                let plain = occurrences
-                    .iter()
-                    .any(|occurrence| occurrence.kind == ReferenceKind::Plain);
-                traces.push(ReferenceDiagnosticTrace {
-                    page: entry.name.clone(),
-                    kind: entry.kind,
-                    block_id: block.uuid.clone(),
-                    occurrences,
-                    included_linked: !self_page && explicit,
-                    included_unlinked: !self_page && plain,
-                    exclusion_reason: if self_page {
-                        Some("self_page_excluded".to_string())
-                    } else if !explicit && !plain {
-                        Some("parser_excluded_context_or_boundary".to_string())
-                    } else {
-                        None
-                    },
-                });
-            };
-            if let Some(block) = document
-                .pre_block
-                .as_deref()
-                .and_then(|pre| page_property_block(entry, pre))
-            {
-                inspect(&block);
-            }
-            walk(&document.roots, &mut inspect);
-        }
-        traces
-    });
-    traces.sort_by(|a, b| {
-        a.page
-            .cmp(&b.page)
-            .then_with(|| a.block_id.cmp(&b.block_id))
-    });
-    ReferenceDiagnostics {
-        engine_version: tine_core::reference_evidence::ENGINE_VERSION.to_string(),
-        target: canonical,
-        traces,
-    }
 }
 
 /// Page-level properties and `tags::` values parsed from a page's pre-block.
@@ -1341,11 +1228,11 @@ fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) 
     (props, tags)
 }
 
-pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
+pub(crate) fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
     run_query_bounded(graph, query_src, usize::MAX, usize::MAX).groups
 }
 
-pub fn run_query_bounded(
+pub(crate) fn run_query_bounded(
     graph: &Graph,
     query_src: &str,
     max_rows: usize,
@@ -1716,17 +1603,6 @@ pub(crate) fn page_affects_advanced_query(
     hit
 }
 
-/// Result of an advanced (datalog) query: matched groups + which clause heads
-/// ran vs were ignored, so the UI shows "ran X; ignored Y" rather than a blunt
-/// "unsupported". `supported` is false only when nothing in the subset matched.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AdvancedResult {
-    pub groups: Vec<RefGroup>,
-    pub ran: Vec<String>,
-    pub ignored: Vec<String>,
-    pub supported: bool,
-}
-
 pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
     AdvancedResult {
         groups: Vec::new(),
@@ -1742,7 +1618,8 @@ pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
 /// predicates already exist. Unrecognized clauses (custom rules, `[?e ?a ?v]`
 /// joins, `:view`/`:result-transform`) are listed in `ignored` and skipped, never
 /// guessed (a wrong result is worse than "unsupported").
-pub fn run_advanced_query(
+#[allow(dead_code)]
+pub(crate) fn run_advanced_query(
     graph: &Graph,
     query_src: &str,
     current_page: Option<&str>,
@@ -1750,7 +1627,7 @@ pub fn run_advanced_query(
     run_advanced_query_bounded(graph, query_src, current_page, usize::MAX, usize::MAX).0
 }
 
-pub fn run_advanced_query_bounded(
+pub(crate) fn run_advanced_query_bounded(
     graph: &Graph,
     query_src: &str,
     current_page: Option<&str>,
@@ -2258,14 +2135,14 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
 /// Literal fuzzy full-text autocomplete for the `((` block picker, grouped by
 /// page and capped at `limit` total blocks. Ctrl-K uses `run_graph_search*` and
 /// retains the shared search dialect through `QueryPlan::friendly*`.
-pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
+pub(crate) fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
     search_cancellable(graph, query, limit, || false)
 }
 
 /// Search with cooperative cancellation for interactive callers. The cheap
 /// callback is checked before each block projection, so a superseded rare-prefix
 /// scan does not finish walking a huge page in the background.
-pub fn search_cancellable(
+pub(crate) fn search_cancellable(
     graph: &Graph,
     query: &str,
     limit: usize,
@@ -2281,7 +2158,7 @@ pub fn search_cancellable(
 }
 
 /// Find every `template:: <name>` block and the blocks an insertion produces.
-pub fn templates(graph: &Graph) -> Vec<TemplateDto> {
+pub(crate) fn templates(graph: &Graph) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
         for (entry, doc) in pages {
@@ -2354,7 +2231,8 @@ const INTERNAL_PROPS: &[&str] = &[
 
 /// Distinct property keys (each with its sorted distinct values) used across the
 /// graph. Drives the query builder's property-filter pickers.
-pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
+#[allow(dead_code)]
+pub(crate) fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
     property_facets_bounded(graph, usize::MAX, usize::MAX).0
 }
 
@@ -2601,7 +2479,7 @@ pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> 
 /// Resolve a `((uuid))` block reference to a shallow identity/result row.
 /// Descendants are owned by the source page; explicit bounded consumers use
 /// `preview_block`.
-pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
+pub(crate) fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
     // Jump to the owning page via the uuid index, falling back to a full scan if
     // the hint is missing or stale (so a lagging index can never give a wrong
     // answer — just a slower one).
@@ -2646,7 +2524,7 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
 /// absent) falls back to a SINGLE whole-graph scan. Match semantics + first-block-
 /// wins ordering are identical to `resolve_block`. Output is positional and
 /// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
-pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> {
+pub(crate) fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> {
     resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
 }
 
@@ -2715,7 +2593,10 @@ pub fn resolve_blocks_bounded(
             let group = resolved.get(u.as_str())?;
             let block = group.blocks.first()?;
             output_budget
-                .admit_estimated(&group.page, crate::model::block_dto_estimated_bytes(block))
+                .admit_estimated(
+                    &group.page,
+                    tine_core::model::block_dto_estimated_bytes(block),
+                )
                 .then(|| group.clone())
         })
         .collect();
@@ -2757,7 +2638,7 @@ fn block_to_bounded_dto(
         return None;
     }
     let mut dto = block_to_shallow_dto(block);
-    let dto_bytes = crate::model::block_dto_estimated_bytes(&dto);
+    let dto_bytes = tine_core::model::block_dto_estimated_bytes(&dto);
     if dto_bytes > *remaining_bytes {
         return None;
     }
@@ -2770,36 +2651,6 @@ fn block_to_bounded_dto(
         dto.children.push(child_dto);
     }
     Some(dto)
-}
-
-/// One query macro requested by Copy / Export. Query evaluation and subtree
-/// hydration stay in the same native operation so a shallow result never causes
-/// the WebView to fetch and retain its complete source page.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QueryExportSpec {
-    pub key: String,
-    pub query: String,
-    pub advanced: bool,
-}
-
-/// A single query macro's bounded, hierarchy-preserving export projection.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QueryExportResult {
-    pub key: String,
-    pub groups: Vec<RefGroup>,
-    pub shown: usize,
-    pub total: usize,
-    pub omitted_nodes: usize,
-}
-
-/// All query macros in one export session share the same construction budget.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QueryExportBatch {
-    pub results: Vec<QueryExportResult>,
-    /// Query macros beyond the native request cap are not evaluated. The caller
-    /// renders an explicit truncation note rather than silently expanding them
-    /// through an unbounded sequence of independent requests.
-    pub omitted_queries: usize,
 }
 
 #[derive(Debug)]
@@ -3004,7 +2855,8 @@ pub fn export_query_subtrees(
 /// Resolve one block for a hover/export consumer that explicitly needs a
 /// subtree. This compatibility wrapper applies the caller's node bound; native
 /// and export consumers use `preview_block_with_budget` to add a byte bound.
-pub fn preview_block(graph: &Graph, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
+#[allow(dead_code)]
+pub(crate) fn preview_block(graph: &Graph, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
     preview_block_with_budget(graph, uuid, max_nodes, usize::MAX)
 }
 
@@ -3014,7 +2866,7 @@ pub fn preview_block(graph: &Graph, uuid: &str, max_nodes: usize) -> Option<Bloc
 /// fit, the preview is returned with an empty block list and the exact omitted
 /// count; callers can disclose truncation without confusing "too large" with
 /// "block not found".
-pub fn preview_block_with_budget(
+pub(crate) fn preview_block_with_budget(
     graph: &Graph,
     uuid: &str,
     max_nodes: usize,
@@ -3113,11 +2965,6 @@ fn resolve_ids_in_page<'a>(
 }
 
 /// Is this query body an advanced datalog query we don't support?
-pub fn is_advanced(query_src: &str) -> bool {
-    let s = query_src.trim_start();
-    s.starts_with("[:find") || s.contains(":where") || s.contains(":find")
-}
-
 // ---------------------------------------------------------------------------
 // Query predicate AST + parser + evaluator
 // ---------------------------------------------------------------------------
@@ -3902,7 +3749,7 @@ mod tests {
         assert!(ran.is_empty());
         assert!(ignored.iter().any(|item| item == "query-nesting-too-deep"));
 
-        let oversized = "x".repeat(QUERY_SOURCE_MAX_BYTES + 1);
+        let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
         assert!(!query_source_within_limit(&oversized));
         assert!(Pred::parse(&oversized, TODAY).is_none());
 
@@ -4664,13 +4511,13 @@ mod tests {
             .collect()
     }
 
-    fn graph_search_block_texts(execution: crate::query_plan::QueryExecution) -> Vec<String> {
+    fn graph_search_block_texts(execution: tine_core::query_plan::QueryExecution) -> Vec<String> {
         execution
             .hits
             .into_iter()
             .filter_map(|hit| match hit {
-                crate::query_plan::QueryHit::Block { display_text, .. } => Some(display_text),
-                crate::query_plan::QueryHit::Page { .. } => None,
+                tine_core::query_plan::QueryHit::Block { display_text, .. } => Some(display_text),
+                tine_core::query_plan::QueryHit::Page { .. } => None,
             })
             .collect()
     }
@@ -5327,18 +5174,6 @@ mod tests {
             .occurrences
             .iter()
             .all(|occurrence| occurrence.kind == ReferenceKind::Plain));
-        let diagnostics = reference_diagnostics(&graph, "Target");
-        assert_eq!(diagnostics.engine_version, "reference-evidence/v1");
-        let source_trace = diagnostics
-            .traces
-            .iter()
-            .find(|trace| trace.page == "Source")
-            .unwrap();
-        assert!(source_trace.included_linked && source_trace.included_unlinked);
-        assert_eq!(source_trace.occurrences.len(), 3);
-        assert!(!serde_json::to_string(&diagnostics)
-            .unwrap()
-            .contains("launcher-ranking"));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -5394,7 +5229,7 @@ mod tests {
         assert_eq!(occurrence.rule, "explicit_property_key");
         assert_eq!(
             occurrence.span,
-            crate::model::ReferenceSpan { start: 0, end: 3 }
+            tine_core::model::ReferenceSpan { start: 0, end: 3 }
         );
         assert_eq!(
             &key_group.blocks[0].raw[occurrence.span.start..occurrence.span.end],
@@ -5546,15 +5381,6 @@ mod tests {
                 .unwrap()
                 .blocks[0]
                 .page_property
-        );
-        let diagnostics = reference_diagnostics(&graph, "Target");
-        assert!(
-            diagnostics
-                .traces
-                .iter()
-                .find(|trace| trace.page == "PageProps")
-                .unwrap()
-                .included_unlinked
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5748,7 +5574,7 @@ mod tests {
                 .group
                 .blocks
                 .iter()
-                .map(crate::model::block_dto_estimated_bytes)
+                .map(tine_core::model::block_dto_estimated_bytes)
                 .sum::<usize>()
                 <= 512
         );
@@ -5901,7 +5727,7 @@ mod tests {
             .iter()
             .flat_map(|result| result.groups.iter())
             .flat_map(|group| group.blocks.iter())
-            .map(crate::model::block_dto_estimated_bytes)
+            .map(tine_core::model::block_dto_estimated_bytes)
             .sum::<usize>();
         assert!(emitted <= 1024 * 1024);
         assert!(batch.results.iter().all(|result| {

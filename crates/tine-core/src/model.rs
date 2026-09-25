@@ -411,3 +411,90 @@ pub struct GraphMeta {
     /// one-time in-app Guide announcement.
     pub guide_announced: bool,
 }
+pub fn block_dto_estimated_bytes(block: &BlockDto) -> usize {
+    block.id.len()
+        + block.raw.len()
+        + block.breadcrumb.iter().map(String::len).sum::<usize>()
+        + block.tags.iter().map(String::len).sum::<usize>()
+        + block
+            .properties
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum::<usize>()
+        + block
+            .children
+            .iter()
+            .map(block_dto_estimated_bytes)
+            .sum::<usize>()
+        + 128
+}
+
+/// Conservative owned-memory estimate for a result payload. Tauri commands use
+/// this before serialization as a second guard beside the row cap; derived
+/// caches use the same accounting so transport and retention budgets cannot
+/// drift apart.
+pub fn ref_groups_estimated_bytes(groups: &[RefGroup]) -> usize {
+    groups
+        .iter()
+        .map(|group| {
+            group.page.len()
+                + group
+                    .blocks
+                    .iter()
+                    .map(block_dto_estimated_bytes)
+                    .sum::<usize>()
+                + group
+                    .evidence
+                    .iter()
+                    .map(|evidence| {
+                        evidence.block_id.len()
+                            + evidence
+                                .occurrences
+                                .iter()
+                                .map(|occurrence| {
+                                    occurrence.matched_name.len()
+                                        + occurrence.canonical.len()
+                                        + occurrence.rule.len()
+                                        + std::mem::size_of::<ReferenceOccurrence>()
+                                })
+                                .sum::<usize>()
+                    })
+                    .sum::<usize>()
+                + std::mem::size_of::<RefGroup>()
+        })
+        .sum()
+}
+impl GraphMeta {
+    pub fn from_config(
+        root: String,
+        config: &crate::config::Config,
+        journal_format: &crate::date::JournalFormat,
+    ) -> Self {
+        Self {
+            root,
+            journals_dir: config.journals_dir.clone(),
+            pages_dir: config.pages_dir.clone(),
+            preferred_workflow: match config.preferred_workflow {
+                crate::config::Workflow::Todo => "todo".into(),
+                crate::config::Workflow::Now => "now".into(),
+            },
+            shortcuts: config.shortcuts.clone(),
+            start_of_week: config.start_of_week,
+            block_hidden_properties: config.block_hidden_properties.clone(),
+            default_journal_template: config.default_journal_template.clone(),
+            favorites: config.favorites.clone(),
+            journal_page_title_format: journal_format.title_format().to_string(),
+            journal_file_name_format: journal_format.file_format().to_string(),
+            preferred_format: config.preferred_format.ext().to_string(),
+            macros: config.macros.clone(),
+            enable_timetracking: config.enable_timetracking,
+            show_brackets: config.show_brackets,
+            doc_mode_enter_for_new_block: config.doc_mode_enter_for_new_block,
+            logical_outdenting: config.logical_outdenting,
+            logbook_with_second_support: config.logbook.with_second_support,
+            logbook_enabled_in_timestamped_blocks: config.logbook.enabled_in_timestamped_blocks,
+            logbook_enabled_in_all_blocks: config.logbook.enabled_in_all_blocks,
+            guide_announced: config.guide_announced,
+        }
+    }
+}

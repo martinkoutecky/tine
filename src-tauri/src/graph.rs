@@ -7,7 +7,8 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
-use tine_store::model::{Graph, GraphMeta};
+use tine_core::model::GraphMeta;
+use tine_store::model::Graph;
 
 /// Reset the warm flag for a new graph load and return the new warm generation
 /// (passed to `warm_cache_async`, which only reports done if still current).

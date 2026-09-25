@@ -1,7 +1,32 @@
 //! Bundled Guide content: the canonical Guide pages, the demo-graph config and
 //! the embedded assets. Pure data; the store (`tine_store::onboarding`) writes it.
 
+use crate::model::PageDto;
+use crate::projection::markdown_page_dto;
 use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GuidePage {
+    pub title: String,
+    pub markdown: String,
+    pub page: PageDto,
+}
+
+pub fn bundled_guide_pages() -> Vec<GuidePage> {
+    GUIDE_TEMPLATES
+        .iter()
+        .map(|t| {
+            let mut page = markdown_page_dto(&guide_page_name(t.title), t.title, t.markdown);
+            page.read_only = true;
+            page.guide = true;
+            GuidePage {
+                title: t.title.to_string(),
+                markdown: t.markdown.to_string(),
+                page,
+            }
+        })
+        .collect()
+}
 
 /// `logseq/config.edn` for the demo graph (triple-lowbar namespace filenames,
 /// the welcome page pinned as a favorite).

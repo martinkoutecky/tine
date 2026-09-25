@@ -2,7 +2,7 @@
 //! plus an index. Inline formatting, nested block lists, and `[[page]]` links
 //! become real anchors between the generated files.
 
-use crate::model::{BlockDto, Graph, PageKind, RefGroup};
+use crate::model::Graph;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 #[cfg(not(target_os = "windows"))]
@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tine_core::doc::{self, DocBlock};
 use tine_core::lsdoc::ast::{Block, Inline, Url};
+use tine_core::model::{BlockDto, PageKind, RefGroup};
 use tine_core::refs::block_id;
 
 // `same_file::Handle` keeps its Windows handle open without FILE_SHARE_DELETE,
@@ -107,7 +108,7 @@ fn identity_from_path(path: &Path) -> io::Result<FileIdentity> {
 }
 
 /// URL/file-safe slug for a page name (links and filenames must match).
-pub fn slug(name: &str) -> String {
+pub(crate) fn slug(name: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
     for c in name.chars() {
@@ -163,7 +164,7 @@ impl QueryCache {
         }
         let bytes = key
             .source_len()
-            .saturating_add(crate::model::ref_groups_estimated_bytes(&groups.groups))
+            .saturating_add(tine_core::model::ref_groups_estimated_bytes(&groups.groups))
             .saturating_add(256);
         if bytes > QUERY_CACHE_MAX_BYTES || self.bytes.saturating_add(bytes) > QUERY_CACHE_MAX_BYTES
         {
@@ -1447,16 +1448,16 @@ fn render_query_with_title(
 ) -> String {
     const STATIC_QUERY_MAX_ROWS: usize = 20_000;
     const STATIC_QUERY_MAX_BYTES: usize = 32 * 1024 * 1024;
-    if !crate::query::query_source_within_limit(src) {
+    if !tine_core::query::query_source_within_limit(src) {
         return format!(
             "<div class=\"query query-too-large\">Query source exceeds the {} KiB publication limit.</div>",
-            crate::query::QUERY_SOURCE_MAX_BYTES / 1024
+            tine_core::query::QUERY_SOURCE_MAX_BYTES / 1024
         );
     }
-    if !crate::query::query_nesting_within_limit(src) {
+    if !tine_core::query::query_nesting_within_limit(src) {
         return "<div class=\"query query-too-large\">Query nesting is too deep to publish safely.</div>".to_string();
     }
-    let is_advanced = crate::query::is_advanced(src);
+    let is_advanced = tine_core::query::is_advanced(src);
     let bounded = if let Some(cache) = ctx.query_cache {
         let key = if is_advanced {
             QueryCacheKey::Advanced(src.to_string())
@@ -2419,7 +2420,7 @@ struct PublicationGraphSnapshot {
 }
 
 impl PublicationGraphSnapshot {
-    fn new(pages: Vec<(crate::model::PageEntry, Arc<doc::Document>)>) -> io::Result<Self> {
+    fn new(pages: Vec<(tine_core::model::PageEntry, Arc<doc::Document>)>) -> io::Result<Self> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let temp = std::env::temp_dir();
@@ -2747,7 +2748,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
             doc::parse(&content)
         };
         let is_public = all_public || page_is_public(parsed.pre_block.as_deref());
-        crate::model::assign_doc_runtime_ids(&mut parsed.roots, &e.rel_path);
+        tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, &e.rel_path);
         let parsed = Arc::new(parsed);
         snapshot_pages.push((e.clone(), Arc::clone(&parsed)));
         if !is_public {
@@ -3382,7 +3383,7 @@ mod tests {
         for entry in graph.list_pages() {
             let content = fs::read_to_string(&entry.path).unwrap();
             let mut parsed = doc::parse(&content);
-            crate::model::assign_doc_runtime_ids(&mut parsed.roots, &entry.rel_path);
+            tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, &entry.rel_path);
             snapshot_pages.push((entry, Arc::new(parsed)));
         }
         let snapshot = PublicationGraphSnapshot::new(snapshot_pages).unwrap();
@@ -4142,7 +4143,7 @@ mod tests {
             pages: None,
         };
 
-        let oversized = "x".repeat(crate::query::QUERY_SOURCE_MAX_BYTES + 1);
+        let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
         assert!(render_query(&graph, &oversized, &ctx, 0).contains("publication limit"));
         let nested = format!("{}(task TODO){}", "(and ".repeat(1_000), ")".repeat(1_000));
         assert!(render_query(&graph, &nested, &ctx, 0).contains("nesting is too deep"));

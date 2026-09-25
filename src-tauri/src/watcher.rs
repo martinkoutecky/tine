@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tauri::{Emitter, Manager, State};
-use tine_store::model::{Graph, PageKind};
+use tine_core::model::PageKind;
+use tine_store::model::Graph;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 struct GraphChange {
@@ -224,7 +225,7 @@ fn full_diff_reconcile(
     for (p, m) in &current {
         if snap.get(p) != Some(m) {
             let created = !snap.contains_key(p);
-            if tine_store::model::path_is_sync_conflict(p) {
+            if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
             } else if let Some(en) = graph.sync_file(p) {
                 changes.push(GraphChange {
@@ -238,7 +239,7 @@ fn full_diff_reconcile(
     }
     for p in snap.keys() {
         if !current.contains_key(p) {
-            if tine_store::model::path_is_sync_conflict(p) {
+            if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
             } else if let Some(en) = graph.forget_file(p) {
                 changes.push(GraphChange {
@@ -268,7 +269,7 @@ fn incremental_reconcile(
             // This path came from an explicit OS event. Always compare its
             // content even if a sync/copy tool preserved mtime and length;
             // `Graph::sync_file` already suppresses Tine's own/unchanged bytes.
-            if tine_store::model::path_is_sync_conflict(p) {
+            if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
             } else if let Some(en) = graph.sync_file(p) {
                 changes.push(GraphChange {
@@ -280,7 +281,7 @@ fn incremental_reconcile(
             }
             snap.insert(p.clone(), m);
         } else if snap.contains_key(p) {
-            if tine_store::model::path_is_sync_conflict(p) {
+            if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
             } else if let Some(en) = graph.forget_file(p) {
                 changes.push(GraphChange {

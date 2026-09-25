@@ -10,21 +10,13 @@ use std::collections::HashSet;
 use std::io;
 use std::path::Path;
 
-use crate::model::{atomic_write_new, markdown_page_dto, Graph, PageDto, PageKind};
+use crate::model::{atomic_write_new, Graph};
+use tine_core::guide::guide_copy_page_name;
 use tine_core::guide::{
     collect_guide_asset_refs, guide_link_renames, rewrite_bundled_guide_links, CONFIG_EDN,
     GUIDE_ASSETS, GUIDE_TEMPLATES, QUICK_CAPTURE_PNG,
 };
-pub use tine_core::guide::{
-    guide_copy_page_name, guide_page_name, GUIDE_COPY_PREFIX, GUIDE_DISPLAY_PREFIX,
-};
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct GuidePage {
-    pub title: String,
-    pub markdown: String,
-    pub page: PageDto,
-}
+use tine_core::model::PageKind;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GuideCopyResult {
@@ -33,22 +25,6 @@ pub struct GuideCopyResult {
     pub created_pages: Vec<String>,
     pub skipped_pages: Vec<String>,
     pub copied_assets: Vec<String>,
-}
-
-pub fn bundled_guide_pages() -> Vec<GuidePage> {
-    GUIDE_TEMPLATES
-        .iter()
-        .map(|t| {
-            let mut page = markdown_page_dto(&guide_page_name(t.title), t.title, t.markdown);
-            page.read_only = true;
-            page.guide = true;
-            GuidePage {
-                title: t.title.to_string(),
-                markdown: t.markdown.to_string(),
-                page,
-            }
-        })
-        .collect()
 }
 
 pub fn copy_guide_into_graph(graph: &Graph, title: &str) -> io::Result<GuideCopyResult> {
@@ -142,6 +118,7 @@ pub fn create_demo_graph(root: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use tine_core::guide::bundled_guide_pages;
 
     fn rewrite_guide_links(markdown: &str, copied_titles: &[&str]) -> String {
         let renames: HashMap<String, String> = copied_titles

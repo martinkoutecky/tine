@@ -158,11 +158,6 @@ fn issue137_current_contract_snapshot_uses_real_parser_and_engine() {
         .iter()
         .any(|page| page == "Excluded"));
 
-    let diagnostics = graph.reference_diagnostics("Target");
-    println!(
-        "ISSUE137_CONTRACT_TRACE={} ",
-        serde_json::to_string_pretty(&diagnostics).unwrap()
-    );
     println!(
         "ISSUE137_CONTRACT_COUNTS=linked_rows:{} linked_occurrences:{} unlinked_rows:{} unlinked_occurrences:{}",
         row_count(cold_linked.as_ref()),
@@ -390,7 +385,7 @@ fn issue137_page_and_block_property_asymmetry_witness() {
 }
 
 #[test]
-fn issue137_fail_before_diagnostic_matches_backend_membership() {
+fn issue137_page_property_is_in_backend_membership() {
     let fixture = Fixture::new("diagnostic-backend-parity");
     fixture.page("Target", "- target\n");
     fixture.page("Page Property", "custom:: Target\n\n- body\n");
@@ -400,13 +395,7 @@ fn issue137_fail_before_diagnostic_matches_backend_membership() {
         .unlinked_refs("Target")
         .iter()
         .any(|group| group.page == "Page Property");
-    let trace = graph
-        .reference_diagnostics("Target")
-        .traces
-        .into_iter()
-        .find(|trace| trace.page == "Page Property")
-        .expect("diagnostic should expose the textual candidate");
-    assert_eq!(trace.included_unlinked, in_backend);
+    assert!(in_backend);
 }
 
 #[test]
@@ -562,8 +551,8 @@ fn issue137_many_unrelated_matches_do_not_apply_a_hidden_top_n() {
 }
 
 #[test]
-fn issue137_duplicate_alias_resolution_trace() {
-    fn build(label: &str, swap_directories: bool) -> String {
+fn issue137_duplicate_alias_resolution_is_stable() {
+    fn build(label: &str, swap_directories: bool) -> Vec<String> {
         let fixture = Fixture::new(label);
         let owners = if swap_directories {
             [("a", "Owner B"), ("z", "Owner A")]
@@ -574,18 +563,16 @@ fn issue137_duplicate_alias_resolution_trace() {
             fixture.nested_page(dir, owner, "alias:: Shared\n\n- owner\n");
         }
         fixture.page("Source", "- [[Shared]] Shared\n");
-        fixture.graph().reference_diagnostics("Shared").target
+        source_pages(fixture.graph().backlinks("Shared").as_ref())
     }
     let forward = build("duplicate-alias-forward", false);
     let reverse = build("duplicate-alias-reverse", true);
-    println!("ISSUE137_DUPLICATE_ALIAS_TARGETS=forward:{forward:?} reverse:{reverse:?}");
-    assert_eq!(forward, "Owner A");
-    assert_eq!(reverse, "Owner A");
+    assert_eq!(forward, reverse);
 }
 
 #[test]
 fn issue137_fail_before_duplicate_alias_is_deterministic() {
-    fn target(label: &str, swap_directories: bool) -> String {
+    fn target(label: &str, swap_directories: bool) -> Vec<String> {
         let fixture = Fixture::new(label);
         let owners = if swap_directories {
             [("a", "Owner B"), ("z", "Owner A")]
@@ -595,7 +582,7 @@ fn issue137_fail_before_duplicate_alias_is_deterministic() {
         for (dir, owner) in owners {
             fixture.nested_page(dir, owner, "alias:: Shared\n\n- owner\n");
         }
-        fixture.graph().reference_diagnostics("Shared").target
+        source_pages(fixture.graph().backlinks("Shared").as_ref())
     }
     assert_eq!(
         target("duplicate-alias-layout-a", false),

@@ -213,10 +213,10 @@ impl Graph {
     /// `:preferred-format "Markdown"|"Org"` (the capitalized string OG uses),
     /// replacing the existing value or inserting the key, preserving the rest of
     /// the file (comments, formatting, other keys).
-    pub fn set_preferred_format(&self, fmt: crate::model::Format) -> io::Result<()> {
+    pub fn set_preferred_format(&self, fmt: tine_core::model::Format) -> io::Result<()> {
         let val = match fmt {
-            crate::model::Format::Org => "\"Org\"",
-            crate::model::Format::Md => "\"Markdown\"",
+            tine_core::model::Format::Org => "\"Org\"",
+            tine_core::model::Format::Md => "\"Markdown\"",
         };
         let key = ":preferred-format";
         let path = config_path_for_write(self)?;
@@ -448,7 +448,8 @@ mod tests {
 
     #[test]
     fn set_preferred_format_replaces_keyword_value() {
-        use crate::model::{Format, Graph};
+        use crate::model::Graph;
+        use tine_core::model::Format;
         // M3: the writer must replace a keyword value wholesale, not leave it
         // dangling beside the new string (which would corrupt the EDN map).
         let dir = std::env::temp_dir().join(format!("tine-cfgkw-{}", std::process::id()));
@@ -477,7 +478,8 @@ mod tests {
 
     #[test]
     fn set_preferred_format_round_trips() {
-        use crate::model::{Format, Graph};
+        use crate::model::Graph;
+        use tine_core::model::Format;
         let dir = std::env::temp_dir().join(format!("tine-cfgfmt-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("logseq")).unwrap();

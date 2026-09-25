@@ -4729,6 +4729,7 @@ dependencies = [
  "tine-core",
  "tine-store",
  "webkit2gtk",
+ "windows-sys 0.61.2",
  "x11",
 ]
 
@@ -4744,6 +4745,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2",
  "unicode-normalization",
  "uuid",
 ]
