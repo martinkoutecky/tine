@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tine",
+  "productName": "Tine OG",
   "version": "0.6.5",
-  "identifier": "page.tine.Tine",
+  "identifier": "page.tine.TineOG",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5181",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Tine",
+        "title": "Tine OG",
         "width": 1200,
         "height": 820,
         "minWidth": 640,

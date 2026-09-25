@@ -1574,9 +1574,6 @@ export function mockBackend(): Backend {
     async saveWorkspaces(data: string): Promise<void> {
       mockWorkspaces = data;
     },
-    async takeIdentifierMigrationNotice(): Promise<boolean> {
-      return false;
-    },
     async gpuEnv(): Promise<GpuEnv> {
       return { software_forced: false, appimage: false };
     },

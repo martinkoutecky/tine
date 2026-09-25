@@ -34,7 +34,7 @@ fn app_bool_at(path: &std::path::Path, key: &str, default: bool) -> bool {
 /// every window created by this process must use the same startup value.
 pub(crate) fn init_native_frame_active() -> bool {
     *NATIVE_FRAME_ACTIVE.get_or_init(|| {
-        crate::migrate_identifier::current_app_data_dir()
+        crate::app_identity::current_app_data_dir()
             .map(|dir| app_bool_at(&dir.join("tine-settings.json"), NATIVE_FRAME_KEY, false))
             .unwrap_or(false)
     })
@@ -136,7 +136,9 @@ fn forget_graph_json(json: &mut serde_json::Value, path: &str) {
     json["known_graphs"] = serde_json::to_value(graphs).unwrap_or_default();
 }
 
-fn external_assets_approvals(json: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+fn external_assets_approvals(
+    json: &serde_json::Value,
+) -> serde_json::Map<String, serde_json::Value> {
     json.get("external_assets_approvals")
         .and_then(serde_json::Value::as_object)
         .cloned()
@@ -169,16 +171,17 @@ pub(crate) fn remember_external_assets_approval(
 ) -> Result<(), String> {
     let graph = graph_root.display().to_string();
     let assets = assets_root.display().to_string();
-    update_settings(app, |json| remember_external_assets_approval_json(json, &graph, &assets))
+    update_settings(app, |json| {
+        remember_external_assets_approval_json(json, &graph, &assets)
+    })
 }
 
-fn remember_external_assets_approval_json(
-    json: &mut serde_json::Value,
-    graph: &str,
-    assets: &str,
-) {
+fn remember_external_assets_approval_json(json: &mut serde_json::Value, graph: &str, assets: &str) {
     let mut approvals = external_assets_approvals(json);
-    approvals.insert(graph.to_string(), serde_json::Value::String(assets.to_string()));
+    approvals.insert(
+        graph.to_string(),
+        serde_json::Value::String(assets.to_string()),
+    );
     json["external_assets_approvals"] = serde_json::Value::Object(approvals);
 }
 

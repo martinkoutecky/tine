@@ -20,8 +20,8 @@ use gtk::{
     prelude::WidgetExt,
 };
 
-const APP_ID: &str = "page.tine.Tine";
-const DESKTOP_FILE: &str = "page.tine.Tine.desktop";
+const APP_ID: &str = "page.tine.TineOG";
+const DESKTOP_FILE: &str = "page.tine.TineOG.desktop";
 const MANAGED_MARKER: &str = "X-Tine-Managed=true";
 
 const ICONS: &[(&str, &[u8])] = &[
@@ -284,12 +284,12 @@ mod tests {
         let desktop = fs::read_to_string(
             data_home
                 .join("applications")
-                .join("page.tine.Tine.desktop"),
+                .join("page.tine.TineOG.desktop"),
         )
         .unwrap();
         assert!(desktop.contains("Exec=\"/opt/Tine Builds/tine%%preview\" %U"));
-        assert!(desktop.contains("Icon=page.tine.Tine"));
-        assert!(desktop.contains("StartupWMClass=page.tine.Tine"));
+        assert!(desktop.contains("Icon=page.tine.TineOG"));
+        assert!(desktop.contains("StartupWMClass=page.tine.TineOG"));
         assert!(desktop.contains(MANAGED_MARKER));
         for (size, bytes) in ICONS {
             assert_eq!(
@@ -297,7 +297,7 @@ mod tests {
                     data_home
                         .join("icons/hicolor")
                         .join(size)
-                        .join("apps/page.tine.Tine.png")
+                        .join("apps/page.tine.TineOG.png")
                 )
                 .unwrap(),
                 *bytes

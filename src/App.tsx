@@ -544,25 +544,6 @@ export function App(): JSX.Element {
     onCleanup(uninstall);
   });
 
-  // One-time notice after the desktop identifier rename chain
-  // dev.tine.app / page.tine.app -> page.tine.Tine: the backend moved
-  // settings/session/backups to the new app-data dir, but some app-level prefs
-  // (window geometry, possibly shortcuts) may have reset. Sticky so the user
-  // actually sees it; the backend flag self-clears after this one read.
-  onMount(async () => {
-    try {
-      if (await backend().takeIdentifierMigrationNotice()) {
-        pushToast(
-          "Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!",
-          "info",
-          { sticky: true }
-        );
-      }
-    } catch {
-      // Non-Tauri/mock or an older backend without the command: nothing to notify.
-    }
-  });
-
   onMount(async () => {
     const injected = (window as any).__GRAPH_PATH__ ?? "";
     let startup = "";
