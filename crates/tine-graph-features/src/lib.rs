@@ -10,6 +10,7 @@ pub mod guide;
 pub mod journals;
 pub mod pages;
 pub mod pdf;
+pub mod sources;
 
 use std::io;
 use tine_store::{Refusal, StoreError, TxOutcome, Why};

@@ -1487,6 +1487,27 @@ fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>,
 }
 
 impl WholeGraph {
+    /// Copy the current parsed-page table into a read-only evaluator input.
+    /// Interim cost is O(P) pointer and identity copies after a possible first
+    /// cache build of O(P + B + disk). The returned documents are shared by
+    /// `Arc`; no page text or block tree is copied.
+    pub fn corpus(&self) -> tine_core::Corpus {
+        let pages = self.graph.with_pages(|pages| {
+            pages
+                .iter()
+                .filter_map(|(entry, document)| {
+                    Some(tine_core::CorpusPage {
+                        id: entry.rel_path.clone()?,
+                        name: entry.name.clone(),
+                        kind: entry.kind,
+                        document: Arc::clone(document),
+                    })
+                })
+                .collect()
+        });
+        tine_core::Corpus { pages }
+    }
+
     /// Asset names mentioned in page preambles or blocks, including decoded URL
     /// spellings and the first segment of nested image references. Cost
     /// O(P + B + disk) on the first live-cache build, O(B) thereafter; the

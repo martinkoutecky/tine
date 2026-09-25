@@ -993,7 +993,7 @@ impl Graph {
     /// stable, machine-portable id Tine hands the frontend so a page can be pinned
     /// to a SPECIFIC file (#21). Falls back to the input lossily if it's somehow
     /// outside the root (shouldn't happen for graph files).
-    pub fn rel_path(&self, abs: &Path) -> String {
+    pub(crate) fn rel_path(&self, abs: &Path) -> String {
         slash_path(abs.strip_prefix(&self.root).unwrap_or(abs))
     }
 
@@ -1004,7 +1004,7 @@ impl Graph {
     /// sub-directories allowed but no `..`/`.`/absolute/empty/backslash segments.
     /// Anything else returns `None`, so a path-addressed read/save can never
     /// escape the graph.
-    pub fn resolve_rel(&self, rel: &str) -> Option<PathBuf> {
+    pub(crate) fn resolve_rel(&self, rel: &str) -> Option<PathBuf> {
         let rel = rel.trim();
         if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
             return None;

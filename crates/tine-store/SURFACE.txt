@@ -31,6 +31,7 @@ struct transaction::RenameMap
 struct transaction::Rollback
 struct transaction::Transaction
 use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TxOutcome,Why,}
+use crate::publish::{PublishFailed,PublishReceipt,SiteWriter}
 enum store::Budget
 enum store::FacetPolicy
 enum store::LoadError
@@ -83,6 +84,16 @@ fn store::Store::save
 fn store::Store::trash_stats
 fn store::Store::purge_asset_trash
 fn store::Store::whole_graph
+fn publish::Store::publish_site
+fn publish::SiteWriter::write
+struct publish::PublishFailed
+struct publish::PublishReceipt
+struct publish::SiteWriter
+field publish::PublishFailed.cause
+field publish::PublishFailed.previous_kept
+field publish::PublishReceipt.site
+field publish::PublishReceipt.files
+field publish::PublishReceipt.previous_kept
 fn store::QueryError::bridge_matching_blocks
 fn store::QueryError::bridge_search_hits
 fn store::WholeGraph::backlink_filter_context
@@ -95,6 +106,7 @@ fn store::WholeGraph::explicit_referrers
 fn store::WholeGraph::export_query_subtrees
 fn store::WholeGraph::find_blocks
 fn store::WholeGraph::inventory
+fn store::WholeGraph::corpus
 fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::page_icons
 fn store::WholeGraph::page_mtime

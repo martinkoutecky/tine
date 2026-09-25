@@ -2,7 +2,7 @@
 # Each entry is resolved by rewiring its caller onto the target surface, moving
 # it to a client crate, or justifying it into SURFACE.txt (budget A).
 # This list only shrinks; arrived = empty. Enforced by tests/shallow_ratchet.rs.
-# ceiling: 34
+# ceiling: 32
 field model::Graph.config
 field model::Graph.root
 field publish::PrintOpts.expand_collapsed
@@ -24,8 +24,6 @@ fn model::Graph::page_print_html
 fn model::Graph::pages_path
 fn model::Graph::publish_html
 fn model::Graph::referenced_page_names
-fn model::Graph::rel_path
-fn model::Graph::resolve_rel
 fn model::Graph::save_page
 fn model::Graph::sync_file
 fn model::Graph::with_pages

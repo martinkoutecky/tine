@@ -2297,7 +2297,9 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
 
     let g = Graph::open(&root);
     assert!(g.list_pages().iter().all(|page| page.name != "Secret"));
-    assert!(g.resolve_rel("pages/Secret.md").is_none());
+    let (store, _, _) = Store::open(&root, Default::default()).unwrap();
+    let id = store.file_id(tine_store::Area::Pages, "Secret.md").unwrap();
+    assert!(store.path_for_os_handoff(&id).is_err());
     assert!(g.sync_file(&link).is_none());
 
     std::fs::remove_dir_all(&root).ok();

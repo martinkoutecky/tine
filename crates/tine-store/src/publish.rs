@@ -3,6 +3,8 @@
 //! become real anchors between the generated files.
 
 use crate::model::Graph;
+use crate::store::Store;
+use crate::transaction::IoError;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 #[cfg(not(target_os = "windows"))]
@@ -2414,6 +2416,81 @@ struct PublishStage {
     identity: FileIdentity,
 }
 
+/// A staged publish file writer. Each call writes and fsyncs one new file.
+pub struct SiteWriter {
+    stage: PublishStage,
+    files: u64,
+}
+
+impl SiteWriter {
+    /// Write an area-relative file under the reserved stage. Cost O(bytes).
+    pub fn write(&mut self, rel: &str, bytes: &[u8]) -> Result<(), IoError> {
+        write_publish_stage_file(&self.stage, rel, bytes).map_err(IoError::from)?;
+        self.files += 1;
+        Ok(())
+    }
+}
+
+/// A failed publish keeps any retired previous site in recovery.
+#[derive(Debug)]
+pub struct PublishFailed {
+    pub cause: IoError,
+    pub previous_kept: Option<PathBuf>,
+}
+
+/// The published site path is for handing to the OS or showing to the user.
+#[derive(Debug)]
+pub struct PublishReceipt {
+    pub site: PathBuf,
+    pub files: u64,
+    pub previous_kept: Option<PathBuf>,
+}
+
+impl Store {
+    /// Stage each emitted file with fsync, retire the previous site, move the
+    /// stage by no-replace, then verify its identity. Holds the writer mutex.
+    /// A late winner stays live; the previous site stays in recovery. Publishes
+    /// no graph generation. Cost O(emitted bytes).
+    pub fn publish_site(
+        &self,
+        emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+    ) -> Result<PublishReceipt, PublishFailed> {
+        let _writer = self.writer.lock().unwrap();
+        if self.is_closed() {
+            return Err(PublishFailed {
+                cause: io::Error::new(io::ErrorKind::BrokenPipe, "store closed").into(),
+                previous_kept: None,
+            });
+        }
+        let out = self.graph.root.join("publish");
+        let setup = (|| {
+            self.graph.ensure_write_target(&out)?;
+            reserve_publish_stage(&self.graph)
+        })();
+        let stage = setup.map_err(|cause| PublishFailed {
+            cause: cause.into(),
+            previous_kept: None,
+        })?;
+        let mut writer = SiteWriter { stage, files: 0 };
+        emit(&mut writer).map_err(|cause| PublishFailed {
+            cause,
+            previous_kept: None,
+        })?;
+        let files = writer.files;
+        commit_publish_stage_report(&self.graph, writer.stage, &out).map_err(
+            |(cause, previous_kept)| PublishFailed {
+                cause: cause.into(),
+                previous_kept,
+            },
+        )?;
+        Ok(PublishReceipt {
+            site: out,
+            files,
+            previous_kept: None,
+        })
+    }
+}
+
 struct PublicationGraphSnapshot {
     graph: Graph,
     root: PathBuf,
@@ -2455,7 +2532,6 @@ impl Drop for PublicationGraphSnapshot {
 }
 
 struct PublishRecovery {
-    #[cfg(test)]
     path: PathBuf,
     dir: Dir,
 }
@@ -2513,10 +2589,12 @@ fn reserve_publish_stage(graph: &Graph) -> io::Result<PublishStage> {
 
 fn write_publish_stage_file(stage: &PublishStage, name: &str, bytes: &[u8]) -> io::Result<()> {
     let relative = Path::new(name);
-    if relative.file_name().is_none_or(|value| value != name)
-        || relative
-            .parent()
-            .is_some_and(|parent| parent != Path::new(""))
+    if name.is_empty()
+        || name.contains('\\')
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || relative.is_absolute()
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -2529,6 +2607,12 @@ fn write_publish_stage_file(stage: &PublishStage, name: &str, bytes: &[u8]) -> i
     // therefore cannot redirect an open or truncate outside the graph.
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
+    if let Some(parent) = relative
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        stage.dir.create_dir_all(parent)?;
+    }
     let mut file = stage.dir.open_with(relative, &options)?;
     file.write_all(bytes)?;
     file.sync_all()
@@ -2608,7 +2692,6 @@ fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishReco
         match recovery_root.create_dir(&name) {
             Ok(()) => {
                 return Ok(PublishRecovery {
-                    #[cfg(test)]
                     path: recovery.join(&name),
                     dir: recovery_root.open_dir(&name)?,
                 });
@@ -2624,11 +2707,26 @@ fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishReco
 }
 
 fn commit_publish_stage(graph: &Graph, stage: PublishStage, out: &Path) -> io::Result<()> {
-    graph.ensure_write_target(out)?;
+    commit_publish_stage_report(graph, stage, out).map_err(|(error, _)| error)
+}
+
+fn commit_publish_stage_report(
+    graph: &Graph,
+    stage: PublishStage,
+    out: &Path,
+) -> Result<(), (io::Error, Option<PathBuf>)> {
+    graph
+        .ensure_write_target(out)
+        .map_err(|error| (error, None))?;
     // cap-std may represent a directory capability with an O_PATH descriptor on
     // Linux, which cannot itself be fsynced. Every generated file is fsynced;
     // directory durability remains best-effort, matching the other atomic paths.
-    let _ = stage.dir.try_clone()?.into_std_file().sync_all();
+    let _ = stage
+        .dir
+        .try_clone()
+        .map_err(|error| (error, None))?
+        .into_std_file()
+        .sync_all();
     let PublishStage {
         path,
         root,
@@ -2646,34 +2744,48 @@ fn commit_publish_stage(graph: &Graph, stage: PublishStage, out: &Path) -> io::R
     let old_recovery = match root.symlink_metadata("publish") {
         Ok(metadata) => {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "static-publish output is not a real directory",
+                return Err((
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "static-publish output is not a real directory",
+                    ),
+                    None,
                 ));
             }
-            let recovery = reserve_publish_recovery(graph, &root)?;
-            publish_recovery_race_hook(&recovery)?;
-            root.rename("publish", &recovery.dir, "previous")?;
-            let retired = recovery.dir.symlink_metadata("previous")?;
+            let recovery = reserve_publish_recovery(graph, &root).map_err(|error| (error, None))?;
+            publish_recovery_race_hook(&recovery).map_err(|error| (error, None))?;
+            root.rename("publish", &recovery.dir, "previous")
+                .map_err(|error| (error, None))?;
+            let previous = recovery.path.join("previous");
+            let retired = recovery
+                .dir
+                .symlink_metadata("previous")
+                .map_err(|error| (error, Some(previous.clone())))?;
             if !retired.is_dir() || retired.file_type().is_symlink() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "static-publish output changed during retirement",
+                return Err((
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "static-publish output changed during retirement",
+                    ),
+                    Some(previous),
                 ));
             }
             Some(recovery)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
+        Err(error) => return Err((error, None)),
     };
+
+    let previous_kept = old_recovery
+        .as_ref()
+        .map(|recovery| recovery.path.join("previous"));
 
     if let Err(error) = crate::model::move_file_noreplace(&path, out) {
         // The previous site stays complete in conflict recovery. Avoid a
         // compare-then-replace restoration that could clobber a late winner.
-        let _ = old_recovery;
-        return Err(error);
+        return Err((error, previous_kept));
     }
-    let out_meta = fs::symlink_metadata(out)?;
+    let out_meta = fs::symlink_metadata(out).map_err(|error| (error, previous_kept.clone()))?;
     let same_stage = out_meta.is_dir()
         && !out_meta.file_type().is_symlink()
         && identity_from_path(out).is_ok_and(|live| live == identity);
@@ -2684,11 +2796,15 @@ fn commit_publish_stage(graph: &Graph, stage: PublishStage, out: &Path) -> io::R
     // A replaced stage must never remain live. Move it through the bound graph
     // and recovery directory handles; the previous complete site is already
     // retained separately and is not overwritten during automatic recovery.
-    let bad = reserve_publish_recovery(graph, &root)?;
+    let bad =
+        reserve_publish_recovery(graph, &root).map_err(|error| (error, previous_kept.clone()))?;
     let _ = root.rename("publish", &bad.dir, "invalid-stage");
-    Err(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        "static-publish staging directory changed during commit",
+    Err((
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "static-publish staging directory changed during commit",
+        ),
+        previous_kept,
     ))
 }
 
