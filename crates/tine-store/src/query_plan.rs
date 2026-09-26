@@ -6,7 +6,9 @@
 //! block-query result contract.  The plan/result types are the seam that a
 //! durable query workspace can grow into later.
 
+#[cfg(test)]
 use crate::model::Graph;
+use crate::model::GraphRead;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -275,13 +277,17 @@ impl QueryPlan {
 
     /// Execute all graph-backed branches.  Cancellation is checked between page
     /// candidates and before every block projection; no partial result escapes.
-    pub(crate) fn execute(&self, graph: &Graph, cancelled: impl Fn() -> bool) -> QueryExecution {
+    pub(crate) fn execute(
+        &self,
+        graph: &impl GraphRead,
+        cancelled: impl Fn() -> bool,
+    ) -> QueryExecution {
         self.execute_with_explain(graph, cancelled, true)
     }
 
     pub(crate) fn execute_with_explain(
         &self,
-        graph: &Graph,
+        graph: &impl GraphRead,
         cancelled: impl Fn() -> bool,
         explain: bool,
     ) -> QueryExecution {
@@ -1147,7 +1153,7 @@ fn best_page_match(
 
 fn execute_pages(
     plan: &QueryPlan,
-    graph: &Graph,
+    graph: &impl GraphRead,
     branch: &QueryBranch,
     cancelled: &impl Fn() -> bool,
 ) -> Option<(Vec<QueryHit>, bool)> {
@@ -1301,7 +1307,7 @@ fn walk_blocks<'a>(
 
 fn execute_blocks(
     plan: &QueryPlan,
-    graph: &Graph,
+    graph: &impl GraphRead,
     branch: &QueryBranch,
     cancelled: &impl Fn() -> bool,
 ) -> Option<(Vec<QueryHit>, bool)> {
@@ -1508,7 +1514,11 @@ mod tests {
             .collect()
     }
 
-    fn reference_literal_search(graph: &Graph, query: &str, limit: usize) -> Vec<(String, String)> {
+    fn reference_literal_search(
+        graph: &impl GraphRead,
+        query: &str,
+        limit: usize,
+    ) -> Vec<(String, String)> {
         if limit == 0 || query.is_empty() {
             return Vec::new();
         }

@@ -14,6 +14,12 @@ pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
     for page in &initial.pages {
         store.page(&page.id).map_err(crate::store_error)?;
     }
+    store
+        .scan_refresh()
+        .map_err(|error| io::Error::other(format!("graph refresh failed: {error:?}")))?;
+    let whole = store
+        .whole_graph()
+        .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
     let corpus = whole.corpus();
     let config = store.config();
     let graph = RenderGraph {

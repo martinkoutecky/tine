@@ -82,7 +82,7 @@ use std::time::SystemTime;
 use crate::model::{classify_legacy_trash_entry, trash_dir_kind, trash_root, TrashEntryKind};
 
 use serde::{Deserialize, Serialize};
-use tine_core::date::JournalDate;
+use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, BlockPreview, BoundedRefGroups, PageDto,
     PageEntry, PageKind, RefGroup, TemplateDto,
@@ -91,7 +91,24 @@ pub use tine_core::model::{FileId, PageId};
 use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
 use tine_core::query_plan::QueryExecution;
 
-use crate::model::{CheckedOpenError, Graph};
+use crate::model::{CheckedOpenError, Graph, GraphRead, ReadSnapshot};
+
+#[cfg(test)]
+pub(crate) type TestPause = Arc<(Mutex<(bool, bool)>, Condvar)>;
+
+#[cfg(test)]
+pub(crate) fn pause_at_hook(hook: &Mutex<Option<TestPause>>) {
+    let pause = hook.lock().unwrap().clone();
+    if let Some(pause) = pause {
+        let (state, ready) = &*pause;
+        let mut state = state.lock().unwrap();
+        state.0 = true;
+        ready.notify_all();
+        while !state.1 {
+            state = ready.wait(state).unwrap();
+        }
+    }
+}
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -210,6 +227,11 @@ pub struct Closed;
 pub(crate) struct ChangeFeed {
     state: Mutex<FeedState>,
     ready: Condvar,
+    graph: Arc<Graph>,
+    config: Arc<RwLock<ConfigState>>,
+    snapshot: RwLock<Option<Arc<Snapshot>>>,
+    #[cfg(test)]
+    pub(crate) snapshot_publish_pause: Mutex<Option<TestPause>>,
 }
 
 struct FeedState {
@@ -219,8 +241,128 @@ struct FeedState {
     closed: bool,
 }
 
+struct Snapshot {
+    graph: Arc<ReadSnapshot>,
+    rev: GraphRev,
+    cache_generation: u64,
+    config: ConfigState,
+    journal_format: JournalFormat,
+    list: Arc<Vec<PageEntry>>,
+    claimants: Arc<HashMap<(PageKind, String), Vec<PageEntry>>>,
+    observed_mtimes: Arc<HashMap<String, SystemTime>>,
+    unreadable: Arc<Vec<(FileId, String)>>,
+}
+
+impl Snapshot {
+    fn capture(
+        graph: &Graph,
+        config: &RwLock<ConfigState>,
+        old: Option<&Snapshot>,
+        files: &[(FileId, ChangeKind, Option<FileRev>)],
+        config_changed: bool,
+        rev: GraphRev,
+    ) -> Self {
+        // The publication caller holds the store writer lock. A load worker
+        // publishes only after its initial parse has finished.
+        graph.with_pages(|_| ());
+        let config = config.read().unwrap().clone();
+        let journal_format = graph.current_journal_format();
+        let cache_generation = graph.cache_generation();
+        let changed_names: Vec<_> = files
+            .iter()
+            .filter(|(id, kind, _)| {
+                (id.as_str()
+                    .starts_with(&format!("{}/", config.config.pages_dir))
+                    || id
+                        .as_str()
+                        .starts_with(&format!("{}/", config.config.journals_dir)))
+                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
+            })
+            .collect();
+        let name_set_changed = config_changed || old.is_none() || !changed_names.is_empty();
+        let (list, claimants) = if config_changed || old.is_none() {
+            let (list, claimants) = graph.snapshot_name_index();
+            (Arc::new(list), Arc::new(claimants))
+        } else if !changed_names.is_empty() {
+            let previous = old.expect("name index from old generation");
+            let mut list = Arc::clone(&previous.list);
+            let mut claimants = Arc::clone(&previous.claimants);
+            for (id, kind, _) in changed_names {
+                let path = graph.root.join(id.as_str());
+                let entry = graph.entry_for_path(&path);
+                let Some(entry) = entry else { continue };
+                let key = (entry.kind, tine_core::refs::page_key(&entry.name));
+                let bucket = Arc::make_mut(&mut claimants).entry(key).or_default();
+                bucket.retain(|candidate| candidate.path != path);
+                if *kind == ChangeKind::Created {
+                    bucket.push(entry.clone());
+                }
+                bucket.sort_by(|a, b| crate::model::compare_page_claimants(a, b, &journal_format));
+                let list = Arc::make_mut(&mut list);
+                list.retain(|candidate| candidate.path != path);
+                if entry.kind == PageKind::Journal && entry.date_key.is_some() {
+                    list.retain(|candidate| {
+                        candidate.kind != PageKind::Journal || candidate.date_key != entry.date_key
+                    });
+                    if let Some(winner) = bucket.first() {
+                        list.push(winner.clone());
+                    }
+                } else if *kind == ChangeKind::Created {
+                    list.push(entry);
+                }
+            }
+            (list, claimants)
+        } else {
+            let old = old.expect("name index from old generation");
+            (Arc::clone(&old.list), Arc::clone(&old.claimants))
+        };
+        let changed_paths: Vec<String> = files
+            .iter()
+            .filter(|(id, _, _)| {
+                id.as_str()
+                    .starts_with(&format!("{}/", config.config.pages_dir))
+                    || id
+                        .as_str()
+                        .starts_with(&format!("{}/", config.config.journals_dir))
+            })
+            .map(|(id, _, _)| id.as_str().to_owned())
+            .collect();
+        let evaluator = if let Some(old) =
+            old.filter(|old| old.cache_generation == cache_generation && !config_changed)
+        {
+            Arc::clone(&old.graph)
+        } else {
+            let evaluator = ReadSnapshot::capture(
+                graph,
+                (*config.config).clone(),
+                Arc::clone(&list),
+                old.filter(|_| !config_changed)
+                    .map(|old| old.graph.as_ref()),
+                &changed_paths,
+            );
+            if !name_set_changed {
+                if let Some(old) = old {
+                    evaluator.carry_memos_from(&old.graph, &changed_paths);
+                }
+            }
+            Arc::new(evaluator)
+        };
+        Self {
+            graph: evaluator,
+            rev,
+            cache_generation,
+            config,
+            journal_format,
+            list,
+            claimants,
+            observed_mtimes: graph.observed_page_mtimes(),
+            unreadable: graph.unreadable_pages(),
+        }
+    }
+}
+
 impl ChangeFeed {
-    fn new() -> Self {
+    fn new(graph: Arc<Graph>, config: Arc<RwLock<ConfigState>>) -> Self {
         Self {
             state: Mutex::new(FeedState {
                 rev: 0,
@@ -229,7 +371,18 @@ impl ChangeFeed {
                 closed: false,
             }),
             ready: Condvar::new(),
+            graph,
+            config,
+            snapshot: RwLock::new(None),
+            #[cfg(test)]
+            snapshot_publish_pause: Mutex::new(None),
         }
+    }
+
+    #[cfg(test)]
+    fn initialize(&self) {
+        let snapshot = Snapshot::capture(&self.graph, &self.config, None, &[], false, GraphRev(0));
+        *self.snapshot.write().unwrap() = Some(Arc::new(snapshot));
     }
 
     pub(crate) fn publish(
@@ -239,9 +392,23 @@ impl ChangeFeed {
         config_changed: bool,
         pages: Vec<(FileId, PageKind, String)>,
     ) -> GraphRev {
+        let old = self.snapshot.read().unwrap().clone();
+        let rev = GraphRev(self.rev().0 + 1);
+        let snapshot = Arc::new(Snapshot::capture(
+            &self.graph,
+            &self.config,
+            old.as_deref(),
+            &files,
+            config_changed,
+            rev,
+        ));
+        #[cfg(test)]
+        pause_at_hook(&self.snapshot_publish_pause);
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let rev = GraphRev(state.rev);
+        debug_assert_eq!(snapshot.rev, rev);
+        *self.snapshot.write().unwrap() = Some(snapshot);
         if !state.closed {
             state.queue.push_back(Change {
                 graph_rev: rev,
@@ -460,7 +627,6 @@ impl Store {
         graph.install_live_config();
         let writer = Arc::new(Mutex::new(()));
         let load = Arc::new(LoadState::new(LoadStatus::Ready));
-        let changes = Arc::new(ChangeFeed::new());
         let journal_ids = Arc::new(Mutex::new(journal_ids_from_entries(
             &graph,
             graph.list_pages(),
@@ -469,6 +635,11 @@ impl Store {
             config: Arc::new(graph.config.clone()),
             problem: None,
         }));
+        let changes = Arc::new(ChangeFeed::new(
+            Arc::clone(&graph),
+            Arc::clone(&config_state),
+        ));
+        changes.initialize();
         let watch = crate::watch::WatchHandle::start(
             Arc::clone(&graph),
             Arc::clone(&writer),
@@ -653,9 +824,12 @@ impl Store {
         );
         let load = Arc::new(LoadState::new(LoadStatus::Loading));
         let writer = Arc::new(Mutex::new(()));
-        let changes = Arc::new(ChangeFeed::new());
         let journal_ids = Arc::new(Mutex::new(journal_ids));
         let config_state = Arc::new(RwLock::new(config.clone()));
+        let changes = Arc::new(ChangeFeed::new(
+            Arc::clone(&graph),
+            Arc::clone(&config_state),
+        ));
         let watch = crate::watch::WatchHandle::start(
             Arc::clone(&graph),
             Arc::clone(&writer),
@@ -1375,10 +1549,12 @@ impl Store {
         Ok(listing)
     }
 
-    /// Read and parse one page. This can advance the live cache when its bytes
-    /// differ from the cached copy (interim behavior, before immutable D3).
+    /// Read and parse one page. If disk bytes advance the parsed cache, publish
+    /// that change before returning so later graph views see the new page.
     /// Cost: O(page bytes + its blocks).
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
+        let _writer = self.writer.lock().unwrap();
+        let before_generation = self.graph.cache_generation();
         if self.is_closed() {
             return Err(StoreError::Closed);
         }
@@ -1435,6 +1611,15 @@ impl Store {
         let read_only = doc
             .read_only
             .then(|| "Org file does not round-trip".to_owned());
+        if self.graph.cache_generation() != before_generation {
+            self.watch.note_own(&[id.file()]);
+            self.changes.publish(
+                Origin::External,
+                vec![(id.file(), ChangeKind::Modified, Some(rev.clone()))],
+                false,
+                vec![(id.file(), entry.kind, entry.name)],
+            );
+        }
         Ok(PageRead {
             id: id.clone(),
             doc,
@@ -1443,7 +1628,7 @@ impl Store {
         })
     }
 
-    /// Wait for the initial load, then get a live-cache read view.
+    /// Wait for the initial load, then clone its current immutable generation.
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         let mut status = self.load.status.lock().unwrap();
         while matches!(*status, LoadStatus::Loading) {
@@ -1459,11 +1644,24 @@ impl Store {
             LoadStatus::Ready => {}
             LoadStatus::Loading => unreachable!(),
         }
+        let snapshot = self
+            .changes
+            .snapshot
+            .read()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .expect("ready store has a graph snapshot");
         Ok(WholeGraph {
-            graph: Arc::clone(&self.graph),
-            rev: self.changes.rev(),
-            observed_mtimes: self.graph.observed_page_mtimes(),
-            unreadable: self.graph.unreadable_pages(),
+            graph: Arc::clone(&snapshot.graph),
+            rev: snapshot.rev,
+            observed_mtimes: Arc::clone(&snapshot.observed_mtimes),
+            unreadable: Arc::clone(&snapshot.unreadable),
+            config: snapshot.config.clone(),
+            journal_format: snapshot.journal_format.clone(),
+            list: Arc::clone(&snapshot.list),
+            claimants: Arc::clone(&snapshot.claimants),
+            _snapshot: snapshot,
         })
     }
 }
@@ -1768,15 +1966,19 @@ pub enum FacetPolicy {
     Truncated,
 }
 
-/// Live-cache graph-wide questions. Clone is O(1). A first question may build
-/// the cache in O(P + B + disk); later calls do not wait for a load. This is
-/// not yet an immutable snapshot: successive calls can see different states.
+/// One published graph generation. Clone is O(1); reads use its owned parse,
+/// indexes and memos without consulting the live store or the filesystem.
 #[derive(Clone)]
 pub struct WholeGraph {
-    graph: Arc<Graph>,
+    _snapshot: Arc<Snapshot>,
+    graph: Arc<ReadSnapshot>,
     rev: GraphRev,
-    observed_mtimes: Arc<HashMap<String, std::time::SystemTime>>,
+    observed_mtimes: Arc<HashMap<String, SystemTime>>,
     unreadable: Arc<Vec<(FileId, String)>>,
+    config: ConfigState,
+    journal_format: JournalFormat,
+    list: Arc<Vec<PageEntry>>,
+    claimants: Arc<HashMap<(PageKind, String), Vec<PageEntry>>>,
 }
 
 fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>, QueryError> {
@@ -1846,15 +2048,20 @@ impl WholeGraph {
         let mut visited = HashSet::new();
         let mut claimed_names = HashSet::new();
         let mut page_claimed_names = HashSet::new();
-        for page in self.graph.list_pages() {
+        for page in self.list.iter() {
             let key = tine_core::refs::page_key(&page.name);
             if !visited.insert((page.kind, key.clone())) {
                 continue;
             }
             let mut by_name: HashMap<String, Vec<PageId>> = HashMap::new();
-            for claimant in self.graph.find_claimants(&page.name, page.kind) {
-                if let Some(id) = claimant.rel_path {
-                    by_name.entry(claimant.name).or_default().push(id);
+            if let Some(claimants) = self.claimants.get(&(page.kind, key.clone())) {
+                for claimant in claimants {
+                    if let Some(id) = &claimant.rel_path {
+                        by_name
+                            .entry(claimant.name.clone())
+                            .or_default()
+                            .push(id.clone());
+                    }
                 }
             }
             for (name, mut ids) in by_name {
@@ -1954,7 +2161,7 @@ impl WholeGraph {
                         .iter()
                         .any(|name| keys.contains(name))
             })
-            .map(|(entry, _)| PageId::from(self.graph.rel_path(&entry.path)))
+            .map(|(entry, _)| PageId::from(entry.rel_path_str()))
             .collect();
         ids.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
         ids.dedup();
@@ -1975,7 +2182,11 @@ impl WholeGraph {
         } else {
             PageKind::Page
         };
-        let entries = self.graph.find_claimants(name, kind);
+        let entries = self
+            .claimants
+            .get(&(kind, tine_core::refs::page_key(name)))
+            .cloned()
+            .unwrap_or_default();
         if !entries.is_empty() {
             let mut ids = entries
                 .into_iter()
@@ -1997,15 +2208,29 @@ impl WholeGraph {
                 return Resolved::Alias { owners };
             }
         }
+        let config = &self.config.config;
+        let (dir, stem) = if is_journal {
+            let stem = self
+                .journal_format
+                .parse(name)
+                .map(|date| self.journal_format.file_stem(date))
+                .unwrap_or_else(|| name.to_owned());
+            (&config.journals_dir, stem)
+        } else {
+            (
+                &config.pages_dir,
+                tine_core::model::encode_page_name(name, config.file_name_format),
+            )
+        };
         Resolved::Absent {
-            id: PageId::from(self.graph.rel_path(&self.graph.path_for(name, kind))),
+            id: PageId::from(format!("{dir}/{stem}.{}", config.preferred_format.ext())),
         }
     }
 
     fn validated_page(&self, id: &PageId) -> Result<(), QueryError> {
         let path = id.as_str();
-        let valid_area = path.starts_with(&format!("{}/", self.graph.current_config().pages_dir))
-            || path.starts_with(&format!("{}/", self.graph.current_config().journals_dir));
+        let valid_area = path.starts_with(&format!("{}/", self.config.config.pages_dir))
+            || path.starts_with(&format!("{}/", self.config.config.journals_dir));
         let valid_name = !path.contains('\\')
             && !path
                 .split('/')
@@ -2370,6 +2595,419 @@ impl WholeGraph {
 #[cfg(test)]
 mod rev5_tests {
     use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    fn wait_hook(pause: &TestPause) {
+        let (state, ready) = &**pause;
+        let mut state = state.lock().unwrap();
+        while !state.0 {
+            state = ready.wait(state).unwrap();
+        }
+    }
+
+    fn release_hook(pause: &TestPause) {
+        let (state, ready) = &**pause;
+        state.lock().unwrap().1 = true;
+        ready.notify_all();
+    }
+
+    #[test]
+    fn whole_graph_reader_completes_during_writer_and_snapshot_publication() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-d3-noblock-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/Source.md"), "- [[Target]] before\n").unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let old = store.whole_graph().unwrap();
+        let id = PageId::from("pages/Source.md");
+        for during_cache_write in [true, false] {
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw.push_str(" edited");
+            let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+            let hook = if during_cache_write {
+                &store.graph.cache_publish_pause
+            } else {
+                &store.changes.snapshot_publish_pause
+            };
+            *hook.lock().unwrap() = Some(Arc::clone(&pause));
+            let writer_store = Arc::clone(&store);
+            let writer_id = id.clone();
+            let writer = std::thread::spawn(move || {
+                writer_store.save(&writer_id, SaveBase::Existing(read.rev), &doc)
+            });
+            wait_hook(&pause);
+            let (send, receive) = mpsc::channel();
+            let reader_store = Arc::clone(&store);
+            let reader_view = old.clone();
+            let reader = std::thread::spawn(move || {
+                let acquired = reader_store.whole_graph().unwrap();
+                let result = (
+                    reader_view.backlinks("Target").unwrap().len(),
+                    acquired.resolve("Source", false),
+                );
+                send.send(result).unwrap();
+            });
+            let result = receive.recv_timeout(Duration::from_secs(2));
+            release_hook(&pause);
+            *hook.lock().unwrap() = None;
+            assert!(matches!(writer.join().unwrap(), SaveOutcome::Saved(_)));
+            reader.join().unwrap();
+            let (count, resolved) = result.expect("reader blocked behind writer publication");
+            assert_eq!(count, 1);
+            assert!(matches!(resolved, Resolved::Existing { .. }));
+        }
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn whole_graph_carries_only_unaffected_backlink_memos() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-d3-memos-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- [[Alpha]] original\n").unwrap();
+        fs::write(root.join("pages/B.md"), "- [[Beta]] original\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let old = store.whole_graph().unwrap();
+        assert_eq!(old.backlinks("Alpha").unwrap().len(), 1);
+        assert_eq!(old.backlinks("Beta").unwrap().len(), 1);
+        let id = PageId::from("pages/A.md");
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "[[Alpha]] edited".into();
+        assert!(matches!(
+            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            SaveOutcome::Saved(_)
+        ));
+        let fresh = store.whole_graph().unwrap();
+        let before = crate::query::result_dto_constructions();
+        assert_eq!(fresh.backlinks("Beta").unwrap().len(), 1);
+        assert_eq!(crate::query::result_dto_constructions(), before);
+        let alpha = fresh.backlinks("Alpha").unwrap();
+        assert!(crate::query::result_dto_constructions() > before);
+        assert_eq!(alpha[0].blocks[0].raw, "[[Alpha]] edited");
+        assert_eq!(
+            old.backlinks("Alpha").unwrap()[0].blocks[0].raw,
+            "[[Alpha]] original"
+        );
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn whole_graph_concurrent_reader_writer_watcher_loop() {
+        use std::sync::atomic::AtomicUsize;
+        use std::time::Instant;
+        let root = std::env::temp_dir().join(format!(
+            "tine-d3-loop-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/Writer.md"), "- [[Target]] initial\n").unwrap();
+        fs::write(root.join("pages/External.md"), "- outside initial\n").unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let mut threads = Vec::new();
+        for _ in 0..3 {
+            let store = Arc::clone(&store);
+            let stop = Arc::clone(&stop);
+            let reads = Arc::clone(&reads);
+            threads.push(std::thread::spawn(move || {
+                while !stop.load(Ordering::Acquire) {
+                    let view = store.whole_graph().unwrap();
+                    let rev = view.rev();
+                    let page_count = view.corpus().pages.len();
+                    let _ = view.backlinks("Target").unwrap();
+                    let _ = view
+                        .query("[[Target]]", QueryDialect::Simple, None)
+                        .unwrap();
+                    let _ = view.resolve("External", false);
+                    let _ = view.inventory();
+                    assert_eq!(view.rev(), rev);
+                    assert_eq!(view.corpus().pages.len(), page_count);
+                    reads.fetch_add(1, Ordering::Relaxed);
+                }
+            }));
+        }
+        let writer_store = Arc::clone(&store);
+        let writer_stop = Arc::clone(&stop);
+        threads.push(std::thread::spawn(move || {
+            let id = PageId::from("pages/Writer.md");
+            let mut n = 0;
+            while !writer_stop.load(Ordering::Acquire) {
+                let read = writer_store.page(&id).unwrap();
+                let mut doc = read.doc;
+                doc.blocks[0].raw = format!("[[Target]] edit {n}");
+                assert!(matches!(
+                    writer_store.save(&id, SaveBase::Existing(read.rev), &doc),
+                    SaveOutcome::Saved(_)
+                ));
+                n += 1;
+            }
+        }));
+        let watch_store = Arc::clone(&store);
+        let watch_stop = Arc::clone(&stop);
+        let external = root.join("pages/External.md");
+        threads.push(std::thread::spawn(move || {
+            let mut n = 0;
+            while !watch_stop.load(Ordering::Acquire) {
+                fs::write(&external, format!("- outside {n}\n")).unwrap();
+                watch_store.scan_refresh().unwrap();
+                n += 1;
+            }
+        }));
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        stop.store(true, Ordering::Release);
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert!(reads.load(Ordering::Relaxed) > 0);
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn view_answers(view: &WholeGraph) -> Vec<(&'static str, String)> {
+        let cancel = Cancel(Arc::new(AtomicBool::new(false)));
+        let id = PageId::from("pages/Source.md");
+        let query_rows = |dialect| match view.query("[[Target]]", dialect, Some(&id)).unwrap() {
+            QueryResult::Simple(rows) => format!("{rows:?}"),
+            QueryResult::Advanced(rows) => format!("{rows:?}"),
+        };
+        let resolved = |name| match view.resolve(name, false) {
+            Resolved::Existing { id, others } => format!("existing:{id:?}:{others:?}"),
+            Resolved::Alias { owners } => format!("alias:{owners:?}"),
+            Resolved::Absent { id } => format!("absent:{id:?}"),
+        };
+        let mut assets: Vec<_> = view.referenced_assets().iter().cloned().collect();
+        assets.sort();
+        vec![
+            ("rev", format!("{:?}", view.rev())),
+            ("unreadable_files", format!("{:?}", view.unreadable_files())),
+            ("page_mtime", format!("{:?}", view.page_mtime(&id))),
+            (
+                "corpus",
+                format!(
+                    "{:?}",
+                    view.corpus()
+                        .pages
+                        .iter()
+                        .map(|p| &p.name)
+                        .collect::<Vec<_>>()
+                ),
+            ),
+            ("referenced_assets", format!("{assets:?}")),
+            (
+                "inventory",
+                format!(
+                    "{:?}",
+                    view.inventory()
+                        .0
+                        .iter()
+                        .map(|entry| &entry.name)
+                        .collect::<Vec<_>>()
+                ),
+            ),
+            (
+                "explicit_referrers",
+                format!("{:?}", view.explicit_referrers(&["Target".into()])),
+            ),
+            ("resolve", resolved("New Alias")),
+            ("resolve_absent", resolved("A/B")),
+            ("query_simple", query_rows(QueryDialect::Simple)),
+            ("query_advanced", query_rows(QueryDialect::Advanced)),
+            (
+                "search",
+                format!(
+                    "{:?}",
+                    view.search(
+                        &SearchRequest {
+                            text: "Target".into(),
+                            within: None,
+                            page_limit: 10,
+                            block_limit: 10,
+                            explain: false
+                        },
+                        &cancel
+                    )
+                    .unwrap()
+                    .hits
+                ),
+            ),
+            (
+                "backlinks",
+                format!("{:?}", view.backlinks("Target").unwrap()),
+            ),
+            (
+                "unlinked_references",
+                format!("{:?}", view.unlinked_references("Target").unwrap()),
+            ),
+            (
+                "backlink_filter_context",
+                format!("{:?}", view.backlink_filter_context("Target", &[]).unwrap()),
+            ),
+            (
+                "blocks",
+                format!("{:?}", view.blocks(&["d3-block".into()]).unwrap()),
+            ),
+            (
+                "preview_block",
+                format!("{:?}", view.preview_block("d3-block", 10).unwrap()),
+            ),
+            (
+                "block_referrers",
+                format!("{:?}", view.block_referrers("d3-block").unwrap()),
+            ),
+            ("block_ref_counts", format!("{:?}", view.block_ref_counts())),
+            (
+                "complete_page_names",
+                format!(
+                    "{:?}",
+                    view.complete_page_names("", 20)
+                        .iter()
+                        .map(|entry| &entry.name)
+                        .collect::<Vec<_>>()
+                ),
+            ),
+            (
+                "find_blocks",
+                format!("{:?}", view.find_blocks("Target", 10, &cancel).unwrap()),
+            ),
+            (
+                "export_query_subtrees",
+                format!(
+                    "{:?}",
+                    view.export_query_subtrees(&[QueryExportSpec {
+                        key: "d3".into(),
+                        query: "[[Target]]".into(),
+                        advanced: false
+                    }])
+                    .unwrap()
+                ),
+            ),
+            (
+                "property_facets",
+                format!("{:?}", view.property_facets(FacetPolicy::Budgeted).unwrap()),
+            ),
+            ("templates", format!("{:?}", view.templates())),
+            (
+                "page_icons",
+                format!("{:?}", view.page_icons(&["Source".into()])),
+            ),
+            (
+                "journal_content_days",
+                format!("{:?}", view.journal_content_days()),
+            ),
+        ]
+    }
+
+    #[test]
+    fn whole_graph_view_is_stable_across_external_publication() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-d3-stability-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/Source.md"), "- [[Target]] before\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let old = store.whole_graph().unwrap();
+        let original_answers = view_answers(&old);
+        let old_corpus = old.corpus().pages.len();
+        let old_backlinks = old.backlinks("Target").unwrap().len();
+        let old_inventory = old.inventory().0.len();
+        assert!(matches!(
+            old.resolve("Added", false),
+            Resolved::Absent { .. }
+        ));
+
+        let source = PageId::from("pages/Source.md");
+        let read = store.page(&source).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "[[Target]] after save".into();
+        assert!(matches!(
+            store.save(&source, SaveBase::Existing(read.rev), &doc),
+            SaveOutcome::Saved(_)
+        ));
+        assert_eq!(view_answers(&old), original_answers);
+        let fresh_after_save = store.whole_graph().unwrap();
+        assert_ne!(view_answers(&fresh_after_save), original_answers);
+
+        let mut tx = store.transaction();
+        tx.create(
+            &FileId::from("logseq/config.edn".to_owned()),
+            crate::transaction::Content::Bytes(b"{:file/name-format :triple-lowbar}\n".to_vec()),
+        );
+        assert!(matches!(
+            tx.commit(),
+            crate::transaction::TxOutcome::Committed { .. }
+        ));
+        assert_eq!(view_answers(&old), original_answers);
+
+        let alias_page = PageDto {
+            name: "AliasOwner".into(),
+            kind: PageKind::Page,
+            title: "AliasOwner".into(),
+            pre_block: Some("alias:: New Alias".into()),
+            blocks: vec![tine_core::model::BlockDto {
+                id: "alias-block".into(),
+                raw: "owner".into(),
+                ..Default::default()
+            }],
+            rev: None,
+            format: Default::default(),
+            read_only: false,
+            guide: false,
+        };
+        assert!(matches!(
+            store.save(
+                &PageId::from("pages/AliasOwner.md"),
+                SaveBase::CreateNew,
+                &alias_page
+            ),
+            SaveOutcome::Saved(_)
+        ));
+        assert_eq!(view_answers(&old), original_answers);
+
+        fs::write(root.join("pages/Added.md"), "- [[Target]] after\n").unwrap();
+        store.scan_refresh().unwrap();
+        let fresh = store.whole_graph().unwrap();
+        assert!(fresh.rev() != old.rev());
+        assert_eq!(old.corpus().pages.len(), old_corpus);
+        assert_eq!(old.backlinks("Target").unwrap().len(), old_backlinks);
+        assert_eq!(old.inventory().0.len(), old_inventory);
+        assert!(matches!(
+            old.resolve("Added", false),
+            Resolved::Absent { .. }
+        ));
+        assert!(matches!(
+            fresh.resolve("Added", false),
+            Resolved::Existing { .. }
+        ));
+        assert!(matches!(
+            fresh.resolve("New Alias", false),
+            Resolved::Alias { .. }
+        ));
+        assert_eq!(view_answers(&old), original_answers);
+        let fresh_answers = view_answers(&fresh);
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(view_answers(&old), original_answers);
+        assert_eq!(view_answers(&fresh), fresh_answers);
+    }
 
     #[test]
     fn page_parser_panic_is_unparseable() {

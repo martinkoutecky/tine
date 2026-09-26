@@ -3,7 +3,9 @@
 //! task markers, and property filters. Advanced datalog (`[:find ...]`) is
 //! detected and reported as unsupported rather than crashed.
 
+#[cfg(test)]
 use crate::model::Graph;
+use crate::model::GraphRead;
 use tine_core::date::JournalDate;
 use tine_core::doc::{property_key_norm, DocBlock, Document};
 use tine_core::model::{
@@ -288,6 +290,11 @@ thread_local! {
     static RESULT_DTO_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(test)]
+pub(crate) fn result_dto_constructions() -> usize {
+    RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get)
+}
+
 /// Cancellable variant used by interactive search. Returning false from `f`
 /// stops the entire depth-first walk, including the current deep page.
 /// A short, single-line label for a block in a breadcrumb trail.
@@ -311,7 +318,7 @@ fn crumb_line(b: &DocBlock) -> String {
 /// I/O or re-parsing happens per call.
 #[cfg(test)]
 fn collect(
-    graph: &Graph,
+    graph: &impl GraphRead,
     keep: impl FnMut(&DocBlock) -> bool,
     keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
     exclude: Option<&str>,
@@ -328,7 +335,7 @@ fn collect(
 }
 
 fn collect_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     mut keep: impl FnMut(&DocBlock) -> bool,
     mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
     exclude: Option<&str>,
@@ -491,7 +498,7 @@ fn sorted_alias_owners(
         .collect()
 }
 
-pub(crate) fn page_aliases_with_owners(graph: &Graph) -> Vec<(String, String, String)> {
+pub(crate) fn page_aliases_with_owners(graph: &impl GraphRead) -> Vec<(String, String, String)> {
     graph.with_pages(|pages| {
         let mut owned = Vec::new();
         for (entry, doc) in pages {
@@ -514,11 +521,11 @@ pub(crate) fn page_aliases_with_owners(graph: &Graph) -> Vec<(String, String, St
 
 pub(crate) type RealPageNames = std::collections::HashMap<String, (std::path::PathBuf, String)>;
 
-pub(crate) fn real_page_names(graph: &Graph) -> RealPageNames {
+pub(crate) fn real_page_names(graph: &impl GraphRead) -> std::sync::Arc<RealPageNames> {
     if let Some(indexed) = graph.reference_real_page_names() {
         return indexed;
     }
-    graph.with_pages(|pages| {
+    std::sync::Arc::new(graph.with_pages(|pages| {
         let mut real = RealPageNames::new();
         for (entry, _) in pages {
             let key = refs::page_key(&entry.name);
@@ -534,7 +541,7 @@ pub(crate) fn real_page_names(graph: &Graph) -> RealPageNames {
             }
         }
         real
-    })
+    }))
 }
 
 /// Resolve a requested page/alias to its canonical display name, the complete
@@ -597,7 +604,7 @@ fn equivalent_page_names(
 }
 
 fn graph_equivalent_page_names(
-    graph: &Graph,
+    graph: &impl GraphRead,
     aliases: &[(String, String)],
     target: &str,
 ) -> (String, Vec<String>, String) {
@@ -734,7 +741,7 @@ fn block_has_reference(
 
 #[cfg(test)]
 fn collect_reference_occurrences(
-    graph: &Graph,
+    graph: &impl GraphRead,
     canonical: &str,
     self_page: &str,
     names_norm: &[String],
@@ -753,7 +760,7 @@ fn collect_reference_occurrences(
 }
 
 fn collect_reference_occurrences_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     canonical: &str,
     self_page: &str,
     names_norm: &[String],
@@ -782,11 +789,11 @@ fn collect_reference_occurrences_bounded(
                 .and_then(|pre| page_property_block(entry, pre))
             {
                 if budget.closed() {
-                    if block_has_reference(&block, names_norm, kind, &graph.config) {
+                    if block_has_reference(&block, names_norm, kind, graph.config()) {
                         budget.deny_match();
                     }
                 } else if let Some(hit) =
-                    block_reference_evidence(&block, canonical, names_norm, kind, &graph.config)
+                    block_reference_evidence(&block, canonical, names_norm, kind, graph.config())
                 {
                     let mut dto = block_to_shallow_dto(&block);
                     dto.page_property = true;
@@ -807,9 +814,9 @@ fn collect_reference_occurrences_bounded(
                 &mut path,
                 &mut |block, _| {
                     if construction_closed.get() {
-                        block_has_reference(block, names_norm, kind, &graph.config).then_some(None)
+                        block_has_reference(block, names_norm, kind, graph.config()).then_some(None)
                     } else {
-                        block_reference_evidence(block, canonical, names_norm, kind, &graph.config)
+                        block_reference_evidence(block, canonical, names_norm, kind, graph.config())
                             .map(Some)
                     }
                 },
@@ -879,7 +886,7 @@ fn collect_reference_occurrences_bounded(
 }
 
 #[cfg(test)]
-pub(crate) fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
+pub(crate) fn backlinks(graph: &impl GraphRead, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
     collect_reference_occurrences(
@@ -892,7 +899,7 @@ pub(crate) fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
 }
 
 pub(crate) fn backlinks_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     target: &str,
     max_rows: usize,
     max_bytes: usize,
@@ -1028,7 +1035,7 @@ fn backlink_filter_entry(
 /// cannot turn into a graph-sized arbitrary export: the request is ID-scoped,
 /// de-duplicated, and the response has both per-root and total byte ceilings.
 pub(crate) fn backlink_filter_context(
-    graph: &Graph,
+    graph: &impl GraphRead,
     target: &str,
     targets: &[BacklinkFilterTarget],
 ) -> BacklinkFilterContext {
@@ -1137,7 +1144,7 @@ pub(crate) fn backlink_filter_context(
 /// so a referrer on the *same page* as the target is included — matching OG's
 /// `get-block-referenced-blocks` (no self-page exclusion at the block level).
 #[cfg(test)]
-pub(crate) fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
+pub(crate) fn block_referrers(graph: &impl GraphRead, uuid: &str) -> Vec<RefGroup> {
     let u = uuid.trim();
     if u.is_empty() {
         return Vec::new();
@@ -1151,7 +1158,7 @@ pub(crate) fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
 }
 
 pub(crate) fn block_referrers_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     uuid: &str,
     max_rows: usize,
     max_bytes: usize,
@@ -1178,7 +1185,7 @@ pub(crate) fn block_referrers_bounded(
 /// reference syntax. A block containing both kinds appears once in each surface,
 /// with the corresponding occurrence evidence.
 #[cfg(test)]
-pub(crate) fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
+pub(crate) fn unlinked_refs(graph: &impl GraphRead, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
     collect_reference_occurrences(
@@ -1191,7 +1198,7 @@ pub(crate) fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
 }
 
 pub(crate) fn unlinked_refs_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     target: &str,
     max_rows: usize,
     max_bytes: usize,
@@ -1231,12 +1238,12 @@ fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) 
 }
 
 #[cfg(test)]
-pub(crate) fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
+pub(crate) fn run_query(graph: &impl GraphRead, query_src: &str) -> Vec<RefGroup> {
     run_query_bounded(graph, query_src, usize::MAX, usize::MAX).groups
 }
 
 pub(crate) fn run_query_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     query_src: &str,
     max_rows: usize,
     max_bytes: usize,
@@ -1262,7 +1269,7 @@ pub(crate) fn run_query_bounded(
 }
 
 fn run_pred_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     pred: &Pred,
     opts: &QueryOpts,
     max_rows: usize,
@@ -1276,8 +1283,9 @@ fn run_pred_bounded(
     let sample_admission_cap = opts.sample.filter(|_| opts.sort.is_none());
     // A recency sort (`(sort-by modified …)`) needs each result page's position on
     // a single time axis: journal pages by the day they represent, other pages by
-    // file mtime. Only computed when such a sort is active (else we skip the stat).
+    // file mtime captured with the parsed page table.
     let want_recency = matches!(&opts.sort, Some((f, _)) if is_recency_field(f));
+    let observed_mtimes = want_recency.then(|| graph.observed_page_mtimes());
     let (mut groups, recency_by_page) = graph.with_pages(|pages| {
         let mut groups: Vec<RefGroup> = Vec::new();
         let mut recency: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
@@ -1322,7 +1330,10 @@ fn run_pred_bounded(
             );
             if !matched.is_empty() {
                 if want_recency {
-                    recency.insert(entry.name.clone(), page_recency_secs(entry));
+                    recency.insert(
+                        entry.name.clone(),
+                        page_recency_secs(entry, observed_mtimes.as_ref().unwrap()),
+                    );
                 }
                 groups.push(RefGroup {
                     page: entry.name.clone(),
@@ -1623,7 +1634,7 @@ pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
 /// guessed (a wrong result is worse than "unsupported").
 #[cfg(test)]
 pub(crate) fn run_advanced_query(
-    graph: &Graph,
+    graph: &impl GraphRead,
     query_src: &str,
     current_page: Option<&str>,
 ) -> AdvancedResult {
@@ -1631,7 +1642,7 @@ pub(crate) fn run_advanced_query(
 }
 
 pub(crate) fn run_advanced_query_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     query_src: &str,
     current_page: Option<&str>,
     max_rows: usize,
@@ -2084,13 +2095,16 @@ fn is_recency_field(field: &str) -> bool {
 /// midnight of the day it represents (stable — independent of when it was last
 /// edited); any other page by its file's last-modified time. `i64::MIN` when a
 /// non-journal page can't be stat'd (so it sorts oldest).
-fn page_recency_secs(entry: &PageEntry) -> i64 {
+fn page_recency_secs(
+    entry: &PageEntry,
+    mtimes: &std::collections::HashMap<String, std::time::SystemTime>,
+) -> i64 {
     if let Some(dk) = entry.date_key {
         return JournalDate::from_ordinal(dk).to_days() * 86_400;
     }
-    std::fs::metadata(&entry.path)
-        .and_then(|m| m.modified())
-        .ok()
+    mtimes
+        .get(entry.rel_path_str())
+        .copied()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64)
         .unwrap_or(i64::MIN)
@@ -2139,7 +2153,7 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
 /// page and capped at `limit` total blocks. Ctrl-K uses `run_graph_search*` and
 /// retains the shared search dialect through `QueryPlan::friendly*`.
 #[cfg(test)]
-pub(crate) fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
+pub(crate) fn search(graph: &impl GraphRead, query: &str, limit: usize) -> Vec<RefGroup> {
     search_cancellable(graph, query, limit, || false)
 }
 
@@ -2148,7 +2162,7 @@ pub(crate) fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> 
 /// scan does not finish walking a huge page in the background.
 #[cfg(test)]
 pub(crate) fn search_cancellable(
-    graph: &Graph,
+    graph: &impl GraphRead,
     query: &str,
     limit: usize,
     cancelled: impl Fn() -> bool,
@@ -2157,7 +2171,7 @@ pub(crate) fn search_cancellable(
 }
 
 pub(crate) fn search_cancellable_result(
-    graph: &Graph,
+    graph: &impl GraphRead,
     query: &str,
     limit: usize,
     cancelled: impl Fn() -> bool,
@@ -2172,7 +2186,7 @@ pub(crate) fn search_cancellable_result(
 }
 
 /// Find every `template:: <name>` block and the blocks an insertion produces.
-pub(crate) fn templates(graph: &Graph) -> Vec<TemplateDto> {
+pub(crate) fn templates(graph: &impl GraphRead) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
         for (entry, doc) in pages {
@@ -2246,7 +2260,7 @@ const INTERNAL_PROPS: &[&str] = &[
 /// Distinct property keys (each with its sorted distinct values) used across the
 /// graph. Drives the query builder's property-filter pickers.
 pub(crate) fn property_facets_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     max_values: usize,
     max_bytes: usize,
 ) -> (Vec<(String, Vec<String>)>, bool) {
@@ -2339,7 +2353,7 @@ const OG_AUTOCOMPLETE_HIDDEN_PROPS: &[&str] = &[
 ];
 
 pub(crate) fn autocomplete_property_facets_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     max_items: usize,
     max_bytes: usize,
 ) -> (Vec<(String, Vec<String>)>, bool) {
@@ -2350,7 +2364,7 @@ pub(crate) fn autocomplete_property_facets_bounded(
         .map(|key| property_key_norm(key))
         .chain(
             graph
-                .config
+                .config()
                 .block_hidden_properties
                 .iter()
                 .map(|key| property_key_norm(key.trim_start_matches(':'))),
@@ -2495,7 +2509,7 @@ fn finish_quick_switch_top(
 
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
-pub(crate) fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> {
+pub(crate) fn quick_switch(graph: &impl GraphRead, query: &str, limit: usize) -> Vec<PageEntry> {
     let plan = crate::query_plan::QueryPlan::legacy_page_search(query, limit);
     let execution = plan.execute(graph, || false);
     crate::query_plan::page_hits_to_entries(execution.hits)
@@ -2505,7 +2519,7 @@ pub(crate) fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<Page
 /// Descendants are owned by the source page; explicit bounded consumers use
 /// `preview_block`.
 #[cfg(test)]
-pub(crate) fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
+pub(crate) fn resolve_block(graph: &impl GraphRead, uuid: &str) -> Option<RefGroup> {
     // Jump to the owning page via the uuid index, falling back to a full scan if
     // the hint is missing or stale (so a lagging index can never give a wrong
     // answer — just a slower one).
@@ -2551,12 +2565,12 @@ pub(crate) fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
 /// wins ordering are identical to `resolve_block`. Output is positional and
 /// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
 #[cfg(test)]
-pub(crate) fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> {
+pub(crate) fn resolve_blocks(graph: &impl GraphRead, uuids: &[String]) -> Vec<Option<RefGroup>> {
     resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
 }
 
 pub(crate) fn resolve_blocks_bounded(
-    graph: &Graph,
+    graph: &impl GraphRead,
     uuids: &[String],
     max_rows: usize,
     max_bytes: usize,
@@ -2704,7 +2718,7 @@ struct SelectedExportQuery {
 /// references to the requested roots are retained while the graph snapshot is
 /// borrowed.
 pub(crate) fn export_query_subtrees(
-    graph: &Graph,
+    graph: &impl GraphRead,
     specs: &[QueryExportSpec],
     max_queries: usize,
     max_roots: usize,
@@ -2886,7 +2900,7 @@ pub(crate) fn export_query_subtrees(
 /// count; callers can disclose truncation without confusing "too large" with
 /// "block not found".
 pub(crate) fn preview_block_with_budget(
-    graph: &Graph,
+    graph: &impl GraphRead,
     uuid: &str,
     max_nodes: usize,
     max_bytes: usize,
@@ -4523,7 +4537,7 @@ mod tests {
             .expect("fixture block has persisted id::")
     }
 
-    fn search_block_texts(graph: &Graph, query: &str, limit: usize) -> Vec<String> {
+    fn search_block_texts(graph: &impl GraphRead, query: &str, limit: usize) -> Vec<String> {
         search(graph, query, limit)
             .into_iter()
             .flat_map(|group| group.blocks.into_iter().map(|block| block.raw))
@@ -4681,7 +4695,7 @@ mod tests {
     }
 
     fn quick_switch_reference_full_sort(
-        graph: &Graph,
+        graph: &impl GraphRead,
         query: &str,
         limit: usize,
     ) -> Vec<PageEntry> {

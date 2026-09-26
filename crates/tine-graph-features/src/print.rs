@@ -35,6 +35,12 @@ pub fn page_print_html(store: &Store, name: &str, opts: PrintOpts) -> io::Result
         return Ok(None);
     };
     store.page(&page.id).map_err(crate::store_error)?;
+    store
+        .scan_refresh()
+        .map_err(|error| io::Error::other(format!("graph refresh failed: {error:?}")))?;
+    let whole = store
+        .whole_graph()
+        .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
     let corpus = whole.corpus();
     // The old print path parses Org source as Markdown. Keep that behavior in
     // the print client, with its original unbounded file read.

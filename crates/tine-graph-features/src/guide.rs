@@ -84,13 +84,13 @@ pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopy
         ));
     };
     let config = store.config();
-    let graph = store
-        .whole_graph()
-        .map_err(|error| io::Error::other(format!("{error:?}")))?;
     let renames = guide_link_renames();
     let mut created_pages = Vec::new();
     let mut skipped_pages = Vec::new();
     for template in GUIDE_TEMPLATES {
+        let graph = store
+            .whole_graph()
+            .map_err(|error| io::Error::other(format!("{error:?}")))?;
         let name = guide_copy_page_name(template.title);
         if matches!(graph.resolve(&name, false), Resolved::Existing { .. }) {
             skipped_pages.push(name);

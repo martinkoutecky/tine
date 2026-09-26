@@ -269,6 +269,16 @@ pub fn rename_page_expected(
     new: &str,
     expected_path: Option<&str>,
 ) -> io::Result<()> {
+    rename_page_after_inventory(store, old, new, expected_path, || {})
+}
+
+fn rename_page_after_inventory(
+    store: &Store,
+    old: &str,
+    new: &str,
+    expected_path: Option<&str>,
+    after_inventory: impl Fn(),
+) -> io::Result<()> {
     let old = old.trim();
     let new = new.trim();
     if new.is_empty() {
@@ -280,6 +290,7 @@ pub fn rename_page_expected(
     for _ in 0..4 {
         let graph = view(store)?;
         let inventory = graph.inventory();
+        after_inventory();
         let source = existing(graph.resolve(old, false));
         validate_target(&source, expected_path)?;
         let old_key = refs::normalize(old);
@@ -556,3 +567,7 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
         "pages changed repeatedly during merge",
     ))
 }
+
+#[cfg(test)]
+#[path = "pages_snapshot_tests.rs"]
+mod snapshot_tests;

@@ -59,6 +59,30 @@ pub fn run_graph_search(
     explain: bool,
     scope: Option<Scope>,
 ) -> Result<QueryExecution, SearchError> {
+    run_graph_search_after_scope(
+        store,
+        lanes,
+        source,
+        page_limit,
+        block_limit,
+        lane,
+        explain,
+        scope,
+        || {},
+    )
+}
+
+fn run_graph_search_after_scope(
+    store: &Store,
+    lanes: &SearchLanes,
+    source: String,
+    page_limit: usize,
+    block_limit: usize,
+    lane: Option<&str>,
+    explain: bool,
+    scope: Option<Scope>,
+    after_scope: impl FnOnce(),
+) -> Result<QueryExecution, SearchError> {
     let view = store.whole_graph().map_err(SearchError::Load)?;
     let flag = lanes.begin(lane);
     let within = scope.map(|scope| match scope.path {
@@ -75,6 +99,7 @@ pub fn run_graph_search(
         block_limit,
         explain,
     };
+    after_scope();
     let execution = match view.search(&request, &Cancel(flag)) {
         Ok(execution) => execution,
         Err(QueryError::Cancelled) => QueryExecution {
@@ -181,12 +206,22 @@ pub fn run_advanced_query(
     query: &str,
     current_page: Option<&str>,
 ) -> Result<tine_core::query::AdvancedResult, SearchError> {
+    run_advanced_query_after_scope(store, query, current_page, || {})
+}
+
+fn run_advanced_query_after_scope(
+    store: &Store,
+    query: &str,
+    current_page: Option<&str>,
+    after_scope: impl FnOnce(),
+) -> Result<tine_core::query::AdvancedResult, SearchError> {
     validate_source(query).map_err(SearchError::Query)?;
     let view = store.whole_graph().map_err(SearchError::Load)?;
     let current_id = current_page.map(|name| match view.resolve(name, false) {
         Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
         Resolved::Alias { owners } => owners.into_iter().next().expect("alias has an owner"),
     });
+    after_scope();
     match view
         .query(query, QueryDialect::Advanced, current_id.as_ref())
         .map_err(SearchError::Query)?
@@ -199,6 +234,91 @@ pub fn run_advanced_query(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tine_store::{SaveBase, SaveOutcome};
+
+    #[test]
+    fn search_and_advanced_scope_keep_one_generation_during_write() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-d3-search-scope-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/Scope.md"), "- TODO oldtoken\n").unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let lanes = SearchLanes::default();
+        let scope = Scope {
+            name: "Scope".into(),
+            kind: PageKind::Page,
+            path: None,
+        };
+        let scoped = run_graph_search_after_scope(
+            &store,
+            &lanes,
+            "oldtoken".into(),
+            10,
+            10,
+            None,
+            false,
+            Some(scope),
+            || {
+                let writer = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    let id = PageId::from("pages/Scope.md");
+                    let read = writer.page(&id).unwrap();
+                    let mut doc = read.doc;
+                    doc.blocks[0].raw = "DONE newtoken".into();
+                    assert!(matches!(
+                        writer.save(&id, SaveBase::Existing(read.rev), &doc),
+                        SaveOutcome::Saved(_)
+                    ));
+                })
+                .join()
+                .unwrap();
+            },
+        )
+        .unwrap_or_else(|_| panic!("scoped search failed"));
+        assert!(
+            !scoped.hits.is_empty(),
+            "search must read the resolved generation"
+        );
+
+        let id = PageId::from("pages/Scope.md");
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "TODO oldtoken".into();
+        assert!(matches!(
+            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            SaveOutcome::Saved(_)
+        ));
+        let advanced = run_advanced_query_after_scope(
+            &store,
+            r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#,
+            Some("Scope"),
+            || {
+                let writer = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    let id = PageId::from("pages/Scope.md");
+                    let read = writer.page(&id).unwrap();
+                    let mut doc = read.doc;
+                    doc.blocks[0].raw = "DONE newtoken".into();
+                    assert!(matches!(
+                        writer.save(&id, SaveBase::Existing(read.rev), &doc),
+                        SaveOutcome::Saved(_)
+                    ));
+                })
+                .join()
+                .unwrap();
+            },
+        )
+        .unwrap_or_else(|_| panic!("advanced query failed"));
+        assert!(
+            !advanced.groups.is_empty(),
+            "advanced query must read the resolved generation"
+        );
+        store.close();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn rejects_oversized_query_source_before_cache_or_parser() {
