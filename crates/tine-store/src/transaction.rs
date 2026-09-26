@@ -562,7 +562,11 @@ impl<'a> Transaction<'a> {
 
     fn stage(&self, file: &FileId, expected: &FileRev) -> Result<Vec<u8>, Why> {
         let path = self.path(file)?;
-        match fs::read(path) {
+        match if self.page(file) {
+            crate::model::read_parse_bytes(&path)
+        } else {
+            fs::read(&path)
+        } {
             Ok(bytes) if FileRev::from_bytes(&bytes) == *expected => Ok(bytes),
             Ok(bytes) => Err(Why::Conflict {
                 file: file.clone(),
@@ -610,6 +614,12 @@ impl<'a> Transaction<'a> {
                 if !self.page(&file) {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
+                if !crate::model::dto_depth_within_limit(doc) {
+                    return Err(failed(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "input nesting exceeds 512 levels",
+                    )));
+                }
                 if matches!(base, SaveBase::CreateNew) {
                     if let Some(existing) = self.disk_twin(&file)? {
                         return Err(Why::Refused(Refusal::Twin {
@@ -623,6 +633,9 @@ impl<'a> Transaction<'a> {
                     SaveBase::Existing(rev) => Some(self.stage(&file, rev)?),
                     SaveBase::CreateNew => None,
                 };
+                if let Some(old) = old.as_ref() {
+                    crate::model::validate_parse_bytes(old).map_err(failed)?;
+                }
                 let path = self.path(&file)?;
                 let text = match old.as_deref() {
                     Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
@@ -641,6 +654,7 @@ impl<'a> Transaction<'a> {
                             Why::Failed(error.into())
                         }
                     })?;
+                crate::model::validate_parse_bytes(&new).map_err(failed)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -837,7 +851,11 @@ impl<'a> Transaction<'a> {
             };
             result.map_err(failed)?;
         }
-        match fs::read(path) {
+        match if self.page(file) {
+            crate::model::read_parse_bytes(&path)
+        } else {
+            fs::read(path)
+        } {
             Ok(now) if old == Some(now.as_slice()) => Ok(()),
             Ok(now) => Err(Why::Conflict {
                 file: file.clone(),
@@ -984,7 +1002,11 @@ impl<'a> Transaction<'a> {
                         if fault(self.store, FaultPoint::AfterTempSync) {
                             atomic_write(&src, b"external after temp sync")?;
                         }
-                        let unchanged = match fs::read(&src) {
+                        let unchanged = match if self.page(&plan.src) {
+                            crate::model::read_parse_bytes(&src)
+                        } else {
+                            fs::read(&src)
+                        } {
                             Ok(current) => current == old,
                             Err(error) if error.kind() == io::ErrorKind::NotFound => false,
                             Err(error) => return Err(error),
@@ -1456,7 +1478,6 @@ impl<'a> Transaction<'a> {
                 before.insert(dst.as_str().to_owned(), None);
             }
         }
-        let original_pages = self.store.graph.list_pages_shared();
         let fixed_names = self.fixed_step_names();
         let mut steps = std::mem::take(&mut self.steps);
         let mut done = Vec::new();
@@ -1534,7 +1555,11 @@ impl<'a> Transaction<'a> {
                     continue;
                 }
             };
-            let now = match fs::read(&path) {
+            let now = match if self.page(&id) {
+                crate::model::read_parse_bytes(&path)
+            } else {
+                fs::read(&path)
+            } {
                 Ok(bytes) => Some(bytes),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                 Err(_) => {
@@ -1605,7 +1630,12 @@ impl<'a> Transaction<'a> {
                     } else {
                         None
                     };
-                    self.store.graph.transaction_publish_page(&path, saved_page);
+                    self.store.graph.transaction_publish_page(
+                        &path,
+                        now.as_deref(),
+                        saved_page,
+                        baseline.is_none() || now.is_none(),
+                    );
                 } else {
                     self.store.graph.transaction_clear_page_marker(&path);
                 }
@@ -1621,19 +1651,12 @@ impl<'a> Transaction<'a> {
             published_rev = self.store.publish_own(published_own);
         }
         if !published_external.is_empty() {
-            let current_pages = self.store.graph.list_pages_shared();
             let pages = published_external
                 .iter()
                 .filter_map(|(id, _, _)| {
-                    current_pages
-                        .iter()
-                        .chain(original_pages.iter())
-                        .find(|entry| {
-                            entry
-                                .rel_path
-                                .as_ref()
-                                .is_some_and(|path| path.file() == *id)
-                        })
+                    self.store
+                        .graph
+                        .entry_for_path(&self.store.graph.root.join(id.as_str()))
                         .map(|entry| (id.clone(), entry.kind, entry.name.clone()))
                 })
                 .collect();

@@ -39,13 +39,21 @@ fn id(store: &Store, rel: &str) -> io::Result<FileId> {
 }
 
 fn read_text(store: &Store, id: &FileId) -> io::Result<(String, FileRev)> {
-    let (bytes, rev) = store.read(id, None).map_err(store_error)?;
+    let (bytes, rev) = store
+        .read(id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+        .map_err(store_error)?;
     let content = String::from_utf8(bytes).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "stream did not contain valid UTF-8",
         )
     })?;
+    if !tine_store::parse_input_depth_within_limit(&content) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "I-22: input nesting exceeds 512 levels",
+        ));
+    }
     Ok((content, rev))
 }
 
@@ -345,7 +353,7 @@ pub fn trash_sync_conflict(store: &Store, conflict: &str) -> io::Result<()> {
         return Err(invalid_path());
     }
     for _ in 0..4 {
-        let rev = match store.read(&conf, None) {
+        let rev = match store.read(&conf, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((_, rev)) => rev,
             Err(StoreError::NotFound) => {
                 return Err(io::Error::new(

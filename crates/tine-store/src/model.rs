@@ -27,6 +27,120 @@ use tine_core::model::{
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use unicode_normalization::UnicodeNormalization;
 
+/// Maximum source bytes admitted to a page/config/EDN parser or renderer.
+pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// Maximum structural depth admitted before recursive projections or rendering.
+pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = 512;
+
+#[derive(Debug)]
+pub(crate) struct ParseInputTooLarge {
+    pub(crate) len: u64,
+}
+
+impl std::fmt::Display for ParseInputTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "input exceeds {} byte parse limit",
+            PARSE_INPUT_MAX_BYTES
+        )
+    }
+}
+impl std::error::Error for ParseInputTooLarge {}
+
+pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
+    let bytes = read_parse_bytes(path)?;
+    validate_parse_bytes(&bytes)?;
+    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    let mut input = fs::File::open(path)?;
+    let len = input.metadata()?.len();
+    if len > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ParseInputTooLarge { len },
+        ));
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut input)
+        .take(PARSE_INPUT_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ParseInputTooLarge {
+                len: bytes.len() as u64,
+            },
+        ));
+    }
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::full_read();
+    Ok(bytes)
+}
+
+pub(crate) fn validate_parse_bytes(bytes: &[u8]) -> io::Result<()> {
+    if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ParseInputTooLarge {
+                len: bytes.len() as u64,
+            },
+        ));
+    }
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if !parse_input_depth_within_limit(text) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "input nesting exceeds 512 levels",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
+    let mut todo: Vec<_> = page.blocks.iter().map(|block| (block, 1usize)).collect();
+    while let Some((block, depth)) = todo.pop() {
+        if depth > PARSE_INPUT_MAX_DEPTH {
+            return false;
+        }
+        todo.extend(block.children.iter().map(|child| (child, depth + 1)));
+    }
+    true
+}
+
+/// Whether source text stays below the parser and renderer nesting ceiling.
+pub fn parse_input_depth_within_limit(input: &str) -> bool {
+    let mut inline_depth = 0usize;
+    for line in input.lines() {
+        let indent = line
+            .bytes()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .map(|byte| if byte == b'\t' { 2 } else { 1 })
+            .sum::<usize>();
+        if indent / 2 > PARSE_INPUT_MAX_DEPTH {
+            return false;
+        }
+        let stars = line.bytes().take_while(|byte| *byte == b'*').count();
+        if stars > PARSE_INPUT_MAX_DEPTH && line.as_bytes().get(stars) == Some(&b' ') {
+            return false;
+        }
+        for byte in line.bytes() {
+            match byte {
+                b'[' | b'{' | b'(' => inline_depth += 1,
+                b']' | b'}' | b')' => inline_depth = inline_depth.saturating_sub(1),
+                _ => {}
+            }
+            if inline_depth > PARSE_INPUT_MAX_DEPTH {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Whether `path` is a page file Tine reads (markdown or org).
 fn is_page_file(path: &Path) -> bool {
     matches!(
@@ -51,6 +165,8 @@ fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
 /// Parse a page file's bytes into a [`Document`] using the parser for its
 /// format (org headlines vs markdown bullets), chosen by the path's extension.
 fn parse_doc(path: &Path, content: &str) -> Document {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::parse();
     match Format::from_path(path) {
         Format::Md => doc::parse(content),
         Format::Org => tine_core::org::parse_org(content),
@@ -248,6 +364,8 @@ impl ReadSnapshot {
         old: Option<&Self>,
         changed_paths: &[String],
     ) -> Self {
+        #[cfg(feature = "test-faults")]
+        let capture_started = std::time::Instant::now();
         let pages = graph
             .cache
             .read()
@@ -260,7 +378,8 @@ impl ReadSnapshot {
         // names were first-use work there, so their OnceLocks remain cold.
         let initial = old.is_none().then(|| {
             std::thread::scope(|scope| {
-                let explicit = scope.spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[]));
+                let explicit =
+                    scope.spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None));
                 let signatures = scope.spawn(|| {
                     SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation)
                 });
@@ -279,6 +398,7 @@ impl ReadSnapshot {
                         &pages,
                         &[],
                         crate::query::document_aliases,
+                        None,
                     )
                 });
                 (
@@ -289,15 +409,6 @@ impl ReadSnapshot {
                 )
             })
         });
-        let explicit_index = if let Some((index, ..)) = &initial {
-            index.clone()
-        } else {
-            SnapshotExplicitIndex::capture(
-                old.map(|old| (&old.explicit_index, &old.pages)),
-                &pages,
-                changed_paths,
-            )
-        };
         let reference_candidate_index = if let Some((_, index, ..)) = &initial {
             index.clone()
         } else if let Some(old) = old {
@@ -311,6 +422,22 @@ impl ReadSnapshot {
         } else {
             SnapshotReferenceCandidateIndex::capture(None, &pages, changed_paths, cache_generation)
         };
+        let old_positions =
+            old.map(|old| Arc::clone(&old.reference_candidate_index.read().unwrap().positions));
+        let positions = Arc::clone(&reference_candidate_index.positions);
+        let position_pair = old_positions
+            .as_ref()
+            .map(|before| (before.as_ref(), positions.as_ref()));
+        let explicit_index = if let Some((index, ..)) = &initial {
+            index.clone()
+        } else {
+            SnapshotExplicitIndex::capture(
+                old.map(|old| (&old.explicit_index, &old.pages)),
+                &pages,
+                changed_paths,
+                position_pair,
+            )
+        };
         let block_index = std::sync::OnceLock::new();
         let previous_block =
             old.and_then(|old| old.block_index.get().map(|index| (index, &old.pages)));
@@ -319,6 +446,7 @@ impl ReadSnapshot {
                 previous_block,
                 &pages,
                 changed_paths,
+                position_pair,
             ));
         }
         let carry_projection =
@@ -334,6 +462,7 @@ impl ReadSnapshot {
                         &pages,
                         changed_paths,
                         project,
+                        position_pair,
                     ));
                 }
                 cell
@@ -360,11 +489,8 @@ impl ReadSnapshot {
             Some(old) => {
                 let mut names = Arc::clone(&old.real_page_names);
                 for path in changed_paths {
-                    let before = old
-                        .pages
-                        .iter()
-                        .find(|(entry, _)| entry.rel_path_str() == path);
-                    let after = pages.iter().find(|(entry, _)| entry.rel_path_str() == path);
+                    let before = snapshot_page_by_rel(&old.pages, old_positions.as_deref(), path);
+                    let after = snapshot_page_by_rel(&pages, Some(positions.as_ref()), path);
                     if before.map(|(entry, _)| (&entry.name, &entry.path))
                         == after.map(|(entry, _)| (&entry.name, &entry.path))
                     {
@@ -435,14 +561,9 @@ impl ReadSnapshot {
             }) {
                 let mut next = Arc::clone(counts);
                 for path in changed_paths {
-                    let before = old
-                        .pages
-                        .iter()
-                        .find(|(entry, _)| entry.rel_path_str() == path);
-                    let after = snapshot
-                        .pages
-                        .iter()
-                        .find(|(entry, _)| entry.rel_path_str() == path);
+                    let before = snapshot_page_by_rel(&old.pages, old_positions.as_deref(), path);
+                    let after =
+                        snapshot_page_by_rel(&snapshot.pages, Some(positions.as_ref()), path);
                     let before_counts = before
                         .map(|(_, doc)| document_block_ref_counts(doc))
                         .unwrap_or_default();
@@ -478,6 +599,8 @@ impl ReadSnapshot {
                 let _ = snapshot.block_ref_counts.set(Arc::new(counts));
             }
         }
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::snapshot_elapsed(capture_started.elapsed());
         snapshot
     }
 
@@ -791,6 +914,7 @@ impl GraphRead for ReadSnapshot {
                         &self.pages,
                         &[],
                         crate::query::document_aliases,
+                        None,
                     )
                 });
                 let mut owned = Vec::new();
@@ -823,7 +947,7 @@ impl GraphRead for ReadSnapshot {
                 #[cfg(test)]
                 self.block_full_builds
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                SnapshotBlockIndex::capture(None, &self.pages, &[])
+                SnapshotBlockIndex::capture(None, &self.pages, &[], None)
             })
             .hint(uuid)
     }
@@ -842,6 +966,7 @@ impl GraphRead for ReadSnapshot {
                         &self.pages,
                         &[],
                         collect_document_referenced_names,
+                        None,
                     )
                 });
                 let mut seen = HashMap::new();
@@ -920,6 +1045,17 @@ pub(crate) enum Withdrawal {
 struct PageCacheIndex {
     by_name: std::collections::HashMap<(PageKind, String), usize>,
     by_path: std::collections::HashMap<PathBuf, usize>,
+}
+
+fn snapshot_page_by_rel<'a>(
+    pages: &'a Arc<Vec<(PageEntry, Arc<Document>)>>,
+    positions: Option<&HashMap<String, usize>>,
+    rel: &str,
+) -> Option<&'a (PageEntry, Arc<Document>)> {
+    positions
+        .and_then(|positions| positions.get(rel).and_then(|position| pages.get(*position)))
+        .filter(|(entry, _)| entry.rel_path_str() == rel)
+        .or_else(|| pages.iter().find(|(entry, _)| entry.rel_path_str() == rel))
 }
 
 const REFERENCE_SIGNATURE_WORDS: usize = 64; // 4096 bits = 512 bytes/page
@@ -1022,16 +1158,124 @@ fn reference_signature(doc: &Document) -> ReferenceTokenSignature {
 
 #[derive(Clone)]
 struct SnapshotReferenceCandidateIndex {
-    signatures: Arc<Vec<Arc<ReferenceTokenSignature>>>,
+    signatures: SignatureSlots,
+    positions: Arc<HashMap<String, usize>>,
     page_count: usize,
     complete: bool,
     generation: u64,
 }
 
+// A persistent 32-way tree. Replacing one page signature copies at most 32
+// pointers per level rather than the P-entry signature vector held by an old
+// snapshot. Page-set changes rebuild the table, as their requested scope is P.
+#[derive(Clone)]
+struct SignatureSlots {
+    root: Option<Arc<SignatureNode>>,
+    height: usize,
+    len: usize,
+}
+
+#[derive(Clone)]
+enum SignatureNode {
+    Leaf(Vec<Arc<ReferenceTokenSignature>>),
+    Branch(Vec<Arc<SignatureNode>>),
+}
+
+impl SignatureSlots {
+    fn new(values: Vec<Arc<ReferenceTokenSignature>>) -> Self {
+        let len = values.len();
+        let mut level: Vec<_> = values
+            .chunks(32)
+            .map(|chunk| Arc::new(SignatureNode::Leaf(chunk.to_vec())))
+            .collect();
+        let mut height = 0;
+        while level.len() > 1 {
+            level = level
+                .chunks(32)
+                .map(|chunk| Arc::new(SignatureNode::Branch(chunk.to_vec())))
+                .collect();
+            height += 1;
+        }
+        Self {
+            root: level.pop(),
+            height,
+            len,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn get(&self, position: usize) -> Option<&ReferenceTokenSignature> {
+        if position >= self.len {
+            return None;
+        }
+        let mut node = self.root.as_deref()?;
+        let mut height = self.height;
+        loop {
+            match node {
+                SignatureNode::Leaf(values) => return values.get(position % 32).map(AsRef::as_ref),
+                SignatureNode::Branch(children) => {
+                    let divisor = 32usize.pow(height as u32);
+                    node = children.get((position / divisor) % 32)?.as_ref();
+                    height -= 1;
+                }
+            }
+        }
+    }
+
+    fn get_arc(&self, position: usize) -> Option<Arc<ReferenceTokenSignature>> {
+        if position >= self.len {
+            return None;
+        }
+        let mut node = self.root.as_deref()?;
+        let mut height = self.height;
+        loop {
+            match node {
+                SignatureNode::Leaf(values) => return values.get(position % 32).cloned(),
+                SignatureNode::Branch(children) => {
+                    let divisor = 32usize.pow(height as u32);
+                    node = children.get((position / divisor) % 32)?.as_ref();
+                    height -= 1;
+                }
+            }
+        }
+    }
+
+    fn set(&mut self, position: usize, value: Arc<ReferenceTokenSignature>) {
+        fn replaced(
+            node: &SignatureNode,
+            height: usize,
+            position: usize,
+            value: Arc<ReferenceTokenSignature>,
+        ) -> Arc<SignatureNode> {
+            match node {
+                SignatureNode::Leaf(values) => {
+                    let mut next = values.clone();
+                    next[position % 32] = value;
+                    Arc::new(SignatureNode::Leaf(next))
+                }
+                SignatureNode::Branch(children) => {
+                    let divisor = 32usize.pow(height as u32);
+                    let slot = (position / divisor) % 32;
+                    let mut next = children.clone();
+                    next[slot] = replaced(&children[slot], height - 1, position, value);
+                    Arc::new(SignatureNode::Branch(next))
+                }
+            }
+        }
+        if let Some(root) = &self.root {
+            self.root = Some(replaced(root, self.height, position, value));
+        }
+    }
+}
+
 impl SnapshotReferenceCandidateIndex {
     fn empty() -> Self {
         Self {
-            signatures: Arc::new(Vec::new()),
+            signatures: SignatureSlots::new(Vec::new()),
+            positions: Arc::new(HashMap::new()),
             page_count: 0,
             complete: true,
             generation: 0,
@@ -1043,7 +1287,7 @@ impl SnapshotReferenceCandidateIndex {
     }
 
     fn get(&self, position: usize) -> Option<&ReferenceTokenSignature> {
-        self.signatures.get(position).map(AsRef::as_ref)
+        self.signatures.get(position)
     }
 
     fn capture(
@@ -1060,20 +1304,26 @@ impl SnapshotReferenceCandidateIndex {
             index.generation = generation;
             let structural_change = previous_pages.len() != pages.len()
                 || changed_paths.iter().any(|path| {
-                    previous_pages
-                        .iter()
-                        .position(|(entry, _)| entry.rel_path_str() == path)
-                        != pages
-                            .iter()
-                            .position(|(entry, _)| entry.rel_path_str() == path)
+                    previous.positions.get(path).is_none_or(|position| {
+                        pages
+                            .get(*position)
+                            .is_none_or(|(entry, _)| entry.rel_path_str() != path)
+                    })
                 });
             if structural_change {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::snapshot_rebuild();
                 let old_by_path: HashMap<_, _> = previous_pages
                     .iter()
-                    .zip(previous.signatures.iter())
-                    .map(|((entry, _), signature)| (entry.rel_path_str(), Arc::clone(signature)))
+                    .enumerate()
+                    .filter_map(|(position, (entry, _))| {
+                        previous
+                            .signatures
+                            .get_arc(position)
+                            .map(|signature| (entry.rel_path_str(), signature))
+                    })
                     .collect();
-                index.signatures = Arc::new(
+                index.signatures = SignatureSlots::new(
                     pages
                         .iter()
                         .map(|(entry, doc)| {
@@ -1091,33 +1341,44 @@ impl SnapshotReferenceCandidateIndex {
                         })
                         .collect(),
                 );
+                index.positions = Arc::new(
+                    pages
+                        .iter()
+                        .enumerate()
+                        .map(|(position, (entry, _))| (entry.rel_path_str().to_owned(), position))
+                        .collect(),
+                );
                 index.complete = index.signatures.len() == pages.len();
                 return index;
             }
-            let signatures = Arc::make_mut(&mut index.signatures);
             for rel_path in changed_paths {
-                let after = pages
-                    .iter()
-                    .position(|(entry, _)| entry.rel_path_str() == rel_path);
-                match after {
-                    Some(after) => {
-                        signatures[after] = Arc::new(reference_signature(&pages[after].1));
-                    }
-                    None => {}
+                if let Some(&position) = previous.positions.get(rel_path) {
+                    index
+                        .signatures
+                        .set(position, Arc::new(reference_signature(&pages[position].1)));
                 }
             }
-            if signatures.len() != pages.len() {
+            if index.signatures.len() != pages.len() {
                 index.complete = false;
             }
             index
         } else {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::snapshot_rebuild();
             let mut index = Self::empty();
             index.page_count = pages.len();
             index.generation = generation;
-            index.signatures = Arc::new(
+            index.signatures = SignatureSlots::new(
                 pages
                     .iter()
                     .map(|(_, doc)| Arc::new(reference_signature(doc)))
+                    .collect(),
+            );
+            index.positions = Arc::new(
+                pages
+                    .iter()
+                    .enumerate()
+                    .map(|(position, (entry, _))| (entry.rel_path_str().to_owned(), position))
                     .collect(),
             );
             index
@@ -1177,6 +1438,7 @@ impl SnapshotBlockIndex {
         old: Option<(&Self, &Arc<Vec<(PageEntry, Arc<Document>)>>)>,
         pages: &Arc<Vec<(PageEntry, Arc<Document>)>>,
         changed_paths: &[String],
+        positions: Option<(&HashMap<String, usize>, &HashMap<String, usize>)>,
     ) -> Self {
         if let Some((previous, _previous_pages)) = old.filter(|(_, previous_pages)| {
             !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
@@ -1187,9 +1449,8 @@ impl SnapshotBlockIndex {
             // ambiguity, without copying the shared base.
             let overlay = Arc::make_mut(&mut index.overlay);
             for rel_path in changed_paths {
-                if let Some((entry, doc)) = pages
-                    .iter()
-                    .find(|(entry, _)| entry.rel_path_str() == rel_path)
+                if let Some((entry, doc)) =
+                    snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path)
                 {
                     let owner = Self::owner(entry);
                     Self::for_each_block_id(doc, |id| {
@@ -1272,24 +1533,25 @@ impl SnapshotPageDerivedIndex {
         pages: &Arc<Vec<(PageEntry, Arc<Document>)>>,
         changed_paths: &[String],
         project: fn(&Document) -> Vec<String>,
+        positions: Option<(&HashMap<String, usize>, &HashMap<String, usize>)>,
     ) -> Self {
         if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
             !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
         }) {
             let mut index = previous.clone();
             for rel_path in changed_paths {
-                if let Some((entry, _)) = previous_pages
-                    .iter()
-                    .find(|(entry, _)| entry.rel_path_str() == rel_path)
-                {
+                if let Some((entry, _)) = snapshot_page_by_rel(
+                    previous_pages,
+                    positions.map(|(before, _)| before),
+                    rel_path,
+                ) {
                     Arc::make_mut(
                         &mut index.shards[SnapshotReferenceCandidateIndex::shard(&entry.path)],
                     )
                     .remove(&entry.path);
                 }
-                if let Some((entry, doc)) = pages
-                    .iter()
-                    .find(|(entry, _)| entry.rel_path_str() == rel_path)
+                if let Some((entry, doc)) =
+                    snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path)
                 {
                     index.insert(entry, doc, project);
                 }
@@ -1358,18 +1620,20 @@ impl SnapshotExplicitIndex {
         old: Option<(&Self, &Arc<Vec<(PageEntry, Arc<Document>)>>)>,
         pages: &Arc<Vec<(PageEntry, Arc<Document>)>>,
         changed_paths: &[String],
+        positions: Option<(&HashMap<String, usize>, &HashMap<String, usize>)>,
     ) -> Self {
         if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
             !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
         }) {
             let mut index = previous.clone();
             for rel_path in changed_paths {
-                let before = previous_pages
-                    .iter()
-                    .find(|(entry, _)| entry.rel_path_str() == rel_path);
-                let after = pages
-                    .iter()
-                    .find(|(entry, _)| entry.rel_path_str() == rel_path);
+                let before = snapshot_page_by_rel(
+                    previous_pages,
+                    positions.map(|(before, _)| before),
+                    rel_path,
+                );
+                let after =
+                    snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path);
                 let old_names = before
                     .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
                     .unwrap_or_default();
@@ -1894,7 +2158,7 @@ impl Graph {
 
     pub(crate) fn open_inner(root: impl AsRef<Path>) -> Graph {
         let root = root.as_ref().to_path_buf();
-        let config = fs::read_to_string(root.join("logseq").join("config.edn"))
+        let config = read_parse_input(&root.join("logseq").join("config.edn"))
             .map(|s| Config::parse(&s))
             .unwrap_or_default();
         let journal_format = JournalFormat::new(
@@ -2257,7 +2521,7 @@ impl Graph {
             let mut jfiles: Vec<JournalFile> = files
                 .into_iter()
                 .map(|(name, path, canonical)| {
-                    let preview = fs::read_to_string(&path)
+                    let preview = read_parse_input(&path)
                         .ok()
                         .and_then(|c| {
                             c.lines()
@@ -2338,7 +2602,7 @@ impl Graph {
                 let tag = stem[base_stem.len()..]
                     .trim_matches(|c: char| c == '.' || c == ' ' || c == '(' || c == ')')
                     .to_string();
-                let preview = fs::read_to_string(&p)
+                let preview = read_parse_input(&p)
                     .ok()
                     .and_then(|c| {
                         c.lines()
@@ -2573,7 +2837,7 @@ impl Graph {
         // baseline (rev) from the SAME bytes (so rev and the served content can't
         // disagree via a write landing between two reads), and — on a cache miss —
         // parse it below.
-        let read = fs::read_to_string(&entry.path);
+        let read = read_parse_input(&entry.path);
         if let Ok(content) = &read {
             self.sync_file_content(&entry.path, content, false);
         } else if read
@@ -2630,7 +2894,7 @@ impl Graph {
         let Some(entry) = self.entry_for_path(&abs) else {
             return Ok(None);
         };
-        let content = match fs::read_to_string(&abs) {
+        let content = match read_parse_input(&abs) {
             Ok(c) => c,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
@@ -2829,7 +3093,7 @@ impl Graph {
             }
             let mtime = fs::metadata(&e.path).and_then(|m| m.modified()).ok();
             let path = e.path.clone();
-            let indexed = match fs::read_to_string(&e.path) {
+            let indexed = match read_parse_input(&e.path) {
                 Ok(content) => built.collect(isolate_page_parse(e, |entry| {
                     Some(parse_page_content(entry, &content))
                 })),
@@ -3605,7 +3869,7 @@ impl Graph {
         {
             return None;
         }
-        let content = fs::read_to_string(path).ok()?;
+        let content = read_parse_input(path).ok()?;
         // The watcher consumes the self-write marker (one-shot) so the map stays
         // bounded to in-flight writes.
         self.sync_file_content(path, &content, true)
@@ -3790,11 +4054,22 @@ impl Graph {
         self.note_self_write(path, "<tx-deleted>".into());
     }
 
-    pub(crate) fn transaction_publish_page(&self, path: &Path, saved: Option<&Document>) {
-        match fs::read_to_string(path) {
-            Ok(content) => {
+    pub(crate) fn transaction_publish_page(
+        &self,
+        path: &Path,
+        bytes: Option<&[u8]>,
+        saved: Option<&Document>,
+        file_set_changed: bool,
+    ) {
+        let before_gen = self.cache_generation();
+        match bytes {
+            Some(bytes) => {
+                let Ok(content) = std::str::from_utf8(bytes) else {
+                    self.invalidate_cache();
+                    return;
+                };
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.sync_file_content_with_saved(path, &content, false, saved)
+                    self.sync_file_content_with_saved(path, content, false, saved)
                 }))
                 .is_err()
                 {
@@ -3805,13 +4080,28 @@ impl Graph {
                         .push(self.rel_path(path));
                 }
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            None => {
                 let _ = self.forget_file_internal(path);
             }
-            Err(_) => self.invalidate_cache(),
         }
-        *self.page_list_cache.write().unwrap() = None;
-        *self.find_entry_cache.write().unwrap() = None;
+        if file_set_changed {
+            *self.page_list_cache.write().unwrap() = None;
+            *self.find_entry_cache.write().unwrap() = None;
+        } else {
+            let after_gen = self.cache_generation();
+            if after_gen == before_gen || after_gen == before_gen + 1 {
+                if let Some((gen, _)) = self.page_list_cache.write().unwrap().as_mut() {
+                    if *gen == before_gen {
+                        *gen = after_gen;
+                    }
+                }
+                if let Some((gen, _)) = self.find_entry_cache.write().unwrap().as_mut() {
+                    if *gen == before_gen {
+                        *gen = after_gen;
+                    }
+                }
+            }
+        }
         self.recent_writes.lock().unwrap().remove(path);
     }
 
@@ -3820,8 +4110,19 @@ impl Graph {
     }
 
     pub(crate) fn transaction_bump_generation(&self) {
-        self.cache_gen
+        let before = self
+            .cache_gen
             .fetch_add(1, std::sync::atomic::Ordering::Release);
+        if let Some((gen, _)) = self.page_list_cache.write().unwrap().as_mut() {
+            if *gen == before {
+                *gen = before + 1;
+            }
+        }
+        if let Some((gen, _)) = self.find_entry_cache.write().unwrap().as_mut() {
+            if *gen == before {
+                *gen = before + 1;
+            }
+        }
     }
 
     fn prepare_page_content(
@@ -4117,7 +4418,7 @@ fn preserve_crlf(content: String, existing: Option<&str>) -> String {
 /// when its v2 parser does not own an input shape; isolating here preserves that
 /// loud guard while limiting the search-cache blast radius to this page.
 fn parse_page_entry_isolated(e: PageEntry) -> PageParseResult {
-    let content = fs::read_to_string(&e.path).map_err(|error| {
+    let content = read_parse_input(&e.path).map_err(|error| {
         PageParseFailure::Unreadable(e.rel_path_str().to_owned(), error.to_string())
     })?;
     isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
@@ -4310,6 +4611,8 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
     // exposed. Hidden dirs (`.git` &c.) are skipped — never a page store.
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::readdir();
         let Ok(rd) = fs::read_dir(&d) else { continue };
         for entry in rd.flatten() {
             let path = entry.path();
@@ -4791,7 +5094,11 @@ pub(crate) fn atomic_write_with_check(
             .create_new(true)
             .open(&tmp)?;
         f.write_all(bytes)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::wrote(bytes.len());
         f.sync_all()?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
         drop(f);
         check()?;
         fs::rename(&tmp, path)
@@ -4803,6 +5110,8 @@ pub(crate) fn atomic_write_with_check(
         // write can't lose the new directory entry (the rename) on some
         // filesystems. Best-effort — not all platforms allow fsync on a dir.
         let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
     }
     res
 }
@@ -6213,7 +6522,7 @@ mod tests {
         let path = dir.join("pages").join("B.md");
         fs::write(&path, "- new\n").unwrap();
         let writer = std::thread::spawn(move || {
-            write_graph.transaction_publish_page(&path, None);
+            write_graph.transaction_publish_page(&path, Some(b"- new\n"), None, false);
             done_tx.send(()).unwrap();
         });
 
@@ -6265,7 +6574,7 @@ mod tests {
 
         let new_content = "- new body\n";
         fs::write(&path, new_content).unwrap();
-        g.transaction_publish_page(&path, None);
+        g.transaction_publish_page(&path, Some(new_content.as_bytes()), None, false);
 
         release_tx.send(()).unwrap();
         let (before, after) = observed_rx
@@ -6440,7 +6749,7 @@ mod tests {
             (entry("A"), doc("A", "- empty\n")),
             (entry("B"), doc("B", "- empty\n")),
         ]);
-        let base = SnapshotBlockIndex::capture(None, &base_pages, &[]);
+        let base = SnapshotBlockIndex::capture(None, &base_pages, &[], None);
         let added_pages = Arc::new(vec![
             base_pages[0].clone(),
             (entry("A"), doc("A", "- source\n  id:: moved-id\n")),
@@ -6450,6 +6759,7 @@ mod tests {
             Some((&base, &base_pages)),
             &added_pages,
             &["pages/A.md".into()],
+            None,
         );
         assert_eq!(added.overlay.len(), 1);
         assert_eq!(added.hint("moved-id").as_deref(), Some("A"));
@@ -6462,6 +6772,7 @@ mod tests {
             Some((&added, &added_pages)),
             &removed_pages,
             &["pages/A.md".into()],
+            None,
         );
         assert_eq!(stale.hint("moved-id").as_deref(), Some("A"));
         let moved_pages = Arc::new(vec![
@@ -6473,6 +6784,7 @@ mod tests {
             Some((&stale, &removed_pages)),
             &moved_pages,
             &["pages/B.md".into()],
+            None,
         );
         assert_eq!(moved.hint("moved-id"), None);
         assert!(moved_pages.iter().any(|(entry, doc)| {
@@ -6530,7 +6842,7 @@ mod tests {
             (entry("A"), doc("A", "- empty\n")),
             (entry("B"), doc("B", "- empty\n")),
         ]);
-        let base = SnapshotBlockIndex::capture(None, &base_pages, &[]);
+        let base = SnapshotBlockIndex::capture(None, &base_pages, &[], None);
         assert_eq!(base.fold_limit(), 2);
         let before_pages = Arc::new(vec![
             base_pages[0].clone(),
@@ -6541,6 +6853,7 @@ mod tests {
             Some((&base, &base_pages)),
             &before_pages,
             &["pages/A.md".into()],
+            None,
         );
         assert_eq!(before.overlay.len(), 1);
         assert_eq!(before.hint("first-new").as_deref(), Some("A"));
@@ -6553,6 +6866,7 @@ mod tests {
             Some((&before, &before_pages)),
             &after_pages,
             &["pages/B.md".into()],
+            None,
         );
         assert!(after.overlay.is_empty());
         assert_eq!(after.hint("first-new"), before.hint("first-new"));

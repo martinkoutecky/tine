@@ -423,7 +423,7 @@ impl Core {
     }
 
     fn read_config(&self, path: &Path) -> Result<(), LoadError> {
-        let (config, problem) = match fs::read_to_string(path) {
+        let (config, problem) = match crate::model::read_parse_input(path) {
             Ok(value) => (tine_core::config::Config::parse(&value), None),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 (tine_core::config::Config::default(), None)

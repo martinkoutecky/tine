@@ -1345,13 +1345,47 @@ fn emit_block_inner(raw: &str, out: &mut String, ctx: &Ctx, depth: u8) {
 
 /// Render a query/embed result block (a `BlockDto` from the query engine) as an
 /// `<li>` with its facets + children, at `depth` (bounds recursion).
-fn render_result_block(dto: &BlockDto, out: &mut String, ctx: &Ctx, depth: u8) {
+const MAX_RENDER_TREE_DEPTH: usize = 128;
+
+fn flat_dto_text(root: &BlockDto) -> String {
+    let mut text = String::new();
+    let mut stack = vec![root];
+    while let Some(block) = stack.pop() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&block.raw);
+        stack.extend(block.children.iter().rev());
+    }
+    text
+}
+
+fn flat_doc_text(root: &DocBlock) -> String {
+    let mut text = String::new();
+    let mut stack = vec![root];
+    while let Some(block) = stack.pop() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(block.raw());
+        stack.extend(block.children.iter().rev());
+    }
+    text
+}
+
+fn render_result_block(dto: &BlockDto, out: &mut String, ctx: &Ctx, depth: u8, tree_depth: usize) {
     out.push_str("<li>");
+    if tree_depth >= MAX_RENDER_TREE_DEPTH {
+        out.push_str("<pre class=\"outline-flat\">");
+        out.push_str(&esc(&flat_dto_text(dto)));
+        out.push_str("</pre></li>");
+        return;
+    }
     emit_block_inner(&dto.raw, out, ctx, depth);
     if !dto.children.is_empty() {
         out.push_str("<ul>");
         for c in &dto.children {
-            render_result_block(c, out, ctx, depth);
+            render_result_block(c, out, ctx, depth, tree_depth + 1);
         }
         out.push_str("</ul>");
     }
@@ -1363,13 +1397,14 @@ fn collect_wanted_doc_blocks<'a>(
     wanted: &std::collections::HashSet<&str>,
     found: &mut std::collections::HashMap<&'a str, &'a DocBlock>,
 ) {
-    for block in blocks {
+    let mut stack: Vec<_> = blocks.iter().rev().collect();
+    while let Some(block) = stack.pop() {
         if wanted.contains(block.uuid.as_str()) {
             found.insert(block.uuid.as_str(), block);
         }
         // OG can retain a matching descendant below a non-matching child of a
         // retained ancestor. Keep walking so both roots hydrate from source.
-        collect_wanted_doc_blocks(&block.children, wanted, found);
+        stack.extend(block.children.iter().rev());
     }
 }
 
@@ -1405,7 +1440,7 @@ fn render_query_groups(
             collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
             for block in &group.blocks {
                 if let Some(source) = found.get(block.id.as_str()) {
-                    render_embedded_block(source, out, ctx, depth);
+                    render_embedded_block(source, out, ctx, depth, 0);
                 }
             }
         }
@@ -1413,13 +1448,19 @@ fn render_query_groups(
 }
 
 /// Render an embedded page's block (a `DocBlock`) as an `<li>`, mirroring `render_result_block`.
-fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8) {
+fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8, tree_depth: usize) {
     out.push_str("<li>");
+    if tree_depth >= MAX_RENDER_TREE_DEPTH {
+        out.push_str("<pre class=\"outline-flat\">");
+        out.push_str(&esc(&flat_doc_text(b)));
+        out.push_str("</pre></li>");
+        return;
+    }
     emit_block_inner(b.raw(), out, ctx, depth);
     if !b.children.is_empty() {
         out.push_str("<ul>");
         for c in &b.children {
-            render_embedded_block(c, out, ctx, depth);
+            render_embedded_block(c, out, ctx, depth, tree_depth + 1);
         }
         out.push_str("</ul>");
     }
@@ -1545,7 +1586,7 @@ fn render_embed(graph: &RenderGraph<'_>, arg: &str, ctx: &Ctx, depth: u8) -> Str
                     "<div class=\"embed block-embed single-root\"><ul class=\"embed-outline\">",
                 );
                 for blk in &preview.group.blocks {
-                    render_result_block(blk, &mut out, ctx, depth);
+                    render_result_block(blk, &mut out, ctx, depth, 0);
                 }
                 if preview.truncated > 0 {
                     out.push_str(&format!(
@@ -1675,7 +1716,7 @@ fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) 
         esc(page)
     );
     for b in &doc.roots {
-        render_embedded_block(b, &mut out, ctx, depth);
+        render_embedded_block(b, &mut out, ctx, depth, 0);
     }
     out.push_str("</ul></div>");
     out
@@ -1700,7 +1741,14 @@ fn render_block(
     counter: &mut u32,
     index: &mut Vec<serde_json::Value>,
     opts: PrintOpts,
+    tree_depth: usize,
 ) {
+    if tree_depth >= MAX_RENDER_TREE_DEPTH {
+        out.push_str("<li><pre class=\"outline-flat\">");
+        out.push_str(&esc(&flat_doc_text(b)));
+        out.push_str("</pre></li>");
+        return;
+    }
     // ONE lsdoc parse → the canonical body skeleton (M3), property/planning-filtered like
     // the app's `bodyBlocks`. No second hand-rolled inline parser (the old `render_inline`).
     let blocks = body_blocks(b.raw());
@@ -1798,7 +1846,17 @@ fn render_block(
     if !b.children.is_empty() && (opts.expand_collapsed || !b.collapsed()) {
         out.push_str("<ul>");
         for c in &b.children {
-            render_block(c, out, ctx, slug, title, counter, index, opts);
+            render_block(
+                c,
+                out,
+                ctx,
+                slug,
+                title,
+                counter,
+                index,
+                opts,
+                tree_depth + 1,
+            );
         }
         out.push_str("</ul>");
     }
@@ -1828,6 +1886,7 @@ fn page_html(
             &mut counter,
             blocks,
             PrintOpts::default(),
+            0,
         );
     }
     body.push_str("</ul>");
@@ -2037,6 +2096,7 @@ pub fn page_print_html(
             &mut counter,
             &mut blocks,
             opts,
+            0,
         );
     }
     body.push_str("</ul>");

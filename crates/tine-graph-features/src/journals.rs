@@ -245,7 +245,7 @@ fn stem(name: &str) -> Option<&str> {
 
 fn preview(store: &Store, entry: &FileEntry) -> String {
     store
-        .read(&entry.id, None)
+        .read(&entry.id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
         .ok()
         .and_then(|(bytes, _)| String::from_utf8(bytes).ok())
         .and_then(|content| {
@@ -322,7 +322,7 @@ pub fn migrate_journal_filenames(store: &Store) -> usize {
         let Some(target) = migration_target(&entry, &existing, &fmt) else {
             continue;
         };
-        let Ok((_, rev)) = store.read(&entry.id, None) else {
+        let Ok((_, rev)) = store.read(&entry.id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) else {
             continue;
         };
         let Ok(to) = store.file_id(Area::Journals, &target) else {
@@ -402,7 +402,9 @@ fn journal_name(name: &str) -> io::Result<()> {
 pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
-    let (bytes, _) = store.read(&id, None).map_err(store_error)?;
+    let (bytes, _) = store
+        .read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+        .map_err(store_error)?;
     String::from_utf8(bytes).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -417,7 +419,7 @@ pub fn trash_journal_file(store: &Store, name: &str) -> io::Result<()> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
     for _ in 0..4 {
-        let rev = match store.read(&id, None) {
+        let rev = match store.read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((_, rev)) => rev,
             Err(StoreError::NotFound) => {
                 return Err(io::Error::new(

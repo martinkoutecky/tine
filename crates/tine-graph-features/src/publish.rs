@@ -10,9 +10,8 @@ pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
     let whole = store
         .whole_graph()
         .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    let initial = whole.corpus();
-    for page in &initial.pages {
-        store.page(&page.id).map_err(crate::store_error)?;
+    for file in whole.parsed_page_ids() {
+        store.page(&file).map_err(crate::store_error)?;
     }
     store
         .scan_refresh()

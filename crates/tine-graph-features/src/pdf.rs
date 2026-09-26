@@ -14,16 +14,22 @@ fn asset(store: &Store, rel: &str) -> io::Result<FileId> {
 }
 
 fn optional(store: &Store, id: &FileId) -> io::Result<Option<(String, FileRev)>> {
-    match store.read(id, None) {
-        Ok((bytes, rev)) => Ok(Some((
-            String::from_utf8(bytes).map_err(|_| {
+    match store.read(id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+        Ok((bytes, rev)) => {
+            let text = String::from_utf8(bytes).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "stream did not contain valid UTF-8",
                 )
-            })?,
-            rev,
-        ))),
+            })?;
+            if !tine_store::parse_input_depth_within_limit(&text) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "I-22: input nesting exceeds 512 levels",
+                ));
+            }
+            Ok(Some((text, rev)))
+        }
         Err(StoreError::NotFound) => Ok(None),
         Err(error) => Err(store_error(error)),
     }
@@ -288,7 +294,7 @@ pub fn write_pdf_area_image(
     };
     let file = asset(store, file_rel)?;
     for _ in 0..4 {
-        let baseline = match store.read(&file, None) {
+        let baseline = match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((_, rev)) => Some(rev),
             Err(StoreError::NotFound) => None,
             Err(error) => return Err(store_error(error)),
@@ -442,7 +448,8 @@ pub fn write_highlights(
             let Ok(crop) = asset(store, &crop_rel) else {
                 continue;
             };
-            let Ok((_, crop_rev)) = store.read(&crop, None) else {
+            let Ok((_, crop_rev)) = store.read(&crop, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+            else {
                 continue;
             };
             let Ok(Some((live, _))) = optional(store, &primary) else {

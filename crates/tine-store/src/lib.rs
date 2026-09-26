@@ -16,6 +16,20 @@
 //! can block without a timeout; run them off a UI thread.
 //! [`FileId`] and [`PageId`] are re-exports of the same types in
 //! `tine_core::model`, not separate store-specific identities.
+//!
+//! Storage unit cost (I-25, measured 2026-09-26): a one-block edit writes one
+//! page file through one temporary file, 8 bytes in the 1-block fixture; a
+//! 60-block edit writes 539 bytes in the same one-file protocol. Transport is
+//! one page DTO. The persisted record is the page file; there is no private
+//! per-edit record. The I-13 counter fixture measures identical disk primitive
+//! counts in 20-page and 2000-page graphs.
+//!
+//! Hostile-input contract (I-22): text entering a page, config, EDN parser or
+//! renderer is capped at 64 MiB and 512 source nesting levels. Export rendering
+//! flattens descendants past 128 outline levels while retaining their text. An oversize
+//! page returns [`StoreError::TooLarge`] on direct page read and appears in
+//! [`WholeGraph::unreadable_files`]. A too-deep page is also listed unreadable.
+//! A normal outline within the bounds round-trips without byte changes.
 #![deny(missing_docs)]
 
 #[cfg(test)]
@@ -29,6 +43,9 @@ mod issue137_investigation_tests;
 #[cfg(test)]
 mod legacy_graph_writer_guard_tests;
 pub mod model;
+pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
+#[cfg(feature = "test-faults")]
+pub mod cost_counters;
 mod no_replace;
 #[cfg(test)]
 mod production_index_guard_tests;

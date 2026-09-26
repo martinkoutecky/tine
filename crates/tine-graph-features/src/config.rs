@@ -28,15 +28,22 @@ fn config_id(store: &Store) -> io::Result<FileId> {
 }
 
 fn read_config(store: &Store, id: &FileId) -> io::Result<Option<(String, FileRev)>> {
-    match store.read(id, None) {
-        Ok((bytes, rev)) => String::from_utf8(bytes)
-            .map(|text| Some((text, rev)))
-            .map_err(|_| {
+    match store.read(id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+        Ok((bytes, rev)) => {
+            let text = String::from_utf8(bytes).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "stream did not contain valid UTF-8",
                 )
-            }),
+            })?;
+            if !tine_store::parse_input_depth_within_limit(&text) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "I-22: input nesting exceeds 512 levels",
+                ));
+            }
+            Ok(Some((text, rev)))
+        }
         Err(StoreError::NotFound) => Ok(None),
         Err(error) => Err(config_error(error)),
     }
@@ -72,7 +79,11 @@ pub fn custom_css(store: &Store) -> String {
     store
         .file_id(Area::Meta, "custom.css")
         .ok()
-        .and_then(|id| store.read(&id, None).ok())
+        .and_then(|id| {
+            store
+                .read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+                .ok()
+        })
         .and_then(|(bytes, _)| String::from_utf8(bytes).ok())
         .unwrap_or_default()
 }

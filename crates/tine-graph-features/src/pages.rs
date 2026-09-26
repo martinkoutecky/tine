@@ -105,7 +105,7 @@ pub fn save_page(
         return Ok(SaveOutcome::GuideEphemeral);
     }
     let base = if force {
-        match store.read(&id.file(), None) {
+        match store.read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((bytes, rev)) => {
                 std::str::from_utf8(&bytes).map_err(|_| StoreError::Undecodable)?;
                 SaveBase::Existing(rev)
@@ -179,13 +179,21 @@ fn validate_target(ids: &[PageId], expected_path: Option<&str>) -> io::Result<()
 }
 
 fn read_text(store: &Store, file: &FileId) -> io::Result<(String, FileRev)> {
-    let (bytes, rev) = store.read(file, None).map_err(store_error)?;
+    let (bytes, rev) = store
+        .read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+        .map_err(store_error)?;
     let text = String::from_utf8(bytes).map_err(|_| {
         error(
             io::ErrorKind::InvalidData,
             "stream did not contain valid UTF-8",
         )
     })?;
+    if !tine_store::parse_input_depth_within_limit(&text) {
+        return Err(error(
+            io::ErrorKind::InvalidData,
+            "I-22: input nesting exceeds 512 levels",
+        ));
+    }
     Ok((text, rev))
 }
 
@@ -239,7 +247,9 @@ pub fn delete_page_expected(
             return Ok(());
         };
         let file = id.file();
-        let (_, rev) = store.read(&file, None).map_err(store_error)?;
+        let (_, rev) = store
+            .read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+            .map_err(store_error)?;
         if expected_rev.is_some_and(|expected| *expected != rev) {
             return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
         }
@@ -472,7 +482,9 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
                 "a page with that name already exists",
             ));
         }
-        let (_, rev) = store.read(&src, None).map_err(store_error)?;
+        let (_, rev) = store
+            .read(&src, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+            .map_err(store_error)?;
         let mut tx = store.transaction();
         tx.move_file(&src, rev, &to, None);
         let outcome = tx.commit();

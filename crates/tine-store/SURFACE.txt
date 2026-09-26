@@ -1,6 +1,9 @@
 # tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
 # Counts against 01-arrival.md budget A: <=35 Store+Transaction ops,
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
+const model::PARSE_INPUT_MAX_BYTES
+fn model::parse_input_depth_within_limit
+use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 enum store::Area
 enum store::ChangeKind
 enum store::Origin
@@ -143,6 +146,7 @@ fn store::WholeGraph::corpus
 fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::page_icons
 fn store::WholeGraph::page_mtime
+fn store::WholeGraph::parsed_page_ids
 fn store::WholeGraph::preview_block
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::query

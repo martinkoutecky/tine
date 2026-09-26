@@ -899,7 +899,7 @@ impl Store {
         // in the cancellable worker below.
         let journal_ids = journal_ids_from_entries(&graph, graph.list_pages_shared().as_ref());
         let config_path = root.join("logseq/config.edn");
-        let problem = match fs::read_to_string(config_path) {
+        let problem = match crate::model::read_parse_input(&config_path) {
             Ok(_) => None,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => Some(error.into()),
@@ -1071,7 +1071,15 @@ impl Store {
         let ids: Vec<FileId> = files.iter().map(|(id, _, _)| id.clone()).collect();
         self.watch.note_own(&ids);
         let config_changed = ids.iter().any(|id| id.as_str() == "logseq/config.edn");
-        self.refresh_journal_ids();
+        let journal_set_changed = config_changed
+            || files.iter().any(|(id, kind, _)| {
+                id.as_str()
+                    .starts_with(&format!("{}/", self.config().journals_dir))
+                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
+            });
+        if journal_set_changed {
+            self.refresh_journal_ids();
+        }
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_)) {
             return self.changes.rev();
         }
@@ -1529,7 +1537,14 @@ impl Store {
             }
         }
         let mut bytes = Vec::new();
-        input.read_to_end(&mut bytes).map_err(StoreError::from_io)?;
+        if let Some(limit) = max_bytes {
+            input
+                .take(limit.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .map_err(StoreError::from_io)?;
+        } else {
+            input.read_to_end(&mut bytes).map_err(StoreError::from_io)?;
+        }
         if let Some(limit) = max_bytes {
             if bytes.len() as u64 > limit {
                 return Err(StoreError::TooLarge {
@@ -1814,7 +1829,12 @@ impl Store {
             StoreError::Unparseable(reason)
         })?
         .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::InvalidData {
+            if error.kind() == std::io::ErrorKind::InvalidData
+                && error
+                    .get_ref()
+                    .and_then(|inner| inner.downcast_ref::<crate::model::ParseInputTooLarge>())
+                    .is_none()
+            {
                 StoreError::Undecodable
             } else {
                 StoreError::from_io(error)
@@ -1986,6 +2006,15 @@ pub enum StoreError {
 
 impl StoreError {
     fn from_io(error: std::io::Error) -> Self {
+        if let Some(too_large) = error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<crate::model::ParseInputTooLarge>())
+        {
+            return Self::TooLarge {
+                limit: crate::model::PARSE_INPUT_MAX_BYTES,
+                len: too_large.len,
+            };
+        }
         match error.kind() {
             std::io::ErrorKind::NotFound => Self::NotFound,
             _ => Self::Io(error),
@@ -2384,10 +2413,23 @@ impl WholeGraph {
         &self.unreadable
     }
 
+    /// IDs of parsed page files in this stable view, without constructing an
+    /// owned corpus. Cost O(P) IDs; used to refresh each source before export.
+    pub fn parsed_page_ids(&self) -> Vec<PageId> {
+        self.graph.with_pages(|pages| {
+            pages
+                .iter()
+                .filter_map(|(entry, _)| entry.rel_path.clone())
+                .collect()
+        })
+    }
+
     /// Return an owned `Corpus` of pages in this view for evaluation. Cost
     /// O(P); parsed documents are shared while the result is held.
     // The evaluator receives a copy of the parsed-page table.
     pub fn corpus(&self) -> tine_core::Corpus {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::corpus();
         let pages = self.graph.with_pages(|pages| {
             pages
                 .iter()
