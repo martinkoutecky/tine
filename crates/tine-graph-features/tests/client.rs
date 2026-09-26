@@ -1258,6 +1258,31 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
 }
 
 #[test]
+fn merge_keeps_source_preamble_text_and_conflicting_properties() {
+    let (root, _) = fixture("merge-source-preamble");
+    put(
+        &root,
+        "pages/src.md",
+        "alias:: Source alias\nnote:: only source\nfree text before bullets\n- moved\n",
+    );
+    put(&root, "pages/dst.md", "alias:: Destination alias\n- kept\n");
+    let store = Store::open(&root, Default::default()).unwrap().0;
+
+    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    let merged = std::fs::read_to_string(root.join("pages/dst.md")).unwrap();
+    let parsed = tine_core::doc::parse(&merged);
+    assert!(merged.contains("alias:: Destination alias"));
+    assert!(merged.contains("note:: only source"));
+    assert!(!merged.contains("Source page preamble"));
+    assert!(
+        parsed.roots.iter().any(|block| {
+            block.raw() == "alias:: Source alias\nfree text before bullets"
+        }),
+        "I-4: merge must keep leftover source preamble lines verbatim in one block; exemplar pages::merge_pages"
+    );
+}
+
+#[test]
 fn org_merge_and_binary_rescue_match_legacy() {
     let (a, _) = fixture("org-merge-new");
     put(&a, "pages/src.org", "* moved\n");

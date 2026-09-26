@@ -2322,7 +2322,28 @@ pub(crate) fn get_page_by_path(
 pub(crate) fn merge_pages(src: String, dst: String, state: GraphContext<'_>) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tine_graph_features::pages::merge_pages(&slot.store, &src, &dst)
-        .map_err(|error| error.to_string())
+        .map_err(graph_write_error_to_wire)
+}
+
+fn graph_write_error_to_wire(error: std::io::Error) -> String {
+    error.to_string()
+}
+
+#[cfg(test)]
+#[test]
+fn graph_write_wire_keeps_rollback_incomplete_family() {
+    let error = std::io::Error::other(
+        "rollback-incomplete: undo failed for pages/A.md; recovery: logseq/.tine-trash/r/A.md",
+    );
+    let wire = graph_write_error_to_wire(error);
+    assert!(
+        wire.starts_with("rollback-incomplete:"),
+        "I-9: graph command wire must preserve rollback-incomplete; exemplar merge_pages: {wire}"
+    );
+    assert!(
+        wire.contains(".tine-trash/r/A.md"),
+        "I-9: graph command wire must preserve recovery location; exemplar merge_pages: {wire}"
+    );
 }
 
 /// Rescue a duplicate-day stray by moving it to a uniquely-named page

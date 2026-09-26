@@ -4,6 +4,12 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+// Compile the one audited no-replace primitive in both crates without adding
+// a graph-independent device path to tine-store's public API.
+#[allow(dead_code)]
+#[path = "../../crates/tine-store/src/no_replace.rs"]
+mod no_replace;
+
 /// Device source errors remain distinct so the command can preserve its wire text.
 #[derive(Debug)]
 pub(crate) enum DeviceAssetImportError {
@@ -67,72 +73,7 @@ mod asset_import_tests {
 /// Platform-native no-replace rename semantics ensure the source name and inode
 /// cannot be swapped between a check and an unlink.
 pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let src = std::ffi::CString::new(src.as_os_str().as_bytes())?;
-        let dest = std::ffi::CString::new(dest.as_os_str().as_bytes())?;
-        // Atomic move + create-if-absent. Call the syscall directly: Android's
-        // bionic `renameat2` wrapper is only exported from API 30, whereas
-        // `syscall` is available from API 1. A wrapper reference here survived
-        // the first GH #192 fix in backup.rs and still prevented the complete
-        // native library from loading on Android 9. Whichever inode currently
-        // owns `src` at the syscall boundary is moved intact, so the safety and
-        // errno contracts remain unchanged.
-        let result = unsafe {
-            libc::syscall(
-                libc::SYS_renameat2,
-                libc::AT_FDCWD,
-                src.as_ptr(),
-                libc::AT_FDCWD,
-                dest.as_ptr(),
-                libc::RENAME_NOREPLACE as libc::c_uint,
-            )
-        };
-        return (result == 0)
-            .then_some(())
-            .ok_or_else(io::Error::last_os_error);
-    }
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let src = std::ffi::CString::new(src.as_os_str().as_bytes())?;
-        let dest = std::ffi::CString::new(dest.as_os_str().as_bytes())?;
-        let result = unsafe { libc::renamex_np(src.as_ptr(), dest.as_ptr(), libc::RENAME_EXCL) };
-        return (result == 0)
-            .then_some(())
-            .ok_or_else(io::Error::last_os_error);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        let mut src: Vec<u16> = src.as_os_str().encode_wide().collect();
-        let mut dest: Vec<u16> = dest.as_os_str().encode_wide().collect();
-        src.push(0);
-        dest.push(0);
-        // MoveFileW fails when the destination already exists (unlike Rust's
-        // cross-platform `rename` contract, which permits replacement).
-        let result = unsafe {
-            windows_sys::Win32::Storage::FileSystem::MoveFileW(src.as_ptr(), dest.as_ptr())
-        };
-        return (result != 0)
-            .then_some(())
-            .ok_or_else(io::Error::last_os_error);
-    }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "windows"
-    )))]
-    {
-        let _ = (src, dest);
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "atomic no-replace move is unavailable on this platform",
-        ))
-    }
+    no_replace::move_file_noreplace(src, dest)
 }
 
 /// Atomically publish a newly-created file without clobbering a destination that

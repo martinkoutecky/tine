@@ -1,4 +1,4 @@
-use crate::backup::{backup_async, backup_graph_now};
+use crate::backup::{backup_async, backup_graph_now, report_launch_outcome, BackupOutcome};
 use crate::settings::{
     approved_external_assets, remember_external_assets_approval, remember_graph,
 };
@@ -110,13 +110,14 @@ struct LoadedGraph {
     store: Store,
     meta: GraphMeta,
     launch_backup_done: bool,
+    launch_backup_outcome: BackupOutcome,
 }
 
 fn open_graph_for_load(
     root: &str,
     approved_assets: Option<&Path>,
     watch: tine_store::WatchMode,
-    take_launch_backup: impl FnOnce(&Store) -> (usize, bool),
+    take_launch_backup: impl FnOnce(&Store) -> BackupOutcome,
 ) -> Result<LoadedGraph, String> {
     let (store, meta, _) = Store::open(
         Path::new(root),
@@ -127,12 +128,13 @@ fn open_graph_for_load(
     )
     .map_err(|error| open_error_text(error, true))?;
     let needs_migration = tine_graph_features::journals::has_journal_filename_migrations(&store);
-    let (backup_n, backup_complete) = if needs_migration {
+    let launch_backup_outcome = if needs_migration {
         take_launch_backup(&store)
     } else {
-        (0, false)
+        BackupOutcome::success(0)
     };
-    let launch_backup_done = backup_n > 0 && backup_complete;
+    let launch_backup_done =
+        launch_backup_outcome.copied > 0 && launch_backup_outcome.failure.is_none();
     if needs_migration && launch_backup_done {
         // Recover any journals mis-saved under their title (see method docs),
         // but only after the launch snapshot has captured the original names.
@@ -142,6 +144,7 @@ fn open_graph_for_load(
         store,
         meta,
         launch_backup_done,
+        launch_backup_outcome,
     })
 }
 
@@ -255,6 +258,7 @@ pub(crate) fn load_graph_for_label(
         store,
         meta,
         launch_backup_done,
+        launch_backup_outcome,
     } = open_graph_for_load(
         &root,
         approved_assets.as_deref(),
@@ -270,6 +274,7 @@ pub(crate) fn load_graph_for_label(
         .bind(window_label.to_string(), slot.clone())?;
     state.note_focused(window_label);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
+    report_launch_outcome(&launch_backup_outcome);
     if !launch_backup_done {
         backup_async(app.clone(), slot.clone());
     }
@@ -502,12 +507,12 @@ mod tests {
         dir
     }
 
-    fn copy_graph_text_dir(src: &Path, dest: &Path) -> (usize, bool) {
+    fn copy_graph_text_dir(src: &Path, dest: &Path) -> BackupOutcome {
         let _ = std::fs::create_dir_all(dest);
         let mut copied = 0usize;
         let mut failed = false;
         let Ok(rd) = std::fs::read_dir(src) else {
-            return (0, false);
+            return BackupOutcome::failed(0, "source", std::io::ErrorKind::Other);
         };
         for entry in rd {
             let Ok(entry) = entry else {
@@ -527,7 +532,11 @@ mod tests {
                 failed = true;
             }
         }
-        (copied, !failed)
+        if failed {
+            BackupOutcome::failed(copied, "copy", std::io::ErrorKind::Other)
+        } else {
+            BackupOutcome::success(copied)
+        }
     }
 
     #[test]
@@ -582,7 +591,7 @@ mod tests {
         std::fs::remove_dir(dir.join("pages")).unwrap();
         std::os::unix::fs::symlink(outside.join("pages"), dir.join("pages")).unwrap();
         let new = open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), |_| {
-            (0, false)
+            BackupOutcome::failed(0, "source", std::io::ErrorKind::Other)
         })
         .err()
         .unwrap();

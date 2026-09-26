@@ -15,6 +15,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const ASSET_RECOVERY: &str = ".tine-restore-recovery";
 static RECOVERY_SEQ: AtomicU64 = AtomicU64::new(0);
 static COPY_SEQ: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "test-faults")]
+static RESTORE_BOUNDARY: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "test-faults")]
+fn restore_abort_boundary() {
+    let index = RESTORE_BOUNDARY.fetch_add(1, Ordering::Relaxed);
+    if std::env::var("TINE_RESTORE_ABORT_BOUNDARY")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        == Some(index)
+    {
+        std::process::abort();
+    }
+}
 
 /// One caller-supplied snapshot file. `rel` is relative to `area`; `source` is
 /// an already-open file. Restore checks regular-file metadata and `len`, but
@@ -488,13 +502,17 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
         }
         Err(error) => return Err(error),
     }
-    match rename_noreplace(
+    match crate::no_replace::rename_noreplace_dir(
         &live_parent,
         Path::new(name),
         &recovery_parent,
         recovery_name,
     ) {
-        Ok(()) => Ok(true),
+        Ok(()) => {
+            #[cfg(feature = "test-faults")]
+            restore_abort_boundary();
+            Ok(true)
+        }
         Err(rename_error) => {
             let mut source = live_parent.open(name)?.into_std();
             let mut options = OpenOptions::new();
@@ -535,6 +553,8 @@ fn copy_new(recovery: &Recovery, live: &Path, source: &mut File, len: u64) -> io
         output.sync_all()?;
         drop(output);
         publish_temp(&parent, Path::new(&temp), name)?;
+        #[cfg(feature = "test-faults")]
+        restore_abort_boundary();
         if let Ok(sync) = parent.try_clone() {
             let _ = sync.into_std_file().sync_all();
         }
@@ -598,75 +618,23 @@ fn retire_extras(
     Ok(())
 }
 
-fn rename_noreplace(
-    from_dir: &Dir,
-    from: &Path,
-    to_dir: &Dir,
-    to: &std::ffi::OsStr,
-) -> io::Result<()> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
-        let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
-        let to = std::ffi::CString::new(to.as_bytes())?;
-        let result = unsafe {
-            libc::syscall(
-                libc::SYS_renameat2,
-                from_dir.as_raw_fd(),
-                from.as_ptr(),
-                to_dir.as_raw_fd(),
-                to.as_ptr(),
-                libc::RENAME_NOREPLACE as libc::c_uint,
-            )
-        };
-        return (result == 0)
-            .then_some(())
-            .ok_or_else(io::Error::last_os_error);
-    }
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    {
-        use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
-        let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
-        let to = std::ffi::CString::new(to.as_bytes())?;
-        let result = unsafe {
-            libc::renameatx_np(
-                from_dir.as_raw_fd(),
-                from.as_ptr(),
-                to_dir.as_raw_fd(),
-                to.as_ptr(),
-                libc::RENAME_EXCL as libc::c_uint,
-            )
-        };
-        return (result == 0)
-            .then_some(())
-            .ok_or_else(io::Error::last_os_error);
-    }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios"
-    )))]
-    {
-        from_dir.rename(from, to_dir, Path::new(to))
-    }
-}
-
 fn publish_temp(parent: &Dir, temp: &Path, name: &std::ffi::OsStr) -> io::Result<()> {
     #[cfg(any(
         target_os = "linux",
         target_os = "android",
         target_os = "macos",
-        target_os = "ios"
+        target_os = "ios",
+        target_os = "windows"
     ))]
     {
-        rename_noreplace(parent, temp, parent, name)
+        crate::no_replace::rename_noreplace_dir(parent, temp, parent, name)
     }
     #[cfg(not(any(
         target_os = "linux",
         target_os = "android",
         target_os = "macos",
-        target_os = "ios"
+        target_os = "ios",
+        target_os = "windows"
     )))]
     {
         parent.hard_link(temp, parent, Path::new(name))?;

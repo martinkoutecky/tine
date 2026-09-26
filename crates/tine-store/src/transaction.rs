@@ -221,6 +221,8 @@ pub enum FaultPoint {
     UndoLiveWrite,
     /// Simulate a twin appearing after publication.
     TwinAfterPublish,
+    /// Abort the process immediately after the indexed step has reached disk.
+    AbortAfterStep(usize),
 }
 
 #[cfg(not(any(test, feature = "test-faults")))]
@@ -236,6 +238,7 @@ pub(crate) enum FaultPoint {
     MidStepIoAt(usize),
     UndoLiveWrite,
     TwinAfterPublish,
+    AbortAfterStep(usize),
 }
 
 #[cfg(any(test, feature = "test-faults"))]
@@ -1491,6 +1494,9 @@ impl<'a> Transaction<'a> {
                 Ok(result) => {
                     results.push(result);
                     done.push(undo);
+                    if fault(self.store, FaultPoint::AbortAfterStep(index)) {
+                        std::process::abort();
+                    }
                 }
                 Err(why) => {
                     done.push(undo);

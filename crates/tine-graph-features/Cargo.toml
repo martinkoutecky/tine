@@ -11,6 +11,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.4" }
 tine-store = { path = "../tine-store", features = ["test-faults"] }
 serde_json = { workspace = true }
 sha2 = "0.10"

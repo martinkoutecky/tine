@@ -29,6 +29,7 @@ mod issue137_investigation_tests;
 #[cfg(test)]
 mod legacy_graph_writer_guard_tests;
 pub mod model;
+mod no_replace;
 #[cfg(test)]
 mod production_index_guard_tests;
 pub mod publish;

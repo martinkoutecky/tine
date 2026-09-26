@@ -1,6 +1,7 @@
 use crate::settings::{settings_path, update_settings};
 use crate::state::{slot_for_context, GraphContext, GraphSlot};
 use sha2::{Digest, Sha256};
+use std::io::ErrorKind;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -14,11 +15,60 @@ use tine_store::{Area, RestoreFile, Store};
 // it never blocks startup or holds the graph lock during file copies.
 const BACKUP_KEEP_DEFAULT: usize = 12;
 static BACKUP_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+#[derive(Clone, Debug)]
+pub(crate) struct BackupFailure {
+    phase: &'static str,
+    kind: ErrorKind,
+}
+
+impl BackupFailure {
+    fn wire(&self) -> String {
+        format!("backup-failed:{}:{:?}", self.phase, self.kind)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct BackupOutcome {
+    pub(crate) copied: usize,
+    pub(crate) failure: Option<BackupFailure>,
+}
+
+impl BackupOutcome {
+    pub(crate) fn success(copied: usize) -> Self {
+        Self {
+            copied,
+            failure: None,
+        }
+    }
+
+    pub(crate) fn failed(copied: usize, phase: &'static str, kind: ErrorKind) -> Self {
+        Self {
+            copied,
+            failure: Some(BackupFailure { phase, kind }),
+        }
+    }
+}
+
+fn launch_failure_token(outcome: &BackupOutcome) -> Option<String> {
+    outcome
+        .failure
+        .as_ref()
+        .filter(|failure| failure.phase != "cancelled")
+        .map(BackupFailure::wire)
+}
+
+pub(crate) fn report_launch_outcome(outcome: &BackupOutcome) {
+    if let Some(token) = launch_failure_token(outcome) {
+        crate::debug::diag(token);
+    }
+}
 #[cfg(test)]
 const ASSET_RESTORE_RECOVERY_DIR: &str = ".tine-restore-recovery";
 
 pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
     let Ok(source) = BackupSource::from_store(&slot.store, &slot.root_key) else {
+        report_launch_outcome(&BackupOutcome::failed(0, "source", ErrorKind::Other));
         return;
     };
     std::thread::spawn(move || {
@@ -41,9 +91,12 @@ pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
         if slot.background_cancelled.load(Ordering::Acquire) {
             return;
         }
-        let _ = do_backup_source_cancellable(&app, &slot.store, source, "", &|| {
+        let outcome = do_backup_source_cancellable(&app, &slot.store, source, "", &|| {
             slot.background_cancelled.load(Ordering::Acquire)
-        }); // launch snapshot is best-effort
+        });
+        if !slot.background_cancelled.load(Ordering::Acquire) {
+            report_launch_outcome(&outcome);
+        }
     });
 }
 
@@ -52,9 +105,9 @@ pub(crate) fn backup_graph_now(
     store: &Store,
     root: &std::path::Path,
     suffix: &str,
-) -> (usize, bool) {
+) -> BackupOutcome {
     let Ok(source) = BackupSource::from_store(store, root) else {
-        return (0, false);
+        return BackupOutcome::failed(0, "source", ErrorKind::Other);
     };
     do_backup_source(app, store, source, suffix)
 }
@@ -64,9 +117,8 @@ pub(crate) fn backup_graph_now(
 /// app-settings file and prunes old snapshots afterwards. `suffix` tags special
 /// snapshots (e.g. "pre-restore") so they get a distinct, collision-proof
 /// directory name and are exempt from the keep-count prune.
-/// Returns (files copied, complete) — `complete` is false if ANY graph
-/// text/config/asset-sidecar copy failed, so the caller (restore) can refuse to
-/// proceed without a full rollback snapshot.
+/// The typed outcome records any graph text/config/asset-sidecar copy failure,
+/// so the caller (restore) can refuse to proceed without a full rollback snapshot.
 #[derive(Clone)]
 struct BackupSource {
     root: PathBuf,
@@ -156,8 +208,78 @@ fn write_manifest(dir: &std::path::Path, manifest: &SnapshotManifest) -> std::io
     use std::io::Write;
     file.write_all(&bytes)?;
     file.sync_all()?;
+    record_backup_op("manifest_sync");
     drop(file);
-    std::fs::rename(tmp, path)
+    crate::device_io::move_file_noreplace(&tmp, &path)?;
+    sync_dir(dir)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static BACKUP_OPS: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn record_backup_op(op: &'static str) {
+    #[cfg(test)]
+    BACKUP_OPS.with(|ops| ops.borrow_mut().push(op));
+    #[cfg(not(test))]
+    let _ = op;
+}
+
+fn sync_dir(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        // FlushFileBuffers does not support directory handles. The two
+        // namespace publications use MoveFileExW(MOVEFILE_WRITE_THROUGH).
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::File::open(path)?.sync_all()
+    }
+}
+
+fn write_payload(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_WRITE_THROUGH);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    record_backup_op("payload_sync");
+    Ok(())
+}
+
+fn sync_payload_dirs(dir: &std::path::Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            sync_payload_dirs(&entry.path())?;
+        }
+    }
+    sync_dir(dir)?;
+    record_backup_op("payload_dir_sync");
+    Ok(())
+}
+
+fn publish_snapshot(
+    partial: &std::path::Path,
+    final_dest: &std::path::Path,
+    manifest: &SnapshotManifest,
+) -> std::io::Result<()> {
+    sync_payload_dirs(partial)?;
+    write_manifest(partial, manifest)?;
+    crate::device_io::move_file_noreplace(partial, final_dest)?;
+    record_backup_op("publish_rename");
+    sync_dir(final_dest.parent().expect("snapshot has parent"))?;
+    record_backup_op("publication_dir_sync");
+    Ok(())
 }
 
 fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
@@ -228,7 +350,7 @@ fn do_backup_source(
     store: &Store,
     source: BackupSource,
     suffix: &str,
-) -> (usize, bool) {
+) -> BackupOutcome {
     let _worker = BACKUP_WORK
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
@@ -242,44 +364,117 @@ fn copy_store_area(
     dest: &std::path::Path,
     include: fn(&std::path::Path) -> bool,
     cancelled: &dyn Fn() -> bool,
-) -> (usize, usize) {
+) -> (usize, usize, Option<BackupFailure>) {
+    let phase = match area {
+        Area::Journals => "journals",
+        Area::Pages => "pages",
+        Area::Assets => "assets",
+        Area::Meta => "config",
+        Area::Trash => "trash",
+    };
     if cancelled() {
-        return (0, 1);
+        return (
+            0,
+            1,
+            Some(BackupFailure {
+                phase,
+                kind: ErrorKind::Interrupted,
+            }),
+        );
     }
-    if std::fs::create_dir_all(dest).is_err() {
-        return (0, 1);
+    if let Err(error) = std::fs::create_dir_all(dest) {
+        return (
+            0,
+            1,
+            Some(BackupFailure {
+                phase,
+                kind: error.kind(),
+            }),
+        );
     }
     let listing = match store.scan_area(area, None) {
         Ok(listing) => listing,
-        Err(_) => return (0, 1),
+        Err(_) => {
+            return (
+                0,
+                1,
+                Some(BackupFailure {
+                    phase,
+                    kind: ErrorKind::Other,
+                }),
+            )
+        }
     };
     let mut copied = 0;
+    let mut first_failure = listing
+        .unreadable
+        .iter()
+        .find(|(_, error)| error.kind != ErrorKind::NotFound)
+        .map(|(_, error)| BackupFailure {
+            phase,
+            kind: error.kind,
+        });
     let mut failed = listing
         .unreadable
         .iter()
-        .filter(|(_, error)| error.kind != std::io::ErrorKind::NotFound)
+        .filter(|(_, error)| error.kind != ErrorKind::NotFound)
         .count();
     for entry in listing.files {
         if cancelled() {
-            return (copied, failed + 1);
+            return (
+                copied,
+                failed + 1,
+                Some(BackupFailure {
+                    phase,
+                    kind: ErrorKind::Interrupted,
+                }),
+            );
         }
         if !include(std::path::Path::new(&entry.rel)) {
             continue;
         }
         let target = dest.join(&entry.rel);
-        let result = store.read(&entry.id, None).ok().and_then(|(bytes, _)| {
-            target
-                .parent()
-                .and_then(|parent| std::fs::create_dir_all(parent).ok())?;
-            std::fs::write(target, bytes).ok()
-        });
-        if result.is_some() {
-            copied += 1;
-        } else {
-            failed += 1;
+        match store.read(&entry.id, None) {
+            Ok((bytes, _)) => {
+                let result = target
+                    .parent()
+                    .ok_or_else(|| std::io::Error::from(ErrorKind::InvalidInput))
+                    .and_then(std::fs::create_dir_all)
+                    .and_then(|_| write_payload(&target, &bytes));
+                match result {
+                    Ok(()) => copied += 1,
+                    Err(error) => {
+                        failed += 1;
+                        first_failure.get_or_insert(BackupFailure {
+                            phase,
+                            kind: error.kind(),
+                        });
+                    }
+                }
+            }
+            Err(error) => {
+                failed += 1;
+                first_failure.get_or_insert(BackupFailure {
+                    phase,
+                    kind: store_error_kind(&error),
+                });
+            }
         }
     }
-    (copied, failed)
+    (copied, failed, first_failure)
+}
+
+fn store_error_kind(error: &tine_store::StoreError) -> ErrorKind {
+    match error {
+        tine_store::StoreError::Io(error) => error.kind(),
+        tine_store::StoreError::NotFound => ErrorKind::NotFound,
+        tine_store::StoreError::Undecodable | tine_store::StoreError::Unparseable(_) => {
+            ErrorKind::InvalidData
+        }
+        tine_store::StoreError::InvalidTarget(_) => ErrorKind::InvalidInput,
+        tine_store::StoreError::TooLarge { .. } => ErrorKind::FileTooLarge,
+        tine_store::StoreError::Closed => ErrorKind::BrokenPipe,
+    }
 }
 
 fn count_store_text(store: &Store, area: Area) -> Option<usize> {
@@ -335,12 +530,12 @@ fn do_backup_source_cancellable(
     source: BackupSource,
     suffix: &str,
     cancelled: &dyn Fn() -> bool,
-) -> (usize, bool) {
+) -> BackupOutcome {
     if cancelled() {
-        return (0, false);
+        return BackupOutcome::failed(0, "cancelled", ErrorKind::Interrupted);
     }
     let Ok(data_dir) = app.path().app_data_dir() else {
-        return (0, false);
+        return BackupOutcome::failed(0, "app-data", ErrorKind::NotFound);
     };
     let base = data_dir.join("backups").join(root_backup_id(&source.root));
     let stamp = backup_stamp();
@@ -356,7 +551,9 @@ fn do_backup_source_cancellable(
     // snapshots' files, leaving a later restore with stale notes/sidecars. `create_dir`
     // (non-recursive) fails atomically if the name is taken, so we bump a counter
     // until we win an unused name.
-    let _ = std::fs::create_dir_all(&base);
+    if let Err(error) = std::fs::create_dir_all(&base) {
+        return BackupOutcome::failed(0, "reserve", error.kind());
+    }
     cleanup_partial_backups(&base);
     let mut final_dest = base.join(&name);
     let mut dest = base.join(format!(".partial-{name}"));
@@ -369,7 +566,7 @@ fn do_backup_source_cancellable(
                 dest = base.join(format!(".partial-{name}-{k}"));
                 k += 1;
             }
-            Err(_) => return (0, false),
+            Err(error) => return BackupOutcome::failed(0, "reserve", error.kind()),
         }
     }
     let mut partial = PartialBackup {
@@ -379,23 +576,23 @@ fn do_backup_source_cancellable(
     let Some(live_text_n) = count_store_text(store, Area::Journals)
         .and_then(|journals| count_store_text(store, Area::Pages).map(|pages| journals + pages))
     else {
-        return (0, false);
+        return BackupOutcome::failed(0, "inventory", ErrorKind::Other);
     };
-    let (cj, fj) = copy_store_area(
+    let (cj, fj, ej) = copy_store_area(
         store,
         Area::Journals,
         &dest.join("journals"),
         is_graph_text,
         cancelled,
     );
-    let (cp, fp) = copy_store_area(
+    let (cp, fp, ep) = copy_store_area(
         store,
         Area::Pages,
         &dest.join("pages"),
         is_graph_text,
         cancelled,
     );
-    let (ca, fa) = copy_store_area(
+    let (ca, fa, ea) = copy_store_area(
         store,
         Area::Assets,
         &dest.join(&source.assets_dir_name),
@@ -404,6 +601,7 @@ fn do_backup_source_cancellable(
     );
     let mut n = cj + cp + ca;
     let mut failed = fj + fp + fa;
+    let mut first_failure = ej.or(ep).or(ea);
     if !cancelled() {
         match store.scan_area(Area::Meta, None) {
             Ok(listing) => {
@@ -412,51 +610,92 @@ fn do_backup_source_cancellable(
                     .iter()
                     .filter(|(_, error)| error.kind != std::io::ErrorKind::NotFound)
                     .count();
+                if first_failure.is_none() {
+                    first_failure = listing
+                        .unreadable
+                        .iter()
+                        .find(|(_, error)| error.kind != ErrorKind::NotFound)
+                        .map(|(_, error)| BackupFailure {
+                            phase: "config",
+                            kind: error.kind,
+                        });
+                }
                 if let Some(config) = listing.files.iter().find(|entry| entry.rel == "config.edn") {
                     match store.read(&config.id, None) {
                         Ok((bytes, _)) => {
-                            if std::fs::create_dir_all(dest.join("logseq")).is_ok()
-                                && std::fs::write(dest.join("logseq/config.edn"), bytes).is_ok()
-                            {
-                                n += 1;
-                            } else {
-                                failed += 1;
+                            let result =
+                                std::fs::create_dir_all(dest.join("logseq")).and_then(|_| {
+                                    write_payload(&dest.join("logseq/config.edn"), &bytes)
+                                });
+                            match result {
+                                Ok(()) => n += 1,
+                                Err(error) => {
+                                    failed += 1;
+                                    first_failure.get_or_insert(BackupFailure {
+                                        phase: "config",
+                                        kind: error.kind(),
+                                    });
+                                }
                             }
                         }
-                        _ => failed += 1,
+                        Err(error) => {
+                            failed += 1;
+                            first_failure.get_or_insert(BackupFailure {
+                                phase: "config",
+                                kind: store_error_kind(&error),
+                            });
+                        }
                     }
                 }
             }
-            Err(_) => failed += 1,
+            Err(_) => {
+                failed += 1;
+                first_failure.get_or_insert(BackupFailure {
+                    phase: "config",
+                    kind: ErrorKind::Other,
+                });
+            }
         }
     }
-    let complete = !cancelled() && failed == 0 && cj + cp == live_text_n;
+    if cancelled() {
+        return BackupOutcome::failed(n, "cancelled", ErrorKind::Interrupted);
+    }
+    if failed != 0 {
+        return BackupOutcome {
+            copied: n,
+            failure: first_failure.or(Some(BackupFailure {
+                phase: "copy",
+                kind: ErrorKind::Other,
+            })),
+        };
+    }
+    if cj + cp != live_text_n {
+        return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
+    }
     if n == 0 {
-        return (0, complete);
+        return BackupOutcome::success(0);
     }
-    if complete {
-        let Ok(files) = snapshot_inventory(&dest) else {
-            return (n, false);
-        };
-        if files.len() != n {
-            return (n, false);
-        }
-        let manifest = SnapshotManifest {
-            schema: SNAPSHOT_SCHEMA,
-            root: source.root.display().to_string(),
-            journals_dir: source.journals_dir,
-            pages_dir: source.pages_dir,
-            files,
-            complete: true,
-        };
-        if write_manifest(&dest, &manifest).is_err() || std::fs::rename(&dest, &final_dest).is_err()
-        {
-            return (n, false);
-        }
-        partial.committed = true;
+    let files = match snapshot_inventory(&dest) {
+        Ok(files) => files,
+        Err(error) => return BackupOutcome::failed(n, "inventory", error.kind()),
+    };
+    if files.len() != n {
+        return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
     }
+    let manifest = SnapshotManifest {
+        schema: SNAPSHOT_SCHEMA,
+        root: source.root.display().to_string(),
+        journals_dir: source.journals_dir,
+        pages_dir: source.pages_dir,
+        files,
+        complete: true,
+    };
+    if let Err(error) = publish_snapshot(&dest, &final_dest, &manifest) {
+        return BackupOutcome::failed(n, "publish", error.kind());
+    }
+    partial.committed = true;
     prune_backups(&base, backup_keep(app));
-    (n, complete)
+    BackupOutcome::success(n)
 }
 
 fn backup_keep(app: &tauri::AppHandle) -> usize {
@@ -572,7 +811,8 @@ pub(crate) async fn restore_backup(
         return Err("invalid backup id".into());
     }
     let slot = slot_for_context(&state)?;
-    let source = BackupSource::from_store(&slot.store, &slot.root_key)?;
+    let source = BackupSource::from_store(&slot.store, &slot.root_key)
+        .map_err(|message| format!("backup-failed:source:Other: {message}"))?;
     let restore_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
@@ -590,7 +830,7 @@ fn restore_from_backup_source(
     base: &std::path::Path,
     store: &Store,
     source: BackupSource,
-    snapshot_current: impl FnOnce(&BackupSource) -> (usize, bool),
+    snapshot_current: impl FnOnce(&BackupSource) -> BackupOutcome,
 ) -> Result<(), String> {
     let src = base.join(stamp);
     if !src.is_dir() {
@@ -630,7 +870,7 @@ fn restore_from_backup_source(
     {
         return Err("backup contents do not match the verified manifest".into());
     }
-    let (snapshot_n, complete) = snapshot_current(&source);
+    let snapshot = snapshot_current(&source);
     let live_n = [Area::Journals, Area::Pages, Area::Assets]
         .into_iter()
         .map(|area| {
@@ -646,19 +886,64 @@ fn restore_from_backup_source(
             })
         })
         .collect::<Option<Vec<_>>>()
-        .ok_or("couldn't create a complete pre-restore safety snapshot — restore aborted")?
+        .ok_or_else(|| {
+            format!(
+                "{}: couldn't create a complete pre-restore safety snapshot — restore aborted",
+                BackupFailure {
+                    phase: "live-inventory",
+                    kind: ErrorKind::Other
+                }
+                .wire()
+            )
+        })?
         .into_iter()
         .sum::<usize>();
-    if live_n > 0 && (snapshot_n == 0 || !complete) {
-        return Err(
-            "couldn't create a complete pre-restore safety snapshot — restore aborted".into(),
-        );
-    }
+    require_safety_snapshot(snapshot, live_n)?;
     let files = open_verified_restore_files(&src, &manifest, &source)?;
     store
         .restore(files)
-        .map_err(|error| format!("{}: {}", error.phase, error.cause.message))?;
+        .map_err(|error| format_restore_failure(&error))?;
     Ok(())
+}
+
+fn require_safety_snapshot(snapshot: BackupOutcome, live_n: usize) -> Result<(), String> {
+    if live_n > 0 && (snapshot.copied == 0 || snapshot.failure.is_some()) {
+        let token = snapshot.failure.map_or_else(
+            || {
+                BackupFailure {
+                    phase: "safety-snapshot",
+                    kind: ErrorKind::InvalidData,
+                }
+                .wire()
+            },
+            |failure| failure.wire(),
+        );
+        return Err(format!(
+            "{token}: couldn't create a complete pre-restore safety snapshot — restore aborted"
+        ));
+    }
+    Ok(())
+}
+
+fn format_restore_failure(error: &tine_store::RestoreFailed) -> String {
+    let recovery = error
+        .done
+        .recovery
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let kept = error
+        .done
+        .kept_external
+        .iter()
+        .map(|file| file.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "restore-failed:{:?}: {}: {}; recovery: {}; kept live: {}",
+        error.cause.kind, error.phase, error.cause.message, recovery, kept
+    )
 }
 
 fn open_verified_restore_files(
@@ -813,6 +1098,100 @@ mod tests {
         dir
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn backup_payload_and_directories_sync_before_publication() {
+        let root = scratch("backup-publication-order");
+        let partial = root.join(".partial-1");
+        std::fs::create_dir_all(partial.join("pages/nested")).unwrap();
+        BACKUP_OPS.with(|ops| ops.borrow_mut().clear());
+        write_payload(&partial.join("pages/nested/a.md"), b"- durable\n").unwrap();
+        let final_dest = root.join("complete-1");
+        let manifest = SnapshotManifest {
+            schema: SNAPSHOT_SCHEMA,
+            root: "test".into(),
+            journals_dir: "journals".into(),
+            pages_dir: "pages".into(),
+            files: vec![],
+            complete: true,
+        };
+        publish_snapshot(&partial, &final_dest, &manifest).unwrap();
+        let ops = BACKUP_OPS.with(|ops| ops.borrow().clone());
+        let position = |name| ops.iter().position(|op| *op == name).unwrap();
+        assert!(position("payload_sync") < position("payload_dir_sync"));
+        assert!(position("payload_dir_sync") < position("manifest_sync"));
+        assert!(position("manifest_sync") < position("publish_rename"));
+        assert!(position("publish_rename") < position("publication_dir_sync"),
+            "I-1/I-2: backup publication follows fsynced payload and directory; exemplar backup.rs publish_snapshot");
+        assert_eq!(
+            std::fs::read(final_dest.join("pages/nested/a.md")).unwrap(),
+            b"- durable\n"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn restore_wire_error_names_recovery_paths_and_kind() {
+        let root = scratch("restore-wire-error");
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let recovery = root.join("logseq/.tine-trash/restore-1");
+        let error = tine_store::RestoreFailed {
+            phase: "copy pages".into(),
+            cause: tine_store::IoError {
+                kind: std::io::ErrorKind::PermissionDenied,
+                message: "copy failed".into(),
+            },
+            done: tine_store::RestoreReport {
+                restored: 1,
+                recovery: vec![recovery.clone()],
+                kept_external: Vec::new(),
+                graph_rev: store.whole_graph().unwrap().rev(),
+            },
+        };
+        let wire = format_restore_failure(&error);
+        assert!(
+            wire.starts_with("restore-failed:PermissionDenied:"),
+            "I-9: restore wire keeps family; exemplar backup.rs restore_from_backup_source: {wire}"
+        );
+        assert!(wire.contains(&recovery.display().to_string()), "I-9: restore wire names recovery location; exemplar backup.rs restore_from_backup_source: {wire}");
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn backup_failure_wire_has_fixed_phase_and_kind() {
+        let wire = require_safety_snapshot(
+            BackupOutcome::failed(2, "pages", ErrorKind::PermissionDenied),
+            3,
+        )
+        .unwrap_err();
+        assert!(wire.starts_with("backup-failed:pages:PermissionDenied:"),
+            "I-9: pre-restore backup errors need a fixed family token; exemplar backup.rs require_safety_snapshot: {wire}");
+    }
+
+    #[test]
+    fn launch_backup_copy_failure_reaches_diagnostic_adapter() {
+        let root = scratch("launch-backup-copy-error");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/note.md"), b"- keep\n").unwrap();
+        let dest = root.join("blocked-destination");
+        std::fs::write(&dest, b"already a file").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false);
+        assert_eq!((copied, failed), (0, 1));
+        let failure = failure.unwrap();
+        let token = launch_failure_token(&BackupOutcome {
+            copied,
+            failure: Some(failure.clone()),
+        })
+        .unwrap();
+        assert_eq!(token, format!("backup-failed:pages:{:?}", failure.kind),
+            "I-9: forced copy failure must reach the launch diagnostic adapter; exemplar backup.rs backup_async");
+        store.close();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn backup_root_ids_do_not_conflate_punctuation() {
         let root = scratch("backup-root-id");
@@ -834,10 +1213,10 @@ mod tests {
         std::fs::write(root.join("pages/Ignore.txt"), b"skip").unwrap();
         let (store, _, _) = Store::open(&root, tine_store::OpenOptions::default()).unwrap();
         let dest = root.join("backup-out");
-        assert_eq!(
-            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false),
-            (1, 0)
-        );
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| false);
+        assert_eq!((copied, failed), (1, 0));
+        assert!(failure.is_none());
         assert_eq!(
             std::fs::read(dest.join("nested/Note.md")).unwrap(),
             b"- note\n"
@@ -910,10 +1289,10 @@ mod tests {
         }
         std::fs::write(src.join("note.md"), b"secret").unwrap();
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        assert_eq!(
-            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| true),
-            (0, 1)
-        );
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Pages, &dest, is_graph_text, &|| true);
+        assert_eq!((copied, failed), (0, 1));
+        assert_eq!(failure.unwrap().kind, ErrorKind::Interrupted);
         assert!(!dest.exists());
         drop(store);
         let _ = std::fs::remove_dir_all(root);
@@ -1025,7 +1404,7 @@ mod tests {
         PAYLOAD_HASH_READS.with(|reads| reads.set(0));
         let result = restore_from_backup_source(stamp, &base, &store, source, |_| {
             std::fs::write(&live_page, b"mutated graph data").unwrap();
-            (1, true)
+            BackupOutcome::success(1)
         });
 
         assert_eq!(
@@ -1065,7 +1444,7 @@ mod tests {
             &root.join("backups"),
             &store,
             source,
-            |_| (1, true),
+            |_| BackupOutcome::success(1),
         )
         .unwrap();
         assert_eq!(std::fs::read(graph.join("pages/New.md")).unwrap(), b"new");
@@ -1141,10 +1520,10 @@ mod tests {
         .unwrap();
 
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        assert_eq!(
-            copy_store_area(&store, Area::Assets, &dst, is_asset_sidecar, &|| false),
-            (2, 0)
-        );
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Assets, &dst, is_asset_sidecar, &|| false);
+        assert_eq!((copied, failed), (2, 0));
+        assert!(failure.is_none());
         assert_eq!(
             std::fs::read_to_string(dst.join("doc.edn")).unwrap(),
             "{:a 1}\n"
@@ -1178,14 +1557,14 @@ mod tests {
         let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
         let live_pages = count_store_text(&store, Area::Pages).unwrap();
         let live_journals = count_store_text(&store, Area::Journals).unwrap();
-        let (copied_pages, failed_pages) = copy_store_area(
+        let (copied_pages, failed_pages, _) = copy_store_area(
             &store,
             Area::Pages,
             &backup.join("pages"),
             is_graph_text,
             &|| false,
         );
-        let (copied_journals, failed_journals) = copy_store_area(
+        let (copied_journals, failed_journals, _) = copy_store_area(
             &store,
             Area::Journals,
             &backup.join("journals"),

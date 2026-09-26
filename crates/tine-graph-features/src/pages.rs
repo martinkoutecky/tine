@@ -538,13 +538,17 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
                         doc::parse_property_line(line).map(|(key, _)| key.to_ascii_lowercase())
                     })
                     .collect();
-                let extra: Vec<_> = pre
-                    .lines()
-                    .filter(|line| {
-                        doc::parse_property_line(line)
-                            .is_some_and(|(key, _)| !keys.contains(&key.to_ascii_lowercase()))
-                    })
-                    .collect();
+                let mut extra = Vec::new();
+                let mut remaining = Vec::new();
+                for line in pre.lines() {
+                    if doc::parse_property_line(line)
+                        .is_some_and(|(key, _)| !keys.contains(&key.to_ascii_lowercase()))
+                    {
+                        extra.push(line);
+                    } else {
+                        remaining.push(line);
+                    }
+                }
                 if !extra.is_empty() {
                     if !dst_pre.is_empty() && !dst_pre.ends_with('\n') {
                         dst_pre.push('\n');
@@ -556,6 +560,22 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
                         dst_pre.push_str(line);
                     }
                     survivor.pre_block = Some(dst_pre);
+                }
+                // OG Logseq moves the source's properties pre-block with its
+                // ordinary blocks. Keep source-only properties in the destination
+                // header, and move the remaining lines as one ordinary block.
+                if remaining.iter().any(|line| !line.trim().is_empty()) {
+                    let mut raw = String::new();
+                    for (index, line) in remaining.iter().enumerate() {
+                        if index != 0 {
+                            raw.push('\n');
+                        }
+                        raw.push_str(line);
+                    }
+                    survivor.blocks.push(tine_core::model::BlockDto {
+                        raw,
+                        ..Default::default()
+                    });
                 }
             }
         }
