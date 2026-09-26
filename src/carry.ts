@@ -4,6 +4,7 @@
 // newest→oldest so the newest carried tasks end up on top of today.
 
 import { backend } from "./backend";
+import { captureBinding, stillBound, type Binding } from "./binding";
 import {
   pageByName,
   ensurePageLoaded,
@@ -18,9 +19,10 @@ import { carryKeepsContext, carryHeaderText, pushToast } from "./ui";
 import { openJournals } from "./router";
 import type { PageDto } from "./types";
 
-async function ensureLoaded(name: string, kind: "journal" | "page"): Promise<boolean> {
+async function ensureLoaded(name: string, kind: "journal" | "page", binding: Binding): Promise<boolean> {
   if (pageByName(name)) return true;
   const dto = await backend().getPage(name, kind);
+  if (!stillBound(binding)) return false;
   if (dto) {
     ensurePageLoaded(dto);
     return true;
@@ -30,10 +32,11 @@ async function ensureLoaded(name: string, kind: "journal" | "page"): Promise<boo
 
 /** Make sure today's journal is in the working set (synthesize an empty one if
  *  it has no file yet, like the feed does). */
-async function ensureToday(): Promise<string> {
+async function ensureToday(binding: Binding): Promise<string | null> {
   const t = journalTitle(new Date());
   if (!pageByName(t)) {
     const dto = await backend().getPage(t, "journal");
+    if (!stillBound(binding)) return null;
     const page: PageDto =
       dto ?? { name: t, kind: "journal", title: t, pre_block: null, blocks: [{ id: `new-${t}`, raw: "", collapsed: false, children: [] }] };
     ensurePageLoaded(page);
@@ -47,22 +50,24 @@ async function ensureToday(): Promise<string> {
 // Persist `today` (the ADDITION side) FIRST and only flush the source days once it
 // lands — so a today-conflict can't leave the carried blocks removed from their
 // source files but never written to today (a removal-only, data-losing state).
-async function persist(today: string, sources: string[]): Promise<boolean> {
+async function persist(today: string, sources: string[], binding: Binding): Promise<boolean> {
   // Destination (today) must land first. carryUnfinished intentionally left the
   // source days NOT dirty, so nothing can save a source removal until today is
   // safely written — only THEN do we mark + flush the sources.
   if (isDirty(today) && !(await flushPage(today))) return false;
+  if (!stillBound(binding)) return false;
   const uniq = [...new Set(sources)].filter((n) => n !== today);
   for (const n of uniq) markDirty(n);
   const results = await Promise.all(uniq.map((n) => flushPage(n)));
-  return results.every(Boolean);
+  return stillBound(binding) && results.every(Boolean);
 }
 
-async function report(n: number, today: string, sources: string[]): Promise<void> {
+async function report(n: number, today: string, sources: string[], binding: Binding): Promise<void> {
   // If a touched page couldn't be saved (conflict / disk error), DON'T reload the
   // journals feed — that would re-read the old files and drop the carried blocks
   // from memory. Leave the move in memory and surface the failure.
-  if (!(await persist(today, sources))) {
+  if (!(await persist(today, sources, binding))) {
+    if (!stillBound(binding)) return;
     pushToast("Carry couldn't be saved — resolve the conflict; your moved tasks are kept in the editor.", "error");
     return;
   }
@@ -75,6 +80,7 @@ async function report(n: number, today: string, sources: string[]): Promise<void
  *  day" means the most recent journal before today that actually has content
  *  (not literally yesterday, which is often blank). */
 export async function carryPrevDay(): Promise<void> {
+  const binding = captureBinding();
   const today = new Date();
   const todayKey =
     today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
@@ -84,6 +90,7 @@ export async function carryPrevDay(): Promise<void> {
   } catch {
     days = [];
   }
+  if (!stillBound(binding)) return;
   const prevKey = days.filter((k) => k < todayKey).sort((a, b) => a - b).pop();
   if (prevKey == null) {
     pushToast("No previous day with content to carry from");
@@ -95,24 +102,31 @@ export async function carryPrevDay(): Promise<void> {
 
 /** Carry one day's unfinished tasks to today (used from a day's context menu). */
 export async function carryDay(pageName: string): Promise<void> {
-  const today = await ensureToday();
+  const binding = captureBinding();
+  const today = await ensureToday(binding);
+  if (!today || !stillBound(binding)) return;
   if (pageName === today) return;
-  if (!(await ensureLoaded(pageName, "journal"))) return;
+  if (!(await ensureLoaded(pageName, "journal", binding))) return;
+  if (!stillBound(binding)) return;
   // Flush the source day (while it still holds the tasks) before the in-memory
   // move, so a save already pending for it can't write the removal before today
   // is saved. Abort if it can't be flushed (unresolved conflict).
   if (!(await prepareCrossPageSources([pageName]))) {
+    if (!stillBound(binding)) return;
     pushToast("Couldn't carry — that day has unsaved changes to resolve first.", "error");
     return;
   }
+  if (!stillBound(binding)) return;
   const n = carryUnfinished([pageName], carryKeepsContext(), carryHeaderText());
-  await report(n, today, [pageName]);
+  await report(n, today, [pageName], binding);
 }
 
 /** Carry unfinished tasks from the last `days` days (today−1 … today−days) to
  *  today, newest first. Only days that have a file are touched. */
 export async function carryDaysBack(days: number): Promise<void> {
-  const today = await ensureToday();
+  const binding = captureBinding();
+  const today = await ensureToday(binding);
+  if (!today || !stillBound(binding)) return;
   const base = new Date();
   const candidates: string[] = [];
   for (let i = 1; i <= days; i++) {
@@ -121,13 +135,16 @@ export async function carryDaysBack(days: number): Promise<void> {
     candidates.push(journalTitle(d));
   }
   // Load all the day files in parallel rather than one IPC round-trip at a time.
-  const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal")));
+  const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal", binding)));
+  if (!stillBound(binding)) return;
   const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
   // Flush source days (with their tasks intact) before the in-memory move — see carryDay.
   if (!(await prepareCrossPageSources(titles))) {
+    if (!stillBound(binding)) return;
     pushToast("Couldn't carry — a day has unsaved changes to resolve first.", "error");
     return;
   }
+  if (!stillBound(binding)) return;
   const n = carryUnfinished(titles, carryKeepsContext(), carryHeaderText());
-  await report(n, today, titles);
+  await report(n, today, titles, binding);
 }

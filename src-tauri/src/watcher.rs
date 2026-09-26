@@ -84,10 +84,20 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
     (events, conflicts_dirty)
 }
 
-fn dispatch(app: &tauri::AppHandle, label: &str, change: Change) {
+fn dispatch(app: &tauri::AppHandle, label: &str, binding_generation: u64, change: Change) {
     let (events, conflicts_dirty) = window_events(&change);
     for event in events {
-        let _ = app.emit_to(label, "graph-changed", event);
+        let _ = app.emit_to(
+            label,
+            "graph-changed",
+            serde_json::json!({
+                "name": event.name,
+                "kind": event.kind,
+                "created": event.created,
+                "removed": event.removed,
+                "binding_generation": binding_generation,
+            }),
+        );
     }
     if conflicts_dirty {
         let _ = app.emit_to(label, "conflicts-changed", ());
@@ -107,7 +117,7 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
                 .as_ref()
                 .is_some_and(|current| Arc::ptr_eq(current, &slot))
             {
-                dispatch(&app, &label, change);
+                dispatch(&app, &label, slot.binding_generation, change);
             }
         }
     });

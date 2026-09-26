@@ -85,9 +85,21 @@ fn store_error(error: StoreError) -> String {
         StoreError::InvalidTarget(_) => "invalid page path".into(),
         StoreError::Undecodable => "stream did not contain valid UTF-8".into(),
         StoreError::Unparseable(reason) => reason,
-        StoreError::TooLarge { limit, .. } => format!("asset exceeds {limit} byte limit"),
+        StoreError::TooLarge { .. } => "asset-too-large".into(),
         StoreError::Io(error) => error.to_string(),
         StoreError::Closed => "store closed".into(),
+    }
+}
+
+fn save_store_error(error: StoreError) -> String {
+    match error {
+        StoreError::NotFound => "deleted".into(),
+        StoreError::InvalidTarget(_) | StoreError::Undecodable | StoreError::Unparseable(_) => {
+            "invalid-target".into()
+        }
+        StoreError::TooLarge { .. } => "asset-too-large".into(),
+        StoreError::Io(error) => format!("io:{:?}", error.kind()),
+        StoreError::Closed => "closed".into(),
     }
 }
 
@@ -95,8 +107,16 @@ fn asset_error(error: StoreError) -> String {
     match error {
         StoreError::NotFound => std::io::Error::from_raw_os_error(2).to_string(),
         StoreError::InvalidTarget(_) => "invalid asset".into(),
-        StoreError::TooLarge { limit, .. } => format!("asset exceeds {limit} byte limit"),
+        StoreError::TooLarge { .. } => "asset-too-large".into(),
         other => store_error(other),
+    }
+}
+
+fn sync_conflict_error(error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        "conflict".into()
+    } else {
+        format!("io:{:?}", error.kind())
     }
 }
 
@@ -744,22 +764,93 @@ pub(crate) fn save_page(
         base_rev,
         force.unwrap_or(false),
     )
-    .map_err(store_error)?;
+    .map_err(save_store_error)?;
     save_outcome_to_wire(outcome, &page)
 }
 
-fn save_outcome_to_wire(outcome: SaveOutcome, page: &PageDto) -> Result<String, String> {
+fn save_outcome_to_wire(outcome: SaveOutcome, _page: &PageDto) -> Result<String, String> {
     match outcome {
         SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => Ok(rev.into()),
-        SaveOutcome::Conflict { .. } | SaveOutcome::Deleted => Err("conflict".into()),
-        SaveOutcome::ReadOnly(reason) | SaveOutcome::InvalidTarget(reason) => Err(reason),
-        SaveOutcome::Twin { .. } => Err(format!(
-            "\"{}\" exists as both a .md and a .org file — remove one (e.g. in Logseq) to edit it in Tine",
-            page.name
-        )),
-        SaveOutcome::Io(error) => Err(error.to_string()),
-        SaveOutcome::Closed => Err("store closed".into()),
+        SaveOutcome::Conflict { .. } => Err("conflict".into()),
+        SaveOutcome::Deleted => Err("deleted".into()),
+        SaveOutcome::ReadOnly(_) => Err("read-only".into()),
+        SaveOutcome::InvalidTarget(_) => Err("invalid-target".into()),
+        SaveOutcome::Twin { .. } => Err("twin".into()),
+        SaveOutcome::Io(error) => Err(format!("io:{:?}", error.kind())),
+        SaveOutcome::Closed => Err("closed".into()),
         SaveOutcome::GuideEphemeral => Ok("guide-ephemeral".into()),
+    }
+}
+
+#[cfg(test)]
+mod save_wire_tests {
+    use super::*;
+
+    #[test]
+    fn save_wire_families_are_distinct() {
+        const RULE: &str = "I-9: wire failures use fixed families and omit page names/paths; exemplar commands::save_outcome_to_wire";
+        let page: PageDto = serde_json::from_value(serde_json::json!({
+            "name": "a conflict in my title", "kind": "page", "title": "a conflict in my title",
+            "pre_block": null, "blocks": []
+        }))
+        .unwrap();
+        assert_eq!(
+            save_outcome_to_wire(
+                SaveOutcome::Conflict {
+                    disk: String::from("rev").into()
+                },
+                &page
+            ),
+            Err("conflict".into()),
+            "{RULE}"
+        );
+        assert_eq!(
+            save_outcome_to_wire(SaveOutcome::Deleted, &page),
+            Err("deleted".into()),
+            "{RULE}"
+        );
+        assert_eq!(
+            save_outcome_to_wire(
+                SaveOutcome::Twin {
+                    existing: PageId::from("pages/secret.md".to_string())
+                },
+                &page
+            ),
+            Err("twin".into()),
+            "{RULE}"
+        );
+        assert_eq!(
+            save_outcome_to_wire(
+                SaveOutcome::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "/secret/path"
+                )),
+                &page
+            ),
+            Err("io:PermissionDenied".into()),
+            "{RULE}"
+        );
+        assert_eq!(
+            asset_error(StoreError::TooLarge { limit: 12, len: 13 }),
+            "asset-too-large",
+            "{RULE}"
+        );
+        assert_eq!(
+            sync_conflict_error(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "secret"
+            )),
+            "conflict",
+            "{RULE}"
+        );
+        assert_eq!(
+            sync_conflict_error(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "/secret/path"
+            )),
+            "io:PermissionDenied",
+            "{RULE}"
+        );
     }
 }
 
@@ -2266,13 +2357,7 @@ pub(crate) fn resolve_sync_conflict(
         &conflict_rev,
         pre_choice.as_deref().unwrap_or("union"),
     )
-    .map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
-            "conflict".to_string()
-        } else {
-            e.to_string()
-        }
-    })
+    .map_err(sync_conflict_error)
 }
 
 /// Discard a sync-conflict copy without merging (move it to the recoverable

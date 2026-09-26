@@ -95,6 +95,7 @@ import {
 } from "./store";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri, type GraphChange } from "./backend";
+import { captureBinding, stillBound } from "./binding";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -191,6 +192,8 @@ function requestJournalFeedWatcherRestart(
 }
 
 export async function handleGraphChange(c: GraphChange) {
+  const binding = captureBinding();
+  if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
   // The backend watcher has already landed this transaction in its graph cache.
   // Invalidate every derived visible-entity view even when the changed page is
   // outside the bounded frontend working set (#166); loaded pages are refreshed
@@ -234,6 +237,7 @@ export async function handleGraphChange(c: GraphChange) {
   }
   if (routes.some((p) => p.route.kind === "page" && p.route.name === c.name)) {
     const dto = await backend().getPage(c.name, c.kind);
+    if (!stillBound(binding)) return;
     if (dto) reloadPage(toLoadablePage(dto, c.name));
     // A page surface may have the same journal loaded while another live pane
     // shows Journals.  Reloading that DTO is not feed reconciliation: always
@@ -244,6 +248,7 @@ export async function handleGraphChange(c: GraphChange) {
   if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
     if (pageByName(c.name)) {
       const dto = await backend().getPage(c.name, c.kind);
+      if (!stillBound(binding)) return;
       if (dto) reloadPage(dto);
       requestJournalFeedWatcherRestart(routes);
       return;
@@ -256,6 +261,7 @@ export async function handleGraphChange(c: GraphChange) {
   }
   if (pageByName(c.name) && !doc.feed.includes(c.name)) {
     const dto = await backend().getPage(c.name, c.kind);
+    if (!stillBound(binding)) return;
     if (dto) reloadPage(dto);
   }
 }

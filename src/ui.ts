@@ -3,6 +3,7 @@ import { createSignal, useContext } from "solid-js";
 import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend, isTauri } from "./backend";
+import { captureBinding, stillBound } from "./binding";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave, type PageTarget } from "./router";
 import { PaneContext } from "./paneContext";
@@ -243,8 +244,10 @@ export function changeJournalTitleFormat(fmt: string) {
 export const [journalConflicts, setJournalConflicts] = createSignal<JournalConflict[]>([]);
 /** Re-fetch the duplicate-journal-day list; with `notify`, toast if any exist. */
 export async function refreshJournalConflicts(notify = false): Promise<void> {
+  const binding = captureBinding();
   try {
     const c = await backend().listJournalConflicts();
+    if (!stillBound(binding)) return;
     setJournalConflicts(c);
     if (notify && c.length) {
       pushToast(
@@ -264,8 +267,10 @@ export async function refreshJournalConflicts(notify = false): Promise<void> {
 export const [syncConflicts, setSyncConflicts] = createSignal<SyncConflict[]>([]);
 /** Re-fetch the sync-conflict list; with `notify`, toast if any exist. */
 export async function refreshSyncConflicts(notify = false): Promise<void> {
+  const binding = captureBinding();
   try {
     const c = await backend().listSyncConflicts();
+    if (!stillBound(binding)) return;
     setSyncConflicts(c);
     if (notify && c.length) {
       pushToast(

@@ -2,6 +2,7 @@ import { For, Show, createEffect, createSignal, createUniqueId, on, onCleanup, o
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
+import { errorFamily } from "../errorFamily";
 import { writeClipboardText } from "../clipboard";
 import { closePdf, pushToast, isConflicted, activePane, requestBlockReferences, type PdfTarget } from "../ui";
 import { flushPage, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../store";
@@ -13,6 +14,7 @@ import { isMac, isMobilePlatform } from "../nativeChrome";
 import { registerTransientLayer } from "../transientLayers";
 import {
   isPdfOwnershipCurrent,
+  drainPdfWork,
   pdfOwnershipKey,
   registerPdfParticipant,
   trackPdfMutation,
@@ -387,9 +389,9 @@ export function PdfViewer(props: {
     });
   }
 
-  // Persist the current highlight set to disk. Returns false (and toasts) without
-  // mutating the on-disk baseline if anything failed, so the caller can revert the
-  // optimistic UI change rather than show a highlight that didn't actually save.
+  // Failed additions remain visible and marked unsaved. The viewer participant
+  // retries them on graph switch, and close waits for that same drain.
+  const [unsavedHighlights, setUnsavedHighlights] = createSignal(false);
   const persistOwned = async (): Promise<boolean> => {
     const hlsName = hlsPageName(props.filename);
     // If the notes (hls__) page is open with unsaved edits, get them onto disk
@@ -413,8 +415,9 @@ export function PdfViewer(props: {
       );
       setHighlights(persisted);
       baseIds = ids; // what's now on disk becomes the next write's baseline
+      setUnsavedHighlights(false);
     } catch (e) {
-      pushToast(`Couldn't save highlight — try again. (${String(e)})`, "error");
+      pushToast(`Couldn't save highlight — it remains unsaved in the PDF. (${String(e)})`, "error");
       return false;
     }
     // Refresh the loaded notes page (content + save baseline) to include the change.
@@ -1008,7 +1011,7 @@ export function PdfViewer(props: {
       bytes = await backend().readAsset(props.filename, MAX_PDF_BYTES);
       if (disposed) return;
     } catch (err) {
-      if (String(err).includes("asset exceeds"))
+      if (errorFamily(err) === "asset-too-large")
         failPdf("This PDF is larger than 256 MiB and can't be opened safely.");
       else failPdf(errorMessage("Couldn't read this PDF asset", err));
       return;
@@ -1276,12 +1279,12 @@ export function PdfViewer(props: {
       image: null,
     };
     const prev = highlights();
-    setHighlights([...highlights(), h]);
+    setHighlights([...prev, h]);
+    setUnsavedHighlights(true);
     window.getSelection()?.removeAllRanges();
     closeHighlightMenu();
     pending = null;
-    if (!(await persist())) setHighlights(prev); // revert the optimistic add on failure
-    else await copyCreatedHighlightRef(h.id);
+    if (await persist()) await copyCreatedHighlightRef(h.id);
   };
 
   // --- area (image) highlights ---------------------------------------------
@@ -1408,8 +1411,8 @@ export function PdfViewer(props: {
     };
     const prev = highlights();
     setHighlights([...prev, h]);
+    setUnsavedHighlights(true);
     if (!(await persistOwned())) {
-      setHighlights(prev); // revert the optimistic add on failure
       return false;
     }
     await copyCreatedHighlightRef(h.id);
@@ -1423,6 +1426,10 @@ export function PdfViewer(props: {
       // Ownership retirement cancels a not-yet-started area mutation.  It must
       // not be retried after another graph is bound.
     }
+  };
+
+  const closeSafely = async () => {
+    if (await drainPdfWork()) closePdf();
   };
 
   // --- page navigation -----------------------------------------------------
@@ -1671,8 +1678,8 @@ export function PdfViewer(props: {
       id: "pdf-pane",
       root: () => viewerRootEl ?? null,
       dismiss: () => {
-        closePdf();
-        return true;
+        void closeSafely();
+        return false;
       },
     });
     onCleanup(unregister);
@@ -1765,7 +1772,7 @@ export function PdfViewer(props: {
   });
 
   unregisterPdfParticipant = registerPdfParticipant(owner, {
-    flush: flushViewState,
+    flush: async () => (await flushViewState()) && (!unsavedHighlights() || await persist()),
     cancel: cancelOwnedWork,
   });
 
@@ -1777,11 +1784,13 @@ export function PdfViewer(props: {
       data-pdf-filename={props.filename}
       data-pdf-highlight-target={props.navigation?.()?.highlightId}
       data-pdf-ready={ready() ? "true" : "false"}
+      data-pdf-highlights-unsaved={unsavedHighlights() ? "true" : "false"}
     >
       <div class="pdf-toolbar">
         <span class="pdf-title">{props.label}</span>
+        <Show when={unsavedHighlights()}><span class="pdf-unsaved">Unsaved highlight</span></Show>
         <div class="pdf-toolbar-actions">
-          <button class="icon-btn pdf-close-btn" title="Close PDF" onClick={closePdf}>
+          <button class="icon-btn pdf-close-btn" title="Close PDF" onClick={() => void closeSafely()}>
             ✕
           </button>
           <div class="pdf-pager">

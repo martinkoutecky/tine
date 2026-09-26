@@ -19,6 +19,7 @@ import type { Route } from "./router";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
+import { captureBinding, stillBound, invalidateBinding } from "./binding";
 import {
   isConflicted,
   clearConflict,
@@ -75,6 +76,7 @@ import {
   resetSaveState,
   isSaving,
   holdSourcesForDest,
+  cancelSourceHoldForDest,
   trackAssetWrite,
   flushCutSourcePages,
   cutSourcePagesRetired,
@@ -431,6 +433,8 @@ export function forgetPage(name: string) {
  *  calling the backend directly — is what prevents a queued baseRev=null save from
  *  resurrecting a just-typed, never-saved page. Returns backend success. */
 export async function deletePage(name: string, kind: PageKind, expectedPath?: string): Promise<boolean> {
+  const binding = captureBinding();
+  const generation = pageInstanceGeneration(name);
   const loaded = pageByName(name);
   if (expectedPath && loaded?.id !== expectedPath) return false;
   if (loaded?.readOnly || loaded?.guide) return false;
@@ -442,7 +446,8 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   // and the on-disk version still lands in .tine-trash (recoverable), so a conflict
   // must not veto the delete. For a merely-dirty page we still flush first (to trash
   // the latest bytes) and abort only if that genuinely fails.
-  if (isDirty(name) && !isConflicted(name) && !(await flushPage(name))) return false;
+  if ((isDirty(name) || isSaving(name)) && !isConflicted(name) && !(await flushPage(name))) return false;
+  if (!stillBound(binding) || pageInstanceGeneration(name) !== generation) return false;
   // Tombstone first so any queued/in-flight save no-ops during the delete, but
   // DON'T drop the in-memory page until the backend actually deletes it — if the
   // delete fails, the page (and its unsaved edits) must survive.
@@ -451,9 +456,11 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
     if (expectedPath) await backend().deletePage(name, kind, expectedPath);
     else await backend().deletePage(name, kind);
   } catch {
+    if (!stillBound(binding)) return false;
     untombstone(name); // delete failed — lift the tombstone; page + edits stay intact
     return false;
   }
+  if (!stillBound(binding)) return false;
   forgetPage(name); // success — now drop it from the working set + feed
   removeDeletedPageFromNavigation({ name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) });
   // A page delete changes every live query / backlink result (the backend already
@@ -505,8 +512,10 @@ export function reloadPage(dto: PageDto & { id?: string }) {
 export async function reloadHlsIfLoaded(name: string): Promise<void> {
   if (!pageByName(name)) return;
   if (isDirty(name) || isConflicted(name)) return;
+  const binding = captureBinding();
+  const generation = pageInstanceGeneration(name);
   const dto = await backend().getPage(name, "page");
-  if (dto) reloadPage(dto);
+  if (dto && stillBound(binding) && pageInstanceGeneration(name) === generation) reloadPage(dto);
 }
 function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
@@ -536,6 +545,7 @@ function evictIfNeeded() {
  *  cancels pending saves and clears dirty flags so nothing from the old graph
  *  can be written after a switch. */
 export function resetStore() {
+  invalidateBinding();
   // Cancel pending/in-flight saves and clear all save guard state (timers, graph
   // token, dirty/baseline/tombstone) so nothing from the old graph can be written
   // after the switch.
@@ -1270,10 +1280,34 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
   }
 }
 
+function holdHistoryRemovalsUntilAdditionsLand(entry: UndoEntry, inverse: UndoEntry): void {
+  if (entry.kind !== "snap" || inverse.kind !== "snap") return;
+  // A moved block is present in both snapshots under different page owners.
+  // The target snapshot is about to become memory; its gaining page must reach
+  // disk before the old owner is allowed to save its removal.
+  const transfers = new Map<string, Set<string>>();
+  for (const [id, next] of Object.entries(entry.nodes)) {
+    const previous = inverse.nodes[id];
+    if (!previous || previous.page === next.page) continue;
+    let sources = transfers.get(next.page);
+    if (!sources) {
+      sources = new Set();
+      transfers.set(next.page, sources);
+    }
+    sources.add(previous.page);
+  }
+  for (const [dest, sources] of transfers) {
+    for (const source of sources) cancelSourceHoldForDest(dest, source);
+    holdSourcesForDest(dest, [...sources]);
+  }
+}
+
 export function undo() {
   const entry = popHistoryEntry(undoStack);
   if (!entry) return;
-  redoStack.push(applyEntry(entry));
+  const inverse = applyEntry(entry);
+  holdHistoryRemovalsUntilAdditionsLand(entry, inverse);
+  redoStack.push(inverse);
   lastUndoTag = null;
   endEdit("undo");
   scheduleSave();
@@ -1291,7 +1325,9 @@ export function redo() {
     pushToast("Redo skipped: a block with the same id now exists", "error");
     return;
   }
-  undoStack.push(applyEntry(entry));
+  const inverse = applyEntry(entry);
+  holdHistoryRemovalsUntilAdditionsLand(entry, inverse);
+  undoStack.push(inverse);
   lastUndoTag = null;
   endEdit("redo");
   scheduleSave();
@@ -1941,10 +1977,12 @@ export async function captureToPage(title: string, markdown: string): Promise<bo
  *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether it landed. */
 async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNode[]): Promise<boolean> {
   if (!nodes.length) return false;
+  const binding = captureBinding();
   if (!pageByName(name)) {
     const dto: PageDto =
       (await backend().getPage(name, kind)) ??
       { name, kind, title: name, pre_block: null, blocks: [], rev: null };
+    if (!stillBound(binding)) return false;
     ensurePageLoaded(dto);
   }
   const page = pageByName(name);
@@ -1971,7 +2009,8 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
       deleteBlock(anchor);
     });
   }
-  return await flushPage(name);
+  const saved = await flushPage(name);
+  return stillBound(binding) && saved;
 }
 
 const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
@@ -2671,6 +2710,7 @@ function orgRawWithProperty(raw: string, key: string, value: string | null): str
  *  a ref on the clipboard until the id is actually written, or quitting /
  *  resolving a conflict with "use disk version" would leave the ref dangling. */
 export async function ensureBlockId(id: string): Promise<string | null> {
+  const binding = captureBinding();
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return null;
   const fmt = formatForBlock(id);
@@ -2687,7 +2727,7 @@ export async function ensureBlockId(id: string): Promise<string | null> {
   // Even a pre-existing id may not be on disk yet (added in-memory, not flushed);
   // flush and only hand back the uuid if the write actually landed.
   const ok = await flushPage(node.page);
-  return ok ? uuid : null;
+  return ok && stillBound(binding) ? uuid : null;
 }
 
 /** A live reference to a loaded block: its durable external UUID plus its exact
@@ -2745,11 +2785,13 @@ export async function persistBlockRefTarget(
   kind: PageKind,
   path?: string,
 ): Promise<void> {
+  const binding = captureBinding();
   const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
   if (!resolveBlockRef(ref)) {
     const dto = path
       ? await backend().getPageByPath(path)
       : await backend().getPage(page, kind);
+    if (!stillBound(binding)) return;
     if (dto) ensurePageLoaded(dto);
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
@@ -3247,6 +3289,7 @@ export async function moveBlock(
   targetPage?: string,
   dropTargetId?: string,
 ) {
+  const binding = captureBinding();
   const node = doc.byId[id];
   if (!node) return;
   // Don't drop a block into its own descendant.
@@ -3265,9 +3308,11 @@ export async function moveBlock(
   // pre-existing pending save can't write the removal before the destination
   // lands. Abort (no move) if the source can't be saved.
   if (newPage !== oldPage && !(await prepareCrossPageSources([oldPage]))) {
+    if (!stillBound(binding)) return;
     pushToast(`Couldn't move — “${oldPage}” has unsaved changes that need resolving first.`, "error");
     return;
   }
+  if (!stillBound(binding)) return;
   if (!doc.byId[id]) return; // block vanished during the async flush
   const sourceFormat = formatForBlock(id);
   const destinationFormat = formatForPage(newPage);
@@ -3425,10 +3470,12 @@ function persistCrossPage(dest: string, sources: string[]) {
  *  prevent. Returns false if any source can't be flushed (an unresolved conflict);
  *  the caller MUST then abort the move. Clean sources flush as instant no-ops. */
 export async function prepareCrossPageSources(sources: string[]): Promise<boolean> {
+  const binding = captureBinding();
   for (const s of new Set(sources)) {
+    if (!stillBound(binding)) return false;
     if ((isDirty(s) || isSaving(s)) && !(await flushPage(s))) return false;
   }
-  return true;
+  return stillBound(binding);
 }
 
 /** Resolve the adjacent feed day for a root block at the page boundary, loading
@@ -3474,6 +3521,7 @@ export async function extendFeedForScroll(): Promise<boolean> {
 /** Move a single block one slot, crossing into the adjacent day at a page
  *  boundary. Returns how it moved so the caller can restore the caret. */
 export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" | "crossed" | "none"> {
+  const binding = captureBinding();
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return "none";
   if (canMoveItem(id, dir)) {
@@ -3482,8 +3530,10 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
   }
   if (node.parent !== null) return "none"; // nested block at a child-list edge: stop
   const target = await feedNeighbor(node.page, dir);
+  if (!stillBound(binding)) return "none";
   if (!target || !pageWritable(target)) return "none";
   if (!(await prepareCrossPageSources([node.page]))) return "none"; // source has unsaved edits → abort
+  if (!stillBound(binding)) return "none";
   if (!doc.byId[id]) return "none"; // vanished during the flush
   pushUndo("move-cross", [node.page, target]);
   crossMoveBlocks([id], node.page, target, dir);
@@ -3493,6 +3543,7 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
 /** Move every top-level selected block up/down by one slot, preserving the
  *  selection; at a day boundary the whole group crosses into the adjacent day. */
 export async function moveSelectionItems(dir: 1 | -1) {
+  const binding = captureBinding();
   const ids = topSelected(); // document order: ids[0] topmost, last bottommost
   if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const lead = dir === 1 ? ids[ids.length - 1] : ids[0];
@@ -3530,8 +3581,10 @@ export async function moveSelectionItems(dir: 1 | -1) {
   if (!page) return;
   if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
   const target = await feedNeighbor(page, dir);
+  if (!stillBound(binding)) return;
   if (!target || !pageWritable(target)) return;
   if (!(await prepareCrossPageSources([page]))) return; // source has unsaved edits → abort
+  if (!stillBound(binding)) return;
   pushUndo("move-sel-cross", [page, target]);
   crossMoveBlocks(ids, page, target, dir);
 }

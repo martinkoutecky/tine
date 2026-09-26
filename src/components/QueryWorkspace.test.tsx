@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import type { PaneRouter, QueryRoute } from "../router";
-import type { QueryExecution } from "../types";
+import type { QueryExecution, ResolvedPage } from "../types";
 import {
   clearTransientLayersForTest,
   dismissTopTransient,
@@ -15,6 +15,7 @@ import {
   type QueryWorkspaceDependencies,
 } from "./QueryWorkspace";
 import { pageInventoryRev } from "../ui";
+import { resetStore } from "../store";
 
 afterEach(() => {
   clearTransientLayersForTest();
@@ -31,6 +32,19 @@ function materializeDeps(overrides: Partial<MaterializeQueryDependencies> = {}):
 }
 
 describe("materializeQueryWorkspace", () => {
+  it("does not save when a page resolve lands after a graph switch (I-20)", async () => {
+    let finish!: (value: { kind: "absent"; id: string }) => void;
+    const deps = materializeDeps({
+      resolvePage: vi.fn(() => new Promise<ResolvedPage>((resolve) => { finish = resolve; })),
+    });
+    const materializing = materializeQueryWorkspace({ title: "Saved", sourceKind: "dsl", source: "(todo TODO)", presentation: "list", routeId: "old-graph" }, deps);
+    await vi.waitFor(() => expect(deps.resolvePage).toHaveBeenCalled());
+    resetStore();
+    finish({ kind: "absent", id: "pages/Saved.md" });
+    expect(await materializing).toMatchObject({ ok: false, kind: "error" });
+    expect(deps.savePage).not.toHaveBeenCalled();
+  });
+
   it("rejects empty, exclusion-only, and Rust-diagnostic friendly searches before any graph write", async () => {
     for (const source of ["   ", "-draft", "/(a)\\1/"]) {
       const deps = materializeDeps({ runGraphSearch: vi.fn(async () => source === "-draft"
@@ -99,7 +113,7 @@ describe("materializeQueryWorkspace", () => {
     expect(deps.resolvePage).toHaveBeenCalledWith("Project dashboard", "page");
     expect(deps.savePage).toHaveBeenCalledTimes(1);
     // Saved to the backend's Absent id (its name format and preferred format).
-    expect(deps.savePage).toHaveBeenCalledWith("pages/Project dashboard.md", result.page, null, false);
+    expect(deps.savePage).toHaveBeenCalledWith("pages/Project dashboard.md", result.page, null, false, 1);
     expect(pageInventoryRev()).toBeGreaterThan(beforeInventory);
   });
 
@@ -162,7 +176,7 @@ describe("materializeQueryWorkspace", () => {
 
   it("keeps the workspace virtual when a create race reaches the save guard", async () => {
     const deps = materializeDeps({
-      savePage: vi.fn(async () => { throw new Error("save conflict: page changed on disk"); }),
+      savePage: vi.fn(async () => { throw new Error("conflict"); }),
     });
     const result = await materializeQueryWorkspace({
       title: "Raced",
@@ -441,7 +455,7 @@ describe("QueryWorkspace", () => {
     const saved = vi.mocked(deps.savePage).mock.calls[0][1];
     expect(saved.blocks).toHaveLength(1);
     expect(saved.blocks[0].raw).toBe('{{query (search "alpha OR beta")}}\ntine.view:: board');
-    expect(deps.savePage).toHaveBeenCalledWith("pages/Saved search.md", saved, null, false);
+    expect(deps.savePage).toHaveBeenCalledWith("pages/Saved search.md", saved, null, false, 1);
 
     dispose();
   });

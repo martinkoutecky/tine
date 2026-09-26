@@ -15,6 +15,8 @@ import {
   markDirty,
   flushPage,
   flushAll,
+  captureToPage,
+  reloadHlsIfLoaded,
   forceSave,
   isDirty,
   deletePage,
@@ -93,6 +95,8 @@ import {
   pageInventoryRev,
   setWorkflow,
   setGraphMeta,
+  toasts,
+  setToasts,
 } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto, PageRead } from "./types";
@@ -1045,6 +1049,87 @@ describe("page-scoped structural undo", () => {
     expect(raws("Older")).toEqual(["o1", "o2"]);
     expect(doc.byId[o1].page).toBe("Older"); // page ownership restored too
   });
+
+  it("undo saves the page gaining a moved block before the losing page, even if the second save fails", async () => {
+    setToasts([]);
+    const today = journal("Today", [blk("today")]);
+    const older = journal("Older", [blk("durable moved block")]);
+    loadFeed([today, older]);
+    const moved = older.blocks[0].id;
+    const save = vi.spyOn(backend(), "savePage").mockResolvedValue("rev");
+    await moveBlockFeed(moved, -1);
+    await flushPage("Today"); // establish the block on disk in Today
+    save.mockClear();
+    const disk = new Map([["Today", ["today", "durable moved block"]], ["Older", [] as string[]]]);
+    let finishFirst!: () => void;
+    save.mockImplementation((_id, dto) => {
+      if (save.mock.calls.length === 1) {
+        return new Promise((resolve) => { finishFirst = () => { disk.set(dto.name, dto.blocks.map((b) => b.raw)); resolve("rev"); }; });
+      }
+      return Promise.reject(new Error("io:Other"));
+    });
+    undo();
+    const draining = flushAll();
+    await vi.waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.map(([, dto]) => dto.name)).toEqual(["Older"]);
+    finishFirst();
+    expect(await draining).toBe(false);
+    expect(disk.get("Older")).toContain("durable moved block");
+    expect(disk.get("Today")).toContain("durable moved block");
+    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("Today"))).toBe(true);
+    save.mockRestore();
+  });
+
+  it("redo saves the page gaining a moved block before the losing page, even if the second save fails", async () => {
+    setToasts([]);
+    const today = journal("Today", [blk("today")]);
+    const older = journal("Older", [blk("durable moved block")]);
+    loadFeed([today, older]);
+    const save = vi.spyOn(backend(), "savePage").mockResolvedValue("rev");
+    await moveBlockFeed(older.blocks[0].id, -1);
+    expect(await flushAll()).toBe(true);
+    undo();
+    expect(await flushAll()).toBe(true);
+    save.mockClear();
+    const disk = new Map([["Today", ["today"]], ["Older", ["durable moved block"]]]);
+    let finishFirst!: () => void;
+    save.mockImplementation((_id, dto) => {
+      if (save.mock.calls.length === 1) {
+        return new Promise((resolve) => { finishFirst = () => { disk.set(dto.name, dto.blocks.map((b) => b.raw)); resolve("rev"); }; });
+      }
+      return Promise.reject(new Error("io:Other"));
+    });
+    redo();
+    const draining = flushAll();
+    await vi.waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.map(([, dto]) => dto.name)).toEqual(["Today"]);
+    finishFirst();
+    expect(await draining).toBe(false);
+    expect(disk.get("Older")).toContain("durable moved block");
+    expect(disk.get("Today")).toContain("durable moved block");
+    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("Older"))).toBe(true);
+    save.mockRestore();
+  });
+
+  it("undo before the original destination save settles does not leave reciprocal page holds", async () => {
+    const today = journal("Today", [blk("today")]);
+    const older = journal("Older", [blk("moved")]);
+    loadFeed([today, older]);
+    let finishPrior!: () => void;
+    const save = vi.spyOn(backend(), "savePage").mockImplementationOnce(() =>
+      new Promise((resolve) => { finishPrior = () => resolve("prior-rev"); })
+    ).mockResolvedValue("rev");
+    markDirty("Today");
+    const prior = flushPage("Today");
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await moveBlockFeed(older.blocks[0].id, -1);
+    undo();
+    finishPrior();
+    await prior;
+    expect(await flushAll()).toBe(true);
+    expect(save.mock.calls.some(([, dto]) => dto.name === "Older" && dto.blocks.some((b) => b.raw === "moved"))).toBe(true);
+    save.mockRestore();
+  });
 });
 
 describe("carry unfinished tasks → today", () => {
@@ -1603,6 +1688,163 @@ describe("save engine (persistence)", () => {
     expect(saveSpy.mock.calls[1][2]).toBe("rev2");
   });
 
+  it("a late save does not advance the baseline of a same-name replacement", async () => {
+    let finish!: (rev: string) => void;
+    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    load([blk("old instance")]);
+    markDirty("Test");
+    const first = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    reloadPage({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("new instance")], rev: "replacement-rev" });
+    finish("old-save-rev");
+    await first;
+    markDirty("Test");
+    await flushPage("Test");
+    expect(saveSpy.mock.calls[1][2]).toBe("replacement-rev");
+  });
+
+  it("a never-saved page deleted during its first save is deleted after that save", async () => {
+    let finish!: (rev: string) => void;
+    const disk = new Set<string>();
+    saveSpy.mockImplementationOnce((id) => new Promise((resolve) => { finish = (rev) => { disk.add(id); resolve(rev); }; }));
+    const remove = vi.spyOn(backend(), "deletePage").mockImplementation(async () => { disk.clear(); });
+    load([blk("new content")]);
+    markDirty("Test");
+    const save = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    const deletion = deletePage("Test", "page");
+    await Promise.resolve();
+    expect(remove).not.toHaveBeenCalled();
+    finish("created-rev");
+    await save;
+    expect(await deletion, "I-11: deletePage drains a first save before removal; exemplar src/store.ts deletePage").toBe(true);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(disk.size, "I-11: a deleted never-saved page leaves no file; exemplar src/store.ts deletePage").toBe(0);
+    remove.mockRestore();
+  });
+
+  it("flushAll drains an in-flight save and the edit made while it was pending (I-11)", async () => {
+    let finish!: (rev: string) => void;
+    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const firstBlock = blk("first");
+    load([firstBlock]);
+    markDirty("Test");
+    const first = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    let settled = false;
+    const all = flushAll().then((ok) => { settled = true; return ok; });
+    setRaw(firstBlock.id, "second");
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish("first-rev");
+    await first;
+    expect(await all, "I-11: flushAll counts the saveChain and edits made during a save; exemplar src/persistence.ts flushAll").toBe(true);
+    expect(saveSpy.mock.calls.at(-1)![1].blocks[0].raw).toBe("second");
+    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("flushAll refuses completion when a fifth queued save survives its bounded drain (I-11)", async () => {
+    let finishFifth!: (rev: string) => void;
+    let nested: Promise<boolean> | undefined;
+    load([blk("content")]);
+    saveSpy.mockImplementation(() => {
+      const call = saveSpy.mock.calls.length;
+      if (call < 4) {
+        markDirty("Test");
+        return Promise.resolve(`rev-${call}`);
+      }
+      if (call === 4) {
+        nested = forceSave("Test");
+        return Promise.resolve("rev-4");
+      }
+      return new Promise((resolve) => { finishFifth = resolve; });
+    });
+    markDirty("Test");
+    const draining = flushAll();
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(5));
+    expect(isDirty("Test")).toBe(false);
+    try {
+      expect(await draining,
+        "I-11: flushAll must count saveChain after its bounded drain; exemplar src/persistence.ts flushAll").toBe(false);
+    } finally {
+      finishFifth("rev-5");
+      await nested;
+    }
+  });
+
+  it("shows one toast for repeated identical save failures (I-10)", async () => {
+    setToasts([]);
+    load([blk("unsaved")]);
+    saveSpy.mockRejectedValue(new Error("io:Other"));
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(false);
+    expect(await flushPage("Test")).toBe(false);
+    expect(toasts().filter((toast) => toast.kind === "error" && toast.message.includes("Test")),
+      "I-10: identical save failures show one toast; exemplar src/persistence.ts lastSaveFailure").toHaveLength(1);
+  });
+
+  it("drops a quick capture read that resolves after a graph switch (I-20)", async () => {
+    let finish!: (dto: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    load([blk("old graph")]);
+    const capture = captureToPage("Captured", "- captured text");
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    resetStore();
+    load([blk("new graph")]);
+    finish({ name: "Captured", kind: "page", title: "Captured", id: "pages/Captured.md", pre_block: null, blocks: [] });
+    expect(await capture).toBe(false);
+    expect(pageByName("Captured")).toBeUndefined();
+    expect(saveSpy).not.toHaveBeenCalled();
+    read.mockRestore();
+  });
+
+  it("drops an hls reload that resolves after a graph switch (I-20)", async () => {
+    let finish!: (dto: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("old notes")] });
+    const reload = reloadHlsIfLoaded("hls__paper");
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    resetStore();
+    loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("new graph notes")] });
+    finish({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("stale notes")], rev: "stale-rev" });
+    await reload;
+    expect(pageToDto("hls__paper")!.blocks[0].raw).toBe("new graph notes");
+    read.mockRestore();
+  });
+
+  it("drops a direct save after its resolve lands in another graph (I-20)", async () => {
+    let finish!: (resolved: { kind: "absent"; id: string }) => void;
+    const resolve = vi.spyOn(backend(), "resolvePage").mockImplementationOnce(() => new Promise((done) => { finish = done; }));
+    load([blk("old draft")]);
+    markDirty("Test");
+    const save = flushPage("Test");
+    await vi.waitFor(() => expect(resolve).toHaveBeenCalled());
+    resetStore();
+    load([blk("new graph")]);
+    finish({ kind: "absent", id: "pages/Test.md" });
+    expect(await save).toBe(false);
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
+    resolve.mockRestore();
+  });
+
+  it("does not run a forced save queued in the old binding against a same-name new graph page (I-20)", async () => {
+    let finish!: (rev: string) => void;
+    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    load([blk("old graph")]);
+    markDirty("Test");
+    const first = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    const queued = forceSave("Test");
+    resetStore();
+    load([blk("new graph")]);
+    finish("old-rev");
+    await first;
+    expect(await queued).toBe(false);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
+  });
+
   it("gives a fresh Markdown block one durable identity for persistent references and Copy block ref", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
@@ -1726,6 +1968,9 @@ describe("save engine (persistence)", () => {
   it("refuses a content save onto an alias name: no write, conflict surface, content kept", async () => {
     const resolveSpy = vi.spyOn(backend(), "resolvePage")
       .mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] });
+    // The old HEAD test name stays as a ratchet: an alias owner that vanished
+    // between resolution and read must refuse without losing the draft.
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
     const [b] = [blk("typed under an alias name")];
     load([b]);
     markDirty("Test");
@@ -1734,7 +1979,64 @@ describe("save engine (persistence)", () => {
     expect(isConflicted("Test")).toBe(true);
     expect(pageByName("Test")!.id).toBeUndefined();
     expect(doc.byId[b.id].raw).toBe("typed under an alias name");
+    read.mockRestore();
     resolveSpy.mockRestore();
+  });
+
+  it("appends a never-saved alias draft after its owner's blocks and opens the owner", async () => {
+    const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("owner text")] };
+    const draft = blk("draft parent", [blk("draft child")]);
+    load([draft]);
+    const disk = new Map<string, PageDto>([[owner.id, owner]]);
+    saveSpy.mockImplementation(async (id, dto) => { disk.set(id, dto); return "saved-owner-rev"; });
+    const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(saveSpy.mock.calls[0][0]).toBe(owner.id);
+    expect(saveSpy.mock.calls[0][2]).toBe(owner.rev);
+    expect(saveSpy.mock.calls[0][1].blocks.map((b) => b.raw)).toEqual(["owner text", "draft parent"]);
+    expect(saveSpy.mock.calls[0][1].blocks[1].children.map((b) => b.raw)).toEqual(["draft child"]);
+    expect([...disk.keys()]).toEqual([owner.id]);
+    expect(disk.get(owner.id)!.blocks.map((b) => b.raw)).toEqual(["owner text", "draft parent"]);
+    expect(disk.get(owner.id)!.blocks[1].children.map((b) => b.raw)).toEqual(["draft child"]);
+    expect(pageByName("Test")).toBeUndefined();
+    expect(pageByName("Owner")!.roots.map((id) => doc.byId[id].raw)).toEqual(["owner text", "draft parent"]);
+    expect(doc.feed).toEqual(["Owner"]);
+    expect(toasts().some((t) => t.kind === "info" && t.message.includes("Test") && t.message.includes("Owner"))).toBe(true);
+    read.mockRestore();
+    resolve.mockRestore();
+  });
+
+  it("keeps an alias draft conflicted in memory when the owner's append conflicts", async () => {
+    const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("owner text")] };
+    const draft = blk("draft text");
+    load([draft]);
+    const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(false);
+    expect(saveSpy.mock.calls[0][1].blocks.map((b) => b.raw)).toEqual(["owner text", "draft text"]);
+    expect(isConflicted("Test")).toBe(true);
+    expect(doc.byId[draft.id].raw).toBe("draft text");
+    expect(doc.feed).toEqual(["Test"]);
+    read.mockRestore();
+    resolve.mockRestore();
+  });
+
+  it("keeps a draft page preamble as an appended owner block", async () => {
+    const owner = { name: "Owner", kind: "page" as const, title: "Owner", id: "pages/Owner.md", rev: "owner-rev", pre_block: "alias:: Test", blocks: [blk("existing")] };
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: "tags:: draft", blocks: [blk("body")] });
+    const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(saveSpy.mock.calls[0][1].pre_block).toBe("alias:: Test");
+    expect(saveSpy.mock.calls[0][1].blocks.map((b) => b.raw)).toEqual(["existing", "tags:: draft", "body"]);
+    read.mockRestore();
+    resolve.mockRestore();
   });
 
   it("no-ops guide-flagged pages at the persistence boundary", async () => {

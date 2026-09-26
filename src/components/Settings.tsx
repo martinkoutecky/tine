@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { ImproveTab } from "./ImproveTab";
+import { errorFamily } from "../errorFamily";
 import { AboutTab } from "./AboutTab";
 import {
   settingsOpen,
@@ -2434,7 +2435,7 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
       await refreshSyncConflicts();
       props.onClose();
     } catch (e) {
-      if (String(e).includes("conflict")) {
+      if (errorFamily(e) === "conflict") {
         pushToast("The current page changed on disk — re-reading it, please redo your choices.", "error");
         setDecisions({});
         void refetch();

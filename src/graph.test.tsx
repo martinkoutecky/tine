@@ -37,6 +37,8 @@ async function loadHarness(
     approveExternalAssets: vi.fn(async () => {}),
     confirm: vi.fn(async () => confirm),
     loadGraph: vi.fn(async () => ({ kind: "loaded" as const, meta: META, binding_generation: 1 })),
+    pickFolder: vi.fn(async () => "/tmp"),
+    createGraph: vi.fn(async () => META.root),
     getPage: vi.fn(async () => existing),
     resolvePage: vi.fn(async () => ({ kind: "absent" as const, id: "journals/2026_07_10.md" })),
     listTemplates: vi.fn(async () => [
@@ -59,6 +61,7 @@ async function loadHarness(
   const waitForWarmCache = vi.fn(async () => warm);
   const applyTemplateVars = vi.fn((raw: string, _currentPage?: string) => raw);
   const prepareTemplateVars = vi.fn(async () => {});
+  const openPage = vi.fn();
   const drainPdfWork = vi.fn(async () => {
     events.push("drain-pdf");
     return true;
@@ -96,7 +99,7 @@ async function loadHarness(
   vi.doMock("./assetCache", () => ({ clearAssetBlobCache: vi.fn() }));
   vi.doMock("./router", () => ({
     resetTabsToJournals: vi.fn(),
-    openPage: vi.fn(),
+    openPage,
     restoreSession: vi.fn(async () => {}),
     flushSession: vi.fn(async () => {}),
   }));
@@ -114,11 +117,11 @@ async function loadHarness(
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { loadGraphPath, refreshAfterRename } = await import("./graph");
+  const { loadGraphPath, createNewGraph, refreshAfterRename } = await import("./graph");
   return {
-    loadGraphPath, refreshAfterRename, api, events, resetPageIndex, resetAt, waitForWarmCache,
+    loadGraphPath, createNewGraph, refreshAfterRename, api, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
-    applyTemplateVars, prepareTemplateVars,
+    applyTemplateVars, prepareTemplateVars, openPage,
   };
 }
 
@@ -131,6 +134,34 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
+  it("drops template insertion when its page read lands after a graph switch (I-20)", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    let finish!: (page: PageRead | null) => void;
+    api.getPage.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const opening = loadGraphPath(META.root);
+    await vi.waitFor(() => expect(api.getPage).toHaveBeenCalled());
+    const { invalidateBinding } = await import("./binding");
+    invalidateBinding();
+    finish(null);
+    await opening;
+    expect(api.savePage).not.toHaveBeenCalled();
+  });
+
+  it("drops demo seed and Welcome navigation when its page read lands after a graph switch (I-20)", async () => {
+    const { createNewGraph, api, openPage } = await loadHarness(null);
+    let finish!: (page: PageRead | null) => void;
+    api.getPage.mockResolvedValueOnce(null).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const creating = createNewGraph();
+    await vi.waitFor(() => expect(api.getPage).toHaveBeenCalledTimes(2));
+    const before = api.savePage.mock.calls.length;
+    const { invalidateBinding } = await import("./binding");
+    invalidateBinding();
+    finish(null);
+    await creating;
+    expect(api.savePage).toHaveBeenCalledTimes(before);
+    expect(openPage).not.toHaveBeenCalled();
+  });
+
   // Ported from "loads real page identities once and lets them win colliding
   // aliases" (with "refreshes real-page precedence after a same-session page
   // creation", "folds NFD alias keys…" and "discards an older same-epoch
@@ -184,7 +215,8 @@ describe("default journal template graph bind", () => {
         blocks: [expect.objectContaining({ raw: "Template body" })],
       }),
       null,
-      false
+      false,
+      0
     );
   });
 
@@ -204,7 +236,7 @@ describe("default journal template graph bind", () => {
 
     // The empty journal's own file (its id), with its rev as the baseline; no
     // name lookup.
-    expect(api.savePage).toHaveBeenCalledWith("journals/Jul 10th, 2026.org", expect.any(Object), "empty-journal-rev", false);
+    expect(api.savePage).toHaveBeenCalledWith("journals/Jul 10th, 2026.org", expect.any(Object), "empty-journal-rev", false, 0);
     expect(api.resolvePage).not.toHaveBeenCalled();
   });
 

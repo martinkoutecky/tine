@@ -8,8 +8,11 @@
 // page snapshot (pageToDto) and the loaded flag (doc.loaded) — used at call time,
 // so the store↔persistence import cycle resolves cleanly.
 
-import { doc, pageByName, pageInstanceGeneration, pageToDto, setPageId } from "./store";
+import { doc, forgetPage, loadSingle, pageByName, pageInstanceGeneration, pageToDto, reloadPage, setPageId } from "./store";
+import { openPage } from "./router";
 import { backend } from "./backend";
+import { captureBinding, stillBound, type Binding } from "./binding";
+import { errorFamily } from "./errorFamily";
 import { markConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
 import type { ClipboardSourcePage } from "./clipboard";
 
@@ -34,6 +37,7 @@ let graphToken = 0;
 // Per-page save queue: writes for one page run strictly one-after-another (never
 // concurrently) and each runs against the LATEST store state.
 const saveChain = new Map<string, Promise<boolean>>();
+const lastSaveFailure = new Map<string, string>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dataRevTimer: ReturnType<typeof setTimeout> | null = null;
 const assetWriteChain = new Set<Promise<boolean>>();
@@ -44,8 +48,8 @@ const assetWriteChain = new Set<Promise<boolean>>();
 // = pages whose saves are blocked; `heldByDest` maps each dest to the sources waiting on
 // it, released the moment that dest saves durably (immediately, or after a conflict is
 // resolved). Until then the source keeps the block on disk, so it's never lost.
-const heldSources = new Set<string>();
-const heldByDest = new Map<string, string[]>();
+const heldSources = new Map<string, Set<string>>();
+const heldByDest = new Map<string, Set<string>>();
 
 // ---------------------------------------------------------------------------
 // Accessors — store.ts mutations call these instead of touching the guards.
@@ -83,8 +87,32 @@ export function isSaving(name: string): boolean {
 export function holdSourcesForDest(dest: string, sources: string[]) {
   const srcs = sources.filter((s) => s !== dest);
   if (srcs.length === 0) return;
-  heldByDest.set(dest, srcs);
-  for (const s of srcs) heldSources.add(s);
+  let held = heldByDest.get(dest);
+  if (!held) {
+    held = new Set();
+    heldByDest.set(dest, held);
+  }
+  for (const s of srcs) {
+    held.add(s);
+    let dependencies = heldSources.get(s);
+    if (!dependencies) {
+      dependencies = new Set();
+      heldSources.set(s, dependencies);
+    }
+    dependencies.add(dest);
+  }
+}
+
+/** Undo of an as-yet-unpublished move returns content to its still-durable
+ * original page. Retire that old dependency before installing the reverse one,
+ * otherwise each page can end up waiting for the other to save. */
+export function cancelSourceHoldForDest(source: string, dest: string): void {
+  const sources = heldByDest.get(dest);
+  if (!sources?.delete(source)) return;
+  if (sources.size === 0) heldByDest.delete(dest);
+  const dependencies = heldSources.get(source);
+  dependencies?.delete(dest);
+  if (dependencies?.size === 0) heldSources.delete(source);
 }
 
 /** Track an optimistic asset write so flushAll/app-close waits for the bytes to
@@ -109,7 +137,10 @@ function releaseSourcesFor(dest: string) {
   heldByDest.delete(dest);
   let any = false;
   for (const s of srcs) {
-    if (heldSources.delete(s)) {
+    const dependencies = heldSources.get(s);
+    dependencies?.delete(dest);
+    if (dependencies && dependencies.size === 0) {
+      heldSources.delete(s);
       dirty.add(s); // its removal (and any held edit) can write now
       any = true;
     }
@@ -132,6 +163,7 @@ export function untombstone(name: string) {
 export function forgetSaveState(name: string) {
   dirty.delete(name);
   baseRev.delete(name);
+  lastSaveFailure.delete(name);
 }
 /** Cancel timers, invalidate in-flight saves (bump the graph token), and clear
  *  all guard state — on graph switch / reset, so nothing from the old graph can
@@ -151,6 +183,7 @@ export function resetSaveState() {
   deletedPages.clear();
   heldSources.clear();
   heldByDest.clear();
+  lastSaveFailure.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -190,10 +223,13 @@ function enqueueSave(
   force = false,
   expectedCutSource?: ClipboardSourcePage,
 ): Promise<boolean> {
+  const binding = captureBinding();
+  const token = graphToken;
+  const generation = pageInstanceGeneration(name);
   const prev = saveChain.get(name) ?? Promise.resolve(true);
   const next = prev.then(
-    () => doSave(name, force, expectedCutSource),
-    () => doSave(name, force, expectedCutSource),
+    () => doSave(name, force, binding, token, generation, expectedCutSource),
+    () => doSave(name, force, binding, token, generation, expectedCutSource),
   );
   saveChain.set(name, next);
   void next.finally(() => {
@@ -209,8 +245,12 @@ function enqueueSave(
 async function doSave(
   name: string,
   force: boolean,
+  binding: Binding,
+  token: number,
+  generation: number | null,
   expectedCutSource?: ClipboardSourcePage,
 ): Promise<boolean> {
+  if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
   // A cut-retirement save is authority-bound to the exact loaded page instance.
   // Check when this queued operation actually reaches its snapshot boundary, not
   // only when the caller enqueues it: another save may have been ahead of it.
@@ -221,7 +261,6 @@ async function doSave(
   // A cross-page move source: hold its save until the destination is durable (C#1).
   // Stays dirty, so it writes the moment `releaseSourcesFor(dest)` frees it.
   if (heldSources.has(name) && !force) return false;
-  const token = graphToken;
   const dto = pageToDto(name);
   if (!dto) return false;
   if (dto.guide) {
@@ -237,33 +276,78 @@ async function doSave(
   dirty.delete(name);
   try {
     const baseline = baseRev.get(name) ?? null;
-    const generation = pageInstanceGeneration(name);
     let id = pageByName(name)?.id;
     if (!id) {
       const resolved = await backend().resolvePage(dto.name, dto.kind);
-      if (resolved.kind === "alias") throw new Error("conflict: page name is an alias");
+      if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+      if (resolved.kind === "alias") {
+        // A pathless draft may acquire an alias while it is open. Its blocks
+        // belong to the alias owner, but the owner's existing bytes must win
+        // the front of the page. Read its current revision and use an ordinary
+        // guarded save; forceSave must not clobber an externally edited owner.
+        const owner = resolved.owners[0] && await backend().getPageByPath(resolved.owners[0]);
+        if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+        if (!owner || owner.read_only || owner.guide || isDirty(owner.name) || isSaving(owner.name) || isConflicted(owner.name)) {
+          throw new Error("conflict");
+        }
+        const ownerGeneration = pageInstanceGeneration(owner.name);
+        // A draft's property-only first root is folded into pre_block by
+        // pageToDto. Keep those bytes too: on the owner they are ordinary
+        // appended content, never a replacement for the owner's preamble.
+        const draftBlocks = dto.pre_block
+          ? [{ id: "", raw: dto.pre_block, collapsed: false, children: [] }, ...dto.blocks]
+          : dto.blocks;
+        const appended = { ...owner, blocks: [...owner.blocks, ...draftBlocks] };
+        const ownerRev = await backend().savePage(owner.id, appended, owner.rev ?? null, false, binding.backendGeneration);
+        if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+        if (dirty.has(name) || isDirty(owner.name) || isSaving(owner.name)
+            || isConflicted(owner.name) || pageInstanceGeneration(owner.name) !== ownerGeneration) {
+          // The saved snapshot is durable, but a later edit must remain visible
+          // in the draft rather than being discarded by the route change.
+          throw new Error("conflict");
+        }
+        const landed = { ...appended, rev: ownerRev };
+        forgetPage(name);
+        reloadPage(landed);
+        loadSingle(landed);
+        openPage(owner.name, owner.kind);
+        pushToast(`Moved “${name}” into its alias owner “${owner.name}”.`, "info");
+        bumpPageInventoryRev();
+        releaseSourcesFor(name);
+        lastSaveFailure.delete(name);
+        return true;
+      }
       id = resolved.id;
     }
-    const rev = await backend().savePage(id, dto, baseline, force);
+    const rev = await backend().savePage(id, dto, baseline, force, binding.backendGeneration);
     // A reload/rename/delete/rebind while savePage was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
     // authorize identity reuse or update the replacement instance's baseline.
     if (expectedCutSource && !cutSourceUsable(expectedCutSource)) return false;
-    if (token === graphToken) {
+    if (token === graphToken && stillBound(binding) && pageInstanceGeneration(name) === generation) {
       // Record the file this save wrote, but only on the instance that asked:
       // a reload/rebind meanwhile carries its own id.
-      if (pageInstanceGeneration(name) === generation) setPageId(name, id);
+      setPageId(name, id);
       baseRev.set(name, rev);
       if (baseline === null) bumpPageInventoryRev();
+      releaseSourcesFor(name); // only this binding may release its held sources
+      lastSaveFailure.delete(name);
+      return true;
     }
-    releaseSourcesFor(name); // if this was a cross-page dest, its sources can save now
-    return true;
+    return false;
   } catch (e) {
-    if (String(e).includes("conflict")) {
-      markConflict(name);
-    } else if (token === graphToken) {
-      dirty.add(name); // keep pending — retried on next edit / flush
-      pushToast(`Couldn't save “${name}” — will retry. (${String(e)})`, "error");
+    if (token === graphToken && stillBound(binding) && pageInstanceGeneration(name) === generation) {
+      const family = errorFamily(e);
+      if (family === "conflict" || family === "deleted" || family === "twin"
+          || family === "read-only" || family === "invalid-target") {
+        markConflict(name);
+      } else {
+        dirty.add(name); // keep pending — retried on next edit / flush
+      }
+      if (family !== "conflict" && lastSaveFailure.get(name) !== family) {
+        pushToast(`Couldn't save “${name}” — ${family === "deleted" ? "the file was deleted on disk; your edits remain in the editor" : String(e)}`, "error");
+        lastSaveFailure.set(name, family);
+      }
     }
     return false;
   }
@@ -354,7 +438,7 @@ export async function flushAll(): Promise<boolean> {
   // Success only if nothing is still pending AND there are no unresolved
   // conflicts (a conflicted page's edit is NOT on disk) — so a destructive
   // transition (graph switch / restore / close) can abort instead of discarding it.
-  return dirty.size === 0 && assetWriteChain.size === 0 && conflicts().length === 0;
+  return dirty.size === 0 && saveChain.size === 0 && assetWriteChain.size === 0 && conflicts().length === 0;
 }
 
 /** Resolve a save conflict by overwriting the on-disk file with the in-memory

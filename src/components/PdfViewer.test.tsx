@@ -697,6 +697,44 @@ describe("PdfViewer OG state and reference behavior", () => {
     }
   });
 
+  it("keeps a failed new highlight visible and retries it before graph retirement", async () => {
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: null, scale: null });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights")
+      .mockRejectedValueOnce(new Error("io:Other"))
+      .mockResolvedValue(undefined);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("11111111-1111-4111-8111-111111111111");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      const wrap = host.querySelector(".pdf-page") as HTMLDivElement;
+      vi.spyOn(wrap, "getBoundingClientRect").mockReturnValue({
+        left: 0, top: 0, right: 612, bottom: 792, width: 612, height: 792, x: 0, y: 0,
+        toJSON: () => ({}),
+      });
+      vi.mocked(document.elementFromPoint).mockReturnValue(wrap);
+      vi.spyOn(window, "getSelection").mockReturnValue({
+        isCollapsed: false, toString: () => "selected text",
+        getRangeAt: () => ({ getClientRects: () => [{ left: 10, top: 20, right: 110, bottom: 32, width: 100, height: 12 }] }),
+        removeAllRanges: vi.fn(),
+      } as unknown as Selection);
+      host.querySelector(".pdf-scroll")!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 20, clientY: 30 }));
+      await flush();
+      (host.querySelector(".pdf-color-swatch") as HTMLButtonElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await flush();
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("true");
+      expect(await drainPdfWork()).toBe(true);
+      expect(writeHighlights).toHaveBeenCalledTimes(2);
+      expect(writeHighlights.mock.calls[1][2].map((h) => h.id)).toContain("11111111-1111-4111-8111-111111111111");
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("false");
+    } finally {
+      dispose();
+    }
+  });
+
   it("offers OG reference actions for existing text and area highlights", async () => {
     const textId = "11111111-1111-4111-8111-111111111111";
     const areaId = "22222222-2222-4222-8222-222222222222";

@@ -19,6 +19,38 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it("does not create or navigate to a page after its resolve finishes in another graph (I-20)", async () => {
+    let finish!: (result: { kind: "absent"; id: string }) => void;
+    const resolve = vi.spyOn(backend(), "resolvePage").mockImplementationOnce(() =>
+      new Promise((done) => { finish = done; })
+    );
+    const save = vi.spyOn(backend(), "savePage");
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
+      hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false,
+    });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "Brand new page";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(root.textContent).toContain("Create page: Brand new page"));
+    const create = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]
+      .find((row) => row.textContent?.includes("Create page:"))!;
+    create.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(resolve).toHaveBeenCalled());
+    resetStore();
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
+    finish({ kind: "absent", id: "pages/Brand new page.md" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(save).not.toHaveBeenCalled();
+    expect(route()).toEqual({ kind: "journals" });
+    dispose();
+    resolve.mockRestore();
+    save.mockRestore();
+  });
+
   it.each([
     [true, true],
     [false, false],

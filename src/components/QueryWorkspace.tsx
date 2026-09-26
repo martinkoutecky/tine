@@ -12,6 +12,8 @@ import {
   type JSX,
 } from "solid-js";
 import { backend } from "../backend";
+import { captureBinding, stillBound } from "../binding";
+import { errorFamily } from "../errorFamily";
 import {
   friendlySearchToDsl,
   friendlySearchToSavedDsl,
@@ -51,7 +53,7 @@ export interface MaterializeQueryInput {
 export interface MaterializeQueryDependencies {
   /** The one name answerer: an existing file, an alias, or where a new page goes. */
   resolvePage(name: string, kind: "page"): Promise<ResolvedPage>;
-  savePage(id: string, page: PageDto, baseRev: null, force: false): Promise<string>;
+  savePage(id: string, page: PageDto, baseRev: null, force: false, bindingGeneration?: number): Promise<string>;
   /** Rust-authoritative friendly-search validation; required before every nonblank friendly save. */
   runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane: string, explain: boolean): Promise<QueryExecution>;
 }
@@ -96,6 +98,7 @@ export async function materializeQueryWorkspace(
   input: MaterializeQueryInput,
   deps: MaterializeQueryDependencies
 ): Promise<MaterializeQueryResult> {
+  const binding = captureBinding();
   const name = input.title.trim();
   if (!name) {
     return { ok: false, kind: "invalid-name", message: "Enter a page title before saving." };
@@ -106,6 +109,7 @@ export async function materializeQueryWorkspace(
   if (input.sourceKind === "search") {
     try {
       const execution = await deps.runGraphSearch(input.source.trim(), 0, 0, `query-workspace:${input.routeId}:materialize`, true);
+      if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
       if (execution.cancelled) return { ok: false, kind: "invalid-query", message: "Search validation was superseded. Try saving again." };
       if (execution.diagnostics.length) return { ok: false, kind: "invalid-query", message: execution.diagnostics.map((item) => item.message).join(" · ") };
       if (!execution.explanation.branches.length) return { ok: false, kind: "empty-query", message: "Enter a search with at least one included term before saving." };
@@ -117,6 +121,7 @@ export async function materializeQueryWorkspace(
 
   try {
     const resolved = await deps.resolvePage(name, "page");
+    if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     if (resolved.kind === "existing") {
       return {
         ok: false,
@@ -145,12 +150,14 @@ export async function materializeQueryWorkspace(
         children: [],
       }],
     };
-    const rev = await deps.savePage(resolved.id, page, null, false);
+    const rev = await deps.savePage(resolved.id, page, null, false, binding.backendGeneration);
+    if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     bumpPageInventoryRev();
     return { ok: true, name, page, rev };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    if (/conflict|already exists/i.test(detail)) {
+    if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (errorFamily(error) === "conflict") {
       return {
         ok: false,
         kind: "conflict",
@@ -169,7 +176,7 @@ function defaultDependencies(): QueryWorkspaceDependencies {
   const api = backend();
   return {
     resolvePage: (name, kind) => api.resolvePage(name, kind),
-    savePage: (id, page, baseRev, force) => api.savePage(id, page, baseRev, force),
+    savePage: (id, page, baseRev, force, bindingGeneration) => api.savePage(id, page, baseRev, force, bindingGeneration),
     runGraphSearch: (source, pageLimit, blockLimit, lane, explain) =>
       api.runGraphSearch(source, pageLimit, blockLimit, lane, explain),
     runQuery: (source) => api.runQuery(source),

@@ -161,6 +161,7 @@ export interface GraphAccessInspection {
 }
 
 export interface Backend {
+  graphBindingGeneration(): number;
   inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
   approveExternalAssets(graphRoot: string, assetsPath: string): Promise<void>;
   loadGraph(path: string): Promise<LoadGraphResult>;
@@ -220,7 +221,7 @@ export interface Backend {
   /** Save a page. `baseRev` is the file hash the editor loaded; the backend
    *  rejects with "conflict" if the file changed on disk since then (unless
    *  `force`). Returns the new on-disk rev to use as the next baseline. */
-  savePage(id: string, page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
+  savePage(id: string, page: PageDto, baseRev: string | null, force?: boolean, bindingGeneration?: number): Promise<string>;
   /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
   guidePages(): Promise<GuidePage[]>;
   /** Copy the bundled Guide into the real graph under `tine-guide/`. */
@@ -515,6 +516,7 @@ export interface BackupInfo {
 }
 
 export interface GraphChange {
+  binding_generation?: number;
   name: string;
   kind: "journal" | "page";
   created: boolean;
@@ -538,10 +540,12 @@ class TauriBackend implements Backend {
     });
   }
 
-  private async call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  graphBindingGeneration() { return this.bindingGeneration; }
+
+  private async call<T>(cmd: string, args?: Record<string, unknown>, bindingGeneration = this.bindingGeneration): Promise<T> {
     await this.ready;
-    const leasedArgs = this.bindingGeneration
-      ? { ...(args ?? {}), bindingGeneration: this.bindingGeneration }
+    const leasedArgs = bindingGeneration
+      ? { ...(args ?? {}), bindingGeneration }
       : args;
     return this.invoke<T>(cmd, leasedArgs);
   }
@@ -651,8 +655,8 @@ class TauriBackend implements Backend {
   graphSourceFiles(includeJournals: boolean) {
     return this.call<GraphSourceFile[]>("graph_source_files", { includeJournals });
   }
-  savePage(id: string, page: PageDto, baseRev: string | null, force = false) {
-    return this.call<string>("save_page", { id, page, baseRev, force });
+  savePage(id: string, page: PageDto, baseRev: string | null, force = false, bindingGeneration = this.bindingGeneration) {
+    return this.call<string>("save_page", { id, page, baseRev, force }, bindingGeneration);
   }
   guidePages() {
     return this.call<GuidePage[]>("guide_pages");

@@ -2,6 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
+import { captureBinding, stillBound } from "./binding";
 import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
@@ -209,15 +210,19 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
 // from that template when it doesn't exist yet (or is empty). No-op when unset,
 // so default behaviour is unchanged.
 async function ensureJournalTemplate(): Promise<void> {
+  const binding = captureBinding();
   const tname = graphMeta()?.default_journal_template;
   if (!tname) return;
   const title = journalTitle(new Date());
   try {
     const existing = await backend().getPage(title, "journal");
+    if (!stillBound(binding)) return;
     if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return; // already has content
     const tmpl = (await backend().listTemplates()).find((t) => t.name === tname);
+    if (!stillBound(binding)) return;
     if (!tmpl) return;
     await prepareTemplateVars();
+    if (!stillBound(binding)) return;
     const resolve = (b: BlockDto): BlockDto => ({
       id: "",
       raw: applyTemplateVars(b.raw, title),
@@ -225,6 +230,7 @@ async function ensureJournalTemplate(): Promise<void> {
       children: b.children.map(resolve),
     });
     const resolved = existing?.id ? null : await backend().resolvePage(title, "journal");
+    if (!stillBound(binding)) return;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
     await backend().savePage(
       existing?.id ?? resolved!.id,
@@ -238,7 +244,8 @@ async function ensureJournalTemplate(): Promise<void> {
         format: existing?.format,
       },
       existing?.rev ?? null,
-      false
+      false,
+      binding.backendGeneration
     );
   } catch {
     // ignore — never block graph open on template insertion
@@ -324,7 +331,9 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     pushToast(`Created the graph at ${root}, but kept the current graph open.`, "info");
     return loaded;
   }
+  const binding = captureBinding();
   await seedTodayJournal();
+  if (!stillBound(binding)) return { kind: "aborted" };
   openPage("Welcome to Tine", "page"); // land on the tour, not the empty journal feed
   return loaded;
 }
@@ -332,11 +341,14 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
 /** Give a freshly-created demo graph a friendly today's-journal entry so the
  *  Journals view isn't empty on first open. Best-effort; never blocks. */
 async function seedTodayJournal(): Promise<void> {
+  const binding = captureBinding();
   try {
     const title = journalTitle(new Date());
     const existing = await backend().getPage(title, "journal");
+    if (!stillBound(binding)) return;
     if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return;
     const resolved = existing?.id ? null : await backend().resolvePage(title, "journal");
+    if (!stillBound(binding)) return;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
     await backend().savePage(
       existing?.id ?? resolved!.id,
@@ -355,7 +367,8 @@ async function seedTodayJournal(): Promise<void> {
         ],
       },
       null,
-      false
+      false,
+      binding.backendGeneration
     );
   } catch {
     // best-effort — never block opening the new graph on the seed

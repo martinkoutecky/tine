@@ -881,6 +881,7 @@ export function mockBackend(): Backend {
       }
       return files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length }));
     },
+    graphBindingGeneration: () => 1,
     async savePage(_id: string, _page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
       return "mock-rev"; // no-op in mock
     },

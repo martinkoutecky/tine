@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { handleGraphChange, installMobileExternalLinkHandler } from "./App";
 import { resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./store";
+import { pageToDto, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./store";
 import { pageInventoryRev } from "./ui";
 
 function addAnchor(href: string): HTMLAnchorElement {
@@ -88,6 +88,21 @@ describe("mobile external link delegation", () => {
 });
 
 describe("journal watcher feed reconciliation", () => {
+  it("does not reload old watcher bytes into a same-name page after a graph switch (I-20)", async () => {
+    const name = "Same name";
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
+    setDoc({ byId: { old: { ...node("old", name), raw: "old graph" } }, pages: [page(name, "page", ["old"])], feed: [name], loaded: true });
+    let finish!: (dto: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const changed = handleGraphChange({ name, kind: "page", created: false, removed: false });
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    resetStore();
+    setDoc({ byId: { fresh: { ...node("fresh", name), raw: "new graph" } }, pages: [page(name, "page", ["fresh"])], feed: [name], loaded: true });
+    finish({ name, kind: "page", title: name, id: "pages/Same name.md", pre_block: null, blocks: [{ id: "stale", raw: "stale watcher", collapsed: false, children: [] }] });
+    await changed;
+    expect(pageToDto(name)!.blocks[0].raw).toBe("new graph");
+  });
+
   it("restarts a live Journals feed when the changed journal was already loaded in another pane", async () => {
     const name = "15th July, 2030";
     restorePaneLayout(
