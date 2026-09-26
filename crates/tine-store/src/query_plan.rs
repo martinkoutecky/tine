@@ -2016,9 +2016,9 @@ mod tests {
             "foo",
             50,
             QueryPageScope {
+                path: Some("pages/Opinion Diffusion.md".into()),
                 name: "Opinion Diffusion".into(),
                 page_kind: PageKind::Page,
-                path: Some("pages/Opinion Diffusion.md".into()),
             },
         )
         .execute(&graph, || false);

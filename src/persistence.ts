@@ -8,7 +8,7 @@
 // page snapshot (pageToDto) and the loaded flag (doc.loaded) — used at call time,
 // so the store↔persistence import cycle resolves cleanly.
 
-import { doc, pageByName, pageInstanceGeneration, pageToDto } from "./store";
+import { doc, pageByName, pageInstanceGeneration, pageToDto, setPageId } from "./store";
 import { backend } from "./backend";
 import { markConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
 import type { ClipboardSourcePage } from "./clipboard";
@@ -172,7 +172,10 @@ function cutSourceMatches(expected: ClipboardSourcePage): boolean {
   return !!page
     && page.name === expected.name
     && page.kind === expected.kind
-    && page.path === expected.path
+    // A grant taken before the page's first save has no file id; that save
+    // then records the id it created (`setPageId`) on the same instance, so
+    // the generation check alone pins it.
+    && (expected.path === undefined || page.id === expected.path)
     && pageInstanceGeneration(expected.name) === expected.generation;
 }
 
@@ -234,12 +237,22 @@ async function doSave(
   dirty.delete(name);
   try {
     const baseline = baseRev.get(name) ?? null;
-    const rev = await backend().savePage(dto, baseline, force);
+    const generation = pageInstanceGeneration(name);
+    let id = pageByName(name)?.id;
+    if (!id) {
+      const resolved = await backend().resolvePage(dto.name, dto.kind);
+      if (resolved.kind === "alias") throw new Error("conflict: page name is an alias");
+      id = resolved.id;
+    }
+    const rev = await backend().savePage(id, dto, baseline, force);
     // A reload/rename/delete/rebind while savePage was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
     // authorize identity reuse or update the replacement instance's baseline.
     if (expectedCutSource && !cutSourceUsable(expectedCutSource)) return false;
     if (token === graphToken) {
+      // Record the file this save wrote, but only on the instance that asked:
+      // a reload/rebind meanwhile carries its own id.
+      if (pageInstanceGeneration(name) === generation) setPageId(name, id);
       baseRev.set(name, rev);
       if (baseline === null) bumpPageInventoryRev();
     }

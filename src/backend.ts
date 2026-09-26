@@ -211,14 +211,15 @@ export interface Backend {
   journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
-  getPage(name: string, kind: "journal" | "page"): Promise<PageDto | null>;
+  getPage(name: string, kind: "journal" | "page"): Promise<import("./types").PageRead | null>;
+  resolvePage(name: string, kind: "journal" | "page"): Promise<import("./types").ResolvedPage>;
   /** Raw source text of every md/org file in the open graph (+journals when
    *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
   graphSourceFiles(includeJournals: boolean): Promise<GraphSourceFile[]>;
   /** Save a page. `baseRev` is the file hash the editor loaded; the backend
    *  rejects with "conflict" if the file changed on disk since then (unless
    *  `force`). Returns the new on-disk rev to use as the next baseline. */
-  savePage(page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
+  savePage(id: string, page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
   /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
   guidePages(): Promise<GuidePage[]>;
   /** Copy the bundled Guide into the real graph under `tine-guide/`. */
@@ -315,7 +316,7 @@ export interface Backend {
   readJournalFile(name: string): Promise<string>;
   /** Load a page from a SPECIFIC file by its graph-root-relative path — reaches a
    *  duplicate-day stray that shares a (kind,name) with the canonical file (#21). */
-  getPageByPath(path: string): Promise<PageDto | null>;
+  getPageByPath(path: string): Promise<import("./types").PageRead | null>;
   /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
    *  `src` — fold a duplicate-day stray into the canonical day (#21). */
   mergePages(src: string, dst: string): Promise<void>;
@@ -646,13 +647,16 @@ class TauriBackend implements Backend {
     return this.call<number[]>("journal_content_days");
   }
   getPage(name: string, kind: "journal" | "page") {
-    return this.call<PageDto | null>("get_page", { name, kind });
+    return this.call<import("./types").PageRead | null>("get_page", { name, kind });
+  }
+  resolvePage(name: string, kind: "journal" | "page") {
+    return this.call<import("./types").ResolvedPage>("resolve_page", { name, kind });
   }
   graphSourceFiles(includeJournals: boolean) {
     return this.call<GraphSourceFile[]>("graph_source_files", { includeJournals });
   }
-  savePage(page: PageDto, baseRev: string | null, force = false) {
-    return this.call<string>("save_page", { page, baseRev, force });
+  savePage(id: string, page: PageDto, baseRev: string | null, force = false) {
+    return this.call<string>("save_page", { id, page, baseRev, force });
   }
   guidePages() {
     return this.call<GuidePage[]>("guide_pages");
@@ -844,7 +848,7 @@ class TauriBackend implements Backend {
     return this.call<string>("read_journal_file", { name });
   }
   getPageByPath(path: string) {
-    return this.call<PageDto | null>("get_page_by_path", { path });
+    return this.call<import("./types").PageRead | null>("get_page_by_path", { path });
   }
   mergePages(src: string, dst: string) {
     return this.call<void>("merge_pages", { src, dst });

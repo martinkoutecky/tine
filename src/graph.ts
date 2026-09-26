@@ -301,16 +301,17 @@ async function ensureJournalTemplate(): Promise<void> {
       collapsed: false,
       children: b.children.map(resolve),
     });
+    const resolved = existing?.id ? null : await backend().resolvePage(title, "journal");
+    if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
     await backend().savePage(
+      existing?.id ?? resolved!.id,
       {
         name: title,
         kind: "journal",
         title,
         pre_block: existing?.pre_block ?? null,
         blocks: tmpl.blocks.map(resolve),
-        // An empty journal may already exist on disk. Preserve its concrete file
-        // and format rather than re-resolving it as a new canonical markdown page.
-        path: existing?.path,
+        // An empty journal may already exist on disk. Preserve its format.
         format: existing?.format,
       },
       existing?.rev ?? null,
@@ -412,7 +413,10 @@ async function seedTodayJournal(): Promise<void> {
     const title = journalTitle(new Date());
     const existing = await backend().getPage(title, "journal");
     if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return;
+    const resolved = existing?.id ? null : await backend().resolvePage(title, "journal");
+    if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
     await backend().savePage(
+      existing?.id ?? resolved!.id,
       {
         name: title,
         kind: "journal",

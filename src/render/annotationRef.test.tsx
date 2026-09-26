@@ -1,3 +1,4 @@
+import type { PageDto, PageRead } from "../types";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -52,7 +53,7 @@ describe("PDF annotation block references (GH #61)", () => {
       title: "A Book",
       pre_block: "file:: [A Book](../assets/A_Book.pdf)\nfile-path:: ../assets/A_Book.pdf",
       blocks: [],
-    });
+    } as PageDto as PageRead);
 
     const host = document.createElement("div");
     document.body.appendChild(host);

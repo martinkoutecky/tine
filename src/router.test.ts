@@ -184,7 +184,7 @@ describe("reuse already-open tabs on user navigation", () => {
       pages: [{
         name: "Target", kind: "page", title: "Target", preBlock: null,
         roots: ["bfresh-route"], format: "md", readOnly: false, guide: false,
-        path: "pages/Target.md",
+        id: "pages/Target.md",
       }],
       feed: ["Target"],
       loaded: true,
@@ -318,7 +318,7 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
       },
       pages: [{
         name: "Twin", kind: "page", title: "Twin", preBlock: null, roots: [id],
-        format: "md", readOnly: false, guide: false, path,
+      format: "md", readOnly: false, guide: false, id: path,
       }],
       feed: ["Twin"],
       loaded: true,

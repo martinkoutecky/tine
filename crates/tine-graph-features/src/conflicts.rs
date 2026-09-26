@@ -251,7 +251,7 @@ fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
         rev: None,
         format: format(&id.file()),
         read_only: false,
-        path: Some(id.clone()),
+
         guide: false,
     }
 }

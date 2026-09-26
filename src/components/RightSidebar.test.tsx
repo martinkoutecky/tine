@@ -4,7 +4,7 @@ import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
 import { doc, loadSingle, pageByName, persistentBlockRef, resetStore } from "../store";
-import type { PageDto } from "../types";
+import type { PageDto, PageRead } from "../types";
 import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar } from "../ui";
 import { RightSidebar } from "./RightSidebar";
 
@@ -77,13 +77,13 @@ describe("right sidebar collection disclosures", () => {
   it("resolves a durable Org sidebar UUID to its transient live store node", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     const transient = "bfresh-org-sidebar";
-    const orgPage: PageDto = {
+    const orgPage: PageRead = {
       name: "2026-07-22",
       kind: "journal",
       title: "Wednesday, 22 July 2026",
       pre_block: null,
       format: "org",
-      path: "journals/2026_07_22.org",
+      id: "journals/2026_07_22.org",
       blocks: [{
         id: transient,
         raw: `Fresh Org target\n:PROPERTIES:\n:id: ${uuid}\n:END:`,
@@ -99,7 +99,7 @@ describe("right sidebar collection disclosures", () => {
         uuid,
         page: orgPage.name,
         pageKind: "journal",
-        path: orgPage.path,
+        path: orgPage.id,
       }],
     });
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
@@ -120,7 +120,7 @@ describe("right sidebar collection disclosures", () => {
   });
 
   it("replaces a same-name loaded page with the sidebar item's exact physical owner", async () => {
-    loadSingle({ ...page, path: "pages/Sidebar test.md" });
+    loadSingle({ ...page, id: "pages/Sidebar test.md" });
     applySidebarSession({
       right: true,
       items: [{
@@ -130,9 +130,9 @@ describe("right sidebar collection disclosures", () => {
         path: "pages/duplicates/Sidebar test.md",
       }],
     });
-    const exact = {
+    const exact: PageRead = {
       ...page,
-      path: "pages/duplicates/Sidebar test.md",
+      id: "pages/duplicates/Sidebar test.md",
       blocks: [{ id: "exact-root", raw: "Noncanonical exact content", collapsed: false, children: [] }],
     };
     const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
@@ -147,7 +147,7 @@ describe("right sidebar collection disclosures", () => {
     try {
       await vi.waitFor(() => {
         expect(root.textContent).toContain("Noncanonical exact content");
-        expect(pageByName(page.name)?.path).toBe("pages/duplicates/Sidebar test.md");
+        expect(pageByName(page.name)?.id).toBe("pages/duplicates/Sidebar test.md");
       });
       expect(getPageByPath).toHaveBeenCalledWith("pages/duplicates/Sidebar test.md");
       expect(getPage).not.toHaveBeenCalled();
@@ -162,7 +162,7 @@ describe("right sidebar collection disclosures", () => {
       right: true,
       items: [{ kind: "page", name: "Page1", pageKind: "page" }],
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(canonical);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(canonical as PageRead);
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});

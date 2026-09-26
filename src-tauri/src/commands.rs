@@ -32,12 +32,52 @@ fn feature_pdf_error(error: std::io::Error) -> String {
     error.to_string()
 }
 
-fn page_dto(read: tine_store::PageRead) -> PageDto {
+#[derive(Serialize)]
+pub(crate) struct PageWire {
+    id: String,
+    #[serde(flatten)]
+    doc: PageDto,
+}
+
+impl std::ops::Deref for PageWire {
+    type Target = PageDto;
+
+    fn deref(&self) -> &PageDto {
+        &self.doc
+    }
+}
+
+fn page_dto(read: tine_store::PageRead) -> PageWire {
     let mut doc = read.doc;
     doc.rev = Some(read.rev.into());
     doc.read_only = read.read_only.is_some();
-    doc.path = Some(read.id);
-    doc
+    PageWire {
+        id: read.id.into(),
+        doc,
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ResolvedWire {
+    Existing { id: String, others: Vec<String> },
+    Alias { owners: Vec<String> },
+    Absent { id: String },
+}
+
+impl From<Resolved> for ResolvedWire {
+    fn from(value: Resolved) -> Self {
+        match value {
+            Resolved::Existing { id, others } => Self::Existing {
+                id: id.into(),
+                others: others.into_iter().map(Into::into).collect(),
+            },
+            Resolved::Alias { owners } => Self::Alias {
+                owners: owners.into_iter().map(Into::into).collect(),
+            },
+            Resolved::Absent { id } => Self::Absent { id: id.into() },
+        }
+    }
 }
 
 fn store_error(error: StoreError) -> String {
@@ -642,7 +682,7 @@ mod inventory_adapter_tests {
 
 #[derive(Serialize)]
 pub(crate) struct JournalFeedPage {
-    pages: Vec<PageDto>,
+    pages: Vec<PageWire>,
     next_before_day: Option<i64>,
     done: bool,
     as_of_day: i64,
@@ -663,7 +703,7 @@ fn collect_journal_feed_page<F>(
     mut load: F,
 ) -> Result<JournalFeedPage, String>
 where
-    F: FnMut(&FeedEntry) -> Result<PageDto, std::io::Error>,
+    F: FnMut(&FeedEntry) -> Result<PageWire, std::io::Error>,
 {
     // A zero limit is authoritative: do not scan/load the feed merely to
     // discover that the caller requested no rows. No cursor advances because
@@ -760,12 +800,16 @@ mod journal_feed_tests {
             rel_path: None,
         }
     }
-    fn dto(entry: &FeedEntry) -> PageDto {
-        serde_json::from_value(serde_json::json!({
+    fn dto(entry: &FeedEntry) -> PageWire {
+        let doc = serde_json::from_value(serde_json::json!({
             "name": entry.name, "kind": "journal", "title": entry.name,
             "pre_block": null, "blocks": []
         }))
-        .unwrap()
+        .unwrap();
+        PageWire {
+            id: entry.name.clone(),
+            doc,
+        }
     }
 
     #[test]
@@ -896,7 +940,7 @@ pub(crate) fn get_page(
     name: String,
     kind: PageKind,
     state: GraphContext<'_>,
-) -> Result<Option<PageDto>, String> {
+) -> Result<Option<PageWire>, String> {
     let slot = slot_for_context(&state)?;
     let resolved = slot
         .store
@@ -913,6 +957,17 @@ pub(crate) fn get_page(
         Err(StoreError::NotFound) => Ok(None),
         Err(error) => Err(store_error(error)),
     }
+}
+
+#[tauri::command]
+pub(crate) fn resolve_page(
+    name: String,
+    kind: PageKind,
+    state: GraphContext<'_>,
+) -> Result<ResolvedWire, String> {
+    Ok(whole_graph(&state)?
+        .resolve(&name, kind == PageKind::Journal)
+        .into())
 }
 
 /// Raw text of every Markdown/Org file in the open graph (`pages/`, plus
@@ -934,6 +989,7 @@ pub(crate) fn graph_source_files(
 
 #[tauri::command]
 pub(crate) fn save_page(
+    id: String,
     page: PageDto,
     base_rev: Option<String>,
     force: Option<bool>,
@@ -943,10 +999,7 @@ pub(crate) fn save_page(
     if page.guide {
         return save_outcome_to_wire(SaveOutcome::GuideEphemeral, &page);
     }
-    let id = match slot.store.target_for_save(&page) {
-        Ok(id) => id,
-        Err(outcome) => return save_outcome_to_wire(outcome, &page),
-    };
+    let id = PageId::from(id);
     let base = if force.unwrap_or(false) {
         // Interim keep-mine: the banner shows no disk version yet. Read the
         // current one, then let BOTH save guards reject any later external edit.
@@ -2577,7 +2630,7 @@ pub(crate) fn read_journal_file(name: String, state: GraphContext<'_>) -> Result
 pub(crate) fn get_page_by_path(
     path: String,
     state: GraphContext<'_>,
-) -> Result<Option<PageDto>, String> {
+) -> Result<Option<PageWire>, String> {
     let slot = slot_for_context(&state)?;
     match slot.store.page(&PageId::from(path)) {
         Ok(read) => Ok(Some(page_dto(read))),

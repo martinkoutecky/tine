@@ -69,20 +69,25 @@ export interface PageDto {
   /** True for an org page Tine can't round-trip byte-for-byte: shown but not
    *  editable, so Tine never rewrites (and risks corrupting) it. */
   read_only?: boolean;
-  /** Graph-root-relative path of the file this page was loaded from
-   *  (`journals/2026_06_26.org`). Echoed back on save so a page pinned to a
-   *  SPECIFIC file (a duplicate-day stray, #21) saves to its own file rather than
-   *  being re-resolved by name to the canonical one. Empty for a brand-new page. */
-  path?: string;
   /** Bundled in-app Guide page: read-only, ephemeral, and excluded from normal
    *  graph persistence/search/reference surfaces. */
   guide?: boolean;
 }
 
+/** A page loaded from one concrete file. Its identity is returned unchanged on save. */
+export interface PageRead extends PageDto {
+  id: string;
+}
+
+export type ResolvedPage =
+  | { kind: "existing"; id: string; others: string[] }
+  | { kind: "alias"; owners: string[] }
+  | { kind: "absent"; id: string };
+
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
-  pages: PageDto[];
+  pages: PageRead[];
   next_before_day: number | null;
   done: boolean;
   as_of_day: number;

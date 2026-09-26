@@ -4642,9 +4642,9 @@ mod tests {
             8,
             8,
             Some(crate::query_plan::QueryPageScope {
+                path: Some("pages/search.md".into()),
                 name: "Search".into(),
                 page_kind: PageKind::Page,
-                path: Some("pages/search.md".into()),
             }),
             false,
         ));

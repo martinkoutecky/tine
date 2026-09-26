@@ -38,7 +38,7 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
         title: "Source",
         preBlock: null,
         roots: [runtimeId],
-        path,
+        id: path,
         format: "md",
         readOnly: false,
         guide: false,

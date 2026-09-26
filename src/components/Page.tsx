@@ -210,7 +210,7 @@ export function PageView(): JSX.Element {
             ? await backend().getPageByPath(r.path)
             : await backend().getPage(r.name, r.pageKind);
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
-          if (r.path && (!dto || dto.path !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
+          if (r.path && (!dto || dto.id !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
             throw new Error("The selected physical page is no longer available at that path.");
           }
           // Core page identity is Unicode-case-insensitive while display names
@@ -615,7 +615,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         alert("Couldn't save pending edits — resolve the conflict before renaming.");
         return;
       }
-      if (props.page.path) await backend().renamePage(props.page.name, next, props.page.path);
+      if (props.page.id) await backend().renamePage(props.page.name, next, props.page.id);
       else await backend().renamePage(props.page.name, next);
       // The backend rewrote refs across many pages via the self-write guard (no
       // watcher reload), so every in-memory page is now potentially stale; reset

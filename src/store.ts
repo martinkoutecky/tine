@@ -108,11 +108,8 @@ export interface FeedPage {
   readOnly: boolean;
   /** Bundled in-app Guide page: read-only and ephemeral. */
   guide: boolean;
-  /** Graph-root-relative file this page was loaded from. Sent back on save so a
-   *  page pinned to a SPECIFIC file (a duplicate-day stray, #21) saves to its own
-   *  file, not the canonical one. Empty/absent for a brand-new page (resolved by
-   *  name). */
-  path?: string;
+  /** Concrete file identity returned by the backend; absent until first save. */
+  id?: string;
 }
 
 interface DocState {
@@ -208,6 +205,12 @@ export function pageByName(name: string): FeedPage | undefined {
   return i === undefined ? undefined : doc.pages[i];
 }
 
+/** Record the identity chosen for a new page after its first successful save. */
+export function setPageId(name: string, id: string): void {
+  const i = pageIndexByName().get(name);
+  if (i !== undefined) setDoc("pages", i, "id", id);
+}
+
 /** The format ("md"/"org") to parse a page's inline content with. Exact for a
  *  loaded page; for one that isn't loaded (e.g. the source of a backlink) fall back
  *  to the graph's preferred format — correct for single-format graphs, a safe guess
@@ -280,7 +283,7 @@ function flatten(
   });
 }
 
-function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
+function toFeedPage(dto: PageDto & { id?: string }, byId: Record<string, Node>): FeedPage {
   const roots = flatten(dto.blocks, null, dto.name, byId, dto.format ?? "md");
   return {
     name: dto.name,
@@ -291,7 +294,7 @@ function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
     format: dto.format ?? "md",
     readOnly: dto.read_only ?? false,
     guide: dto.guide ?? false,
-    path: dto.path,
+    id: dto.id,
   };
 }
 
@@ -314,7 +317,7 @@ function purgePageNodes(s: DocState, pageName: string) {
 /** Merge a page into the working set, replacing any prior copy of that page.
  *  Other loaded pages (and their nodes) are left untouched — so a page open in
  *  the sidebar survives navigating the main view elsewhere. */
-function upsertPage(dto: PageDto) {
+function upsertPage(dto: PageDto & { id?: string }) {
   // A real page with this name exists again → lift any delete tombstone so edits
   // to the freshly-(re)created page save normally.
   untombstone(dto.name);
@@ -357,8 +360,8 @@ function upsertPage(dto: PageDto) {
  *  i.e. a self-write echo, not a real external change. Lets `upsertPage` skip a
  *  needless reload that would otherwise reset block identities and invalidate the
  *  undo history for content we already hold. */
-function pageContentMatches(dto: PageDto, page: FeedPage): boolean {
-  if ((dto.path ?? "") !== (page.path ?? "")) return false;
+function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boolean {
+  if ((dto.id ?? "") !== (page.id ?? "")) return false;
   if ((dto.pre_block ?? null) !== (page.preBlock ?? null)) return false;
   const eq = (b: BlockDto, id: string): boolean => {
     const n = doc.byId[id];
@@ -372,9 +375,9 @@ function pageContentMatches(dto: PageDto, page: FeedPage): boolean {
  *  satellite surfaces — sidebar / query results / embeds — so they render the
  *  same live, editable nodes as the main view). Idempotent: never clobbers an
  *  already-loaded page's in-progress edits. */
-export function ensurePageLoaded(dto: PageDto) {
+export function ensurePageLoaded(dto: PageDto & { id?: string }) {
   const existing = doc.pages.find((p) => p.name === dto.name);
-  if (existing && (existing.path ?? "") === (dto.path ?? "")) return;
+  if (existing && (existing.id ?? "") === (dto.id ?? "")) return;
   // A path-pinned route may intentionally load a duplicate-day stray with the
   // same logical title as the canonical journal. Replace the name slot with the
   // exact requested file instead of silently keeping (and then editing/saving)
@@ -429,7 +432,7 @@ export function forgetPage(name: string) {
  *  resurrecting a just-typed, never-saved page. Returns backend success. */
 export async function deletePage(name: string, kind: PageKind, expectedPath?: string): Promise<boolean> {
   const loaded = pageByName(name);
-  if (expectedPath && loaded?.path !== expectedPath) return false;
+  if (expectedPath && loaded?.id !== expectedPath) return false;
   if (loaded?.readOnly || loaded?.guide) return false;
   // Capture the current (possibly unsaved) content first, so the recoverable trash
   // copy is the LATEST version — not the stale bytes on disk. A CONFLICTED page can
@@ -490,7 +493,7 @@ function pinnedPages(): Set<string> {
 /** Replace a page in the working set from a fresh DTO (e.g. resolving a conflict
  *  with the disk version, or a watcher reload). Updates the main view and any
  *  satellite that shows it, since they share `byId`. */
-export function reloadPage(dto: PageDto) {
+export function reloadPage(dto: PageDto & { id?: string }) {
   upsertPage(dto);
 }
 
@@ -588,7 +591,7 @@ export function reloadDisposition(name: string): ReloadDisposition {
 }
 
 /** Load a single page and make it the main view. */
-export function loadSingle(dto: PageDto, opts: { endEdit?: boolean } = {}) {
+export function loadSingle(dto: PageDto & { id?: string }, opts: { endEdit?: boolean } = {}) {
   upsertUnlessDirty(dto);
   setDoc("feed", [dto.name]);
   setDoc("loaded", true);
@@ -597,7 +600,7 @@ export function loadSingle(dto: PageDto, opts: { endEdit?: boolean } = {}) {
 }
 
 /** Load the journals feed as the main view. */
-export function loadFeed(dtos: PageDto[], opts: { endEdit?: boolean } = {}) {
+export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean } = {}) {
   for (const d of dtos) upsertUnlessDirty(d);
   setDoc("feed", dtos.map((d) => d.name));
   setDoc("loaded", true);
@@ -606,7 +609,7 @@ export function loadFeed(dtos: PageDto[], opts: { endEdit?: boolean } = {}) {
 }
 
 /** Append more pages to the journals feed (infinite scroll). */
-export function appendFeed(dtos: PageDto[]) {
+export function appendFeed(dtos: (PageDto & { id?: string })[]) {
   for (const d of dtos) {
     if (doc.feed.includes(d.name)) continue;
     upsertUnlessDirty(d);
@@ -716,9 +719,6 @@ export function pageToDto(pageName: string): PageDto | null {
     pre_block: preBlock,
     blocks,
     format: p.format,
-    // Pin the save to the exact file this page came from (#21). Absent for a
-    // brand-new page → the backend resolves the file by name, as before.
-    path: p.path,
     guide: p.guide,
     read_only: p.readOnly,
   };
@@ -2566,7 +2566,7 @@ export function resolveBlockRef(ref: LoadedBlockRef): string | null {
   if (
     !owner
     || owner.kind !== ref.pageKind
-    || (ref.path !== undefined && owner.path !== ref.path)
+    || (ref.path !== undefined && owner.id !== ref.path)
   ) return null;
 
   const matches = (id: string): boolean => {
@@ -2699,7 +2699,7 @@ export function blockRef(id: string): LoadedBlockRef {
     uuid: blockExternalId(id) ?? n.id,
     page: n.page,
     pageKind: owner?.kind ?? "page",
-    ...(owner?.path ? { path: owner.path } : {}),
+    ...(owner?.id ? { path: owner.id } : {}),
   };
 }
 
@@ -2838,7 +2838,7 @@ export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | nul
       pages.set(page.name, {
         name: page.name,
         kind: page.kind,
-        ...(page.path ? { path: page.path } : {}),
+        ...(page.id ? { path: page.id } : {}),
         generation,
       });
     }

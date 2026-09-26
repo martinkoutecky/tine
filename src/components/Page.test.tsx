@@ -21,7 +21,7 @@ import {
 } from "../store";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { journalTitle } from "../journal";
-import type { JournalFeedPage, PageDto, RefGroup } from "../types";
+import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
@@ -84,8 +84,15 @@ function journalDto(name: string, raw = name): PageDto {
   };
 }
 
+/** A backend read without a file id. These fixtures predate `PageRead.id`
+ *  (B15b); a page that has no id is saved via `resolvePage`, and an id-less
+ *  read matches an id-less loaded page exactly as a path-less one did. */
+function unpinned(dto: PageDto): PageRead {
+  return dto as PageRead;
+}
+
 function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): JournalFeedPage {
-  return { pages, next_before_day: null, done: true, as_of_day: localDay(), ...patch };
+  return { pages: pages.map(unpinned), next_before_day: null, done: true, as_of_day: localDay(), ...patch };
 }
 
 describe("Journals feed generation lifecycle", () => {
@@ -455,12 +462,12 @@ describe("zoomed block view", () => {
       kind: "page" as const,
       title: "Fresh zoom",
       pre_block: null,
-      path: "pages/Fresh zoom.md",
+      id: "pages/Fresh zoom.md",
       blocks: [{ id: uuid, raw, collapsed: false, children: [] }],
     };
     setDoc({
       byId: { [transient]: node(transient, raw, dto.name) },
-      pages: [{ ...page(dto.name, "page", [transient]), path: dto.path }],
+      pages: [{ ...page(dto.name, "page", [transient]), id: dto.id }],
       feed: [dto.name],
       loaded: true,
     });
@@ -469,7 +476,7 @@ describe("zoomed block view", () => {
       kind: "page",
       name: dto.name,
       pageKind: dto.kind,
-      path: dto.path,
+      path: dto.id,
       block: uuid,
     });
 
@@ -509,7 +516,7 @@ describe("zoomed block view", () => {
       feed: [dto.name],
       loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     focusBlock(parent);
 
     const { root, dispose } = mount(() => <PageView />);
@@ -545,7 +552,7 @@ describe("zoomed block view", () => {
       },
       pages: [page(dto.name, "page", [parent, outside])], feed: [], loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     focusBlock(parent);
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -583,7 +590,7 @@ describe("trailing page block target", () => {
       byId: { last: node("last", "Last text", "Continue") },
       pages: [page("Continue", "page", ["last"])], feed: [], loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage("Continue", "page");
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -639,7 +646,7 @@ describe("trailing page block target", () => {
       },
       pages: [page(dto.name, "page", ["parent"])], feed: [], loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page");
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -662,7 +669,7 @@ describe("trailing page block target", () => {
       blocks: [{ id: "last", raw: "Last text", collapsed: false, children: [] }],
     };
     setDoc({ byId: { last: node("last", "Last text", dto.name) }, pages: [page(dto.name, "page", ["last"])], feed: [], loaded: true });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page");
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -676,18 +683,23 @@ describe("trailing page block target", () => {
   });
 
   it("adds a zoom-root child and hides the target on read-only pages", async () => {
-    const dto = {
+    // A loaded page carries its file id, as every backend read does. (An
+    // id-less fixture here would acquire one from its first save and then no
+    // longer match the id-less reread.)
+    const dto: PageRead = {
       name: "Zoom",
       kind: "page" as const,
       title: "Zoom",
       pre_block: null,
+      id: "pages/Zoom.md",
       blocks: [{ id: "zoom", raw: "Root", collapsed: false, children: [] }],
     };
     setDoc({
       byId: { zoom: node("zoom", "Root", "Zoom") },
-      pages: [page("Zoom", "page", ["zoom"])], feed: [], loaded: true,
+      pages: [{ ...page("Zoom", "page", ["zoom"]), id: dto.id }], feed: [], loaded: true,
     });
     vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
     focusBlock("zoom");
     const mounted = mount(() => <PageView />);
     await tick(); await tick();
@@ -707,17 +719,17 @@ describe("trailing page block target", () => {
 
 describe("page actions entry point", () => {
   it("commits title rename once from blur or Enter and lets Escape cancel (GH #233)", async () => {
-    const dto: PageDto = {
+    const dto: PageRead = {
       name: "Rename me",
       kind: "page",
       title: "Rename me",
       pre_block: null,
-      path: "pages/Rename me.md",
+      id: "pages/Rename me.md",
       blocks: [{ id: "rename-root", raw: "Body", collapsed: false, children: [] }],
     };
     setDoc({
       byId: { "rename-root": node("rename-root", "Body", dto.name) },
-      pages: [{ ...page(dto.name, "page", ["rename-root"]), path: dto.path }],
+      pages: [{ ...page(dto.name, "page", ["rename-root"]), id: dto.id }],
       feed: [],
       loaded: true,
     });
@@ -725,7 +737,7 @@ describe("page actions entry point", () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue();
-    mainPaneRouter.openFile(dto.path!, dto.name, "page", { inPlace: true });
+    mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
     const begin = async (next: string) => {
@@ -746,7 +758,7 @@ describe("page actions entry point", () => {
       blurred.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
       await flushMicrotasks();
       expect(rename).toHaveBeenCalledTimes(1);
-      expect(rename).toHaveBeenLastCalledWith("Rename me", "Blurred name", dto.path);
+      expect(rename).toHaveBeenLastCalledWith("Rename me", "Blurred name", dto.id);
 
       rename.mockClear();
       const entered = await begin("Entered name");
@@ -768,13 +780,13 @@ describe("page actions entry point", () => {
 
   it("keeps a path-bearing title owner through sidebar, new-tab, and menu gestures", async () => {
     const path = "pages/client-b/Twin.md";
-    const dto: PageDto = {
-      name: "Twin", kind: "page", title: "Twin", pre_block: null, path,
+    const dto: PageRead = {
+      name: "Twin", kind: "page", title: "Twin", pre_block: null, id: path,
       blocks: [{ id: "twin-b", raw: "Client B", collapsed: false, children: [] }],
     };
     setDoc({
       byId: { "twin-b": node("twin-b", "Client B", "Twin") },
-      pages: [{ ...page("Twin", "page", ["twin-b"]), path }], feed: [], loaded: true,
+      pages: [{ ...page("Twin", "page", ["twin-b"]), id: path }], feed: [], loaded: true,
     });
     vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
     mainPaneRouter.openFile(path, "Twin", "page", { inPlace: true });
@@ -813,7 +825,7 @@ describe("page actions entry point", () => {
       feed: [],
       loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <><PageView /><PageView /></>);
@@ -863,7 +875,7 @@ describe("page actions entry point", () => {
       feed: [],
       loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -901,7 +913,7 @@ describe("page actions entry point", () => {
       feed: [],
       loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -929,17 +941,17 @@ describe("page route loading", () => {
     const sharedRaw = "Same copied UUID and content";
     const pathA = "pages/client-a/Twin.md";
     const pathB = "pages/client-b/Twin.md";
-    const dto: PageDto = {
+    const dto: PageRead = {
       name: "Twin",
       kind: "page",
       title: "Twin",
-      path: pathB,
+      id: pathB,
       pre_block: null,
       blocks: [{ id: sharedId, raw: sharedRaw, collapsed: false, children: [] }],
     };
     setDoc({
       byId: { [sharedId]: node(sharedId, sharedRaw, dto.name) },
-      pages: [{ ...page(dto.name, "page", [sharedId]), path: pathB }],
+      pages: [{ ...page(dto.name, "page", [sharedId]), id: pathB }],
       feed: [],
       loaded: true,
     });
@@ -958,7 +970,7 @@ describe("page route loading", () => {
       // must not satisfy a zoom route that still claims exact owner B.
       setDoc({
         byId: { [sharedId]: node(sharedId, sharedRaw, dto.name) },
-        pages: [{ ...page(dto.name, "page", [sharedId]), path: pathA }],
+        pages: [{ ...page(dto.name, "page", [sharedId]), id: pathA }],
         feed: [],
         loaded: true,
       });
@@ -982,7 +994,7 @@ describe("page route loading", () => {
       pre_block: null,
       blocks: [{ id: "canonical-page", raw: "canonical page content", collapsed: false, children: [] }],
     };
-    const api = vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    const api = vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage("Page1", "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -1019,7 +1031,7 @@ describe("page route loading", () => {
       if (name === "Slow page") {
         return new Promise((_, reject) => { rejectSlow = reject; });
       }
-      return new Promise((resolve) => { resolveFast = resolve as (value: typeof fast) => void; });
+      return new Promise((resolve) => { resolveFast = (value) => resolve(unpinned(value)); });
     });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -1071,7 +1083,7 @@ describe("page route loading", () => {
       },
       pages: [page(dto.name, "page", ["lead", "parent"])], feed: [], loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page");
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -1113,7 +1125,7 @@ describe("page route loading", () => {
       },
       pages: [page(dto.name, "page", ["lead", "grid"])], feed: [], loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page");
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -1146,7 +1158,7 @@ describe("page properties", () => {
       feed: [dto.name],
       loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -1194,7 +1206,7 @@ describe("page properties", () => {
       feed: [dto.name],
       loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -1237,7 +1249,7 @@ describe("page properties", () => {
       },
       pages: [page(dto.name, "page", [propsId, bodyId])], feed: [dto.name], loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -1270,7 +1282,7 @@ describe("page properties", () => {
       byId: { [propsId]: node(propsId, dto.blocks[0].raw, dto.name) },
       pages: [page(dto.name, "page", [propsId])], feed: [dto.name], loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -1301,7 +1313,7 @@ describe("Markdown preamble content", () => {
       pages: [page(dto.name, "page", [bodyId], dto.pre_block)],
       feed: [], loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -1344,7 +1356,7 @@ describe("Markdown preamble content", () => {
       feed: [dto.name],
       loaded: true,
     });
-    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);

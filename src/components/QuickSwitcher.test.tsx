@@ -6,7 +6,7 @@ import { activeId, closeTab, route, tabRoute, tabs } from "../router";
 import { backend } from "../backend";
 import { closePane, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
 import { loadSingle, resetStore } from "../store";
-import type { PageDto } from "../types";
+import type { PageRead } from "../types";
 
 afterEach(() => {
   closeSwitcher();
@@ -55,11 +55,11 @@ describe("QuickSwitcher search syntax help", () => {
     const sharedName = "Twin";
     const canonicalPath = "pages/client-a/Twin.md";
     const exactPath = "pages/client-b/Twin.md";
-    const canonical: PageDto = {
+    const canonical: PageRead = {
       name: sharedName,
       kind: "page",
       title: sharedName,
-      path: canonicalPath,
+      id: canonicalPath,
       pre_block: null,
       blocks: [{ id: "canonical-twin", raw: "Canonical sibling unchanged", collapsed: false, children: [] }],
     };
@@ -209,14 +209,14 @@ describe("QuickSwitcher search syntax help", () => {
     const authoredId = "7eab7af1-1b53-4baa-9082-c1d63540e123";
     const canonicalPath = "pages/unloaded.md";
     const exactPath = "pages/duplicates/unloaded.md";
-    const canonical: PageDto = {
+    const canonical: PageRead = {
       name: "Unloaded", kind: "page", title: "Unloaded", pre_block: null,
-      path: canonicalPath, rev: "canonical-rev",
+      id: canonicalPath, rev: "canonical-rev",
       blocks: [{ id: "canonical-block", raw: "canonical sibling bytes", collapsed: false, children: [] }],
     };
-    const exact: PageDto = {
+    const exact: PageRead = {
       name: "Unloaded", kind: "page", title: "Unloaded", pre_block: null,
-      path: exactPath, rev: "exact-rev",
+      id: exactPath, rev: "exact-rev",
       blocks: [{
         id: runtimeId,
         raw: `needle block\nid:: ${authoredId}`,
@@ -230,15 +230,15 @@ describe("QuickSwitcher search syntax help", () => {
       [exactPath, JSON.stringify(exact)],
     ]);
     const canonicalBytes = disk.get(canonicalPath)!;
-    loadSingle(JSON.parse(canonicalBytes) as PageDto);
+    loadSingle(JSON.parse(canonicalBytes) as PageRead);
 
     const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
     const getPageByPath = vi.spyOn(backend(), "getPageByPath").mockImplementation(async (path) => {
       const bytes = disk.get(path);
-      return bytes ? JSON.parse(bytes) as PageDto : null;
+      return bytes ? JSON.parse(bytes) as PageRead : null;
     });
-    const savePage = vi.spyOn(backend(), "savePage").mockImplementation(async (dto) => {
-      if (dto.path) disk.set(dto.path, JSON.stringify(dto));
+    const savePage = vi.spyOn(backend(), "savePage").mockImplementation(async (id, dto) => {
+      disk.set(id, JSON.stringify({ ...dto, id }));
       return "saved-exact-rev";
     });
     vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
@@ -282,8 +282,8 @@ describe("QuickSwitcher search syntax help", () => {
     await vi.waitFor(() => expect(getPageByPath).toHaveBeenCalledWith(exactPath));
     expect(getPageByPath).toHaveBeenCalledWith(exactPath);
     expect(getPage).not.toHaveBeenCalled();
-    const savedExact = JSON.parse(disk.get(exactPath)!) as PageDto;
-    expect(savedExact.path).toBe(exactPath);
+    const savedExact = JSON.parse(disk.get(exactPath)!) as PageRead;
+    expect(savedExact.id).toBe(exactPath);
     expect(savedExact.blocks[0].raw).toBe(`needle block\nid:: ${authoredId}`);
     expect(savePage).not.toHaveBeenCalled();
     expect(disk.get(canonicalPath)).toBe(canonicalBytes);
@@ -471,9 +471,52 @@ describe("QuickSwitcher search syntax help", () => {
         .find((row) => row.textContent?.includes("Create page: Fresh canonical page"))!;
       create.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+      // Saved to the id the backend proposed for a new page (B15b).
+      expect(save.mock.calls[0][0]).toBe("pages/Fresh canonical page.md");
+      expect(save.mock.calls[0][2]).toBeNull();
       expect(pageInventoryRev()).toBeGreaterThan(before);
     } finally {
       save.mockRestore();
+      dispose();
+    }
+  });
+
+  it("Create on an alias name opens the alias owner and writes no file (B15b, Martin 2026-09-26)", async () => {
+    // The Create row shows before the 110 ms search debounce, so an alias name
+    // can reach it. v0.6.5 created `Nickname.md`; now it opens owners[0].
+    const save = vi.spyOn(backend(), "savePage").mockResolvedValue("created-rev");
+    const resolve = vi.spyOn(backend(), "resolvePage")
+      .mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md", "pages/Z owner.md"] });
+    const owner: PageRead = {
+      name: "Owner", kind: "page", title: "Owner", pre_block: "alias:: Nickname", id: "pages/Owner.md",
+      blocks: [{ id: "owner-root", raw: "owner body", collapsed: false, children: [] }],
+    };
+    const byPath = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    try {
+      openSwitcher();
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      input.value = "Nickname";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await vi.waitFor(() => {
+        expect([...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]
+          .some((row) => row.textContent?.includes("Create page: Nickname"))).toBe(true);
+      });
+      const create = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]
+        .find((row) => row.textContent?.includes("Create page: Nickname"))!;
+      create.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      await vi.waitFor(() => expect(route()).toMatchObject({
+        kind: "page", name: "Owner", pageKind: "page", path: "pages/Owner.md",
+      }));
+      expect(resolve).toHaveBeenCalledWith("Nickname", "page");
+      expect(byPath).toHaveBeenCalledWith("pages/Owner.md");
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      save.mockRestore();
+      resolve.mockRestore();
+      byPath.mockRestore();
       dispose();
     }
   });

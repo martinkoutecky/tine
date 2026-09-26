@@ -85,7 +85,7 @@ export async function installFileDrop(): Promise<() => void> {
         nodes.push({
           raw: assetMarkdown(saved, {
             label: orig,
-            pagePath: page?.path,
+            pagePath: page?.id,
             format: formatForBlock(afterId),
           }),
           children: [],

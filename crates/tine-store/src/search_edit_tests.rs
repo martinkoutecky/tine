@@ -334,7 +334,7 @@ fn new_journal_appears_in_journals_desc_via_cache() {
         rev: None,
         format: Default::default(),
         read_only: false,
-        path: None,
+
         guide: false,
     };
     g.save_page(&dto, None).expect("save new journal");
@@ -616,7 +616,6 @@ fn save_new_page_while_initial_load_is_pending() {
     b.name = "B".into();
     b.title = "B".into();
     b.rev = None;
-    b.path = None;
     assert!(matches!(
         store.save(
             &tine_store::PageId::from("pages/B.md"),
@@ -655,7 +654,6 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     b.name = "B".into();
     b.title = "B".into();
     b.rev = None;
-    b.path = None;
     assert!(matches!(
         store.save(
             &tine_store::PageId::from("pages/B.md"),
@@ -983,7 +981,7 @@ fn new_journal_saved_with_date_stem_not_title() {
         rev: None,
         format: Default::default(),
         read_only: false,
-        path: None,
+
         guide: false,
     };
     g.save_page(&dto, None).expect("save new journal");

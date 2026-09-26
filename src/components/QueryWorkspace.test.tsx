@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import type { PaneRouter, QueryRoute } from "../router";
-import type { PageDto, QueryExecution } from "../types";
+import type { QueryExecution } from "../types";
 import {
   clearTransientLayersForTest,
   dismissTopTransient,
@@ -23,7 +23,7 @@ afterEach(() => {
 
 function materializeDeps(overrides: Partial<MaterializeQueryDependencies> = {}): MaterializeQueryDependencies {
   return {
-    getPage: vi.fn(async () => null),
+    resolvePage: vi.fn(async (name: string) => ({ kind: "absent" as const, id: `pages/${name}.md` })),
     savePage: vi.fn(async () => "rev-new"),
     runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false })),
     ...overrides,
@@ -38,7 +38,7 @@ describe("materializeQueryWorkspace", () => {
         : { hits: [], diagnostics: [{ code: "invalid_regex", message: "invalid regex" }], explanation: { branches: [] }, cancelled: false }) });
       const result = await materializeQueryWorkspace({ title: "Unsafe", sourceKind: "search", source, presentation: "search", routeId: "query-unsafe" }, deps);
       expect(result.ok).toBe(false);
-      expect(deps.getPage).not.toHaveBeenCalled();
+      expect(deps.resolvePage).not.toHaveBeenCalled();
       expect(deps.savePage).not.toHaveBeenCalled();
     }
   });
@@ -55,7 +55,7 @@ describe("materializeQueryWorkspace", () => {
     const blank = materializeDeps();
     await materializeQueryWorkspace({ ...input, source: "   " }, blank);
     expect(blank.runGraphSearch).not.toHaveBeenCalled();
-    expect(blank.getPage).not.toHaveBeenCalled();
+    expect(blank.resolvePage).not.toHaveBeenCalled();
     expect(blank.savePage).not.toHaveBeenCalled();
   });
   it("rejects JavaScript-invalid, cancelled, and failed Rust validation before page lookup", async () => {
@@ -63,13 +63,13 @@ describe("materializeQueryWorkspace", () => {
     const diagnostic = materializeDeps({ runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [{ code: "invalid_regex", message: "invalid regex" }], explanation: { branches: [] }, cancelled: false })) });
     await materializeQueryWorkspace(input, diagnostic);
     expect(diagnostic.runGraphSearch).toHaveBeenCalledWith("/(unclosed/", 0, 0, "query-workspace:query-rejected:materialize", true);
-    expect(diagnostic.getPage).not.toHaveBeenCalled(); expect(diagnostic.savePage).not.toHaveBeenCalled();
+    expect(diagnostic.resolvePage).not.toHaveBeenCalled(); expect(diagnostic.savePage).not.toHaveBeenCalled();
     const cancelled = materializeDeps({ runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true })) });
     await materializeQueryWorkspace({ ...input, source: "alpha" }, cancelled);
-    expect(cancelled.getPage).not.toHaveBeenCalled(); expect(cancelled.savePage).not.toHaveBeenCalled();
+    expect(cancelled.resolvePage).not.toHaveBeenCalled(); expect(cancelled.savePage).not.toHaveBeenCalled();
     const failed = materializeDeps({ runGraphSearch: vi.fn(async () => { throw new Error("IPC unavailable"); }) });
     await materializeQueryWorkspace({ ...input, source: "alpha" }, failed);
-    expect(failed.getPage).not.toHaveBeenCalled(); expect(failed.savePage).not.toHaveBeenCalled();
+    expect(failed.resolvePage).not.toHaveBeenCalled(); expect(failed.savePage).not.toHaveBeenCalled();
   });
   it("creates one canonical friendly query block through the guarded no-baseline save", async () => {
     const deps = materializeDeps();
@@ -96,9 +96,10 @@ describe("materializeQueryWorkspace", () => {
         children: [],
       }],
     });
-    expect(deps.getPage).toHaveBeenCalledWith("Project dashboard", "page");
+    expect(deps.resolvePage).toHaveBeenCalledWith("Project dashboard", "page");
     expect(deps.savePage).toHaveBeenCalledTimes(1);
-    expect(deps.savePage).toHaveBeenCalledWith(result.page, null, false);
+    // Saved to the backend's Absent id (its name format and preferred format).
+    expect(deps.savePage).toHaveBeenCalledWith("pages/Project dashboard.md", result.page, null, false);
     expect(pageInventoryRev()).toBeGreaterThan(beforeInventory);
   });
 
@@ -127,14 +128,9 @@ describe("materializeQueryWorkspace", () => {
   });
 
   it("refuses an existing page without attempting a write", async () => {
-    const existing: PageDto = {
-      name: "Taken",
-      kind: "page",
-      title: "Taken",
-      pre_block: null,
-      blocks: [],
-    };
-    const deps = materializeDeps({ getPage: vi.fn(async () => existing) });
+    const deps = materializeDeps({
+      resolvePage: vi.fn(async () => ({ kind: "existing" as const, id: "pages/Taken.md", others: [] })),
+    });
     const result = await materializeQueryWorkspace({
       title: "Taken",
       sourceKind: "search",
@@ -144,6 +140,23 @@ describe("materializeQueryWorkspace", () => {
     }, deps);
 
     expect(result).toMatchObject({ ok: false, kind: "exists" });
+    expect(deps.savePage).not.toHaveBeenCalled();
+  });
+
+  it("refuses an alias title without a write and keeps the query in the workspace (B15b)", async () => {
+    const deps = materializeDeps({
+      resolvePage: vi.fn(async () => ({ kind: "alias" as const, owners: ["pages/Owner.md"] })),
+    });
+    const result = await materializeQueryWorkspace({
+      title: "Nickname",
+      sourceKind: "search",
+      source: "alpha",
+      presentation: "list",
+      routeId: "query-alias",
+    }, deps);
+
+    expect(result).toMatchObject({ ok: false, kind: "exists" });
+    expect(result.ok ? "" : result.message).toContain("alias");
     expect(deps.savePage).not.toHaveBeenCalled();
   });
 
@@ -226,7 +239,7 @@ function executionFixture(explained: boolean): QueryExecution {
 
 function workspaceDeps(): QueryWorkspaceDependencies {
   return {
-    getPage: vi.fn(async () => null),
+    resolvePage: vi.fn(async (name: string) => ({ kind: "absent" as const, id: `pages/${name}.md` })),
     savePage: vi.fn(async () => "saved-rev"),
     runGraphSearch: vi.fn(async (_source, pageLimit, blockLimit, _lane, explain) =>
       pageLimit === 0 && blockLimit === 0
@@ -425,10 +438,10 @@ describe("QueryWorkspace", () => {
       name: "Saved search",
       pageKind: "page",
     }));
-    const saved = vi.mocked(deps.savePage).mock.calls[0][0];
+    const saved = vi.mocked(deps.savePage).mock.calls[0][1];
     expect(saved.blocks).toHaveLength(1);
     expect(saved.blocks[0].raw).toBe('{{query (search "alpha OR beta")}}\ntine.view:: board');
-    expect(deps.savePage).toHaveBeenCalledWith(saved, null, false);
+    expect(deps.savePage).toHaveBeenCalledWith("pages/Saved search.md", saved, null, false);
 
     dispose();
   });

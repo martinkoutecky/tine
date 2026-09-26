@@ -1516,7 +1516,7 @@ export function Editor(props: { id: string }): JSX.Element {
     const page = pageByName(doc.byId[props.id]?.page ?? "");
     const md = assetMarkdown(stored, {
       label: origName,
-      pagePath: page?.path,
+      pagePath: page?.id,
       format: formatForBlock(props.id),
     });
     // The user may have kept typing while a large capture was being fsynced; use
@@ -1538,7 +1538,7 @@ export function Editor(props: { id: string }): JSX.Element {
     const page = pageByName(doc.byId[props.id]?.page ?? "");
     const markdown = assets.map(({ stored, label }) => assetMarkdown(stored, {
       label,
-      pagePath: page?.path,
+      pagePath: page?.id,
       format: formatForBlock(props.id),
     })).join("\n");
     const start = ref.selectionStart;
@@ -1778,7 +1778,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const page = pageByName(doc.byId[props.id]?.page ?? "");
       const md = assetMarkdown(saved, {
         label: orig,
-        pagePath: page?.path,
+        pagePath: page?.id,
         format: formatForBlock(props.id),
       });
       const pos = ref.selectionStart;
@@ -1815,7 +1815,7 @@ export function Editor(props: { id: string }): JSX.Element {
       );
       const page = pageByName(doc.byId[props.id]?.page ?? "");
       const md = assetMarkdown(saved, {
-        pagePath: page?.path,
+        pagePath: page?.id,
         format: formatForBlock(props.id),
       });
       const pos = ref.selectionStart;

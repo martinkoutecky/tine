@@ -423,25 +423,13 @@ impl<'a> Transaction<'a> {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
                 if matches!(base, SaveBase::CreateNew) {
+                    if let Some(existing) = self.disk_twin(&file)? {
+                        return Err(Why::Refused(Refusal::Twin {
+                            existing: PageId::from(existing.as_str()),
+                        }));
+                    }
                     self.absent(&file)?;
                     self.twin(&file, None)?;
-                }
-                let target = self
-                    .store
-                    .target_for_save(doc)
-                    .map_err(|error| match error {
-                        crate::store::SaveOutcome::Twin { existing } => {
-                            Why::Refused(Refusal::Twin { existing })
-                        }
-                        crate::store::SaveOutcome::InvalidTarget(message) => {
-                            Why::Refused(Refusal::InvalidTarget(message))
-                        }
-                        _ => Why::Refused(Refusal::InvalidTarget(file.as_str().into())),
-                    })?;
-                if *id != target {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "invalid page path".into(),
-                    )));
                 }
                 let old = match base {
                     SaveBase::Existing(rev) => Some(self.stage(&file, rev)?),

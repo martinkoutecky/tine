@@ -789,9 +789,9 @@ function PageMenu(props: {
         pushToast("This page target changed; reopen the page actions menu.", "error");
         return;
       }
-      await backend().openPageFile(name, kind, captured.path ?? page!.path, reveal);
+      await backend().openPageFile(name, kind, captured.path ?? page!.id, reveal);
     } catch (error) {
-      const message = page!.path
+      const message = page!.id
         ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`
         : "This page has no on-disk file yet. Type something and let Tine save it first.";
       pushToast(message, "error");

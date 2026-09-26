@@ -61,7 +61,7 @@ describe("block reference count refresh (GH #154)", () => {
         format: "md",
         readOnly: false,
         guide: false,
-        path: "pages/Target page.md",
+        id: "pages/Target page.md",
       }],
       feed: ["Target page"],
       loaded: true,

@@ -6,7 +6,7 @@ import { initParser } from "../render/parse";
 import { doc, loadSingle, pageByName, resetStore } from "../store";
 import { startEditing } from "../editorController";
 import { setToasts, toasts } from "../ui";
-import type { BlockDto, PageDto } from "../types";
+import type { BlockDto, Format, PageDto } from "../types";
 import { Block } from "./Block";
 
 beforeAll(async () => {
@@ -32,7 +32,7 @@ function blk(id: string, raw: string): BlockDto {
   return { id, raw, collapsed: false, children: [] };
 }
 
-function page(name: string, blocks: BlockDto[], opts: Pick<PageDto, "path" | "format"> = {}): PageDto {
+function page(name: string, blocks: BlockDto[], opts: { id?: string; format?: Format } = {}): PageDto & { id?: string } {
   return { name, kind: "page", title: name, pre_block: null, blocks, ...opts };
 }
 
@@ -233,7 +233,7 @@ describe("asset paste durability", () => {
 
   it("keeps the source PDF name as its label when the asset template renames it", async () => {
     loadSingle(page("Nested assets", [blk("asset-renamed-pdf", "")], {
-      path: "pages/projects/Nested assets.md",
+        id: "pages/projects/Nested assets.md",
       format: "md",
     }));
     const id = pageByName("Nested assets")!.roots[0];
@@ -265,7 +265,7 @@ describe("asset paste durability", () => {
 
   it("inserts an Org PDF link on an Org page", async () => {
     loadSingle(page("Org assets", [blk("asset-org-pdf", "")], {
-      path: "pages/Org assets.org",
+        id: "pages/Org assets.org",
       format: "org",
     }));
     const id = pageByName("Org assets")!.roots[0];

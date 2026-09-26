@@ -10,8 +10,8 @@ import {
 } from "./store";
 import type { BlockDto, PageDto } from "./types";
 
-const page = (name: string, blocks: BlockDto[], path = `pages/${name}.md`): PageDto => ({
-  name, kind: "page", title: name, pre_block: null, blocks, format: "md", path,
+const page = (name: string, blocks: BlockDto[], id = `pages/${name}.md`): PageDto & { id: string } => ({
+  name, kind: "page", title: name, pre_block: null, blocks, format: "md", id,
 });
 
 afterEach(() => resetStore());

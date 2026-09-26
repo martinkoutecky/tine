@@ -1,3 +1,4 @@
+import type { PageDto, PageRead } from "./types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { handleGraphChange, installMobileExternalLinkHandler } from "./App";
@@ -98,7 +99,7 @@ describe("journal watcher feed reconciliation", () => {
       "main"
     );
     setDoc({ byId: { loaded: node("loaded", name) }, pages: [page(name, "journal", ["loaded"])], feed: [], loaded: true });
-    vi.spyOn(backend(), "getPage").mockResolvedValue({ name, kind: "journal", title: name, pre_block: null, blocks: [] });
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ name, kind: "journal", title: name, pre_block: null, blocks: [] } as PageDto as PageRead);
     const now = new Date();
     const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
       pages: [], next_before_day: null, done: true,

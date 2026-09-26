@@ -22,6 +22,7 @@ import type {
   AdvancedQueryResult,
   MatchSpan,
   PageDto,
+  ResolvedPage,
   QueryDiagnostic,
   QueryExecution,
   QueryExplainNode,
@@ -48,8 +49,9 @@ export interface MaterializeQueryInput {
 }
 
 export interface MaterializeQueryDependencies {
-  getPage(name: string, kind: "page"): Promise<PageDto | null>;
-  savePage(page: PageDto, baseRev: null, force: false): Promise<string>;
+  /** The one name answerer: an existing file, an alias, or where a new page goes. */
+  resolvePage(name: string, kind: "page"): Promise<ResolvedPage>;
+  savePage(id: string, page: PageDto, baseRev: null, force: false): Promise<string>;
   /** Rust-authoritative friendly-search validation; required before every nonblank friendly save. */
   runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane: string, explain: boolean): Promise<QueryExecution>;
 }
@@ -114,11 +116,20 @@ export async function materializeQueryWorkspace(
   }
 
   try {
-    if (await deps.getPage(name, "page")) {
+    const resolved = await deps.resolvePage(name, "page");
+    if (resolved.kind === "existing") {
       return {
         ok: false,
         kind: "exists",
         message: `A page named “${name}” already exists. Choose another title.`,
+      };
+    }
+    // An alias names another page: refuse, write nothing, keep the query here.
+    if (resolved.kind === "alias") {
+      return {
+        ok: false,
+        kind: "exists",
+        message: `“${name}” is an alias of an existing page. Choose another title.`,
       };
     }
 
@@ -134,7 +145,7 @@ export async function materializeQueryWorkspace(
         children: [],
       }],
     };
-    const rev = await deps.savePage(page, null, false);
+    const rev = await deps.savePage(resolved.id, page, null, false);
     bumpPageInventoryRev();
     return { ok: true, name, page, rev };
   } catch (error) {
@@ -157,8 +168,8 @@ export async function materializeQueryWorkspace(
 function defaultDependencies(): QueryWorkspaceDependencies {
   const api = backend();
   return {
-    getPage: (name, kind) => api.getPage(name, kind),
-    savePage: (page, baseRev, force) => api.savePage(page, baseRev, force),
+    resolvePage: (name, kind) => api.resolvePage(name, kind),
+    savePage: (id, page, baseRev, force) => api.savePage(id, page, baseRev, force),
     runGraphSearch: (source, pageLimit, blockLimit, lane, explain) =>
       api.runGraphSearch(source, pageLimit, blockLimit, lane, explain),
     runQuery: (source) => api.runQuery(source),

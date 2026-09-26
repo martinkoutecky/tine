@@ -176,22 +176,25 @@ fn streaming_refuses_symlinked_asset() {
 }
 
 #[test]
-fn page_dto_path_keeps_string_wire_form() {
+fn page_id_keeps_string_wire_form_beside_a_pathless_dto() {
+    // The file identity travels as `PageRead.id` (a plain string on the wire),
+    // not inside the DTO: the DTO no longer carries a `path`.
     let f = Fixture::new();
     let store = f.store();
-    let mut dto = store.page(&PageId::from("pages/Note.md")).unwrap().doc;
-    let real = serde_json::to_string(&dto).unwrap();
-    assert!(real.contains("\"path\":\"pages/Note.md\""));
+    let read = store.page(&PageId::from("pages/Note.md")).unwrap();
+    assert_eq!(
+        serde_json::to_string(&read.id).unwrap(),
+        "\"pages/Note.md\""
+    );
+    assert_eq!(
+        serde_json::from_str::<PageId>("\"pages/Note.md\"").unwrap(),
+        read.id
+    );
+    let real = serde_json::to_string(&read.doc).unwrap();
+    assert!(!real.contains("\"path\""), "{real}");
     assert_eq!(
         serde_json::to_string(&serde_json::from_str::<PageDto>(&real).unwrap()).unwrap(),
         real
-    );
-    dto.path = None;
-    let empty = serde_json::to_string(&dto).unwrap();
-    assert!(empty.contains("\"path\":\"\""));
-    assert_eq!(
-        serde_json::to_string(&serde_json::from_str::<PageDto>(&empty).unwrap()).unwrap(),
-        empty
     );
 }
 

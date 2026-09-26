@@ -505,14 +505,6 @@ pub struct PageDto {
     /// it but disables editing, so Tine never rewrites (and risks corrupting) it.
     #[serde(default)]
     pub read_only: bool,
-    /// Graph-root-relative path of the file this page was loaded from
-    /// (`journals/2026_06_26.org`), forward-slashed. Echoed back on save so a page
-    /// pinned to a SPECIFIC file — a duplicate-day stray that shares a `(kind,name)`
-    /// with the canonical file — saves to its own file instead of being re-resolved
-    /// by name to the canonical one (#21). Empty for a brand-new page with no file
-    /// yet; then save resolves the path by name, exactly as before.
-    #[serde(default, with = "optional_page_path")]
-    pub path: Option<PageId>,
     /// True for bundled in-app Guide pages. Guide pages are ephemeral/read-only
     /// virtual pages and must never be persisted into the user's graph by the
     /// normal save/writeback path.

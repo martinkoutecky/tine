@@ -56,7 +56,7 @@ export function LiveRefGroup(props: {
     () => (near() ? { p: props.page, k: props.kind, path: props.path } : null),
     async ({ p, k, path }) => {
       const occupied = pageByName(p);
-      if (occupied) return occupied.kind === k && (!path || occupied.path === path);
+      if (occupied) return occupied.kind === k && (!path || occupied.id === path);
       const epoch = graphEpoch();
       const root = graphMeta()?.root ?? "";
       const dto = path ? await backend().getPageByPath(path) : await backend().getPage(p, k);
@@ -67,11 +67,11 @@ export function LiveRefGroup(props: {
       // is name-keyed. Refuse a page/journal twin that occupied the slot during
       // the await, and reject a mismatched backend response defensively.
       const after = pageByName(p);
-      if (after) return after.kind === k && (!path || after.path === path);
-      if (!dto || dto.name !== p || dto.kind !== k || (path && dto.path !== path)) return false;
+      if (after) return after.kind === k && (!path || after.id === path);
+      if (!dto || dto.name !== p || dto.kind !== k || (path && dto.id !== path)) return false;
       ensurePageLoaded(dto);
       const loaded = pageByName(p);
-      return loaded?.kind === k && (!path || loaded.path === path);
+      return loaded?.kind === k && (!path || loaded.id === path);
     }
   );
 

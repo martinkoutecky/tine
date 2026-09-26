@@ -289,7 +289,7 @@ export async function hydrateVisibleQueryPages(
     // A differently-kinded same-name page already occupies the name-keyed store.
     // ensurePageLoaded cannot install this group safely without replacing it.
     const loaded = pageByName(group.page);
-    return !loaded || (!!group.path && loaded.path !== group.path);
+    return !loaded || (!!group.path && loaded.id !== group.path);
   });
   await Promise.all(pending.map((group) => {
     const epoch = graphEpoch();
@@ -312,7 +312,7 @@ export async function hydrateVisibleQueryPages(
       // A stale queued task must die before IPC, not merely discard afterward.
       if (!sameGraph(root, epoch)) return;
       const occupied = pageByName(group.page);
-      if (occupied && occupied.kind === group.kind && (!group.path || occupied.path === group.path)) return;
+      if (occupied && occupied.kind === group.kind && (!group.path || occupied.id === group.path)) return;
       const dto = group.path
         ? await backend().getPageByPath(group.path)
         : await backend().getPage(group.page, group.kind);
@@ -320,8 +320,8 @@ export async function hydrateVisibleQueryPages(
       // Recheck occupancy after the await: another surface may have loaded a
       // same-name twin meanwhile. Never replace or alias that identity.
       const after = pageByName(group.page);
-      if (after && (!group.path || after.path === group.path)) return;
-      if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.path !== group.path)) return;
+      if (after && (!group.path || after.id === group.path)) return;
+      if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.id !== group.path)) return;
       ensurePageLoaded(dto);
     }).finally(() => {
       pageHydrations.delete(key);

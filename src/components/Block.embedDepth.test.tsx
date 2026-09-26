@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import { loadSingle, resetStore } from "../store";
-import type { BlockDto, PageDto, RefGroup } from "../types";
+import type { BlockDto, PageDto, PageRead, RefGroup } from "../types";
 import { Block } from "./Block";
 import { LinkDepthContext } from "./linkDepth";
 
@@ -147,7 +147,7 @@ describe("shared embed/ref render depth (GH #206)", () => {
     }]);
     loadSingle(selfPage);
     liveGroupBudget = 2;
-    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(selfPage);
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(selfPage as PageRead);
 
     const { root, dispose } = mountBlock(hostId);
     try {

@@ -46,9 +46,9 @@
 //! completed work and recovery locations on a partial failure; callers need no
 //! graph layout, recovery path, or file move protocol.
 //!
-//! `target_for_save` resolves a DTO's pinned path or current name. Name lookup
-//! may build the graph cache on first use (O(P + B + disk)); a warm absent or
-//! alias lookup still scans O(aliases). Aliases keep their own prospective file.
+//! `WholeGraph::resolve` answers a name with an existing or proposed `PageId`.
+//! It may build the graph cache on first use (O(P + B + disk)); a warm absent or
+//! alias lookup still scans O(aliases).
 //! `transaction` collects named file steps. Commit preflights all steps before
 //! writing, applies them under sorted path locks, and undoes a failed apply into
 //! recoverable trash. Its cost is O(bytes of named files + affected page blocks).
@@ -91,7 +91,7 @@ pub use tine_core::model::{FileId, PageId};
 use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
 use tine_core::query_plan::QueryExecution;
 
-use crate::model::{CheckedOpenError, Graph, SaveTargetError};
+use crate::model::{CheckedOpenError, Graph};
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -780,36 +780,6 @@ impl Store {
             self.graph.current_config().preferred_format.ext()
         ))
     }
-    /// Resolve the exact file a DTO would save, including pinned stray pages.
-    pub fn target_for_save(&self, doc: &PageDto) -> Result<PageId, SaveOutcome> {
-        if self.is_closed() {
-            return Err(SaveOutcome::Closed);
-        }
-        let (path, _) = self.graph.save_target(doc).map_err(|error| match error {
-            SaveTargetError::Twin => SaveOutcome::Twin {
-                existing: PageId::from(
-                    self.graph
-                        .rel_path(&self.graph.path_for(&doc.name, doc.kind)),
-                ),
-            },
-            SaveTargetError::InvalidTarget(message) => SaveOutcome::InvalidTarget(message.into()),
-        })?;
-        if doc.path.is_none() {
-            // Transaction preflight holds `writer`; the load worker needs that
-            // lock before it can mark `whole_graph()` ready. Resolve against the
-            // live graph directly here so a save during initial load can finish.
-            let view = WholeGraph {
-                graph: Arc::clone(&self.graph),
-                rev: self.changes.rev(),
-            };
-            match view.resolve(&doc.name, doc.kind == PageKind::Journal) {
-                Resolved::Existing { id, .. } | Resolved::Absent { id } => return Ok(id),
-                Resolved::Alias { .. } => {}
-            }
-        }
-        Ok(PageId::from(self.graph.rel_path(&path)))
-    }
-
     /// Save one page with the editor's baseline; no write occurs on refusal.
     pub fn save(&self, id: &PageId, base: SaveBase, doc: &PageDto) -> SaveOutcome {
         if self.is_closed() {

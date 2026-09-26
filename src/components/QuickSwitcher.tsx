@@ -1,7 +1,7 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, graphMeta, isFavorite, pushToast, bumpPageInventoryRev, openPageInSidebar, openBlockInSidebar } from "../ui";
-import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route } from "../router";
+import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
 import { paletteCommands } from "../keybindings";
 import { closePane, focusPane, focusedRouter, layoutPaneIds, openRouteInOtherPane, paneRouter } from "../panes";
 import { fuzzyScore } from "../editor/autocomplete";
@@ -319,8 +319,10 @@ export function QuickSwitcher(): JSX.Element {
         it.path ? router.openFile(it.path, it.name, it.pageKind) : router.openPage(it.name, it.pageKind);
         break;
       case "create":
-        await createPageFile(it.name);
-        router.openPage(it.name, "page");
+        {
+          const target = await createPageFile(it.name);
+          target?.path ? router.openFile(target.path, target.name, target.pageKind) : router.openPage(it.name, "page");
+        }
         break;
       case "block":
         router.openPageAtBlock(it.page, it.pageKind, it.blockId, it.path);
@@ -340,8 +342,10 @@ export function QuickSwitcher(): JSX.Element {
         openRouteInOtherPane({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path });
         break;
       case "create":
-        await createPageFile(it.name);
-        openRouteInOtherPane({ kind: "page", name: it.name, pageKind: "page" });
+        {
+          const target = await createPageFile(it.name);
+          openRouteInOtherPane({ kind: "page", name: target?.name ?? it.name, pageKind: target?.pageKind ?? "page", path: target?.path });
+        }
         break;
       case "command":
         it.run();
@@ -382,22 +386,32 @@ export function QuickSwitcher(): JSX.Element {
     });
   };
 
-  const createPageFile = async (name: string) => {
+  const createPageFile = async (name: string): Promise<PageTarget | null> => {
     try {
+      const resolved = await backend().resolvePage(name, "page");
+      if (resolved.kind === "alias") {
+        const owner = await backend().getPageByPath(resolved.owners[0]);
+        if (!owner) throw new Error("alias owner disappeared");
+        return { name: owner.name, pageKind: owner.kind, path: owner.id };
+      }
       await backend().savePage(
+        resolved.id,
         { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw: "", collapsed: false, children: [] }] },
         null, // brand-new page — no baseline
         false
       );
       bumpPageInventoryRev();
+      return null;
     } catch {
       // ignore — still navigate; the page will be created on first edit
+      return null;
     }
   };
 
   const createPage = async (name: string) => {
-    await createPageFile(name);
-    openPage(name, "page");
+    const target = await createPageFile(name);
+    if (target) openPageTarget(target);
+    else openPage(name, "page");
   };
 
   const move = (d: number) => {

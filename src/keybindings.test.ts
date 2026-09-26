@@ -427,7 +427,7 @@ describe("block-selection commands", () => {
   it("Mod+C preserves public flavors and records the exact full private subtree", () => {
     setGraphMeta(pluginGraphMeta);
     loadSingle({
-      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, format: "md", path: "pages/tasks.md",
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, format: "md", id: "pages/tasks.md",
       blocks: [{
         id: "parent", raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111", collapsed: true,
         children: [{ id: "child", raw: "Child\nid:: 22222222-2222-2222-2222-222222222222", collapsed: false, children: [] }],
@@ -461,7 +461,7 @@ describe("block-selection commands", () => {
   it("Mod+X leaves a fresh one-shot cut payload with its exact source page", () => {
     setGraphMeta(pluginGraphMeta);
     loadSingle({
-      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, path: "pages/tasks.md",
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, id: "pages/tasks.md",
       blocks: [{ id: "cut-me", raw: "Cut me\nid:: 33333333-3333-3333-3333-333333333333", collapsed: false, children: [] }],
     });
     selectBlock("cut-me");

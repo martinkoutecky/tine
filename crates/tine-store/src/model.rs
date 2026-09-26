@@ -65,13 +65,14 @@ fn twin_error(name: &str) -> io::Error {
     )
 }
 
+#[cfg(test)]
 pub(crate) enum SaveTargetError {
     Twin,
     InvalidTarget(&'static str),
 }
 
+#[cfg(test)]
 impl SaveTargetError {
-    #[cfg(test)]
     fn into_io(self, name: &str) -> io::Error {
         match self {
             Self::Twin => twin_error(name),
@@ -1056,6 +1057,7 @@ impl Graph {
     /// sub-directories allowed but no `..`/`.`/absolute/empty/backslash segments.
     /// Anything else returns `None`, so a path-addressed read/save can never
     /// escape the graph.
+    #[cfg(test)]
     pub(crate) fn resolve_rel(&self, rel: &str) -> Option<PathBuf> {
         let rel = rel.trim();
         if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
@@ -1493,6 +1495,7 @@ impl Graph {
     /// Whether a file participates in the `(kind,name)` page cache. False only for a
     /// shadow journal (a title-named duplicate of a canonical date-stem file, #21),
     /// whose cache slot belongs to the canonical file.
+    #[cfg(test)]
     pub(crate) fn path_is_cacheable(&self, path: &Path) -> bool {
         if let Some(entry) = self.entry_for_path(path) {
             if entry.kind == PageKind::Journal {
@@ -1759,6 +1762,7 @@ impl Graph {
     /// is an interim guard; the full fix is path/format in page identity (#21).
     /// `.org` is probed first so a markdown-only graph short-circuits after one
     /// stat. A journal whose name doesn't parse to a date stem isn't guarded.
+    #[cfg(test)]
     fn has_twin(&self, name: &str, kind: PageKind) -> bool {
         let (dir, stem) = match kind {
             PageKind::Page => (
@@ -2327,7 +2331,6 @@ impl Graph {
         if let Some(mut dto) = self.peek_cached_page(entry) {
             dto.read_only = read_only_org(&entry.path, &content);
             dto.rev = rev;
-            dto.path = Some(self.rel_path(&entry.path).into());
             return Ok(dto);
         }
         // Cache miss: parse the bytes we already read (propagate the original read
@@ -2337,7 +2340,6 @@ impl Graph {
         let mut dto = page_dto(entry, &doc);
         dto.read_only = read_only_org(&entry.path, &content);
         dto.rev = rev;
-        dto.path = Some(self.rel_path(&entry.path).into());
         Ok(dto)
     }
 
@@ -2349,14 +2351,6 @@ impl Graph {
     /// cache slot for that `(kind,name)` holds the CANONICAL file, so a cache lookup
     /// here would serve the wrong file's content. Returns `Ok(None)` if the path is
     /// invalid (see [`resolve_rel`]) or the file is gone.
-    #[cfg(test)]
-    pub(crate) fn load_by_path(&self, rel: &str) -> io::Result<Option<PageDto>> {
-        let Some(abs) = self.resolve_rel(rel) else {
-            return Ok(None);
-        };
-        self.load_by_validated_path(&abs)
-    }
-
     /// Parse a path whose graph-relative identity was validated by the caller.
     /// Store page reads use this for lexical page symlinks as well as strays.
     pub(crate) fn load_by_validated_path(&self, abs: &Path) -> io::Result<Option<PageDto>> {
@@ -2373,7 +2367,6 @@ impl Graph {
         let mut dto = page_dto(&entry, &doc);
         dto.read_only = read_only_org(&abs, &content);
         dto.rev = Some(content_rev(&content));
-        dto.path = Some(self.rel_path(&abs).into());
         Ok(Some(dto))
     }
 
@@ -5179,27 +5172,10 @@ impl Graph {
         (was_cached && !own_delete).then_some(entry)
     }
 
-    /// Resolve the file a save writes to, and whether it participates in the
-    /// `(kind,name)` page cache. A page pinned to a specific file (`page.path` set
-    /// — a duplicate-day stray, #21) writes to THAT exact file and stays OUT of the
-    /// cache (the `(kind,name)` slot belongs to the canonical file; caching the
-    /// stray there would make name-resolution serve it). A normal page resolves its
-    /// path by name and caches as before. Errors on an invalid pinned path (escapes
-    /// the graph) or a `.md`+`.org` twin (ambiguous identity, M1).
+    /// Resolve a legacy test save by name. Production saves carry a `PageId`
+    /// through `Store::save` instead of using this path.
+    #[cfg(test)]
     pub(crate) fn save_target(&self, page: &PageDto) -> Result<(PathBuf, bool), SaveTargetError> {
-        if let Some(id) = &page.path {
-            // The page knows its own file (every loaded page carries its path).
-            // Write THERE — that's how a duplicate-day stray saves to its own file
-            // instead of being re-resolved by name to the canonical one. It still
-            // participates in the `(kind,name)` cache UNLESS it's a shadow (a
-            // title-named journal coexisting with a canonical date-stem file): a
-            // shadow's cache slot belongs to the canonical, so it stays out.
-            let path = self
-                .resolve_rel(id.as_str())
-                .ok_or(SaveTargetError::InvalidTarget("invalid page path"))?;
-            let cache = self.path_is_cacheable(&path);
-            return Ok((path, cache));
-        }
         // M1: refuse to write an ambiguous page (both .md and .org on disk) — we
         // can't tell which file the editor's content belongs to.
         if self.has_twin(&page.name, page.kind) {
@@ -6049,7 +6025,7 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         rev: None,
         format: Format::from_path(&entry.path),
         read_only: false,
-        path: None,
+
         guide: false,
     }
 }
@@ -8480,7 +8456,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: true,
-            path: None,
+
             guide: true,
         };
 
@@ -8580,7 +8556,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
-            path: None,
+
             guide: false,
         };
         assert!(g.save_page(&page, None).is_err(), "save refused on twin");
@@ -8926,7 +8902,7 @@ mod tests {
             rev: None,
             format: Format::Org,
             read_only: false,
-            path: None,
+
             guide: false,
         };
         g.save_page(&page, None).unwrap();
@@ -9197,7 +9173,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
-            path: None,
+
             guide: false,
         };
         g.save_page(&page, None).unwrap();
@@ -9263,7 +9239,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
-            path: None,
+
             guide: false,
         };
         g.save_page(&dto, loaded.rev.as_deref())
@@ -9461,7 +9437,7 @@ mod tests {
                 rev: None,
                 format,
                 read_only: false,
-                path: None,
+
                 guide: false,
             };
             g.save_page(&page, None).unwrap();
@@ -10080,7 +10056,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
-            path: None,
+
             guide: false,
         }
     }
@@ -11016,7 +10992,7 @@ mod tests {
             format: Format::Md,
             rev: None,
             read_only: false,
-            path: None,
+
             guide: false,
         };
         assert!(g.save_page(&page, None).is_err());
@@ -11024,11 +11000,19 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Open a store over `dir` and wait for its initial load, so tests can
+    /// drive `Store::page`/`Store::save` by `PageId` and inspect the graph.
+    fn loaded_store(dir: &Path) -> crate::Store {
+        let store = crate::Store::open(dir, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        store
+    }
+
     #[test]
     fn load_by_path_serves_the_stray_not_the_canonical() {
         let dir = dup_day_graph("loadbypath");
-        let g = Graph::open(&dir);
-        g.warm_cache(); // canonical is what name-resolution caches
+        let store = loaded_store(&dir);
+        let g = &store.graph;
 
         // By name → canonical.
         let by_name = g
@@ -11036,42 +11020,38 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(by_name.blocks[0].raw, "canonical body");
-        assert_eq!(
-            by_name.path.as_ref().unwrap().as_str(),
-            "journals/2026_06_26.org"
-        );
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Friday, 26-06-2026", true),
+            crate::Resolved::Existing { id, .. } if id.as_str() == "journals/2026_06_26.org"
+        ));
 
-        // By path → the STRAY's own content, even though it shares the (kind,name).
-        let stray = g
-            .load_by_path("journals/Friday, 26-06-2026.org")
-            .unwrap()
+        // By id → the STRAY's own content, even though it shares the (kind,name).
+        let stray = store
+            .page(&crate::PageId::from("journals/Friday, 26-06-2026.org"))
             .unwrap();
-        assert_eq!(stray.blocks[0].raw, "stray body");
-        assert_eq!(
-            stray.path.as_ref().unwrap().as_str(),
-            "journals/Friday, 26-06-2026.org"
-        );
+        assert_eq!(stray.doc.blocks[0].raw, "stray body");
+        assert_eq!(stray.id.as_str(), "journals/Friday, 26-06-2026.org");
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn save_with_path_writes_the_pinned_file_and_leaves_canonical_intact() {
-        // The core regression for #21: editing a path-pinned stray must save to the
-        // stray file, NOT be re-resolved by name onto the canonical one.
+        // The core regression for #21: editing a stray saved by its own id must
+        // write the stray file, NOT be re-resolved by name onto the canonical one.
         let dir = dup_day_graph("savepinned");
-        let g = Graph::open(&dir);
-        g.warm_cache();
-
-        let mut stray = g
-            .load_by_path("journals/Friday, 26-06-2026.org")
-            .unwrap()
-            .unwrap();
+        let store = loaded_store(&dir);
+        let id = crate::PageId::from("journals/Friday, 26-06-2026.org");
+        let read = store.page(&id).unwrap();
+        let mut stray = read.doc;
         stray.blocks[0].raw = "stray body edited".into();
-        let rev = g.save_page(&stray, stray.rev.as_deref()).unwrap();
+        let rev = match store.save(&id, crate::SaveBase::Existing(read.rev), &stray) {
+            crate::SaveOutcome::Saved(rev) => rev,
+            other => panic!("stray save must succeed, got {other:?}"),
+        };
         assert_eq!(
             rev,
-            content_rev(
-                &fs::read_to_string(dir.join("journals").join("Friday, 26-06-2026.org")).unwrap()
+            crate::FileRev::from_bytes(
+                &fs::read(dir.join("journals").join("Friday, 26-06-2026.org")).unwrap()
             )
         );
 
@@ -11086,7 +11066,8 @@ mod tests {
         );
         // And name-resolution still serves the canonical (the stray didn't poison
         // the (kind,name) cache slot).
-        let by_name = g
+        let by_name = store
+            .graph
             .load_named("Friday, 26-06-2026", PageKind::Journal)
             .unwrap()
             .unwrap();
@@ -11097,16 +11078,19 @@ mod tests {
     #[test]
     fn save_rejects_pinned_path_that_escapes_the_graph() {
         let dir = dup_day_graph("savebadpath");
-        let g = Graph::open(&dir);
-        let mut p = g
-            .load_by_path("journals/Friday, 26-06-2026.org")
-            .unwrap()
+        let store = loaded_store(&dir);
+        let read = store
+            .page(&crate::PageId::from("journals/Friday, 26-06-2026.org"))
             .unwrap();
-        p.path = Some("../escape.md".into());
+        let bad = crate::PageId::from("../escape.md");
         assert!(
-            g.save_page(&p, p.rev.as_deref()).is_err(),
+            matches!(
+                store.save(&bad, crate::SaveBase::Existing(read.rev), &read.doc),
+                crate::SaveOutcome::InvalidTarget(_)
+            ),
             "save must refuse an out-of-graph path"
         );
+        assert!(!dir.parent().unwrap().join("escape.md").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -11124,8 +11108,8 @@ mod tests {
             "- nestedsentinel body\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
-        g.warm_cache();
+        let store = loaded_store(&dir);
+        let g = &store.graph;
 
         // Listed by basename, carrying its nested path.
         let entry = g
@@ -11137,13 +11121,16 @@ mod tests {
         assert_eq!(entry.rel_path_str(), "pages/client-a/foo.md");
 
         // Openable by name (find_entry resolves via the recursive scan), and the
-        // DTO carries the nested path so a later save round-trips in place.
+        // name resolves to the nested id so a later save round-trips in place.
         let dto = g
             .load_named("foo", PageKind::Page)
             .unwrap()
             .expect("open nested page by name");
         assert_eq!(dto.blocks[0].raw, "nestedsentinel body");
-        assert_eq!(dto.path.as_ref().unwrap().as_str(), "pages/client-a/foo.md");
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("foo", false),
+            crate::Resolved::Existing { id, .. } if id.as_str() == "pages/client-a/foo.md"
+        ));
 
         // Indexed for full-text search (the cache folded it in via list_pages).
         assert!(
@@ -11164,13 +11151,19 @@ mod tests {
             "- before\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
-        g.warm_cache();
-
-        let mut dto = g.load_named("foo", PageKind::Page).unwrap().unwrap();
-        assert_eq!(dto.path.as_ref().unwrap().as_str(), "pages/client-a/foo.md");
+        let store = loaded_store(&dir);
+        let id = match store.whole_graph().unwrap().resolve("foo", false) {
+            crate::Resolved::Existing { id, .. } => id,
+            _ => panic!("nested page must resolve by name to an existing page"),
+        };
+        assert_eq!(id.as_str(), "pages/client-a/foo.md");
+        let read = store.page(&id).unwrap();
+        let mut dto = read.doc;
         dto.blocks[0].raw = "after".into();
-        g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        assert!(matches!(
+            store.save(&id, crate::SaveBase::Existing(read.rev), &dto),
+            crate::SaveOutcome::Saved(_)
+        ));
 
         // The nested file got the edit…
         assert_eq!(
@@ -11200,20 +11193,28 @@ mod tests {
             "- before b\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
-        g.warm_cache();
+        let store = loaded_store(&dir);
 
-        let mut a = g.load_by_path("pages/client-a/foo.md").unwrap().unwrap();
-        let mut b = g.load_by_path("pages/client-b/foo.md").unwrap().unwrap();
-        assert_eq!(a.name, "foo");
-        assert_eq!(b.name, "foo");
-        assert_eq!(a.path.as_ref().unwrap().as_str(), "pages/client-a/foo.md");
-        assert_eq!(b.path.as_ref().unwrap().as_str(), "pages/client-b/foo.md");
+        let a_id = crate::PageId::from("pages/client-a/foo.md");
+        let b_id = crate::PageId::from("pages/client-b/foo.md");
+        let a = store.page(&a_id).unwrap();
+        let b = store.page(&b_id).unwrap();
+        assert_eq!(a.doc.name, "foo");
+        assert_eq!(b.doc.name, "foo");
+        assert_eq!(a.id, a_id);
+        assert_eq!(b.id, b_id);
 
-        a.blocks[0].raw = "after a".into();
-        b.blocks[0].raw = "after b".into();
-        g.save_page(&a, a.rev.as_deref()).unwrap();
-        g.save_page(&b, b.rev.as_deref()).unwrap();
+        let (mut a_doc, mut b_doc) = (a.doc, b.doc);
+        a_doc.blocks[0].raw = "after a".into();
+        b_doc.blocks[0].raw = "after b".into();
+        assert!(matches!(
+            store.save(&a_id, crate::SaveBase::Existing(a.rev), &a_doc),
+            crate::SaveOutcome::Saved(_)
+        ));
+        assert!(matches!(
+            store.save(&b_id, crate::SaveBase::Existing(b.rev), &b_doc),
+            crate::SaveOutcome::Saved(_)
+        ));
 
         assert_eq!(
             fs::read_to_string(dir.join("pages").join("client-a").join("foo.md")).unwrap(),
@@ -11225,7 +11226,7 @@ mod tests {
         );
         assert!(
             !dir.join("pages").join("foo.md").exists(),
-            "path-pinned saves must not create a flat pages/foo.md twin"
+            "id-addressed saves must not create a flat pages/foo.md twin"
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -11239,7 +11240,8 @@ mod tests {
         fs::write(&flat, "- flat original sentinel\n").unwrap();
         fs::write(&nested, "- nested original sentinel\n").unwrap();
 
-        let g = Graph::open(&dir);
+        let store = loaded_store(&dir);
+        let g = &store.graph;
         g.warm_cache();
         let logical_winner = g
             .find_entry("Exact Storage Twin", PageKind::Page)
@@ -11254,22 +11256,28 @@ mod tests {
             .expect("non-winning duplicate is addressable by path");
         let winner_original = fs::read_to_string(&logical_winner.path).unwrap();
 
-        // Save through the duplicate's captured physical path after both entries
-        // have been warmed. The name winner must remain stable while the other
-        // physical owner receives its own cached document and revision.
-        let mut non_winner = g
-            .load_by_path(non_winner_entry.rel_path_str())
-            .unwrap()
-            .expect("non-winning duplicate loads by path");
+        // Save through the duplicate's own id after both entries have been
+        // warmed. The name winner must remain stable while the other physical
+        // owner receives its own cached document and revision.
+        let non_winner_id = crate::PageId::from(non_winner_entry.rel_path_str());
+        let read = store.page(&non_winner_id).unwrap();
+        let mut non_winner = read.doc;
         non_winner.blocks[0].raw = "nested saved sentinel".into();
-        g.save_page(&non_winner, non_winner.rev.as_deref()).unwrap();
+        assert!(matches!(
+            store.save(
+                &non_winner_id,
+                crate::SaveBase::Existing(read.rev),
+                &non_winner
+            ),
+            crate::SaveOutcome::Saved(_)
+        ));
 
         assert_eq!(
             g.find_entry("Exact Storage Twin", PageKind::Page)
                 .expect("name winner remains present")
                 .path,
             logical_winner.path,
-            "path-addressed save must not repoint the logical first winner"
+            "id-addressed save must not repoint the logical first winner"
         );
 
         let winner_loaded = g.load_page(&logical_winner).unwrap();
@@ -11280,7 +11288,10 @@ mod tests {
         );
         let non_winner_loaded = g.load_page(&non_winner_entry).unwrap();
         assert_eq!(non_winner_loaded.blocks[0].raw, "nested saved sentinel");
-        assert_eq!(non_winner_loaded.path, non_winner_entry.rel_path.clone());
+        assert_eq!(
+            store.page(&non_winner_id).unwrap().id,
+            non_winner_entry.rel_path.clone().unwrap()
+        );
 
         let cached = g.with_pages(|pages| {
             pages

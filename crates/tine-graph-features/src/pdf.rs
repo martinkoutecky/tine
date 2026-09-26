@@ -144,7 +144,7 @@ fn dto(id: &PageId, name: &str, doc: &tine_core::doc::Document) -> PageDto {
         rev: None,
         format: format(id),
         read_only: false,
-        path: Some(id.clone()),
+
         guide: false,
     }
 }

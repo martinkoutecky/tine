@@ -98,7 +98,7 @@ fn doc(name: &str, raw: &str) -> PageDto {
         rev: None,
         format: Format::Md,
         read_only: false,
-        path: None,
+
         guide: false,
     }
 }

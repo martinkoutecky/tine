@@ -211,7 +211,7 @@ function useEnsurePage(
     const k = kind();
     const p = path();
     const loaded = pageByName(n);
-    if (n && (!loaded || (p && loaded.path !== p))) {
+    if (n && (!loaded || (p && loaded.id !== p))) {
       let active = true;
       onCleanup(() => { active = false; });
       const request = p ? backend().getPageByPath(p) : backend().getPage(n, k);
@@ -267,7 +267,7 @@ function PageItem(props: {
   );
   const page = () => {
     const loaded = pageByName(props.item.name);
-    return props.item.path && loaded?.path !== props.item.path ? undefined : loaded;
+    return props.item.path && loaded?.id !== props.item.path ? undefined : loaded;
   };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
@@ -321,7 +321,7 @@ function BlockItem(props: {
   };
   const pageLoaded = () => {
     const loaded = pageByName(props.item.page);
-    return !!loaded && (!props.item.path || loaded.path === props.item.path);
+    return !!loaded && (!props.item.path || loaded.id === props.item.path);
   };
   const title = () => {
     const n = node();

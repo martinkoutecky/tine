@@ -267,7 +267,7 @@ describe("GH #161 R1 right-sidebar close safety", () => {
     const dir = mkdtempSync(join(tmpdir(), "tine-r1-close-"));
     tempDirs.push(dir);
     const diskPage = join(dir, "page.json");
-    vi.spyOn(backend(), "savePage").mockImplementation(async (dto) => {
+    vi.spyOn(backend(), "savePage").mockImplementation(async (_id, dto) => {
       writeFileSync(diskPage, JSON.stringify(dto));
       return "r1-disk-rev";
     });

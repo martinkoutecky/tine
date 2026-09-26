@@ -41,8 +41,8 @@ export function pageTargetFromRoute(route: Route): PageTarget | null {
     : null;
 }
 
-export function pageTargetFromFeedPage(page: { name: string; kind: PageKind; path?: string }): PageTarget {
-  return { name: page.name, pageKind: page.kind, ...(page.path ? { path: page.path } : {}) };
+export function pageTargetFromFeedPage(page: { name: string; kind: PageKind; id?: string }): PageTarget {
+  return { name: page.name, pageKind: page.kind, ...(page.id ? { path: page.id } : {}) };
 }
 
 export function pageTargetFromEntry(entry: { name: string; kind: PageKind; path?: string }): PageTarget {
@@ -59,10 +59,10 @@ export function pageTargetFromBlockRef(ref: {
 
 export function pageTargetMatchesLoaded(
   target: PageTarget,
-  page: { name: string; kind: PageKind; path?: string } | null | undefined,
+  page: { name: string; kind: PageKind; id?: string } | null | undefined,
 ): boolean {
   if (!page || page.name !== target.name || page.kind !== target.pageKind) return false;
-  return target.path === undefined || page.path === target.path;
+  return target.path === undefined || page.id === target.path;
 }
 
 export type Route =
@@ -1041,7 +1041,7 @@ function restoreHistoryRouteContext(context: HistoryRouteContext): boolean {
     const page = doc.pages.find((candidate) =>
       candidate.name === route.name
       && candidate.kind === route.pageKind
-      && (route.path === undefined || candidate.path === route.path)
+      && (route.path === undefined || candidate.id === route.path)
     );
     if (!page) return false;
   }

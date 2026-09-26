@@ -95,7 +95,7 @@ import {
   setGraphMeta,
 } from "./ui";
 import { journalTitle } from "./journal";
-import type { BlockDto, PageDto } from "./types";
+import type { BlockDto, PageDto, PageRead } from "./types";
 import { resetPaneLayoutToSingle } from "./panes";
 
 let counter = 0;
@@ -856,8 +856,8 @@ describe("undo history is graph-local", () => {
 });
 
 describe("cross-page duplicate id::", () => {
-  const page = (name: string, blocks: BlockDto[], path?: string): PageDto => ({
-    name, kind: "page", title: name, pre_block: null, blocks, path,
+  const page = (name: string, blocks: BlockDto[], id?: string): PageDto & { id?: string } => ({
+    name, kind: "page", title: name, pre_block: null, blocks, id,
   });
 
   it("re-keys a duplicate id:: on a second page so the two blocks stay distinct", () => {
@@ -960,36 +960,42 @@ describe("page-scoped structural undo", () => {
   });
 
   it("undo preserves a path-pinned page's `path` (a #21 stray must not misroute its save)", () => {
-    // `path` pins the save to the exact file the page came from (a duplicate-day
-    // stray). The undo clone used to drop it, so undoing an edit re-routed the
-    // next save to the CANONICAL file. Snapshot → edit → undo must keep `path`.
-    const stray: PageDto = {
+    // The page `id` pins the save to the exact file the page came from (a
+    // duplicate-day stray). The undo clone used to drop it (then `path`), so
+    // undoing an edit re-routed the next save to the CANONICAL file.
+    // Snapshot → edit → undo must keep the id.
+    const stray: PageRead = {
       name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [blk("t1")], path: "journals/Friday, 26-06-2026.md",
+      blocks: [blk("t1")], id: "journals/Friday, 26-06-2026.md",
     };
     loadFeed([stray]);
-    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
     splitBlock(stray.blocks[0].id, 1); // structural op → snapshots this page
     undo();
-    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
     redo();
-    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
   });
 
-  it("an exact path load replaces a same-name canonical page instead of editing the wrong file", () => {
-    const canonical: PageDto = {
+  it("an exact path load replaces a same-name canonical page instead of editing the wrong file", async () => {
+    const canonical: PageRead = {
       name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [blk("canonical")], path: "journals/2026_06_26.md",
+      blocks: [blk("canonical")], id: "journals/2026_06_26.md",
     };
-    const stray: PageDto = {
+    const stray: PageRead = {
       name: "Today", kind: "journal", title: "Today", pre_block: null,
-      blocks: [blk("stray")], path: "journals/Friday, 26-06-2026.md",
+      blocks: [blk("stray")], id: "journals/Friday, 26-06-2026.md",
     };
     loadSingle(canonical);
     ensurePageLoaded(stray);
-    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    expect(pageByName("Today")!.id).toBe("journals/Friday, 26-06-2026.md");
     expect(doc.byId[pageByName("Today")!.roots[0]].raw).toBe("stray");
-    expect(pageToDto("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    // The next save targets the stray's own file (was: pageToDto echoed `path`).
+    const saveSpy = vi.spyOn(backend(), "savePage").mockResolvedValue("rev");
+    markDirty("Today");
+    expect(await flushPage("Today")).toBe(true);
+    expect(saveSpy.mock.calls[0][0]).toBe("journals/Friday, 26-06-2026.md");
+    saveSpy.mockRestore();
   });
 
   it("undo removes an op-added node from byId entirely (root-walk purge, no leak)", () => {
@@ -1581,7 +1587,7 @@ describe("save engine (persistence)", () => {
     expect(saveSpy).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(400);
     expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect((saveSpy.mock.calls[0][0] as { name: string }).name).toBe("Test");
+    expect((saveSpy.mock.calls[0][1]).name).toBe("Test");
     expect(isDirty("Test")).toBe(false);
   });
 
@@ -1594,7 +1600,7 @@ describe("save engine (persistence)", () => {
     // Next save sends the rev returned by the previous one as its baseRev.
     markDirty("Test");
     await flushPage("Test");
-    expect(saveSpy.mock.calls[1][1]).toBe("rev2");
+    expect(saveSpy.mock.calls[1][2]).toBe("rev2");
   });
 
   it("gives a fresh Markdown block one durable identity for persistent references and Copy block ref", async () => {
@@ -1664,6 +1670,71 @@ describe("save engine (persistence)", () => {
     expect(await flushPage("Test")).toBe(false);
     expect(isDirty("Test")).toBe(true);
     expect(await flushPage("Test")).toBe(true); // retry succeeds
+  });
+
+  // B15b: a save carries the page's file identity (PageId). A loaded page sends
+  // its own id; a page with no id yet asks `resolvePage` once, first.
+  it("saves a brand-new page to the backend's Absent id, then reuses it without resolving again", async () => {
+    const resolveSpy = vi.spyOn(backend(), "resolvePage")
+      .mockResolvedValue({ kind: "absent", id: "pages/Test.org" });
+    load([blk("new")]);
+    expect(pageByName("Test")!.id).toBeUndefined();
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(resolveSpy).toHaveBeenCalledWith("Test", "page");
+    expect(saveSpy.mock.calls[0][0]).toBe("pages/Test.org");
+    expect(saveSpy.mock.calls[0][2]).toBeNull(); // CreateNew
+    expect(pageByName("Test")!.id).toBe("pages/Test.org");
+
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(resolveSpy).toHaveBeenCalledTimes(1); // no extra round trip once it has an id
+    expect(saveSpy.mock.calls[1][0]).toBe("pages/Test.org");
+    resolveSpy.mockRestore();
+  });
+
+  it("a loaded duplicate-day stray saves to its own file id without resolving its name (#21)", async () => {
+    const resolveSpy = vi.spyOn(backend(), "resolvePage");
+    const stray = { name: "Today", kind: "journal" as const, title: "Today", pre_block: null,
+      blocks: [blk("stray")], id: "journals/Friday, 26-06-2026.md", rev: "stray-rev" };
+    loadFeed([stray]);
+    markDirty("Today");
+    expect(await flushPage("Today")).toBe(true);
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(saveSpy.mock.calls[0][0]).toBe("journals/Friday, 26-06-2026.md");
+    expect(saveSpy.mock.calls[0][2]).toBe("stray-rev");
+    resolveSpy.mockRestore();
+  });
+
+  it("a pathless save whose name now exists on disk is a conflict and keeps the content", async () => {
+    const resolveSpy = vi.spyOn(backend(), "resolvePage")
+      .mockResolvedValue({ kind: "existing", id: "pages/Test.md", others: [] });
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    const [b] = [blk("mine")];
+    load([b]);
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(false);
+    // CreateNew (null base) onto the existing file: the backend refuses it.
+    expect(saveSpy.mock.calls[0][0]).toBe("pages/Test.md");
+    expect(saveSpy.mock.calls[0][2]).toBeNull();
+    expect(isConflicted("Test")).toBe(true);
+    expect(pageByName("Test")!.id).toBeUndefined();
+    expect(doc.byId[b.id].raw).toBe("mine");
+    resolveSpy.mockRestore();
+  });
+
+  it("refuses a content save onto an alias name: no write, conflict surface, content kept", async () => {
+    const resolveSpy = vi.spyOn(backend(), "resolvePage")
+      .mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] });
+    const [b] = [blk("typed under an alias name")];
+    load([b]);
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(false);
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(isConflicted("Test")).toBe(true);
+    expect(pageByName("Test")!.id).toBeUndefined();
+    expect(doc.byId[b.id].raw).toBe("typed under an alias name");
+    resolveSpy.mockRestore();
   });
 
   it("no-ops guide-flagged pages at the persistence boundary", async () => {
@@ -1801,7 +1872,7 @@ describe("save engine (persistence)", () => {
     markDirty(today);
     expect(await flushPage(today)).toBe(true);
     expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect((saveSpy.mock.calls[0][0] as { name: string }).name).toBe(today);
+    expect((saveSpy.mock.calls[0][1]).name).toBe(today);
   });
 
   it("keeps today untouched when an OLDER day is deleted from the feed (#17 no-op)", async () => {
@@ -1826,7 +1897,7 @@ describe("save engine (persistence)", () => {
     expect(isConflicted("Test")).toBe(true);
     saveSpy.mockResolvedValue("rev3");
     expect(await forceSave("Test")).toBe(true);
-    expect(saveSpy.mock.calls.at(-1)![2]).toBe(true); // force flag
+    expect(saveSpy.mock.calls.at(-1)![3]).toBe(true); // force flag
   });
 
   it("deletes a CONFLICTED page rather than leaving it undeletable", async () => {

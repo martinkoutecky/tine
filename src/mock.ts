@@ -137,7 +137,6 @@ function b(raw: string, children: BlockDto[] = [], collapsed = false, properties
 }
 
 function mockPagePath(p: PageDto): string {
-  if (p.path) return p.path;
   const dir = p.kind === "journal" ? "journals" : "pages";
   const ext = p.format === "org" ? "org" : "md";
   return `${dir}/${p.name.replace(/\//g, "___")}.${ext}`;
@@ -826,7 +825,7 @@ export function mockBackend(): Backend {
       const rows = candidates.slice(0, limit);
       const done = rows.length === candidates.length;
       return {
-        pages: rows.map(({ page }) => page),
+        pages: rows.map(({ page }) => ({ ...page, id: mockPagePath(page) })),
         next_before_day: done || !rows.length ? null : rows[rows.length - 1].day,
         done,
         as_of_day,
@@ -835,9 +834,20 @@ export function mockBackend(): Backend {
     async journalContentDays(): Promise<number[]> {
       return [];
     },
-    async getPage(name: string): Promise<PageDto | null> {
-      if (name.startsWith("hls__")) return hlsPageDto(name);
-      return find(name);
+    async getPage(name: string) {
+      const page = name.startsWith("hls__") ? hlsPageDto(name) : find(name);
+      return page ? { ...page, id: mockPagePath(page) } : null;
+    },
+    async resolvePage(name: string, kind: "journal" | "page") {
+      const page = all.find((p) => p.kind === kind && p.name.toLowerCase() === name.toLowerCase());
+      if (page) return { kind: "existing" as const, id: mockPagePath(page), others: [] };
+      if (kind === "page") {
+        const owners = all.filter((p) => p.pre_block?.split(/\n/).some((line) =>
+          /^alias::\s*/i.test(line) && line.replace(/^alias::\s*/i, "").split(",").some((alias) => alias.trim().toLowerCase() === name.toLowerCase())
+        )).map(mockPagePath).sort();
+        if (owners.length) return { kind: "alias" as const, owners };
+      }
+      return { kind: "absent" as const, id: mockPagePath({ name, kind, title: name, pre_block: null, blocks: [] }) };
     },
     async graphSourceFiles(includeJournals: boolean) {
       // Synthetic sources so the diff panel is exercisable against the mock
@@ -851,7 +861,7 @@ export function mockBackend(): Backend {
       }
       return files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length }));
     },
-    async savePage(_page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
+    async savePage(_id: string, _page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
       return "mock-rev"; // no-op in mock
     },
     async guidePages(): Promise<GuidePage[]> {
@@ -1408,9 +1418,9 @@ export function mockBackend(): Backend {
         ? "* something something\n*\n"
         : "* Tried out the Org demo graph in Tine today\n* TODO follow up on the [[kitchen-sink]] feature tour\nSCHEDULED: <2026-06-27 Sat>\n* DONE loaded the graph and clicked around\n";
     },
-    async getPageByPath(path: string): Promise<PageDto | null> {
+    async getPageByPath(path: string) {
       const page = all.find((p) => mockPagePath(p) === path);
-      if (page) return { ...page, path };
+      if (page) return { ...page, id: path };
       // The duplicate-day stray opens to its own content (#21); other paths fall
       // back to the canonical page by name.
       const stray = path.includes("Friday");
@@ -1423,7 +1433,7 @@ export function mockBackend(): Backend {
         rev: "mock-rev",
         format: "org",
         read_only: false,
-        path,
+        id: path,
       };
     },
     async mergePages(): Promise<void> {

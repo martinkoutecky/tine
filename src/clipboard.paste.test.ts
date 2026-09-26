@@ -53,8 +53,8 @@ function block(id: string, raw: string, children: BlockDto[] = [], collapsed = f
 function page(
   name: string,
   blocks: BlockDto[],
-  options: { format?: Format; path?: string } = {},
-): PageDto {
+  options: { format?: Format; id?: string } = {},
+): PageDto & { id?: string } {
   return {
     name,
     kind: "page",
@@ -62,11 +62,11 @@ function page(
     pre_block: null,
     blocks,
     format: options.format ?? "md",
-    ...(options.path ? { path: options.path } : {}),
+    ...(options.id ? { id: options.id } : {}),
   };
 }
 
-function seed(pages: PageDto[]): void {
+function seed(pages: (PageDto & { id?: string })[]): void {
   loadFeed(pages);
   setGraphMeta({ root: "/graph" } as any);
 }
@@ -119,7 +119,7 @@ describe("clipboard payload insertion and identity validation", () => {
     await paste();
 
     expect(backend().savePage).toHaveBeenCalledTimes(1);
-    const retired = vi.mocked(backend().savePage).mock.calls[0][0];
+    const retired = vi.mocked(backend().savePage).mock.calls[0][1];
     expect(retired.blocks.some((candidate) => candidate.id === ID1)).toBe(false);
     expect(doc.byId[ID1]?.raw).toBe(`source\nid:: ${ID1}`);
     expect(roots("Paste")).toEqual([ID1]);
@@ -127,9 +127,9 @@ describe("clipboard payload insertion and identity validation", () => {
 
   it("retires every page in a multi-page cut before preserving all ids", async () => {
     seed([
-      page("One", [block(ID1, `one\nid:: ${ID1}`)], { path: "pages/one.md" }),
-      page("Two", [block(ID2, `two\nid:: ${ID2}`)], { path: "pages/two.md" }),
-      page("Target", [block(HOST, "")], { path: "pages/target.md" }),
+      page("One", [block(ID1, `one\nid:: ${ID1}`)], { id: "pages/one.md" }),
+      page("Two", [block(ID2, `two\nid:: ${ID2}`)], { id: "pages/two.md" }),
+      page("Target", [block(HOST, "")], { id: "pages/target.md" }),
     ]);
     const payload = buildClipboardPayload([ID1, ID2])!;
     await record("cut", "- one\n- two", payload);
@@ -138,7 +138,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
     await paste();
 
-    expect(vi.mocked(backend().savePage).mock.calls.map(([dto]) => dto.name).sort()).toEqual(["One", "Two"]);
+    expect(vi.mocked(backend().savePage).mock.calls.map(([, dto]) => dto.name).sort()).toEqual(["One", "Two"]);
     expect(roots("Target")).toEqual([ID1, ID2]);
   });
 
@@ -164,7 +164,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
     const ownsIdentity = (raw: string) => new RegExp(`^id::\\s*${ID1}$`, "im").test(raw);
     expect(Object.values(doc.byId).filter((node) => ownsIdentity(node.raw))).toHaveLength(1);
-    const persistedOwners = vi.mocked(backend().savePage).mock.calls.flatMap(([dto]) => {
+    const persistedOwners = vi.mocked(backend().savePage).mock.calls.flatMap(([, dto]) => {
       const visit = (candidate: BlockDto): BlockDto[] => [candidate, ...candidate.children.flatMap(visit)];
       return dto.blocks.flatMap(visit).filter((candidate) => ownsIdentity(candidate.raw));
     });
@@ -220,7 +220,7 @@ describe("clipboard payload insertion and identity validation", () => {
       resetStore();
       clearClipboardSlot();
       seed([
-        page("Source", [block(ID1, `source\nid:: ${ID1}`)], { path: "pages/source.md" }),
+        page("Source", [block(ID1, `source\nid:: ${ID1}`)], { id: "pages/source.md" }),
         page("Target", [block(HOST, "")]),
       ]);
       const payload = buildClipboardPayload([ID1])!;
@@ -236,7 +236,7 @@ describe("clipboard payload insertion and identity validation", () => {
     await run(() => forgetPage("Source"));
     await run(() => {
       forgetPage("Source");
-      reloadPage(page("Source", [block("replacement", "replacement")], { path: "pages/rebound.md" }));
+      reloadPage(page("Source", [block("replacement", "replacement")], { id: "pages/rebound.md" }));
     });
   });
 
@@ -277,7 +277,7 @@ describe("clipboard payload insertion and identity validation", () => {
     await record("cut", "- one\n- two", payload);
     deleteBlock(ID1);
     deleteBlock(ID2);
-    vi.mocked(backend().savePage).mockImplementation(async (dto) => {
+    vi.mocked(backend().savePage).mockImplementation(async (_id, dto) => {
       if (dto.name === "Two") throw new Error("disk full");
       return "saved-rev";
     });
@@ -291,7 +291,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
   it("fails retirement when a source is rebound while its save is in flight", async () => {
     seed([
-      page("Source", [block(ID1, `source\nid:: ${ID1}`)], { path: "pages/source.md" }),
+      page("Source", [block(ID1, `source\nid:: ${ID1}`)], { id: "pages/source.md" }),
       page("Target", [block(HOST, "")]),
     ]);
     const payload = buildClipboardPayload([ID1])!;
@@ -302,7 +302,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
     const pending = paste();
     await vi.waitFor(() => expect(backend().savePage).toHaveBeenCalled());
-    reloadPage(page("Source", [block("replacement", "replacement")], { path: "pages/rebound.md" }));
+    reloadPage(page("Source", [block("replacement", "replacement")], { id: "pages/rebound.md" }));
     finishSave("stale-rev");
 
     await pending;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GraphMeta, PageDto } from "./types";
+import type { GraphMeta, PageRead } from "./types";
 
 const META: GraphMeta = {
   root: "/tmp/template-graph",
@@ -24,7 +24,7 @@ const META: GraphMeta = {
 };
 
 async function loadHarness(
-  existing: PageDto | null,
+  existing: PageRead | null,
   access = { graph_root: META.root, external_assets_path: null as string | null, approved: true },
   confirm = true,
   warm = false
@@ -38,6 +38,7 @@ async function loadHarness(
     confirm: vi.fn(async () => confirm),
     loadGraph: vi.fn(async () => ({ kind: "loaded" as const, meta: META, binding_generation: 1 })),
     getPage: vi.fn(async () => existing),
+    resolvePage: vi.fn(async () => ({ kind: "absent" as const, id: "journals/2026_07_10.md" })),
     listTemplates: vi.fn(async () => [
       {
         name: "Daily",
@@ -233,7 +234,10 @@ describe("default journal template graph bind", () => {
 
     expect(prepareTemplateVars).toHaveBeenCalledOnce();
     expect(applyTemplateVars).toHaveBeenCalledWith("Template body", "Jul 10th, 2026");
+    // No journal file yet: the save goes to the backend's Absent id (B15b).
+    expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
     expect(api.savePage).toHaveBeenCalledWith(
+      "journals/2026_07_10.md",
       expect.objectContaining({
         blocks: [expect.objectContaining({ raw: "Template body" })],
       }),
@@ -243,19 +247,33 @@ describe("default journal template graph bind", () => {
   });
 
   it("uses an empty journal's revision as the conflict baseline", async () => {
-    const existing: PageDto = {
+    const existing: PageRead = {
       name: "Jul 10th, 2026",
       kind: "journal",
       title: "Jul 10th, 2026",
       pre_block: null,
       blocks: [{ id: "empty", raw: "", collapsed: false, children: [] }],
       rev: "empty-journal-rev",
+      id: "journals/Jul 10th, 2026.org",
     };
     const { loadGraphPath, api } = await loadHarness(existing);
 
     await loadGraphPath(META.root);
 
-    expect(api.savePage).toHaveBeenCalledWith(expect.any(Object), "empty-journal-rev", false);
+    // The empty journal's own file (its id), with its rev as the baseline; no
+    // name lookup.
+    expect(api.savePage).toHaveBeenCalledWith("journals/Jul 10th, 2026.org", expect.any(Object), "empty-journal-rev", false);
+    expect(api.resolvePage).not.toHaveBeenCalled();
+  });
+
+  it("refuses to write a template journal onto an alias name (B15b)", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    api.resolvePage.mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] } as never);
+
+    await loadGraphPath(META.root);
+
+    expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
+    expect(api.savePage).not.toHaveBeenCalled();
   });
 });
 

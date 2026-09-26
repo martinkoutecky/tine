@@ -97,7 +97,7 @@ fn fresh(name: &str, kind: PageKind) -> PageDto {
         rev: None,
         format: Format::Md,
         read_only: false,
-        path: None,
+
         guide: false,
     }
 }
@@ -191,9 +191,21 @@ fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
     let result = if doc.guide {
         store_wire(SaveOutcome::GuideEphemeral, &doc)
     } else {
-        let id = match store.target_for_save(&doc) {
-            Ok(id) => id,
-            Err(outcome) => return (store_wire(outcome, &doc), fixture.files()),
+        let id = match case {
+            Case::PinnedJournal => PageId::from("journals/Friday, 26-06-2026.org"),
+            Case::OrgReadOnly | Case::OrgEditable => PageId::from("pages/Note.org"),
+            _ => match store
+                .whole_graph()
+                .unwrap()
+                .resolve(&doc.name, doc.kind == PageKind::Journal)
+            {
+                tine_store::Resolved::Existing { id, .. } | tine_store::Resolved::Absent { id } => {
+                    id
+                }
+                tine_store::Resolved::Alias { .. } => {
+                    return (Err("conflict".into()), fixture.files())
+                }
+            },
         };
         let base = if force {
             match store.read(&id.file(), None) {
@@ -276,7 +288,7 @@ fn legacy_and_store_saves_match_on_data_safety_matrix() {
     ] {
         let new = run(case);
         let expected_result = match case {
-            Case::Alias => Ok("eb859457eef7db1b".to_string()),
+            Case::Alias => Err("conflict".to_string()),
             Case::Appeared => Err("conflict".to_string()),
             Case::Crlf => Ok("2be7206b0f37adb0".to_string()),
             Case::Deleted => Err("conflict".to_string()),
@@ -333,8 +345,9 @@ fn legacy_and_store_saves_match_on_data_safety_matrix() {
                 assert_ne!(new.1["journals/Friday, 26-06-2026.org"], b"* stray\n");
             }
             Case::Alias => {
+                // B15b: a name that is only an alias is refused, not written.
                 assert_eq!(new.1["pages/Owner.md"], b"alias:: Alt\n- owner\n");
-                assert!(new.1.contains_key("pages/Alt.md"));
+                assert!(!new.1.contains_key("pages/Alt.md"));
             }
             Case::KeepMineDeleted => assert!(new.1.contains_key("pages/Note.md")),
             _ => {}
@@ -361,4 +374,88 @@ fn keep_mine_rechecks_the_version_read_for_the_banner_action() {
         fs::read(fixture.0.join("pages/Note.md")).unwrap(),
         b"- external two\n"
     );
+}
+
+/// B15b: a pathless save gets its target from `WholeGraph::resolve`. A brand-new
+/// namespaced name must come back `Absent` at the file the graph's
+/// `:file/name-format` and preferred format name, and saving there creates it.
+#[test]
+fn absent_resolve_names_the_file_by_name_format_and_preferred_format() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.0.join("logseq")).unwrap();
+    fs::write(
+        fixture.0.join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar :preferred-format \"Org\"}\n",
+    )
+    .unwrap();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = match store.whole_graph().unwrap().resolve("Proj/Child", false) {
+        tine_store::Resolved::Absent { id } => id,
+        _ => panic!("a brand-new name must resolve Absent"),
+    };
+    assert_eq!(id.as_str(), "pages/Proj___Child.org");
+    let mut doc = fresh("Proj/Child", PageKind::Page);
+    doc.format = Format::Org;
+    assert!(matches!(
+        store.save(&id, SaveBase::CreateNew, &doc),
+        SaveOutcome::Saved(_)
+    ));
+    let files = fixture.files();
+    assert_eq!(files.keys().collect::<Vec<_>>(), ["pages/Proj___Child.org"]);
+}
+
+/// B15b: a pathless save that resolved `Absent` before the name appeared on disk
+/// carries `CreateNew`; the store must refuse it and leave the new file alone.
+#[test]
+fn create_new_onto_a_name_that_now_exists_conflicts_and_writes_nothing() {
+    let fixture = Fixture::new();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = match store.whole_graph().unwrap().resolve("New", false) {
+        tine_store::Resolved::Absent { id } => id,
+        _ => panic!("a brand-new name must resolve Absent"),
+    };
+    fixture.write("pages/New.md", "- external creation\n");
+    assert!(matches!(
+        store.save(&id, SaveBase::CreateNew, &fresh("New", PageKind::Page)),
+        SaveOutcome::Conflict { .. }
+    ));
+    assert_eq!(
+        fixture.files(),
+        BTreeMap::from([(
+            "pages/New.md".to_string(),
+            b"- external creation\n".to_vec()
+        )])
+    );
+}
+
+/// B15b: a loaded duplicate-day stray saves to the id it was loaded from (the
+/// #21 pin), never to the canonical file the day's name resolves to.
+#[test]
+fn a_loaded_stray_journal_saves_to_its_own_file() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.0.join("logseq")).unwrap();
+    fs::write(
+        fixture.0.join("logseq/config.edn"),
+        "{:journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+    )
+    .unwrap();
+    fixture.write("journals/2026_06_26.md", "- canonical\n");
+    fixture.write("journals/Friday, 26-06-2026.md", "- stray\n");
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let stray = PageId::from("journals/Friday, 26-06-2026.md");
+    let mut doc = store.page(&stray).unwrap().doc;
+    let resolved = match store.whole_graph().unwrap().resolve(&doc.name, true) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("the day must resolve to an existing journal"),
+    };
+    assert_ne!(resolved, stray, "the day's name must not answer the stray");
+    doc.blocks[0].raw = "stray edit".into();
+    let base = SaveBase::Existing(doc.rev.clone().unwrap().into());
+    assert!(matches!(
+        store.save(&stray, base, &doc),
+        SaveOutcome::Saved(_)
+    ));
+    let files = fixture.files();
+    assert_eq!(files["journals/2026_06_26.md"], b"- canonical\n");
+    assert_eq!(files["journals/Friday, 26-06-2026.md"], b"- stray edit\n");
 }
