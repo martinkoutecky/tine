@@ -73,8 +73,11 @@ fn restore_recovery_roots_live_on_the_filesystems_they_detach_from() {
     fs::write(graph_root.join("assets/doc.edn"), b"live").unwrap();
     let report = store.restore(Vec::new()).unwrap();
     assert_eq!(report.recovery.len(), 2);
-    assert!(report.recovery[0].starts_with(graph_root.join("logseq/.tine-trash")));
-    assert!(report.recovery[1].starts_with(graph_root.join("assets/.tine-restore-recovery")));
+    // Recovery roots are reported under the canonical root `Store::open`
+    // binds (on Windows a `\\?\` long-name path).
+    let canonical = fs::canonicalize(&graph_root).unwrap();
+    assert!(report.recovery[0].starts_with(canonical.join("logseq").join(".tine-trash")));
+    assert!(report.recovery[1].starts_with(canonical.join("assets").join(".tine-restore-recovery")));
     assert_eq!(
         fs::read(report.recovery[0].join("pages/secret.md")).unwrap(),
         b"live"

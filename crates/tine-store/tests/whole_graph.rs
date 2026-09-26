@@ -334,6 +334,10 @@ fn simple_query_rejects_source_and_nesting_limits() {
     ));
 }
 
+// Case twins need a case-sensitive filesystem; Windows folds case, so the
+// second write replaces the first file's content under its original name. The
+// Windows sibling below asserts that one-file outcome instead.
+#[cfg(not(windows))]
 #[test]
 fn inventory_targets_agree_with_resolve_for_case_twins() {
     let fixture = Fixture::new();
@@ -370,4 +374,49 @@ fn inventory_targets_agree_with_resolve_for_case_twins() {
         };
         assert_eq!(others.len(), 1, "the other case twin is listed");
     }
+}
+
+/// Windows sibling of `inventory_targets_agree_with_resolve_for_case_twins`:
+/// on a case-insensitive filesystem the lower-case write lands in the existing
+/// `Twin.md`, so there is exactly one page, listed once, with no twin, and the
+/// inventory target still agrees with `resolve`.
+#[cfg(windows)]
+#[test]
+fn case_twin_writes_fold_into_one_page_on_windows() {
+    let fixture = Fixture::new();
+    std::fs::write(fixture.0.join("pages/Twin.md"), "- upper\n").unwrap();
+    std::fs::write(fixture.0.join("pages/twin.md"), "- lower\n").unwrap();
+    let names: Vec<_> = std::fs::read_dir(fixture.0.join("pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.eq_ignore_ascii_case("twin.md"))
+        .collect();
+    assert_eq!(names, ["Twin.md"], "the filesystem folds case");
+    assert_eq!(
+        std::fs::read_to_string(fixture.0.join("pages/Twin.md")).unwrap(),
+        "- lower\n"
+    );
+    let view = fixture.view();
+    let inventory = view.inventory();
+    let twins: Vec<_> = inventory
+        .0
+        .iter()
+        .filter(|entry| entry.name.eq_ignore_ascii_case("twin"))
+        .collect();
+    assert_eq!(twins.len(), 1, "one page for the folded name");
+    let entry = twins[0];
+    let Resolved::Existing { id, others } = &entry.target else {
+        panic!("the page should be existing");
+    };
+    assert_eq!(id.as_str(), "pages/Twin.md");
+    assert!(others.is_empty(), "no case twin exists: {others:?}");
+    let Resolved::Existing {
+        id: resolved,
+        others: resolved_others,
+    } = view.resolve(&entry.name, false)
+    else {
+        panic!("resolve should agree with the inventory");
+    };
+    assert_eq!(&resolved, id);
+    assert!(resolved_others.is_empty());
 }

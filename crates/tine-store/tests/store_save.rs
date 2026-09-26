@@ -60,11 +60,13 @@ impl Fixture {
                 if path.is_dir() {
                     visit(root, &path, out);
                 } else {
+                    // Key by the `/`-separated graph-relative id, as on
+                    // every platform (Windows lists `pages\\New.md`).
                     out.insert(
                         path.strip_prefix(root)
                             .unwrap()
                             .to_string_lossy()
-                            .into_owned(),
+                            .replace('\\', "/"),
                         fs::read(path).unwrap(),
                     );
                 }

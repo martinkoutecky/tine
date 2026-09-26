@@ -141,14 +141,17 @@ fn byte_reads_streaming_and_os_handoff() {
         Err(StoreError::TooLarge { limit: 5, len: 6 })
     ));
     assert_eq!(store.open_read(&id).unwrap().1, 6);
+    // Hand-off paths live under the canonical root `Store::open` binds (on
+    // Windows a `\\?\` long-name path; on macOS `/private/var`).
+    let root = std::fs::canonicalize(&f.0).unwrap();
     assert_eq!(
         store.path_for_os_handoff(&id, false).unwrap(),
-        f.0.join("assets/pic.bin")
+        root.join("assets").join("pic.bin")
     );
     let future = store.file_id(Area::Pages, "future.md").unwrap();
     assert_eq!(
         store.path_for_os_handoff(&future, false).unwrap(),
-        f.0.join("pages/future.md")
+        root.join("pages").join("future.md")
     );
     assert!(matches!(
         store.path_for_os_handoff(&PageId::from("pages/../escape.md").file(), false),
@@ -215,7 +218,10 @@ fn page_mtime_remains_the_observed_snapshot_value() {
     let view = store.whole_graph().unwrap();
     let observed = view.page_mtime(&id).unwrap();
     let later = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
-    std::fs::File::open(f.0.join("pages/Note.md"))
+    // Setting times needs write access on Windows (FILE_WRITE_ATTRIBUTES).
+    std::fs::File::options()
+        .write(true)
+        .open(f.0.join("pages/Note.md"))
         .unwrap()
         .set_modified(later)
         .unwrap();

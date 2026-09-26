@@ -82,9 +82,13 @@ fn asset_path_import_read_and_trash_summary_keep_one_file_semantics() {
     .unwrap();
     assert_eq!(name, "kept.bin");
     assert_eq!(assets::read_asset(&store, &name, None).unwrap(), b"media");
+    // Under the canonical root `Store::open` binds (Windows: `\\?\` path).
     assert_eq!(
         assets::path_for_os_handoff(&store, &name).unwrap(),
-        fixture.0.join("assets/kept.bin")
+        std::fs::canonicalize(&fixture.0)
+            .unwrap()
+            .join("assets")
+            .join("kept.bin")
     );
     assert_eq!(
         assets::choose_import_name(

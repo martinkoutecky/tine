@@ -621,6 +621,10 @@ fn save_refuses_to_clobber_external_change() {
     use crate::store::{SaveBase, SaveOutcome};
     let root = std::env::temp_dir().join(format!("tine-conflict-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
+    // Production `Store::open` binds the canonical root; the write-target
+    // guard compares canonical targets against it. On Windows and macOS the
+    // temp dir is not canonical (`\\?\`/8.3 names, `/var` -> `/private/var`).
+    let root = std::fs::canonicalize(&root).unwrap();
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
 
@@ -659,6 +663,8 @@ fn save_conflicts_when_file_deleted_externally() {
     use crate::store::{SaveBase, SaveOutcome};
     let root = std::env::temp_dir().join(format!("tine-del-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
+    // Canonical like production `Store::open` (see save_refuses_to_clobber_external_change).
+    let root = std::fs::canonicalize(&root).unwrap();
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
     let g = Arc::new(Graph::open(&root));

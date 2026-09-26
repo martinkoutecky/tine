@@ -10145,7 +10145,10 @@ mod tests {
         let dir = fs::canonicalize(scratch("warmed-duplicate-name-owners")).unwrap();
         fs::create_dir_all(dir.join("pages").join("duplicates")).unwrap();
         let flat = dir.join("pages").join("Exact Storage Twin.md");
-        let nested = dir.join("pages").join("duplicates").join("Exact Storage Twin.md");
+        let nested = dir
+            .join("pages")
+            .join("duplicates")
+            .join("Exact Storage Twin.md");
         fs::write(&flat, "- flat original sentinel\n").unwrap();
         fs::write(&nested, "- nested original sentinel\n").unwrap();
 
