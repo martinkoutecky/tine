@@ -19,26 +19,37 @@ static COPY_SEQ: AtomicU64 = AtomicU64::new(0);
 /// One verified snapshot file. `rel` is relative to `area`; `source` is an
 /// already-open regular file, and `len` is its verified length.
 pub struct RestoreFile {
+    /// Destination graph area.
     pub area: Area,
+    /// Destination name relative to `area`.
     pub rel: String,
+    /// Open, verified source file copied from its beginning.
     pub source: File,
+    /// Verified source length, checked again before copying.
     pub len: u64,
 }
 
 /// Completed work and recovery locations, including after a partial failure.
 #[derive(Debug)]
 pub struct RestoreReport {
+    /// Number of input files copied into the graph.
     pub restored: u64,
+    /// Same-filesystem recovery directories holding retired files.
     pub recovery: Vec<PathBuf>,
+    /// Live targets changed by another writer and left in place.
     pub kept_external: Vec<FileId>,
+    /// Generation published for the resulting disk state.
     pub graph_rev: GraphRev,
 }
 
 /// A restore stopped at `phase`; `done` describes work already completed.
 #[derive(Debug)]
 pub struct RestoreFailed {
+    /// Name of the phase that stopped.
     pub phase: String,
+    /// Error that stopped the restore.
     pub cause: IoError,
+    /// Work completed before the failure; recovery locations remain available.
     pub done: RestoreReport,
 }
 

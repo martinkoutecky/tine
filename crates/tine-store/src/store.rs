@@ -123,8 +123,8 @@ const QUERY_EXPORT_MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PREVIEW_NODES: usize = 2_000;
 const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 
-/// Interim owner of a legacy graph. Constructing it is O(1); reads can build
-/// the whole cache in O(P + B + disk) on first use.
+/// Open graph root, its live file observation, and guarded write access.
+/// Opening lists page files and starts background parsing; see [`Self::open`].
 pub struct Store {
     pub(crate) graph: Arc<Graph>,
     pub(crate) writer: Arc<Mutex<()>>,
@@ -172,36 +172,54 @@ impl LoadState {
 /// Consent supplied by the device for a graph's external assets directory.
 #[derive(Default)]
 pub struct OpenOptions {
+    /// Canonical device path approved for an external `assets/` link, if any.
     pub approved_external_assets: Option<PathBuf>,
+    /// Initial file observation mode.
     pub watch: WatchMode,
 }
 
+/// How the store observes graph files after opening.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WatchMode {
+    /// Use filesystem notifications with a 200 ms debounce, falling back to polling.
     #[default]
     Notify,
+    /// Poll graph files every three seconds.
     Poll,
 }
 
+/// Source of a published change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
+    /// A transaction or restore through this store.
     Own,
+    /// Watcher or explicit scan reconciliation.
     External,
 }
 
+/// Byte-level observation of a file across a publication.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChangeKind {
+    /// A file appeared.
     Created,
+    /// File bytes changed.
     Modified,
+    /// Metadata changed without a known byte change.
     Touched,
+    /// A file disappeared.
     Removed,
 }
 
+/// One published graph change; subscriptions deliver generations in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
+    /// Generation after this change.
     pub graph_rev: GraphRev,
+    /// Whether this store or an external actor caused the change.
     pub origin: Origin,
+    /// Affected ids, byte-level kind, and resulting revision when present.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+    /// Whether graph config changed in this publication.
     pub config_changed: bool,
     pages: Vec<(FileId, PageKind, String)>,
 }
@@ -221,6 +239,7 @@ impl Change {
     }
 }
 
+/// A subscription ended because the store closed or another subscriber replaced it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Closed;
 
@@ -434,12 +453,14 @@ impl ChangeFeed {
     }
 }
 
+/// Single active change stream for a store, without replay or a queue bound.
 pub struct Subscription {
     feed: Arc<ChangeFeed>,
     number: u64,
 }
 
 impl Subscription {
+    /// Wait for the next change; returns [`Closed`] after close or replacement.
     pub fn recv(&self) -> Result<Change, Closed> {
         let mut state = self.feed.state.lock().unwrap();
         loop {
@@ -453,6 +474,8 @@ impl Subscription {
         }
     }
 
+    /// Take the next queued change without waiting, or `None` when none is ready.
+    /// Returns [`Closed`] after close or replacement.
     pub fn try_recv(&self) -> Result<Option<Change>, Closed> {
         let mut state = self.feed.state.lock().unwrap();
         if state.closed || state.subscription != self.number {
@@ -464,7 +487,9 @@ impl Subscription {
 
 /// Canonical graph root and any external assets target. Inspection writes nothing.
 pub struct GraphAccessInspection {
+    /// Canonical graph root for display or OS handoff.
     pub root: PathBuf,
+    /// Canonical external assets target, when present.
     pub external_assets: Option<PathBuf>,
 }
 
@@ -475,21 +500,33 @@ impl GraphAccessInspection {
     }
 }
 
+/// Failure to inspect, create, or open a graph root.
 #[derive(Debug)]
 pub enum OpenError {
+    /// Requested root is not a directory.
     NotAFolder(PathBuf),
+    /// Root or a required path could not be resolved.
     Unresolvable {
+        /// Path that could not be resolved.
         path: PathBuf,
+        /// Human-readable reason.
         reason: String,
     },
+    /// Directory layout is unsafe for graph access.
     UnsafeLayout(String),
+    /// External assets target requires device approval.
     ExternalAssetsUnapproved {
+        /// Canonical external target awaiting approval.
         current: PathBuf,
     },
+    /// Creating a new graph root failed.
     CreateFailed {
+        /// Requested root.
         path: PathBuf,
+        /// Underlying I/O failure.
         cause: crate::IoError,
     },
+    /// Other filesystem failure.
     Io(crate::IoError),
 }
 
@@ -524,7 +561,9 @@ impl std::fmt::Display for OpenError {
 /// Effective config; unreadable config is already defaulted by legacy open.
 #[derive(Clone)]
 pub struct ConfigState {
+    /// Effective graph config, defaulted when loading config failed.
     pub config: Arc<tine_core::config::Config>,
+    /// Original config read or parse failure, if defaults were used.
     pub problem: Option<crate::IoError>,
 }
 
@@ -538,10 +577,15 @@ impl std::ops::Deref for ConfigState {
 /// Trash categories. Legacy covers entries with no recognized recoverable type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrashKind {
+    /// Trashed asset.
     Asset,
+    /// Trashed page.
     Page,
+    /// Trashed journal.
     Journal,
+    /// Trashed sync-conflict copy.
     Conflict,
+    /// Entry without a recognized typed trash category.
     Legacy,
 }
 
@@ -777,7 +821,11 @@ impl Store {
         })
     }
 
-    /// Validate the v0.6.5 layout in its original order and start the load.
+    /// Open a graph after validating its layout and any external assets target.
+    /// Returns the store, graph metadata, and effective config. Lists pages and
+    /// journals before returning (O(page-file metadata)); parsing runs in the
+    /// background and [`Self::whole_graph`] waits for it. An unsafe layout,
+    /// unapproved external target, or I/O failure returns [`OpenError`].
     pub fn open(
         root: &Path,
         opts: OpenOptions,
@@ -910,6 +958,8 @@ impl Store {
         self.changes.close();
     }
 
+    /// Start a change stream at the next publication. Replaces any prior
+    /// subscription, discards queued changes, and never waits for a load.
     pub fn subscribe(&self) -> Subscription {
         let mut state = self.changes.state.lock().unwrap();
         state.subscription += 1;
@@ -921,12 +971,16 @@ impl Store {
         }
     }
 
+    /// Change observation mode without waiting for a load; has no effect after close.
     pub fn set_watch_mode(&self, mode: WatchMode) {
         if !self.is_closed() {
             self.watch.set_mode(mode);
         }
     }
 
+    /// Reconcile observed graph files and config now. Reads metadata for all
+    /// page files and changed bytes; cost O(P metadata + changed bytes).
+    /// Returns [`LoadError`] when closed or reconciliation cannot continue.
     pub fn scan_refresh(&self) -> Result<(), LoadError> {
         self.watch.scan_refresh()
     }
@@ -953,8 +1007,8 @@ impl Store {
     }
 
     /// Resolve the canonical journal file for a day, or the preferred new file.
-    /// Interim implementation uses the legacy claimant index, which can build
-    /// from journal names on first use (O(journal entries)); warm lookup O(1).
+    /// Uses the in-memory day index; no disk read or load wait. An unobserved
+    /// external creation may change the answer after watcher reconciliation.
     pub fn journal_id(&self, day: Day) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
         if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
@@ -967,7 +1021,10 @@ impl Store {
             self.graph.current_config().preferred_format.ext()
         ))
     }
-    /// Save one page with the editor's baseline; no write occurs on refusal.
+    /// Save one page with the editor's [`SaveBase`] guard. Blocks for the writer
+    /// and disk I/O, and publishes a generation when bytes change. Refusal
+    /// preserves the caller's edits; [`SaveOutcome`] describes conflict,
+    /// read-only, twin, invalid target, I/O, and closed cases.
     pub fn save(&self, id: &PageId, base: SaveBase, doc: &PageDto) -> SaveOutcome {
         if self.is_closed() {
             return SaveOutcome::Closed;
@@ -1120,8 +1177,9 @@ impl Store {
         Ok(removed)
     }
 
-    /// Type a file name within one configured graph area. Validation repeats
-    /// whenever an id is used, including after deserialization.
+    /// Type a slash-separated file name within one configured graph area.
+    /// Rejects traversal or unsafe identities; validation repeats on use.
+    /// Does not require the file to exist or wait for the initial load.
     pub fn file_id(&self, area: Area, rel: &str) -> Result<FileId, StoreError> {
         if area == Area::Meta && rel.starts_with(".tine-") {
             return Err(StoreError::InvalidTarget(rel.into()));
@@ -1138,6 +1196,8 @@ impl Store {
         Ok(id)
     }
 
+    /// Type a valid `.md` or `.org` file in pages or journals as a page id.
+    /// Sync-conflict copies and invalid ids return `None`; no disk read or wait.
     pub fn as_page(&self, file: &FileId) -> Option<PageId> {
         self.validate_file(file).ok()?;
         let path = file.as_str();
@@ -1666,33 +1726,46 @@ impl Store {
     }
 }
 
+/// Graph area used to form area-relative file identities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Area {
+    /// Configured pages directory.
     Pages,
+    /// Configured journals directory.
     Journals,
+    /// Assets directory, possibly an approved external target.
     Assets,
+    /// `logseq/` metadata directory; `.tine-*` entries cannot be named here.
     Meta,
+    /// Graph-local `logseq/.tine-trash` area.
     Trash,
 }
 
 /// One listed file. `rel` is the exact name within its area; metadata is
 /// present only when the file could be statted. Cost O(1) to inspect.
 pub struct FileEntry {
+    /// Opaque identity of this file.
     pub id: FileId,
+    /// Area containing the file.
     pub area: Area,
+    /// Exact slash-separated name within the area.
     pub rel: String,
+    /// Page identity for page or journal text, if applicable.
     pub page: Option<PageId>,
     /// Parsed journal day under configured and fallback formats; cost O(1).
     pub day: Option<Day>,
     /// Whether the stem is the configured filename form; cost O(1).
     pub date_stem: bool,
+    /// Observed metadata, absent when stat failed or no stat was requested.
     pub meta: Option<FileMeta>,
 }
 
 /// Metadata observed during a scan. Modification time may be unavailable.
 /// Cost O(1) to inspect.
 pub struct FileMeta {
+    /// Observed byte length.
     pub len: u64,
+    /// Observed modification time, when available.
     pub mtime: Option<SystemTime>,
 }
 
@@ -1700,7 +1773,9 @@ pub struct FileMeta {
 /// names and I/O errors. Cost O(files + unreadable entries) to inspect.
 #[derive(Default)]
 pub struct Listing {
+    /// Files successfully listed in this area.
     pub files: Vec<FileEntry>,
+    /// Area-relative names that could not be read, with their errors.
     pub unreadable: Vec<(String, crate::IoError)>,
 }
 
@@ -1710,21 +1785,31 @@ thread_local! {
         const { std::cell::RefCell::new((None, None)) };
 }
 
+/// Journal day encoded as a `yyyymmdd` integer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Day(pub i64);
 
+/// Failure to identify or read a graph file.
 #[derive(Debug)]
 pub enum StoreError {
+    /// File is absent.
     NotFound,
+    /// File id or path is unsafe or outside its area.
     InvalidTarget(String),
+    /// File bytes cannot be decoded as UTF-8.
     Undecodable,
+    /// Page text could not be parsed; message describes the failure.
     Unparseable(String),
+    /// A bounded read exceeded the caller's byte limit.
     TooLarge {
+        /// Requested maximum length.
         limit: u64,
+        /// Observed file length.
         len: u64,
     },
+    /// Other filesystem failure.
     Io(std::io::Error),
-    /// Reserved for B7 lifecycle.
+    /// Store was closed before this disk operation.
     Closed,
 }
 
@@ -1792,66 +1877,115 @@ impl From<String> for FileRev {
 /// The file revision the edit is based on, or a request to create a new file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SaveBase {
+    /// Replace only if the file still has this raw-byte revision.
     Existing(FileRev),
+    /// Create only if the file is absent.
     CreateNew,
 }
 
 /// Result of one guarded page save. A refusal never authorizes dropping edits.
 #[derive(Debug)]
 pub enum SaveOutcome {
+    /// New page bytes were written; contains their revision.
     Saved(FileRev),
+    /// New bytes equal current disk bytes; no write or publication occurred.
     Unchanged(FileRev),
+    /// Disk holds different bytes; read the current file before resolving.
     Conflict {
+        /// Revision of the current disk bytes.
         disk: FileRev,
     },
+    /// Existing base was requested, but the file disappeared.
     Deleted,
+    /// Page cannot be safely rewritten; reason is for display.
     ReadOnly(String),
+    /// Another file claims the page name or journal day.
     Twin {
+        /// Existing claimant.
         existing: PageId,
     },
+    /// Invalid or unsafe target; reason is for display.
     InvalidTarget(String),
+    /// Filesystem operation failed.
     Io(std::io::Error),
-    /// Reserved for the B7 store lifecycle.
+    /// Store was closed before the save.
     Closed,
     /// Interim bundled-guide result; guide pages have no disk identity.
     GuideEphemeral,
 }
 
+/// Parsed page and the raw-byte revision used for a guarded save.
 pub struct PageRead {
+    /// Page identity to pass back to the same store.
     pub id: PageId,
+    /// Parsed document.
     pub doc: PageDto,
+    /// Revision of the bytes that produced `doc`.
     pub rev: FileRev,
+    /// Reason the page cannot be saved without losing data, if any.
     pub read_only: Option<String>,
 }
 
+/// Result of resolving a page name or journal day in one snapshot.
 pub enum Resolved {
-    Existing { id: PageId, others: Vec<PageId> },
-    Alias { owners: Vec<PageId> },
-    Absent { id: PageId },
+    /// One or more files claim the name; the canonical file comes first.
+    Existing {
+        /// Canonical claimant.
+        id: PageId,
+        /// Other claimants.
+        others: Vec<PageId>,
+    },
+    /// Name belongs to pages that declare it as an alias.
+    Alias {
+        /// Alias owners in deterministic file order.
+        owners: Vec<PageId>,
+    },
+    /// No claimant; this is the id a new page would use.
+    Absent {
+        /// Proposed file identity.
+        id: PageId,
+    },
 }
 /// Physical names, aliases, and names that occur only in references, sorted by
 /// the graph's page identity key. Physical entries retain every file claimant.
 pub struct InventoryEntry {
+    /// Decoded file name, alias, or referenced name.
     pub name: String,
+    /// Current claimant or proposed identity.
     pub target: Resolved,
+    /// Whether this entry represents a journal.
     pub is_journal: bool,
+    /// Parsed journal day, if any.
     pub day: Option<Day>,
 }
 
+/// Graph inventory entries in page-key order.
 pub struct Inventory(pub Vec<InventoryEntry>);
+/// Inputs for the query-plan graph search.
 pub struct SearchRequest {
+    /// Search expression.
     pub text: String,
+    /// Restrict search to this page, if present.
     pub within: Option<PageId>,
+    /// Maximum page hits requested.
     pub page_limit: usize,
+    /// Maximum block hits requested.
     pub block_limit: usize,
+    /// Include an explanation of query planning.
     pub explain: bool,
 }
+/// Syntax used to evaluate a `{{query}}` expression.
 pub enum QueryDialect {
+    /// Simple query expression.
     Simple,
+    /// Advanced query expression.
     Advanced,
 }
+/// Answer shape matching the requested query dialect.
 pub enum QueryResult {
+    /// Simple query reference groups.
     Simple(Arc<Vec<RefGroup>>),
+    /// Advanced query result with its diagnostics.
     Advanced(AdvancedResult),
 }
 
@@ -1876,37 +2010,54 @@ impl From<GraphRev> for String {
 /// Initial load failure. The interim `Store::whole_graph` cannot produce one.
 #[derive(Debug)]
 pub enum LoadError {
-    /// Background load failed; introduced with B7.
-    Failed { reason: String },
-    /// Store closed; introduced with B7.
+    /// Background load stopped before a snapshot was available.
+    Failed {
+        /// Human-readable failure reason.
+        reason: String,
+    },
+    /// Store closed while the caller waited.
     Closed,
 }
 
 /// A whole-graph request failed before returning a partial answer.
 #[derive(Debug)]
 pub enum QueryError {
+    /// Page identity is invalid for this graph.
     InvalidTarget(String),
     /// Request exceeds the store's fixed input budget.
     RequestTooLarge {
+        /// Input budget exceeded.
         what: Budget,
+        /// Requested item count.
         count: usize,
+        /// Maximum accepted count.
         limit: usize,
     },
     /// Export request exceeds the fixed macro or source-byte budget. Extra
     /// counts retain the existing frontend error text during this migration.
     ExportRequestTooLarge {
+        /// Requested macro count.
         macros: usize,
+        /// Requested source bytes.
         bytes: usize,
+        /// Maximum macro count.
         macro_limit: usize,
+        /// Maximum source bytes.
         byte_limit: usize,
+        /// Processing cap applied to this export request.
         processing_cap: usize,
     },
     /// Evaluation reached the store's fixed result budget.
     ResultTooLarge {
+        /// Result budget exceeded.
         what: Budget,
+        /// Result item count.
         count: usize,
+        /// Maximum item count.
         limit: usize,
+        /// Estimated serialized bytes, when measured.
         bytes: Option<usize>,
+        /// Maximum serialized bytes.
         byte_limit: usize,
     },
     /// Query syntax error (reserved for later batches).
@@ -1915,16 +2066,26 @@ pub enum QueryError {
     Cancelled,
 }
 
+/// Named input or result limit used by [`QueryError`].
 #[derive(Clone, Copy, Debug)]
 pub enum Budget {
+    /// Backlink filter roots.
     BacklinkFilterRoots,
+    /// Matching block rows.
     MatchingBlocks,
+    /// Matching block rows returned through the bridge.
     BridgeMatchingBlocks,
+    /// Requested block-reference ids.
     RequestedBlockRefs,
+    /// Resolved block rows.
     ResolvedBlockRows,
+    /// Exported query bytes.
     ExportBytes,
+    /// Property facet entries.
     PropertyFacets,
+    /// Advanced query matches.
     AdvancedQueryMatches,
+    /// Search hits returned through the bridge.
     SearchHits,
 }
 
@@ -1962,7 +2123,9 @@ pub struct Cancel(pub Arc<AtomicBool>);
 /// Facet answer policy: reject oversized query-builder results or return the
 /// editor's bounded autocomplete prefix. Both cost O(B) on a cold cache.
 pub enum FacetPolicy {
+    /// Reject a result that exceeds the fixed facet budget.
     Budgeted,
+    /// Return a prefix within that budget.
     Truncated,
 }
 

@@ -1,9 +1,17 @@
-//! `tine-store` — the only owner of a Logseq graph root (og batch 1).
+//! Open, read, observe, and safely change a Logseq graph rooted on disk.
 //!
-//! v0.6.5's `Graph` is private behind the store boundary. `Transaction` owns
-//! guarded multi-file writes, and `Store::save` is one transaction step. The
-//! store also owns observation and publication; `src-tauri` only turns a
-//! subscription into window events.
+//! [`Store::open`] returns after listing graph files and starts parsing in the
+//! background. [`Store::whole_graph`] waits for that first parse and returns an
+//! immutable generation for graph-wide queries. [`Store::page`] reads one page;
+//! [`Store::read`] and [`Store::open_read`] provide raw file data. These calls
+//! are synchronous and should run off a UI thread.
+//!
+//! Use [`Store::save`] for one guarded page edit, or [`Transaction`] for a set
+//! of guarded file changes. A [`FileRev`] identifies the bytes an edit was
+//! based on; a changed file produces a conflict instead of silently replacing
+//! those bytes. [`Store::subscribe`] delivers published changes in order.
+//! [`Store::close`] stops observation and releases callers waiting for load.
+#![deny(missing_docs)]
 
 #[cfg(test)]
 mod derived_cache_fuzz_tests;

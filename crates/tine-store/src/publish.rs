@@ -126,15 +126,21 @@ impl SiteWriter {
 /// A failed publish keeps any retired previous site in recovery.
 #[derive(Debug)]
 pub struct PublishFailed {
+    /// Error that prevented the new site from being published.
     pub cause: IoError,
+    /// Recovery location of the retired site, if retirement had completed.
     pub previous_kept: Option<PathBuf>,
 }
 
 /// The published site path is for handing to the OS or showing to the user.
 #[derive(Debug)]
 pub struct PublishReceipt {
+    /// Published directory for an OS or browser handoff.
     pub site: PathBuf,
+    /// Number of files emitted by the caller.
     pub files: u64,
+    /// Always `None` on success; a retained previous site is reported by
+    /// [`PublishFailed::previous_kept`] on failure.
     pub previous_kept: Option<PathBuf>,
 }
 

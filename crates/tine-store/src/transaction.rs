@@ -18,17 +18,29 @@ use crate::store::{
     Area, ChangeKind, FileId, FileRev, GraphRev, PageId, SaveBase, Store, StoreError,
 };
 
+/// Content staged for a new file. Streams are bounded while being copied.
 pub enum Content {
+    /// Bytes held by the caller.
     Bytes(Vec<u8>),
-    Stream { source: File, max_bytes: u64 },
+    /// Read from an open file during commit, up to `max_bytes`.
+    Stream {
+        /// Open source file.
+        source: File,
+        /// Maximum accepted byte count.
+        max_bytes: u64,
+    },
 }
 
+/// Old page or tag name to new name, compared using normalized references.
 #[derive(Clone, Debug, Default)]
 pub struct RenameMap(pub Vec<(String, String)>);
 
+/// I/O error with a stable kind for handling and a message for display.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IoError {
+    /// Platform-independent I/O error category.
     pub kind: io::ErrorKind,
+    /// Human-readable cause.
     pub message: String,
 }
 
@@ -41,62 +53,128 @@ impl From<io::Error> for IoError {
     }
 }
 
+/// Result of an individual committed transaction step.
 #[derive(Debug)]
 pub enum StepResult {
-    Written { file: FileId, rev: FileRev },
-    Unchanged { file: FileId, rev: FileRev },
-    Trashed { file: FileId, trashed: FileId },
-    Moved { to: FileId, rev: FileRev },
+    /// File was created or replaced.
+    Written {
+        /// Written file.
+        file: FileId,
+        /// Revision of its new bytes.
+        rev: FileRev,
+    },
+    /// Save or reference rewrite found the same bytes on disk.
+    Unchanged {
+        /// Unchanged file.
+        file: FileId,
+        /// Current disk revision.
+        rev: FileRev,
+    },
+    /// Source was moved into graph trash.
+    Trashed {
+        /// Original file identity.
+        file: FileId,
+        /// New identity in the trash area.
+        trashed: FileId,
+    },
+    /// File was moved to a new identity.
+    Moved {
+        /// Destination identity.
+        to: FileId,
+        /// Revision at the destination.
+        rev: FileRev,
+    },
 }
 
+/// A transaction step rejected without authorization to overwrite user data.
 #[derive(Debug)]
 pub enum Refusal {
+    /// Source page cannot be round-tripped safely; reason is for display.
     ReadOnly(String),
+    /// Invalid or unsafe destination; reason is for display.
     InvalidTarget(String),
-    Twin { existing: PageId },
+    /// Another page file claims the same name or journal day.
+    Twin {
+        /// Existing claimant.
+        existing: PageId,
+    },
+    /// Page bytes are not UTF-8.
     Undecodable,
+    /// A transaction named the same file more than once.
     RepeatedFile(FileId),
+    /// The store was closed before commit.
     Closed,
 }
 
+/// Reason a transaction did not commit.
 #[derive(Debug)]
 pub enum Why {
-    Conflict { file: FileId, disk: Option<FileRev> },
+    /// An expected revision did not match the disk state.
+    Conflict {
+        /// File whose guard failed.
+        file: FileId,
+        /// Current revision, or `None` if absent.
+        disk: Option<FileRev>,
+    },
+    /// A step was refused by policy or validation.
     Refused(Refusal),
+    /// An I/O operation failed.
     Failed(IoError),
 }
 
+/// Disk differences left after an unsuccessful transaction's undo.
 #[derive(Debug, Default)]
 pub struct Rollback {
+    /// External changes preserved; optional second id is their recovery location.
     pub kept_external: Vec<(FileId, Option<FileId>)>,
+    /// Files undo could not restore, with their errors.
     pub undo_failed: Vec<(FileId, IoError)>,
 }
 
+/// A committed set of steps or a refusal with its undo result.
 #[derive(Debug)]
 pub enum TxOutcome {
+    /// All steps completed; one generation represents their final state.
     Committed {
+        /// Results in input order.
         steps: Vec<StepResult>,
+        /// Generation publishing the disk state, or current one if unchanged.
         graph_rev: GraphRev,
     },
+    /// Step `step` did not happen; earlier steps were undone where possible.
     NotCommitted {
+        /// Zero-based index of the failed step.
         step: usize,
+        /// Conflict, refusal, or I/O failure.
         why: Why,
+        /// Differences undo could not remove; empty on preflight failure.
         rollback: Rollback,
+        /// Generation covering the final disk state.
         graph_rev: GraphRev,
     },
 }
 
 #[cfg(any(test, feature = "test-faults"))]
+/// Deterministic one-shot failure hooks for tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FaultPoint {
+    /// Simulate a changed file at the second revision guard.
     Stage2Mismatch,
+    /// Simulate a changed file at the indexed step's second guard.
     Stage2MismatchAt(usize),
+    /// Simulate a changed but valid sidecar at the second guard.
     Stage2ValidSidecar,
+    /// Simulate an external config edit at the second guard.
     Stage2ConfigExternal,
+    /// Simulate a no-replace destination collision.
     NoReplaceCollision,
+    /// Simulate an I/O error after a step starts.
     MidStepIo,
+    /// Simulate an I/O error at the indexed step.
     MidStepIoAt(usize),
+    /// Simulate an external write while undoing a live file.
     UndoLiveWrite,
+    /// Simulate a twin appearing after publication.
     TwinAfterPublish,
 }
 
@@ -201,6 +279,7 @@ struct Undo {
     moved: bool,
 }
 
+/// Builder for guarded file changes, applied together by [`Self::commit`].
 pub struct Transaction<'a> {
     store: &'a Store,
     steps: Vec<Step>,
@@ -218,6 +297,8 @@ impl Store {
 }
 
 impl<'a> Transaction<'a> {
+    /// Queue a guarded page save. `CreateNew` requires the file to be absent;
+    /// `Existing` compares its raw-byte revision. No disk I/O until commit.
     pub fn save_page(&mut self, id: &PageId, base: SaveBase, doc: &PageDto) -> &mut Self {
         self.steps.push(Step::Save {
             id: id.clone(),
@@ -227,6 +308,8 @@ impl<'a> Transaction<'a> {
         self
     }
 
+    /// Queue a no-replace file creation. Page text must be UTF-8 and cannot
+    /// claim a name or journal day already held by another file.
     pub fn create(&mut self, file: &FileId, content: Content) -> &mut Self {
         self.steps.push(Step::Create {
             file: file.clone(),
@@ -235,9 +318,10 @@ impl<'a> Transaction<'a> {
         self
     }
 
-    /// Create an area file with v0.6.5 asset collision naming. `ext` is the
-    /// suffix returned by `split_asset_stem_ext` (including its leading dot),
-    /// or empty for extensionless names. Cost O(file bytes + collisions).
+    /// Queue a no-replace creation of `stem` + `ext`, trying `stem_1`,
+    /// `stem_2`, and so on on collision. `stem` is one path component; `ext`
+    /// includes its leading dot, or is empty. An invalid name is refused.
+    /// The chosen id appears in the step result. Cost O(bytes + collisions).
     pub fn create_unique(
         &mut self,
         area: Area,
@@ -254,6 +338,8 @@ impl<'a> Transaction<'a> {
         self
     }
 
+    /// Queue replacement of a non-page file guarded by `expected`.
+    /// Page text must instead use [`Self::save_page`].
     pub fn replace(&mut self, file: &FileId, expected: FileRev, bytes: Vec<u8>) -> &mut Self {
         self.steps.push(Step::Replace {
             file: file.clone(),
@@ -263,6 +349,8 @@ impl<'a> Transaction<'a> {
         self
     }
 
+    /// Queue a guarded page-reference rewrite. Unchanged output reports
+    /// [`StepResult::Unchanged`]; unsafe Org edits are refused as read-only.
     pub fn rewrite_refs(
         &mut self,
         id: &PageId,
@@ -277,6 +365,10 @@ impl<'a> Transaction<'a> {
         self
     }
 
+    /// Queue a guarded no-replace move. Optional reference rewrites affect
+    /// the destination. If bytes change, the old source moves to trash; if
+    /// bytes stay equal, the source is renamed directly without a trash copy.
+    /// Twin claims are refused.
     pub fn move_file(
         &mut self,
         file: &FileId,
@@ -293,6 +385,8 @@ impl<'a> Transaction<'a> {
         self
     }
 
+    /// Queue a guarded move into graph trash. The new id is returned in the
+    /// step result, and changed source bytes are preserved on guard failure.
     pub fn trash(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
         self.steps.push(Step::Trash {
             file: file.clone(),
@@ -1147,6 +1241,9 @@ impl<'a> Transaction<'a> {
         }
     }
 
+    /// Apply queued steps under the writer and file locks, then publish their
+    /// final state. Cost grows with named file bytes and snapshot publication.
+    /// On failure, attempts undo and reports any remaining disk differences.
     pub fn commit(mut self) -> TxOutcome {
         let _writer = self.store.writer.lock().unwrap();
         let rev = || self.store.changes.rev();

@@ -4,8 +4,8 @@
 //! Tine's canonical form would differ from what's on disk — WITHOUT printing any
 //! of your note content or page names. The summary is safe to share.
 //!
-//!   tine-check <graph-dir>            # counts + categories only (shareable)
-//!   tine-check <graph-dir> --paths    # also list relative paths (local use)
+//!   `tine-check <graph-dir>`            # counts + categories only (shareable)
+//!   `tine-check <graph-dir> --paths`    # also list relative paths (local use)
 //!
 //! "structural" = a real round-trip bug (re-parsing the output yields a
 //! different document → potential data loss). Everything else is cosmetic

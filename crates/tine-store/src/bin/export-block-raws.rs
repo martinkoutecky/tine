@@ -4,8 +4,8 @@
 //! de-bulleted, de-indented `:block/content` exactly as Tine stores it (lsdoc
 //! re-bullets it itself, the OG way — do NOT re-bullet here).
 //!
-//! Usage: export-block-raws <graphdir> [<graphdir> ...]
-//!   writes <graphdir>/block-raws.json for each dir.
+//! Usage: `export-block-raws <graphdir> [<graphdir> ...]`
+//!   writes `<graphdir>/block-raws.json` for each dir.
 use std::fs;
 use std::path::{Path, PathBuf};
 use tine_core::doc;
