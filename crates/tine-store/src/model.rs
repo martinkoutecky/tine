@@ -9844,9 +9844,22 @@ mod tests {
             .unwrap();
         assert!(status.success(), "mklink /J must create the test junction");
 
-        assert!(Graph::open_checked(&dir).is_err());
-        let graph = Graph::open_checked_with_assets(&dir, Some(&outside)).unwrap();
-        assert_eq!(graph.assets_path(), outside.canonicalize().unwrap());
+        assert!(tine_store::Store::open(&dir, Default::default()).is_err());
+        let store = tine_store::Store::open(
+            &dir,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(outside.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        assert_eq!(
+            tine_graph_features::assets::save_asset(&store, "approved.txt", b"safe").unwrap(),
+            "approved.txt"
+        );
+        assert_eq!(fs::read(outside.join("approved.txt")).unwrap(), b"safe");
+        drop(store);
 
         let _ = fs::remove_dir(dir.join("assets"));
         let _ = fs::remove_dir_all(&dir);
