@@ -78,7 +78,7 @@ struct BackupSource {
 impl BackupSource {
     fn from_store(store: &Store, root: &std::path::Path) -> Result<Self, String> {
         let config = store.config();
-        let root = root.to_path_buf();
+        let root = Store::canonical_root(root).map_err(|error| error.to_string())?;
         let probe = store
             .file_id(Area::Assets, "__tine_backup_probe__")
             .map_err(|error| format!("unsafe assets directory: {error:?}"))?;
@@ -125,7 +125,7 @@ struct SnapshotManifest {
 }
 
 fn root_backup_id(root: &std::path::Path) -> String {
-    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical = Store::canonical_root(root).unwrap_or_else(|_| root.to_path_buf());
     let mut hasher = Sha256::new();
     hasher.update(canonical.to_string_lossy().as_bytes());
     let digest = format!("{:x}", hasher.finalize());
@@ -443,10 +443,7 @@ fn do_backup_source_cancellable(
         }
         let manifest = SnapshotManifest {
             schema: SNAPSHOT_SCHEMA,
-            root: std::fs::canonicalize(&source.root)
-                .unwrap_or(source.root.clone())
-                .display()
-                .to_string(),
+            root: source.root.display().to_string(),
             journals_dir: source.journals_dir,
             pages_dir: source.pages_dir,
             files,
@@ -527,7 +524,7 @@ pub(crate) async fn list_backups(
 }
 
 fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec<BackupInfo> {
-    let current_root = std::fs::canonicalize(root)
+    let current_root = Store::canonical_root(root)
         .unwrap_or_else(|_| root.to_path_buf())
         .display()
         .to_string();
@@ -600,8 +597,7 @@ fn restore_from_backup_source(
         return Err("backup not found".into());
     }
     let manifest = read_manifest(&src).ok_or("backup is incomplete or unverified")?;
-    let current_root = std::fs::canonicalize(&source.root).unwrap_or_else(|_| source.root.clone());
-    if manifest.root != current_root.display().to_string() {
+    if manifest.root != source.root.display().to_string() {
         return Err("backup belongs to a different graph".into());
     }
     if !verify_snapshot(&src, &manifest) {

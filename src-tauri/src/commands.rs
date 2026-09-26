@@ -22,8 +22,8 @@ fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     error.to_string().replace(
         "logseq/.tine-trash/assets",
         &slot
-            .root_key
-            .join("logseq/.tine-trash/assets")
+            .store
+            .asset_trash_location_for_user()
             .display()
             .to_string(),
     )
@@ -125,44 +125,16 @@ fn asset_handoff_target(slot: &GraphSlot, name: &str) -> Result<std::path::PathB
         .store
         .file_id(Area::Assets, name)
         .map_err(asset_error)?;
-    let target = slot.store.path_for_os_handoff(&id).map_err(asset_error)?;
-    let target = std::fs::canonicalize(target).map_err(|error| error.to_string())?;
-    let assets = tine_store::Store::inspect(&slot.root_key)
-        .map_err(|error| error.to_string())?
-        .external_assets
-        .unwrap_or_else(|| slot.root_key.join("assets"));
-    let assets = std::fs::canonicalize(assets).map_err(|error| error.to_string())?;
-    if !target.starts_with(&assets) || !target.is_file() {
-        return Err("invalid asset".into());
-    }
-    Ok(target)
+    slot.store.asset_for_os_handoff(&id).map_err(asset_error)
 }
 
 fn page_handoff_target(slot: &GraphSlot, id: &PageId) -> Result<std::path::PathBuf, String> {
-    if slot.store.as_page(&id.file()).is_none() {
-        return Err("invalid page path".into());
-    }
-    let lexical = slot.root_key.join(id.as_str());
-    let target = match slot.store.path_for_os_handoff(&id.file()) {
-        Ok(target) => target,
-        // The old page opener admitted symlinks between pages/ and journals/
-        // and reported its own escape error for symlinks outside both.
-        Err(StoreError::InvalidTarget(_)) => lexical,
-        Err(error) => return Err(store_error(error)),
-    };
-    let target = std::fs::canonicalize(target).map_err(|error| error.to_string())?;
-    if !target.is_file() {
-        return Err("page source is not a file".into());
-    }
-    let config = slot.store.config();
-    let pages = std::fs::canonicalize(slot.root_key.join(&config.pages_dir))
-        .map_err(|error| error.to_string())?;
-    let journals = std::fs::canonicalize(slot.root_key.join(&config.journals_dir))
-        .map_err(|error| error.to_string())?;
-    if !target.starts_with(&pages) && !target.starts_with(&journals) {
-        return Err("page source escapes graph directories".into());
-    }
-    Ok(target)
+    slot.store
+        .page_for_os_handoff(id)
+        .map_err(|error| match error {
+            StoreError::InvalidTarget(reason) if reason.starts_with("page source ") => reason,
+            other => store_error(other),
+        })
 }
 
 #[cfg(test)]
@@ -211,6 +183,13 @@ mod handoff_tests {
 
         #[cfg(unix)]
         {
+            std::fs::write(root.join("journals/Cross.md"), "- cross\n").unwrap();
+            std::os::unix::fs::symlink(root.join("journals/Cross.md"), root.join("pages/Cross.md"))
+                .unwrap();
+            assert_eq!(
+                page_handoff_target(&slot, &PageId::from("pages/Cross.md")).unwrap(),
+                root.join("journals/Cross.md")
+            );
             let outside = root.with_extension("outside.md");
             std::fs::write(&outside, "- outside\n").unwrap();
             std::os::unix::fs::symlink(&outside, root.join("pages/Escape.md")).unwrap();
@@ -227,6 +206,97 @@ mod handoff_tests {
         }
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[cfg(test)]
+mod device_read_tests {
+    use super::*;
+
+    #[test]
+    fn read_text_file_refuses_bound_graph_csv() {
+        let temp = tempfile::tempdir().unwrap();
+        let graph = temp.path().join("graph");
+        std::fs::create_dir_all(graph.join("pages")).unwrap();
+        let csv = graph.join("private.csv");
+        std::fs::write(&csv, "secret").unwrap();
+        let state = test_bound_state(&graph);
+        assert!(read_text_file_from_path(&csv, &state).is_err());
+        assert!(read_text_file_from_path(&graph.join("pages/../private.csv"), &state).is_err());
+        #[cfg(unix)]
+        {
+            let alias = temp.path().join("alias.csv");
+            std::os::unix::fs::symlink(&csv, &alias).unwrap();
+            assert!(read_text_file_from_path(&alias, &state).is_err());
+        }
+    }
+
+    #[test]
+    fn read_local_image_requires_a_bound_root_check_before_metadata() {
+        let source = include_str!("commands.rs");
+        let image = source
+            .rsplit("pub(crate) fn read_local_image(")
+            .next()
+            .unwrap();
+        let image = image.split("pub(crate) fn import_asset(").next().unwrap();
+        assert!(image.contains("refuse_bound_graph_path"));
+    }
+
+    fn test_bound_state(root: &std::path::Path) -> AppState {
+        let (store, _, _) =
+            tine_store::Store::open(root, tine_store::OpenOptions::default()).unwrap();
+        let mut graphs = crate::state::GraphRegistry::default();
+        graphs
+            .bind(
+                "main".into(),
+                Arc::new(GraphSlot::new(store, root.to_path_buf())),
+            )
+            .unwrap();
+        AppState {
+            graphs: std::sync::RwLock::new(graphs),
+            graph_load: std::sync::Mutex::new(()),
+            last_focused: std::sync::Mutex::new(None),
+            capture_graph: std::sync::Mutex::new(None),
+            #[cfg(desktop)]
+            next_window: std::sync::atomic::AtomicU64::new(1),
+        }
+    }
+
+    #[test]
+    fn read_local_image_refuses_bound_graph_through_alias_and_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let graph = temp.path().join("graph");
+        std::fs::create_dir_all(graph.join("pages")).unwrap();
+        let image = graph.join("pages/private.png");
+        std::fs::write(&image, b"private").unwrap();
+        let state = test_bound_state(&graph);
+        assert!(
+            refuse_bound_graph_path(&graph.join("pages/../pages/private.png"), &state).is_err()
+        );
+        #[cfg(unix)]
+        {
+            let alias = temp.path().join("alias.png");
+            std::os::unix::fs::symlink(&image, &alias).unwrap();
+            assert!(refuse_bound_graph_path(&alias, &state).is_err());
+        }
+    }
+}
+
+fn refuse_bound_graph_path(
+    path: &std::path::Path,
+    state: &AppState,
+) -> Result<std::path::PathBuf, String> {
+    let resolved = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+    if state
+        .graphs
+        .read()
+        .unwrap()
+        .entries()
+        .iter()
+        .any(|(_, slot)| resolved.starts_with(&slot.root_key))
+    {
+        return Err("device read of a bound graph file is forbidden; use tine-store".into());
+    }
+    Ok(resolved)
 }
 
 fn whole_graph(state: &GraphContext<'_>) -> Result<WholeGraph, String> {
@@ -1884,6 +1954,7 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
 pub(crate) fn read_local_image(
     path: String,
     app: tauri::AppHandle,
+    state: State<'_, AppState>,
 ) -> Result<tauri::ipc::Response, String> {
     // Read an image from an ABSOLUTE path OUTSIDE the graph, for raw-HTML `<img>`
     // srcs the user has explicitly opted into (Settings → "Load local-file images").
@@ -1904,7 +1975,8 @@ pub(crate) fn read_local_image(
     if !ext_ok {
         return Err("not an image file".into());
     }
-    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
+    let p = refuse_bound_graph_path(p, &state)?;
+    let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
     if !meta.is_file() {
         return Err("not a file".into());
     }
@@ -1912,7 +1984,7 @@ pub(crate) fn read_local_image(
     if meta.len() > MAX_BYTES {
         return Err("image too large".into());
     }
-    std::fs::read(p)
+    std::fs::read(&p)
         .map(tauri::ipc::Response::new)
         .map_err(|e| e.to_string())
 }
@@ -2046,20 +2118,23 @@ pub(crate) fn import_native_capture(
 /// so it refuses anything that isn't the drop feature's file types — it must
 /// not grow into a general file-read primitive.
 #[tauri::command]
-pub(crate) fn read_text_file(path: String) -> Result<String, String> {
+pub(crate) fn read_text_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    read_text_file_from_path(std::path::Path::new(&path), &state)
+}
+
+fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<String, String> {
     fn delimited_ext(p: &std::path::Path) -> bool {
         p.extension()
             .and_then(|e| e.to_str())
             .map(|e| e.eq_ignore_ascii_case("csv") || e.eq_ignore_ascii_case("tsv"))
             .unwrap_or(false)
     }
-    let p = std::path::Path::new(&path);
     if !delimited_ext(p) {
         return Err("unsupported file type".into());
     }
     // Re-check on the RESOLVED path too — a symlink named x.csv pointing at an
     // arbitrary file must not pass the extension gate (review finding).
-    let resolved = std::fs::canonicalize(p).map_err(|e| e.to_string())?;
+    let resolved = refuse_bound_graph_path(p, state)?;
     if !delimited_ext(&resolved) {
         return Err("unsupported file type".into());
     }

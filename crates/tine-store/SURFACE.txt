@@ -82,6 +82,8 @@ fn store::Store::config
 fn store::Store::close
 fn store::Store::create_graph
 fn store::Store::inspect
+fn store::Store::canonical_root
+fn store::GraphAccessInspection::approves_external_assets
 fn store::Store::open
 fn store::Store::scan_refresh
 fn store::Store::set_watch_mode
@@ -93,6 +95,9 @@ fn store::Store::journal_id
 fn store::Store::open_read
 fn store::Store::page
 fn store::Store::path_for_os_handoff
+fn store::Store::asset_for_os_handoff
+fn store::Store::page_for_os_handoff
+fn store::Store::asset_trash_location_for_user
 fn store::Store::read
 fn store::Store::scan_area
 fn store::Store::save

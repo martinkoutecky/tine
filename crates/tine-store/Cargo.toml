@@ -26,7 +26,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 tine-graph-features = { path = "../tine-graph-features" }
-syn = { version = "2", features = ["full"] }
+syn = { version = "2", features = ["full", "visit"] }
 quote = "1"
 tine-core = { path = "../tine-core", features = ["test-counters"] }
 # Fault injection for tests/transaction.rs runs in the ordinary workspace test gate.

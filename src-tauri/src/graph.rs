@@ -163,17 +163,15 @@ pub(crate) fn inspect_graph_access(
     let root = resolve_root(&path)
         .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
     let root = canonical_graph_root(&root)?;
-    let external = Store::inspect(&root)
-        .map_err(|error| open_error_text(error, false))?
-        .external_assets;
-    let approved_target =
-        approved_external_assets(&app, &root).and_then(|path| std::fs::canonicalize(path).ok());
-    let approved = external
-        .as_ref()
-        .is_none_or(|target| approved_target.as_ref() == Some(target));
+    let inspection = Store::inspect(&root).map_err(|error| open_error_text(error, false))?;
+    let approved = inspection.external_assets.is_none()
+        || approved_external_assets(&app, &root)
+            .is_some_and(|path| inspection.approves_external_assets(&path).unwrap_or(false));
     Ok(GraphAccessInspection {
         graph_root: root.display().to_string(),
-        external_assets_path: external.map(|path| path.display().to_string()),
+        external_assets_path: inspection
+            .external_assets
+            .map(|path| path.display().to_string()),
         approved,
     })
 }
@@ -187,13 +185,15 @@ pub(crate) fn approve_external_assets(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let root = canonical_graph_root(&graph_root)?;
-    let live = Store::inspect(&root)
-        .map_err(|error| open_error_text(error, false))?
+    let inspection = Store::inspect(&root).map_err(|error| open_error_text(error, false))?;
+    let live = inspection
         .external_assets
+        .clone()
         .ok_or_else(|| "graph no longer uses an external assets directory".to_string())?;
-    let submitted = std::fs::canonicalize(&assets_path)
+    let matches = inspection
+        .approves_external_assets(Path::new(&assets_path))
         .map_err(|error| format!("couldn't resolve external assets path: {error}"))?;
-    if submitted != live {
+    if !matches {
         return Err(format!(
             "external assets directory changed before approval (now {})",
             live.display()

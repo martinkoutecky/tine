@@ -136,6 +136,23 @@ fn inspection_does_not_write() {
     assert_eq!(before, after);
 }
 
+#[cfg(unix)]
+#[test]
+fn external_assets_consent_compares_live_canonical_target() {
+    let graph = Fixture::new("consent-graph");
+    let first = Fixture::new("consent-first");
+    let second = Fixture::new("consent-second");
+    std::os::unix::fs::symlink(first.root(), graph.root().join("assets")).unwrap();
+    let inspection = Store::inspect(graph.root()).unwrap();
+    assert!(inspection.approves_external_assets(first.root()).unwrap());
+    assert!(!inspection.approves_external_assets(second.root()).unwrap());
+    std::fs::remove_file(graph.root().join("assets")).unwrap();
+    std::os::unix::fs::symlink(second.root(), graph.root().join("assets")).unwrap();
+    let retargeted = Store::inspect(graph.root()).unwrap();
+    assert!(!retargeted.approves_external_assets(first.root()).unwrap());
+    assert!(retargeted.approves_external_assets(second.root()).unwrap());
+}
+
 #[test]
 fn unreadable_config_reports_problem_without_changing_legacy_defaults() {
     let fixture = Fixture::new("bad-config");

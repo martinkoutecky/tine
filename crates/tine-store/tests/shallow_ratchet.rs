@@ -247,3 +247,242 @@ fn shallow_surface_only_shrinks() {
         shallow.len()
     );
 }
+
+#[test]
+fn arrival_numeric_budgets() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let items = public_items(&root.join("src"));
+    let methods = |owner: &str| {
+        items
+            .iter()
+            .filter(|item| item.starts_with("fn ") && item.contains(&format!("::{owner}::")))
+            .count()
+    };
+    let operations = methods("Store") + methods("Transaction");
+    let questions = methods("WholeGraph");
+    let types = items
+        .iter()
+        .filter(|item| {
+            ["struct ", "enum ", "trait ", "type ", "union "]
+                .iter()
+                .any(|prefix| item.starts_with(prefix))
+        })
+        .count();
+    assert!(operations <= 35, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 35; imitate crates/tine-store/SURFACE.txt");
+    assert!(questions <= 25, "tine-store Rule 4: WholeGraph has {questions} public methods, budget 25; imitate crates/tine-store/SURFACE.txt");
+    assert!(
+        types <= 55,
+        "tine-store Rule 1: {types} public types, budget 55; imitate crates/tine-store/SURFACE.txt"
+    );
+}
+
+fn carries_path(tokens: impl quote::ToTokens) -> bool {
+    tokens
+        .to_token_stream()
+        .to_string()
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|part| part == "Path" || part == "PathBuf")
+}
+
+fn path_items(
+    module: &str,
+    items: &[Item],
+    visible_types: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    for item in items {
+        match item {
+            Item::Struct(i) if is_pub(&i.vis) && !is_cfg_test(&i.attrs) => {
+                for (index, field) in i.fields.iter().enumerate() {
+                    if is_pub(&field.vis) && carries_path(&field.ty) {
+                        let name = field
+                            .ident
+                            .as_ref()
+                            .map_or_else(|| index.to_string(), ToString::to_string);
+                        out.insert(format!("{module}::{}.{}", i.ident, name));
+                    }
+                }
+            }
+            Item::Enum(i) if is_pub(&i.vis) && !is_cfg_test(&i.attrs) => {
+                for variant in &i.variants {
+                    if variant.fields.iter().any(|field| carries_path(&field.ty)) {
+                        out.insert(format!("{module}::{}::{}", i.ident, variant.ident));
+                    }
+                }
+            }
+            Item::Fn(i) if is_pub(&i.vis) && !is_cfg_test(&i.attrs) && carries_path(&i.sig) => {
+                out.insert(format!("{module}::{}", i.sig.ident));
+            }
+            Item::Impl(i) if i.trait_.is_none() && !is_cfg_test(&i.attrs) => {
+                let owner = type_name(&i.self_ty);
+                if !visible_types.contains(&owner) {
+                    continue;
+                }
+                for method in &i.items {
+                    match method {
+                        ImplItem::Fn(f)
+                            if is_pub(&f.vis) && !is_cfg_test(&f.attrs) && carries_path(&f.sig) =>
+                        {
+                            out.insert(format!("{module}::{owner}::{}", f.sig.ident));
+                        }
+                        ImplItem::Const(c)
+                            if is_pub(&c.vis) && !is_cfg_test(&c.attrs) && carries_path(&c.ty) =>
+                        {
+                            out.insert(format!("{module}::{owner}::{}", c.ident));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Item::Type(i) if is_pub(&i.vis) && carries_path(&i.ty) => {
+                out.insert(format!("{module}::{}", i.ident));
+            }
+            Item::Const(i) if is_pub(&i.vis) && !is_cfg_test(&i.attrs) && carries_path(&i.ty) => {
+                out.insert(format!("{module}::{}", i.ident));
+            }
+            Item::Static(i) if is_pub(&i.vis) && !is_cfg_test(&i.attrs) && carries_path(&i.ty) => {
+                out.insert(format!("{module}::{}", i.ident));
+            }
+            Item::Trait(i) if is_pub(&i.vis) && !is_cfg_test(&i.attrs) => {
+                for member in &i.items {
+                    if let syn::TraitItem::Fn(method) = member {
+                        if carries_path(&method.sig) {
+                            out.insert(format!("{module}::{}::{}", i.ident, method.sig.ident));
+                        }
+                    }
+                }
+            }
+            Item::Union(i) if is_pub(&i.vis) && !is_cfg_test(&i.attrs) => {
+                for field in &i.fields.named {
+                    if is_pub(&field.vis) && carries_path(&field.ty) {
+                        out.insert(format!(
+                            "{module}::{}.{}",
+                            i.ident,
+                            field.ident.as_ref().unwrap()
+                        ));
+                    }
+                }
+            }
+            Item::Mod(i) if is_pub(&i.vis) && !is_cfg_test(&i.attrs) => {
+                if let Some((_, inner)) = &i.content {
+                    path_items(&format!("{module}::{}", i.ident), inner, visible_types, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn public_paths_are_only_inputs_and_handoffs() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let visible_types: BTreeSet<String> = public_items(&root)
+        .iter()
+        .filter(|item| {
+            ["struct ", "enum ", "trait ", "type ", "union "]
+                .iter()
+                .any(|prefix| item.starts_with(prefix))
+        })
+        .filter_map(|item| item.rsplit("::").next().map(str::to_owned))
+        .collect();
+    let lib = syn::parse_file(&std::fs::read_to_string(root.join("lib.rs")).unwrap()).unwrap();
+    let mut actual = BTreeSet::new();
+    path_items("crate", &lib.items, &visible_types, &mut actual);
+    for item in &lib.items {
+        let Item::Mod(module) = item else { continue };
+        if !is_pub(&module.vis) || module.content.is_some() || is_cfg_test(&module.attrs) {
+            continue;
+        }
+        let file = root.join(format!("{}.rs", module.ident));
+        let parsed = syn::parse_file(&std::fs::read_to_string(file).unwrap()).unwrap();
+        path_items(
+            &module.ident.to_string(),
+            &parsed.items,
+            &visible_types,
+            &mut actual,
+        );
+    }
+    // Each path is a user-selected input or an OS/user hand-off. New signatures
+    // require an explicit reason here, even if SURFACE.txt accepts the item.
+    let allowed = [
+        (
+            "store::Store::create_graph",
+            "user-chosen parent input; created root to user",
+        ),
+        (
+            "store::Store::canonical_root",
+            "user-chosen root input; canonical root to caller for binding",
+        ),
+        (
+            "store::Store::inspect",
+            "user-chosen root input; inspection hand-off",
+        ),
+        ("store::Store::open", "user-chosen root input"),
+        (
+            "store::Store::path_for_os_handoff",
+            "validated file path to OS",
+        ),
+        (
+            "store::Store::asset_for_os_handoff",
+            "validated existing asset to OS",
+        ),
+        (
+            "store::Store::page_for_os_handoff",
+            "validated existing page to OS",
+        ),
+        (
+            "store::Store::asset_trash_location_for_user",
+            "trash location in user-facing error",
+        ),
+        (
+            "store::GraphAccessInspection::approves_external_assets",
+            "user-approved device input for comparison",
+        ),
+        (
+            "store::GraphAccessInspection.root",
+            "canonical root to user/binding",
+        ),
+        (
+            "store::GraphAccessInspection.external_assets",
+            "external target to user for consent",
+        ),
+        (
+            "store::OpenOptions.approved_external_assets",
+            "user-approved external target input",
+        ),
+        (
+            "store::OpenError::NotAFolder",
+            "failed user root path to user",
+        ),
+        (
+            "store::OpenError::Unresolvable",
+            "failed user root path to user",
+        ),
+        (
+            "store::OpenError::ExternalAssetsUnapproved",
+            "external target to user for consent",
+        ),
+        ("store::OpenError::CreateFailed", "failed user path to user"),
+        ("publish::PublishReceipt.site", "published site to user/OS"),
+        (
+            "publish::PublishReceipt.previous_kept",
+            "recovery site to user",
+        ),
+        (
+            "publish::PublishFailed.previous_kept",
+            "recovery site to user",
+        ),
+        (
+            "restore::RestoreReport.recovery",
+            "recovery locations to user",
+        ),
+    ];
+    let allowed: BTreeSet<String> = allowed
+        .iter()
+        .map(|(item, reason)| {
+            assert!(!reason.is_empty());
+            (*item).to_owned()
+        })
+        .collect();
+    assert_eq!(actual, allowed, "tine-store Rule 1: every public Path/PathBuf signature needs an input or hand-off reason; imitate crates/tine-store/tests/shallow_ratchet.rs");
+}

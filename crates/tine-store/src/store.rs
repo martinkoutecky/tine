@@ -301,6 +301,13 @@ pub struct GraphAccessInspection {
     pub external_assets: Option<PathBuf>,
 }
 
+impl GraphAccessInspection {
+    /// Compare a user-approved device path with the live external assets target.
+    pub fn approves_external_assets(&self, path: &Path) -> std::io::Result<bool> {
+        Ok(self.external_assets.as_ref() == Some(&fs::canonicalize(path)?))
+    }
+}
+
 #[derive(Debug)]
 pub enum OpenError {
     NotAFolder(PathBuf),
@@ -576,8 +583,8 @@ impl Store {
         Ok(root)
     }
 
-    /// Resolve the graph root and external assets target without writing.
-    pub fn inspect(root: &Path) -> Result<GraphAccessInspection, OpenError> {
+    /// Resolve a user-chosen graph root and require a folder, without writing.
+    pub fn canonical_root(root: &Path) -> Result<PathBuf, OpenError> {
         let canonical = fs::canonicalize(root).map_err(|error| OpenError::Unresolvable {
             path: root.to_path_buf(),
             reason: error.to_string(),
@@ -585,6 +592,12 @@ impl Store {
         if !canonical.is_dir() {
             return Err(OpenError::NotAFolder(canonical));
         }
+        Ok(canonical)
+    }
+
+    /// Resolve the graph root and external assets target without writing.
+    pub fn inspect(root: &Path) -> Result<GraphAccessInspection, OpenError> {
+        let canonical = Self::canonical_root(root)?;
         let external_assets = Graph::external_assets_target(&canonical)
             .map_err(|error| OpenError::Io(error.into()))?;
         Ok(GraphAccessInspection {
@@ -1075,6 +1088,53 @@ impl Store {
         } else {
             Ok(resolved.join(suffix))
         }
+    }
+
+    /// Return an existing regular asset for an OS hand-off, after checking its
+    /// live assets directory and resolved target. Cost: O(path components).
+    pub fn asset_for_os_handoff(&self, file: &FileId) -> Result<PathBuf, StoreError> {
+        if !file.as_str().starts_with("assets/") {
+            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
+        }
+        let target = self.path_for_os_handoff(file)?;
+        let target = fs::canonicalize(target).map_err(StoreError::from_io)?;
+        let assets = fs::canonicalize(self.graph.assets_path()).map_err(StoreError::from_io)?;
+        if !target.starts_with(&assets) || !target.is_file() {
+            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
+        }
+        Ok(target)
+    }
+
+    /// Return an existing page source for an OS hand-off. A page symlink may
+    /// lead from pages to journals or conversely, as in the legacy opener.
+    /// Cost: O(path components).
+    pub fn page_for_os_handoff(&self, id: &PageId) -> Result<PathBuf, StoreError> {
+        if self.as_page(&id.file()).is_none() {
+            return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
+        }
+        let target =
+            fs::canonicalize(self.graph.root.join(id.as_str())).map_err(StoreError::from_io)?;
+        if !target.is_file() {
+            return Err(StoreError::InvalidTarget(
+                "page source is not a file".into(),
+            ));
+        }
+        let config = self.graph.current_config();
+        let pages = fs::canonicalize(self.graph.root.join(&config.pages_dir))
+            .map_err(StoreError::from_io)?;
+        let journals = fs::canonicalize(self.graph.root.join(&config.journals_dir))
+            .map_err(StoreError::from_io)?;
+        if !target.starts_with(&pages) && !target.starts_with(&journals) {
+            return Err(StoreError::InvalidTarget(
+                "page source escapes graph directories".into(),
+            ));
+        }
+        Ok(target)
+    }
+
+    /// Display the recoverable asset trash location in a user-facing error.
+    pub fn asset_trash_location_for_user(&self) -> PathBuf {
+        self.graph.root.join("logseq/.tine-trash/assets")
     }
 
     /// Read one file's bytes, with an optional limit checked before and after

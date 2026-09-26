@@ -206,12 +206,7 @@ impl<'r, 'de: 'r, R: Runtime> CommandArg<'de, R> for GraphContext<'r, R> {
 }
 
 pub(crate) fn canonical_graph_root(path: &str) -> Result<PathBuf, String> {
-    let root = std::fs::canonicalize(path)
-        .map_err(|e| format!("couldn't resolve graph path {path}: {e}"))?;
-    if !root.is_dir() {
-        return Err(format!("graph path is not a folder: {}", root.display()));
-    }
-    Ok(root)
+    Store::canonical_root(Path::new(path)).map_err(|error| error.to_string())
 }
 
 pub(crate) fn slot_for_window(state: &AppState, window: &str) -> Result<Arc<GraphSlot>, String> {
