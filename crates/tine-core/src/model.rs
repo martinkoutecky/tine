@@ -514,8 +514,6 @@ pub struct PageDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphMeta {
     pub root: String,
-    pub journals_dir: String,
-    pub pages_dir: String,
     /// "now" (LATER/NOW) or "todo" (TODO/DOING) — drives the task cycle.
     pub preferred_workflow: String,
     pub shortcuts: std::collections::HashMap<String, String>,
@@ -619,8 +617,6 @@ impl GraphMeta {
     ) -> Self {
         Self {
             root,
-            journals_dir: config.journals_dir.clone(),
-            pages_dir: config.pages_dir.clone(),
             preferred_workflow: match config.preferred_workflow {
                 crate::config::Workflow::Todo => "todo".into(),
                 crate::config::Workflow::Now => "now".into(),

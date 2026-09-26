@@ -1189,7 +1189,19 @@ impl Store {
         };
         let mut listing = Listing::default();
         fn walk(store: &Store, area: Area, root: &Path, dir: &Path, out: &mut Listing) {
-            let entries = match fs::read_dir(dir) {
+            #[cfg(test)]
+            let forced = SCAN_FAULTS.with(|faults| {
+                let rel = dir.strip_prefix(root).unwrap_or(dir).to_string_lossy();
+                (faults.borrow().1.as_deref() == Some(rel.as_ref())).then(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "injected list failure",
+                    )
+                })
+            });
+            #[cfg(not(test))]
+            let forced: Option<std::io::Error> = None;
+            let entries = match forced.map_or_else(|| fs::read_dir(dir), Err) {
                 Ok(entries) => entries,
                 Err(error) => {
                     out.unreadable.push((
@@ -1224,7 +1236,18 @@ impl Store {
                 if area == Area::Meta && rel != "config.edn" && rel != "custom.css" {
                     continue;
                 }
-                let ty = match entry.file_type() {
+                #[cfg(test)]
+                let forced = SCAN_FAULTS.with(|faults| {
+                    (faults.borrow().0.as_deref() == Some(rel.as_str())).then(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "injected stat failure",
+                        )
+                    })
+                });
+                #[cfg(not(test))]
+                let forced: Option<std::io::Error> = None;
+                let ty = match forced.map_or_else(|| entry.file_type(), Err) {
                     Ok(ty) => ty,
                     Err(error) => {
                         out.unreadable.push((rel, error.into()));
@@ -1322,6 +1345,12 @@ impl Store {
             .find_entry(&entry.name, entry.kind)
             .is_some_and(|found| found.path == path);
         let doc = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            #[cfg(test)]
+            if fs::read_to_string(&path)
+                .is_ok_and(|text| text.contains("__TINE_TEST_PAGE_PARSE_PANIC__"))
+            {
+                panic!("deterministic test page parser panic");
+            }
             if canonical {
                 self.graph.load_page(&entry).map(Some)
             } else {
@@ -1375,6 +1404,8 @@ impl Store {
         Ok(WholeGraph {
             graph: Arc::clone(&self.graph),
             rev: self.changes.rev(),
+            observed_mtimes: self.graph.observed_page_mtimes(),
+            unreadable: self.graph.unreadable_pages(),
         })
     }
 }
@@ -1415,6 +1446,12 @@ pub struct FileMeta {
 pub struct Listing {
     pub files: Vec<FileEntry>,
     pub unreadable: Vec<(String, crate::IoError)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static SCAN_FAULTS: std::cell::RefCell<(Option<String>, Option<String>)> =
+        const { std::cell::RefCell::new((None, None)) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1680,6 +1717,8 @@ pub enum FacetPolicy {
 pub struct WholeGraph {
     graph: Arc<Graph>,
     rev: GraphRev,
+    observed_mtimes: Arc<HashMap<String, std::time::SystemTime>>,
+    unreadable: Arc<Vec<(FileId, String)>>,
 }
 
 fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>, QueryError> {
@@ -1697,6 +1736,12 @@ fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>,
 }
 
 impl WholeGraph {
+    /// Page files and subdirectories skipped during the initial or latest cache
+    /// build, with a displayable reason for each. Cost O(1).
+    pub fn unreadable_files(&self) -> &[(FileId, String)] {
+        &self.unreadable
+    }
+
     /// Copy the current parsed-page table into a read-only evaluator input.
     /// Interim cost is O(P) after a possible first cache build of O(P + B + disk).
     /// Parsed documents are shared by `Arc`.
@@ -1858,12 +1903,10 @@ impl WholeGraph {
         ids
     }
 
-    /// File modification time as currently observed. Cost O(1) metadata in
-    /// this interim boundary; B7 will capture it in the snapshot.
+    /// File modification time as observed when this graph view was acquired.
+    /// Cost O(1), without a filesystem read.
     pub fn page_mtime(&self, id: &PageId) -> Option<std::time::SystemTime> {
-        std::fs::metadata(self.graph.root.join(id.as_str()))
-            .and_then(|m| m.modified())
-            .ok()
+        self.observed_mtimes.get(id.as_str()).copied()
     }
 
     /// Resolve a name using the configured file naming rules. Real files win
@@ -2263,5 +2306,59 @@ impl WholeGraph {
             .into_iter()
             .map(Day)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod rev5_tests {
+    use super::*;
+
+    #[test]
+    fn page_parser_panic_is_unparseable() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-page-panic-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(
+            root.join("pages/Panic.md"),
+            "- __TINE_TEST_PAGE_PARSE_PANIC__\n",
+        )
+        .unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let result = store.page(&PageId::from("pages/Panic.md"));
+        assert!(matches!(result, Err(StoreError::Unparseable(_))));
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_reports_unstatable_entry_and_unlistable_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-scan-faults-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages/nested")).unwrap();
+        fs::write(root.join("pages/Unreadable.md"), b"- page\n").unwrap();
+        fs::write(root.join("pages/nested/Inside.md"), b"- page\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        SCAN_FAULTS.with(|faults| {
+            *faults.borrow_mut() = (Some("Unreadable.md".into()), Some("nested".into()));
+        });
+        let listing = store.scan_area(Area::Pages, None).unwrap();
+        SCAN_FAULTS.with(|faults| *faults.borrow_mut() = (None, None));
+        assert_eq!(
+            listing
+                .unreadable
+                .iter()
+                .map(|(rel, _)| rel.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Unreadable.md", "nested"]
+        );
+        assert!(listing.files.is_empty());
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
     }
 }

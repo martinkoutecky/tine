@@ -379,7 +379,10 @@ impl Core {
                 if let Some(entry) = self.graph.forget_file_internal(&path) {
                     pages.push((id.clone(), entry.kind, entry.name));
                 }
-            } else if !matches!(kind, ChangeKind::Touched) {
+            } else if matches!(kind, ChangeKind::Touched) {
+                self.graph
+                    .observe_page_mtime(&path, after.and_then(|value| value.modified));
+            } else {
                 if let Some(entry) = self.graph.sync_file_internal(&path) {
                     pages.push((id.clone(), entry.kind, entry.name));
                 }

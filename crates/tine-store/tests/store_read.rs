@@ -199,6 +199,79 @@ fn page_id_keeps_string_wire_form_beside_a_pathless_dto() {
 }
 
 #[test]
+fn graph_meta_omits_layout_directories() {
+    let f = Fixture::new();
+    let (_, meta, _) = Store::open(&f.0, OpenOptions::default()).unwrap();
+    let value = serde_json::to_value(meta).unwrap();
+    assert!(value.get("pages_dir").is_none(), "{value}");
+    assert!(value.get("journals_dir").is_none(), "{value}");
+}
+
+#[test]
+fn page_mtime_remains_the_observed_snapshot_value() {
+    let f = Fixture::new();
+    let store = f.store();
+    let id = PageId::from("pages/Note.md");
+    let view = store.whole_graph().unwrap();
+    let observed = view.page_mtime(&id).unwrap();
+    let later = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    std::fs::File::open(f.0.join("pages/Note.md"))
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    assert_ne!(observed, later);
+    assert_eq!(view.page_mtime(&id), Some(observed));
+    store.scan_refresh().unwrap();
+    assert_eq!(store.whole_graph().unwrap().page_mtime(&id), Some(later));
+}
+
+#[test]
+fn unreadable_files_reports_skipped_non_utf8_page() {
+    let f = Fixture::new();
+    let store = f.store();
+    let view = store.whole_graph().unwrap();
+    assert!(view
+        .unreadable_files()
+        .iter()
+        .any(|(id, reason)| id.as_str() == "pages/Bad.md" && !reason.is_empty()));
+    assert!(view
+        .corpus()
+        .pages
+        .iter()
+        .all(|page| page.id != "pages/Bad.md"));
+    f.put("pages/Bad.md", b"- now readable\n");
+    store.scan_refresh().unwrap();
+    assert!(store
+        .whole_graph()
+        .unwrap()
+        .unreadable_files()
+        .iter()
+        .all(|(id, _)| id.as_str() != "pages/Bad.md"));
+    assert!(view
+        .unreadable_files()
+        .iter()
+        .any(|(id, _)| id.as_str() == "pages/Bad.md"));
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_files_reports_unlistable_page_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let nested = f.0.join("pages/nested");
+    std::fs::create_dir(&nested).unwrap();
+    std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0)).unwrap();
+    let store = f.store();
+    let view = store.whole_graph().unwrap();
+    assert!(view
+        .unreadable_files()
+        .iter()
+        .any(|(id, reason)| { id.as_str() == "pages/nested" && !reason.is_empty() }));
+    std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700)).unwrap();
+    store.close();
+}
+
+#[test]
 fn resolve_then_page_covers_titles_aliases_namespaces_and_journals() {
     let f = Fixture::new();
     std::fs::write(

@@ -149,6 +149,7 @@ fn store::WholeGraph::referenced_assets
 fn store::WholeGraph::search
 fn store::WholeGraph::templates
 fn store::WholeGraph::unlinked_references
+fn store::WholeGraph::unreadable_files
 struct store::Cancel
 struct store::Day
 struct store::FileRev

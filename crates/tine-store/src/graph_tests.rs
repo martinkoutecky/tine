@@ -1447,7 +1447,7 @@ fn config_reader_preserves_semicolon_in_string_values() {
     )
     .unwrap();
     assert_ne!(
-        Graph::open(&root).meta().journals_dir,
+        Graph::open(&root).config.journals_dir,
         "DECOY",
         "line comment still stripped"
     );

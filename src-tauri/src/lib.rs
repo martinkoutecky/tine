@@ -643,6 +643,7 @@ pub fn run() {
                 // gate the whole block on debug to keep it off the 99% hot launch.
                 if debug_enabled() {
                     let meta = state::graph_meta(&slot);
+                    let config = slot.store.config();
                     let journals = slot.store.scan_area(tine_store::Area::Journals, None).ok();
                     let pages = slot.store.scan_area(tine_store::Area::Pages, None).ok();
                     let inventory = slot.store.whole_graph().ok().map(|view| view.inventory());
@@ -660,7 +661,7 @@ pub fn run() {
                     diag(format!("graph root: {}", meta.root));
                     diag(format!(
                         "journals dir: {} (.md files={:?})",
-                        meta.journals_dir,
+                        config.journals_dir,
                         journals.as_ref().map(|listing| listing
                             .files
                             .iter()
@@ -669,7 +670,7 @@ pub fn run() {
                     ));
                     diag(format!(
                         "pages dir: {} (.md files={:?})",
-                        meta.pages_dir,
+                        config.pages_dir,
                         pages.as_ref().map(|listing| listing
                             .files
                             .iter()

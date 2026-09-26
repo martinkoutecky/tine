@@ -476,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn replaced_output_symlink_is_not_written() {
+    fn publish_commit_never_writes_through_a_replaced_output_symlink() {
         let (base, outside) = roots("output-swap");
         fs::write(outside.join("index.html"), "outside sentinel").unwrap();
         let graph = Graph::open(&base);
@@ -488,24 +488,32 @@ mod tests {
             fs::read_to_string(outside.join("index.html")).unwrap(),
             "outside sentinel"
         );
+        assert!(fs::symlink_metadata(base.join("publish"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]
-    fn stage_handle_survives_ambient_path_swap() {
+    fn publish_stage_handle_survives_ambient_symlink_swap_without_outside_write() {
         let (base, outside) = roots("stage-swap");
         fs::write(outside.join("style.css"), "outside sentinel").unwrap();
         PUBLISH_STAGE_WRITE_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
         let store = Store::open(&base, Default::default()).unwrap().0;
-        let result = store.publish_site(&mut |writer| writer.write("style.css", b"generated"));
+        let result = store.publish_site(&mut |writer| {
+            writer.write("style.css", b"generated")?;
+            writer.write("public.html", b"generated page")
+        });
         assert!(result.is_err());
         assert_eq!(
             fs::read_to_string(outside.join("style.css")).unwrap(),
             "outside sentinel"
         );
+        assert!(!outside.join("public.html").exists());
     }
 
     #[test]
-    fn recovery_handle_survives_ambient_path_swap() {
+    fn publish_recovery_handle_survives_ambient_symlink_swap_without_outside_move() {
         let (base, outside) = roots("recovery-swap");
         fs::create_dir_all(base.join("publish")).unwrap();
         fs::write(base.join("publish/index.html"), "previous site").unwrap();
@@ -520,5 +528,10 @@ mod tests {
             fs::read_to_string(outside.join("previous")).unwrap(),
             "outside sentinel"
         );
+        let conflicts = base.join("logseq/.tine-trash/conflicts");
+        assert!(fs::read_dir(conflicts)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.path().join("previous/index.html").exists()));
     }
 }

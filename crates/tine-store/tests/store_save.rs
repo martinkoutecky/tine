@@ -102,6 +102,30 @@ fn fresh(name: &str, kind: PageKind) -> PageDto {
     }
 }
 
+#[test]
+fn own_write_before_initial_load_is_in_first_snapshot() {
+    let fixture = Fixture::new();
+    fs::write(fixture.0.join(".tine-test-pause-load"), b"").unwrap();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = PageId::from("pages/BeforeReady.md");
+    assert!(matches!(
+        store.save(
+            &id,
+            SaveBase::CreateNew,
+            &fresh("BeforeReady", PageKind::Page)
+        ),
+        SaveOutcome::Saved(_)
+    ));
+    fs::remove_file(fixture.0.join(".tine-test-pause-load")).unwrap();
+    let first = store.whole_graph().unwrap();
+    assert!(first
+        .corpus()
+        .pages
+        .iter()
+        .any(|page| page.id == id.as_str()));
+    store.close();
+}
+
 fn store_wire(outcome: SaveOutcome, doc: &PageDto) -> Result<String, String> {
     match outcome {
         SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => Ok(rev.into()),

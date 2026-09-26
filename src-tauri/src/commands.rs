@@ -154,10 +154,10 @@ fn page_handoff_target(slot: &GraphSlot, id: &PageId) -> Result<std::path::PathB
     if !target.is_file() {
         return Err("page source is not a file".into());
     }
-    let meta = crate::state::graph_meta(slot);
-    let pages = std::fs::canonicalize(slot.root_key.join(meta.pages_dir))
+    let config = slot.store.config();
+    let pages = std::fs::canonicalize(slot.root_key.join(&config.pages_dir))
         .map_err(|error| error.to_string())?;
-    let journals = std::fs::canonicalize(slot.root_key.join(meta.journals_dir))
+    let journals = std::fs::canonicalize(slot.root_key.join(&config.journals_dir))
         .map_err(|error| error.to_string())?;
     if !target.starts_with(&pages) && !target.starts_with(&journals) {
         return Err("page source escapes graph directories".into());

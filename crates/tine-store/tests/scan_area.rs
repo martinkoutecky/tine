@@ -173,3 +173,39 @@ fn journal_scan_and_canonical_id_follow_configured_format() {
         "journals/2026-06-19.org"
     );
 }
+
+#[test]
+fn journal_equal_rank_uses_extension_then_byte_order() {
+    let (root, early) = fixture();
+    drop(early);
+    for name in ["Jun 18th, 2026.org", "Jun 18th, 2026.md", "2026-06-18.md"] {
+        put(&root, &format!("journals/{name}"), b"- body\n");
+    }
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert_eq!(
+        store.journal_id(Day(20260618)).as_str(),
+        "journals/2026-06-18.md"
+    );
+    fs::remove_file(root.join("journals/2026-06-18.md")).unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert_eq!(
+        store.journal_id(Day(20260618)).as_str(),
+        "journals/Jun 18th, 2026.md"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn source_area_scan_does_not_follow_linked_directories() {
+    let (root, store) = fixture();
+    let outside = root.with_extension("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("Secret.md"), b"- outside\n").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("pages/linked")).unwrap();
+    let listing = store.scan_area(Area::Pages, None).unwrap();
+    assert!(listing
+        .files
+        .iter()
+        .all(|file| !file.rel.starts_with("linked/")));
+    fs::remove_dir_all(outside).unwrap();
+}

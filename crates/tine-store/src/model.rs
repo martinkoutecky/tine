@@ -118,10 +118,14 @@ pub(crate) struct Graph {
     // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
     // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
     cache: RwLock<Option<Arc<Vec<(PageEntry, Arc<Document>)>>>>,
+    /// File times observed while publishing the parsed page cache. Readers
+    /// clone the table with their graph view, so later disk edits cannot alter it.
+    observed_mtimes: RwLock<Arc<std::collections::HashMap<String, std::time::SystemTime>>>,
     /// Graph-relative paths of pages skipped by the latest whole-graph cache
     /// build because their parse/projection panicked. Kept retrievable so an
     /// lsdoc ownership gap can never degrade search completeness invisibly.
     page_index_failures: RwLock<Vec<String>>,
+    unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
     /// Companion indexes for `cache`: the logical `(kind, page_key(name)) -> Vec
     /// slot` index preserves deterministic first-wins lookup, while the exact-path
     /// index keeps cache ownership physical. The Vec stays the source of truth for
@@ -444,22 +448,29 @@ pub(crate) struct ReferenceCandidatePages {
 struct PageCacheBuild {
     pages: Vec<ParsedPage>,
     failures: Vec<String>,
+    unreadable: Vec<(String, String)>,
 }
 
 type ParsedPage = (PageEntry, Document, String);
-type PageParseResult = Result<Option<ParsedPage>, String>;
+enum PageParseFailure {
+    Panic(String, String),
+    Unreadable(String, String),
+}
+type PageParseResult = Result<Option<ParsedPage>, PageParseFailure>;
 
 impl PageCacheBuild {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             pages: Vec::with_capacity(capacity),
             failures: Vec::new(),
+            unreadable: Vec::new(),
         }
     }
 
     fn append(&mut self, mut other: Self) {
         self.pages.append(&mut other.pages);
         self.failures.append(&mut other.failures);
+        self.unreadable.append(&mut other.unreadable);
     }
 
     fn collect(&mut self, parsed: PageParseResult) -> bool {
@@ -469,8 +480,13 @@ impl PageCacheBuild {
                 true
             }
             Ok(None) => false,
-            Err(path) => {
+            Err(PageParseFailure::Panic(path, reason)) => {
+                self.unreadable.push((path.clone(), reason));
                 self.failures.push(path);
+                false
+            }
+            Err(PageParseFailure::Unreadable(path, reason)) => {
+                self.unreadable.push((path, reason));
                 false
             }
         }
@@ -952,7 +968,9 @@ impl Graph {
             live_config: RwLock::new(None),
             live_journal_format: RwLock::new(None),
             cache: RwLock::new(None),
+            observed_mtimes: RwLock::new(Arc::new(std::collections::HashMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
+            unreadable_pages: RwLock::new(Arc::new(Vec::new())),
             cache_index: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
             build_lock: std::sync::Mutex::new(()),
@@ -1024,6 +1042,31 @@ impl Graph {
     /// needlessly invalidate everything).
     pub(crate) fn cache_generation(&self) -> u64 {
         self.cache_gen.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) fn observed_page_mtimes(
+        &self,
+    ) -> Arc<std::collections::HashMap<String, std::time::SystemTime>> {
+        Arc::clone(&self.observed_mtimes.read().unwrap())
+    }
+
+    pub(crate) fn unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
+        Arc::clone(&self.unreadable_pages.read().unwrap())
+    }
+
+    pub(crate) fn observe_page_mtime(&self, path: &Path, mtime: Option<std::time::SystemTime>) {
+        let key = self.rel_path(path);
+        let mut observed = self.observed_mtimes.write().unwrap();
+        if observed.contains_key(&key) {
+            match mtime {
+                Some(value) => {
+                    Arc::make_mut(&mut observed).insert(key, value);
+                }
+                None => {
+                    Arc::make_mut(&mut observed).remove(&key);
+                }
+            }
+        }
     }
 
     /// Pages skipped by the latest whole-graph search-cache build because their
@@ -2435,7 +2478,11 @@ impl Graph {
         let PageCacheBuild {
             pages: built,
             failures,
+            mut unreadable,
         } = built;
+        unreadable.extend(page_walk_errors(&self.root, &self.pages_path()));
+        unreadable.extend(page_walk_errors(&self.root, &self.journals_path()));
+        unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         let revs: std::collections::HashMap<PathBuf, String> = built
             .iter()
             .map(|(e, _, r)| (e.path.clone(), r.clone()))
@@ -2444,6 +2491,15 @@ impl Graph {
             .into_iter()
             .map(|(e, d, _)| (e, Arc::new(d)))
             .collect();
+        let mtimes = pages
+            .iter()
+            .filter_map(|(entry, _)| {
+                fs::metadata(&entry.path)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .map(|mtime| (entry.rel_path_str().to_owned(), mtime))
+            })
+            .collect();
         let index = build_page_cache_index(&pages);
         // Publish cache + revs atomically under the cache lock (cache → disk_revs
         // order), so no reader observes a fresh rev paired with a stale cache.
@@ -2451,7 +2507,14 @@ impl Graph {
         let generation = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         let reference_index = ReferenceCandidateIndex::build(generation, &pages);
         *guard = Some(Arc::new(pages));
+        *self.observed_mtimes.write().unwrap() = Arc::new(mtimes);
         *self.page_index_failures.write().unwrap() = failures;
+        *self.unreadable_pages.write().unwrap() = Arc::new(
+            unreadable
+                .into_iter()
+                .map(|(path, reason)| (crate::store::FileId::from(path), reason))
+                .collect(),
+        );
         *self.cache_index.write().unwrap() = Some(index);
         *self.reference_candidate_index.write().unwrap() = Some(reference_index);
         *self.disk_revs.write().unwrap() = revs;
@@ -2552,14 +2615,18 @@ impl Graph {
                 return false;
             }
             let mtime = fs::metadata(&e.path).and_then(|m| m.modified()).ok();
-            if let Ok(content) = fs::read_to_string(&e.path) {
-                let path = e.path.clone();
-                let indexed = built.collect(isolate_page_parse(e, |entry| {
+            let path = e.path.clone();
+            let indexed = match fs::read_to_string(&e.path) {
+                Ok(content) => built.collect(isolate_page_parse(e, |entry| {
                     Some(parse_page_content(entry, &content))
-                }));
-                if indexed {
-                    mtimes.push((path, mtime));
-                }
+                })),
+                Err(error) => built.collect(Err(PageParseFailure::Unreadable(
+                    e.rel_path_str().to_owned(),
+                    error.to_string(),
+                ))),
+            };
+            if indexed {
+                mtimes.push((path, mtime));
             }
             if i % 24 == 23 {
                 if self.cache.read().unwrap().is_some() {
@@ -2596,7 +2663,9 @@ impl Graph {
     pub(crate) fn invalidate_cache(&self) {
         let mut guard = self.cache.write().unwrap();
         *guard = None;
+        *self.observed_mtimes.write().unwrap() = Arc::new(std::collections::HashMap::new());
         self.page_index_failures.write().unwrap().clear();
+        *self.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
         *self.cache_index.write().unwrap() = None;
         *self.reference_candidate_index.write().unwrap() = None;
         self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
@@ -2674,6 +2743,12 @@ impl Graph {
             // the cache lock, so this nesting can't deadlock. Sets only when the
             // page is actually cached (preserves "entry exists IFF cached").
             self.disk_revs.write().unwrap().insert(path_key, disk_rev);
+            if let Ok(mtime) = fs::metadata(&evict_entry.path).and_then(|meta| meta.modified()) {
+                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
+                    .insert(evict_entry.rel_path_str().to_owned(), mtime);
+            }
+            Arc::make_mut(&mut self.unreadable_pages.write().unwrap())
+                .retain(|(id, _)| id.as_str() != evict_entry.rel_path_str());
         }
         // Bump cache_gen AFTER publishing the new content (and disk_revs), still
         // under the cache write lock. A reader loads cache_gen (Acquire) then takes
@@ -2941,6 +3016,8 @@ impl Graph {
             let mut revs = self.disk_revs.write().unwrap();
             for path in removed_paths {
                 revs.remove(&path);
+                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
+                    .remove(&self.rel_path(&path));
             }
         }
         *self.cache_index.write().unwrap() =
@@ -2992,6 +3069,8 @@ impl Graph {
                 // Drop the rev under the cache lock (same cache → disk_revs order
                 // as cache_upsert) so the two never diverge.
                 self.disk_revs.write().unwrap().remove(&entry.path);
+                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
+                    .remove(entry.rel_path_str());
             }
             *self.cache_index.write().unwrap() = Some(build_page_cache_index(pages));
         }
@@ -5774,10 +5853,10 @@ fn validate_highlight_edn(raw: &str) -> io::Result<()> {
 /// when its v2 parser does not own an input shape; isolating here preserves that
 /// loud guard while limiting the search-cache blast radius to this page.
 fn parse_page_entry_isolated(e: PageEntry) -> PageParseResult {
-    isolate_page_parse(e, |entry| {
-        let content = fs::read_to_string(&entry.path).ok()?;
-        Some(parse_page_content(entry, &content))
-    })
+    let content = fs::read_to_string(&e.path).map_err(|error| {
+        PageParseFailure::Unreadable(e.rel_path_str().to_owned(), error.to_string())
+    })?;
+    isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
 }
 
 fn parse_page_content(e: &PageEntry, content: &str) -> (Document, String) {
@@ -5808,7 +5887,10 @@ fn isolate_page_parse(
                 "Tine search index skipped page {:?}: page parse/projection panicked: {detail}",
                 e.rel_path
             );
-            Err(e.rel_path_str().to_owned())
+            Err(PageParseFailure::Panic(
+                e.rel_path_str().to_owned(),
+                format!("page parse/projection panicked: {detail}"),
+            ))
         }
     }
 }
@@ -5987,6 +6069,38 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
             }
         }
     }
+}
+
+fn page_walk_errors(root: &Path, dir: &Path) -> Vec<(String, String)> {
+    let mut unreadable = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let rel = |path: &Path| slash_path(path.strip_prefix(root).unwrap_or(path));
+        let entries = match fs::read_dir(&current) {
+            Ok(entries) => entries,
+            Err(error) => {
+                unreadable.push((rel(&current), error.to_string()));
+                continue;
+            }
+        };
+        for entry in entries {
+            match entry {
+                Ok(entry) => {
+                    let path = entry.path();
+                    if entry.file_name().to_string_lossy().starts_with('.') {
+                        continue;
+                    }
+                    match entry.file_type() {
+                        Ok(kind) if kind.is_dir() => stack.push(path),
+                        Ok(_) => {}
+                        Err(error) => unreadable.push((rel(&path), error.to_string())),
+                    }
+                }
+                Err(error) => unreadable.push((rel(&current), error.to_string())),
+            }
+        }
+    }
+    unreadable
 }
 
 /// True if any block in the subtree has a non-empty line that isn't a `key::`
