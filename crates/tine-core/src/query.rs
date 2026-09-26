@@ -56,7 +56,8 @@ pub fn query_nesting_within_limit(source: &str) -> bool {
 
 /// Result of an advanced (datalog) query: matched groups + which clause heads
 /// ran vs were ignored, so the UI shows "ran X; ignored Y" rather than a blunt
-/// "unsupported". `supported` is false only when nothing in the subset matched.
+/// "unsupported". `supported` is false when no supported clause was recognized.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AdvancedResult {
     /// Matched source-page groups.
@@ -69,9 +70,9 @@ pub struct AdvancedResult {
     pub supported: bool,
 }
 
-/// One query macro requested by Copy / Export. Query evaluation and subtree
-/// hydration stay in the same native operation so a shallow result never causes
-/// the WebView to fetch and retain its complete source page.
+/// One query macro requested by Copy / Export. Its selected subtree is
+/// returned without requiring the caller to fetch the entire source page.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueryExportSpec {
     /// Caller key returned with the corresponding result.
@@ -83,6 +84,7 @@ pub struct QueryExportSpec {
 }
 
 /// A single query macro's bounded, hierarchy-preserving export projection.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueryExportResult {
     /// Caller key from the request.
@@ -98,11 +100,12 @@ pub struct QueryExportResult {
 }
 
 /// All query macros in one export session share the same construction budget.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueryExportBatch {
     /// Results for evaluated query specs, in request order.
     pub results: Vec<QueryExportResult>,
-    /// Query macros beyond the native request cap are not evaluated. The caller
+    /// Accepted query specs beyond the 64-query processing cap are not evaluated. The caller
     /// renders an explicit truncation note rather than silently expanding them
     /// through an unbounded sequence of independent requests.
     pub omitted_queries: usize,

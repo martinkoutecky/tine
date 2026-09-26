@@ -1,4 +1,4 @@
-//! Store-owned static publication staging, retirement and identity verification.
+//! Publish a static site and retain the previous site on replacement.
 
 use crate::model::Graph;
 use crate::store::Store;
@@ -154,7 +154,8 @@ impl SiteWriter {
     }
 }
 
-/// A failed site export removes its unpublished stage. Any retired previous
+/// A failed site export attempts to remove its unpublished stage. An early
+/// setup failure or cleanup error may leave it on disk. Any retired previous
 /// site remains in recovery.
 #[derive(Debug)]
 pub struct PublishFailed {
@@ -171,8 +172,10 @@ pub struct PublishReceipt {
     pub site: PathBuf,
     /// Number of files emitted by the caller.
     pub files: u64,
-    /// Always `None` on success. A previous site retired on success is kept
-    /// in recovery but its path is not returned here. A failed export reports
+    /// Always `None` on success. `site` names the published directory; a
+    /// concurrent destination collision returns an error instead. A previous
+    /// site retired on success is kept in recovery but its path is not returned
+    /// here. A failed export reports
     /// its retained path in [`PublishFailed::previous_kept`] when available.
     pub previous_kept: Option<PathBuf>,
 }
@@ -181,10 +184,13 @@ impl Store {
     /// Export a static site to `<graph root>/publish`. Each emitted file is
     /// fsynced, then the previous site is retired and the new site is moved
     /// into place without replacing a concurrent winner. A concurrent
-    /// directory that appears at the destination stays live; the prior site
-    /// remains in recovery. Failure removes the reserved stage. This does not
+    /// directory that appears at the destination stays live and causes an
+    /// error rather than a successful receipt; the prior site
+    /// remains in recovery. Failure attempts to remove the reserved stage;
+    /// an early setup or cleanup error may leave it on disk. This does not
     /// emit a graph `Change`. Cost O(emitted bytes + previous-site retirement);
-    /// it blocks page saves and other writes for the full operation.
+    /// it blocks page saves and other writes for the full operation, including
+    /// the caller's `emit` closure and each output file's fsync.
     pub fn publish_site(
         &self,
         emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,

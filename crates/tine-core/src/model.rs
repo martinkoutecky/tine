@@ -131,6 +131,7 @@ pub fn path_is_sync_conflict(path: &Path) -> bool {
 /// Opaque area-relative file identity, including assets whose approved target
 /// may be outside the graph root. Constructing one from a string does not
 /// validate it; the store revalidates identities when used.
+#[deny(missing_docs)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FileId(String);
@@ -148,6 +149,7 @@ impl FileId {
 /// Graph-root-relative, slash-separated page file identity, such as
 /// `pages/Example.md`. String constructors do not validate it; store calls
 /// revalidate before accessing disk. Compare identities, not display names.
+#[deny(missing_docs)]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PageId(String);
@@ -268,7 +270,9 @@ mod optional_page_path {
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BlockDto {
-    /// Runtime block identity; a persisted `id::` remains in `raw`.
+    /// Runtime block identity; a persisted `id::` remains in `raw`. Structural
+    /// edits can change this identity across graph publications, so reacquire
+    /// it after a page changes.
     pub id: String,
     /// Raw block text, including properties.
     pub raw: String,
@@ -331,10 +335,9 @@ pub struct RefGroup {
     pub evidence: Vec<ReferenceBlockEvidence>,
 }
 
-/// One backlink root whose visible subtree can be searched and whose OG-style
-/// co-reference facets came from the cached lsdoc projection. This is fetched
-/// only when the Linked References filter opens; ordinary backlink DTOs remain
-/// shallow so their lazy-loading and bridge cost do not change.
+/// One backlink root whose visible subtree and co-reference facets can be
+/// fetched when the Linked References filter opens. Ordinary backlink results
+/// remain shallow until this data is requested.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacklinkFilterTarget {
@@ -572,9 +575,9 @@ pub struct PageDto {
     pub pre_block: Option<String>,
     /// Ordered root blocks.
     pub blocks: Vec<BlockDto>,
-    /// Hash of the on-disk file content when this page was loaded — the editor's
-    /// baseline. Sent back on save so we conflict against the version the editor
-    /// actually loaded (not the mutable cache, which the watcher can advance).
+    /// Hash of the on-disk file content when this page was loaded. The store's
+    /// guarded save uses the separate `SaveBase` argument, not this field;
+    /// callers should pass the revision they edited from as that base.
     /// `None` for a page with no file yet.
     #[serde(default)]
     pub rev: Option<String>,
@@ -602,7 +605,8 @@ pub struct GraphMeta {
     pub preferred_workflow: String,
     /// Configured keyboard shortcuts.
     pub shortcuts: std::collections::HashMap<String, String>,
-    /// First day of week for the date picker (0=Sunday … 6=Saturday).
+    /// First day of week in Logseq numbering (0=Monday … 6=Sunday); the
+    /// frontend converts it to the date picker's JavaScript weekday index.
     pub start_of_week: u32,
     /// Extra property keys to hide from the rendered properties area.
     pub block_hidden_properties: Vec<String>,

@@ -83,16 +83,25 @@ const OG_HIDDEN_BUILT_IN_PROPERTIES: &[&str] = &[
     "card-last-score",
 ];
 
+/// One parser-recognized page reference and its source span.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectedPageRef {
+    /// Reference target spelling.
     pub name: String,
+    /// Byte range in the parsed source.
     pub range: Range<usize>,
+    /// Parser rule that recognized this reference.
     pub rule: &'static str,
 }
 
+/// Reference spans retained with a block projection for later queries.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct ReferenceSourceProjection {
+    /// Explicit page references recognized by the parser.
     pub explicit: Vec<ProjectedPageRef>,
+    /// Source byte ranges eligible for plain-text reference matching.
     pub plain_ranges: Vec<Range<usize>>,
 }
 

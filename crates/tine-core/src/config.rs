@@ -47,10 +47,9 @@ pub struct Config {
     pub default_journal_template: Option<String>,
     /// `:favorites ["Page" …]` — favorited page names (on-disk, graph-portable).
     pub favorites: Vec<String>,
-    /// `:journal/file-name-format` — Logseq's journal FILENAME format (cljs-time /
-    /// Joda tokens). `None` = the default `"yyyy_MM_dd"`. Tine only synthesizes
-    /// the default format, so a non-default value here means Tine must NOT create
-    /// new journal files (it would duplicate the user's real journal for the day).
+    /// `:journal/file-name-format` — Logseq's journal filename format (cljs-time /
+    /// Joda tokens). `None` uses `"yyyy_MM_dd"`. The store compiles a configured
+    /// format and uses it to propose names for new journal files.
     pub journal_file_name_format: Option<String>,
     /// `:journal/page-title-format` — Logseq's journal TITLE format. `None` = the
     /// default `"MMM do, yyyy"`. See `journal_file_name_format`.

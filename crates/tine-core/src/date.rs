@@ -1,13 +1,15 @@
-//! Minimal journal date handling for the default Logseq formats
-//! (file `yyyy_MM_dd`, title `MMM do, yyyy`). Configurable formats are a
-//! later milestone; these defaults cover the standard graph layout.
+//! Journal dates and compiled Logseq filename/title formats.
 
 /// A calendar date as (year, month, day). Stored as an ordinal key `yyyymmdd`
 /// for cheap sorting/comparison.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JournalDate {
+    /// Gregorian year.
     pub year: i32,
+    /// Month, normally 1 through 12.
     pub month: u32,
+    /// Day of month, normally 1 through 31.
     pub day: u32,
 }
 
@@ -208,6 +210,7 @@ enum Tok {
 }
 
 /// A compiled cljs-time / Joda-style date pattern (the subset Logseq uses).
+#[deny(missing_docs)]
 #[derive(Clone, Debug)]
 pub struct Format {
     toks: Vec<Tok>,
@@ -411,6 +414,7 @@ fn match_name(cs: &[char], i: usize, tables: &[&[&str]]) -> Option<(usize, usize
 
 /// The journal date formats for a graph: the user's filename + title patterns,
 /// plus a fallback parse list so foreign/default journal files still resolve.
+#[deny(missing_docs)]
 #[derive(Clone)]
 pub struct JournalFormat {
     file: Format,

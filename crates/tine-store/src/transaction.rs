@@ -23,7 +23,8 @@ use crate::store::{
 pub enum Content {
     /// Bytes held by the caller.
     Bytes(Vec<u8>),
-    /// Read from an open file during commit, up to `max_bytes`.
+    /// Read from an open file during commit. Exceeding `max_bytes` returns
+    /// `Why::Failed` with an invalid-data I/O cause; bytes are not truncated.
     Stream {
         /// Open source file.
         source: File,
@@ -33,6 +34,9 @@ pub enum Content {
 }
 
 /// Old page or tag name to new name, compared using normalized references.
+/// Rewrites `[[page]]`, bare and bracketed tags, supported Org page links,
+/// embeds containing those references, and bare `tags::` values. Code spans,
+/// `alias::`, `title::`, and query arguments are not rewritten.
 #[derive(Clone, Debug, Default)]
 pub struct RenameMap(pub Vec<(String, String)>);
 
@@ -64,7 +68,8 @@ pub enum StepResult {
         /// Revision of its new bytes.
         rev: FileRev,
     },
-    /// Save or reference rewrite found the same bytes on disk.
+    /// Save or reference rewrite found the same bytes on disk after its
+    /// revision guard matched. A stale base still returns `Why::Conflict`.
     Unchanged {
         /// Unchanged file.
         file: FileId,
@@ -111,7 +116,8 @@ pub enum Refusal {
 /// Reason a transaction did not commit.
 #[derive(Debug)]
 pub enum Why {
-    /// An expected revision did not match the disk state.
+    /// An expected revision did not match the disk state. `disk: None` means
+    /// the file disappeared; do not recreate it without a new user decision.
     Conflict {
         /// File whose guard failed.
         file: FileId,
@@ -128,7 +134,8 @@ pub enum Why {
 #[derive(Debug, Default)]
 pub struct Rollback {
     /// External changes preserved during undo. `Some(id)` names where changed
-    /// bytes were moved in recovery; `None` means they remain live. Check
+    /// bytes were moved into the trash recovery area; `None` means they remain
+    /// live. Check
     /// `undo_failed` separately to learn whether old bytes were restored.
     pub kept_external: Vec<(FileId, Option<FileId>)>,
     /// Files undo could not restore, with their errors.
@@ -145,9 +152,11 @@ pub enum TxOutcome {
         /// Generation publishing the disk state, or current one if unchanged.
         graph_rev: GraphRev,
     },
-    /// Step `step` did not happen. Preflight checks every step before any
-    /// write; an apply failure attempts undo of earlier steps. If the final
-    /// disk state changed, an `Origin::Own` publication covers it.
+    /// The transaction did not commit. Preflight checks every step before any
+    /// write; an apply failure attempts undo of prior steps and the failed
+    /// step, which may already have written. Inspect the final disk state and
+    /// `rollback`, including for `step`. If the final disk state changed, an
+    /// `Origin::Own` publication covers it.
     NotCommitted {
         /// Zero-based index of the failed step.
         step: usize,
@@ -317,7 +326,8 @@ impl<'a> Transaction<'a> {
     }
 
     /// Queue a no-replace file creation. Page text must be UTF-8 and cannot
-    /// claim a name or journal day already held by another file.
+    /// claim a name or journal day already held by another file. This takes
+    /// raw content, unlike `save_page`'s structured `PageDto` serialization.
     pub fn create(&mut self, file: &FileId, content: Content) -> &mut Self {
         self.steps.push(Step::Create {
             file: file.clone(),
@@ -347,7 +357,8 @@ impl<'a> Transaction<'a> {
     }
 
     /// Queue replacement of a non-page file guarded by `expected`.
-    /// Page text must instead use [`Self::save_page`].
+    /// Page text must instead use [`Self::save_page`]; passing a page target
+    /// is refused as `Refusal::InvalidTarget`.
     pub fn replace(&mut self, file: &FileId, expected: FileRev, bytes: Vec<u8>) -> &mut Self {
         self.steps.push(Step::Replace {
             file: file.clone(),
@@ -359,7 +370,8 @@ impl<'a> Transaction<'a> {
 
     /// Queue a guarded page-reference rewrite. Obtain each referrer's
     /// `FileRev` with `Store::page` or `Store::read` after locating it in a
-    /// graph view. Unchanged output reports [`StepResult::Unchanged`];
+    /// graph view. Recheck revisions if the view may be stale; each referrer
+    /// needs its own file read. Unchanged output reports [`StepResult::Unchanged`];
     /// unsafe Org edits are refused as read-only. This rewrites file content,
     /// not an unsaved editor buffer.
     pub fn rewrite_refs(
@@ -1259,6 +1271,9 @@ impl<'a> Transaction<'a> {
     /// may wait for the initial graph parse. It blocks other writes for its
     /// duration without a timeout. On apply failure, attempts undo and reports
     /// remaining disk differences; a process crash can leave partial changes.
+    /// Preflight reports the first failing step. Apply rechecks each changed
+    /// source against the preflight bytes before replacing it, subject to the
+    /// external writer window between that check and the final rename.
     pub fn commit(mut self) -> TxOutcome {
         let _writer = self.store.writer.lock().unwrap();
         let rev = || self.store.changes.rev();

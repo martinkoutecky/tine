@@ -139,11 +139,14 @@ pub struct OpenOptions {
 /// How the store observes graph files after opening.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WatchMode {
-    /// Default: use filesystem notifications with a 200 ms debounce, silently
-    /// falling back to three-second polling if notifications fail.
+    /// Default: use filesystem notifications with a 200 ms debounce. A
+    /// notified file is hashed even if its length and mtime match the previous
+    /// observation. Notification failure silently falls back to three-second
+    /// polling.
     #[default]
     Notify,
-    /// Poll graph files every three seconds, scanning O(P) page metadata per tick.
+    /// Poll graph files every three seconds, scanning O(P) page metadata per
+    /// tick and hashing files whose metadata changed. There is no idle backoff.
     Poll,
 }
 
@@ -180,7 +183,8 @@ pub struct Change {
     pub origin: Origin,
     /// Affected graph files and config, with resulting revisions when present.
     /// Trash destinations are not listed. Asset sidecars are not observed as
-    /// external changes; own asset writes can appear here.
+    /// external changes; own asset writes can appear here. Sync-conflict
+    /// copies may appear as files while [`Self::page`] returns `None` for them.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     /// Whether graph config changed in this publication.
     pub config_changed: bool,
@@ -188,10 +192,15 @@ pub struct Change {
 }
 
 impl Change {
-    /// The graph page this own or external change altered, using its
-    /// `title::` name when present (the old name for a removal). Returns
-    /// `None` for a file with no parsed page change, including a duplicate
-    /// journal claimant or sync-conflict copy.
+    /// The parsed graph page altered by an external observation, using its
+    /// `title::` name when present (the old name for a removal). Own writes
+    /// list changed files but carry no parsed page entries, so this returns
+    /// `None` for them. It also returns `None` for a file with no parsed page
+    /// change, including a duplicate journal claimant or sync-conflict copy.
+    /// A move lists its old file as removed and its destination as created;
+    /// `page()` can describe either only when parsed page evidence is present.
+    /// This accessor may use a parsed `title::`; `resolve()` instead uses
+    /// filename and journal-date claims.
     /// Cost O(files in this publication).
     pub fn page(&self, file: &FileId) -> Option<(PageKind, &str)> {
         self.pages
@@ -799,7 +808,12 @@ impl Store {
     /// later reported by `unreadable_files`; a failed entire parse makes
     /// graph-wide queries unavailable until [`Self::scan_refresh`] retries it.
     /// Direct file reads and guarded writes remain available after a parse
-    /// failure. An unsafe layout, unapproved external target, or I/O failure
+    /// failure; a changed write can still emit `Origin::Own`, while
+    /// `whole_graph()` remains unavailable until recovery. The returned
+    /// `GraphMeta` is a snapshot of open-time
+    /// settings; after a config change, reopen to obtain fresh metadata.
+    /// External observations during loading publish after the initial parse.
+    /// An unsafe layout, unapproved external target, or I/O failure
     /// returns [`OpenError`].
     pub fn open(
         root: &Path,
@@ -917,7 +931,8 @@ impl Store {
         ))
     }
 
-    /// Current graph configuration. Never waits.
+    /// Current graph configuration. Does not wait for the graph parse, but may
+    /// briefly wait for a concurrent configuration update.
     pub fn config(&self) -> ConfigState {
         self.config_state.read().unwrap().clone()
     }
@@ -938,7 +953,10 @@ impl Store {
     /// the previous subscriber and discards queued changes. The queue is
     /// unbounded; consumers must drain it. To avoid a subscription gap,
     /// subscribe first, then acquire `whole_graph()` and ignore changes with
-    /// `graph_rev <= view.rev()`. Initial load completion is a publication.
+    /// `graph_rev <= view.rev()`. Initial load completion is a publication;
+    /// failure is observed by calling `whole_graph()`, not as a `Change`.
+    /// Multi-window clients must fan this single stream out themselves. A slow
+    /// consumer can retain an unbounded number of queued changes in memory.
     pub fn subscribe(&self) -> Subscription {
         let mut state = self.changes.state.lock().unwrap();
         state.subscription += 1;
@@ -995,8 +1013,10 @@ impl Store {
     /// file. The day index is complete from the file listing before `open`
     /// returns; no parse or disk read is needed here. This does not indicate
     /// existence: call `page(id)` and handle `NotFound`. An invalid `Day`
-    /// is not rejected and can yield a nonsensical proposed name. An
-    /// unobserved external creation can change the answer later.
+    /// is not rejected and can yield a nonsensical proposed name. For a custom
+    /// journal filename format, the proposal uses that configured format. An
+    /// unobserved external creation can change the answer later; callers must
+    /// use a guarded `CreateNew` save and handle a conflict or twin.
     pub fn journal_id(&self, day: Day) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
         if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
@@ -1015,11 +1035,21 @@ impl Store {
     /// base returns `Conflict` even if the proposed bytes equal current disk
     /// bytes. With a matching base, equal bytes return `Unchanged` without a
     /// publication. A changed save publishes
-    /// before returning. Cost includes reading and hashing the page, writing
+    /// before returning as its own `Origin::Own` change, even when the write
+    /// began during the initial parse. Cost includes reading and hashing the page, writing
     /// its new bytes, and O(P) metadata for graph-wide publication; it can
     /// wait for the first parse and other writers without a timeout. A
     /// separate process can still write between guard check and rename.
-    /// `CreateNew` on an existing target returns `Conflict` with its disk
+    /// `doc.rev` does not replace `base`; `doc.format`, `doc.name`, and
+    /// `doc.title` do not override the target file identity or extension.
+    /// Serialize saves for one editor page, passing each returned `Saved(rev)`
+    /// as the next `SaveBase::Existing`; overlapping saves from the same base
+    /// can conflict with each other. A concurrent external write overwritten
+    /// in the guard-to-rename window may never appear as a separate `Change`.
+    /// `CreateNew` checks the exact destination and alternate extension on
+    /// disk; other same-name claims use the observed graph index, so a newly
+    /// delivered, unobserved journal twin can still be missed. `CreateNew` on
+    /// an existing target returns `Conflict` with its disk
     /// revision, unless another file claims its page name or journal day,
     /// which returns `Twin`. Re-read with `page(id)` for parsed content or
     /// `read(id.file(), None)` for raw bytes; both revisions hash the same
@@ -1119,8 +1149,9 @@ impl Store {
         Ok(trash_counts(counts))
     }
 
-    /// Permanently remove asset and legacy-asset entries, including directories.
-    /// Other kinds stay recoverable. On error, returns counts already removed.
+    /// Permanently remove typed asset and legacy entries classified as assets,
+    /// including directories. Legacy pages and other kinds stay recoverable.
+    /// On error, returns counts already removed.
     /// Cost: O(asset trash entries + bytes).
     pub fn purge_asset_trash(&self) -> Result<(u64, u64), (StoreError, u64, u64)> {
         let _writer = self.writer.lock().unwrap();
@@ -1260,7 +1291,8 @@ impl Store {
     }
 
     /// A validated OS path. `existing_regular_file` requires a live file for an
-    /// opener; page sources may follow a legacy link between pages and journals.
+    /// opener; a page source may follow an older graph layout's in-graph link
+    /// between its pages and journals directories.
     /// Otherwise a missing final file is allowed, with ancestors inside its area.
     /// Cost O(path components), independent of graph size. Refuses an escaped
     /// target; missing or unreadable existing files return their I/O error.
@@ -1441,7 +1473,8 @@ impl Store {
     }
 
     /// Recursively list regular files in one area, sorted by area-relative name.
-    /// Hidden entries and symlinked files or directories are skipped. For
+    /// Hidden entries and symlinks encountered while walking are skipped. An
+    /// explicit `under` may traverse an in-area symlink in an ancestor. For
     /// `Area::Meta`, only `config.edn` and `custom.css` are included;
     /// other visible metadata is omitted, including from `unreadable`.
     /// Stat/list failures for included entries appear in `unreadable`.
@@ -1622,7 +1655,9 @@ impl Store {
     /// Read and parse one page, returning `NotFound` if it is absent. A
     /// newly observed external edit publishes `Origin::External` before
     /// returning; later observation of the same bytes does not duplicate it.
-    /// Cost O(page bytes + blocks), plus O(P) metadata if publication occurs.
+    /// A missing file returns `NotFound` without waiting for the initial parse.
+    /// An observed edit can wait for that parse while publishing. Cost O(page
+    /// bytes + blocks), plus O(P) metadata if publication occurs.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         let _writer = self.writer.lock().unwrap();
         let before_generation = self.graph.cache_generation();
@@ -1701,7 +1736,9 @@ impl Store {
 
     /// Wait without a timeout for the initial parse (or close), then acquire
     /// the current stable publication. Acquisition and clone are O(1) after
-    /// the wait; later writes do not alter this view.
+    /// the wait; later writes do not alter this view. After a failed parse,
+    /// later calls return `LoadError::Failed` without another parse attempt
+    /// until `scan_refresh()` retries it.
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         let mut status = self.load.status.lock().unwrap();
         while matches!(*status, LoadStatus::Loading) {
@@ -1848,7 +1885,8 @@ fn invalid_data_io_error_is_not_a_page_decode_error() {
 }
 
 /// Opaque FNV-1a/64 raw-byte revision. Constructing one from a string does not
-/// validate it; guarded writes compare it with a newly computed disk hash in
+/// validate it; an invalid `SaveBase::Existing` normally conflicts against the
+/// current disk hash. Guarded writes compare it with a newly computed hash in
 /// O(file bytes). This is a conflict marker, not a cryptographic digest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -1911,7 +1949,8 @@ pub enum SaveOutcome {
     /// New bytes equal current disk bytes with a matching base; no write or
     /// publication occurred.
     Unchanged(FileRev),
-    /// Disk holds different bytes; read the current file before resolving.
+    /// The base no longer authorizes this write; read the current file before
+    /// resolving. The proposed bytes can equal those already on disk.
     Conflict {
         /// Revision of the current disk bytes.
         disk: FileRev,
@@ -1922,7 +1961,8 @@ pub enum SaveOutcome {
     /// Page cannot be safely rewritten; reason is for display.
     ReadOnly(String),
     /// Another file claims the page name or journal day. Creation and moves
-    /// check this; an ordinary guarded save of an existing claimant may proceed.
+    /// check this; an ordinary guarded save to either existing claimant is
+    /// allowed when its own revision guard and safety checks pass.
     Twin {
         /// Existing claimant.
         existing: PageId,
@@ -1939,7 +1979,7 @@ pub enum SaveOutcome {
 
 /// Parsed page and the raw-byte revision used for a guarded save.
 pub struct PageRead {
-    /// Page identity to pass back to the same store.
+    /// Same page identity passed to [`Store::page`]; no canonicalization occurs.
     pub id: PageId,
     /// Parsed document.
     pub doc: PageDto,
@@ -1953,16 +1993,18 @@ pub struct PageRead {
 /// Result of resolving a page name or journal day in one snapshot.
 pub enum Resolved {
     /// One or more files claim the name. The canonical file comes first;
-    /// removing it can reveal another claimant with different content.
+    /// removing it can reveal another claimant with different content. A
+    /// subscriber should re-resolve this name after a claimant is removed.
     Existing {
         /// Canonical claimant.
         id: PageId,
         /// Other claimants.
         others: Vec<PageId>,
     },
-    /// Name belongs to pages that declare it as an alias.
+    /// Name belongs to pages that declare it as an alias. Navigation can choose
+    /// an owner; saving requires an actual owner's `PageId`, not the alias.
     Alias {
-        /// Alias owners in deterministic file order.
+        /// Alias owners in deterministic file order; no owner is chosen for you.
         owners: Vec<PageId>,
     },
     /// No claimant; this is the id a new page would use.
@@ -1972,7 +2014,10 @@ pub enum Resolved {
     },
 }
 /// Physical names, aliases, and names that occur only in references, sorted by
-/// the graph's page identity key. Physical entries retain every file claimant.
+/// the graph's page identity key. A physical page has one entry per decoded
+/// spelling, and each entry's target is exactly what [`WholeGraph::resolve`]
+/// returns for that name: the canonical claimant, then every other file
+/// claiming the same normalized name.
 pub struct InventoryEntry {
     /// Decoded file name, alias, or referenced name.
     pub name: String,
@@ -2016,7 +2061,8 @@ pub enum QueryResult {
 
 /// Sequence number of a published stable view, ordered within one Store.
 /// A view with `rev() >= change.graph_rev` includes that publication. This
-/// is not a file-write guard. Serialized as a decimal string.
+/// is not a file-write guard. It restarts for each Store opening; do not compare
+/// values from separate Store instances. Serialized as a decimal string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct GraphRev(pub(crate) u64);
@@ -2160,6 +2206,7 @@ pub enum FacetPolicy {
 
 /// One stable published graph view. Clone is O(1); answers use captured
 /// parsed pages and indexes without rereading files or later publications.
+/// Holding old views retains their graph snapshots and can increase memory use.
 #[derive(Clone)]
 pub struct WholeGraph {
     _snapshot: Arc<Snapshot>,
@@ -2238,7 +2285,7 @@ impl WholeGraph {
     }
 
     /// Names and file claimants in this view. Cost O(P + aliases + referenced
-    /// names); the result does not change after acquisition.
+    /// names) on each call; the result does not change after acquisition.
     pub fn inventory(&self) -> Arc<Inventory> {
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
@@ -2249,27 +2296,32 @@ impl WholeGraph {
             if !visited.insert((page.kind, key.clone())) {
                 continue;
             }
-            let mut by_name: HashMap<String, Vec<PageId>> = HashMap::new();
+            // One entry per spelling, each with the same target `resolve`
+            // gives: the bucket's first claimant, then every other claimant.
+            let mut names: Vec<String> = Vec::new();
+            let mut ids: Vec<PageId> = Vec::new();
             if let Some(claimants) = self.claimants.get(&(page.kind, key.clone())) {
                 for claimant in claimants {
                     if let Some(id) = &claimant.rel_path {
-                        by_name
-                            .entry(claimant.name.clone())
-                            .or_default()
-                            .push(id.clone());
+                        if !names.contains(&claimant.name) {
+                            names.push(claimant.name.clone());
+                        }
+                        ids.push(id.clone());
                     }
                 }
             }
-            for (name, mut ids) in by_name {
+            for name in names {
                 let key = tine_core::refs::page_key(&name);
                 if page.kind == PageKind::Page {
                     page_claimed_names.insert(key.clone());
                 }
                 claimed_names.insert(key);
-                let id = ids.remove(0);
                 entries.push(InventoryEntry {
                     name,
-                    target: Resolved::Existing { id, others: ids },
+                    target: Resolved::Existing {
+                        id: ids[0].clone(),
+                        others: ids[1..].to_vec(),
+                    },
                     is_journal: page.kind == PageKind::Journal,
                     day: page.date_key.map(Day),
                 });
@@ -2338,8 +2390,8 @@ impl WholeGraph {
     /// tags, `tags::`-style properties and `{{embed}}`, but not the arguments of
     /// `{{query}}` or other macros, so a page that mentions a name only inside a
     /// query is not a referrer. The answer comes from this snapshot's parse, not
-    /// from disk. Cost O(matching postings) with a warm reference index, else
-    /// O(P + B) over the parsed snapshot.
+    /// from disk. Cost ranges from O(matching references) to O(P + B) over the
+    /// parsed snapshot.
     pub fn explicit_referrers(&self, names: &[String]) -> Vec<PageId> {
         let keys: Vec<String> = names
             .iter()
@@ -2364,7 +2416,9 @@ impl WholeGraph {
         ids
     }
 
-    /// File modification time as observed when this graph view was acquired.
+    /// Last published observation of the file's modification time. A view
+    /// acquired later may reuse that observation without another filesystem
+    /// read. `None` means no timestamp was recorded for this identity.
     /// Cost O(1), without a filesystem read.
     pub fn page_mtime(&self, id: &PageId) -> Option<std::time::SystemTime> {
         self.observed_mtimes.get(id.as_str()).copied()
@@ -2452,7 +2506,8 @@ impl WholeGraph {
     }
 
     /// Execute one simple or advanced query macro over this stable view.
-    /// `current_page` is validated but not used for evaluation. A simple
+    /// `current_page` must name an existing page but does not affect evaluation:
+    /// `:current-page` inputs are not supported, as in v0.6.5. A simple
     /// source above 64 KiB or 64 parenthesis levels returns
     /// `QueryError::Parse`; advanced unsupported clauses appear in its
     /// diagnostics. Results are bounded to 20,000 rows and 32 MiB.
@@ -2509,8 +2564,10 @@ impl WholeGraph {
     }
 
     /// Graph search, including an exact file scope and caller cancellation.
-    /// Requested page and block hit limits are clamped to a combined 20,000;
-    /// inspect `QueryExecution::has_more` for omitted hits.
+    /// The page limit is clamped first to 20,000, then the block limit to the
+    /// remaining allowance. A cancelled call returns `QueryError::Cancelled`
+    /// without a partial result. Inspect `QueryExecution::has_more` for
+    /// omitted hits.
     pub fn search(
         &self,
         req: &SearchRequest,
@@ -2550,8 +2607,10 @@ impl WholeGraph {
         self.rev
     }
 
-    /// Backlinks to a decoded page name or alias, compared by normalized page
-    /// key. Worst case O(B), with limits of 20,000 rows and 32 MiB.
+    /// Backlinks to a decoded page or journal title or alias, compared by
+    /// normalized name without a separate namespace parameter. Results are
+    /// keyed by display name, so twin files cannot be distinguished by this
+    /// result alone. Worst case O(B), with limits of 20,000 rows and 32 MiB.
     pub fn backlinks(&self, name: &str) -> Result<Arc<Vec<RefGroup>>, QueryError> {
         bounded(
             self.graph
@@ -2560,7 +2619,8 @@ impl WholeGraph {
         )
     }
 
-    /// Unlinked mentions of a decoded page name or alias, worst case O(B),
+    /// Unlinked mentions of a decoded page or journal title or alias, compared
+    /// by normalized name without a separate namespace parameter. Worst case O(B),
     /// with limits of 20,000 rows and 32 MiB.
     pub fn unlinked_references(&self, name: &str) -> Result<Arc<Vec<RefGroup>>, QueryError> {
         bounded(
@@ -2592,7 +2652,8 @@ impl WholeGraph {
     }
 
     /// Resolve block identities in request order; unknown ids yield `None`.
-    /// Cost: hinted pages' blocks, or O(B) for unhinted ids. At most 20,000
+    /// Cost ranges from the identified page's blocks to O(B) if the id cannot
+    /// be routed directly to a page. At most 20,000
     /// requested/result rows and 32 MiB of result data.
     pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
         if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
@@ -2626,7 +2687,8 @@ impl WholeGraph {
     /// Bounded subtree preview. `max_nodes` is clamped to 1..=2,000 and
     /// output is capped below 32 MiB. Inspect `BlockPreview::truncated`:
     /// `Some` can omit descendants or even the root under the byte cap.
-    /// Cost: one hinted page's blocks, or O(B) without a hint.
+    /// Cost ranges from one identified page's blocks to O(B) if the id cannot
+    /// be routed directly to a page.
     pub fn preview_block(
         &self,
         uuid: &str,
@@ -2709,9 +2771,10 @@ impl WholeGraph {
         }
     }
 
-    /// Selected query subtrees. Accepts at most 1,024 specs and 64 KiB of
-    /// source, but evaluates only the first 64. Each result can omit roots or
-    /// nodes (50 roots and 2,000 nodes maximum); output is capped at 8 MiB.
+    /// Selected query subtrees. Accepts at most 1,024 specs and 64 KiB total
+    /// across keys and query sources, but evaluates only the first 64. The
+    /// batch shares a 50-root, 2,000-node, and 8 MiB output budget; later
+    /// results may omit roots or nodes even when small on their own.
     /// Inspect `omitted_queries`, `shown`, `total`, and `omitted_nodes`
     /// before treating `Ok` as complete. Cost up to O(64 × B + selected nodes).
     pub fn export_query_subtrees(

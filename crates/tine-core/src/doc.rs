@@ -29,19 +29,24 @@ pub const MARKERS: &[&str] = &[
 
 /// A parsed `.md` document: an optional page-property pre-block plus a forest
 /// of blocks.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Document {
     /// Raw text of the region before the first bullet (page properties / free
     /// text), with the trailing blank separator removed. `None` if the file
     /// starts with a bullet.
     pub pre_block: Option<String>,
+    /// Top-level blocks in document order.
     pub roots: Vec<DocBlock>,
 }
 
+/// One parsed block with raw text and nested children.
+#[deny(missing_docs)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocBlock {
     /// Dedented block body: first line + continuation lines joined with `\n`.
     pub raw: String,
+    /// Child blocks in document order.
     pub children: Vec<DocBlock>,
     /// Runtime/store identity assigned from the document's physical owner and
     /// structural sibling-index path. Persisted `id::` is a separate external
@@ -68,6 +73,7 @@ pub struct DocBlock {
 /// Memoized projection of a block's `raw`, so whole-graph scans (full-text
 /// search per keystroke, backlink/page-ref matching, `(content …)`) don't
 /// re-parse every block's `raw` on each run.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct BlockProjection {
     /// Visible (non-property) text, original case — the body the reader sees,
@@ -104,6 +110,7 @@ pub struct BlockProjection {
     /// a real `Timestamp` for it — code/fence-robust by construction (a `SCHEDULED:`
     /// inside inline code is NOT a Timestamp, so never badged). `None` otherwise.
     pub scheduled: Option<String>,
+    /// DEADLINE planning date text, when present in parsed syntax.
     pub deadline: Option<String>,
     /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
     /// stay separate in `refs_page`; this is only the tag field.

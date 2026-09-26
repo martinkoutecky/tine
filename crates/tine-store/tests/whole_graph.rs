@@ -317,6 +317,7 @@ fn query_and_scoped_search_use_page_identity() {
         ));
     }
 }
+
 #[test]
 fn simple_query_rejects_source_and_nesting_limits() {
     let fixture = Fixture::new();
@@ -331,4 +332,42 @@ fn simple_query_rejects_source_and_nesting_limits() {
         graph.query(&nested, QueryDialect::Simple, None),
         Err(QueryError::Parse(_))
     ));
+}
+
+#[test]
+fn inventory_targets_agree_with_resolve_for_case_twins() {
+    let fixture = Fixture::new();
+    std::fs::write(fixture.0.join("pages/Twin.md"), "- upper\n").unwrap();
+    std::fs::write(fixture.0.join("pages/twin.md"), "- lower\n").unwrap();
+    let view = fixture.view();
+    let inventory = view.inventory();
+    let twins: Vec<_> = inventory
+        .0
+        .iter()
+        .filter(|entry| entry.name.eq_ignore_ascii_case("twin"))
+        .collect();
+    assert!(!twins.is_empty());
+    for entry in twins {
+        let existing = |target: &Resolved| match target {
+            Resolved::Existing { id, others } => Some((
+                id.as_str().to_string(),
+                others
+                    .iter()
+                    .map(|id| id.as_str().to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            _ => None,
+        };
+        let resolved = view.resolve(&entry.name, false);
+        assert_eq!(
+            existing(&entry.target),
+            existing(&resolved),
+            "inventory entry {:?}",
+            entry.name
+        );
+        let Resolved::Existing { others, .. } = &entry.target else {
+            panic!("twin should be an existing page");
+        };
+        assert_eq!(others.len(), 1, "the other case twin is listed");
+    }
 }
