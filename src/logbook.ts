@@ -39,7 +39,7 @@ export function applyMarkerTransition(
       withSeconds,
     );
   } catch (e) {
-    console.error("logbook marker transition failed", e);
+    console.error("logbook marker transition failed");
     return nextRaw;
   }
 }

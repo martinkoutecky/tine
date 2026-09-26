@@ -38,22 +38,32 @@ pub(crate) fn debug_init() {
         let path = debug_log_path();
         match std::fs::File::create(&path) {
             Ok(f) => {
-                eprintln!("[tine] DEBUG logging to {}", path.display());
+                eprintln!("[tine] debug-log-opened");
                 Some(Mutex::new(f))
             }
             Err(e) => {
-                eprintln!("[tine] could not open debug log {}: {e}", path.display());
+                let _ = (path, e);
+                eprintln!("[tine] debug-log-open-failed");
                 None
             }
         }
     });
 }
 
-/// Emit one diagnostic line to stderr AND, when debug mode is on, the log file
-/// (prefixed with a +Nms offset from process start).
-pub(crate) fn diag(msg: impl AsRef<str>) {
-    let msg = msg.as_ref();
-    eprintln!("[tine] {msg}");
+/// Emit a fixed, source-owned event name to stderr and the opt-in debug file.
+/// Callers must pass a literal; detail belongs in [`diag_private`].
+pub(crate) fn diag(event: &'static str) {
+    eprintln!("[tine] {event}");
+    write_debug(event);
+}
+
+/// Emit only the fixed event to stderr, with private detail in the opt-in file.
+pub(crate) fn diag_private(event: &'static str, detail: impl AsRef<str>) {
+    eprintln!("[tine] {event}");
+    write_debug(detail.as_ref());
+}
+
+fn write_debug(msg: &str) {
     if let Some(Some(lock)) = DEBUG_LOG.get() {
         let ms = DEBUG_START
             .get()
@@ -72,12 +82,15 @@ pub(crate) fn debug_header() {
     if !debug_enabled() {
         return;
     }
-    diag(format!(
-        "Tine {} starting — {}/{}",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    ));
+    diag_private(
+        "startup",
+        format!(
+            "Tine {} starting — {}/{}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+    );
     let env_of = |k: &str| std::env::var(k).unwrap_or_else(|_| "<unset>".into());
     for k in [
         "TINE_GRAPH",
@@ -92,28 +105,102 @@ pub(crate) fn debug_header() {
         "LD_PRELOAD",
         "GDK_BACKEND",
     ] {
-        diag(format!("env {k}={}", env_of(k)));
+        diag_private("startup-env", format!("env {k}={}", env_of(k)));
     }
 }
 
-/// Install a panic hook that records the panic + a backtrace into the debug log
-/// (RUST_BACKTRACE forced on), then chains to the default hook. Debug mode only.
+/// Keep panic payloads and backtraces out of stderr; report the Rust source
+/// location there and retain full details in the opt-in file.
 pub(crate) fn install_panic_logger() {
-    if !debug_enabled() {
-        return;
-    }
-    if std::env::var_os("RUST_BACKTRACE").is_none() {
+    if debug_enabled() && std::env::var_os("RUST_BACKTRACE").is_none() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
-    let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        diag(format!("PANIC: {info}"));
-        diag(format!(
-            "backtrace:\n{}",
-            std::backtrace::Backtrace::force_capture()
-        ));
-        default(info);
+        let location = info
+            .location()
+            .map(|location| {
+                format!(
+                    "{}:{}:{}",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                )
+            })
+            .unwrap_or_else(|| "unknown:0:0".to_owned());
+        eprintln!("tine: panic at {location} (details in debug log when enabled)");
+        if debug_enabled() {
+            write_debug(&format!("PANIC: {info}"));
+            write_debug(&format!(
+                "backtrace:\n{}",
+                std::backtrace::Backtrace::force_capture()
+            ));
+        }
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    #[test]
+    fn panic_hook_child() {
+        if std::env::var_os("TINE_PANIC_HOOK_CHILD").is_none() {
+            return;
+        }
+        super::debug_init();
+        super::install_panic_logger();
+        let _ = std::panic::catch_unwind(|| panic!("PRIVATE_PANIC_PAYLOAD_123"));
+    }
+
+    #[test]
+    fn panic_hook_reports_location_without_payload() {
+        for enabled in [false, true] {
+            let log_path = std::env::temp_dir().join(format!(
+                "tine-panic-hook-test-{}-{enabled}.log",
+                std::process::id()
+            ));
+            let mut child = Command::new(std::env::current_exe().unwrap());
+            child
+                .args(["--exact", "debug::tests::panic_hook_child", "--nocapture"])
+                .env("TINE_PANIC_HOOK_CHILD", "1")
+                .env_remove("TINE_DEBUG")
+                .env_remove("TINE_DEBUG_LOG");
+            if enabled {
+                child
+                    .env("TINE_DEBUG", "1")
+                    .env("TINE_DEBUG_LOG", &log_path);
+            }
+            let output = child.output().unwrap();
+            assert!(output.status.success());
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            let line = stderr
+                .lines()
+                .find(|line| line.starts_with("tine: panic at "))
+                .expect("I-5: panic hook must put Rust source location on stderr; exemplar src-tauri/src/debug.rs");
+            assert!(
+                line.contains("debug.rs:") && line.ends_with(" (details in debug log when enabled)"),
+                "I-5: panic location must name Rust source file:line:column; exemplar src-tauri/src/debug.rs: {line}"
+            );
+            let location = line
+                .strip_prefix("tine: panic at ")
+                .unwrap()
+                .split(" (details in debug log when enabled)")
+                .next()
+                .unwrap();
+            let mut parts = location.rsplit(':');
+            assert!(parts.next().unwrap().parse::<u32>().is_ok());
+            assert!(parts.next().unwrap().parse::<u32>().is_ok());
+            assert!(
+                !stderr.contains("PRIVATE_PANIC_PAYLOAD_123") && !stderr.contains("backtrace:"),
+                "I-5: panic payloads and backtraces stay out of stderr; exemplar src-tauri/src/debug.rs"
+            );
+            if enabled {
+                let log = std::fs::read_to_string(&log_path).unwrap();
+                assert!(log.contains("PRIVATE_PANIC_PAYLOAD_123") && log.contains("backtrace:"));
+                std::fs::remove_file(log_path).unwrap();
+            }
+        }
+    }
 }
 
 /// Frontend → backend bridge so the webview's own milestones / errors land in the
@@ -121,7 +208,7 @@ pub(crate) fn install_panic_logger() {
 #[tauri::command]
 pub(crate) fn debug_log(line: String) {
     if debug_enabled() {
-        diag(format!("[ui] {line}"));
+        diag_private("ui-debug", line);
     }
 }
 

@@ -1,5 +1,5 @@
 // The debounced persistence engine — extracted from store.ts so the save
-// invariant lives in ONE owner: the debounce, the per-page serial write queue,
+// editor-save invariant lives here: the debounce, the per-page serial write queue,
 // and the graph-token / baseRev / tombstone / conflict guards that keep edits
 // from being lost, clobbered, or written into the wrong graph.
 //
@@ -165,9 +165,8 @@ export function forgetSaveState(name: string) {
   baseRev.delete(name);
   lastSaveFailure.delete(name);
 }
-/** Cancel timers, invalidate in-flight saves (bump the graph token), and clear
- *  all guard state — on graph switch / reset, so nothing from the old graph can
- *  be written after a switch. */
+/** After flushAll has drained before a graph switch, cancel timers, invalidate
+ *  in-flight saves (bump the graph token), and clear all guard state. */
 export function resetSaveState() {
   if (saveTimer) {
     clearTimeout(saveTimer);
@@ -264,12 +263,12 @@ async function doSave(
   const dto = pageToDto(name);
   if (!dto) return false;
   if (dto.guide) {
-    console.warn("Refusing to persist ephemeral bundled Guide page", name);
+    console.warn("Refusing to persist ephemeral bundled Guide page");
     dirty.delete(name);
     return true;
   }
   if (dto.read_only) {
-    console.error("Refusing to persist read-only page", name);
+    console.error("Refusing to persist read-only page");
     dirty.delete(name);
     return false;
   }

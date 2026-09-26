@@ -2465,10 +2465,7 @@ pub fn publish_graph(
             .unwrap_or(0)
             != 1
         {
-            eprintln!(
-                "tine export: refusing ambiguous public page identity {:?}; more than one source file claims it",
-                e.name
-            );
+            eprintln!("tine export: refusing ambiguous public page identity");
             continue;
         }
         public.push((e.name.as_str(), e.kind, Arc::clone(&parsed)));
@@ -2480,11 +2477,8 @@ pub fn publish_graph(
     // overwrote (DS#4). `slug(name)` is never recomputed independently downstream.
     let names: Vec<&str> = public.iter().map(|(n, _, _)| *n).collect();
     let (slugs, collisions) = build_slug_map(&names);
-    for (name, base, chosen) in &collisions {
-        eprintln!(
-            "tine export: page {name:?} slug {base:?} collides with another page; \
-             exporting it as {chosen:?}.html instead"
-        );
+    for _ in &collisions {
+        eprintln!("tine export: page slug collision resolved");
     }
     let slug_of = |name: &str| -> String {
         slugs

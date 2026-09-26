@@ -3,6 +3,9 @@
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
+fn file_kind::is_graph_text
+fn file_kind::is_asset_sidecar
+use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 enum store::Area
 enum store::ChangeKind

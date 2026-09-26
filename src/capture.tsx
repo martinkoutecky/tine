@@ -167,7 +167,7 @@ function Capture() {
       const h = Math.max(140, Math.min(measured, screenMax, 700));
       // Diagnostic (visible when launched from a terminal): if the window is ever
       // mis-sized, this shows whether the fault is the measurement or setSize.
-      console.log("[capture] fit", { measured, screenMax, h, lastH });
+      console.log("[capture] fit");
       if (Math.abs(h - lastH) < 2) return; // avoid churn / feedback loops
       lastH = h;
       await win.setSize(new LogicalSize(600, h));
@@ -594,5 +594,5 @@ function Capture() {
 // wasm init. The parser loads in the background; any block that renders before it's
 // ready falls back to raw text (AstBody/InlineText) and swaps in once `parserReady`
 // flips (typically tens of ms, well before you finish typing the first block).
-void initParser().catch((e) => console.error("lsdoc-wasm init failed:", e));
+void initParser().catch(() => console.error("lsdoc-wasm init failed"));
 render(() => <Capture />, document.getElementById("capture-root")!);

@@ -1723,6 +1723,25 @@ describe("save engine (persistence)", () => {
     remove.mockRestore();
   });
 
+  it("does not delete a same-name page in a new graph after draining the old save (I-20)", async () => {
+    let finish!: (rev: string) => void;
+    saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined);
+    load([blk("old graph")]);
+    markDirty("Test");
+    const first = flushPage("Test");
+    await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    const deletion = deletePage("Test", "page");
+    resetStore();
+    load([blk("new graph")]);
+    finish("old-rev");
+    await first;
+    expect(await deletion).toBe(false);
+    expect(remove, "I-20: old delete must not trash a new graph page; exemplar src/store.ts deletePage").not.toHaveBeenCalled();
+    expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
+    remove.mockRestore();
+  });
+
   it("flushAll drains an in-flight save and the edit made while it was pending (I-11)", async () => {
     let finish!: (rev: string) => void;
     saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));

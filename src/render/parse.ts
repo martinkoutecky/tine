@@ -48,7 +48,7 @@ export function initParser(): Promise<void> {
         if (typeof document !== "undefined") document.documentElement.dataset.lsdocParser = "ready";
         // Diagnostic only — the hard stale-wasm guard is in build-wasm.mjs.
         if (lsdoc_tag() !== LSDOC_TAG) {
-          console.warn(`lsdoc-wasm tag mismatch: wasm=${lsdoc_tag()} bytes=${LSDOC_TAG}`);
+          console.warn("lsdoc-wasm tag mismatch");
         }
       })
       .catch((e) => {

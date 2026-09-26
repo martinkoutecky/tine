@@ -34,6 +34,7 @@
 
 #[cfg(test)]
 mod derived_cache_fuzz_tests;
+pub mod file_kind;
 #[cfg(test)]
 mod gh221_malformed_html_tests;
 #[cfg(test)]
@@ -43,6 +44,7 @@ mod issue137_investigation_tests;
 #[cfg(test)]
 mod legacy_graph_writer_guard_tests;
 pub mod model;
+pub use file_kind::{is_asset_sidecar, is_graph_text};
 pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
 #[cfg(feature = "test-faults")]
 pub mod cost_counters;

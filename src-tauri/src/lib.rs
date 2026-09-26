@@ -42,7 +42,8 @@ use commands::{
     trash_asset, trash_journal_file, trash_sync_conflict, write_highlights, write_pdf_view_state,
 };
 use debug::{
-    debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, install_panic_logger,
+    debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, diag_private,
+    install_panic_logger,
 };
 use graph::{
     app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph,
@@ -432,17 +433,19 @@ pub fn run() {
             };
             // `exec` only returns on failure; on success it replaces this process
             // (same PID, env + bundled LD_LIBRARY_PATH inherited, host lib preloaded).
-            diag(format!(
-                "Wayland AppImage: re-exec with LD_PRELOAD={preload}"
-            ));
+            diag_private(
+                "wayland-preload",
+                format!("Wayland AppImage: re-exec with LD_PRELOAD={preload}"),
+            );
             let err = std::process::Command::new(exe)
                 .args(std::env::args_os().skip(1))
                 .env("LD_PRELOAD", preload)
                 .env("TINE_WL_PRELOADED", "1")
                 .exec();
-            diag(format!(
-                "Wayland libwayland-client preload re-exec failed ({err}); continuing"
-            ));
+            diag_private(
+                "wayland-preload-failed",
+                format!("Wayland libwayland-client preload re-exec failed ({err}); continuing"),
+            );
         }
     }
 
@@ -658,40 +661,52 @@ pub fn run() {
                             _ => Vec::new(),
                         })
                         .collect();
-                    diag(format!("graph root: {}", meta.root));
-                    diag(format!(
-                        "journals dir: {} (.md files={:?})",
-                        config.journals_dir,
-                        journals.as_ref().map(|listing| listing
-                            .files
-                            .iter()
-                            .filter(|entry| entry.rel.ends_with(".md"))
-                            .count())
-                    ));
-                    diag(format!(
-                        "pages dir: {} (.md files={:?})",
-                        config.pages_dir,
-                        pages.as_ref().map(|listing| listing
-                            .files
-                            .iter()
-                            .filter(|entry| entry.rel.ends_with(".md"))
-                            .count())
-                    ));
-                    diag(format!(
-                        "journals recognized as dates: {} | total page entries: {}",
-                        physical
-                            .iter()
-                            .filter(|(entry, _)| entry.is_journal && entry.day.is_some())
-                            .count(),
-                        physical.len()
-                    ));
+                    diag_private("graph-root", format!("graph root: {}", meta.root));
+                    diag_private(
+                        "graph-inventory",
+                        format!(
+                            "journals dir: {} (.md files={:?})",
+                            config.journals_dir,
+                            journals.as_ref().map(|listing| listing
+                                .files
+                                .iter()
+                                .filter(|entry| entry.rel.ends_with(".md"))
+                                .count())
+                        ),
+                    );
+                    diag_private(
+                        "graph-inventory",
+                        format!(
+                            "pages dir: {} (.md files={:?})",
+                            config.pages_dir,
+                            pages.as_ref().map(|listing| listing
+                                .files
+                                .iter()
+                                .filter(|entry| entry.rel.ends_with(".md"))
+                                .count())
+                        ),
+                    );
+                    diag_private(
+                        "graph-inventory",
+                        format!(
+                            "journals recognized as dates: {} | total page entries: {}",
+                            physical
+                                .iter()
+                                .filter(|(entry, _)| entry.is_journal && entry.day.is_some())
+                                .count(),
+                            physical.len()
+                        ),
+                    );
                     let sample: Vec<_> = physical
                         .iter()
                         .filter(|(entry, id)| entry.is_journal && id.as_str().ends_with(".md"))
                         .filter_map(|(_, id)| id.as_str().rsplit('/').next())
                         .take(3)
                         .collect();
-                    diag(format!("sample journal files: {sample:?}"));
+                    diag_private(
+                        "graph-inventory",
+                        format!("sample journal files: {sample:?}"),
+                    );
                 }
             } else {
                 diag("NO graph root resolved — set TINE_GRAPH=/path/to/graph");

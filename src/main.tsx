@@ -48,7 +48,7 @@ async function revealMainWindowAfterStableFrame(): Promise<void> {
 const mount = () => {
   render(() => <App />, document.getElementById("root")!);
   void revealMainWindowAfterStableFrame().catch((error) =>
-    console.error("failed to reveal the main window:", error)
+    console.error("failed to reveal the main window")
   );
 };
 // Init the in-browser wasm parser before first paint so blocks render
@@ -56,7 +56,7 @@ const mount = () => {
 // session restore; a parser-init failure is caught so it can't block startup —
 // the legacy fallback renderer still covers that case during the transition.
 void Promise.all([
-  initParser().catch((e) => console.error("lsdoc-wasm init failed:", e)),
+  initParser().catch(() => console.error("lsdoc-wasm init failed")),
   Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))]),
   communityExtensionsReady,
 ]).then(mount, mount);

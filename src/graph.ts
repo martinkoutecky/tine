@@ -285,7 +285,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
     // Diagnostic breadcrumbs (visible in `adb logcat`, chromium console channel):
     // an intermittent first-run stall on "Opening…" — these pin down whether the
     // native picker returned and whether the graph parse completed or hung.
-    console.info(`[tine/android] pickGraphFolder → ${result.status}`);
+    console.info("[tine/android] pickGraphFolder completed");
     if (result.status === "picked") {
       if (result.path) {
         console.info("[tine/android] loadGraphPath: start");
@@ -339,7 +339,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
 }
 
 /** Give a freshly-created demo graph a friendly today's-journal entry so the
- *  Journals view isn't empty on first open. Best-effort; never blocks. */
+ *  Journals view isn't empty on first open. The caller awaits this best-effort seed. */
 async function seedTodayJournal(): Promise<void> {
   const binding = captureBinding();
   try {

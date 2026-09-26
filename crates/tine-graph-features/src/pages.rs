@@ -5,7 +5,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 
-use tine_core::config::FileNameFormat;
 use tine_core::doc;
 use tine_core::model::{PageDto, PageKind};
 use tine_core::refs;
@@ -197,19 +196,6 @@ fn read_text(store: &Store, file: &FileId) -> io::Result<(String, FileRev)> {
     Ok((text, rev))
 }
 
-fn encoding(name: &str, fmt: FileNameFormat) -> String {
-    // v0.6.5 model.rs `encode_page_name` (6278): slash and underscore order
-    // preserves literal triple underscores beside namespace separators.
-    match fmt {
-        FileNameFormat::Legacy => name.replace('/', "%2F"),
-        FileNameFormat::TripleLowbar => name
-            .replace("___", "%5F%5F%5F")
-            .replace("_/", "%5F/")
-            .replace("/_", "/%5F")
-            .replace('/', "___"),
-    }
-}
-
 fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
     let config = store.config();
     for (area, dir) in [
@@ -363,7 +349,7 @@ fn rename_page_after_inventory(
             };
             let rel = format!(
                 "{}.{}",
-                encoding(&new_name, store.config().file_name_format),
+                tine_core::model::encode_page_name(&new_name, store.config().file_name_format),
                 ext
             );
             let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
@@ -471,7 +457,7 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
     };
     let rel = format!(
         "{}.{}",
-        encoding(name, store.config().file_name_format),
+        tine_core::model::encode_page_name(name, store.config().file_name_format),
         ext
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;

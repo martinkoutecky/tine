@@ -208,9 +208,7 @@ export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<
     const threshold = opts.warnThreshold ?? DEFAULT_EVAL_WARN_THRESHOLD;
     if (evaluations > threshold && !warned) {
       warned = true;
-      console.warn(
-        `SheetTable ${opts.ownerId ?? ""} evaluated ${evaluations} formula cells in one render pass; consider reducing rows or formula columns.`
-      );
+      console.warn("SheetTable evaluated many formula cells in one render pass");
     }
     return out;
   });

@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { handleGraphChange, installMobileExternalLinkHandler } from "./App";
 import { resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { pageToDto, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./store";
-import { pageInventoryRev } from "./ui";
+import { markDirty, pageToDto, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./store";
+import { isConflicted, pageInventoryRev } from "./ui";
 
 function addAnchor(href: string): HTMLAnchorElement {
   const a = document.createElement("a");
@@ -88,6 +88,14 @@ describe("mobile external link delegation", () => {
 });
 
 describe("journal watcher feed reconciliation", () => {
+  it("does not mark a new graph page conflicted from an old watcher event (I-20)", async () => {
+    const name = "Same name";
+    setDoc({ byId: { fresh: node("fresh", name) }, pages: [page(name, "page", ["fresh"])], feed: [], loaded: true });
+    markDirty(name);
+    await handleGraphChange({ name, kind: "page", created: false, removed: true, binding_generation: Number.MAX_SAFE_INTEGER });
+    expect(isConflicted(name), "I-20: old watcher events must not block the new graph; exemplar src/App.tsx handleGraphChange").toBe(false);
+  });
+
   it("does not reload old watcher bytes into a same-name page after a graph switch (I-20)", async () => {
     const name = "Same name";
     resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });

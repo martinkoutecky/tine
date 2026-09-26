@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::Manager;
-use tine_store::{Area, RestoreFile, Store};
+use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
 
 // Snapshot the graph's markdown into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
@@ -60,7 +60,7 @@ fn launch_failure_token(outcome: &BackupOutcome) -> Option<String> {
 
 pub(crate) fn report_launch_outcome(outcome: &BackupOutcome) {
     if let Some(token) = launch_failure_token(outcome) {
-        crate::debug::diag(token);
+        crate::debug::diag_private("backup-failed", token);
     }
 }
 #[cfg(test)]
@@ -1022,17 +1022,6 @@ fn open_verified_restore_files(
 /// Page/journal text files Tine snapshots + restores: Markdown and Org. Asset
 /// `.edn` sidecars are handled separately under `assets`; binary asset bytes stay
 /// excluded from snapshots by design.
-fn is_graph_text(p: &std::path::Path) -> bool {
-    matches!(
-        p.extension().and_then(|x| x.to_str()),
-        Some("md") | Some("org")
-    )
-}
-
-fn is_asset_sidecar(p: &std::path::Path) -> bool {
-    matches!(p.extension().and_then(|x| x.to_str()), Some("edn"))
-}
-
 fn prune_backups(base: &std::path::Path, keep: usize) {
     let Ok(rd) = std::fs::read_dir(base) else {
         return;

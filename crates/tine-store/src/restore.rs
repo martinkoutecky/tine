@@ -2,6 +2,7 @@
 
 use crate::store::{Area, FileId, GraphRev, Store};
 use crate::IoError;
+use crate::{is_asset_sidecar, is_graph_text};
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
@@ -143,7 +144,7 @@ impl Store {
             let allowed = match file.area {
                 Area::Pages | Area::Journals => is_graph_text(Path::new(&file.rel)),
                 Area::Assets => {
-                    is_sidecar(Path::new(&file.rel))
+                    is_asset_sidecar(Path::new(&file.rel))
                         && !file.rel.split('/').any(|part| part == ASSET_RECOVERY)
                 }
                 Area::Meta => file.rel == "config.edn",
@@ -353,13 +354,6 @@ impl Store {
     }
 }
 
-fn is_graph_text(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|x| x.to_str()),
-        Some("md" | "org")
-    )
-}
-
 fn backup_stamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -381,10 +375,6 @@ fn backup_stamp() -> String {
     let year = if m <= 2 { y + 1 } else { y };
     format!("{year:04}-{m:02}-{d:02}_{h:02}-{mi:02}-{s:02}")
 }
-fn is_sidecar(path: &Path) -> bool {
-    path.extension().and_then(|x| x.to_str()) == Some("edn")
-}
-
 fn ensure_target_within_root(root: &Path, target: &Path) -> io::Result<()> {
     let canonical_root = std::fs::canonicalize(root)?;
     let mut existing = target;
@@ -602,7 +592,7 @@ fn retire_extras(
                 area,
                 changed,
             )?;
-        } else if ((area == Area::Assets && kind.is_file() && is_sidecar(&child))
+        } else if ((area == Area::Assets && kind.is_file() && is_asset_sidecar(&child))
             || (area != Area::Assets
                 && (kind.is_file() || kind.is_symlink())
                 && is_graph_text(&child)))

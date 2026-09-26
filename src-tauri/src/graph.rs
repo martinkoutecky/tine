@@ -428,9 +428,9 @@ pub(crate) fn default_graph_parent(app: tauri::AppHandle) -> Result<String, Stri
     Ok(dir.display().to_string())
 }
 
-/// Build the search/backlinks cache off the hot path. We let the frontend's
-/// first journal load grab the graph lock first, then warm in the background so
-/// the first search is instant instead of re-parsing the whole tree. When the
+/// Wait for Store::open's background parse off the hot path. Let the frontend's
+/// first journal load a head start before this warm task waits for the
+/// whole-graph cache. When the
 /// warm completes (and this graph is still the current one — generation check),
 /// flip `warm_done` and tell the frontend, which has been HOLDING its
 /// whole-graph fetches (aliases, ref-count badges) so graph open never does
@@ -442,10 +442,8 @@ pub(crate) fn warm_cache_async(
     warm_generation: u64,
 ) {
     std::thread::spawn(move || {
-        // Brief delay so the first journal paint (which only needs a few pages)
-        // grabs the lock first; then build the whole-graph cache in the
-        // background so the first search / query / `g j` agenda doesn't pay for
-        // parsing every file synchronously under the lock.
+        // Brief delay to reduce contention with the first journal paint.
+        // Store::open owns the initial parse; whole_graph waits for its result.
         std::thread::sleep(std::time::Duration::from_millis(250));
         if slot.background_cancelled.load(Ordering::Acquire)
             || slot.warm_generation.load(Ordering::Acquire) != warm_generation

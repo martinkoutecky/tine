@@ -4448,10 +4448,7 @@ fn isolate_page_parse(
                 .copied()
                 .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
                 .unwrap_or("unknown panic payload");
-            eprintln!(
-                "Tine search index skipped page {:?}: page parse/projection panicked: {detail}",
-                e.rel_path
-            );
+            eprintln!("Tine search index skipped a page after parse/projection panic");
             Err(PageParseFailure::Panic(
                 e.rel_path_str().to_owned(),
                 format!("page parse/projection panicked: {detail}"),

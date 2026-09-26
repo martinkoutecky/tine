@@ -1,0 +1,122 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "tags:: books"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags:: books"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_0",
+        "pre_block": null,
+        "title": "I12_0"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "title:: Note\ntags:: books"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-1",
+            "raw": "title:: Note\ntags:: books"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_1",
+        "pre_block": null,
+        "title": "I12_1"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "id:: 66aa\nfoo:: bar"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-2",
+            "raw": "id:: 66aa\nfoo:: bar"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_2",
+        "pre_block": null,
+        "title": "I12_2"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "foo:: bar\nbody"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-3",
+            "raw": "foo:: bar\nbody"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_3",
+        "pre_block": null,
+        "title": "I12_3"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "foo:: bar"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [
+              {
+                "children": [],
+                "collapsed": false,
+                "id": "child",
+                "raw": "child"
+              }
+            ],
+            "collapsed": false,
+            "id": "root-4",
+            "raw": "foo:: bar"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_4",
+        "pre_block": null,
+        "title": "I12_4"
+      }
+    }
+  ]
+}

@@ -605,7 +605,7 @@ impl<'a> Transaction<'a> {
         };
         if unsupported_config_step {
             return Err(Why::Refused(Refusal::InvalidTarget(
-                "config.edn requires live config publication (B7)".into(),
+                "config.edn requires live config publication".into(),
             )));
         }
         match step {

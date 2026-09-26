@@ -544,7 +544,7 @@ export function App(): JSX.Element {
       closeRoot: () => { void closeAndroidRootSafely(); },
       // No JS listener means the inspected AppPlugin retains its native WebView
       // history/activity fallback. Do not install a competing recovery owner.
-      setupFailed: (error) => console.warn("Android Back listener unavailable; using native fallback", error),
+      setupFailed: () => console.warn("Android Back listener unavailable; using native fallback"),
     });
     onCleanup(uninstall);
   });

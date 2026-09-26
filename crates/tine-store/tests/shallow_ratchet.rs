@@ -406,6 +406,14 @@ fn public_paths_are_only_inputs_and_handoffs() {
     // require an explicit reason here, even if SURFACE.txt accepts the item.
     let allowed = [
         (
+            "file_kind::is_graph_text",
+            "validated file path input for backup and restore inclusion",
+        ),
+        (
+            "file_kind::is_asset_sidecar",
+            "validated asset path input for backup and restore inclusion",
+        ),
+        (
             "store::Store::create_graph",
             "user-chosen parent input; created root to user",
         ),

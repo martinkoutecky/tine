@@ -180,7 +180,10 @@ pub(crate) fn install_desktop_identity() {
         return;
     };
     if let Err(error) = install_into(&data_home, &system_data_dirs, &executable) {
-        crate::debug::diag(format!("could not install Linux desktop identity: {error}"));
+        crate::debug::diag_private(
+            "linux-desktop-identity-failed",
+            format!("could not install Linux desktop identity: {error}"),
+        );
     }
 }
 

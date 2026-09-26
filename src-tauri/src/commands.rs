@@ -1,5 +1,5 @@
 #[cfg(desktop)]
-use crate::debug::diag;
+use crate::debug::diag_private;
 #[cfg(desktop)]
 use crate::platform::{open_page_source, opener_command, reveal_page_source};
 use crate::state::{
@@ -1838,10 +1838,10 @@ pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), St
         let prog = "open";
         #[cfg(target_os = "windows")]
         let prog = "explorer";
-        diag(format!(
-            "open_asset: {name} -> {} ({prog})",
-            target.display()
-        ));
+        diag_private(
+            "open-asset",
+            format!("open_asset: {name} -> {} ({prog})", target.display()),
+        );
         opener_command(prog)
             .arg(&target)
             .spawn()
@@ -1922,9 +1922,10 @@ pub(crate) fn edit_asset_external(
             let prog = "open";
             #[cfg(target_os = "windows")]
             let prog = "explorer";
-            diag(format!(
-                "edit_asset_external: {name} -> {target_str} (opener {prog})"
-            ));
+            diag_private(
+                "edit-asset",
+                format!("edit_asset_external: {name} -> {target_str} (opener {prog})"),
+            );
             opener_command(prog)
                 .arg(&target)
                 .spawn()
@@ -1932,7 +1933,10 @@ pub(crate) fn edit_asset_external(
             return Ok(());
         }
         let (prog, args) = build_editor_argv(trimmed, &target_str)?;
-        diag(format!("edit_asset_external: {name} -> {prog} {args:?}"));
+        diag_private(
+            "edit-asset",
+            format!("edit_asset_external: {name} -> {prog} {args:?}"),
+        );
         opener_command(&prog)
             .args(&args)
             .spawn()

@@ -682,7 +682,10 @@ pub fn kill_webkit_children() {
         }
     }
     if !killed.is_empty() {
-        crate::debug::diag(format!("kill_webkit_children: SIGKILL {killed:?} (GH #28)"));
+        crate::debug::diag_private(
+            "webkit-children-killed",
+            format!("kill_webkit_children: SIGKILL {killed:?} (GH #28)"),
+        );
     }
 }
 
