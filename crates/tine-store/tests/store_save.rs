@@ -269,11 +269,12 @@ fn assert_save_tree(actual: &BTreeMap<String, Vec<u8>>, case: Case) {
             if path.is_dir() {
                 visit(root, &path, out);
             } else {
+                // `/`-separated like `Fixture::files` (Windows lists `\\`).
                 out.insert(
                     path.strip_prefix(root)
                         .unwrap()
                         .to_string_lossy()
-                        .into_owned(),
+                        .replace('\\', "/"),
                     fs::read(path).unwrap(),
                 );
             }
