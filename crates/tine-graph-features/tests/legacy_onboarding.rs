@@ -215,7 +215,10 @@ fn copy_guide_into_graph_writes_whole_lowercase_namespace_and_assets() {
         let name = guide_copy_page_name(&template.title);
         let id = page_id(&store, &name);
         assert!(
-            store.path_for_os_handoff(&id.file()).unwrap().is_file(),
+            store
+                .path_for_os_handoff(&id.file(), false)
+                .unwrap()
+                .is_file(),
             "missing copied guide page {name}"
         );
         let dto = store.page(&id).unwrap().doc;
@@ -227,7 +230,7 @@ fn copy_guide_into_graph_writes_whole_lowercase_namespace_and_assets() {
     }
     let index = fs::read_to_string(
         store
-            .path_for_os_handoff(&page_id(&store, "tine-guide/Tine Guide").file())
+            .path_for_os_handoff(&page_id(&store, "tine-guide/Tine Guide").file(), false)
             .unwrap(),
     )
     .unwrap();
@@ -244,7 +247,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
     guide::copy_guide_into_graph(&store, "Tine Guide").unwrap();
     let edited = guide_copy_page_name("Features/Sheets");
     let edited_path = store
-        .path_for_os_handoff(&page_id(&store, &edited).file())
+        .path_for_os_handoff(&page_id(&store, &edited).file(), false)
         .unwrap();
     atomic_write(&dir, &edited_path, b"- user edits stay\n");
     store.scan_refresh().unwrap();
@@ -253,7 +256,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
         .map(|template| {
             let name = guide_copy_page_name(template.title);
             let path = store
-                .path_for_os_handoff(&page_id(&store, &name).file())
+                .path_for_os_handoff(&page_id(&store, &name).file(), false)
                 .unwrap();
             (name, fs::read_to_string(path).unwrap())
         })
@@ -265,7 +268,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
     assert_eq!(existing.skipped_pages.len(), GUIDE_TEMPLATES.len());
     for (name, body) in before {
         let path = store
-            .path_for_os_handoff(&page_id(&store, &name).file())
+            .path_for_os_handoff(&page_id(&store, &name).file(), false)
             .unwrap();
         assert_eq!(
             fs::read_to_string(path).unwrap(),

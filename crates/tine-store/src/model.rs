@@ -8264,7 +8264,10 @@ mod tests {
             crate::store::Store::open(&dir, Default::default())
                 .unwrap()
                 .0
-                .path_for_os_handoff(&crate::store::PageId::from(g.rel_path(&future)).file())
+                .path_for_os_handoff(
+                    &crate::store::PageId::from(g.rel_path(&future)).file(),
+                    false
+                )
                 .unwrap(),
             future.canonicalize().unwrap()
         );
@@ -10818,7 +10821,10 @@ mod tests {
 
         assert_eq!(
             store
-                .path_for_os_handoff(&crate::store::PageId::from("pages/client-a/Note.md").file())
+                .path_for_os_handoff(
+                    &crate::store::PageId::from("pages/client-a/Note.md").file(),
+                    false
+                )
                 .unwrap(),
             nested.canonicalize().unwrap()
         );
@@ -10826,7 +10832,8 @@ mod tests {
             store
                 .path_for_os_handoff(
                     &crate::store::PageId::from(g.rel_path(&g.path_for("Note", PageKind::Page)))
-                        .file()
+                        .file(),
+                    false,
                 )
                 .unwrap(),
             canonical.canonicalize().unwrap()

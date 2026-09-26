@@ -21,7 +21,7 @@ pub(crate) struct CaptureGraphBinding {
 pub(crate) struct GraphSlot {
     pub(crate) store: Store,
     /// Latest `((` request per transport lane for this window binding.
-    pub(crate) block_search_lanes: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub(crate) block_search_lanes: tine_graph_features::search::SearchLanes,
     pub(crate) root_key: PathBuf,
     /// Unique lease for this exact window→graph binding. Frontend mutations carry
     /// it so an IPC queued before an in-place graph switch cannot execute against
@@ -39,7 +39,7 @@ impl GraphSlot {
         static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
         Self {
             store,
-            block_search_lanes: Mutex::new(HashMap::new()),
+            block_search_lanes: tine_graph_features::search::SearchLanes::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             warm_done: AtomicBool::new(false),

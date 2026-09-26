@@ -6,27 +6,19 @@ use crate::state::{
     capture_quick_switch_slot, slot_for_context, AppState, GraphContext, GraphSlot,
 };
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
-use tine_core::date::JournalDate;
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
+#[cfg(test)]
+use tine_store::SaveBase;
 use tine_store::{
-    Area, Budget, Cancel, FacetPolicy, PageId, QueryDialect, QueryError, QueryResult, Resolved,
-    SaveBase, SaveOutcome, SearchRequest, StoreError, TrashKind, WholeGraph,
+    Budget, FacetPolicy, PageId, QueryError, Resolved, SaveOutcome, StoreError, WholeGraph,
 };
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
-    error.to_string().replace(
-        "logseq/.tine-trash/assets",
-        &slot
-            .store
-            .asset_trash_location_for_user()
-            .display()
-            .to_string(),
-    )
+    tine_graph_features::assets::error_for_user(&slot.store, error)
 }
 fn feature_pdf_error(error: std::io::Error) -> String {
     error.to_string()
@@ -108,103 +100,27 @@ fn asset_error(error: StoreError) -> String {
     }
 }
 
-fn stream_asset_error(error: StoreError) -> String {
+fn feature_asset_access_error(error: tine_graph_features::assets::AssetAccessError) -> String {
     match error {
-        StoreError::InvalidTarget(reason) if reason.starts_with("symlink:") => {
+        tine_graph_features::assets::AssetAccessError::BadName => "bad asset name".into(),
+        tine_graph_features::assets::AssetAccessError::StreamSymlink => {
             "asset symlinks cannot be streamed".into()
         }
-        other => asset_error(other),
+        tine_graph_features::assets::AssetAccessError::Store(error) => asset_error(error),
     }
 }
 
 fn asset_handoff_target(slot: &GraphSlot, name: &str) -> Result<std::path::PathBuf, String> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
-        return Err("bad asset name".into());
-    }
-    let id = slot
-        .store
-        .file_id(Area::Assets, name)
-        .map_err(asset_error)?;
-    slot.store.asset_for_os_handoff(&id).map_err(asset_error)
+    tine_graph_features::assets::path_for_os_handoff(&slot.store, name)
+        .map_err(feature_asset_access_error)
 }
 
-fn page_handoff_target(slot: &GraphSlot, id: &PageId) -> Result<std::path::PathBuf, String> {
-    slot.store
-        .page_for_os_handoff(id)
-        .map_err(|error| match error {
-            StoreError::InvalidTarget(reason) if reason.starts_with("page source ") => reason,
-            other => store_error(other),
-        })
-}
-
-#[cfg(test)]
-mod handoff_tests {
-    use super::*;
-
-    #[test]
-    fn open_targets_require_existing_regular_files() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-handoff-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        for area in ["pages", "journals", "assets"] {
-            std::fs::create_dir_all(root.join(area)).unwrap();
-        }
-        std::fs::write(root.join("pages/Good.md"), "- good\n").unwrap();
-        std::fs::write(root.join("assets/good.bin"), b"good").unwrap();
-        std::fs::create_dir(root.join("pages/Directory.md")).unwrap();
-        std::fs::create_dir(root.join("assets/directory.bin")).unwrap();
-        let (store, _, _) =
-            tine_store::Store::open(&root, tine_store::OpenOptions::default()).unwrap();
-        let slot = GraphSlot::new(store, root.clone());
-
-        assert_eq!(
-            page_handoff_target(&slot, &PageId::from("pages/Good.md")).unwrap(),
-            root.join("pages/Good.md")
-        );
-        assert_eq!(
-            asset_handoff_target(&slot, "good.bin").unwrap(),
-            root.join("assets/good.bin")
-        );
-        assert!(page_handoff_target(&slot, &PageId::from("pages/Missing.md")).is_err());
-        assert!(asset_handoff_target(&slot, "missing.bin").is_err());
-        assert_eq!(
-            page_handoff_target(&slot, &PageId::from("pages/Directory.md")).unwrap_err(),
-            "page source is not a file"
-        );
-        assert_eq!(
-            asset_handoff_target(&slot, "directory.bin").unwrap_err(),
-            "invalid asset"
-        );
-
-        #[cfg(unix)]
-        {
-            std::fs::write(root.join("journals/Cross.md"), "- cross\n").unwrap();
-            std::os::unix::fs::symlink(root.join("journals/Cross.md"), root.join("pages/Cross.md"))
-                .unwrap();
-            assert_eq!(
-                page_handoff_target(&slot, &PageId::from("pages/Cross.md")).unwrap(),
-                root.join("journals/Cross.md")
-            );
-            let outside = root.with_extension("outside.md");
-            std::fs::write(&outside, "- outside\n").unwrap();
-            std::os::unix::fs::symlink(&outside, root.join("pages/Escape.md")).unwrap();
-            std::os::unix::fs::symlink(&outside, root.join("assets/escape.bin")).unwrap();
-            assert_eq!(
-                page_handoff_target(&slot, &PageId::from("pages/Escape.md")).unwrap_err(),
-                "page source escapes graph directories"
-            );
-            assert_eq!(
-                asset_handoff_target(&slot, "escape.bin").unwrap_err(),
-                "invalid asset"
-            );
-            std::fs::remove_file(outside).unwrap();
-        }
-        std::fs::remove_dir_all(root).unwrap();
+fn feature_page_read_error(error: tine_graph_features::pages::PageReadError) -> String {
+    match error {
+        tine_graph_features::pages::PageReadError::Load(error) => format!("{error:?}"),
+        tine_graph_features::pages::PageReadError::Source(reason) => reason,
+        tine_graph_features::pages::PageReadError::Store(error) => store_error(error),
+        tine_graph_features::pages::PageReadError::EmptyAlias => "alias has no owner".into(),
     }
 }
 
@@ -369,20 +285,6 @@ pub(crate) fn save_workspaces(
     crate::settings::save_workspaces(data, app, state)
 }
 
-fn validate_query_source(query: &str) -> Result<(), String> {
-    if !tine_core::query::query_source_within_limit(query) {
-        return Err(format!(
-            "query-too-large: query source is {} bytes (limit: {} bytes)",
-            query.len(),
-            tine_core::query::QUERY_SOURCE_MAX_BYTES
-        ));
-    }
-    if !tine_core::query::query_nesting_within_limit(query) {
-        return Err("query-nesting-too-deep: simplify nested boolean clauses".to_string());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
     let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
@@ -393,50 +295,18 @@ fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
     Ok(())
 }
 
-fn enforce_query_execution_budget(
-    execution: &tine_core::query_plan::QueryExecution,
-) -> Result<(), String> {
-    use tine_core::query_plan::QueryHit;
-    let bytes = execution.hits.iter().fold(0usize, |total, hit| {
-        total.saturating_add(match hit {
-            QueryHit::Page {
-                page,
-                display_text,
-                evidence,
-                matched_alias,
-                ..
-            } => {
-                page.name.len()
-                    + page.rel_path_str().len()
-                    + display_text.len()
-                    + matched_alias.as_ref().map_or(0, String::len)
-                    + evidence.len() * 128
-                    + 256
-            }
-            QueryHit::Block {
-                page,
-                block,
-                display_text,
-                evidence,
-                ..
-            } => {
-                page.len()
-                    + tine_core::model::block_dto_estimated_bytes(block)
-                    + display_text.len()
-                    + evidence.len() * 128
-                    + 256
-            }
-        })
-    });
-    if let Some(error) = QueryError::bridge_search_hits(execution.hits.len(), bytes) {
-        return Err(query_error(error));
+fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
+    match error {
+        tine_graph_features::search::SearchError::Load(error) => {
+            format!("graph load failed: {error:?}")
+        }
+        tine_graph_features::search::SearchError::Query(error) => query_error(error),
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod result_bridge_budget_tests {
-    use super::{enforce_result_bridge_budget, query_error, validate_query_source};
+    use super::{enforce_result_bridge_budget, query_error};
     use tine_core::{BlockDto, PageKind, RefGroup};
     use tine_store::{Budget, QueryError};
 
@@ -464,19 +334,6 @@ mod result_bridge_budget_tests {
         assert!(enforce_result_bridge_budget(&[group(vec![block])])
             .unwrap_err()
             .starts_with("result-too-large:"));
-    }
-
-    #[test]
-    fn rejects_oversized_query_source_before_cache_or_parser() {
-        let source = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
-        assert!(validate_query_source(&source)
-            .unwrap_err()
-            .starts_with("query-too-large:"));
-
-        let nested = format!("{}(task TODO){}", "(and ".repeat(65), ")".repeat(65));
-        assert!(validate_query_source(&nested)
-            .unwrap_err()
-            .starts_with("query-nesting-too-deep:"));
     }
 
     #[test]
@@ -798,275 +655,40 @@ pub(crate) struct JournalFeedPage {
     as_of_day: i64,
 }
 
-struct FeedEntry {
-    #[cfg(test)]
-    name: String,
-    date_key: Option<i64>,
-    rel_path: Option<tine_store::PageId>,
-}
-
-fn collect_journal_feed_page<F>(
-    entries: Vec<FeedEntry>,
-    limit: usize,
-    before_day: Option<i64>,
-    as_of_day: i64,
-    mut load: F,
-) -> Result<JournalFeedPage, String>
-where
-    F: FnMut(&FeedEntry) -> Result<PageWire, std::io::Error>,
-{
-    // A zero limit is authoritative: do not scan/load the feed merely to
-    // discover that the caller requested no rows. No cursor advances because
-    // no day was examined.
-    if limit == 0 {
-        let done = !entries
-            .iter()
-            .any(|entry| before_day.is_none_or(|before| entry.date_key.unwrap_or(0) < before));
-        return Ok(JournalFeedPage {
-            pages: Vec::new(),
-            next_before_day: None,
-            done,
-            as_of_day,
-        });
-    }
-    let mut out = Vec::new();
-    let mut last_examined = None;
-    let mut candidates = entries
-        .into_iter()
-        .filter(|e| before_day.is_none_or(|before| e.date_key.unwrap_or(0) < before))
-        .peekable();
-    while let Some(e) = candidates.next() {
-        let day = e
-            .date_key
-            .expect("feed inventory only contains dated journals");
-        last_examined = Some(day);
-        match load(&e) {
-            Ok(dto) => out.push(dto),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.to_string()),
-        }
-        if out.len() == limit {
-            break;
-        }
-    }
-    let done = candidates.peek().is_none();
-    Ok(JournalFeedPage {
-        pages: out,
-        next_before_day: if done { None } else { last_examined },
-        done,
-        as_of_day,
-    })
-}
-
-/// Feed-only pagination. `before_day` is an ordinal-day cursor rather than a
-/// mutable vector offset, so a file disappearing after inventory cannot make a
-/// later day duplicate or disappear from the next request.
+/// Feed-only pagination by ordinal day.
 #[tauri::command]
-pub(crate) fn journal_feed_page(
+pub(crate) async fn journal_feed_page(
     limit: usize,
     before_day: Option<i64>,
     state: GraphContext<'_>,
 ) -> Result<JournalFeedPage, String> {
     let slot = slot_for_context(&state)?;
-    {
-        let as_of_day = JournalDate::today().ordinal_key();
-        let entries = tine_graph_features::journals::feed_journals_desc_through(
-            &slot.store,
-            tine_store::Day(as_of_day),
-        )
-        .into_iter()
-        .map(|(day, id)| FeedEntry {
-            #[cfg(test)]
-            name: String::new(),
-            date_key: Some(day.0),
-            rel_path: Some(id),
+    tauri::async_runtime::spawn_blocking(move || {
+        let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)?;
+        Ok(JournalFeedPage {
+            pages: feed.pages.into_iter().map(page_dto).collect(),
+            next_before_day: feed.next_before_day,
+            done: feed.done,
+            as_of_day: feed.as_of_day,
         })
-        .collect();
-        collect_journal_feed_page(entries, limit, before_day, as_of_day, |entry| {
-            // A journal deleted from disk between inventory and load is skipped,
-            // but its day still advances the cursor in the helper above.
-            let id = entry.rel_path.as_ref().ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing journal path")
-            })?;
-            slot.store
-                .page(id)
-                .map(page_dto)
-                .map_err(|error| match error {
-                    StoreError::NotFound => std::io::Error::from(std::io::ErrorKind::NotFound),
-                    StoreError::Io(error) => error,
-                    other => std::io::Error::other(store_error(other)),
-                })
-        })
-    }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
-
-#[cfg(test)]
-mod journal_feed_tests {
-    use super::*;
-    fn entry(day: i64) -> FeedEntry {
-        FeedEntry {
-            name: day.to_string(),
-            date_key: Some(day),
-            rel_path: None,
-        }
-    }
-    fn dto(entry: &FeedEntry) -> PageWire {
-        let doc = serde_json::from_value(serde_json::json!({
-            "name": entry.name, "kind": "journal", "title": entry.name,
-            "pre_block": null, "blocks": []
-        }))
-        .unwrap();
-        PageWire {
-            id: entry.name.clone(),
-            doc,
-        }
-    }
-
-    #[test]
-    fn deletion_stable_day_cursor_fills_then_continues_without_duplicates() {
-        let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
-        let first = collect_journal_feed_page(entries, 3, None, 5, |e| {
-            if e.date_key == Some(5) {
-                Err(std::io::Error::from(std::io::ErrorKind::NotFound))
-            } else {
-                Ok(dto(e))
-            }
-        })
-        .unwrap();
-        assert_eq!(
-            first
-                .pages
-                .iter()
-                .map(|p| p.name.as_str())
-                .collect::<Vec<_>>(),
-            ["4", "3", "2"]
-        );
-        assert_eq!(first.next_before_day, Some(2));
-        assert!(!first.done);
-        let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
-        let second =
-            collect_journal_feed_page(entries, 3, first.next_before_day, 5, |e| Ok(dto(e)))
-                .unwrap();
-        assert_eq!(
-            second
-                .pages
-                .iter()
-                .map(|p| p.name.as_str())
-                .collect::<Vec<_>>(),
-            ["1"]
-        );
-        assert!(second.done);
-        assert_eq!(second.next_before_day, None);
-    }
-
-    #[test]
-    fn cursor_handles_second_page_loss_empty_suffix_exact_limit_zero_and_hard_errors() {
-        let first = collect_journal_feed_page(
-            [5, 4, 3, 2, 1].into_iter().map(entry).collect(),
-            3,
-            None,
-            5,
-            |e| Ok(dto(e)),
-        )
-        .unwrap();
-        assert_eq!(first.next_before_day, Some(3));
-        let second = collect_journal_feed_page(
-            [5, 4, 3, 2, 1].into_iter().map(entry).collect(),
-            3,
-            first.next_before_day,
-            5,
-            |e| {
-                if e.date_key == Some(2) {
-                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
-                } else {
-                    Ok(dto(e))
-                }
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            second
-                .pages
-                .iter()
-                .map(|p| p.name.as_str())
-                .collect::<Vec<_>>(),
-            ["1"]
-        );
-        assert!(
-            second.done,
-            "a missing second-page row still exhausts the suffix"
-        );
-
-        let empty = collect_journal_feed_page(
-            [5, 4].into_iter().map(entry).collect(),
-            3,
-            Some(4),
-            5,
-            |e| Ok(dto(e)),
-        )
-        .unwrap();
-        assert!(empty.pages.is_empty());
-        assert!(empty.done);
-
-        let exact = collect_journal_feed_page(
-            [3, 2, 1].into_iter().map(entry).collect(),
-            3,
-            None,
-            3,
-            |e| Ok(dto(e)),
-        )
-        .unwrap();
-        assert!(exact.done, "an exactly-full final page is done");
-        assert_eq!(exact.next_before_day, None);
-
-        let mut loads = 0;
-        let zero = collect_journal_feed_page(
-            [3, 2, 1].into_iter().map(entry).collect(),
-            0,
-            None,
-            3,
-            |_e| {
-                loads += 1;
-                Ok(dto(&entry(0)))
-            },
-        )
-        .unwrap();
-        assert_eq!(loads, 0, "zero limit loads no entries");
-        assert!(!zero.done);
-
-        let hard =
-            collect_journal_feed_page([3].into_iter().map(entry).collect(), 1, None, 3, |_e| {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "denied",
-                ))
-            });
-        assert!(matches!(hard, Err(err) if err.contains("denied")));
-    }
-}
-
 #[tauri::command]
-pub(crate) fn get_page(
+pub(crate) async fn get_page(
     name: String,
     kind: PageKind,
     state: GraphContext<'_>,
 ) -> Result<Option<PageWire>, String> {
     let slot = slot_for_context(&state)?;
-    let resolved = slot
-        .store
-        .whole_graph()
-        .map_err(|e| format!("{e:?}"))?
-        .resolve(&name, kind == PageKind::Journal);
-    let id = match resolved {
-        Resolved::Existing { id, .. } => id,
-        Resolved::Alias { owners } => owners.into_iter().next().ok_or("alias has no owner")?,
-        Resolved::Absent { .. } => return Ok(None),
-    };
-    match slot.store.page(&id) {
-        Ok(read) => Ok(Some(page_dto(read))),
-        Err(StoreError::NotFound) => Ok(None),
-        Err(error) => Err(store_error(error)),
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::pages::get_page(&slot.store, &name, kind)
+            .map(|read| read.map(page_dto))
+            .map_err(feature_page_read_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Waits for the initial load, so it runs on the blocking pool.
@@ -1093,15 +715,16 @@ pub(crate) async fn resolve_page(
 /// format by extension, returns graph-root-relative paths sorted for stable
 /// output. Read-only and local — the panel makes no network calls.
 #[tauri::command]
-pub(crate) fn graph_source_files(
+pub(crate) async fn graph_source_files(
     include_journals: bool,
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_graph_features::sources::GraphSourceFile>, String> {
     let slot = slot_for_context(&state)?;
-    Ok(tine_graph_features::sources::graph_source_files(
-        &slot.store,
-        include_journals,
-    ))
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::sources::graph_source_files(&slot.store, include_journals)
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1113,29 +736,16 @@ pub(crate) fn save_page(
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    if page.guide {
-        return save_outcome_to_wire(SaveOutcome::GuideEphemeral, &page);
-    }
     let id = PageId::from(id);
-    let base = if force.unwrap_or(false) {
-        // Interim keep-mine: the banner shows no disk version yet. Read the
-        // current one, then let BOTH save guards reject any later external edit.
-        // Never turn unreadable or undecodable bytes into overwrite permission.
-        match slot.store.read(&id.file(), None) {
-            Ok((bytes, rev)) => {
-                std::str::from_utf8(&bytes)
-                    .map_err(|_| "stream did not contain valid UTF-8".to_string())?;
-                SaveBase::Existing(rev)
-            }
-            Err(StoreError::NotFound) => SaveBase::CreateNew,
-            Err(error) => return Err(store_error(error)),
-        }
-    } else {
-        base_rev
-            .map(|rev| SaveBase::Existing(rev.into()))
-            .unwrap_or(SaveBase::CreateNew)
-    };
-    save_outcome_to_wire(slot.store.save(&id, base, &page), &page)
+    let outcome = tine_graph_features::pages::save_page(
+        &slot.store,
+        &id,
+        &page,
+        base_rev,
+        force.unwrap_or(false),
+    )
+    .map_err(store_error)?;
+    save_outcome_to_wire(outcome, &page)
 }
 
 fn save_outcome_to_wire(outcome: SaveOutcome, page: &PageDto) -> Result<String, String> {
@@ -1173,10 +783,16 @@ pub(crate) async fn get_backlinks(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    let view = whole_graph(&state)?;
-    tauri::async_runtime::spawn_blocking(move || view.backlinks(&name).map_err(query_error))
-        .await
-        .map_err(|error| error.to_string())?
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.backlinks(&name).map_err(query_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1185,8 +801,12 @@ pub(crate) async fn get_backlink_filter_context(
     targets: Vec<BacklinkFilterTarget>,
     state: GraphContext<'_>,
 ) -> Result<BacklinkFilterContext, String> {
-    let view = whole_graph(&state)?;
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
         view.backlink_filter_context(&name, &targets)
             .map_err(query_error)
     })
@@ -1199,8 +819,12 @@ pub(crate) async fn get_unlinked_refs(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    let view = whole_graph(&state)?;
+    let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
         view.unlinked_references(&name).map_err(query_error)
     })
     .await
@@ -1214,22 +838,34 @@ pub(crate) async fn get_unlinked_refs(
 pub(crate) async fn block_ref_counts(
     state: GraphContext<'_>,
 ) -> Result<Arc<std::collections::HashMap<String, usize>>, String> {
-    let view = whole_graph(&state)?;
-    tauri::async_runtime::spawn_blocking(move || view.block_ref_counts())
-        .await
-        .map_err(|error| error.to_string())
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.store
+            .whole_graph()
+            .map(|view| view.block_ref_counts())
+            .map_err(|e| format!("graph load failed: {e:?}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// The blocks that reference block `uuid`, grouped by page (the badge's referrers
 /// panel). Lazy: called only when a badge is clicked open.
 #[tauri::command]
-pub(crate) fn block_referrers(
+pub(crate) async fn block_referrers(
     uuid: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    whole_graph(&state)?
-        .block_referrers(&uuid)
-        .map_err(query_error)
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.block_referrers(&uuid).map_err(query_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1290,9 +926,13 @@ mod graph_wide_command_boundary_tests {
 }
 
 #[tauri::command]
-pub(crate) fn publish_html(state: GraphContext<'_>) -> Result<(String, usize), String> {
+pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usize), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::publish::publish_html(&slot.store).map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::publish::publish_html(&slot.store).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Render one page to a self-contained HTML document (assets inlined, no sidebar)
@@ -1311,31 +951,36 @@ pub(crate) fn page_print_html(
 }
 
 #[tauri::command]
-pub(crate) fn run_query(
+pub(crate) async fn run_query(
     query: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    validate_query_source(&query)?;
-    match whole_graph(&state)?
-        .query(&query, QueryDialect::Simple, None)
-        .map_err(query_error)?
-    {
-        QueryResult::Simple(groups) => Ok(groups),
-        QueryResult::Advanced(_) => unreachable!(),
-    }
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::search::run_query(&slot.store, &query).map_err(feature_search_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Resolve every query macro in one Copy / Export session under one cumulative
 /// construction budget. Unlike `get_page`, this returns only selected subtrees;
 /// unrelated page content is never cloned across IPC or retained by the WebView.
 #[tauri::command]
-pub(crate) fn export_query_subtrees(
+pub(crate) async fn export_query_subtrees(
     specs: Vec<tine_core::query::QueryExportSpec>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::QueryExportBatch, String> {
-    whole_graph(&state)?
-        .export_query_subtrees(&specs)
-        .map_err(query_error)
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.export_query_subtrees(&specs).map_err(query_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[derive(serde::Deserialize)]
@@ -1358,83 +1003,49 @@ pub(crate) async fn run_graph_search(
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let slot = slot_for_context(&state)?;
-    let view = slot
-        .store
-        .whole_graph()
-        .map_err(|e| format!("graph load failed: {e:?}"))?;
-    let flag = Arc::new(AtomicBool::new(false));
-    if let Some(lane) = lane.as_ref() {
-        if let Some(previous) = slot
-            .block_search_lanes
-            .lock()
-            .unwrap()
-            .insert(lane.clone(), Arc::clone(&flag))
-        {
-            previous.store(true, Ordering::Release);
-        }
-    }
-    let within = scope.map(|scope| match scope.path {
-        Some(path) => tine_store::PageId::from(path),
-        None => match view.resolve(&scope.name, scope.page_kind == PageKind::Journal) {
-            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
-            Resolved::Alias { owners } => owners.into_iter().next().expect("alias has an owner"),
-        },
+    let scope = scope.map(|scope| tine_graph_features::search::Scope {
+        name: scope.name,
+        kind: scope.page_kind,
+        path: scope.path,
     });
-    let request = SearchRequest {
-        text: source,
-        within,
-        page_limit,
-        block_limit,
-        explain,
-    };
-    // QueryExecution carries backward-defaulted per-category `has_more` bits;
-    // returning it directly preserves those bits on the Tauri wire.
-    let execution =
-        tauri::async_runtime::spawn_blocking(move || view.search(&request, &Cancel(flag)))
-            .await
-            .map_err(|e| e.to_string())?;
-    let execution = match execution {
-        Ok(execution) => execution,
-        Err(QueryError::Cancelled) => tine_core::query_plan::QueryExecution {
-            hits: Vec::new(),
-            diagnostics: Vec::new(),
-            explanation: tine_core::query_plan::QueryExplanation {
-                branches: Vec::new(),
-            },
-            has_more: tine_core::query_plan::QueryHasMore::default(),
-            cancelled: true,
-        },
-        Err(error) => return Err(query_error(error)),
-    };
-    enforce_query_execution_budget(&execution)?;
-    Ok(execution)
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::search::run_graph_search(
+            &slot.store,
+            &slot.block_search_lanes,
+            source,
+            page_limit,
+            block_limit,
+            lane.as_deref(),
+            explain,
+            scope,
+        )
+        .map_err(feature_search_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn run_advanced_query(
+pub(crate) async fn run_advanced_query(
     query: String,
     current_page: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::AdvancedResult, String> {
-    validate_query_source(&query)?;
-    let view = whole_graph(&state)?;
-    let current_id = current_page
-        .as_deref()
-        .map(|name| match view.resolve(name, false) {
-            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
-            Resolved::Alias { owners } => owners.into_iter().next().expect("alias has an owner"),
-        });
-    match view
-        .query(&query, QueryDialect::Advanced, current_id.as_ref())
-        .map_err(query_error)?
-    {
-        QueryResult::Advanced(result) => Ok(result),
-        QueryResult::Simple(_) => unreachable!(),
-    }
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::search::run_advanced_query(
+            &slot.store,
+            &query,
+            current_page.as_deref(),
+        )
+        .map_err(feature_search_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn query_facets(
+pub(crate) async fn query_facets(
     state: GraphContext<'_>,
     autocomplete: Option<bool>,
 ) -> Result<Vec<(String, Vec<String>)>, String> {
@@ -1443,17 +1054,32 @@ pub(crate) fn query_facets(
     } else {
         FacetPolicy::Budgeted
     };
-    whole_graph(&state)?
-        .property_facets(policy)
-        .map_err(query_error)
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        view.property_facets(policy).map_err(query_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn page_icons(
+pub(crate) async fn page_icons(
     names: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    Ok(whole_graph(&state)?.page_icons(&names))
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.store
+            .whole_graph()
+            .map(|view| view.page_icons(&names))
+            .map_err(|e| format!("graph load failed: {e:?}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn with_config_store<T>(
@@ -1571,13 +1197,9 @@ pub(crate) fn set_journal_title_format(
     format: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_config_store(&state, |store| {
-        tine_graph_features::config::set_journal_page_title_format(store, &format)
-            .map_err(|e| e.to_string())
-    })?;
     let slot = slot_for_context(&state)?;
-    tine_graph_features::journals::migrate_journal_filenames(&slot.store);
-    Ok(())
+    tine_graph_features::config::set_journal_page_title_format_and_migrate(&slot.store, &format)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1595,37 +1217,35 @@ pub(crate) async fn search(
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
     let slot = slot_for_context(&state)?;
-    let view = slot
-        .store
-        .whole_graph()
-        .map_err(|e| format!("graph load failed: {e:?}"))?;
-    let flag = Arc::new(AtomicBool::new(false));
-    if let Some(lane) = lane {
-        if let Some(previous) = slot
-            .block_search_lanes
-            .lock()
-            .unwrap()
-            .insert(lane, Arc::clone(&flag))
-        {
-            previous.store(true, Ordering::Release);
-        }
-    }
-    let groups = tauri::async_runtime::spawn_blocking(move || {
-        view.find_blocks(&query, limit, &Cancel(flag))
-            .map_err(query_error)
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::search::find_blocks(
+            &slot.store,
+            &slot.block_search_lanes,
+            &query,
+            limit,
+            lane.as_deref(),
+        )
+        .map_err(feature_search_error)
     })
     .await
-    .map_err(|e| e.to_string())??;
-    Ok(groups)
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn quick_switch(
+pub(crate) async fn quick_switch(
     query: String,
     limit: usize,
     state: GraphContext<'_>,
 ) -> Result<Vec<PageEntry>, String> {
-    Ok(whole_graph(&state)?.complete_page_names(&query, limit))
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.store
+            .whole_graph()
+            .map(|view| view.complete_page_names(&query, limit))
+            .map_err(|e| format!("graph load failed: {e:?}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn capture_quick_switch_for(
@@ -1832,18 +1452,10 @@ pub(crate) fn read_asset(
     // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
     // serialized element-by-element and re-parsed on the JS side — the frontend
     // receives an ArrayBuffer directly.
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
-        return Err("bad asset name".into());
-    }
     let slot = slot_for_context(&state)?;
-    let file = slot
-        .store
-        .file_id(Area::Assets, &name)
-        .map_err(asset_error)?;
-    slot.store
-        .read(&file, max_bytes)
-        .map(|(bytes, _)| tauri::ipc::Response::new(bytes))
-        .map_err(asset_error)
+    tine_graph_features::assets::read_asset(&slot.store, &name, max_bytes)
+        .map(tauri::ipc::Response::new)
+        .map_err(feature_asset_access_error)
 }
 
 /// Validate one graph media file and return its top-level asset name for the
@@ -1852,14 +1464,8 @@ pub(crate) fn read_asset(
 #[tauri::command]
 pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
-        return Err("bad asset name".into());
-    }
-    let id = slot
-        .store
-        .file_id(Area::Assets, &name)
-        .map_err(asset_error)?;
-    slot.store.open_read(&id).map_err(stream_asset_error)?;
+    tine_graph_features::assets::validate_stream_asset(&slot.store, &name)
+        .map_err(feature_asset_access_error)?;
     Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
@@ -1996,37 +1602,14 @@ pub(crate) fn import_asset(
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    let source_path = std::path::Path::new(&path);
-    let chosen = name
-        .as_deref()
-        .filter(|n| !n.is_empty())
-        .map(str::to_owned)
-        .or_else(|| {
-            source_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(str::to_owned)
-        })
-        .ok_or_else(|| "bad source filename".to_string())?;
-    if chosen.is_empty()
-        || chosen == "."
-        || chosen == ".."
-        || chosen.contains('/')
-        || chosen.contains('\\')
-    {
-        return Err("bad asset name".into());
-    }
-    let source =
-        std::fs::File::open(source_path).map_err(|error| feature_asset_error(error, &slot))?;
-    tine_graph_features::assets::import_asset(
-        &slot.store,
-        &chosen,
-        tine_store::Content::Stream {
-            source,
-            max_bytes: u64::MAX,
-        },
-    )
-    .map_err(|error| feature_asset_error(error, &slot))
+    crate::device_io::import_asset_from_path(&slot.store, &path, name.as_deref()).map_err(|error| {
+        match error {
+            crate::device_io::DeviceAssetImportError::Name(message) => message,
+            crate::device_io::DeviceAssetImportError::Io(error) => {
+                feature_asset_error(error, &slot)
+            }
+        }
+    })
 }
 
 /// Import a bounded Android photo or voice memo by native cache-file capability.
@@ -2194,33 +1777,13 @@ pub(crate) fn open_page_file(
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let recorded_path = path.filter(|p| !p.trim().is_empty());
-    let id = if let Some(path) = recorded_path {
-        let config = slot.store.config();
-        let file = [
-            (Area::Pages, config.pages_dir.as_str()),
-            (Area::Journals, config.journals_dir.as_str()),
-        ]
-        .into_iter()
-        .find_map(|(area, dir)| {
-            path.strip_prefix(&format!("{dir}/"))
-                .and_then(|rel| slot.store.file_id(area, rel).ok())
-        })
-        .ok_or("invalid page path")?;
-        slot.store.as_page(&file).ok_or("invalid page path")?
-    } else {
-        match slot
-            .store
-            .whole_graph()
-            .map_err(|e| format!("{e:?}"))?
-            .resolve(&name, kind == PageKind::Journal)
-        {
-            Resolved::Existing { id, .. } => id,
-            Resolved::Alias { owners } => owners.into_iter().next().ok_or("alias has no owner")?,
-            Resolved::Absent { id } => id,
-        }
-    };
-    let target = page_handoff_target(&slot, &id)?;
+    let target = tine_graph_features::pages::source_path_for_os_handoff(
+        &slot.store,
+        &name,
+        kind,
+        path.as_deref(),
+    )
+    .map_err(feature_page_read_error)?;
     #[cfg(desktop)]
     {
         if reveal {
@@ -2591,11 +2154,15 @@ mod editor_argv_tests {
 
 /// Orphaned `assets/` files (no block references them) for the cleanup UI.
 #[tauri::command]
-pub(crate) fn list_orphan_assets(
+pub(crate) async fn list_orphan_assets(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::AssetInfo>, String> {
     let slot = slot_for_context(&state)?;
-    Ok(tine_graph_features::assets::orphan_assets(&slot.store))
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::assets::orphan_assets(&slot.store)
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// Move an orphaned asset to the recoverable trash.
@@ -2608,27 +2175,15 @@ pub(crate) fn trash_asset(name: String, state: GraphContext<'_>) -> Result<(), S
 
 /// Count + total bytes in the recoverable asset trash.
 #[tauri::command]
-pub(crate) fn asset_trash_stats(
+pub(crate) async fn asset_trash_stats(
     state: GraphContext<'_>,
 ) -> Result<tine_core::model::TrashStats, String> {
-    let mut stats = tine_core::model::TrashStats::default();
-    for (kind, count, bytes) in slot_for_context(&state)?
-        .store
-        .trash_stats()
-        .map_err(store_error)?
-    {
-        match kind {
-            TrashKind::Asset => {
-                stats.count = count;
-                stats.bytes = bytes;
-            }
-            TrashKind::Page => stats.pages = count,
-            TrashKind::Journal => stats.journals = count,
-            TrashKind::Conflict => stats.conflicts = count,
-            TrashKind::Legacy => stats.other = count,
-        }
-    }
-    Ok(stats)
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::assets::asset_trash_stats(&slot.store).map_err(store_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Permanently delete everything in the asset trash; returns files removed.
@@ -2649,25 +2204,29 @@ pub(crate) fn empty_asset_trash(state: GraphContext<'_>) -> Result<u64, String> 
 /// Journal days that resolve to more than one file (e.g. a date-stem file plus a
 /// title-named one) — for the user to reconcile.
 #[tauri::command]
-pub(crate) fn list_journal_conflicts(
+pub(crate) async fn list_journal_conflicts(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::JournalConflict>, String> {
     let slot = slot_for_context(&state)?;
-    Ok(tine_graph_features::journals::journal_conflicts(
-        &slot.store,
-    ))
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::journals::journal_conflicts(&slot.store)
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
 /// user to review + reconcile instead of them showing as garbage pages.
 #[tauri::command]
-pub(crate) fn list_sync_conflicts(
+pub(crate) async fn list_sync_conflicts(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::SyncConflict>, String> {
     let slot = slot_for_context(&state)?;
-    Ok(tine_graph_features::conflicts::list_sync_conflicts(
-        &slot.store,
-    ))
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::conflicts::list_sync_conflicts(&slot.store)
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// Block-level diff of a sync-conflict copy against its winner (both graph-root-

@@ -1,6 +1,6 @@
 //! PDF, asset, journal, page, and conflict graph features. Each operation uses the public `tine-store`
-//! boundary; callers supply device source streams and receive values or I/O
-//! errors. A transaction owns every graph write. Cost is stated on each public
+//! boundary; callers supply device source streams, while the asset client
+//! validates a selected import name without opening its path. A transaction owns every graph write. Cost is stated on each public
 //! function. Callers need no graph path, lock, cache state, or write protocol.
 
 pub mod assets;
@@ -13,6 +13,7 @@ pub mod pdf;
 pub mod print;
 pub mod publish;
 mod render;
+pub mod search;
 pub mod sources;
 
 use std::io;

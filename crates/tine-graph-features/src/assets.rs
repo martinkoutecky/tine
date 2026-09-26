@@ -3,12 +3,21 @@
 
 use std::io;
 use std::time::UNIX_EPOCH;
-use tine_core::model::AssetInfo;
-use tine_store::{Area, Content, StepResult, Store, StoreError};
+use tine_core::model::{AssetInfo, TrashStats};
+use tine_store::{Area, Content, StepResult, Store, StoreError, TrashKind};
 
 use crate::{is_conflict, store_error, tx_error};
 
 const COMPOUND_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.png"];
+
+/// Keep the legacy trash error display path while the store owns its layout.
+/// Cost O(error text); the original I/O failure remains visible.
+pub fn error_for_user(store: &Store, error: io::Error) -> String {
+    error.to_string().replace(
+        "logseq/.tine-trash/assets",
+        &store.asset_trash_location_for_user().display().to_string(),
+    )
+}
 
 fn split_name(name: &str) -> (&str, &str) {
     let lower = name.to_ascii_lowercase();
@@ -32,6 +41,95 @@ fn validate_name(name: &str) -> io::Result<()> {
     } else {
         Ok(())
     }
+}
+
+/// A top-level asset request failed before or during store access.
+#[derive(Debug)]
+pub enum AssetAccessError {
+    BadName,
+    Store(StoreError),
+    StreamSymlink,
+}
+
+fn named_asset(store: &Store, name: &str) -> Result<tine_store::FileId, AssetAccessError> {
+    if validate_name(name).is_err() {
+        return Err(AssetAccessError::BadName);
+    }
+    store
+        .file_id(Area::Assets, name)
+        .map_err(AssetAccessError::Store)
+}
+
+/// Read one top-level asset into bytes. Cost O(file bytes).
+pub fn read_asset(
+    store: &Store,
+    name: &str,
+    max_bytes: Option<u64>,
+) -> Result<Vec<u8>, AssetAccessError> {
+    let id = named_asset(store, name)?;
+    store
+        .read(&id, max_bytes)
+        .map(|(bytes, _)| bytes)
+        .map_err(AssetAccessError::Store)
+}
+
+/// Validate a top-level asset for the range-aware media protocol. Cost O(path components).
+pub fn validate_stream_asset(store: &Store, name: &str) -> Result<(), AssetAccessError> {
+    let id = named_asset(store, name)?;
+    store
+        .open_read(&id)
+        .map(|_| ())
+        .map_err(|error| match error {
+            StoreError::InvalidTarget(reason) if reason.starts_with("symlink:") => {
+                AssetAccessError::StreamSymlink
+            }
+            other => AssetAccessError::Store(other),
+        })
+}
+
+/// Return an existing top-level asset path for an OS opener. Cost O(path components).
+pub fn path_for_os_handoff(
+    store: &Store,
+    name: &str,
+) -> Result<std::path::PathBuf, AssetAccessError> {
+    let id = named_asset(store, name)?;
+    store
+        .path_for_os_handoff(&id, true)
+        .map_err(AssetAccessError::Store)
+}
+
+/// A device import failed during filename selection or streaming.
+/// Choose and validate an import name from an explicit name or the device
+/// source's final component. No path is opened. Cost O(name bytes).
+pub fn choose_import_name(
+    source_filename: Option<&str>,
+    name: Option<&str>,
+) -> Result<String, String> {
+    let chosen = name
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .or_else(|| source_filename.map(str::to_owned))
+        .ok_or_else(|| "bad source filename".to_string())?;
+    validate_name(&chosen).map_err(|_| "bad asset name".to_string())?;
+    Ok(chosen)
+}
+
+/// Summarize all recoverable trash categories. Cost O(trash entries).
+pub fn asset_trash_stats(store: &Store) -> Result<TrashStats, StoreError> {
+    let mut stats = TrashStats::default();
+    for (kind, count, bytes) in store.trash_stats()? {
+        match kind {
+            TrashKind::Asset => {
+                stats.count = count;
+                stats.bytes = bytes;
+            }
+            TrashKind::Page => stats.pages = count,
+            TrashKind::Journal => stats.journals = count,
+            TrashKind::Conflict => stats.conflicts = count,
+            TrashKind::Legacy => stats.other = count,
+        }
+    }
+    Ok(stats)
 }
 
 fn create_unique(store: &Store, name: &str, content: Content) -> io::Result<String> {

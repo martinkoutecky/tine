@@ -1020,10 +1020,16 @@ impl Store {
         Ok(self.graph.root.join(area))
     }
 
-    /// A validated OS path. A missing final file is allowed; existing ancestors
-    /// must still remain inside the selected area. Callers requiring an existing
-    /// regular file must check that separately.
-    pub fn path_for_os_handoff(&self, file: &FileId) -> Result<PathBuf, StoreError> {
+    /// A validated OS path. `existing_regular_file` requires a live file for an
+    /// opener; page sources may follow a legacy link between pages and journals.
+    /// Otherwise a missing final file is allowed, with ancestors inside its area.
+    /// Cost O(path components), independent of graph size. Refuses an escaped
+    /// target; missing or unreadable existing files return their I/O error.
+    pub fn path_for_os_handoff(
+        &self,
+        file: &FileId,
+        existing_regular_file: bool,
+    ) -> Result<PathBuf, StoreError> {
         if self.is_closed() {
             return Err(StoreError::Closed);
         }
@@ -1047,6 +1053,40 @@ impl Store {
         } else {
             (area, self.graph.root.join(file.as_str()))
         };
+        if existing_regular_file {
+            let target = fs::canonicalize(&candidate).map_err(StoreError::from_io)?;
+            if !target.is_file() {
+                return Err(StoreError::InvalidTarget(
+                    if file.as_str().starts_with("assets/") {
+                        file.as_str().to_owned()
+                    } else {
+                        "page source is not a file".into()
+                    },
+                ));
+            }
+            if file.as_str().starts_with("assets/") {
+                let assets =
+                    fs::canonicalize(self.graph.assets_path()).map_err(StoreError::from_io)?;
+                if !target.starts_with(&assets) {
+                    return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
+                }
+            } else {
+                if self.as_page(file).is_none() {
+                    return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
+                }
+                let config = self.graph.current_config();
+                let pages = fs::canonicalize(self.graph.root.join(&config.pages_dir))
+                    .map_err(StoreError::from_io)?;
+                let journals = fs::canonicalize(self.graph.root.join(&config.journals_dir))
+                    .map_err(StoreError::from_io)?;
+                if !target.starts_with(&pages) && !target.starts_with(&journals) {
+                    return Err(StoreError::InvalidTarget(
+                        "page source escapes graph directories".into(),
+                    ));
+                }
+            }
+            return Ok(target);
+        }
         let (area_canonical, area_missing) = match fs::canonicalize(&area) {
             Ok(path) => (path, false),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1090,48 +1130,6 @@ impl Store {
         }
     }
 
-    /// Return an existing regular asset for an OS hand-off, after checking its
-    /// live assets directory and resolved target. Cost: O(path components).
-    pub fn asset_for_os_handoff(&self, file: &FileId) -> Result<PathBuf, StoreError> {
-        if !file.as_str().starts_with("assets/") {
-            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
-        }
-        let target = self.path_for_os_handoff(file)?;
-        let target = fs::canonicalize(target).map_err(StoreError::from_io)?;
-        let assets = fs::canonicalize(self.graph.assets_path()).map_err(StoreError::from_io)?;
-        if !target.starts_with(&assets) || !target.is_file() {
-            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
-        }
-        Ok(target)
-    }
-
-    /// Return an existing page source for an OS hand-off. A page symlink may
-    /// lead from pages to journals or conversely, as in the legacy opener.
-    /// Cost: O(path components).
-    pub fn page_for_os_handoff(&self, id: &PageId) -> Result<PathBuf, StoreError> {
-        if self.as_page(&id.file()).is_none() {
-            return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
-        }
-        let target =
-            fs::canonicalize(self.graph.root.join(id.as_str())).map_err(StoreError::from_io)?;
-        if !target.is_file() {
-            return Err(StoreError::InvalidTarget(
-                "page source is not a file".into(),
-            ));
-        }
-        let config = self.graph.current_config();
-        let pages = fs::canonicalize(self.graph.root.join(&config.pages_dir))
-            .map_err(StoreError::from_io)?;
-        let journals = fs::canonicalize(self.graph.root.join(&config.journals_dir))
-            .map_err(StoreError::from_io)?;
-        if !target.starts_with(&pages) && !target.starts_with(&journals) {
-            return Err(StoreError::InvalidTarget(
-                "page source escapes graph directories".into(),
-            ));
-        }
-        Ok(target)
-    }
-
     /// Display the recoverable asset trash location in a user-facing error.
     pub fn asset_trash_location_for_user(&self) -> PathBuf {
         self.graph.root.join("logseq/.tine-trash/assets")
@@ -1144,7 +1142,7 @@ impl Store {
         file: &FileId,
         max_bytes: Option<u64>,
     ) -> Result<(Vec<u8>, FileRev), StoreError> {
-        let path = self.path_for_os_handoff(file)?;
+        let path = self.path_for_os_handoff(file, false)?;
         let mut input = File::open(path).map_err(StoreError::from_io)?;
         let meta = input.metadata().map_err(StoreError::from_io)?;
         if !meta.is_file() {
@@ -1177,7 +1175,7 @@ impl Store {
             return Err(StoreError::Closed);
         }
         self.validate_file(file)?;
-        let path = self.path_for_os_handoff(file)?;
+        let path = self.path_for_os_handoff(file, false)?;
         let raw = if let Some(rel) = file.as_str().strip_prefix("assets/") {
             self.graph.assets_path().join(rel)
         } else {
@@ -1243,7 +1241,7 @@ impl Store {
             {
                 return Ok(Listing::default());
             }
-            self.path_for_os_handoff(&dir)?
+            self.path_for_os_handoff(&dir, false)?
         } else {
             root.clone()
         };
@@ -1392,7 +1390,7 @@ impl Store {
         // id; refuse one here too. Ancestors must stay inside the area. The
         // read itself uses the lexical path, which is the page's identity.
         let path = self.graph.root.join(id.as_str());
-        self.path_for_os_handoff(&id.file())?;
+        self.path_for_os_handoff(&id.file(), false)?;
         if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }

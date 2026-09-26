@@ -2312,7 +2312,7 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
     assert!(g.list_pages().iter().all(|page| page.name != "Secret"));
     let (store, _, _) = Store::open(&root, Default::default()).unwrap();
     let id = store.file_id(tine_store::Area::Pages, "Secret.md").unwrap();
-    assert!(store.path_for_os_handoff(&id).is_err());
+    assert!(store.path_for_os_handoff(&id, false).is_err());
     assert!(g.sync_file(&link).is_none());
 
     std::fs::remove_dir_all(&root).ok();

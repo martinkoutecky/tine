@@ -147,6 +147,9 @@ fn source_scan_guard_clients_touch_no_path() {
             if name == "guide" && forbidden == "std::path" {
                 continue; // Public API accepts the device parent folder for graph creation.
             }
+            if matches!(name, "assets" | "pages") && forbidden == "std::path" {
+                continue; // Existing-file paths are validated OS hand-offs, not graph I/O.
+            }
             assert!(
                 !source.contains(forbidden),
                 "Clients touch no path: {name} contains {forbidden}"

@@ -7,9 +7,119 @@ use std::io;
 
 use tine_core::config::FileNameFormat;
 use tine_core::doc;
-use tine_core::model::PageKind;
+use tine_core::model::{PageDto, PageKind};
 use tine_core::refs;
-use tine_store::{Area, FileId, FileRev, PageId, RenameMap, Resolved, SaveBase, Store};
+use tine_store::{
+    Area, FileId, FileRev, LoadError, PageId, PageRead, RenameMap, Resolved, SaveBase, SaveOutcome,
+    Store, StoreError,
+};
+
+/// A page read or OS source selection failed at the load, identity, or file step.
+#[derive(Debug)]
+pub enum PageReadError {
+    Load(LoadError),
+    Store(StoreError),
+    EmptyAlias,
+    Source(String),
+}
+
+/// Resolve a page name or alias and read its current file. Cost O(index lookup + page bytes).
+pub fn get_page(
+    store: &Store,
+    name: &str,
+    kind: PageKind,
+) -> Result<Option<PageRead>, PageReadError> {
+    let resolved = store
+        .whole_graph()
+        .map_err(PageReadError::Load)?
+        .resolve(name, kind == PageKind::Journal);
+    let id = match resolved {
+        Resolved::Existing { id, .. } => id,
+        Resolved::Alias { owners } => owners.into_iter().next().ok_or(PageReadError::EmptyAlias)?,
+        Resolved::Absent { .. } => return Ok(None),
+    };
+    match store.page(&id) {
+        Ok(read) => Ok(Some(read)),
+        Err(StoreError::NotFound) => Ok(None),
+        Err(error) => Err(PageReadError::Store(error)),
+    }
+}
+
+/// Select a source identity and validate the existing OS hand-off path.
+/// Cost O(index lookup + path components).
+pub fn source_path_for_os_handoff(
+    store: &Store,
+    name: &str,
+    kind: PageKind,
+    path: Option<&str>,
+) -> Result<std::path::PathBuf, PageReadError> {
+    let id = if let Some(path) = path.filter(|path| !path.trim().is_empty()) {
+        let config = store.config();
+        let file = [
+            (Area::Pages, config.pages_dir.as_str()),
+            (Area::Journals, config.journals_dir.as_str()),
+        ]
+        .into_iter()
+        .find_map(|(area, dir)| {
+            path.strip_prefix(&format!("{dir}/"))
+                .and_then(|rel| store.file_id(area, rel).ok())
+        })
+        .ok_or_else(|| {
+            PageReadError::Store(StoreError::InvalidTarget("invalid page path".into()))
+        })?;
+        store.as_page(&file).ok_or_else(|| {
+            PageReadError::Store(StoreError::InvalidTarget("invalid page path".into()))
+        })?
+    } else {
+        match store
+            .whole_graph()
+            .map_err(PageReadError::Load)?
+            .resolve(name, kind == PageKind::Journal)
+        {
+            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
+            Resolved::Alias { owners } => {
+                owners.into_iter().next().ok_or(PageReadError::EmptyAlias)?
+            }
+        }
+    };
+    store
+        .path_for_os_handoff(&id.file(), true)
+        .map_err(|error| match error {
+            StoreError::InvalidTarget(reason) if reason.starts_with("page source ") => {
+                PageReadError::Source(reason)
+            }
+            other => PageReadError::Store(other),
+        })
+}
+
+/// Keep-mine reads the current UTF-8 revision and lets the save guard reject
+/// later edits. Cost O(page bytes + transaction publication).
+pub fn save_page(
+    store: &Store,
+    id: &PageId,
+    page: &PageDto,
+    base_rev: Option<String>,
+    force: bool,
+) -> Result<SaveOutcome, StoreError> {
+    if page.guide {
+        return Ok(SaveOutcome::GuideEphemeral);
+    }
+    let base = if force {
+        match store.read(&id.file(), None) {
+            Ok((bytes, rev)) => {
+                std::str::from_utf8(&bytes).map_err(|_| StoreError::Undecodable)?;
+                SaveBase::Existing(rev)
+            }
+            Err(StoreError::NotFound) => SaveBase::CreateNew,
+            Err(error) => return Err(error),
+        }
+    } else {
+        base_rev
+            .map(|rev| SaveBase::Existing(rev.into()))
+            .unwrap_or(SaveBase::CreateNew)
+    };
+    Ok(store.save(id, base, page))
+}
 
 use crate::{is_conflict, store_error, tx_error};
 
@@ -277,7 +387,9 @@ pub fn rename_page_expected(
                 org,
             );
             if org && updated != content && !tine_core::org::org_editable(&content) {
-                let display = store.path_for_os_handoff(&file).map_err(store_error)?;
+                let display = store
+                    .path_for_os_handoff(&file, false)
+                    .map_err(store_error)?;
                 return Err(error(
                     io::ErrorKind::PermissionDenied,
                     &format!(

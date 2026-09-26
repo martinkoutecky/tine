@@ -4,6 +4,65 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+/// Device source errors remain distinct so the command can preserve its wire text.
+#[derive(Debug)]
+pub(crate) enum DeviceAssetImportError {
+    Name(String),
+    Io(io::Error),
+}
+
+/// Open a caller-selected device file once, then stream it through the graph
+/// asset transaction. The asset client owns filename and collision policy.
+pub(crate) fn import_asset_from_path(
+    store: &tine_store::Store,
+    path: &str,
+    name: Option<&str>,
+) -> Result<String, DeviceAssetImportError> {
+    let source_filename = Path::new(path).file_name().and_then(|value| value.to_str());
+    let chosen = tine_graph_features::assets::choose_import_name(source_filename, name)
+        .map_err(DeviceAssetImportError::Name)?;
+    let source = fs::File::open(path).map_err(DeviceAssetImportError::Io)?;
+    tine_graph_features::assets::import_asset(
+        store,
+        &chosen,
+        tine_store::Content::Stream {
+            source,
+            max_bytes: u64::MAX,
+        },
+    )
+    .map_err(DeviceAssetImportError::Io)
+}
+
+#[cfg(test)]
+mod asset_import_tests {
+    use super::*;
+
+    #[test]
+    fn import_path_selects_name_before_open_and_streams_once() {
+        let root = std::env::temp_dir().join(format!("tine-device-import-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for area in ["pages", "journals", "assets"] {
+            fs::create_dir_all(root.join(area)).unwrap();
+        }
+        let source = root.with_extension("source.bin");
+        fs::write(&source, b"media").unwrap();
+        let store = tine_store::Store::open(&root, tine_store::OpenOptions::default())
+            .unwrap()
+            .0;
+        assert!(
+            matches!(import_asset_from_path(&store, source.to_str().unwrap(), Some("../bad")),
+            Err(DeviceAssetImportError::Name(message)) if message == "bad asset name")
+        );
+        assert_eq!(
+            import_asset_from_path(&store, source.to_str().unwrap(), Some("kept.bin")).unwrap(),
+            "kept.bin"
+        );
+        assert_eq!(fs::read(root.join("assets/kept.bin")).unwrap(), b"media");
+        fs::remove_file(source).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 /// Atomically move one file without ever replacing an existing destination.
 /// Platform-native no-replace rename semantics ensure the source name and inode
 /// cannot be swapped between a check and an unlink.

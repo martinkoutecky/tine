@@ -304,7 +304,7 @@ impl<'a> Transaction<'a> {
     fn path(&self, file: &FileId) -> Result<PathBuf, Why> {
         let path = self
             .store
-            .path_for_os_handoff(file)
+            .path_for_os_handoff(file, false)
             .map_err(|error| match error {
                 StoreError::InvalidTarget(message) => Why::Refused(Refusal::InvalidTarget(message)),
                 StoreError::Io(error)

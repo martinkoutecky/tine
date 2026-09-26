@@ -423,14 +423,6 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "validated file path to OS",
         ),
         (
-            "store::Store::asset_for_os_handoff",
-            "validated existing asset to OS",
-        ),
-        (
-            "store::Store::page_for_os_handoff",
-            "validated existing page to OS",
-        ),
-        (
             "store::Store::asset_trash_location_for_user",
             "trash location in user-facing error",
         ),

@@ -83,7 +83,7 @@ impl BackupSource {
             .file_id(Area::Assets, "__tine_backup_probe__")
             .map_err(|error| format!("unsafe assets directory: {error:?}"))?;
         let assets_dir_name = store
-            .path_for_os_handoff(&probe)
+            .path_for_os_handoff(&probe, false)
             .map_err(|error| format!("unsafe assets directory: {error:?}"))?
             .parent()
             .ok_or("unsafe assets directory")?

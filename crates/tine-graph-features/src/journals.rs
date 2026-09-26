@@ -10,6 +10,217 @@ use tine_store::{Area, Day, FileEntry, PageId, Store, StoreError};
 
 use crate::{is_conflict, store_error, tx_error};
 
+/// A day-based page of the journal feed. The cursor records the last examined
+/// day, including a journal that disappeared between inventory and read.
+pub struct FeedPage<T> {
+    pub pages: Vec<T>,
+    pub next_before_day: Option<i64>,
+    pub done: bool,
+    pub as_of_day: i64,
+}
+
+fn collect_feed_page<T, F>(
+    entries: Vec<(Day, PageId)>,
+    limit: usize,
+    before_day: Option<i64>,
+    as_of_day: i64,
+    mut load: F,
+) -> Result<FeedPage<T>, String>
+where
+    F: FnMut(&PageId) -> Result<T, io::Error>,
+{
+    if limit == 0 {
+        let done = !entries
+            .iter()
+            .any(|(day, _)| before_day.is_none_or(|before| day.0 < before));
+        return Ok(FeedPage {
+            pages: Vec::new(),
+            next_before_day: None,
+            done,
+            as_of_day,
+        });
+    }
+    let mut out = Vec::new();
+    let mut last_examined = None;
+    let mut candidates = entries
+        .into_iter()
+        .filter(|(day, _)| before_day.is_none_or(|before| day.0 < before))
+        .peekable();
+    while let Some((day, id)) = candidates.next() {
+        last_examined = Some(day.0);
+        match load(&id) {
+            Ok(value) => out.push(value),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        if out.len() == limit {
+            break;
+        }
+    }
+    let done = candidates.peek().is_none();
+    Ok(FeedPage {
+        pages: out,
+        next_before_day: if done { None } else { last_examined },
+        done,
+        as_of_day,
+    })
+}
+
+/// Page the dated journal feed by day, skipping a file deleted since inventory.
+/// Cost O(J log J + bytes of returned pages).
+pub fn feed_page(
+    store: &Store,
+    limit: usize,
+    before_day: Option<i64>,
+) -> Result<FeedPage<tine_store::PageRead>, String> {
+    let as_of_day = JournalDate::today().ordinal_key();
+    let entries = feed_journals_desc_through(store, Day(as_of_day));
+    collect_feed_page(entries, limit, before_day, as_of_day, |id| {
+        store.page(id).map_err(|error| match error {
+            StoreError::NotFound => io::Error::from(io::ErrorKind::NotFound),
+            StoreError::Io(error) => error,
+            StoreError::InvalidTarget(_) => io::Error::other("invalid page path"),
+            StoreError::Undecodable => io::Error::other("stream did not contain valid UTF-8"),
+            StoreError::Unparseable(reason) => io::Error::other(reason),
+            StoreError::TooLarge { limit, .. } => {
+                io::Error::other(format!("asset exceeds {limit} byte limit"))
+            }
+            StoreError::Closed => io::Error::other("store closed"),
+        })
+    })
+}
+
+#[cfg(test)]
+mod journal_feed_tests {
+    use super::*;
+    use tine_core::model::PageDto;
+
+    fn entry(day: i64) -> (Day, PageId) {
+        (Day(day), PageId::from(day.to_string()))
+    }
+    fn dto(id: &PageId) -> PageDto {
+        serde_json::from_value(serde_json::json!({
+            "name": id.as_str(), "kind": "journal", "title": id.as_str(),
+            "pre_block": null, "blocks": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn deletion_stable_day_cursor_fills_then_continues_without_duplicates() {
+        let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
+        let first = collect_feed_page(entries, 3, None, 5, |id| {
+            if id.as_str() == "5" {
+                Err(io::Error::from(io::ErrorKind::NotFound))
+            } else {
+                Ok(dto(id))
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            first
+                .pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["4", "3", "2"]
+        );
+        assert_eq!(first.next_before_day, Some(2));
+        assert!(!first.done);
+        let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
+        let second =
+            collect_feed_page(entries, 3, first.next_before_day, 5, |id| Ok(dto(id))).unwrap();
+        assert_eq!(
+            second
+                .pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["1"]
+        );
+        assert!(second.done);
+        assert_eq!(second.next_before_day, None);
+    }
+
+    #[test]
+    fn cursor_handles_second_page_loss_empty_suffix_exact_limit_zero_and_hard_errors() {
+        let first = collect_feed_page(
+            [5, 4, 3, 2, 1].into_iter().map(entry).collect(),
+            3,
+            None,
+            5,
+            |id| Ok(dto(id)),
+        )
+        .unwrap();
+        assert_eq!(first.next_before_day, Some(3));
+        let second = collect_feed_page(
+            [5, 4, 3, 2, 1].into_iter().map(entry).collect(),
+            3,
+            first.next_before_day,
+            5,
+            |id| {
+                if id.as_str() == "2" {
+                    Err(io::Error::from(io::ErrorKind::NotFound))
+                } else {
+                    Ok(dto(id))
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            second
+                .pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["1"]
+        );
+        assert!(
+            second.done,
+            "a missing second-page row still exhausts the suffix"
+        );
+        let empty = collect_feed_page(
+            [5, 4].into_iter().map(entry).collect(),
+            3,
+            Some(4),
+            5,
+            |id| Ok(dto(id)),
+        )
+        .unwrap();
+        assert!(empty.pages.is_empty());
+        assert!(empty.done);
+        let exact = collect_feed_page(
+            [3, 2, 1].into_iter().map(entry).collect(),
+            3,
+            None,
+            3,
+            |id| Ok(dto(id)),
+        )
+        .unwrap();
+        assert!(exact.done, "an exactly-full final page is done");
+        assert_eq!(exact.next_before_day, None);
+        let mut loads = 0;
+        let zero = collect_feed_page(
+            [3, 2, 1].into_iter().map(entry).collect(),
+            0,
+            None,
+            3,
+            |_id| {
+                loads += 1;
+                Ok(dto(&PageId::from("0")))
+            },
+        )
+        .unwrap();
+        assert_eq!(loads, 0, "zero limit loads no entries");
+        assert!(!zero.done);
+        let hard: Result<FeedPage<PageDto>, _> =
+            collect_feed_page([3].into_iter().map(entry).collect(), 1, None, 3, |_id| {
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"))
+            });
+        assert!(matches!(hard, Err(err) if err.contains("denied")));
+    }
+}
+
 fn format(store: &Store) -> JournalFormat {
     let config = store.config();
     JournalFormat::new(

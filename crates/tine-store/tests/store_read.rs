@@ -142,16 +142,16 @@ fn byte_reads_streaming_and_os_handoff() {
     ));
     assert_eq!(store.open_read(&id).unwrap().1, 6);
     assert_eq!(
-        store.path_for_os_handoff(&id).unwrap(),
+        store.path_for_os_handoff(&id, false).unwrap(),
         f.0.join("assets/pic.bin")
     );
     let future = store.file_id(Area::Pages, "future.md").unwrap();
     assert_eq!(
-        store.path_for_os_handoff(&future).unwrap(),
+        store.path_for_os_handoff(&future, false).unwrap(),
         f.0.join("pages/future.md")
     );
     assert!(matches!(
-        store.path_for_os_handoff(&PageId::from("pages/../escape.md").file()),
+        store.path_for_os_handoff(&PageId::from("pages/../escape.md").file(), false),
         Err(StoreError::InvalidTarget(_))
     ));
 }
@@ -170,7 +170,7 @@ fn streaming_refuses_symlinked_asset() {
     std::os::unix::fs::symlink(f.0.parent().unwrap(), f.0.join("pages/outside")).unwrap();
     let escaping = PageId::from("pages/outside/next.md");
     assert!(matches!(
-        store.path_for_os_handoff(&escaping.file()),
+        store.path_for_os_handoff(&escaping.file(), false),
         Err(StoreError::InvalidTarget(_))
     ));
 }
