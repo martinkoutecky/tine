@@ -342,11 +342,12 @@ fn publishes_only_public_pages() {
     let store = Store::open(&root, Default::default()).unwrap().0;
     let (dir, n) = tine_graph_features::publish::publish_html(&store).unwrap();
     assert_eq!(n, 1, "only the public page is published");
-    let p = std::fs::read_to_string(format!("{dir}/shared.html")).unwrap();
+    let p = std::fs::read_to_string(std::path::Path::new(&dir).join("shared.html"))
+        .unwrap_or_else(|error| panic!("published page under {dir:?}: {error}"));
     assert!(p.contains("<h1 class=\"page\">Shared</h1>"));
     assert!(p.contains("<a class=\"ref\""), "should link [[refs]]");
     // The private page must not be exported.
-    assert!(!std::path::Path::new(&format!("{dir}/secret.html")).exists());
+    assert!(!std::path::Path::new(&dir).join("secret.html").exists());
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -635,10 +636,11 @@ fn save_refuses_to_clobber_external_change() {
     crate::test_fixture_io::atomic_write(&path, "- EXTERNAL EDIT").unwrap();
 
     // Saving the now-stale page must fail with a conflict and NOT overwrite.
-    assert!(matches!(
-        store.save(&id, SaveBase::Existing(read.rev), &dto),
-        SaveOutcome::Conflict { .. }
-    ));
+    let outcome = store.save(&id, SaveBase::Existing(read.rev), &dto);
+    assert!(
+        matches!(outcome, SaveOutcome::Conflict { .. }),
+        "stale save over an external edit: {outcome:?}"
+    );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "- EXTERNAL EDIT");
 
     // "Keep mine" force-saves over it.
@@ -669,10 +671,11 @@ fn save_conflicts_when_file_deleted_externally() {
     std::fs::remove_file(&path).unwrap();
 
     // Saving must conflict, NOT silently resurrect the deleted note.
-    assert!(matches!(
-        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
-        SaveOutcome::Deleted
-    ));
+    let outcome = store.save(&id, SaveBase::Existing(read.rev), &read.doc);
+    assert!(
+        matches!(outcome, SaveOutcome::Deleted),
+        "stale save over an external delete: {outcome:?}"
+    );
     assert!(
         !path.exists(),
         "deleted file must stay deleted on a conflicting save"
