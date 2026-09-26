@@ -74,7 +74,7 @@ jobs:
           npm test
 
       - name: Rust core tests
-        run: cargo test -p tine-core -p tine-store
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
   test:
     name: Full CI / Linux tests and release contracts
@@ -146,7 +146,7 @@ jobs:
         run: npm test
 
       - name: Rust core tests
-        run: cargo test -p tine-core -p tine-store
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
       - name: Standalone plugin template builds and conforms
         run: npm run plugin:template-check
@@ -175,8 +175,8 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - run: npm run build
-      - name: Windows core tests (including junction filesystem behavior)
-        run: cargo test -p tine-core -p tine-store
+      - name: Windows core and graph-feature tests (including junction filesystem behavior)
+        run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
 
