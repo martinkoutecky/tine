@@ -6,7 +6,7 @@ use crate::test_config_client::ConfigClient;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tine_graph_features::{conflicts, pages};
-use tine_store::{PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{Cancel, PageId, SaveBase, SaveOutcome, SearchRequest, Store};
 
 fn demo_graph() -> Graph {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
@@ -42,6 +42,25 @@ fn query_simple(store: &Store, source: &str) -> Arc<Vec<tine_core::model::RefGro
         tine_store::QueryResult::Simple(groups) => groups,
         _ => unreachable!(),
     }
+}
+
+fn search_count(store: &Store, query: &str) -> usize {
+    store
+        .whole_graph()
+        .unwrap()
+        .search(
+            &SearchRequest {
+                text: query.into(),
+                within: None,
+                page_limit: 10,
+                block_limit: 10,
+                explain: false,
+            },
+            &Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+        )
+        .unwrap()
+        .hits
+        .len()
 }
 
 #[test]
@@ -393,7 +412,7 @@ fn search_ignores_hidden_property_metadata() {
     let root = std::env::temp_dir().join(format!("tine-search-meta-{}", std::process::id()));
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
-    let g = Graph::open(&root);
+    let store = store_at(&root);
 
     // A block whose only occurrence of "qzxmeta" is in a property line (like an
     // id:: uuid or hl-color::) must NOT match — the user can't see it.
@@ -413,26 +432,29 @@ fn search_ignores_hidden_property_metadata() {
 
         guide: false,
     };
-    g.save_page(&page, None).unwrap();
+    let id = PageId::from("pages/Meta.md");
+    assert!(matches!(
+        store.save(&id, SaveBase::CreateNew, &page),
+        SaveOutcome::Saved(_)
+    ));
     assert_eq!(
-        g.search("qzxmeta", 10).len(),
+        search_count(&store, "qzxmeta"),
         0,
         "token only in a property line should not be a search hit"
     );
     // But the visible body is still searchable.
     assert_eq!(
-        g.search("ordinary", 10).len(),
+        search_count(&store, "ordinary"),
         1,
         "visible body still matches"
     );
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn save_preserves_file_format_no_churn() {
-    use tine_core::model::PageKind;
-
     let root = std::env::temp_dir().join(format!("tine-fmt-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Logseq style: no trailing newline. Plus one with a newline, and a
@@ -444,12 +466,16 @@ fn save_preserves_file_format_no_churn() {
     std::fs::write(root.join("pages").join("B.md"), with_nl).unwrap();
     std::fs::write(root.join("pages").join("C.md"), spaces).unwrap();
 
-    let g = Graph::open(&root);
+    let store = store_at(&root);
     // Load then save unchanged must be byte-identical (no churn): each file's
     // trailing-newline + indent convention is preserved.
     for name in ["A", "B", "C"] {
-        let dto = g.load_named(name, PageKind::Page).unwrap().unwrap();
-        g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        let id = PageId::from(format!("pages/{name}.md"));
+        let read = store.page(&id).unwrap();
+        assert!(matches!(
+            store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+            SaveOutcome::Unchanged(_) | SaveOutcome::Saved(_)
+        ));
     }
     assert_eq!(
         std::fs::read_to_string(root.join("pages").join("A.md")).unwrap(),
@@ -464,12 +490,13 @@ fn save_preserves_file_format_no_churn() {
         spaces
     );
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
-    use tine_core::model::{Format, PageKind};
+    use tine_core::model::Format;
 
     let root = std::env::temp_dir().join(format!(
         "tine-sheet-field-rename-org-{}",
@@ -502,13 +529,12 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
     std::fs::write(&path, &before).unwrap();
 
     // This DTO is the exact write shape produced by the frontend's already-unit-
-    // tested rename plan. Exercise the real guarded Graph save, inspect bytes,
-    // then construct a fresh Graph so this cannot pass on an in-memory document.
-    let graph = Graph::open(&root);
-    let mut page = graph
-        .load_named("Sheet", PageKind::Page)
-        .unwrap()
-        .expect("org sheet");
+    // tested rename plan. Exercise the guarded Store save, inspect bytes,
+    // then reopen Store so this cannot pass on an in-memory document.
+    let store = store_at(&root);
+    let id = PageId::from("pages/Sheet.org");
+    let read = store.page(&id).expect("org sheet");
+    let mut page = read.doc;
     assert_eq!(page.format, Format::Org);
     assert!(!page.read_only, "canonical Org fixture must be writable");
     let owner = &mut page.blocks[0];
@@ -532,9 +558,10 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
             ":tine.col-aggregates: prop:OCC=sum;prop:severity=max",
         );
     owner.children[0].raw = owner.children[0].raw.replace(":occurrence: 2", ":OCC: 2");
-    graph
-        .save_page(&page, page.rev.as_deref())
-        .expect("guarded Org save");
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(read.rev), &page),
+        SaveOutcome::Saved(_)
+    ));
 
     let disk = std::fs::read_to_string(&path).unwrap();
     assert!(disk.contains(":tine.fields: severity=number;OCC=number;detection=number"));
@@ -555,10 +582,9 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
         "string literal and formula member are not field identities"
     );
 
-    let reopened = Graph::open(&root)
-        .load_named("Sheet", PageKind::Page)
-        .unwrap()
-        .expect("reparsed org sheet");
+    store.close();
+    let reopened_store = store_at(&root);
+    let reopened = reopened_store.page(&id).expect("reparsed org sheet").doc;
     assert_eq!(reopened.format, Format::Org);
     assert!(
         !reopened.read_only,
@@ -585,6 +611,7 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
         "fresh parser recognizes the renamed row property"
     );
 
+    reopened_store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -655,27 +682,30 @@ fn save_conflicts_when_file_deleted_externally() {
 
 #[test]
 fn load_reflects_external_change_then_save_is_clean() {
-    use tine_core::model::PageKind;
     let root = std::env::temp_dir().join(format!("tine-reconcile-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
-    let g = Graph::open(&root);
-    g.warm_parsed_pages();
-    let _ = g.load_named("N", PageKind::Page).unwrap().unwrap(); // cache built
+    let store = store_at(&root);
+    let id = PageId::from("pages/N.md");
+    let _ = store.whole_graph().unwrap();
+    let _ = store.page(&id).unwrap();
 
     // External writer changes the file; the 3s watcher hasn't run yet.
     std::fs::write(&path, "- TWO external").unwrap();
 
-    // load_page must reconcile and serve the NEW content (not the stale cache),
+    // Store::page must serve the NEW content (not the stale cache),
     // and the rev it returns must match disk so a save doesn't spuriously conflict.
-    let dto = g.load_named("N", PageKind::Page).unwrap().unwrap();
+    let read = store.page(&id).unwrap();
     assert!(
-        dto.blocks[0].raw.contains("TWO external"),
+        read.doc.blocks[0].raw.contains("TWO external"),
         "load reflects external change"
     );
-    g.save_page(&dto, dto.rev.as_deref())
-        .expect("save of freshly-loaded current content is clean");
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+        SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)
+    ));
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -690,7 +720,7 @@ fn consecutive_self_saves_do_not_conflict() {
 
     let root = std::env::temp_dir().join(format!("tine-selfsave-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
-    let g = Graph::open(&root);
+    let store = store_at(&root);
     let mk = |raw: &str| PageDto {
         name: "D".into(),
         kind: PageKind::Page,
@@ -708,58 +738,77 @@ fn consecutive_self_saves_do_not_conflict() {
         guide: false,
     };
     // 1) date picker inserts a SCHEDULED line (page is new — no baseline yet).
-    let r1 = g
-        .save_page(&mk("TODO task\nSCHEDULED: <2026-06-16 Tue>"), None)
-        .unwrap();
+    let id = PageId::from("pages/D.md");
+    let r1 = match store.save(
+        &id,
+        SaveBase::CreateNew,
+        &mk("TODO task\nSCHEDULED: <2026-06-16 Tue>"),
+    ) {
+        SaveOutcome::Saved(rev) => rev,
+        outcome => panic!("first save failed: {outcome:?}"),
+    };
     // 2) user deletes the inserted text — must NOT be read as an external edit.
-    let r2 = g
-        .save_page(&mk("TODO task"), Some(&r1))
-        .expect("no spurious conflict after our own save");
+    let r2 = match store.save(&id, SaveBase::Existing(r1), &mk("TODO task")) {
+        SaveOutcome::Saved(rev) => rev,
+        outcome => panic!("second save failed: {outcome:?}"),
+    };
     // 3) and a further edit still saves cleanly.
-    g.save_page(&mk("TODO task edited"), Some(&r2))
-        .expect("no spurious conflict");
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(r2), &mk("TODO task edited")),
+        SaveOutcome::Saved(_)
+    ));
     assert!(std::fs::read_to_string(root.join("pages").join("D.md"))
         .unwrap()
         .contains("edited"));
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn sync_file_detects_external_change_and_suppresses_self() {
-    use tine_core::model::PageKind;
-
     let root = std::env::temp_dir().join(format!("tine-sync-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages").join("S.md");
     std::fs::write(&path, "- before").unwrap();
 
-    let g = Graph::open(&root);
-    g.search("before", 10); // build the cache (S = "- before")
+    let store = store_at(&root);
+    let id = PageId::from("pages/S.md");
+    let initial = store.whole_graph().unwrap().rev();
 
     // No external change yet → sync reports nothing.
-    assert!(g.sync_file(&path).is_none());
+    store.scan_refresh().unwrap();
+    assert_eq!(store.whole_graph().unwrap().rev(), initial);
 
     // External edit → sync reports the entry and refreshes the cache.
     std::fs::write(&path, "- after the change").unwrap();
-    let changed = g.sync_file(&path).expect("external change detected");
-    assert_eq!(changed.name, "S");
-    assert_eq!(changed.kind, PageKind::Page);
+    store.scan_refresh().unwrap();
+    let changed = store.whole_graph().unwrap();
+    assert!(changed.rev() > initial, "external change detected");
+    assert_eq!(store.page(&id).unwrap().doc.name, "S");
+    assert_eq!(store.page(&id).unwrap().doc.kind, tine_core::PageKind::Page);
     assert_eq!(
-        g.search("after", 10).len(),
+        search_count(&store, "after"),
         1,
         "cache updated to new content"
     );
-    assert_eq!(g.search("before", 10).len(), 0);
+    assert_eq!(search_count(&store, "before"), 0);
 
     // Re-syncing the same content is a no-op (self-write suppression).
-    assert!(g.sync_file(&path).is_none());
+    store.scan_refresh().unwrap();
+    assert_eq!(store.whole_graph().unwrap().rev(), changed.rev());
 
     // Deletion is reported and drops it from the cache.
     std::fs::remove_file(&path).unwrap();
-    assert!(g.forget_file(&path).is_some());
-    assert_eq!(g.search("after", 10).len(), 0);
+    store.scan_refresh().unwrap();
+    assert!(store.whole_graph().unwrap().rev() > changed.rev());
+    assert!(matches!(
+        store.page(&id),
+        Err(tine_store::StoreError::NotFound)
+    ));
+    assert_eq!(search_count(&store, "after"), 0);
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -773,8 +822,8 @@ fn noop_save_does_not_bump_cache_generation() {
 
     let root = std::env::temp_dir().join(format!("tine-noopgen-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
-    let g = Graph::open(&root);
-    g.search("x", 10); // build the cache
+    let store = store_at(&root);
+    let _ = store.whole_graph().unwrap();
     let mk = |raw: &str| PageDto {
         name: "N".into(),
         kind: PageKind::Page,
@@ -791,23 +840,34 @@ fn noop_save_does_not_bump_cache_generation() {
 
         guide: false,
     };
-    let r1 = g.save_page(&mk("hello"), None).unwrap();
-    let gen1 = g.cache_generation();
+    let id = PageId::from("pages/N.md");
+    let r1 = match store.save(&id, SaveBase::CreateNew, &mk("hello")) {
+        SaveOutcome::Saved(rev) => rev,
+        outcome => panic!("first save failed: {outcome:?}"),
+    };
+    let rev1 = store.whole_graph().unwrap().rev();
     // Re-save byte-identical content (no-op) with the returned baseline.
-    let r2 = g.save_page(&mk("hello"), Some(&r1)).unwrap();
+    let r2 = match store.save(&id, SaveBase::Existing(r1.clone()), &mk("hello")) {
+        SaveOutcome::Unchanged(rev) => rev,
+        outcome => panic!("unchanged save failed: {outcome:?}"),
+    };
     assert_eq!(r1, r2, "rev must be stable across a no-op save");
     assert_eq!(
-        g.cache_generation(),
-        gen1,
-        "no-op save must not bump cache_gen"
+        store.whole_graph().unwrap().rev(),
+        rev1,
+        "no-op save must not publish a new graph view"
     );
     // A real edit DOES bump it.
-    g.save_page(&mk("hello world"), Some(&r2)).unwrap();
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(r2), &mk("hello world")),
+        SaveOutcome::Saved(_)
+    ));
     assert!(
-        g.cache_generation() > gen1,
-        "a real edit must bump cache_gen"
+        store.whole_graph().unwrap().rev() > rev1,
+        "a real edit must publish a new graph view"
     );
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -816,15 +876,14 @@ fn self_write_marker_does_not_outlive_its_save() {
     // The self-write marker only covers the rename→cache_upsert window and is
     // dropped by the writer once the write is published, so it can't linger and
     // later suppress a REAL external change that restores Tine's earlier bytes
-    // (a delete+recreate, here simulated by forgetting the cached page and
-    // re-syncing the still-on-disk file). Before this fix, the stale marker made
+    // (a delete+recreate). Before this fix, the stale marker made
     // the recreate look like our own write and it was silently dropped.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
     let root = std::env::temp_dir().join(format!("tine-marker-life-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
-    let g = Graph::open(&root);
-    g.search("x", 10);
+    let store = store_at(&root);
+    let _ = store.whole_graph().unwrap();
     let page = PageDto {
         name: "C".into(),
         kind: PageKind::Page,
@@ -841,19 +900,31 @@ fn self_write_marker_does_not_outlive_its_save() {
 
         guide: false,
     };
-    g.save_page(&page, None).unwrap(); // sets, then self-removes, the marker
+    let id = PageId::from("pages/C.md");
+    assert!(matches!(
+        store.save(&id, SaveBase::CreateNew, &page),
+        SaveOutcome::Saved(_)
+    ));
     let path = root.join("pages").join("C.md");
+    let saved_bytes = std::fs::read(&path).unwrap();
+    let saved_rev = store.whole_graph().unwrap().rev();
+    std::fs::remove_file(&path).unwrap();
+    store.scan_refresh().unwrap();
+    let removed_rev = store.whole_graph().unwrap().rev();
+    assert!(removed_rev > saved_rev, "page deletion must be published");
+    assert!(matches!(
+        store.page(&id),
+        Err(tine_store::StoreError::NotFound)
+    ));
+    std::fs::write(&path, saved_bytes).unwrap();
+    store.scan_refresh().unwrap();
     assert!(
-        g.forget_file(&path).is_some(),
-        "page should have been cached"
-    );
-    // The page still exists on disk; with the marker gone, re-syncing must treat
-    // it as a real (re)appearance, not a suppressed self-write.
-    assert!(
-        g.sync_file(&path).is_some(),
+        store.whole_graph().unwrap().rev() > removed_rev,
         "a stale self-write marker must not suppress the page reappearing"
     );
+    assert_eq!(store.page(&id).unwrap().doc.blocks[0].raw, "noted");
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -866,8 +937,8 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
 
     let root = std::env::temp_dir().join(format!("tine-diskrev-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
-    let g = Graph::open(&root);
-    g.search("x", 10); // build the cache
+    let store = store_at(&root);
+    let _ = store.whole_graph().unwrap();
     let page = PageDto {
         name: "R".into(),
         kind: PageKind::Page,
@@ -884,30 +955,42 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
 
         guide: false,
     };
-    g.save_page(&page, None).unwrap(); // populates disk_revs[R] (marker self-removed)
+    let id = PageId::from("pages/R.md");
+    assert!(matches!(
+        store.save(&id, SaveBase::CreateNew, &page),
+        SaveOutcome::Saved(_)
+    ));
     let path = root.join("pages").join("R.md");
-    assert!(
-        g.sync_file(&path).is_none(),
+    let saved = store.whole_graph().unwrap().rev();
+    store.scan_refresh().unwrap();
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        saved,
         "unchanged save → suppressed via disk_rev fast-path"
     );
-    assert!(
-        g.sync_file(&path).is_none(),
+    store.scan_refresh().unwrap();
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        saved,
         "still unchanged → disk_rev fast-path again"
     );
 
     // A real external edit must still be detected (not masked by disk_revs).
     std::fs::write(&path, "- beta\n").unwrap();
-    let changed = g
-        .sync_file(&path)
-        .expect("external change detected despite disk_revs entry");
-    assert_eq!(changed.name, "R");
+    store.scan_refresh().unwrap();
+    assert!(
+        store.whole_graph().unwrap().rev() > saved,
+        "external change detected despite disk_revs entry"
+    );
+    assert_eq!(store.page(&id).unwrap().doc.name, "R");
     // The cache now serves the new content (load_page goes through sync_file_content).
-    let dto = g.load_named("R", PageKind::Page).unwrap().unwrap();
+    let dto = store.page(&id).unwrap().doc;
     assert!(
         dto.blocks.iter().any(|b| b.raw.contains("beta")),
         "served stale after external edit"
     );
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -922,8 +1005,8 @@ fn self_write_is_not_reported_as_external_change() {
 
     let root = std::env::temp_dir().join(format!("tine-selfwrite-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
-    let g = Graph::open(&root);
-    g.search("x", 10); // build the cache
+    let store = store_at(&root);
+    let _ = store.whole_graph().unwrap();
 
     let path = root.join("pages").join("W.md");
     let page = PageDto {
@@ -942,14 +1025,23 @@ fn self_write_is_not_reported_as_external_change() {
 
         guide: false,
     };
-    g.save_page(&page, None).unwrap();
+    let id = PageId::from("pages/W.md");
+    assert!(matches!(
+        store.save(&id, SaveBase::CreateNew, &page),
+        SaveOutcome::Saved(_)
+    ));
+    assert!(std::fs::read_to_string(&path).unwrap().contains("hello"));
 
     // A watcher poll right after our own save must emit nothing.
-    assert!(
-        g.sync_file(&path).is_none(),
+    let saved = store.whole_graph().unwrap().rev();
+    store.scan_refresh().unwrap();
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        saved,
         "Tine's own save must not be reported as an external change"
     );
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -1121,21 +1213,26 @@ fn legacy_namespace_file_round_trips() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
+    let store = store_at(&root);
     // Discoverable under the decoded, slashed name.
-    let entry = g
-        .find_entry("math/algebra", tine_core::PageKind::Page)
-        .expect("legacy %2F file should resolve under its slashed name");
-    assert_eq!(entry.name, "math/algebra");
-    let dto = g.load_page(&entry).unwrap();
+    let id = match store.whole_graph().unwrap().resolve("math/algebra", false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("legacy %2F file should resolve under its slashed name"),
+    };
+    let read = store.page(&id).unwrap();
+    assert_eq!(read.doc.name, "math/algebra");
     // An edited save round-trips to the SAME file; no `___` twin appears.
-    g.save_page(&dto, dto.rev.as_deref()).unwrap();
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+        SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)
+    ));
     assert!(root.join("pages").join("math%2Falgebra.md").exists());
     assert!(
         !root.join("pages").join("math___algebra.md").exists(),
         "must not fork a triple-lowbar twin"
     );
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -2377,13 +2474,20 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
     let link = root.join("pages/Secret.md");
     symlink(&outside, &link).unwrap();
 
-    let g = Graph::open(&root);
-    assert!(g.list_pages().iter().all(|page| page.name != "Secret"));
     let (store, _, _) = Store::open(&root, Default::default()).unwrap();
+    let before = store.whole_graph().unwrap();
+    assert!(before
+        .inventory()
+        .0
+        .iter()
+        .all(|entry| entry.name != "Secret"));
     let id = store.file_id(tine_store::Area::Pages, "Secret.md").unwrap();
     assert!(store.path_for_os_handoff(&id, false).is_err());
-    assert!(g.sync_file(&link).is_none());
+    store.scan_refresh().unwrap();
+    assert_eq!(store.whole_graph().unwrap().rev(), before.rev());
+    assert!(link.exists());
 
+    store.close();
     std::fs::remove_dir_all(&root).ok();
     std::fs::remove_file(&outside).ok();
 }

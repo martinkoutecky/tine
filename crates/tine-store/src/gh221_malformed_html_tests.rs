@@ -41,7 +41,7 @@ fn gh221_malformed_html_fragment_indexes_without_panic() {
             &Cancel(Arc::new(AtomicBool::new(false))),
         )
         .unwrap();
-    g.warm_parsed_pages();
+    assert!(g.warm_cache_cancellable(|| false));
     let failures = g.page_index_failures();
 
     let _ = std::fs::remove_dir_all(&dir);

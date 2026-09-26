@@ -5,8 +5,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-#[cfg(test)]
-use std::io::Seek;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -48,42 +46,6 @@ fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
     } else {
         format!("{rel_dir}/{}", slash_path(tail))
     }
-}
-
-/// Error for an ambiguous page that exists as both a `.md` and a `.org` file.
-/// Deliberately NOT the `AlreadyExists`/"conflict" signal, so the UI surfaces it
-/// as a plain error (a toast) instead of a keep-mine/use-disk conflict prompt.
-#[cfg(test)]
-fn twin_error(name: &str) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::Other,
-        format!(
-            "\"{name}\" exists as both a .md and a .org file — remove one (e.g. in Logseq) to edit it in Tine"
-        ),
-    )
-}
-
-#[cfg(test)]
-pub(crate) enum SaveTargetError {
-    Twin,
-    InvalidTarget(&'static str),
-}
-
-#[cfg(test)]
-impl SaveTargetError {
-    fn into_io(self, name: &str) -> io::Error {
-        match self {
-            Self::Twin => twin_error(name),
-            Self::InvalidTarget(message) => io::Error::new(io::ErrorKind::InvalidInput, message),
-        }
-    }
-}
-
-/// The error for a path-addressed op (#21) whose graph-root-relative path is
-/// invalid — outside `journals/`/`pages/`, a traversal, or the wrong extension.
-#[cfg(test)]
-fn bad_path() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
 }
 
 /// Parse a page file's bytes into a [`Document`] using the parser for its
@@ -1725,23 +1687,7 @@ fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
 
 #[cfg(test)]
 thread_local! {
-    static FAIL_NEXT_RENAME_SOURCE_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static WITHDRAW_RACE_REPLACEMENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
-    static GUIDE_TWIN_RACE_CONTENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-fn rename_source_remove_failpoint() -> io::Result<()> {
-    FAIL_NEXT_RENAME_SOURCE_REMOVE.with(|flag| {
-        if flag.replace(false) {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "injected source remove failure",
-            ))
-        } else {
-            Ok(())
-        }
-    })
 }
 
 #[cfg(test)]
@@ -1757,16 +1703,6 @@ fn withdrawal_race_hook(path: &Path) -> io::Result<()> {
 #[cfg(not(test))]
 fn withdrawal_race_hook(_path: &Path) -> io::Result<()> {
     Ok(())
-}
-
-#[cfg(test)]
-fn guide_twin_race_hook(path: &Path) -> io::Result<()> {
-    GUIDE_TWIN_RACE_CONTENT.with(|content| {
-        if let Some(bytes) = content.borrow_mut().take() {
-            fs::write(path.with_extension("org"), bytes)?;
-        }
-        Ok(())
-    })
 }
 
 pub(crate) enum CheckedOpenError {
@@ -1878,15 +1814,6 @@ impl Graph {
     /// boundary: an external `assets` link/junction is accepted only when its
     /// current canonical target exactly matches the caller's approved target.
     /// This makes a retargeted link fail closed instead of inheriting old trust.
-    #[cfg(test)]
-    pub fn open_checked_with_assets(
-        root: impl AsRef<Path>,
-        approved_assets: Option<&Path>,
-    ) -> io::Result<Graph> {
-        Self::open_checked_with_assets_inner(root, approved_assets)
-            .map_err(CheckedOpenError::into_io)
-    }
-
     pub(crate) fn open_checked_with_assets_inner(
         root: impl AsRef<Path>,
         approved_assets: Option<&Path>,
@@ -2293,62 +2220,6 @@ impl Graph {
             .collect()
     }
 
-    /// Journal `date_key`s (yyyymmdd) whose page has real content — i.e. at
-    /// least one block with a non-empty, non-property line. Drives the calendar
-    /// picker's empty/non-empty day marking. Served from the cache.
-    #[cfg(test)]
-    pub(crate) fn journal_content_days(&self) -> Vec<i64> {
-        self.with_pages(|pages| {
-            pages
-                .iter()
-                .filter(|(e, _)| e.kind == PageKind::Journal)
-                .filter_map(|(e, d)| e.date_key.filter(|_| doc_has_content(&d.roots)))
-                .collect()
-        })
-    }
-
-    #[cfg(test)]
-    fn journal_filename_migration_target(&self, p: &std::path::Path) -> Option<PathBuf> {
-        // Both formats — an org graph's title-named journals are `.org`.
-        let ext = match p.extension().and_then(|x| x.to_str()) {
-            Some(e @ ("md" | "org")) => e,
-            _ => return None,
-        };
-        let stem = p.file_stem().and_then(|s| s.to_str())?;
-        if JournalDate::from_file_stem(stem).is_some() {
-            return None; // already a plausible date stem (yyyy_MM_dd / yyyy-MM-dd) — leave it
-        }
-        // A title-named ("Jun 18th, 2026.md", "Thursday, 25-06-2026.org") or
-        // otherwise non-stem journal file: normalize it to the graph's filename
-        // format so it round-trips with OG and is recognized in the feed.
-        let d = self.current_journal_format().parse(stem)?;
-        let want = self.current_journal_format().file_stem(d);
-        if want == stem {
-            return None; // already in the graph's filename format
-        }
-        let target = self.journals_path().join(format!("{want}.{ext}"));
-        if target.exists() {
-            return None; // don't clobber an existing stem file
-        }
-        Some(target)
-    }
-
-    #[cfg(test)]
-    pub fn migrate_journal_filenames(&self) -> usize {
-        let dir = self.journals_path();
-        let Ok(rd) = fs::read_dir(&dir) else { return 0 };
-        let mut n = 0;
-        for e in rd.flatten() {
-            let p = e.path();
-            if let Some(target) = self.journal_filename_migration_target(&p) {
-                if move_file_noreplace(&p, &target).is_ok() {
-                    n += 1;
-                }
-            }
-        }
-        n
-    }
-
     /// Journal days that resolve to more than one file — the migration leaves these
     /// alone (it never clobbers), so they're reported for the user to reconcile.
     /// Each file gets a one-line preview and a `canonical` flag (date-stem name).
@@ -2500,180 +2371,6 @@ impl Graph {
         out
     }
 
-    /// Whether a file participates in the `(kind,name)` page cache. False only for a
-    /// shadow journal (a title-named duplicate of a canonical date-stem file, #21),
-    /// whose cache slot belongs to the canonical file.
-    #[cfg(test)]
-    pub(crate) fn path_is_cacheable(&self, path: &Path) -> bool {
-        if let Some(entry) = self.entry_for_path(path) {
-            if entry.kind == PageKind::Journal {
-                if let Some(date) = entry
-                    .date_key
-                    .map(tine_core::date::JournalDate::from_ordinal)
-                {
-                    return !self.is_shadow_journal(path, date);
-                }
-            }
-        }
-        true
-    }
-
-    /// Reconcile a duplicate-day pair: append every block of `src_rel` to the end of
-    /// `dst_rel`, then move `src_rel` to the recoverable trash (#21). Both must be
-    /// real graph text files of the SAME format (we don't transcode md⇄org), and an
-    /// org file that can't be round-tripped is refused so the merge can never
-    /// corrupt it (both files are left untouched on any error). `src`'s page
-    /// PROPERTIES that `dst` doesn't already define are carried into `dst` (md only;
-    /// dst wins on a clash) so an alias/tags/icon isn't silently lost; src free-text
-    /// in the pre-block is dropped. The src is trashed ONLY after `dst` is durably
-    /// written.
-    #[cfg(test)]
-    pub fn merge_pages(&self, src_rel: &str, dst_rel: &str) -> io::Result<()> {
-        let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
-        let dst = self.resolve_rel(dst_rel).ok_or_else(bad_path)?;
-        if src == dst {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "cannot merge a file into itself",
-            ));
-        }
-        if Format::from_path(&src) != Format::from_path(&dst) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "files are in different formats",
-            ));
-        }
-        let dst_entry = self.entry_for_path(&dst).ok_or_else(bad_path)?;
-        // Write `dst` under its page lock so a concurrent editor/PDF write can't
-        // race the merge; read both files inside the lock (the dst baseline must be
-        // current for write_page's recheck).
-        let lock = self.page_lock(&dst);
-        let _guard = lock.lock().unwrap();
-        let src_content = fs::read_to_string(&src)?;
-        let dst_content = fs::read_to_string(&dst)?;
-        if Format::from_path(&dst) == Format::Org
-            && (!tine_core::org::org_editable(&dst_content)
-                || !tine_core::org::org_editable(&src_content))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "an org file in this pair does not round-trip; not merging",
-            ));
-        }
-        let src_doc = parse_doc(&src, &src_content);
-        let mut merged = parse_doc(&dst, &dst_content);
-        // Preserve src's page PROPERTIES that dst doesn't already define
-        // (alias::/tags::/icon::/…). Dropping them silently is real data loss — a
-        // lost `alias::` breaks every inbound link that used the alias. dst's value
-        // wins on a key clash (no duplicate property line); markdown only (org
-        // pre-blocks are header/drawer-structured and gated by the round-trip
-        // firewall, so we don't risk a non-round-tripping merge there). Free text in
-        // src's pre-block is still dropped — rare, and src is trashed-recoverable.
-        if Format::from_path(&dst) == Format::Md {
-            if let Some(src_pre) = src_doc.pre_block.as_deref() {
-                let dst_pre = merged.pre_block.clone().unwrap_or_default();
-                let dst_keys: std::collections::HashSet<String> = dst_pre
-                    .lines()
-                    .filter_map(|l| {
-                        doc::parse_property_line(l).map(|(k, _)| k.to_ascii_lowercase())
-                    })
-                    .collect();
-                let extra: Vec<&str> = src_pre
-                    .lines()
-                    .filter(|l| {
-                        doc::parse_property_line(l)
-                            .is_some_and(|(k, _)| !dst_keys.contains(&k.to_ascii_lowercase()))
-                    })
-                    .collect();
-                if !extra.is_empty() {
-                    let mut pre = dst_pre;
-                    if !pre.is_empty() && !pre.ends_with('\n') {
-                        pre.push('\n');
-                    }
-                    pre.push_str(&extra.join("\n"));
-                    merged.pre_block = Some(pre);
-                }
-            }
-        }
-        merged.roots.extend(src_doc.roots);
-        assign_doc_runtime_ids(&mut merged.roots, dst_entry.rel_path_str());
-        let dto = page_dto(&dst_entry, &merged);
-        let dst_cacheable = self.path_is_cacheable(&dst);
-        // L5: stage `src` into the trash BEFORE committing the merged `dst`. The old
-        // order (write dst, then trash src) duplicated blocks on a retry when
-        // trashing failed: dst already held src's blocks while src survived on disk,
-        // so a second merge re-appended them. Now we move src out first — a staging
-        // failure aborts the merge cleanly before any write — and if the dst write
-        // then fails we roll the move back, so neither the merge nor the source is
-        // lost. On success src sits in the recoverable trash.
-        let trash = typed_trash_dir(
-            &self.root,
-            match self.entry_for_path(&src).map(|e| e.kind) {
-                Some(PageKind::Journal) => TrashEntryKind::Journal,
-                _ => TrashEntryKind::Page,
-            },
-        );
-        self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
-        let src_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
-        let staged = trash.join(format!("{}__{src_name}", trash_stamp()));
-        move_file_noreplace(&src, &staged)?;
-        if fs::read_to_string(&staged)? != src_content {
-            let _ = move_file_noreplace(&staged, &src);
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "source changed during merge",
-            ));
-        }
-        // The page lock excludes other Tine writers, but not Logseq/Syncthing.
-        // Recheck the baseline at commit so an external edit arriving after our
-        // read is not silently overwritten.
-        if let Err(e) = self.write_page(&dto, &dst, Some(&dst_content), true, dst_cacheable) {
-            let _ = move_file_noreplace(&staged, &src); // rollback: restore the source file
-            return Err(e);
-        }
-        Ok(())
-    }
-
-    /// Turn a stray file into a normal, uniquely-named page by moving it to
-    /// `pages/<encoded new_name>.<its ext>` (#21) — the way to rescue a duplicate-day
-    /// leftover whose name collides with the canonical day. Refuses if a page for
-    /// `new_name` already exists in EITHER extension (never clobbers) or the name is
-    /// empty. Inbound references are NOT rewritten (a stray rarely has any); the
-    /// file's own content is unchanged.
-    #[cfg(test)]
-    pub fn rename_file_to_page(&self, src_rel: &str, new_name: &str) -> io::Result<()> {
-        let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
-        let name = new_name.trim();
-        if name.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "empty page name",
-            ));
-        }
-        let ext = match src.extension().and_then(|e| e.to_str()) {
-            Some(e @ ("md" | "org")) => e.to_string(),
-            _ => return Err(bad_path()),
-        };
-        let enc = encode_page_name(name, self.current_config().file_name_format);
-        let dir = self.pages_path();
-        if dir.join(format!("{enc}.md")).exists() || dir.join(format!("{enc}.org")).exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "a page with that name already exists",
-            ));
-        }
-        fs::create_dir_all(&dir)?;
-        move_file_noreplace(&src, &dir.join(format!("{enc}.{ext}")))?;
-        // The page SET changed — drop the list memo so the new page (and the stray's
-        // disappearance from journals/) show up immediately, and discard the
-        // parsed snapshot so its page/index set is rebuilt coherently on next use.
-        *self.page_list_cache.write().unwrap() = None;
-        *self.find_entry_cache.write().unwrap() = None;
-        self.invalidate_cache();
-        Ok(())
-    }
-
     /// Resolve a page name to a file path. Journals match by date title;
     /// pages match by filename stem.
     #[cfg(test)]
@@ -2709,101 +2406,6 @@ impl Graph {
         }
     }
 
-    /// Create a Markdown page file with `content` if that logical page does not
-    /// already exist. Used by the explicit guide-copy action:
-    /// it is intentionally raw Markdown, not a serialized DTO, so copied guide
-    /// pages stay ordinary Logseq template pages byte-for-byte.
-    ///
-    /// Returns `true` when a file was created and `false` when an existing page
-    /// won. Existing content is never overwritten.
-    #[cfg(test)]
-    pub(crate) fn create_markdown_page_if_absent(
-        &self,
-        name: &str,
-        content: &str,
-    ) -> io::Result<bool> {
-        if self.find_entry(name, PageKind::Page).is_some() {
-            return Ok(false);
-        }
-        let path = self.pages_path().join(format!(
-            "{}.md",
-            encode_page_name(name, self.current_config().file_name_format)
-        ));
-        let lock = self.page_lock(&path);
-        let _guard = lock.lock().unwrap();
-        if self.find_entry(name, PageKind::Page).is_some() || path.exists() {
-            return Ok(false);
-        }
-        self.ensure_write_target(&path)?;
-        fs::create_dir_all(self.pages_path())?;
-        match atomic_write_new(&path, content.as_bytes()) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
-            Err(e) => return Err(e),
-        }
-        guide_twin_race_hook(&path)?;
-        let alt = self.pages_path().join(format!(
-            "{}.org",
-            encode_page_name(name, self.current_config().file_name_format)
-        ));
-        if alt.exists() {
-            // An Org twin appeared during publication. Withdraw only the exact
-            // guide inode we just created. Stage the currently named inode first
-            // and verify it in recovery, so an external replacement that wins at
-            // the syscall boundary is restored or retained rather than unlinked.
-            let _ = self.withdraw_file_to_conflict_if_exact(
-                &path,
-                content.as_bytes(),
-                "guide-twin-withdrawal",
-            )?;
-            return Ok(false);
-        }
-        *self.page_list_cache.write().unwrap() = None;
-        *self.find_entry_cache.write().unwrap() = None;
-        self.invalidate_cache();
-        Ok(true)
-    }
-
-    /// Whether BOTH a `.md` and a `.org` file exist for the same logical page —
-    /// an ambiguous identity, since Tine keys pages by `(kind, name)`. Writes
-    /// (save/rename/delete) are refused on such a page so a save can't serve one
-    /// twin's content with the other's baseline and clobber the wrong file. This
-    /// is an interim guard; the full fix is path/format in page identity (#21).
-    /// `.org` is probed first so a markdown-only graph short-circuits after one
-    /// stat. A journal whose name doesn't parse to a date stem isn't guarded.
-    #[cfg(test)]
-    fn has_twin(&self, name: &str, kind: PageKind) -> bool {
-        let (dir, stem) = match kind {
-            PageKind::Page => (
-                self.pages_path(),
-                Some(encode_page_name(
-                    name,
-                    self.current_config().file_name_format,
-                )),
-            ),
-            PageKind::Journal => (
-                self.journals_path(),
-                self.current_journal_format()
-                    .parse(name)
-                    .map(|d| self.current_journal_format().file_stem(d)),
-            ),
-        };
-        match stem {
-            Some(s) => {
-                dir.join(format!("{s}.org")).exists() && dir.join(format!("{s}.md")).exists()
-            }
-            None => false,
-        }
-    }
-
-    /// Find a page/journal entry by display name. When several files share the
-    /// name — a duplicate journal day, a canonical `2026_06_26.org` plus a
-    /// title-named stray `Friday, 26-06-2026.org` (#21) — prefer the canonical
-    /// date-stem file, so opening the day by name (a `[[link]]`, quick-switch, or
-    /// `get_page`) is deterministic AND lands on the same file a save resolves to
-    /// (`path_for`), instead of whichever the directory listing happened to yield
-    /// first (which could mismatch the save target and raise a phantom conflict).
-    /// The stray is reached by path via `load_by_path`.
     pub(crate) fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
         self.find_claimants(name, kind).into_iter().next()
     }
@@ -2902,48 +2504,6 @@ impl Graph {
             }
         }
         Ok(None)
-    }
-
-    /// The `icon::` property value of each named page that has one (for rendering
-    /// page icons next to titles / in the namespace tree, like OG). Scans the
-    /// cached pages once, then answers the requested names; only pages WITH an
-    /// icon appear in the result. On-demand (e.g. a `{{namespace}}` macro), not at
-    /// index time.
-    #[cfg(test)]
-    pub(crate) fn page_icons(&self, names: &[String]) -> std::collections::HashMap<String, String> {
-        let (mut icons_by_name, real_page_names) = self.with_pages(|pages| {
-            let mut icons = std::collections::HashMap::new();
-            let mut real = std::collections::HashSet::new();
-            for (entry, doc) in pages {
-                if entry.kind != PageKind::Page {
-                    continue;
-                }
-                let key = tine_core::refs::page_key(&entry.name);
-                real.insert(key.clone());
-                if let Some(icon) = doc.pre_block.as_deref().and_then(pre_block_icon) {
-                    icons.entry(key).or_insert(icon);
-                }
-            }
-            (icons, real)
-        });
-        for (alias, canon) in self.page_aliases() {
-            if real_page_names.contains(&alias) {
-                continue; // `load_named` prefers a real page over an alias fallback.
-            }
-            if let Some(icon) = icons_by_name
-                .get(&tine_core::refs::page_key(&canon))
-                .cloned()
-            {
-                icons_by_name.entry(alias).or_insert(icon);
-            }
-        }
-        let mut out = std::collections::HashMap::new();
-        for name in names {
-            if let Some(icon) = icons_by_name.get(&tine_core::refs::page_key(name)) {
-                out.insert(name.clone(), icon.clone());
-            }
-        }
-        out
     }
 
     /// Locate a page in the parsed-doc cache by its resolved physical path.
@@ -3229,12 +2789,6 @@ impl Graph {
             guard.as_ref().map(Arc::clone).unwrap()
         };
         f(snapshot.as_slice())
-    }
-
-    /// Eagerly build parsed pages for direct Graph writer tests.
-    #[cfg(test)]
-    pub(crate) fn warm_parsed_pages(&self) {
-        let _ = self.warm_cache_cancellable(|| false);
     }
 
     /// Build graph-open caches while allowing a revoked window binding to stop
@@ -3597,38 +3151,6 @@ impl SnapshotMemos {
 }
 
 impl Graph {
-    /// Drop one page from the cache after deleting its file.
-    #[cfg(test)]
-    fn cache_remove(&self, name: &str, kind: PageKind) {
-        let mut guard = self.cache.write().unwrap();
-        if let Some(pages) = guard.as_mut() {
-            let pages = Arc::make_mut(pages);
-            let removed_paths = pages
-                .iter()
-                .filter(|(e, _)| e.kind == kind && tine_core::refs::same_page(&e.name, name))
-                .map(|(e, _)| e.path.clone())
-                .collect::<Vec<_>>();
-            pages.retain(|(e, _)| !(e.kind == kind && tine_core::refs::same_page(&e.name, name)));
-            // Drop all exact revisions removed by this ambiguity-validated logical
-            // delete under the cache lock (same cache → disk_revs order as
-            // cache_upsert) so the two never diverge.
-            let mut revs = self.disk_revs.write().unwrap();
-            for path in removed_paths {
-                revs.remove(&path);
-                Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
-                    .remove(&self.rel_path(&path));
-            }
-        }
-        *self.cache_index.write().unwrap() =
-            guard.as_ref().map(|pages| build_page_cache_index(pages));
-        // Bump AFTER the removal is published (under the cache lock), so a reader
-        // that loads the new gen is guaranteed to see the page gone — see the
-        // gen-after-content note in cache_upsert.
-        self.cache_gen
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        drop(guard);
-    }
-
     /// Drop one physical page from the cache after its file disappears. Unlike
     /// `cache_remove`, this preserves same-name siblings and rebuilds the logical
     /// first-wins index from the surviving entries.
@@ -3780,413 +3302,6 @@ impl SnapshotMemos {
 }
 
 impl Graph {
-    /// Rename a page, OG-style. Moves its file to the new name and rewrites every
-    /// reference across pages AND journals — inline `[[old]]`/`#old`, the page's
-    /// OWN self/sibling refs, and bare `tags:: old` property refs — and CASCADES
-    /// to the whole `old/*` namespace subtree (each `old/child` page moves to
-    /// `new/child`, its refs rewritten), matching Logseq's `rename-namespace-pages!`.
-    /// Journals can't be renamed (their name is their date). Transactional: locks
-    /// every touched file, re-verifies each is unchanged since collection, commits,
-    /// and rolls back every write on any failure. Aborts (no change) if a target
-    /// name already exists or a touched file changed under us.
-    #[cfg(test)]
-    pub fn rename_page(&self, old: &str, new: &str) -> io::Result<()> {
-        self.rename_page_expected(old, new, None)
-    }
-
-    #[cfg(test)]
-    pub fn rename_page_expected(
-        &self,
-        old: &str,
-        new: &str,
-        expected_path: Option<&str>,
-    ) -> io::Result<()> {
-        let old = old.trim();
-        let new = new.trim();
-        if new.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty name"));
-        }
-        if old.is_empty() || tine_core::refs::same_page(old, new) {
-            return Ok(()); // nothing to do (case-only rename is intentionally a no-op)
-        }
-        self.validate_page_mutation_target(old, PageKind::Page, expected_path)?;
-        // M1: refuse to rename an ambiguous page (both .md and .org on disk) — which
-        // twin moves, and which content is authoritative, is undecidable here.
-        if self.has_twin(old, PageKind::Page) || self.has_twin(new, PageKind::Page) {
-            return Err(twin_error(old));
-        }
-        let old_n = tine_core::refs::normalize(old);
-        let ns_prefix = format!("{old_n}/");
-        let skip = old.chars().count();
-        let entries = self.list_pages();
-
-        // Phase 0a — the rename SET: the page itself plus every file-backed
-        // namespace descendant (`old/*`). Each contributes a file move and an
-        // (old_name -> new_name) ref-rewrite pair applied graph-wide. We only match
-        // the exact name or the `old/` prefix (never a bare substring), so renaming
-        // `work` -> `work1` turns `work/log` into `work1/log`, not `work1/work1log`.
-        let mut rename_pairs: Vec<(String, String)> = Vec::new();
-        let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
-        let mut move_destinations: std::collections::HashSet<PathBuf> =
-            std::collections::HashSet::new();
-        let mut move_identities: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        let mut primary_is_file = false;
-        for entry in &entries {
-            if entry.kind != PageKind::Page {
-                continue; // journals aren't namespaced pages; their refs still get rewritten in 0b
-            }
-            let en = tine_core::refs::normalize(&entry.name);
-            let is_primary = en == old_n;
-            if !is_primary && !en.starts_with(&ns_prefix) {
-                continue;
-            }
-            let new_name = if is_primary {
-                new.to_string()
-            } else {
-                // replace the `old` prefix, preserving the descendant's own casing
-                let suffix: String = entry.name.chars().skip(skip).collect();
-                format!("{new}{suffix}")
-            };
-            // Keep the page's own format on rename (an .org page stays .org).
-            let encoded_new = encode_page_name(&new_name, self.current_config().file_name_format);
-            let entry_format = Format::from_path(&entry.path);
-            let new_path = self
-                .pages_path()
-                .join(format!("{encoded_new}.{}", entry_format.ext()));
-            let other_ext = if entry_format == Format::Org {
-                "md"
-            } else {
-                "org"
-            };
-            let other_format_target = self.pages_path().join(format!("{encoded_new}.{other_ext}"));
-            if entries.iter().any(|other| {
-                other.kind == PageKind::Page
-                    && other.path != entry.path
-                    && tine_core::refs::same_page(&other.name, &new_name)
-            }) {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "target page identity already exists elsewhere in the graph",
-                ));
-            }
-            if new_path != entry.path && new_path.exists() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "target page exists",
-                ));
-            }
-            if other_format_target != entry.path && other_format_target.exists() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "target page exists in the other format",
-                ));
-            }
-            // Recursive graph directories can contain two distinct files with
-            // the same basename/page identity. Both would map to the same flat
-            // rename destination; allowing the transaction to continue would let
-            // the later atomic rename overwrite the earlier page and remove both
-            // sources. Refuse the ambiguous rename before collecting any edits.
-            if !move_destinations.insert(new_path.clone()) {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "multiple pages map to the same rename target",
-                ));
-            }
-            if !move_identities.insert(tine_core::refs::normalize(&new_name)) {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "multiple pages map to the same logical rename target",
-                ));
-            }
-            if is_primary {
-                primary_is_file = true;
-            }
-            rename_pairs.push((entry.name.clone(), new_name));
-            moves.push((entry.path.clone(), new_path));
-        }
-        // A page can exist only via references (no file of its own); still rewrite
-        // refs to it.
-        if !primary_is_file {
-            rename_pairs.push((old.to_string(), new.to_string()));
-        }
-
-        // Phase 0b — compute every file edit (inline refs + bare `tags::`), across
-        // pages AND journals. A moved page's OWN content is rewritten too (self /
-        // sibling refs) and lands at its new path.
-        struct Edit {
-            src: PathBuf,
-            dst: PathBuf,
-            orig: String,
-            new_content: String,
-            base_rev: String,
-            is_move: bool,
-        }
-        let move_dst: std::collections::HashMap<PathBuf, PathBuf> = moves.into_iter().collect();
-        // The whole rename SET as a normalized(old) -> new map, so each graph file
-        // is rewritten ONCE against every descendant in a single pass — not K passes
-        // (one per `(old,new)` pair), which made a namespace rename O(graph_text * K)
-        // and recomputed code ranges twice per pair per file (perf Codex#2).
-        let rename_map: std::collections::HashMap<String, String> = rename_pairs
-            .iter()
-            .map(|(o, n)| (tine_core::refs::normalize(o), n.clone()))
-            .collect();
-        let mut edits: Vec<Edit> = Vec::new();
-        for entry in &entries {
-            let Ok(content) = fs::read_to_string(&entry.path) else {
-                continue;
-            };
-            let is_org = Format::from_path(&entry.path) == Format::Org;
-            // One inline-ref pass + one `tags::` pass per file (each computes code
-            // ranges once), regardless of how many descendants are being renamed.
-            let updated = tine_core::refs::rename_tags_property_multi(
-                &tine_core::refs::rename_refs_multi(&content, &rename_map, is_org),
-                &rename_map,
-                is_org,
-            );
-            // H1: a rename must never rewrite a read-only (non-round-tripping) .org
-            // file. Abort the whole rename (all-or-nothing) so the user resolves it
-            // in Logseq first. A pure file move with no content change (updated ==
-            // content) is still allowed — it preserves bytes exactly.
-            if is_org && updated != content && !tine_core::org::org_editable(&content) {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!(
-                        "cannot rename: {} is a read-only .org file (does not round-trip)",
-                        entry.path.display()
-                    ),
-                ));
-            }
-            match move_dst.get(&entry.path) {
-                Some(dst) => edits.push(Edit {
-                    src: entry.path.clone(),
-                    dst: dst.clone(),
-                    base_rev: content_rev(&content),
-                    orig: content,
-                    new_content: updated,
-                    is_move: true,
-                }),
-                None if updated != content => edits.push(Edit {
-                    src: entry.path.clone(),
-                    dst: entry.path.clone(),
-                    base_rev: content_rev(&content),
-                    orig: content,
-                    new_content: updated,
-                    is_move: false,
-                }),
-                None => {}
-            }
-        }
-        if edits.is_empty() {
-            return Ok(()); // page doesn't exist / nothing references it
-        }
-
-        // Phase 1 — lock every touched path (src + move dst), sorted + deduped
-        // (deadlock-free against a single-page save, which only ever holds ONE lock).
-        let mut lock_paths: Vec<PathBuf> = Vec::new();
-        for e in &edits {
-            lock_paths.push(e.src.clone());
-            if e.is_move {
-                lock_paths.push(e.dst.clone());
-            }
-        }
-        lock_paths.sort();
-        lock_paths.dedup();
-        let locks: Vec<_> = lock_paths.iter().map(|p| self.page_lock(p)).collect();
-        let _guards: Vec<_> = locks.iter().map(|l| l.lock().unwrap()).collect();
-
-        // Phase 2 — re-verify nothing changed under us since Phase 0; abort (no
-        // change) on any mismatch (an external editor / Syncthing pull landed).
-        for e in &edits {
-            if e.is_move && e.dst != e.src && e.dst.exists() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "target page exists",
-                ));
-            }
-            // A hard read failure is not the same thing as an empty file. Treating
-            // it as empty could let an actually-empty baseline pass verification,
-            // after which the transaction would overwrite a file we could no
-            // longer inspect.
-            if content_rev(&fs::read_to_string(&e.src)?) != e.base_rev {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-            }
-        }
-
-        // Phase 3 — commit, tracking writes for rollback. Move sources are
-        // atomically staged into recoverable trash rather than unlinked, so an
-        // external replacement at the syscall boundary is preserved as an inode.
-        let mut written: Vec<(&Edit, Option<PathBuf>)> = Vec::new();
-        let result: io::Result<()> = (|| {
-            for e in &edits {
-                // Phase 2 can be far in the past for a large graph. Recheck this
-                // exact file immediately before its write so an external editor or
-                // sync pull that landed while earlier edits committed is preserved.
-                if content_rev(&fs::read_to_string(&e.src)?) != e.base_rev {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-                }
-                self.note_self_write(&e.dst, content_rev(&e.new_content));
-                if e.is_move && e.dst != e.src {
-                    if let Some(parent) = e.dst.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                }
-                if e.is_move && e.dst != e.src {
-                    atomic_write_new(&e.dst, e.new_content.as_bytes())?;
-                } else {
-                    atomic_write(&e.dst, e.new_content.as_bytes())?;
-                }
-                written.push((e, None));
-                if e.is_move && e.dst != e.src {
-                    rename_source_remove_failpoint()?;
-                    let trash = typed_trash_dir(&self.root, TrashEntryKind::Page);
-                    self.ensure_write_target(&trash)?;
-                    fs::create_dir_all(&trash)?;
-                    let src_name = e.src.file_name().and_then(|s| s.to_str()).unwrap_or("page");
-                    let staged = trash.join(format!("{}__rename__{src_name}", trash_stamp()));
-                    move_file_noreplace(&e.src, &staged)?;
-                    written.last_mut().unwrap().1 = Some(staged.clone());
-                    // If a sync replacement won just before the atomic move, the
-                    // staged bytes no longer match our baseline. Abort and restore
-                    // that exact inode instead of completing from stale content.
-                    if content_rev(&fs::read_to_string(&staged)?) != e.base_rev {
-                        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-                    }
-                }
-            }
-            Ok(())
-        })();
-        if let Err(err) = result {
-            // Roll back in reverse, and drop the self-write markers for bytes that
-            // won't survive the rollback so they can't later suppress a real
-            // external change (M1).
-            for (e, staged_source) in written.iter().rev() {
-                if e.is_move && e.dst != e.src {
-                    let source_restored = match staged_source {
-                        Some(staged) => {
-                            move_file_noreplace(staged, &e.src).is_ok() || e.src.exists()
-                        }
-                        None => e.src.exists(),
-                    };
-                    if source_restored {
-                        // Never compare and unlink the live destination. Detach
-                        // whichever inode currently owns the name, inspect it in
-                        // recovery, and restore/retain any external replacement.
-                        let _ = self.withdraw_file_to_conflict_if_exact(
-                            &e.dst,
-                            e.new_content.as_bytes(),
-                            "rename-rollback-destination",
-                        );
-                    }
-                    self.recent_writes.lock().unwrap().remove(&e.dst);
-                } else {
-                    let ours = content_rev(&e.new_content);
-                    if fs::read_to_string(&e.dst).is_ok_and(|disk| content_rev(&disk) == ours) {
-                        self.note_self_write(&e.dst, content_rev(&e.orig));
-                        let _ = atomic_write(&e.dst, e.orig.as_bytes());
-                    } else {
-                        self.recent_writes.lock().unwrap().remove(&e.dst);
-                    }
-                }
-            }
-            self.invalidate_cache();
-            return Err(err);
-        }
-        self.invalidate_cache();
-        Ok(())
-    }
-
-    /// Delete a page/journal file. Rather than unlinking, the file is moved to a
-    /// graph-local trash (`logseq/.tine-trash/`, outside journals//pages/ so it's
-    /// never re-loaded) — so a delete that races an unseen external edit, or a
-    /// simple misclick, is recoverable. If the trash move fails, the live file is
-    /// left in place and the error is returned.
-    #[cfg(test)]
-    pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
-        self.delete_page_expected(name, kind, None)
-    }
-
-    #[cfg(test)]
-    pub fn delete_page_expected(
-        &self,
-        name: &str,
-        kind: PageKind,
-        expected_path: Option<&str>,
-    ) -> io::Result<()> {
-        // M1: with both a .md and a .org twin, "which file?" is ambiguous — refuse
-        // rather than trash an arbitrary one.
-        if self.has_twin(name, kind) {
-            return Err(twin_error(name));
-        }
-        let matching: Vec<_> = self
-            .list_pages()
-            .into_iter()
-            .filter(|entry| entry.kind == kind && tine_core::refs::same_page(&entry.name, name))
-            .collect();
-        if matching.len() > 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "multiple files share this page identity; delete by name is ambiguous",
-            ));
-        }
-        self.validate_page_mutation_target(name, kind, expected_path)?;
-        if let Some(entry) = matching.into_iter().next() {
-            let trash = typed_trash_dir(
-                &self.root,
-                match entry.kind {
-                    PageKind::Journal => TrashEntryKind::Journal,
-                    PageKind::Page => TrashEntryKind::Page,
-                },
-            );
-            self.ensure_write_target(&trash)?;
-            let fname = entry
-                .path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("page.md");
-            let dest = trash.join(format!("{}__{fname}", trash_stamp()));
-            move_to_trash(&entry.path, &dest, &trash)?;
-        }
-        self.cache_remove(name, kind);
-        Ok(())
-    }
-
-    /// Validate the snapshot captured by a page menu/title before any mutation.
-    /// Even an exact path does not authorize choosing one logical duplicate: the
-    /// semantics of rewriting `[[page]]` references remain ambiguous.
-    #[cfg(test)]
-    fn validate_page_mutation_target(
-        &self,
-        name: &str,
-        kind: PageKind,
-        expected_path: Option<&str>,
-    ) -> io::Result<()> {
-        let matching: Vec<_> = self
-            .list_pages()
-            .into_iter()
-            .filter(|entry| entry.kind == kind && tine_core::refs::same_page(&entry.name, name))
-            .collect();
-        if matching.len() > 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "multiple files share this page identity; mutation is ambiguous",
-            ));
-        }
-        let Some(expected) = expected_path.filter(|path| !path.trim().is_empty()) else {
-            return Ok(());
-        };
-        let expected_abs = self.resolve_rel(expected).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "invalid expected page path")
-        })?;
-        let Some(entry) = matching.first() else {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "stale page target"));
-        };
-        if entry.path != expected_abs {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "stale page target"));
-        }
-        Ok(())
-    }
-
     /// Full-text search across all blocks.
     #[cfg(test)]
     pub fn search(&self, query: &str, limit: usize) -> Vec<RefGroup> {
@@ -4223,12 +3338,6 @@ impl Graph {
             None => crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit),
         }
         .execute_with_explain(&self.test_read_snapshot(), || false, explain)
-    }
-
-    /// Resolve a `((uuid))` block reference to its shallow identity row.
-    #[cfg(test)]
-    pub fn resolve_block(&self, uuid: &str) -> Option<RefGroup> {
-        crate::query::resolve_block(&self.test_read_snapshot(), uuid)
     }
 
     // ---- Assets & PDF highlights ----
@@ -4293,29 +3402,6 @@ impl Graph {
         out
     }
 
-    /// Move an asset file to `logseq/.tine-trash` (recoverable), never a hard
-    /// delete by default. Refuses any name with a path separator (top-level
-    /// assets only) so it can't reach outside `assets/`.
-    #[cfg(test)]
-    pub fn trash_asset(&self, name: &str) -> io::Result<()> {
-        if name.is_empty() || name.contains('/') || name.contains('\\') {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "bad asset name",
-            ));
-        }
-        let src = self.assets_path().join(name);
-        if !src.is_file() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "no such asset"));
-        }
-        let trash = typed_trash_dir(&self.root, TrashEntryKind::Asset);
-        self.ensure_asset_write_target(&src)?;
-        self.ensure_write_target(&trash)?;
-        let dest = trash.join(format!("{}__{name}", trash_stamp()));
-        move_to_trash(&src, &dest, &trash)?;
-        Ok(())
-    }
-
     /// Read raw bytes of an asset (e.g. a PDF) for the viewer.
     #[cfg(test)]
     pub(crate) fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
@@ -4368,730 +3454,6 @@ impl Graph {
 
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
-    #[cfg(test)]
-    pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
-        let assets = self.assets_path();
-        self.ensure_asset_write_target(&assets)?;
-        fs::create_dir_all(&assets)?;
-        top_level_asset_name(name)?;
-        let (stem, ext) = split_asset_stem_ext(name);
-        for i in 0usize.. {
-            let final_name = if i == 0 {
-                name.to_string()
-            } else {
-                format!("{stem}_{i}{ext}")
-            };
-            match atomic_write_new(&assets.join(&final_name), bytes) {
-                Ok(()) => return Ok(final_name),
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        unreachable!()
-    }
-
-    /// Copy a file into `assets/`, returning the stored filename. De-duplicates
-    /// against existing assets (never overwrites one already referenced by notes).
-    #[cfg(test)]
-    pub fn import_asset(&self, src: &Path, name: Option<&str>) -> io::Result<String> {
-        // Desired stored name (a timestamped name from the frontend), else the
-        // source basename. `reserve_asset` still dedups same-name collisions.
-        let name = match name {
-            Some(n) if !n.is_empty() => n.to_string(),
-            _ => src
-                .file_name()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bad source filename"))?
-                .to_string(),
-        };
-        let assets = self.assets_path();
-        self.ensure_asset_write_target(&assets)?;
-        fs::create_dir_all(&assets)?;
-        top_level_asset_name(&name)?;
-        let (stem, ext) = split_asset_stem_ext(&name);
-        for i in 0usize.. {
-            let final_name = if i == 0 {
-                name.clone()
-            } else {
-                format!("{stem}_{i}{ext}")
-            };
-            match atomic_copy_new(src, &assets.join(&final_name)) {
-                Ok(()) => return Ok(final_name),
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        unreachable!()
-    }
-
-    /// Stream an already-open native capture into `assets/` without ever
-    /// materializing it as a bridge/base64 value. The source handle is the
-    /// capability validated by the native caller; collision retries rewind it.
-    #[cfg(test)]
-    pub fn import_asset_file(
-        &self,
-        src: &mut fs::File,
-        name: &str,
-        max_bytes: u64,
-    ) -> io::Result<String> {
-        let assets = self.assets_path();
-        self.ensure_asset_write_target(&assets)?;
-        fs::create_dir_all(&assets)?;
-        top_level_asset_name(name)?;
-        let (stem, ext) = split_asset_stem_ext(name);
-        for i in 0usize.. {
-            let final_name = if i == 0 {
-                name.to_string()
-            } else {
-                format!("{stem}_{i}{ext}")
-            };
-            src.seek(io::SeekFrom::Start(0))?;
-            match atomic_copy_file_new(src, &assets.join(&final_name), max_bytes) {
-                Ok(()) => return Ok(final_name),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error),
-            }
-        }
-        unreachable!()
-    }
-
-    /// Write a cropped area-highlight image to OG's file-graph layout:
-    /// `assets/<key>/<page>_<id>_<stamp>.png` (`<stamp>` = the `js/Date.now()`
-    /// epoch-ms integer also stored in the highlight's `:content {:image …}`).
-    /// Returns the assets-relative path.
-    ///
-    /// **Non-dedup on purpose:** the filename IS the stable link from the `.edn`
-    /// entry to the file, so a re-save must overwrite in place rather than rename
-    /// on collision (which `reserve_asset` would do, breaking the link).
-    #[cfg(test)]
-    pub fn write_pdf_area_image(
-        &self,
-        pdf_filename: &str,
-        page: i64,
-        id: &str,
-        stamp: i64,
-        bytes: &[u8],
-    ) -> io::Result<String> {
-        let key = tine_core::pdf::asset_key(pdf_filename);
-        let dir = self.assets_path().join(&key);
-        self.ensure_asset_write_target(&dir)?;
-        fs::create_dir_all(&dir)?;
-        let name = format!("{page}_{id}_{stamp}.png");
-        // The highlight `id` round-trips through the graph `.edn`, so a synced/hand-edited
-        // file can control it — reject any path separator so it can't escape the assets
-        // dir and write a `.png` anywhere (audit M3, path traversal).
-        top_level_asset_name(&name)?;
-        let target = dir.join(&name);
-        self.ensure_asset_write_target(&target)?;
-        atomic_write(&target, bytes)?;
-        Ok(format!("{key}/{name}"))
-    }
-
-    /// After the highlight sidecar + hls page pair is durably committed, move
-    /// deleted area crops to recoverable asset trash. OG removes this exact crop
-    /// with its highlight (`extensions/pdf/core.cljs:155-159` and
-    /// `extensions/pdf/assets.cljs:137-147` at OG 6e7afa8eb); Tine keeps the same
-    /// lifecycle without introducing OG's hard delete.
-    ///
-    /// Cleanup is deliberately best-effort and compare-guarded: the paired save
-    /// is already committed, so a cleanup failure must not make the frontend
-    /// restore stale state. Any sidecar change before or immediately after a move
-    /// aborts cleanup, rolling that move back when possible.
-    #[cfg(test)]
-    fn trash_deleted_pdf_area_images(
-        &self,
-        source_key: &str,
-        edn_path: &Path,
-        committed_edn: &str,
-        source_sidecar_guard: Option<(&Path, &str)>,
-        deleted: &[tine_core::pdf::Highlight],
-    ) {
-        if deleted.is_empty() {
-            return;
-        }
-        let trash = typed_trash_dir(&self.root, TrashEntryKind::Asset);
-        for highlight in deleted {
-            let Some(stamp) = highlight.image else {
-                continue;
-            };
-            let Ok(Some(current_edn)) = read_optional_text(edn_path) else {
-                return;
-            };
-            if current_edn != committed_edn {
-                return;
-            }
-            if source_sidecar_guard.is_some_and(|(path, baseline)| {
-                read_optional_text(path)
-                    .map(|raw| raw.as_deref() != Some(baseline))
-                    .unwrap_or(true)
-            }) {
-                return;
-            }
-            if tine_core::pdf::parse_highlights(&current_edn)
-                .iter()
-                .any(|remaining| remaining.image == Some(stamp))
-            {
-                continue;
-            }
-
-            let name = format!("{}_{}_{}.png", highlight.page, highlight.id, stamp);
-            if top_level_asset_name(&name).is_err() {
-                continue;
-            }
-            let source = self.assets_path().join(source_key).join(&name);
-            if !source.is_file()
-                || self.ensure_asset_write_target(&source).is_err()
-                || self.ensure_write_target(&trash).is_err()
-                || fs::create_dir_all(&trash).is_err()
-            {
-                continue;
-            }
-            let trash_name = format!("{}__pdf-area__{}__{name}", trash_stamp(), source_key);
-            if top_level_asset_name(&trash_name).is_err() {
-                continue;
-            }
-            let destination = trash.join(trash_name);
-            if move_to_trash(&source, &destination, &trash).is_err() {
-                continue;
-            }
-
-            // A non-cooperating writer can change the sidecar between the
-            // last-moment read and rename. Put the crop back if that happened.
-            let primary_unchanged = read_optional_text(edn_path)
-                .map(|raw| raw.as_deref() == Some(committed_edn))
-                .unwrap_or(false);
-            let source_unchanged = source_sidecar_guard.is_none_or(|(path, baseline)| {
-                read_optional_text(path)
-                    .map(|raw| raw.as_deref() == Some(baseline))
-                    .unwrap_or(false)
-            });
-            if primary_unchanged && source_unchanged {
-                continue;
-            }
-            let _ = move_file_noreplace(&destination, &source);
-            return;
-        }
-    }
-
-    /// Read highlights for a PDF from `assets/<key>.edn`.
-    ///
-    /// If the OG-compatible key's file is absent but a file under Tine's old
-    /// `legacy_asset_key` exists, read that instead (it is migrated forward to
-    /// the new key on the next `write_highlights`). This keeps highlights made
-    /// by pre-launch Tine builds from disappearing after the key change.
-    #[cfg(test)]
-    pub fn read_highlights(&self, pdf_filename: &str) -> Vec<tine_core::pdf::Highlight> {
-        self.read_pdf_state(pdf_filename).highlights
-    }
-
-    #[cfg(test)]
-    fn read_pdf_state(&self, pdf_filename: &str) -> tine_core::pdf::PdfState {
-        let key = tine_core::pdf::asset_key(pdf_filename);
-        let s = self
-            .asset_file_for_read(&format!("{key}.edn"))
-            .and_then(fs::read_to_string)
-            .ok()
-            .or_else(|| {
-                let legacy = tine_core::pdf::legacy_asset_key(pdf_filename);
-                (legacy != key)
-                    .then(|| {
-                        self.asset_file_for_read(&format!("{legacy}.edn"))
-                            .and_then(fs::read_to_string)
-                            .ok()
-                    })
-                    .flatten()
-            });
-        s.map(|s| tine_core::pdf::parse_pdf_state(&s))
-            .unwrap_or_default()
-    }
-
-    #[cfg(test)]
-    fn existing_hls_page_path(&self, key: &str) -> io::Result<Option<PathBuf>> {
-        let name = tine_core::pdf::hls_page_name(key);
-        let md = self.pages_path().join(format!("{name}.md"));
-        let org = self.pages_path().join(format!("{name}.org"));
-        match (md.exists(), org.exists()) {
-            (true, true) => Err(twin_error(&name)),
-            (true, false) => Ok(Some(md)),
-            (false, true) => Ok(Some(org)),
-            (false, false) => Ok(self
-                .find_entry(&name, PageKind::Page)
-                .map(|entry| entry.path)),
-        }
-    }
-
-    #[cfg(test)]
-    fn hls_page_path(&self, pdf_filename: &str, key: &str) -> io::Result<PathBuf> {
-        if let Some(existing) = self.existing_hls_page_path(key)? {
-            return Ok(existing);
-        }
-        // A key migration renames the annotation page but must not implicitly
-        // convert its syntax because the graph's preference changed meanwhile.
-        let legacy_key = tine_core::pdf::legacy_asset_key(pdf_filename);
-        if legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key) {
-            if let Some(legacy) = self.existing_hls_page_path(&legacy_key)? {
-                let ext = legacy
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .unwrap_or("md");
-                return Ok(legacy.with_file_name(format!(
-                    "{}.{}",
-                    tine_core::pdf::hls_page_name(key),
-                    ext
-                )));
-            }
-        }
-        Ok(self.pages_path().join(format!(
-            "{}.{}",
-            tine_core::pdf::hls_page_name(key),
-            self.preferred_format().ext()
-        )))
-    }
-
-    #[cfg(test)]
-    fn pdf_sidecar_for_update(&self, pdf_filename: &str) -> io::Result<PathBuf> {
-        let key = tine_core::pdf::asset_key(pdf_filename);
-        let primary = self.assets_path().join(format!("{key}.edn"));
-        if primary.exists() {
-            return Ok(primary);
-        }
-        let legacy_key = tine_core::pdf::legacy_asset_key(pdf_filename);
-        if legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key) {
-            let legacy = self.assets_path().join(format!("{legacy_key}.edn"));
-            if legacy.exists() {
-                return Ok(legacy);
-            }
-        }
-        Ok(primary)
-    }
-
-    /// Open-time OG artifact initialization plus the persisted PDF state. Existing
-    /// sidecars/pages are read without being rewritten; only missing artifacts are
-    /// created. Old Tine-key artifacts remain in place until the established
-    /// edit-time migration path can carry their notes forward safely.
-    #[cfg(test)]
-    pub fn open_pdf(
-        &self,
-        pdf_filename: &str,
-        label: &str,
-    ) -> io::Result<tine_core::pdf::PdfState> {
-        let key = tine_core::pdf::asset_key(pdf_filename);
-        let page_path = self.hls_page_path(pdf_filename, &key)?;
-        self.ensure_write_target(&page_path)?;
-        let page_lock = self.page_lock(&page_path);
-        let _guard = page_lock.lock().unwrap();
-
-        fs::create_dir_all(self.assets_path())?;
-        let sidecar_path = self.pdf_sidecar_for_update(pdf_filename)?;
-        self.ensure_asset_write_target(&sidecar_path)?;
-        let mut sidecar = read_optional_text(&sidecar_path)?;
-        if let Some(raw) = &sidecar {
-            validate_highlight_edn(raw)?;
-        } else {
-            let skeleton = tine_core::pdf::write_highlights(&[], "");
-            // Recheck immediately before publish so an external creator wins.
-            if let Some(external) = read_optional_text(&sidecar_path)? {
-                validate_highlight_edn(&external)?;
-                sidecar = Some(external);
-            } else {
-                match atomic_write_new(&sidecar_path, skeleton.as_bytes()) {
-                    Ok(()) => sidecar = Some(skeleton),
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                        let external = read_optional_text(&sidecar_path)?.ok_or(error)?;
-                        validate_highlight_edn(&external)?;
-                        sidecar = Some(external);
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-        }
-        let state = tine_core::pdf::parse_pdf_state(sidecar.as_deref().unwrap_or(""));
-
-        // Do not create a new-key page on top of an unmigrated legacy page: the
-        // normal highlight write carries its notes forward under one guarded merge.
-        let legacy_key = tine_core::pdf::legacy_asset_key(pdf_filename);
-        let legacy_page_exists = legacy_key != key
-            && !self.asset_key_in_use_by_pdf(&legacy_key)
-            && self.existing_hls_page_path(&legacy_key)?.is_some();
-        let page_baseline = read_optional_text(&page_path)?;
-        if page_baseline.is_none() && !legacy_page_exists {
-            let format = Format::from_path(&page_path);
-            let page_doc = tine_core::pdf::hls_page_document_for_format(
-                pdf_filename,
-                label,
-                &state.highlights,
-                format,
-            );
-            let content = serialize_pdf_hls_page(&page_path, &page_doc, None)?;
-            let page_rev = self.commit_write(&page_path, &content, None, true)?;
-            let name = tine_core::pdf::hls_page_name(&key);
-            let entry = PageEntry {
-                name,
-                kind: PageKind::Page,
-                date_key: None,
-                rel_path: Some(self.rel_path(&page_path).into()),
-                path: page_path.clone(),
-            };
-            self.cache_upsert(entry, page_doc, page_rev.clone());
-            self.drop_self_write_marker(&page_path, &page_rev);
-        }
-        Ok(state)
-    }
-
-    /// Persist only OG's last-view page/scale fields. The hls-page lock is shared
-    /// with highlight writes so an in-app highlight update cannot race this
-    /// read-modify-write; external writers are handled by the same bounded
-    /// compare/retry discipline.
-    #[cfg(test)]
-    pub fn write_pdf_view_state(
-        &self,
-        pdf_filename: &str,
-        page: i64,
-        scale: f64,
-    ) -> io::Result<()> {
-        let key = tine_core::pdf::asset_key(pdf_filename);
-        let page_path = self.hls_page_path(pdf_filename, &key)?;
-        let lock = self.page_lock(&page_path);
-        let _guard = lock.lock().unwrap();
-        fs::create_dir_all(self.assets_path())?;
-        let sidecar_path = self.pdf_sidecar_for_update(pdf_filename)?;
-        self.ensure_asset_write_target(&sidecar_path)?;
-        for _attempt in 0..4 {
-            let baseline = read_optional_text(&sidecar_path)?;
-            if let Some(raw) = &baseline {
-                validate_highlight_edn(raw)?;
-            }
-            let next = tine_core::pdf::write_pdf_view_state(
-                baseline.as_deref().unwrap_or(""),
-                page,
-                scale,
-            )
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PDF view state"))?;
-            if read_optional_text(&sidecar_path)? != baseline {
-                continue;
-            }
-            let publish = if baseline.is_none() {
-                atomic_write_new(&sidecar_path, next.as_bytes())
-            } else {
-                atomic_write(&sidecar_path, next.as_bytes())
-            };
-            match publish {
-                Ok(()) => return Ok(()),
-                Err(error)
-                    if baseline.is_none() && error.kind() == io::ErrorKind::AlreadyExists =>
-                {
-                    continue;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "highlight sidecar changed repeatedly during view-state update",
-        ))
-    }
-
-    #[cfg(test)]
-    fn asset_key_in_use_by_pdf(&self, candidate_key: &str) -> bool {
-        let Ok(entries) = fs::read_dir(self.assets_path()) else {
-            return false;
-        };
-        entries.flatten().any(|entry| {
-            let filename = entry.file_name();
-            let Some(filename) = filename.to_str() else {
-                return false;
-            };
-            if !filename.ends_with(".pdf") && !filename.ends_with(".PDF") {
-                return false;
-            }
-            tine_core::pdf::asset_key(filename) == candidate_key
-        })
-    }
-
-    /// Persist highlights: write `assets/<key>.edn` and the `hls__<key>` page.
-    /// `base_ids` are the highlight ids the editor LOADED (its baseline) — used for
-    /// a 3-way merge so a highlight the user deleted is honored while one added
-    /// externally (e.g. by OG between load and write) is still preserved.
-    #[cfg(test)]
-    pub fn write_highlights(
-        &self,
-        pdf_filename: &str,
-        label: &str,
-        highlights: &[tine_core::pdf::Highlight],
-        base_ids: &[String],
-    ) -> io::Result<()> {
-        let key = tine_core::pdf::asset_key(pdf_filename);
-        // Legacy (pre-launch) key. When it differs and only the legacy files
-        // exist, we read those as the baseline and migrate them to the new key
-        // below — so the key change never strands existing highlights.
-        let legacy_key = tine_core::pdf::legacy_asset_key(pdf_filename);
-        let legacy_active = legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key);
-        let legacy_edn =
-            legacy_active.then(|| self.assets_path().join(format!("{legacy_key}.edn")));
-        let legacy_page = if legacy_active {
-            self.existing_hls_page_path(&legacy_key)?
-        } else {
-            None
-        };
-        // Serialize against an editor save of the SAME `hls__` page (see
-        // `page_locks`): hold the page lock across the .edn merge AND the page
-        // read→merge→write→cache_upsert, so the two writers can't clobber each
-        // other or trip a false self-write conflict.
-        let page_path = self.hls_page_path(pdf_filename, &key)?;
-        self.ensure_write_target(&page_path)?;
-        let lock = self.page_lock(&page_path);
-        let _guard = lock.lock().unwrap();
-        fs::create_dir_all(self.assets_path())?;
-        let edn_path = self.assets_path().join(format!("{key}.edn"));
-        self.ensure_asset_write_target(&edn_path)?;
-        // 3-way merge against the on-disk set: keep our current highlights, plus
-        // any disk highlight that is an EXTERNAL addition (id not in our baseline
-        // and not already present). A highlight we deliberately deleted (in the
-        // baseline, absent from current) is NOT resurrected. Prefer the new-key
-        // file; fall back to the legacy-key file (migrating it forward).
-        let base: std::collections::HashSet<&str> = base_ids.iter().map(|s| s.as_str()).collect();
-        // Read every artifact that will participate before committing either one.
-        // If the notes page (or its legacy source) is unreadable, abort while the
-        // sidecar is still untouched rather than leaving a half-updated pair.
-        let page_baseline = read_optional_text(&page_path)?;
-        let legacy_page_baseline = if page_baseline.is_none() {
-            match &legacy_page {
-                Some(path) => read_optional_text(path)?,
-                None => None,
-            }
-        } else {
-            None
-        };
-        let existing_raw = page_baseline
-            .clone()
-            .or_else(|| legacy_page_baseline.clone());
-        // The sidecar and annotation page are one logical update. Reject a
-        // non-round-trippable Org page before publishing the sidecar so a failed
-        // page serialization cannot leave the pair half-updated.
-        if Format::from_path(&page_path) == Format::Org
-            && existing_raw
-                .as_deref()
-                .is_some_and(|raw| !tine_core::org::org_editable(raw))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "org highlight page is read-only (does not round-trip)",
-            ));
-        }
-        // Merge and publish the sidecar with the same external-writer guard as
-        // config updates. If Logseq/Syncthing changes either the primary or the
-        // legacy fallback after our read, retry against those new bytes instead
-        // of replacing them with a stale full-file serialization.
-        let mut committed_sidecar = None;
-        for _attempt in 0..4 {
-            let primary_baseline = read_optional_text(&edn_path)?;
-            let legacy_baseline = if primary_baseline.is_none() {
-                match &legacy_edn {
-                    Some(path) => read_optional_text(path)?,
-                    None => None,
-                }
-            } else {
-                None
-            };
-            let existing_edn = primary_baseline.as_ref().or(legacy_baseline.as_ref());
-            if let Some(raw) = existing_edn {
-                validate_highlight_edn(raw)?;
-            }
-            let disk_highlights = existing_edn
-                .map(|raw| tine_core::pdf::parse_highlights(raw))
-                .unwrap_or_default();
-            let have: std::collections::HashSet<&str> =
-                highlights.iter().map(|h| h.id.as_str()).collect();
-            let mut merged = highlights.to_vec();
-            for h in &disk_highlights {
-                if !have.contains(h.id.as_str()) && !base.contains(h.id.as_str()) {
-                    merged.push(h.clone());
-                }
-            }
-            let merged_ids: std::collections::HashSet<&str> =
-                merged.iter().map(|h| h.id.as_str()).collect();
-            let deleted_areas: Vec<tine_core::pdf::Highlight> = disk_highlights
-                .into_iter()
-                .filter(|h| h.image.is_some() && !merged_ids.contains(h.id.as_str()))
-                .collect();
-            let area_source_key = if primary_baseline.is_none() && legacy_baseline.is_some() {
-                legacy_key.as_str()
-            } else {
-                key.as_str()
-            };
-            let next =
-                tine_core::pdf::write_highlights(&merged, existing_edn.map_or("", String::as_str));
-            let primary_now = read_optional_text(&edn_path)?;
-            let legacy_now = if primary_now.is_none() && primary_baseline.is_none() {
-                match &legacy_edn {
-                    Some(path) => read_optional_text(path)?,
-                    None => None,
-                }
-            } else {
-                None
-            };
-            if primary_now != primary_baseline
-                || (primary_baseline.is_none() && legacy_now != legacy_baseline)
-            {
-                continue;
-            }
-            let publish = if primary_baseline.is_none() {
-                atomic_write_new(&edn_path, next.as_bytes())
-            } else {
-                atomic_write(&edn_path, next.as_bytes())
-            };
-            match publish {
-                Ok(()) => {}
-                Err(error)
-                    if primary_baseline.is_none()
-                        && error.kind() == io::ErrorKind::AlreadyExists =>
-                {
-                    continue;
-                }
-                Err(error) => return Err(error),
-            }
-            committed_sidecar = Some((
-                merged,
-                primary_baseline,
-                legacy_baseline,
-                next,
-                area_source_key.to_string(),
-                deleted_areas,
-            ));
-            break;
-        }
-        let (
-            merged,
-            committed_primary_edn_baseline,
-            committed_legacy_edn_baseline,
-            committed_edn,
-            area_source_key,
-            deleted_areas,
-        ) = committed_sidecar.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "highlight sidecar changed repeatedly during update",
-            )
-        })?;
-
-        // Upsert into the existing hls page, preserving note children by id.
-        // (`page_path` + its lock were taken at the top of this fn.) Prefer the
-        // new-key page; fall back to the legacy-key page so its user notes are
-        // carried over during migration.
-        // The hls page's OWN bytes are its write baseline; the legacy fallback is
-        // used only as a migration merge source. The A3-style recheck below
-        // compares the page against this baseline.
-        let existing = existing_raw
-            .as_deref()
-            .map(|raw| parse_doc(&page_path, raw));
-        let page_doc = tine_core::pdf::merge_hls_page_for_format(
-            existing.as_ref(),
-            pdf_filename,
-            label,
-            &merged,
-            Format::from_path(&page_path),
-        );
-        // Preserve the notes page's CRLF (shared with write_page), then go through
-        // the shared write commit (self-write marker → A3 recheck vs `page_baseline`
-        // → atomic_write). The recheck is mandatory here precisely because this path
-        // lacked save_page's guard: a non-cooperating external writer (OG / Syncthing)
-        // could have added a note between `page_baseline` and now, and merge_hls_page
-        // only carried notes from the bytes we read — so an overwrite would clobber it.
-        // On mismatch → conflict; PdfViewer.persist toasts + reverts and a retry merges
-        // cleanly (the .edn was already 3-way-merged, so no highlight is lost).
-        let page_md = serialize_pdf_hls_page(&page_path, &page_doc, existing_raw.as_deref())?;
-        let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true)
-        {
-            Ok(rev) => rev,
-            Err(page_error) => {
-                if let Err(rollback_error) = self.rollback_highlight_sidecar(
-                    &edn_path,
-                    committed_primary_edn_baseline.as_deref(),
-                    &committed_edn,
-                ) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "highlight notes page was not saved ({page_error}); the sidecar rollback also failed ({rollback_error})"
-                        ),
-                    ));
-                }
-                return Err(page_error);
-            }
-        };
-        // The hls page is a real page; reflect it in the search cache.
-        let name = tine_core::pdf::hls_page_name(&key);
-        let entry = self.find_entry(&name, PageKind::Page).unwrap_or(PageEntry {
-            name,
-            kind: PageKind::Page,
-            date_key: None,
-            rel_path: Some(self.rel_path(&page_path).into()),
-            path: page_path.clone(),
-        });
-        self.cache_upsert(entry, page_doc, page_rev.clone());
-        // Drop the self-write marker now the write is published + cached (see
-        // write_page / drop_self_write_marker).
-        self.drop_self_write_marker(&page_path, &page_rev);
-        let source_sidecar_guard = (area_source_key == legacy_key)
-            .then(|| legacy_edn.as_deref())
-            .flatten()
-            .zip(committed_legacy_edn_baseline.as_deref());
-        self.trash_deleted_pdf_area_images(
-            &area_source_key,
-            &edn_path,
-            &committed_edn,
-            source_sidecar_guard,
-            &deleted_areas,
-        );
-        // Migrate-on-write cleanup is compare-and-recover: only retire a legacy
-        // artifact if it still equals the exact bytes we merged. A concurrent
-        // legacy update stays at its original path. Unchanged files are moved to
-        // recoverable trash rather than hard-deleted.
-        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
-        self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
-        if let (Some(path), Some(baseline)) = (&legacy_edn, &committed_legacy_edn_baseline) {
-            if read_optional_text(path)?.as_ref() == Some(baseline) {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("legacy.edn");
-                let dest = trash.join(format!("{}__legacy__{name}", trash_stamp()));
-                if move_file_noreplace(path, &dest).is_ok()
-                    && read_optional_text(&dest)?.as_ref() != Some(baseline)
-                {
-                    let _ = move_file_noreplace(&dest, path);
-                    return Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        "legacy highlight sidecar changed during migration cleanup",
-                    ));
-                }
-            }
-        }
-        if let (Some(path), Some(baseline)) = (&legacy_page, &legacy_page_baseline) {
-            if read_optional_text(path)?.as_ref() == Some(baseline) {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("legacy.md");
-                let dest = trash.join(format!("{}__legacy__{name}", trash_stamp()));
-                if move_file_noreplace(path, &dest).is_ok() {
-                    if read_optional_text(&dest)?.as_ref() != Some(baseline) {
-                        let _ = move_file_noreplace(&dest, path);
-                        return Err(io::Error::new(
-                            io::ErrorKind::AlreadyExists,
-                            "legacy highlight page changed during migration cleanup",
-                        ));
-                    }
-                    self.cache_remove(&tine_core::pdf::hls_page_name(&legacy_key), PageKind::Page);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Map an on-disk `.md` path to its page entry (journal or page), or None if
-    /// it isn't in the graph's journals/pages dirs.
     pub(crate) fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
         if !is_page_file(path) {
             return None;
@@ -5144,78 +3506,11 @@ impl Graph {
         recent.insert(path.to_path_buf(), rev);
     }
 
-    /// Drop the self-write marker for `path` once a write is fully published (after
-    /// the cache_upsert), bounding it to its write window so it can never outlive
-    /// this save and later suppress a real external change. Removes it only if it's
-    /// still OURS (a concurrent same-path writer may have replaced it).
-    #[cfg(test)]
-    fn drop_self_write_marker(&self, path: &Path, rev: &str) {
-        let mut recent = self.recent_writes.lock().unwrap();
-        if recent.get(path).is_some_and(|r| r == rev) {
-            recent.remove(path);
-        }
-    }
-
-    /// Restore a PDF highlight sidecar after the paired `hls__` page failed to
-    /// commit. The sidecar is restored only while it still contains the exact
-    /// bytes this call published; a later external edit is never knowingly
-    /// replaced. A newly-created sidecar is moved to recoverable conflict trash
-    /// rather than hard-deleted.
-    #[cfg(test)]
-    fn rollback_highlight_sidecar(
-        &self,
-        path: &Path,
-        baseline: Option<&str>,
-        committed: &str,
-    ) -> io::Result<()> {
-        if read_optional_text(path)?.as_deref() != Some(committed) {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "highlight sidecar changed after its commit",
-            ));
-        }
-        if let Some(previous) = baseline {
-            return atomic_write(path, previous.as_bytes());
-        }
-
-        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
-        self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("highlights.edn");
-        let destination = trash.join(format!("{}__failed-highlight-pair__{name}", trash_stamp()));
-        move_file_noreplace(path, &destination)?;
-        if read_optional_text(&destination)?.as_deref() == Some(committed) {
-            return Ok(());
-        }
-
-        let _ = move_file_noreplace(&destination, path);
-        Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "highlight sidecar changed during rollback",
-        ))
-    }
-
     /// Remove a transaction-owned live file without ever unlinking a race winner.
     /// The currently named inode is first moved atomically into recoverable
     /// conflict trash. Exact expected bytes stay there as the withdrawn copy; a
     /// different inode is restored if the live name is free, or retained in
     /// recovery if another writer has already recreated the name.
-    #[cfg(test)]
-    pub(crate) fn withdraw_file_to_conflict_if_exact(
-        &self,
-        path: &Path,
-        expected: &[u8],
-        reason: &str,
-    ) -> io::Result<bool> {
-        self.withdraw_file_to_conflict_if(path, reason, |staged| {
-            fs::read(staged).map(|bytes| bytes == expected)
-        })
-        .map(|result| matches!(result, Withdrawal::Exact(_)))
-    }
-
     pub(crate) fn transaction_withdraw_exact(
         &self,
         path: &Path,
@@ -5300,67 +3595,6 @@ impl Graph {
         }
     }
 
-    /// The shared page-write commit protocol, written ONCE so `write_page` and
-    /// `write_highlights` can't drift apart on it (a missed step = a stale marker
-    /// suppressing a real external edit, or a phantom conflict):
-    ///   record self-write marker → ensure parent dir → (A3) optional last-moment
-    ///   recheck that disk still == `baseline` → atomic_write.
-    /// We hold the page lock, so no other Tine writer raced us; the recheck guards
-    /// a non-cooperating external writer (OG/Syncthing) that touched the file since
-    /// our baseline read — on mismatch we abort WITHOUT writing and drop our marker
-    /// so the watcher still sees the external change. Returns the new content rev.
-    /// The post-publish marker drop is `drop_self_write_marker` (it must run AFTER
-    /// the caller's cache_upsert, so it stays the caller's responsibility).
-    #[cfg(test)]
-    fn commit_write(
-        &self,
-        path: &Path,
-        content: &str,
-        baseline: Option<&str>,
-        recheck: bool,
-    ) -> io::Result<String> {
-        let rev = content_rev(content);
-        self.note_self_write(path, rev.clone());
-        let result = (|| {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            if recheck {
-                // Only NotFound means "no baseline file". Permission errors, invalid
-                // UTF-8, and transient I/O failures must abort; collapsing them to
-                // None would authorize an overwrite of unreadable on-disk data.
-                let now = read_optional_text(path)?;
-                let still_matches = match (now.as_deref(), baseline) {
-                    (Some(n), Some(e)) => n == e,
-                    (None, None) => true,
-                    _ => false,
-                };
-                if !still_matches {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-                }
-            }
-            if baseline.is_none() {
-                atomic_write_new(path, content.as_bytes())
-            } else {
-                atomic_write(path, content.as_bytes())
-            }
-        })();
-        if let Err(error) = result {
-            self.drop_self_write_marker(path, &rev);
-            return Err(error);
-        }
-        Ok(rev)
-    }
-
-    /// Reconcile a (possibly externally-changed) file with the in-memory cache.
-    /// Returns the entry only if its parsed content actually differs from the
-    /// cache (i.e. a real external change) — Tine's own writes keep the cache in
-    /// sync, so they return None. No-op if the cache hasn't been built yet.
-    #[cfg(test)]
-    pub fn sync_file(&self, path: &Path) -> Option<PageEntry> {
-        self.sync_file_internal(path)
-    }
-
     pub(crate) fn sync_file_internal(&self, path: &Path) -> Option<PageEntry> {
         // Watch events are untrusted path inputs. Never follow a page symlink
         // (which could expose an arbitrary file outside the graph), and recheck
@@ -5389,6 +3623,16 @@ impl Graph {
         path: &Path,
         content: &str,
         consume_self_write: bool,
+    ) -> Option<PageEntry> {
+        self.sync_file_content_with_saved(path, content, consume_self_write, None)
+    }
+
+    fn sync_file_content_with_saved(
+        &self,
+        path: &Path,
+        content: &str,
+        consume_self_write: bool,
+        saved: Option<&Document>,
     ) -> Option<PageEntry> {
         let entry = self.entry_for_path(path)?;
         // A sync-tool conflict copy (`*.sync-conflict-*`) is never a real page: keep
@@ -5459,7 +3703,7 @@ impl Graph {
                 return None;
             }
         }
-        let newdoc = parse_doc(path, content);
+        let mut newdoc = parse_doc(path, content);
         {
             let guard = self.cache.read().unwrap();
             let Some(cache) = guard.as_ref() else {
@@ -5499,17 +3743,15 @@ impl Graph {
                 }
             }
         }
+        if let Some(saved) = saved {
+            carry_saved_runtime_ids(&mut newdoc.roots, &saved.roots);
+        }
         self.cache_upsert(entry.clone(), newdoc, disk_rev);
         Some(entry)
     }
 
     /// Drop a file deleted on disk from the cache; returns the entry if it was
     /// cached (so the UI can react).
-    #[cfg(test)]
-    pub fn forget_file(&self, path: &Path) -> Option<PageEntry> {
-        self.forget_file_internal(path)
-    }
-
     pub(crate) fn forget_file_internal(&self, path: &Path) -> Option<PageEntry> {
         let own_delete = self
             .recent_writes
@@ -5528,128 +3770,14 @@ impl Graph {
         (was_cached && !own_delete).then_some(entry)
     }
 
-    /// Resolve a legacy test save by name. Production saves carry a `PageId`
-    /// through `Store::save` instead of using this path.
-    #[cfg(test)]
-    pub(crate) fn save_target(&self, page: &PageDto) -> Result<(PathBuf, bool), SaveTargetError> {
-        // M1: refuse to write an ambiguous page (both .md and .org on disk) — we
-        // can't tell which file the editor's content belongs to.
-        if self.has_twin(&page.name, page.kind) {
-            return Err(SaveTargetError::Twin);
-        }
-        let path = self.path_for(&page.name, page.kind);
-        if !path_stays_within_root(&self.root, &path) {
-            return Err(SaveTargetError::InvalidTarget(
-                "page path escapes graph root",
-            ));
-        }
-        Ok((path, true))
-    }
-
-    /// Save a page, refusing to clobber an external change. If the file on disk
-    /// no longer matches what Tine last knew (another app or a Syncthing pull
-    /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
-    /// so the caller can surface it and keep the in-memory edits.
-    #[cfg(test)]
-    pub(crate) fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
-        self.save_with_base(page, base_rev).map(|(rev, _)| rev)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn save_with_base(
-        &self,
-        page: &PageDto,
-        base_rev: Option<&str>,
-    ) -> io::Result<(String, bool)> {
-        if page.guide {
-            #[cfg(debug_assertions)]
-            eprintln!("attempted to persist an ephemeral bundled Guide page");
-            return Ok(("guide-ephemeral".into(), false));
-        }
-        let (path, cache) = self
-            .save_target(page)
-            .map_err(|error| error.into_io(&page.name))?;
-        self.save_at(page, &path, cache, base_rev)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn save_at(
-        &self,
-        page: &PageDto,
-        path: &Path,
-        cache: bool,
-        base_rev: Option<&str>,
-    ) -> io::Result<(String, bool)> {
-        // Serialize against any other writer of THIS page (a PDF highlight write
-        // of the same `hls__` page, or another save) for the whole
-        // read→conflict-check→write→cache_upsert, so neither can clobber the other
-        // or steal its self-write marker (see `page_locks`).
-        let lock = self.page_lock(&path);
-        let _guard = lock.lock().unwrap();
-        // Single read of the current file (the conflict baseline AND the
-        // formatting source AND, with the written content, the returned rev) —
-        // avoids re-reading the file 2-3× per save, which is felt on NFS.
-        let existing: Option<String> = match fs::read_to_string(&path) {
-            Ok(disk_s) => {
-                // The file must still match the exact bytes the editor loaded
-                // (`base_rev`); if it changed underneath us (external edit /
-                // Syncthing pull), refuse to clobber. `base_rev == None` means the
-                // editor believed the page was new, so any existing file is an
-                // external creation → conflict.
-                if !base_rev.is_some_and(|rev| content_rev(&disk_s) == rev) {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-                }
-                Some(disk_s)
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                // The file is gone. If the editor had a baseline (page existed at
-                // load), it was deleted externally — DON'T silently resurrect it.
-                if base_rev.is_some() {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-                }
-                None
-            }
-            Err(e) => return Err(e), // hard error (permission, I/O) — don't write blind
-        };
-        // recheck = true: re-verify the file hasn't changed on disk in the instant
-        // before the write, to narrow the inherent race against a NON-cooperating
-        // external writer (OG/Syncthing) that doesn't take our page lock.
-        // M2: write to the SAME path we locked + read the baseline from — never
-        // re-resolve `path_for` under the lock (an `exists()`-probe could otherwise
-        // pick a different extension if a twin appears mid-save).
-        self.write_page(page, &path, existing.as_deref(), true, cache)
-    }
-
-    /// Save a page unconditionally (the user chose "keep mine" over a conflict).
-    #[cfg(test)]
-    pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
-        if page.guide {
-            #[cfg(debug_assertions)]
-            eprintln!("attempted to force-persist an ephemeral bundled Guide page");
-            return Ok("guide-ephemeral".into());
-        }
-        let (path, cache) = self
-            .save_target(page)
-            .map_err(|error| error.into_io(&page.name))?;
-        let lock = self.page_lock(&path);
-        let _guard = lock.lock().unwrap();
-        // "Keep mine" resolves a content conflict, but it must not turn an I/O or
-        // decoding failure into permission to overwrite unknown bytes.
-        let existing = read_optional_text(&path)?;
-        // recheck = false: "keep mine" overwrites unconditionally. Same locked path
-        // is threaded into write_page (M2) so a forced save can't land on a twin.
-        self.write_page(page, &path, existing.as_deref(), false, cache)
-            .map(|(rev, _)| rev)
-    }
-
     pub(crate) fn prepare_page_bytes(
         &self,
         page: &PageDto,
         path: &Path,
         existing: Option<&str>,
-    ) -> io::Result<Vec<u8>> {
+    ) -> io::Result<(Vec<u8>, Document)> {
         self.prepare_page_content(page, path, existing)
-            .map(|(content, _)| content.into_bytes())
+            .map(|(content, doc)| (content.into_bytes(), doc))
     }
 
     pub(crate) fn transaction_note_page(&self, path: &Path, bytes: &[u8]) {
@@ -5662,11 +3790,11 @@ impl Graph {
         self.note_self_write(path, "<tx-deleted>".into());
     }
 
-    pub(crate) fn transaction_publish_page(&self, path: &Path) {
+    pub(crate) fn transaction_publish_page(&self, path: &Path, saved: Option<&Document>) {
         match fs::read_to_string(path) {
             Ok(content) => {
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.sync_file_content(path, &content, false)
+                    self.sync_file_content_with_saved(path, &content, false, saved)
                 }))
                 .is_err()
                 {
@@ -5727,7 +3855,8 @@ impl Graph {
             // A nonempty disk preamble is authoritative. If a contradictory DTO
             // drops it while presenting a first-root header candidate, refusing
             // the save is safer than either overwriting the preamble or silently
-            // keeping the candidate as a bullet. This also protects force-save.
+            // keeping the candidate as a bullet. The same validator protects
+            // the Store-backed keep-mine path.
             let existing_doc = doc::parse(existing);
             if existing_doc
                 .pre_block
@@ -5811,95 +3940,6 @@ impl Graph {
             }
         };
         Ok((content, doc))
-    }
-    /// Write a page to `path` (already resolved + locked by the caller), reproducing
-    /// `existing`'s formatting, and return the new on-disk content rev (computed from
-    /// what was written — no extra read).
-    #[cfg(test)]
-    fn write_page(
-        &self,
-        page: &PageDto,
-        path: &Path,
-        existing: Option<&str>,
-        recheck: bool,
-        cache: bool,
-    ) -> io::Result<(String, bool)> {
-        let (content, doc) = self.prepare_page_content(page, path, existing)?;
-        // No-op save: identical bytes already on disk (e.g. focus/blur with no real
-        // edit, or a forced flush of an unchanged page). Skip the write, the
-        // watcher record, AND — crucially — the cache update below.
-        let changed = existing != Some(content.as_str());
-        // The shared commit protocol (marker → A3 recheck vs `existing` →
-        // atomic_write); `force_save_page` passes recheck=false so "keep mine"
-        // overwrites unconditionally. On a no-op, just hash the unchanged bytes for
-        // the returned/cached rev — no write, no marker.
-        let rev = if changed {
-            self.commit_write(&path, &content, existing, recheck)?
-        } else {
-            content_rev(&content)
-        };
-        // Touch the cache only when the bytes changed, or the page isn't in an
-        // already-built cache yet (fold a cold page in). A no-op save of an
-        // already-cached page MUST NOT call cache_upsert: it bumps `cache_gen`,
-        // which keys every memoized query/backlink/derived result — so an unchanged
-        // re-save would force a whole-graph requery on every open dashboard.
-        // A path-pinned save (`cache == false`, a duplicate-day stray, #21) NEVER
-        // touches the `(kind,name)` cache: that slot belongs to the canonical file,
-        // and folding the stray's content in would make name-resolution serve it.
-        // The stray is re-parsed from disk on its next path-addressed load.
-        let need_cache_update = cache
-            && (changed || {
-                let guard = self.cache.read().unwrap();
-                guard
-                    .as_ref()
-                    .is_some_and(|pages| self.cached_page_index_for_path(pages, &path).is_none())
-            });
-        if need_cache_update {
-            // For a brand-new journal, derive its date_key from the name so it's
-            // recognized as a dated journal by `journals_desc` (which reads this
-            // cache) — otherwise today's freshly-created page would be missing.
-            let entry = self.entry_for_path(&path).unwrap_or_else(|| {
-                let date_key = if page.kind == PageKind::Journal {
-                    tine_core::date::JournalDate::from_title(&page.name).map(|d| d.ordinal_key())
-                } else {
-                    None
-                };
-                PageEntry {
-                    name: page.name.clone(),
-                    kind: page.kind,
-                    date_key,
-                    rel_path: Some(self.rel_path(&path).into()),
-                    path: path.to_path_buf(),
-                }
-            });
-            // H4: for org, the on-disk bytes are authoritative. If the user typed a
-            // structural marker (a column-0 `* ` line, or an unbalanced #+BEGIN_)
-            // into a block body, `content` re-parses to a DIFFERENT tree than the
-            // frontend `doc` — cache what's actually on disk so the next load shows
-            // the real structure instead of a cache that silently disagrees. Common
-            // case: structures match → keep `doc` (block uuids stay stable). Markdown
-            // continuation lines are indented, so they can't re-read differently.
-            let cache_doc = if Format::from_path(&path) == Format::Org {
-                let reparsed = tine_core::org::parse_org(&content);
-                if reparsed == doc {
-                    doc
-                } else {
-                    reparsed
-                }
-            } else {
-                doc
-            };
-            self.cache_upsert(entry, cache_doc, rev.clone());
-        }
-        // Drop the self-write marker now the write is published + cached (it only
-        // had to cover the atomic-write → cache_upsert window; disk_revs now
-        // suppresses the watcher). See drop_self_write_marker.
-        if changed {
-            self.drop_self_write_marker(&path, &rev);
-        }
-        // The new baseline rev = hash of exactly what's now on disk (the content we
-        // serialized, or the identical existing bytes on a no-op) — no re-read.
-        Ok((rev, changed))
     }
 }
 
@@ -6063,66 +4103,13 @@ fn top_level_asset_name(name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Preserve a file's CRLF line endings on re-write: if `existing` used Windows
-/// endings and the freshly-serialized `content` is all-LF, convert it back, so a
-/// real edit produces a minimal diff instead of flipping every line (Syncthing
-/// churn vs a Windows editor). New files stay LF. Shared by write_page +
-/// write_highlights so the two can't drift on it.
-#[cfg(test)]
-fn serialize_pdf_hls_page(
-    path: &Path,
-    document: &Document,
-    existing: Option<&str>,
-) -> io::Result<String> {
-    match Format::from_path(path) {
-        Format::Md => Ok(preserve_crlf(doc::serialize(document), existing)),
-        Format::Org => {
-            if existing.is_some_and(|raw| !tine_core::org::org_editable(raw)) {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "org highlight page is read-only (does not round-trip)",
-                ));
-            }
-            Ok(tine_core::org::serialize_org_detect(document, existing))
-        }
-    }
-}
-
+/// Preserve a file's CRLF line endings on rewrite so an edit produces a
+/// minimal diff instead of flipping every line. New files stay LF.
 fn preserve_crlf(content: String, existing: Option<&str>) -> String {
     if existing.is_some_and(|e| e.contains("\r\n")) && !content.contains('\r') {
         content.replace('\n', "\r\n")
     } else {
         content
-    }
-}
-
-/// Read an optional UTF-8 text file without conflating "missing" with "could not
-/// safely read". Mutation paths use this for their baselines: only NotFound may
-/// become `None`; every other error must stop the write.
-#[cfg(test)]
-fn read_optional_text(path: &Path) -> io::Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(content) => Ok(Some(content)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
-    }
-}
-
-#[cfg(test)]
-fn validate_highlight_edn(raw: &str) -> io::Result<()> {
-    if raw.trim().is_empty() {
-        return Ok(());
-    }
-    if matches!(
-        tine_core::edn::parse_strict(raw),
-        Some(tine_core::edn::Edn::Map(_))
-    ) {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "highlight sidecar is malformed; refusing to replace it",
-        ))
     }
 }
 
@@ -6389,6 +4376,22 @@ fn doc_has_content(blocks: &[DocBlock]) -> bool {
             .any(|l| !l.trim().is_empty() && tine_core::doc::parse_property_line(l).is_none())
             || doc_has_content(&b.children)
     })
+}
+
+/// A committed DTO save publishes parsed content with the live identities of
+/// blocks that survived serialization. Header promotion has already changed
+/// the saved tree, so corresponding nodes have the same structural position.
+/// When a parser changes the tree shape, leave that subtree's parsed ids alone.
+fn carry_saved_runtime_ids(parsed: &mut [DocBlock], saved: &[DocBlock]) {
+    if parsed.len() != saved.len() {
+        return;
+    }
+    for (parsed, saved) in parsed.iter_mut().zip(saved) {
+        if !saved.uuid.is_empty() {
+            parsed.uuid.clone_from(&saved.uuid);
+        }
+        carry_saved_runtime_ids(&mut parsed.children, &saved.children);
+    }
 }
 
 /// Convert a frontend DTO subtree back to a doc block, preserving the frontend's
@@ -6724,22 +4727,6 @@ pub(crate) fn trash_stamp() -> String {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     format!("{ms}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
-}
-
-#[cfg(test)]
-fn move_to_trash(src: &Path, dest: &Path, trash: &Path) -> io::Result<()> {
-    fs::create_dir_all(trash).map_err(|e| {
-        io::Error::new(
-            e.kind(),
-            format!("could not create trash directory {}: {e}", trash.display()),
-        )
-    })?;
-    move_file_noreplace(src, dest).map_err(|e| {
-        io::Error::new(
-            e.kind(),
-            format!("could not move file to trash {}: {e}", trash.display()),
-        )
-    })
 }
 
 /// Atomically move one file without ever replacing an existing destination.
@@ -7215,16 +5202,22 @@ mod tests {
     #[test]
     fn native_capture_import_streams_with_limit_and_collision_rewind() {
         let dir = scratch("native-capture-import");
-        let graph = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let source_path = dir.join("tine_memo_source.m4a");
         fs::write(&source_path, b"bounded voice memo").unwrap();
         let mut source = fs::File::open(&source_path).unwrap();
 
         fs::create_dir_all(dir.join("assets")).unwrap();
         fs::write(dir.join("assets/voice.m4a"), b"existing memo").unwrap();
-        let stored = graph
-            .import_asset_file(&mut source, "voice.m4a", 32 * 1024 * 1024)
-            .unwrap();
+        let stored = tine_graph_features::assets::import_asset_file(
+            &store,
+            "voice.m4a",
+            tine_store::Content::Stream {
+                source,
+                max_bytes: 32 * 1024 * 1024,
+            },
+        )
+        .unwrap();
         assert_eq!(stored, "voice_1.m4a");
         assert_eq!(
             fs::read(dir.join("assets/voice_1.m4a")).unwrap(),
@@ -7236,10 +5229,16 @@ mod tests {
             "collision retry must not overwrite an existing graph asset"
         );
 
-        source.seek(io::SeekFrom::Start(0)).unwrap();
-        assert!(graph
-            .import_asset_file(&mut source, "too-large.m4a", 4)
-            .is_err());
+        source = fs::File::open(&source_path).unwrap();
+        assert!(tine_graph_features::assets::import_asset_file(
+            &store,
+            "too-large.m4a",
+            tine_store::Content::Stream {
+                source,
+                max_bytes: 4,
+            },
+        )
+        .is_err());
         assert!(
             !dir.join("assets/too-large.m4a").exists(),
             "an over-limit stream must not leave a visible partial asset"
@@ -7265,9 +5264,9 @@ mod tests {
             "alias:: Foo\ntags:: Other\n- src body\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        g.merge_pages("pages/src.md", "pages/dst.md").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        tine_graph_features::pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
         let merged = fs::read_to_string(dir.join("pages").join("dst.md")).unwrap();
         assert!(
             merged.contains("alias:: Foo"),
@@ -7289,6 +5288,7 @@ mod tests {
             !dir.join("pages").join("src.md").exists(),
             "src moved to trash"
         );
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -7572,6 +5572,34 @@ mod tests {
         crate::store::Store::open(dir, crate::store::OpenOptions::default())
             .unwrap()
             .0
+    }
+
+    fn save_on_store(
+        store: &tine_store::Store,
+        page: &PageDto,
+        base: Option<&str>,
+    ) -> tine_store::SaveOutcome {
+        let target = store
+            .whole_graph()
+            .unwrap()
+            .resolve(&page.name, page.kind == PageKind::Journal);
+        let id = match target {
+            tine_store::Resolved::Existing { id, .. } | tine_store::Resolved::Absent { id } => id,
+            _ => panic!("ambiguous page target"),
+        };
+        let base = base
+            .map(|rev| tine_store::SaveBase::Existing(rev.to_owned().into()))
+            .unwrap_or(tine_store::SaveBase::CreateNew);
+        store.save(&id, base, page)
+    }
+
+    fn saved_rev(outcome: tine_store::SaveOutcome) -> String {
+        match outcome {
+            tine_store::SaveOutcome::Saved(rev) | tine_store::SaveOutcome::Unchanged(rev) => {
+                rev.into()
+            }
+            other => panic!("page was not saved: {other:?}"),
+        }
     }
 
     fn save_model_page(store: &crate::store::Store, name: &str, edit: impl FnOnce(&mut PageDto)) {
@@ -7933,7 +5961,7 @@ mod tests {
         // applies the same page-sized isolation when it rebuilds.
         g.invalidate_cache();
         assert!(g.page_index_failures().is_empty());
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
         assert!(g
             .run_graph_search(needle, 0, 8, false)
             .hits
@@ -7998,7 +6026,7 @@ mod tests {
             fs::write(dir.join("pages").join(format!("Page {i}.md")), "- body\n").unwrap();
         }
         let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
 
         reset_list_md_calls();
         for i in 0..16 {
@@ -8078,7 +6106,7 @@ mod tests {
             fs::write(dir.join("pages").join(format!("Page {i}.md")), "- body\n").unwrap();
         }
         let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
         assert!(
             g.cache_index.read().unwrap().is_some(),
             "warm cache should install the by-name parsed-doc index"
@@ -8104,17 +6132,25 @@ mod tests {
     fn parsed_doc_cache_index_does_not_serve_deleted_page() {
         let dir = scratch("doc-cache-index-delete");
         fs::write(dir.join("pages").join("Gone.md"), "- old\n").unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let entry = g.find_entry("Gone", PageKind::Page).unwrap();
-        assert!(g.load_page(&entry).is_ok());
-
-        g.delete_page("Gone", PageKind::Page).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Gone.md");
+        assert!(store.page(&id).is_ok());
+        tine_graph_features::pages::delete_page_expected(
+            &store,
+            "Gone",
+            PageKind::Page,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(
-            g.load_page(&entry).is_err(),
+            store.page(&id).is_err(),
             "stale cache/index must not serve the deleted entry"
         );
-        assert!(g.load_named("Gone", PageKind::Page).unwrap().is_none());
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Gone", false),
+            tine_store::Resolved::Absent { .. }
+        ));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -8126,21 +6162,22 @@ mod tests {
             "- links [[Old]] and #Old\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let old_entry = g.find_entry("Old", PageKind::Page).unwrap();
-        assert!(g.load_page(&old_entry).is_ok());
-
-        g.rename_page("Old", "New").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let old_id = tine_store::PageId::from("pages/Old.md");
+        assert!(store.page(&old_id).is_ok());
+        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
         assert!(
-            g.load_page(&old_entry).is_err(),
+            store.page(&old_id).is_err(),
             "old entry must not be served after rename"
         );
-        assert!(g.load_named("Old", PageKind::Page).unwrap().is_none());
-        let new_page = g
-            .load_named("New", PageKind::Page)
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Old", false),
+            tine_store::Resolved::Absent { .. }
+        ));
+        let new_page = store
+            .page(&tine_store::PageId::from("pages/New.md"))
             .unwrap()
-            .expect("new name resolves");
+            .doc;
         assert_eq!(new_page.name, "New");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -8149,15 +6186,30 @@ mod tests {
     fn find_entry_cache_rebuilds_after_file_rescue_generation_bump() {
         let dir = scratch("find-entry-cache-rescue");
         fs::write(dir.join("journals").join("Loose.md"), "- loose\n").unwrap();
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        assert!(g.find_entry("Rescued", PageKind::Page).is_none());
-        assert!(g.find_entry("Loose", PageKind::Journal).is_some());
+        let before = store.whole_graph().unwrap();
+        assert!(matches!(
+            before.resolve("Rescued", false),
+            tine_store::Resolved::Absent { .. }
+        ));
+        assert!(matches!(
+            before.resolve("Loose", true),
+            tine_store::Resolved::Existing { .. }
+        ));
 
-        g.rename_file_to_page("journals/Loose.md", "Rescued")
+        tine_graph_features::pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued")
             .unwrap();
-        assert!(g.find_entry("Loose", PageKind::Journal).is_none());
-        assert!(g.find_entry("Rescued", PageKind::Page).is_some());
+        let after = store.whole_graph().unwrap();
+        assert!(matches!(
+            after.resolve("Loose", true),
+            tine_store::Resolved::Absent { .. }
+        ));
+        assert!(matches!(
+            after.resolve("Rescued", false),
+            tine_store::Resolved::Existing { .. }
+        ));
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -8179,7 +6231,7 @@ mod tests {
         // A brand-new external file appears (as Logseq/Syncthing would create it),
         // reconciled while the doc cache is still cold.
         fs::write(dir.join("pages").join("New.md"), "- new body\n").unwrap();
-        g.sync_file(&dir.join("pages").join("New.md"));
+        g.sync_file_internal(&dir.join("pages").join("New.md"));
 
         assert!(
             g.find_entry("New", PageKind::Page).is_some(),
@@ -8193,7 +6245,7 @@ mod tests {
         let dir = scratch("with-pages-snapshot-nonblocking");
         fs::write(dir.join("pages").join("A.md"), "- old\n").unwrap();
         let g = Arc::new(Graph::open(&dir));
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
 
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -8217,15 +6269,7 @@ mod tests {
         let path = dir.join("pages").join("B.md");
         fs::write(&path, "- new\n").unwrap();
         let writer = std::thread::spawn(move || {
-            let content = "- new\n";
-            let entry = PageEntry {
-                name: "B".to_string(),
-                kind: PageKind::Page,
-                date_key: None,
-                rel_path: Some("pages/B.md".into()),
-                path: path.clone(),
-            };
-            write_graph.cache_upsert(entry, parse_doc(&path, content), content_rev(content));
+            write_graph.transaction_publish_page(&path, None);
             done_tx.send(()).unwrap();
         });
 
@@ -8249,7 +6293,7 @@ mod tests {
         let path = dir.join("pages").join("A.md");
         fs::write(&path, "- old body\n").unwrap();
         let g = Arc::new(Graph::open(&dir));
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
 
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -8277,18 +6321,7 @@ mod tests {
 
         let new_content = "- new body\n";
         fs::write(&path, new_content).unwrap();
-        let entry = PageEntry {
-            name: "A".to_string(),
-            kind: PageKind::Page,
-            date_key: None,
-            rel_path: Some("pages/A.md".into()),
-            path: path.clone(),
-        };
-        g.cache_upsert(
-            entry,
-            parse_doc(&path, new_content),
-            content_rev(new_content),
-        );
+        g.transaction_publish_page(&path, None);
 
         release_tx.send(()).unwrap();
         let (before, after) = observed_rx
@@ -8637,9 +6670,9 @@ mod tests {
         // A canonical file for another day must be left untouched.
         fs::write(dir.join("journals").join("2026_06_24.org"), "* prior\n").unwrap();
 
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         assert_eq!(
-            g.migrate_journal_filenames(),
+            tine_graph_features::journals::migrate_journal_filenames(&store),
             1,
             "exactly the title-named file renamed"
         );
@@ -8659,10 +6692,14 @@ mod tests {
         );
 
         // It's now recognized in the feed listing (name via the title format).
-        let names: Vec<String> = Graph::open(&dir)
-            .journals_desc()
-            .into_iter()
-            .map(|e| e.name)
+        let names: Vec<String> = store
+            .whole_graph()
+            .unwrap()
+            .inventory()
+            .0
+            .iter()
+            .filter(|e| e.is_journal)
+            .map(|e| e.name.clone())
             .collect();
         assert!(
             names.iter().any(|n| n == "Thursday, 25-06-2026"),
@@ -8905,7 +6942,7 @@ mod tests {
 
         // The warmed cache retains exactly the cold membership/order and later
         // whole-graph lookups still see the excluded future page.
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
         assert_eq!(
             g.feed_journals_desc_through(JournalDate {
                 year: 2030,
@@ -8930,56 +6967,62 @@ mod tests {
     #[test]
     fn warmed_save_cache_upsert_keeps_future_and_duplicate_days_out_of_feed() {
         let dir = scratch("future-feed-warm-save");
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
 
         let mut past = jdto("Jul 14th, 2030");
         past.blocks[0].raw = "past after warm cache".into();
-        g.save_page(&past, None).unwrap();
+        saved_rev(save_on_store(&store, &past, None));
         let mut today = jdto("Jul 15th, 2030");
         today.blocks[0].raw = "today after warm cache".into();
-        g.save_page(&today, None).unwrap();
+        saved_rev(save_on_store(&store, &today, None));
         let mut future = jdto("Jul 17th, 2030");
         future.blocks[0].raw = "future after warm cache".into();
-        g.save_page(&future, None).unwrap();
+        saved_rev(save_on_store(&store, &future, None));
 
-        let cutoff = JournalDate {
-            year: 2030,
-            month: 7,
-            day: 15,
-        };
+        let cutoff = tine_store::Day(20300715);
         assert_eq!(
-            g.feed_journals_desc_through(cutoff)
+            tine_graph_features::journals::feed_journals_desc_through(&store, cutoff)
                 .iter()
-                .map(|e| e.date_key)
+                .map(|(day, _)| Some(day.0))
                 .collect::<Vec<_>>(),
             vec![Some(20300715), Some(20300714)],
             "guarded save/cache-upsert must not leak a future day into warm feed membership"
         );
-        assert!(g
-            .load_named("Jul 17th, 2030", PageKind::Journal)
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Jul 17th, 2030", true),
+            tine_store::Resolved::Existing { .. }
+        ));
+        assert!(store
+            .whole_graph()
             .unwrap()
-            .is_some());
-        assert!(g.list_pages().iter().any(|e| e.name == "Jul 17th, 2030"));
+            .inventory()
+            .0
+            .iter()
+            .any(|e| e.name == "Jul 17th, 2030"));
 
         // The raw inventory retains duplicate future files for conflict discovery,
         // while date deduplication still leaves no future feed row at all.
         fs::write(dir.join("journals/2030_07_17.org"), "* future twin\n").unwrap();
-        let duplicate = Graph::open(&dir);
+        let duplicate = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         assert_eq!(
             duplicate
-                .journals_desc()
+                .whole_graph()
+                .unwrap()
+                .inventory()
+                .0
                 .iter()
-                .filter(|e| e.date_key == Some(20300717))
+                .filter(|e| e.day == Some(tine_store::Day(20300717)))
                 .count(),
             1
         );
-        assert!(duplicate
-            .feed_journals_desc_through(cutoff)
-            .iter()
-            .all(|e| e.date_key != Some(20300717)));
         assert!(
-            !duplicate.journal_conflicts().is_empty(),
+            tine_graph_features::journals::feed_journals_desc_through(&duplicate, cutoff)
+                .iter()
+                .all(|(day, _)| day.0 != 20300717)
+        );
+        assert!(
+            matches!(duplicate.whole_graph().unwrap().resolve("Jul 17th, 2030", true), tine_store::Resolved::Existing { others, .. } if !others.is_empty()),
             "future duplicate remains discoverable outside feed"
         );
         let _ = fs::remove_dir_all(&dir);
@@ -8990,9 +7033,8 @@ mod tests {
         let dir = scratch("rename");
         fs::write(dir.join("pages").join("Alpha.md"), "- alpha body\n").unwrap();
         fs::write(dir.join("pages").join("Other.md"), "- see [[Alpha]] here\n").unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        g.rename_page("Alpha", "Beta").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::pages::rename_page_expected(&store, "Alpha", "Beta", None).unwrap();
         // The page file moved (content preserved) and the old file is gone.
         assert!(!dir.join("pages").join("Alpha.md").exists());
         assert_eq!(
@@ -9043,20 +7085,22 @@ mod tests {
         let ref_original = "- see [[Alpha]] here\n";
         fs::write(dir.join("pages/Alpha.md"), original).unwrap();
         fs::write(dir.join("pages/Other.md"), ref_original).unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        FAIL_NEXT_RENAME_SOURCE_REMOVE.with(|flag| flag.set(true));
-        WITHDRAW_RACE_REPLACEMENT.with(|replacement| {
-            *replacement.borrow_mut() = Some(b"- external replacement\n".to_vec());
-        });
-        assert!(g.rename_page("Alpha", "Beta").is_err());
+        let store = loaded_store(&dir);
+        let from = crate::FileId::from("pages/Alpha.md".to_owned());
+        let to = crate::FileId::from("pages/Beta.md".to_owned());
+        let rev = store.read(&from, None).unwrap().1;
+        store.inject_fault(crate::FaultPoint::MidStepIo);
+        store.inject_fault(crate::FaultPoint::UndoLiveWrite);
+        let mut tx = store.transaction();
+        tx.move_file(&from, rev, &to, None);
+        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
         assert_eq!(
             fs::read_to_string(dir.join("pages/Alpha.md")).unwrap(),
             original
         );
         assert_eq!(
             fs::read_to_string(dir.join("pages/Beta.md")).unwrap(),
-            "- external replacement\n",
+            "external during undo",
             "rollback must not unlink a destination replaced after its check"
         );
         assert_eq!(
@@ -9088,9 +7132,9 @@ mod tests {
             "tags:: Project, Project/Beta\n- see [[Project]], [[Project/Alpha]] and #[[Project/Beta]]\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        g.rename_page("Project", "Archive").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::pages::rename_page_expected(&store, "Project", "Archive", None)
+            .unwrap();
 
         // Primary + every descendant file moved (content preserved), old names gone.
         assert!(!dir.join("pages").join("Project.md").exists());
@@ -9138,19 +7182,19 @@ mod tests {
         let dir = scratch("org-page");
         let src = "* TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>\n* second block\n";
         fs::write(dir.join("pages").join("Org Notes.org"), src).unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Org Notes.org");
 
         // Listed, recognized as an org page.
-        let entry = g
-            .list_pages()
-            .into_iter()
-            .find(|e| e.name == "Org Notes")
-            .expect("org page listed");
-        assert_eq!(Format::from_path(&entry.path), Format::Org);
+        let entry = store.whole_graph().unwrap().resolve("Org Notes", false);
+        assert!(
+            matches!(entry, tine_store::Resolved::Existing { id: ref found, .. } if found == &id)
+        );
+        assert_eq!(Format::from_path(&dir.join(id.as_str())), Format::Org);
 
         // Loaded: format=org, editable, headlines decomposed into blocks.
-        let dto = g.load_named("Org Notes", PageKind::Page).unwrap().unwrap();
+        let read = store.page(&id).unwrap();
+        let dto = read.doc;
         assert_eq!(dto.format, Format::Org);
         assert!(!dto.read_only);
         assert_eq!(dto.blocks.len(), 2);
@@ -9161,7 +7205,7 @@ mod tests {
         assert_eq!(dto.blocks[1].raw, "second block");
 
         // No-op save leaves the file byte-identical (no churn).
-        let rev = g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        let rev = saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
         assert_eq!(
             fs::read_to_string(dir.join("pages").join("Org Notes.org")).unwrap(),
             src
@@ -9170,7 +7214,7 @@ mod tests {
         // Edit a block and save → file updated, still org, byte-faithful.
         let mut edited = dto.clone();
         edited.blocks[1].raw = "second block edited".into();
-        g.save_page(&edited, Some(&rev)).unwrap();
+        saved_rev(save_on_store(&store, &edited, Some(&rev)));
         let on_disk = fs::read_to_string(dir.join("pages").join("Org Notes.org")).unwrap();
         assert_eq!(
             on_disk,
@@ -9184,7 +7228,7 @@ mod tests {
     #[test]
     fn guide_flagged_pages_are_never_written_to_graph_files() {
         let dir = scratch("guide-no-save");
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let page = PageDto {
             name: "Tine-guide/Features/Sheets".into(),
             kind: PageKind::Page,
@@ -9203,8 +7247,14 @@ mod tests {
             guide: true,
         };
 
-        assert_eq!(g.save_page(&page, None).unwrap(), "guide-ephemeral");
-        assert_eq!(g.force_save_page(&page).unwrap(), "guide-ephemeral");
+        assert!(matches!(
+            store.save(
+                &tine_store::PageId::from("pages/Guide.md"),
+                tine_store::SaveBase::CreateNew,
+                &page,
+            ),
+            tine_store::SaveOutcome::GuideEphemeral
+        ));
         let files: Vec<_> = fs::read_dir(dir.join("pages"))
             .unwrap()
             .filter_map(Result::ok)
@@ -9214,6 +7264,7 @@ mod tests {
             files.is_empty(),
             "guide save guard must be load-bearing; wrote files: {files:?}"
         );
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9245,74 +7296,44 @@ mod tests {
         // depth → not round-trip safe → must load read-only and refuse writes.
         let src = "* a\n*** c\n";
         fs::write(dir.join("pages").join("Weird.org"), src).unwrap();
-        let g = Graph::open(&dir);
-        let dto = g.load_named("Weird", PageKind::Page).unwrap().unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Weird.org");
+        let dto = store.page(&id).unwrap().doc;
         assert_eq!(dto.format, Format::Org);
         assert!(dto.read_only, "non-round-tripping org loads read-only");
-        // Even a forced save must refuse (defense in depth) and leave bytes intact.
-        let err = g.force_save_page(&dto).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(matches!(
+            tine_graph_features::pages::save_page(&store, &id, &dto, None, true),
+            Ok(tine_store::SaveOutcome::ReadOnly(_))
+        ));
         assert_eq!(
             fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(),
             src
         );
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn force_save_refuses_unreadable_existing_bytes() {
-        let dir = scratch("force-save-invalid-utf8");
-        let path = dir.join("pages").join("A.md");
-        fs::write(&path, "- original\n").unwrap();
-        let g = Graph::open(&dir);
-        let mut dto = g.load_named("A", PageKind::Page).unwrap().unwrap();
-        dto.blocks[0].raw = "replacement".into();
-        let unknown = b"\xff\xfeunknown on-disk bytes";
-        fs::write(&path, unknown).unwrap();
-
-        let err = g.force_save_page(&dto).unwrap_err();
-
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(fs::read(&path).unwrap(), unknown);
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn twin_md_org_refuses_writes() {
-        // M1: a page that exists as BOTH Foo.md and Foo.org is ambiguous — save,
-        // force-save, rename, and delete must all refuse (no clobber of either).
+        // The unpinned save has no production input. Creation refusal and
+        // pinned keep-mine behavior are tested in pages_snapshot_tests.
         let dir = scratch("org-twin");
         fs::write(dir.join("pages").join("Foo.md"), "- md body\n").unwrap();
         fs::write(dir.join("pages").join("Foo.org"), "* org body\n").unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let page = PageDto {
-            name: "Foo".into(),
-            kind: PageKind::Page,
-            title: "Foo".into(),
-            pre_block: None,
-            blocks: vec![BlockDto {
-                id: "x".into(),
-                raw: "edited".into(),
-                ..Default::default()
-            }],
-            rev: None,
-            format: Format::Md,
-            read_only: false,
-
-            guide: false,
-        };
-        assert!(g.save_page(&page, None).is_err(), "save refused on twin");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         assert!(
-            g.force_save_page(&page).is_err(),
-            "force_save refused on twin"
-        );
-        assert!(
-            g.rename_page("Foo", "Bar").is_err(),
+            tine_graph_features::pages::rename_page_expected(&store, "Foo", "Bar", None).is_err(),
             "rename refused on twin"
         );
         assert!(
-            g.delete_page("Foo", PageKind::Page).is_err(),
+            tine_graph_features::pages::delete_page_expected(
+                &store,
+                "Foo",
+                PageKind::Page,
+                None,
+                None
+            )
+            .is_err(),
             "delete refused on twin"
         );
         // Both files are byte-intact (nothing was written/moved/trashed).
@@ -9324,6 +7345,7 @@ mod tests {
             fs::read_to_string(dir.join("pages").join("Foo.org")).unwrap(),
             "* org body\n"
         );
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9337,14 +7359,14 @@ mod tests {
         let path = dir.join("pages").join("RO.org");
         fs::write(&path, src).unwrap();
         let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
         // Confirm it loaded read-only.
         let dto = g.load_named("RO", PageKind::Page).unwrap().unwrap();
         assert!(dto.read_only);
         let gen0 = g.cache_generation();
         // Two watcher reconciles of the unchanged file must be no-ops.
-        g.sync_file(&path);
-        g.sync_file(&path);
+        g.sync_file_internal(&path);
+        g.sync_file_internal(&path);
         assert_eq!(
             g.cache_generation(),
             gen0,
@@ -9374,18 +7396,21 @@ mod tests {
             "- ![](../assets/used.png)\n- [paper](../assets/paper.pdf)\n- ![](../assets/my clip.mp4)\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
-        let orphans: Vec<String> = g.orphan_assets().into_iter().map(|a| a.name).collect();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let orphans: Vec<String> = tine_graph_features::assets::orphan_assets(&store)
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
         assert_eq!(
             orphans,
             vec!["old_video.webm".to_string(), "stray.png".to_string()]
         );
         // Trash one → it moves out of assets/ into the recoverable trash.
-        g.trash_asset("stray.png").unwrap();
+        tine_graph_features::assets::trash_asset(&store, "stray.png").unwrap();
         assert!(!assets.join("stray.png").exists());
         assert!(dir.join("logseq").join(".tine-trash").exists());
         // A name with a separator is refused (can't escape assets/).
-        assert!(g.trash_asset("../pages/P.md").is_err());
+        assert!(tine_graph_features::assets::trash_asset(&store, "../pages/P.md").is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9422,16 +7447,14 @@ mod tests {
         fs::create_dir_all(&assets).unwrap();
         fs::write(assets.join("junk1.png"), b"xx").unwrap(); // 2 bytes
         fs::write(assets.join("junk2.png"), b"yyy").unwrap(); // 3 bytes
-        let g = Graph::open(&dir);
-        g.trash_asset("junk1.png").unwrap();
-        g.trash_asset("junk2.png").unwrap();
-        let store = crate::store::Store::open(&dir, Default::default())
-            .unwrap()
-            .0;
-        let stats = store.trash_stats().unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::assets::trash_asset(&store, "junk1.png").unwrap();
+        tine_graph_features::assets::trash_asset(&store, "junk2.png").unwrap();
+        let local_store = model_store(&dir);
+        let stats = local_store.trash_stats().unwrap();
         assert_eq!(stats[0], (crate::store::TrashKind::Asset, 2, 5));
-        assert_eq!(store.purge_asset_trash().unwrap(), (2, 5));
-        assert_eq!(store.trash_stats().unwrap()[0].1, 0);
+        assert_eq!(local_store.purge_asset_trash().unwrap(), (2, 5));
+        assert_eq!(local_store.trash_stats().unwrap()[0].1, 0);
         // Emptying a never-created trash is a no-op, not an error.
         let dir2 = scratch("empty-trash-missing");
         let empty = crate::store::Store::open(&dir2, Default::default())
@@ -9528,10 +7551,16 @@ mod tests {
         let dir = scratch("import-name");
         let src = dir.join("source.png");
         fs::write(&src, b"img").unwrap();
-        let g = Graph::open(&dir);
-        let saved = g
-            .import_asset(&src, Some("source_20260626_120000.png"))
-            .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let saved = tine_graph_features::assets::import_asset(
+            &store,
+            "source_20260626_120000.png",
+            tine_store::Content::Stream {
+                source: fs::File::open(&src).unwrap(),
+                max_bytes: u64::MAX,
+            },
+        )
+        .unwrap();
         assert_eq!(saved, "source_20260626_120000.png");
         assert!(dir.join("assets").join(&saved).exists());
         let _ = fs::remove_dir_all(&dir);
@@ -9559,9 +7588,9 @@ mod tests {
         // `* a\n*** c` skips a heading level → not round-trip-safe → read-only.
         let ro = "* a\n*** c referencing [[Alpha]]\n";
         fs::write(dir.join("pages").join("Weird.org"), ro).unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let err = g.rename_page("Alpha", "Beta").unwrap_err();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let err = tine_graph_features::pages::rename_page_expected(&store, "Alpha", "Beta", None)
+            .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         // All-or-nothing: neither file moved/changed.
         assert!(
@@ -9583,9 +7612,8 @@ mod tests {
         fs::write(dir.join("pages").join("Old.md"), "- old body\n").unwrap();
         let org = "* note\nsee [[Old]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n";
         fs::write(dir.join("pages").join("Ref.org"), org).unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        g.rename_page("Old", "New").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None).unwrap();
         let got = fs::read_to_string(dir.join("pages").join("Ref.org")).unwrap();
         assert_eq!(
             got,
@@ -9601,20 +7629,20 @@ mod tests {
         // the (now-stale) frontend doc — so reads after the save see the real shape.
         let dir = scratch("org-h4");
         fs::write(dir.join("pages").join("P.org"), "* one\n* two\n").unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let dto = g.load_named("P", PageKind::Page).unwrap().unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/P.org");
+        let dto = store.page(&id).unwrap().doc;
         assert_eq!(dto.blocks.len(), 2);
         // Edit block 0's body to contain a column-0 headline marker.
         let mut edited = dto.clone();
         edited.blocks[0].raw = "one\n* injected".into();
-        let rev = g.save_page(&edited, dto.rev.as_deref()).unwrap();
+        let rev = saved_rev(save_on_store(&store, &edited, dto.rev.as_deref()));
         // Disk now has THREE headlines.
         let disk = fs::read_to_string(dir.join("pages").join("P.org")).unwrap();
         assert_eq!(disk, "* one\n* injected\n* two\n");
         // A fresh load (served from cache) must reflect the 3-block disk structure,
         // not the 2-block frontend doc that produced it.
-        let again = g.load_named("P", PageKind::Page).unwrap().unwrap();
+        let again = store.page(&id).unwrap().doc;
         assert_eq!(
             again.blocks.len(),
             3,
@@ -9652,7 +7680,8 @@ mod tests {
 
             guide: false,
         };
-        g.save_page(&page, None).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        saved_rev(save_on_store(&store, &page, None));
         assert!(
             dir.join("pages").join("Fresh.org").exists(),
             "new page created as .org"
@@ -9675,12 +7704,13 @@ mod tests {
         let path = dir.join("pages").join("A.md");
         let original = "- a\n- \n"; // second bullet: dash + trailing space
         fs::write(&path, original).unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let entry = g.find_entry("A", PageKind::Page).unwrap();
-        let dto = g.load_page(&entry).unwrap();
-        let gen_before = g.cache_generation();
-        let rev = g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let dto = store
+            .page(&tine_store::PageId::from("pages/A.md"))
+            .unwrap()
+            .doc;
+        let gen_before = store.whole_graph().unwrap().rev();
+        let rev = saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             original,
@@ -9692,7 +7722,7 @@ mod tests {
             "returned rev is the on-disk rev"
         );
         assert_eq!(
-            g.cache_generation(),
+            store.whole_graph().unwrap().rev(),
             gen_before,
             "no cache_gen bump on a trivia-only no-op"
         );
@@ -9713,8 +7743,10 @@ mod tests {
             let dir = scratch(&format!("page-property-firewall-{label}"));
             let path = dir.join("pages").join("Property.md");
             fs::write(&path, original).unwrap();
-            let g = Graph::open(&dir);
-            let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+            let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let id = tine_store::PageId::from("pages/Property.md");
+            let read = store.page(&id).unwrap();
+            let mut dto = read.doc;
             let normalized = original.replace("\r\n", "\n");
             let normalized = normalized.trim_end_matches('\n');
             assert_eq!(dto.pre_block.as_deref(), Some(normalized));
@@ -9728,14 +7760,15 @@ mod tests {
                 ..Default::default()
             }];
 
-            let err = g.save_page(&dto, dto.rev.as_deref()).unwrap_err();
+            let err = match store.save(&id, tine_store::SaveBase::Existing(read.rev), &dto) {
+                tine_store::SaveOutcome::Io(error) => error,
+                outcome => panic!("header rewrite was accepted: {outcome:?}"),
+            };
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
             assert!(err.to_string().contains("page-header property"));
             assert_eq!(fs::read_to_string(&path).unwrap(), original);
 
-            let err = g.force_save_page(&dto).unwrap_err();
-            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+            store.close();
             let _ = fs::remove_dir_all(&dir);
         }
     }
@@ -9745,8 +7778,7 @@ mod tests {
         // H7: the preservation firewall is structural, not an exact-text check.
         // A stale/buggy DTO must not evade it by changing the moved property's
         // value or key while reclassifying it as outline content. Exercise both
-        // ordinary and force-save paths from a warm cache and prove neither the
-        // bytes nor cached document move on validation failure.
+        // ordinary save and keep-mine through the production feature boundary.
         for (shape, original, kept, moved, childful) in [
             (
                 "partial-value",
@@ -9788,11 +7820,11 @@ mod tests {
                 let dir = scratch(&format!("page-property-firewall-changed-{shape}-{forced}"));
                 let path = dir.join("pages").join("Property.md");
                 fs::write(&path, original).unwrap();
-                let g = Graph::open(&dir);
-                g.warm_parsed_pages();
-                let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
-                let cached_before = dto.clone();
-                let generation_before = g.cache_generation();
+                let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+                let id = tine_store::PageId::from("pages/Property.md");
+                let cached_before = store.page(&id).unwrap();
+                let mut dto = cached_before.doc.clone();
+                let generation_before = store.whole_graph().unwrap().rev();
                 dto.pre_block = kept.map(str::to_string);
                 dto.blocks = vec![BlockDto {
                     id: "reclassified-header".into(),
@@ -9808,18 +7840,29 @@ mod tests {
                     ..Default::default()
                 }];
 
-                let err = if forced {
-                    g.force_save_page(&dto).unwrap_err()
-                } else {
-                    g.save_page(&dto, dto.rev.as_deref()).unwrap_err()
+                let outcome = tine_graph_features::pages::save_page(
+                    &store,
+                    &id,
+                    &dto,
+                    Some(cached_before.rev.clone().into()),
+                    forced,
+                )
+                .unwrap();
+                let err = match outcome {
+                    tine_store::SaveOutcome::Io(error) => error,
+                    other => panic!("header rewrite was accepted: {other:?}"),
                 };
                 assert_eq!(err.kind(), io::ErrorKind::InvalidData);
                 assert_eq!(fs::read_to_string(&path).unwrap(), original);
-                assert_eq!(g.cache_generation(), generation_before);
-                let cached_after = g.load_named("Property", PageKind::Page).unwrap().unwrap();
-                assert_eq!(cached_after.pre_block, cached_before.pre_block);
-                assert_eq!(cached_after.blocks.len(), cached_before.blocks.len());
+                assert_eq!(store.whole_graph().unwrap().rev(), generation_before);
+                let cached_after = store.page(&id).unwrap();
+                assert_eq!(cached_after.doc.pre_block, cached_before.doc.pre_block);
+                assert_eq!(
+                    cached_after.doc.blocks.len(),
+                    cached_before.doc.blocks.len()
+                );
                 assert_eq!(cached_after.rev, cached_before.rev);
+                store.close();
                 let _ = fs::remove_dir_all(&dir);
             }
         }
@@ -9834,20 +7877,20 @@ mod tests {
         let dir = scratch("page-property-existing-outline-provenance");
         let path = dir.join("pages").join("Property.md");
         fs::write(&path, "A:: header\nB:: shared\n\n- B:: shared\n").unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Property.md");
+        let mut dto = store.page(&id).unwrap().doc;
         dto.pre_block = Some("A:: edited header".into());
-        g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "A:: edited header\n\n- B:: shared\n"
         );
-        let mut warm = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+        let mut warm = store.page(&id).unwrap().doc;
         assert_eq!(warm.pre_block.as_deref(), Some("A:: edited header"));
         assert_eq!(warm.blocks[0].raw, "B:: shared");
         warm.blocks[0].raw = "Renamed:: edited outline".into();
-        g.save_page(&warm, warm.rev.as_deref()).unwrap();
+        saved_rev(save_on_store(&store, &warm, warm.rev.as_deref()));
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "A:: edited header\n\n- Renamed:: edited outline\n"
@@ -9875,17 +7918,16 @@ mod tests {
             let dir = scratch(&format!("page-property-positive-{label}"));
             let path = dir.join("pages").join("Property.md");
             fs::write(&path, original).unwrap();
-            let g = Graph::open(&dir);
-            let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+            let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let id = tine_store::PageId::from("pages/Property.md");
+            let mut dto = store.page(&id).unwrap().doc;
             dto.pre_block = Some("icon:: ★\nA:: XX\nB:: XX\nC:: XX".into());
-            g.save_page(&dto, dto.rev.as_deref()).unwrap();
+            saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
             assert_eq!(fs::read_to_string(&path).unwrap(), expected);
-            drop(g);
+            store.close();
 
-            let reopened = Graph::open(&dir)
-                .load_named("Property", PageKind::Page)
-                .unwrap()
-                .unwrap();
+            let reopened_store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+            let reopened = reopened_store.page(&id).unwrap().doc;
             assert_eq!(
                 reopened.pre_block.as_deref(),
                 Some("icon:: ★\nA:: XX\nB:: XX\nC:: XX")
@@ -9898,8 +7940,8 @@ mod tests {
     #[test]
     fn new_property_only_first_root_becomes_canonical_page_header() {
         let dir = scratch("page-property-authoring");
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
         let page = PageDto {
             name: "Property Authoring".into(),
             kind: PageKind::Page,
@@ -9923,17 +7965,15 @@ mod tests {
 
             guide: false,
         };
-        g.save_page(&page, None).unwrap();
+        saved_rev(save_on_store(&store, &page, None));
         let path = dir.join("pages").join("Property Authoring.md");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "alias:: book\n\nklíč:: hodnota\n\n- Reading list\n"
         );
 
-        let warm = g
-            .load_named("Property Authoring", PageKind::Page)
-            .unwrap()
-            .unwrap();
+        let id = tine_store::PageId::from("pages/Property Authoring.md");
+        let warm = store.page(&id).unwrap().doc;
         assert_eq!(
             warm.pre_block.as_deref(),
             Some("alias:: book\n\nklíč:: hodnota")
@@ -9944,13 +7984,57 @@ mod tests {
             warm.blocks[0].id, "body",
             "normalization changed the body root identity"
         );
-        drop(g);
-        let cold = Graph::open(&dir)
-            .load_named("Property Authoring", PageKind::Page)
-            .unwrap()
-            .unwrap();
+        store.close();
+        let reopened_store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let cold = reopened_store.page(&id).unwrap().doc;
         assert_eq!(cold.pre_block, warm.pre_block);
         assert_eq!(cold.blocks.len(), warm.blocks.len());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dto_save_retains_runtime_ids_until_external_reparse() {
+        let dir = scratch("dto-save-runtime-ids");
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        let id = tine_store::PageId::from("pages/Runtime.md");
+        let mut dto = PageDto {
+            name: "Runtime".into(),
+            kind: PageKind::Page,
+            title: "Runtime".into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                id: "live-parent".into(),
+                raw: "Parent".into(),
+                children: vec![BlockDto {
+                    id: "live-child".into(),
+                    raw: "Child".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+            guide: false,
+        };
+        saved_rev(save_on_store(&store, &dto, None));
+        let first = store.page(&id).unwrap().doc;
+        assert_eq!(first.blocks[0].id, "live-parent");
+        assert_eq!(first.blocks[0].children[0].id, "live-child");
+
+        dto.blocks[0].raw = "Parent edited".into();
+        saved_rev(save_on_store(&store, &dto, first.rev.as_deref()));
+        let second = store.page(&id).unwrap().doc;
+        assert_eq!(second.blocks[0].id, "live-parent");
+        assert_eq!(second.blocks[0].children[0].id, "live-child");
+
+        let path = dir.join("pages/Runtime.md");
+        fs::write(&path, "- External edit\n  - Child\n").unwrap();
+        let external = store.page(&id).unwrap().doc;
+        assert_ne!(external.blocks[0].id, "live-parent");
+        assert_ne!(external.blocks[0].children[0].id, "live-child");
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9966,11 +8050,11 @@ mod tests {
         let path = dir.join("pages").join("The Nazi Mind.md");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "title:: The Nazi Mind\ntags:: books\n").unwrap();
-        let g = Graph::open(&dir);
-        let loaded = g
-            .load_named("The Nazi Mind", PageKind::Page)
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let loaded = store
+            .page(&tine_store::PageId::from("pages/The Nazi Mind.md"))
             .unwrap()
-            .unwrap();
+            .doc;
         assert_eq!(
             loaded.pre_block.as_deref(),
             Some("title:: The Nazi Mind\ntags:: books")
@@ -9989,8 +8073,7 @@ mod tests {
 
             guide: false,
         };
-        g.save_page(&dto, loaded.rev.as_deref())
-            .expect("corrected canonical-preamble DTO must save over an existing preamble");
+        saved_rev(save_on_store(&store, &dto, loaded.rev.as_deref()));
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "title:: The Nazi Mind\ntags:: books\n"
@@ -10022,9 +8105,9 @@ mod tests {
         let dir = scratch("page-property-existing-headerless");
         let path = dir.join("pages").join("Existing.md");
         fs::write(&path, "- Body\r\n").unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let mut dto = g.load_named("Existing", PageKind::Page).unwrap().unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Existing.md");
+        let mut dto = store.page(&id).unwrap().doc;
         dto.blocks.insert(
             0,
             BlockDto {
@@ -10033,33 +8116,32 @@ mod tests {
                 ..Default::default()
             },
         );
-        g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        saved_rev(save_on_store(&store, &dto, dto.rev.as_deref()));
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "custom/key:: exact value\r\n\r\n- Body\r\n"
         );
-        let warm = g.load_named("Existing", PageKind::Page).unwrap().unwrap();
+        let warm = store.page(&id).unwrap().doc;
         assert_eq!(warm.pre_block.as_deref(), Some("custom/key:: exact value"));
         assert_eq!(warm.blocks.len(), 1);
-        drop(g);
-        let cold = Graph::open(&dir)
-            .load_named("Existing", PageKind::Page)
-            .unwrap()
-            .unwrap();
+        store.close();
+        let cold_store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let cold = cold_store.page(&id).unwrap().doc;
         assert_eq!(cold.pre_block, warm.pre_block);
         assert_eq!(cold.blocks.len(), warm.blocks.len());
         let _ = fs::remove_dir_all(&dir);
 
         // A non-property preamble may only move through GH #85's explicit prose
         // promotion. A property candidate cannot make that preamble disappear,
-        // even through force-save, and the warm cache stays on the disk version.
+        // and the warm cache stays on the disk version. Store-backed keep-mine
+        // is covered in pages_snapshot_tests.
         let dir = scratch("page-property-preamble-loss");
         let path = dir.join("pages").join("Imported.md");
         let original = "Intro before outline\n\n- Body\n";
         fs::write(&path, original).unwrap();
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        let mut dto = g.load_named("Imported", PageKind::Page).unwrap().unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let id = tine_store::PageId::from("pages/Imported.md");
+        let mut dto = store.page(&id).unwrap().doc;
         dto.pre_block = None;
         dto.blocks.insert(
             0,
@@ -10069,19 +8151,14 @@ mod tests {
                 ..Default::default()
             },
         );
-        for forced in [false, true] {
-            let err = if forced {
-                g.force_save_page(&dto).unwrap_err()
-            } else {
-                g.save_page(&dto, dto.rev.as_deref()).unwrap_err()
-            };
-            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-            assert!(err.to_string().contains("existing page preamble"));
-            assert_eq!(fs::read_to_string(&path).unwrap(), original);
-            let cached = g.load_named("Imported", PageKind::Page).unwrap().unwrap();
-            assert_eq!(cached.pre_block.as_deref(), Some("Intro before outline"));
-            assert_eq!(cached.blocks.len(), 1);
-        }
+        let outcome = save_on_store(&store, &dto, dto.rev.as_deref());
+        assert!(
+            matches!(outcome, tine_store::SaveOutcome::Io(ref err) if err.kind() == io::ErrorKind::InvalidData && err.to_string().contains("existing page preamble"))
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        let cached = store.page(&id).unwrap().doc;
+        assert_eq!(cached.pre_block.as_deref(), Some("Intro before outline"));
+        assert_eq!(cached.blocks.len(), 1);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -10174,7 +8251,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            let g = Graph::open(&dir);
+            let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
             let page = PageDto {
                 name: format!("Negative {label}"),
                 kind: PageKind::Page,
@@ -10187,8 +8264,12 @@ mod tests {
 
                 guide: false,
             };
-            g.save_page(&page, None).unwrap();
-            let reopened = g.load_named(&page.name, PageKind::Page).unwrap().unwrap();
+            saved_rev(save_on_store(&store, &page, None));
+            let id = match store.whole_graph().unwrap().resolve(&page.name, false) {
+                tine_store::Resolved::Existing { id, .. } => id,
+                _ => panic!("saved page missing"),
+            };
+            let reopened = store.page(&id).unwrap().doc;
             assert!(reopened.pre_block.is_none(), "promoted unsafe case {label}");
             assert_eq!(
                 reopened.blocks.len(),
@@ -10197,7 +8278,11 @@ mod tests {
             );
             if label == "id-bearing" {
                 assert!(
-                    g.resolve_block("11111111-1111-4111-8111-111111111111")
+                    store
+                        .whole_graph()
+                        .unwrap()
+                        .blocks(&["11111111-1111-4111-8111-111111111111".into()])
+                        .unwrap()[0]
                         .is_some(),
                     "ID-bearing root lost addressability"
                 );
@@ -10232,7 +8317,7 @@ mod tests {
     #[test]
     fn write_highlights_refuses_unreadable_artifacts_without_partial_commit() {
         let dir = scratch("highlights-invalid-utf8");
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let key = tine_core::pdf::asset_key("paper.pdf");
         let edn_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -10240,13 +8325,14 @@ mod tests {
         fs::write(&edn_path, unknown).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err = g
-            .write_highlights("paper.pdf", "Paper", &[h], &[])
-            .unwrap_err();
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&edn_path).unwrap(), unknown);
         assert!(!dir.join("pages").join(format!("hls__{key}.md")).exists());
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -10259,8 +8345,8 @@ mod tests {
             "{:preferred-format \"Org\"}\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
-        let state = g.open_pdf("paper.pdf", "Paper").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let state = tine_graph_features::pdf::open_pdf(&store, "paper.pdf", "Paper").unwrap();
         assert!(state.highlights.is_empty());
         assert_eq!(state.page, None);
         assert_eq!(state.scale, None);
@@ -10276,13 +8362,14 @@ mod tests {
             "{org}"
         );
         assert!(org.contains("#+FILE-PATH: ../assets/paper.pdf"), "{org}");
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn pdf_view_state_update_preserves_highlights_and_foreign_edn() {
         let dir = scratch("pdf-view-state");
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let key = tine_core::pdf::asset_key("paper.pdf");
         let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -10291,7 +8378,7 @@ mod tests {
             tine_core::pdf::write_highlights(&[h.clone()], "{:extra {:plugin \"keep\"}}");
         fs::write(&sidecar_path, original).unwrap();
 
-        g.write_pdf_view_state("paper.pdf", 8, 1.9).unwrap();
+        tine_graph_features::pdf::write_pdf_view_state(&store, "paper.pdf", 8, 1.9).unwrap();
 
         let written = fs::read_to_string(&sidecar_path).unwrap();
         let state = tine_core::pdf::parse_pdf_state(&written);
@@ -10306,6 +8393,7 @@ mod tests {
                 .and_then(tine_core::edn::Edn::as_str),
             Some("keep")
         );
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -10318,9 +8406,10 @@ mod tests {
             "{:preferred-format \"Org\"}\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
-        g.write_highlights("paper.pdf", "Paper", &[h], &[]).unwrap();
+        tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+            .unwrap();
         let org_path = dir.join("pages").join("hls__paper.org");
         let org = fs::read_to_string(&org_path).unwrap();
         assert!(org.contains("* text"), "{org}");
@@ -10335,33 +8424,35 @@ mod tests {
             "{:preferred-format \"Markdown\"}\n",
         )
         .unwrap();
-        let reopened = Graph::open(&dir);
+        store.close();
+        let reopened = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("more"));
-        reopened
-            .write_highlights("paper.pdf", "Paper", &[h2], &[])
+        tine_graph_features::pdf::write_highlights(&reopened, "paper.pdf", "Paper", &[h2], &[])
             .unwrap();
         assert!(org_path.exists());
         assert!(!dir.join("pages").join("hls__paper.md").exists());
+        reopened.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn write_highlights_checks_notes_page_before_sidecar_commit() {
         let dir = scratch("highlights-invalid-page");
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let key = tine_core::pdf::asset_key("paper.pdf");
         let page_path = dir.join("pages").join(format!("hls__{key}.md"));
         let unknown = b"\xff\xfeunknown notes bytes";
         fs::write(&page_path, unknown).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err = g
-            .write_highlights("paper.pdf", "Paper", &[h], &[])
-            .unwrap_err();
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&page_path).unwrap(), unknown);
         assert!(!dir.join("assets").join(format!("{key}.edn")).exists());
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -10383,13 +8474,15 @@ mod tests {
         fs::write(&sidecar_path, original).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err = Graph::open(&dir)
-            .write_highlights("paper.pdf", "Paper", &[h], &[])
-            .unwrap_err();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), original);
         assert_eq!(fs::read_to_string(&page_path).unwrap(), "* a\n*** c\n");
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -10399,7 +8492,6 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = scratch("highlights-page-commit-rollback");
-        let g = Graph::open(&dir);
         let key = tine_core::pdf::asset_key("paper.pdf");
         let page_path = dir.join("pages").join(format!("hls__{key}.md"));
         let page_before = "- Existing annotation note\n";
@@ -10409,13 +8501,16 @@ mod tests {
         let sidecar_before = "{:highlights [] :extra {:plugin \"keep\"}}\n";
         fs::write(&sidecar_path, sidecar_before).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let before_rev = store.whole_graph().unwrap().rev();
 
         let pages = dir.join("pages");
         let original_permissions = fs::metadata(&pages).unwrap().permissions();
         let mut read_only = original_permissions.clone();
         read_only.set_mode(0o555);
         fs::set_permissions(&pages, read_only).unwrap();
-        let result = g.write_highlights("paper.pdf", "Paper", &[h], &[]);
+        let result =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]);
         fs::set_permissions(&pages, original_permissions).unwrap();
 
         assert!(
@@ -10424,10 +8519,13 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), sidecar_before);
         assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
-        assert!(
-            !g.recent_writes.lock().unwrap().contains_key(&page_path),
-            "a failed page commit must not leave a stale watcher suppression marker"
+        store.scan_refresh().unwrap();
+        assert_eq!(
+            store.whole_graph().unwrap().rev(),
+            before_rev,
+            "a failed page commit must not publish a watcher change"
         );
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -10437,7 +8535,6 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = scratch("highlights-new-sidecar-page-failure");
-        let g = Graph::open(&dir);
         let key = tine_core::pdf::asset_key("paper.pdf");
         let page_path = dir.join("pages").join(format!("hls__{key}.md"));
         let page_before = "- Existing annotation note\n";
@@ -10445,13 +8542,15 @@ mod tests {
         fs::create_dir_all(dir.join("assets")).unwrap();
         let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
         let pages = dir.join("pages");
         let original_permissions = fs::metadata(&pages).unwrap().permissions();
         let mut read_only = original_permissions.clone();
         read_only.set_mode(0o555);
         fs::set_permissions(&pages, read_only).unwrap();
-        let result = g.write_highlights("paper.pdf", "Paper", &[h], &[]);
+        let result =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]);
         fs::set_permissions(&pages, original_permissions).unwrap();
 
         assert!(result.is_err());
@@ -10460,23 +8559,16 @@ mod tests {
             "the failed pair must leave the primary target absent"
         );
         assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
-        let trash = typed_trash_dir(&dir, TrashEntryKind::Conflict);
-        assert!(
-            fs::read_dir(trash).unwrap().flatten().any(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .contains("failed-highlight-pair")
-            }),
-            "the exact new sidecar remains recoverable in conflict trash"
-        );
+        // The production transaction rolls back both files. The failed new
+        // highlight never becomes live, so there is no sidecar to recover.
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn write_highlights_preserves_malformed_utf8_sidecar() {
         let dir = scratch("highlights-malformed-edn");
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let key = tine_core::pdf::asset_key("paper.pdf");
         let edn_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -10484,9 +8576,9 @@ mod tests {
         fs::write(&edn_path, malformed).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err = g
-            .write_highlights("paper.pdf", "Paper", &[h], &[])
-            .unwrap_err();
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
@@ -10497,7 +8589,7 @@ mod tests {
     #[test]
     fn write_highlights_rejects_valid_map_with_trailing_sync_data() {
         let dir = scratch("highlights-trailing-edn");
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let key = tine_core::pdf::asset_key("paper.pdf");
         let edn_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -10505,9 +8597,9 @@ mod tests {
         fs::write(&edn_path, malformed).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
-        let err = g
-            .write_highlights("paper.pdf", "Paper", &[h], &[])
-            .unwrap_err();
+        let err =
+            tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+                .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
@@ -10544,17 +8636,22 @@ mod tests {
         )
         .unwrap();
 
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         // Read-fallback: the legacy file is found under the new-key lookup.
-        let read = g.read_highlights(pdf);
+        let read = tine_graph_features::pdf::read_highlights(&store, pdf);
         assert_eq!(read.len(), 1);
         assert_eq!(read[0].id, h1.id);
 
         // Write H1 + a newly-added H2 (editor baseline = [H1]).
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("new text"));
-        g.write_highlights(pdf, "My Paper", &[h1.clone(), h2.clone()], &[h1.id.clone()])
-            .unwrap();
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            pdf,
+            "My Paper",
+            &[h1.clone(), h2.clone()],
+            &[h1.id.clone()],
+        )
+        .unwrap();
 
         // New-key artifacts exist with both highlights; the legacy ones are gone.
         let new_edn = assets.join(format!("{new_key}.edn"));
@@ -10609,9 +8706,15 @@ mod tests {
         )
         .unwrap();
 
-        let g = Graph::open(&dir);
-        g.write_highlights(pdf, "Paper", &[h.clone()], &[h.id.clone()])
-            .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            pdf,
+            "Paper",
+            &[h.clone()],
+            &[h.id.clone()],
+        )
+        .unwrap();
 
         let migrated = dir.join("pages").join(format!("hls__{new_key}.md"));
         assert!(migrated.exists(), "legacy .md format should be retained");
@@ -10662,15 +8765,20 @@ mod tests {
             .join(format!("{}.md", tine_core::pdf::hls_page_name(&lower_key)));
         fs::write(&lower_page_path, &lower_page_bytes).unwrap();
 
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let spaced_highlight = mkhl(
             "44444444-4444-4444-4444-444444444444",
             4,
             Some("spaced pdf highlight"),
         );
-        g.write_highlights(spaced_pdf, "My Paper", &[spaced_highlight], &[])
-            .unwrap();
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            spaced_pdf,
+            "My Paper",
+            &[spaced_highlight],
+            &[],
+        )
+        .unwrap();
 
         assert!(
             lower_edn_path.exists(),
@@ -10722,39 +8830,67 @@ mod tests {
         // delete-rewrite) must be recognized as Tine's OWN write by the watcher,
         // not flagged as an external change.
         let dir = scratch("hldel");
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let changes = store.subscribe();
         let h1 = mkhl("aaaaaaaa-0000-0000-0000-000000000001", 1, Some("one"));
         let h2 = mkhl("bbbbbbbb-0000-0000-0000-000000000002", 2, Some("two"));
         let page_path = dir.join("pages").join("hls__paper.md");
-        g.write_highlights("paper.pdf", "Paper", &[h1.clone(), h2.clone()], &[])
-            .unwrap();
-        assert!(
-            g.sync_file(&page_path).is_none(),
-            "initial highlight write looked external"
-        );
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            "paper.pdf",
+            "Paper",
+            &[h1.clone(), h2.clone()],
+            &[],
+        )
+        .unwrap();
+        assert!(page_path.exists());
+        store.scan_refresh().unwrap();
+        while let Some(change) = changes.try_recv().unwrap() {
+            assert!(
+                change.origin != tine_store::Origin::External
+                    || !change
+                        .files
+                        .iter()
+                        .any(|(file, _, _)| file.as_str() == "pages/hls__paper.md"),
+                "initial highlight write looked external: {change:?}"
+            );
+        }
         // Delete h2 (write just h1; baseline = both) — the rewrite must also be ours.
-        g.write_highlights(
+        tine_graph_features::pdf::write_highlights(
+            &store,
             "paper.pdf",
             "Paper",
             &[h1.clone()],
             &[h1.id.clone(), h2.id.clone()],
         )
         .unwrap();
-        assert!(
-            g.sync_file(&page_path).is_none(),
-            "delete-rewrite looked external (false conflict)"
-        );
+        store.scan_refresh().unwrap();
+        while let Some(change) = changes.try_recv().unwrap() {
+            assert!(
+                change.origin != tine_store::Origin::External
+                    || !change
+                        .files
+                        .iter()
+                        .any(|(file, _, _)| file.as_str() == "pages/hls__paper.md"),
+                "delete-rewrite looked external (false conflict): {change:?}"
+            );
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn write_pdf_area_image_uses_og_layout() {
         let dir = scratch("areaimg");
-        let g = Graph::open(&dir);
-        let rel = g
-            .write_pdf_area_image("My Paper.pdf", 7, "abc-id", 1659920114630, &[1, 2, 3, 4])
-            .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let rel = tine_graph_features::pdf::write_pdf_area_image(
+            &store,
+            "My Paper.pdf",
+            7,
+            "abc-id",
+            1659920114630,
+            &[1, 2, 3, 4],
+        )
+        .unwrap();
         // OG layout: assets/<key>/<page>_<id>_<stamp>.png with the OG-compatible key.
         assert_eq!(rel, "My Paper/7_abc-id_1659920114630.png");
         let p = dir
@@ -10776,11 +8912,16 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         fs::create_dir_all(dir.join("assets")).unwrap();
         symlink(&outside, dir.join("assets").join("My Paper")).unwrap();
-        let g = Graph::open(&dir);
-
-        assert!(g
-            .write_pdf_area_image("My Paper.pdf", 7, "abc-id", 1659920114630, &[1, 2, 3])
-            .is_err());
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        assert!(tine_graph_features::pdf::write_pdf_area_image(
+            &store,
+            "My Paper.pdf",
+            7,
+            "abc-id",
+            1659920114630,
+            &[1, 2, 3],
+        )
+        .is_err());
         assert!(!outside.join("7_abc-id_1659920114630.png").exists());
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&outside);
@@ -10817,10 +8958,10 @@ mod tests {
             "{:journal/file-name-format \"yyyy-MM-dd\"}\n",
         )
         .unwrap();
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         // A custom filename format now creates today's journal at the CORRECT path
         // (the user's format) — not a misplaced default `yyyy_MM_dd` duplicate.
-        g.save_page(&jdto("Jun 24th, 2026"), None).unwrap();
+        saved_rev(save_on_store(&store, &jdto("Jun 24th, 2026"), None));
         assert!(dir.join("journals").join("2026-06-24.md").exists());
         assert!(!dir.join("journals").join("2026_06_24.md").exists());
         let _ = fs::remove_dir_all(&dir);
@@ -10860,8 +9001,8 @@ mod tests {
     fn default_journal_format_creates_journal() {
         let dir = scratch("jfmt-default");
         // No config.edn → defaults → creation proceeds as before.
-        let g = Graph::open(&dir);
-        g.save_page(&jdto("Jun 24th, 2026"), None).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        saved_rev(save_on_store(&store, &jdto("Jun 24th, 2026"), None));
         assert!(dir.join("journals").join("2026_06_24.md").exists());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -11220,7 +9361,7 @@ mod tests {
         .unwrap();
         fs::write(dir.join("pages").join("Café.md"), "- real page\n").unwrap();
         let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
 
         assert_eq!(
             g.load_named("Re\u{301}sume\u{301}", PageKind::Page)
@@ -11564,24 +9705,22 @@ mod tests {
     #[test]
     fn guide_twin_withdrawal_preserves_a_concurrent_markdown_replacement() {
         let dir = scratch("guide-twin-withdrawal-race");
-        let graph = Graph::open(&dir);
-        GUIDE_TWIN_RACE_CONTENT.with(|content| {
-            *content.borrow_mut() = Some(b"* external org twin\n".to_vec());
-        });
-        WITHDRAW_RACE_REPLACEMENT.with(|replacement| {
-            *replacement.borrow_mut() = Some(b"- external markdown replacement\n".to_vec());
-        });
-
-        assert!(!graph
-            .create_markdown_page_if_absent("Guide", "- bundled guide\n")
-            .unwrap());
+        let store = loaded_store(&dir);
+        store.inject_fault(crate::FaultPoint::TwinAfterPublish);
+        store.inject_fault(crate::FaultPoint::UndoLiveWrite);
+        let mut tx = store.transaction();
+        tx.create(
+            &crate::FileId::from("pages/Guide.md".to_owned()),
+            crate::Content::Bytes(b"- bundled guide\n".to_vec()),
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
         assert_eq!(
             fs::read_to_string(dir.join("pages/Guide.md")).unwrap(),
-            "- external markdown replacement\n"
+            "external during undo"
         );
         assert_eq!(
             fs::read_to_string(dir.join("pages/Guide.org")).unwrap(),
-            "* external org twin\n"
+            "external twin"
         );
         let _ = fs::remove_dir_all(dir);
     }
@@ -11658,41 +9797,80 @@ mod tests {
         let _ = fs::remove_dir_all(dir.join("assets"));
         symlink(&outside, dir.join("assets")).unwrap();
 
-        assert!(Graph::open_checked(&dir).is_err());
-        assert!(Graph::open_checked_with_assets(&dir, Some(&other)).is_err());
-        let graph = Graph::open_checked_with_assets(&dir, Some(&outside)).unwrap();
-        assert_eq!(graph.assets_path(), outside.canonicalize().unwrap());
+        assert!(tine_store::Store::open(&dir, Default::default()).is_err());
+        assert!(tine_store::Store::open(
+            &dir,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(other.clone()),
+                ..Default::default()
+            }
+        )
+        .is_err());
+        let store = tine_store::Store::open(
+            &dir,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(outside.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
         assert_eq!(
-            graph.save_asset("approved.txt", b"safe").unwrap(),
+            tine_graph_features::assets::save_asset(&store, "approved.txt", b"safe").unwrap(),
             "approved.txt"
         );
         assert_eq!(fs::read(outside.join("approved.txt")).unwrap(), b"safe");
 
-        // Retargeting the graph link cannot redirect an already-open graph: the
-        // Graph holds the originally approved canonical capability. A fresh open
-        // also fails because the stored approval no longer matches.
+        // A retargeted link no longer resolves to the approved directory.
+        // Neither writes nor reads through that link may silently follow it.
         fs::remove_file(dir.join("assets")).unwrap();
         symlink(&other, dir.join("assets")).unwrap();
-        assert_eq!(
-            graph
-                .save_asset("after-retarget.txt", b"still safe")
-                .unwrap(),
-            "after-retarget.txt"
-        );
-        assert!(outside.join("after-retarget.txt").exists());
+        assert!(tine_graph_features::assets::save_asset(
+            &store,
+            "after-retarget.txt",
+            b"still safe"
+        )
+        .is_err());
+        assert!(!outside.join("after-retarget.txt").exists());
         assert!(!other.join("after-retarget.txt").exists());
-        assert!(Graph::open_checked_with_assets(&dir, Some(&outside)).is_err());
+        assert!(store
+            .read(
+                &tine_store::FileId::from("assets/approved.txt".to_owned()),
+                None
+            )
+            .is_err());
+        assert!(tine_store::Store::open(
+            &dir,
+            tine_store::OpenOptions {
+                approved_external_assets: Some(outside.clone()),
+                ..Default::default()
+            }
+        )
+        .is_err());
 
         // A nested link inside the approved root remains confined: neither read
         // nor write may follow it into another directory.
+        fs::remove_file(dir.join("assets")).unwrap();
+        symlink(&outside, dir.join("assets")).unwrap();
         symlink(other.join("secret.txt"), outside.join("escape.txt")).unwrap();
         fs::write(other.join("secret.txt"), b"private").unwrap();
-        assert!(graph.read_asset("escape.txt").is_err());
+        assert!(store
+            .read(
+                &tine_store::FileId::from("assets/escape.txt".to_owned()),
+                None
+            )
+            .is_err());
         let area_key = tine_core::pdf::asset_key("Escaping area.pdf");
         symlink(&other, outside.join(&area_key)).unwrap();
-        assert!(graph
-            .write_pdf_area_image("Escaping area.pdf", 1, "id", 1, b"png")
-            .is_err());
+        assert!(tine_graph_features::pdf::write_pdf_area_image(
+            &store,
+            "Escaping area.pdf",
+            1,
+            "id",
+            1,
+            b"png"
+        )
+        .is_err());
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&outside);
@@ -11750,7 +9928,7 @@ mod tests {
             "{:journal/file-name-format \"../../yyyy_MM_dd\"}\n",
         )
         .unwrap();
-        let g = Graph::open_checked(&dir).unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let page = PageDto {
             name: "Jul 10th, 2026".into(),
             kind: PageKind::Journal,
@@ -11763,7 +9941,11 @@ mod tests {
 
             guide: false,
         };
-        assert!(g.save_page(&page, None).is_err());
+        let id = store.journal_id(tine_store::Day(20260710));
+        assert!(matches!(
+            store.save(&id, tine_store::SaveBase::CreateNew, &page),
+            tine_store::SaveOutcome::InvalidTarget(_)
+        ));
         assert!(!dir.parent().unwrap().join("2026_07_10.md").exists());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -12010,7 +10192,7 @@ mod tests {
 
         let store = loaded_store(&dir);
         let g = &store.graph;
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
         let logical_winner = g
             .find_entry("Exact Storage Twin", PageKind::Page)
             .expect("one duplicate is the stable name winner");
@@ -12096,7 +10278,7 @@ mod tests {
         // map incorrectly treats that as already fresh and suppresses its reload.
         fs::write(&logical_winner.path, "- nested saved sentinel\n").unwrap();
         assert!(
-            g.sync_file(&logical_winner.path)
+            g.sync_file_internal(&logical_winner.path)
                 .is_some_and(|entry| entry.path == logical_winner.path),
             "one duplicate's revision must not mark the other duplicate fresh"
         );
@@ -12113,7 +10295,7 @@ mod tests {
         fs::write(&nested, "- nested survives if not removed\n").unwrap();
 
         let g = Graph::open(&dir);
-        g.warm_parsed_pages();
+        assert!(g.warm_cache_cancellable(|| false));
         let removed = g
             .find_entry("Exact Storage Twin", PageKind::Page)
             .expect("one duplicate is the initial logical winner");
@@ -12124,7 +10306,7 @@ mod tests {
 
         fs::remove_file(&removed.path).unwrap();
         assert_eq!(
-            g.forget_file(&removed.path)
+            g.forget_file_internal(&removed.path)
                 .expect("the deleted path had a cache entry")
                 .path,
             removed.path
@@ -12165,14 +10347,16 @@ mod tests {
         let b = dir.join("pages/client-b/foo.md");
         fs::write(&a, "- body a\n").unwrap();
         fs::write(&b, "- body b\n").unwrap();
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        let err = g.rename_page("foo", "bar").unwrap_err();
+        let err = tine_graph_features::pages::rename_page_expected(&store, "foo", "bar", None)
+            .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
         assert_eq!(fs::read_to_string(&b).unwrap(), "- body b\n");
         assert!(!dir.join("pages/bar.md").exists());
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -12185,13 +10369,21 @@ mod tests {
         let b = dir.join("pages/client-b/foo.md");
         fs::write(&a, "- body a\n").unwrap();
         fs::write(&b, "- body b\n").unwrap();
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        let err = g.delete_page("foo", PageKind::Page).unwrap_err();
+        let err = tine_graph_features::pages::delete_page_expected(
+            &store,
+            "foo",
+            PageKind::Page,
+            None,
+            None,
+        )
+        .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
         assert_eq!(fs::read_to_string(&b).unwrap(), "- body b\n");
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -12203,23 +10395,32 @@ mod tests {
         let a = dir.join("pages/client-a/Twin.md");
         let b = dir.join("pages/client-b/Twin.md");
         fs::write(&a, "- client a\n").unwrap();
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        let stale = g
-            .delete_page_expected("Twin", PageKind::Page, Some("pages/client-b/Twin.md"))
-            .unwrap_err();
+        let stale = tine_graph_features::pages::delete_page_expected(
+            &store,
+            "Twin",
+            PageKind::Page,
+            Some("pages/client-b/Twin.md"),
+            None,
+        )
+        .unwrap_err();
         assert_eq!(stale.kind(), io::ErrorKind::NotFound);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
 
         fs::write(&b, "- client b\n").unwrap();
-        let g = Graph::open(&dir);
-        let ambiguous = g
-            .rename_page_expected("Twin", "Renamed", Some("pages/client-b/Twin.md"))
-            .unwrap_err();
+        let ambiguous = tine_graph_features::pages::rename_page_expected(
+            &store,
+            "Twin",
+            "Renamed",
+            Some("pages/client-b/Twin.md"),
+        )
+        .unwrap_err();
         assert_eq!(ambiguous.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
         assert_eq!(fs::read_to_string(&b).unwrap(), "- client b\n");
         assert!(!dir.join("pages/Renamed.md").exists());
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -12230,14 +10431,16 @@ mod tests {
         let target = dir.join("pages/New.md");
         fs::write(&old, "* old body\n").unwrap();
         fs::write(&target, "- existing target\n").unwrap();
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        let err = g.rename_page("Old", "New").unwrap_err();
+        let err = tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None)
+            .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
         assert_eq!(fs::read_to_string(&target).unwrap(), "- existing target\n");
         assert!(!dir.join("pages/New.org").exists());
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -12249,24 +10452,30 @@ mod tests {
         let target = dir.join("pages/client/New.md");
         fs::write(&old, "* old body\n").unwrap();
         fs::write(&target, "- nested target\n").unwrap();
-        let g = Graph::open(&dir);
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
 
-        let err = g.rename_page("Old", "New").unwrap_err();
+        let err = tine_graph_features::pages::rename_page_expected(&store, "Old", "New", None)
+            .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
         assert_eq!(fs::read_to_string(&target).unwrap(), "- nested target\n");
         assert!(!dir.join("pages/New.org").exists());
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn merge_pages_appends_stray_into_canonical_and_trashes_stray() {
         let dir = dup_day_graph("merge");
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        g.merge_pages("journals/Friday, 26-06-2026.org", "journals/2026_06_26.org")
-            .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        tine_graph_features::pages::merge_pages(
+            &store,
+            "journals/Friday, 26-06-2026.org",
+            "journals/2026_06_26.org",
+        )
+        .unwrap();
 
         // Canonical now holds both bodies; the stray is gone (moved to trash).
         let merged = fs::read_to_string(dir.join("journals").join("2026_06_26.org")).unwrap();
@@ -12283,20 +10492,29 @@ mod tests {
         let trash = dir.join("logseq").join(".tine-trash");
         let kept = fs::read_dir(&trash).unwrap().flatten().count();
         assert_eq!(kept, 1, "stray sits in the recoverable trash");
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rename_file_to_page_rescues_stray_and_refuses_collision() {
         let dir = dup_day_graph("renamefile");
-        let g = Graph::open(&dir);
-        g.warm_parsed_pages();
-        g.rename_file_to_page("journals/Friday, 26-06-2026.org", "Old Friday")
-            .unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let _ = store.whole_graph().unwrap();
+        tine_graph_features::pages::rename_file_to_page(
+            &store,
+            "journals/Friday, 26-06-2026.org",
+            "Old Friday",
+        )
+        .unwrap();
 
         // The stray became a normal page, reachable by its new unique name.
         assert!(!dir.join("journals").join("Friday, 26-06-2026.org").exists());
-        let page = g.load_named("Old Friday", PageKind::Page).unwrap().unwrap();
+        let id = match store.whole_graph().unwrap().resolve("Old Friday", false) {
+            tine_store::Resolved::Existing { id, .. } => id,
+            _ => panic!("rescue did not publish page"),
+        };
+        let page = store.page(&id).unwrap().doc;
         assert_eq!(page.blocks[0].raw, "stray body");
         assert_eq!(page.kind, PageKind::Page);
 
@@ -12307,8 +10525,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            g.rename_file_to_page("journals/Saturday, 27-06-2026.org", "Old Friday")
-                .is_err(),
+            tine_graph_features::pages::rename_file_to_page(
+                &store,
+                "journals/Saturday, 27-06-2026.org",
+                "Old Friday",
+            )
+            .is_err(),
             "collision refused"
         );
         assert!(
@@ -12317,6 +10539,7 @@ mod tests {
                 .exists(),
             "source left intact on refusal"
         );
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 

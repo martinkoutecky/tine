@@ -2,7 +2,6 @@
 //! saved back (the path a {{query}}-result edit takes).
 use crate::model::atomic_copy;
 use crate::model::Graph;
-use crate::store::Store as InternalStore;
 use crate::test_config_client::ConfigClient;
 use std::sync::Arc;
 use tine_core::PageKind;
@@ -362,9 +361,11 @@ fn search_reflects_toggle_on_journal_page() {
 fn new_journal_appears_in_journals_desc_via_cache() {
     let root = mk("newjournal");
     std::fs::write(root.join("journals").join("2026_06_16.md"), "- old day\n").unwrap();
-    let g = Graph::open(&root);
-    g.warm_parsed_pages(); // build the cache BEFORE the new journal exists
-    assert_eq!(g.journals_desc().len(), 1);
+    let store = store_at(&root);
+    let feed = |store: &Store| {
+        tine_graph_features::journals::feed_journals_desc_through(store, tine_store::Day(99991231))
+    };
+    assert_eq!(feed(&store).len(), 1);
 
     let dto = tine_core::model::PageDto {
         name: "Jun 18th, 2026".into(),
@@ -381,15 +382,24 @@ fn new_journal_appears_in_journals_desc_via_cache() {
 
         guide: false,
     };
-    g.save_page(&dto, None).expect("save new journal");
+    let id = store.journal_id(tine_store::Day(20260618));
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::CreateNew, &dto),
+        tine_store::SaveOutcome::Saved(_)
+    ));
 
-    let js = g.journals_desc();
+    let js = feed(&store);
     assert_eq!(
         js.len(),
         2,
         "the freshly-created journal must appear in the feed"
     );
-    assert_eq!(js[0].name, "Jun 18th, 2026", "newest day sorts first");
+    assert_eq!(
+        store.page(&js[0].1).unwrap().doc.name,
+        "Jun 18th, 2026",
+        "newest day sorts first"
+    );
+    store.close();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -400,26 +410,44 @@ fn own_write_is_suppressed_by_watcher() {
     let path = root.join("pages").join("Notes.md");
     // A block WITHOUT id:: (the common case): cache uuid is generated, disk has none.
     std::fs::write(&path, "- TODO ship the thing\n- another line\n").unwrap();
-    let g = Graph::open(&root);
-    g.warm_parsed_pages();
+    let store = store_at(&root);
+    let id = tine_store::PageId::from("pages/Notes.md");
+    let before = store.whole_graph().unwrap().rev();
 
     // Before any edit, an unchanged file is already suppressed.
-    assert!(g.sync_file(&path).is_none(), "unchanged file → suppressed");
+    store.scan_refresh().unwrap();
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        before,
+        "unchanged file → suppressed"
+    );
 
     // Edit + save through the normal path.
-    let mut dto = g.load_named("Notes", PageKind::Page).unwrap().unwrap();
+    let read = store.page(&id).unwrap();
+    let mut dto = read.doc;
     dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
-    g.save_page(&dto, dto.rev.as_deref()).expect("save");
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::Existing(read.rev), &dto),
+        tine_store::SaveOutcome::Saved(_)
+    ));
 
     // The watcher polling this file must see it as OUR write, not external.
-    assert!(
-        g.sync_file(&path).is_none(),
+    let after_save = store.whole_graph().unwrap().rev();
+    store.scan_refresh().unwrap();
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        after_save,
         "own write → suppressed (no phantom graph-changed)"
     );
 
     // A genuine external change is still detected.
     std::fs::write(&path, "- DOING ship the thing\n- edited by hand\n").unwrap();
-    assert!(g.sync_file(&path).is_some(), "external edit → detected");
+    store.scan_refresh().unwrap();
+    assert!(
+        store.whole_graph().unwrap().rev() > after_save,
+        "external edit → detected"
+    );
+    store.close();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -434,12 +462,21 @@ fn journal_content_days_distinguishes_empty() {
     .unwrap();
     std::fs::write(root.join("journals").join("2026_06_15.md"), "- \n").unwrap();
     std::fs::write(root.join("journals").join("2026_06_14.md"), "title:: x\n").unwrap();
-    let g = Graph::open(&root);
-    g.warm_parsed_pages();
-    let days = g.journal_content_days();
-    assert!(days.contains(&20260616), "non-empty day present: {days:?}");
-    assert!(!days.contains(&20260615), "empty bullet day absent");
-    assert!(!days.contains(&20260614), "props-only day absent");
+    let store = store_at(&root);
+    let days = store.whole_graph().unwrap().journal_content_days();
+    assert!(
+        days.contains(&tine_store::Day(20260616)),
+        "non-empty day present: {days:?}"
+    );
+    assert!(
+        !days.contains(&tine_store::Day(20260615)),
+        "empty bullet day absent"
+    );
+    assert!(
+        !days.contains(&tine_store::Day(20260614)),
+        "props-only day absent"
+    );
+    store.close();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -694,15 +731,22 @@ fn save_new_page_while_initial_load_is_pending() {
 fn list_pages_memo_reflects_new_and_deleted_pages() {
     let root = mk("listmemo");
     std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();
-    let g = Arc::new(Graph::open(&root));
-    g.warm_parsed_pages();
-    let store = InternalStore::from_graph_for_tests(Arc::clone(&g));
-    let names = |graph: &Graph| {
-        let mut v: Vec<String> = graph.list_pages().into_iter().map(|e| e.name).collect();
+    let store = store_at(&root);
+    let names = |store: &Store| {
+        let mut v: Vec<String> = store
+            .whole_graph()
+            .unwrap()
+            .inventory()
+            .0
+            .iter()
+            .filter(|entry| !entry.is_journal)
+            .filter(|entry| matches!(entry.target, tine_store::Resolved::Existing { .. }))
+            .map(|entry| entry.name.clone())
+            .collect();
         v.sort();
         v
     };
-    assert_eq!(names(&g), vec!["A"]);
+    assert_eq!(names(&store), vec!["A"]);
 
     // Create B via a save (cache_upsert bumps cache_gen → memo invalidates). A
     // brand-new page carries no path, so the save resolves the file by name (a
@@ -717,15 +761,15 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     assert!(matches!(
         store.save(
             &tine_store::PageId::from("pages/B.md"),
-            crate::store::SaveBase::CreateNew,
+            tine_store::SaveBase::CreateNew,
             &b
         ),
-        crate::store::SaveOutcome::Saved(_)
+        tine_store::SaveOutcome::Saved(_)
     ));
     assert!(
-        names(&g).contains(&"B".to_string()),
+        names(&store).contains(&"B".to_string()),
         "new page must appear: {:?}",
-        names(&g)
+        names(&store)
     );
 
     // Delete A → memo must drop it.
@@ -734,12 +778,16 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
         .unwrap();
     let mut tx = store.transaction();
     tx.trash(&tine_store::PageId::from("pages/A.md").file(), rev);
-    assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+    assert!(matches!(
+        tx.commit(),
+        tine_store::TxOutcome::Committed { .. }
+    ));
     assert!(
-        !names(&g).contains(&"A".to_string()),
+        !names(&store).contains(&"A".to_string()),
         "deleted page must disappear: {:?}",
-        names(&g)
+        names(&store)
     );
+    store.close();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -889,11 +937,11 @@ fn page_icons_answer_from_cached_pages_with_page_key_lookup() {
     )
     .unwrap();
     std::fs::write(root.join("pages").join("NoIcon.md"), "- body\n").unwrap();
-    let g = Graph::open(&root);
-    g.warm_parsed_pages();
+    let store = store_at(&root);
+    let view = store.whole_graph().unwrap();
     std::fs::rename(root.join("pages"), root.join("pages.offline")).unwrap();
 
-    let icons = g.page_icons(&[
+    let icons = view.page_icons(&[
         "iconpage".to_string(),
         "Icon Alias".to_string(),
         "NoIcon".to_string(),
@@ -903,6 +951,7 @@ fn page_icons_answer_from_cached_pages_with_page_key_lookup() {
     assert_eq!(icons.get("Icon Alias").map(String::as_str), Some("star"));
     assert!(!icons.contains_key("NoIcon"));
     assert!(!icons.contains_key("Missing"));
+    store.close();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1044,8 +1093,8 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
 #[test]
 fn new_journal_saved_with_date_stem_not_title() {
     let root = mk("journalname");
-    let g = Graph::open(&root);
-    g.warm_parsed_pages();
+    let store = store_at(&root);
+    let _ = store.whole_graph().unwrap();
     // Save a brand-new journal by its title (no file yet).
     let dto = tine_core::model::PageDto {
         name: "Jun 18th, 2026".into(),
@@ -1066,7 +1115,11 @@ fn new_journal_saved_with_date_stem_not_title() {
 
         guide: false,
     };
-    g.save_page(&dto, None).expect("save new journal");
+    let id = store.journal_id(tine_store::Day(20260618));
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::CreateNew, &dto),
+        tine_store::SaveOutcome::Saved(_)
+    ));
     // It must land on the date-stem file, and reopening must show it in the feed.
     assert!(
         root.join("journals").join("2026_06_18.md").exists(),
@@ -1076,13 +1129,16 @@ fn new_journal_saved_with_date_stem_not_title() {
         !root.join("journals").join("Jun 18th, 2026.md").exists(),
         "no title-named file"
     );
-    let g2 = Graph::open(&root);
+    store.close();
+    let reopened = store_at(&root);
     assert!(
-        g2.journals_desc()
+        journals::feed_journals_desc_through(&reopened, tine_store::Day(99991231))
             .iter()
-            .any(|e| e.name == "Jun 18th, 2026"),
+            .any(|(day, id)| *day == tine_store::Day(20260618)
+                && reopened.page(id).unwrap().doc.name == "Jun 18th, 2026"),
         "new journal appears in the feed after reload"
     );
+    reopened.close();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1107,8 +1163,13 @@ fn migrate_renames_title_named_journal_files() {
         "title file gone"
     );
     // Content preserved + now visible.
-    let g = Graph::open(&root);
-    assert!(g.journals_desc().iter().any(|e| e.name == "Jun 18th, 2026"));
+    assert!(
+        journals::feed_journals_desc_through(&store, tine_store::Day(99991231))
+            .iter()
+            .any(|(day, id)| *day == tine_store::Day(20260618)
+                && store.page(id).unwrap().doc.name == "Jun 18th, 2026")
+    );
+    store.close();
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1121,10 +1182,12 @@ fn crlf_files_round_trip_without_churn() {
     let original = "title:: Win\r\n\r\n- TODO ship it\r\n- second line\r\n";
     let path = root.join("pages").join("Win.md");
     std::fs::write(&path, original).unwrap();
-    let g = Graph::open(&root);
-    g.warm_parsed_pages();
+    let store = store_at(&root);
+    let id = tine_store::PageId::from("pages/Win.md");
+    let _ = store.whole_graph().unwrap();
 
-    let dto = g.load_named("Win", PageKind::Page).unwrap().unwrap();
+    let read = store.page(&id).unwrap();
+    let dto = read.doc;
     // (1) no stray CR leaks into the in-memory model
     assert!(
         dto.pre_block.as_deref().map_or(true, |p| !p.contains('\r')),
@@ -1134,16 +1197,23 @@ fn crlf_files_round_trip_without_churn() {
         assert!(!b.raw.contains('\r'), "block raw carries a CR: {:?}", b.raw);
     }
     // (2) an unchanged save is byte-identical — CRLF preserved, no churn
-    g.save_page(&dto, dto.rev.as_deref()).expect("no-op save");
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::Existing(read.rev), &dto),
+        tine_store::SaveOutcome::Unchanged(_) | tine_store::SaveOutcome::Saved(_)
+    ));
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         original,
         "unchanged save must keep the exact CRLF bytes"
     );
     // (3) a real edit keeps CRLF (only the changed line differs, no lone LF)
-    let mut dto2 = g.load_named("Win", PageKind::Page).unwrap().unwrap();
+    let read2 = store.page(&id).unwrap();
+    let mut dto2 = read2.doc;
     dto2.blocks[0].raw = dto2.blocks[0].raw.replace("ship it", "shipped");
-    g.save_page(&dto2, dto2.rev.as_deref()).expect("edit save");
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::Existing(read2.rev), &dto2),
+        tine_store::SaveOutcome::Saved(_)
+    ));
     let after = std::fs::read_to_string(&path).unwrap();
     assert!(after.contains("shipped"), "edit applied: {after:?}");
     assert!(after.contains("\r\n"), "edited file keeps CRLF: {after:?}");
@@ -1152,5 +1222,6 @@ fn crlf_files_round_trip_without_churn() {
         after.matches("\r\n").count(),
         "no lone LF mixed in: {after:?}"
     );
+    store.close();
     let _ = std::fs::remove_dir_all(&root);
 }

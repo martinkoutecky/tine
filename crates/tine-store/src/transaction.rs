@@ -12,6 +12,7 @@ use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use tine_core::doc::Document;
 use tine_core::model::PageDto;
 
 use crate::model::{
@@ -298,6 +299,7 @@ struct Prepared {
     dst: Option<FileId>,
     old: Option<Vec<u8>>,
     new: Option<Vec<u8>>,
+    saved_page: Option<Document>,
 }
 
 enum Expected {
@@ -625,7 +627,7 @@ impl<'a> Transaction<'a> {
                     })?),
                     None => None,
                 };
-                let new = self
+                let (new, saved_page) = self
                     .store
                     .graph
                     .prepare_page_bytes(doc, &path, text)
@@ -641,6 +643,7 @@ impl<'a> Transaction<'a> {
                     dst: None,
                     old,
                     new: Some(new),
+                    saved_page: Some(saved_page),
                 })
             }
             Step::Create { file, content } => {
@@ -665,6 +668,7 @@ impl<'a> Transaction<'a> {
                     dst: None,
                     old: None,
                     new: None,
+                    saved_page: None,
                 })
             }
             Step::Unique {
@@ -727,6 +731,7 @@ impl<'a> Transaction<'a> {
                     dst: None,
                     old: None,
                     new: None,
+                    saved_page: None,
                 })
             }
             Step::Replace {
@@ -743,6 +748,7 @@ impl<'a> Transaction<'a> {
                     dst: None,
                     old: Some(old),
                     new: Some(bytes.clone()),
+                    saved_page: None,
                 })
             }
             Step::Rewrite {
@@ -761,6 +767,7 @@ impl<'a> Transaction<'a> {
                     dst: None,
                     old: Some(old),
                     new: Some(new),
+                    saved_page: None,
                 })
             }
             Step::Move {
@@ -784,6 +791,7 @@ impl<'a> Transaction<'a> {
                     dst: Some(to.clone()),
                     old: Some(old),
                     new: Some(new),
+                    saved_page: None,
                 })
             }
             Step::Trash { file, expected } => {
@@ -796,6 +804,7 @@ impl<'a> Transaction<'a> {
                     dst: None,
                     old: Some(old),
                     new: None,
+                    saved_page: None,
                 })
             }
         }
@@ -1582,7 +1591,15 @@ impl<'a> Transaction<'a> {
             if self.page(&id) {
                 if now.as_ref() != baseline.as_ref() {
                     changed_any = true;
-                    self.store.graph.transaction_publish_page(&path);
+                    let saved_page = if failure.is_none() {
+                        plans
+                            .iter()
+                            .find(|plan| plan.src == id)
+                            .and_then(|plan| plan.saved_page.as_ref())
+                    } else {
+                        None
+                    };
+                    self.store.graph.transaction_publish_page(&path, saved_page);
                 } else {
                     self.store.graph.transaction_clear_page_marker(&path);
                 }

@@ -2491,47 +2491,6 @@ pub(crate) fn quick_switch(graph: &impl GraphRead, query: &str, limit: usize) ->
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
 
-/// Resolve a `((uuid))` block reference to a shallow identity/result row.
-/// Descendants are owned by the source page; explicit bounded consumers use
-/// `preview_block`.
-#[cfg(test)]
-pub(crate) fn resolve_block(graph: &impl GraphRead, uuid: &str) -> Option<RefGroup> {
-    // Jump to the owning page via the uuid index, falling back to a full scan if
-    // the hint is missing or stale (so a lagging index can never give a wrong
-    // answer — just a slower one).
-    let hint = graph.block_page_hint(uuid);
-    graph.with_pages(|pages| {
-        let find_in = |entry: &PageEntry, doc: &Document| -> Option<RefGroup> {
-            let mut found: Option<&DocBlock> = None;
-            walk(&doc.roots, &mut |b| {
-                if found.is_none() && (b.uuid == uuid || b.property("id").as_deref() == Some(uuid))
-                {
-                    found = Some(b);
-                }
-            });
-            found.map(|b| RefGroup {
-                page: entry.name.clone(),
-                kind: entry.kind,
-                blocks: vec![block_to_shallow_dto(b)],
-                evidence: Vec::new(),
-            })
-        };
-        if let Some(h) = &hint {
-            if let Some((entry, doc)) = pages.iter().find(|(e, _)| &e.name == h) {
-                if let Some(rg) = find_in(entry, doc) {
-                    return Some(rg);
-                }
-            }
-        }
-        for (entry, doc) in pages {
-            if let Some(rg) = find_in(entry, doc) {
-                return Some(rg);
-            }
-        }
-        None
-    })
-}
-
 /// Resolve many `((uuid))` block references in a single graph pass — the real
 /// batch behind `Graph::resolve_blocks` (a page full of refs/embeds is one IPC,
 /// and now one scan rather than U independent `resolve_block` calls, each of which

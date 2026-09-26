@@ -26,6 +26,8 @@ mod gh221_malformed_html_tests;
 mod graph_tests;
 #[cfg(test)]
 mod issue137_investigation_tests;
+#[cfg(test)]
+mod legacy_graph_writer_guard_tests;
 pub mod model;
 #[cfg(test)]
 mod production_index_guard_tests;

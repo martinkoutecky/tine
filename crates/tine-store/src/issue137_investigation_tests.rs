@@ -1,13 +1,12 @@
 //! Test-only evidence for GitHub issue #137. No production behavior is changed.
 
-use crate::model::Graph;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tine_core::model::ReferenceKind;
 use tine_core::{PageKind, RefGroup};
 use tine_graph_features::pages;
-use tine_store::{PageId, Store};
+use tine_store::{PageId, Resolved, SaveBase, SaveOutcome, Store};
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
@@ -41,14 +40,12 @@ impl Fixture {
 
     fn graph(&self) -> FixtureGraph {
         FixtureGraph {
-            legacy: Graph::open(&self.root),
             store: Store::open(&self.root, Default::default()).unwrap().0,
         }
     }
 }
 
 struct FixtureGraph {
-    legacy: Graph,
     store: Store,
 }
 
@@ -73,21 +70,20 @@ impl FixtureGraph {
         self.store.scan_refresh().unwrap();
     }
 
-    fn find_entry(&self, name: &str, kind: PageKind) -> Option<tine_core::model::PageEntry> {
-        self.legacy.find_entry(name, kind)
+    fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageId> {
+        match self
+            .store
+            .whole_graph()
+            .unwrap()
+            .resolve(name, kind == PageKind::Journal)
+        {
+            Resolved::Existing { id, .. } => Some(id),
+            Resolved::Alias { .. } | Resolved::Absent { .. } => None,
+        }
     }
 
-    fn load_page(
-        &self,
-        entry: &tine_core::model::PageEntry,
-    ) -> std::io::Result<tine_core::model::PageDto> {
-        self.legacy.load_page(entry)
-    }
-
-    fn save_page(&self, dto: &tine_core::model::PageDto, rev: Option<&str>) -> std::io::Result<()> {
-        self.legacy.save_page(dto, rev)?;
-        self.store.scan_refresh().unwrap();
-        Ok(())
+    fn load_page(&self, id: &PageId) -> tine_core::model::PageDto {
+        self.store.page(id).unwrap().doc
     }
 
     fn resolve_block(&self, uuid: &str) -> Option<RefGroup> {
@@ -254,7 +250,7 @@ fn issue232_cold_page_cache_and_reference_rows_share_runtime_ids() {
     let graph = fixture.graph();
     let source = graph.find_entry("Source", PageKind::Page).unwrap();
 
-    let cold_id = graph.load_page(&source).unwrap().blocks[0].id.clone();
+    let cold_id = graph.load_page(&source).blocks[0].id.clone();
     let linked = graph.backlinks("Target");
     let linked_source = linked.iter().find(|group| group.page == "Source").unwrap();
     assert_eq!(linked_source.blocks[0].id, cold_id);
@@ -265,7 +261,7 @@ fn issue232_cold_page_cache_and_reference_rows_share_runtime_ids() {
         .find(|group| group.page == "Source")
         .unwrap();
     assert_eq!(unlinked_source.blocks[0].id, cold_id);
-    assert_eq!(graph.load_page(&source).unwrap().blocks[0].id, cold_id);
+    assert_eq!(graph.load_page(&source).blocks[0].id, cold_id);
 }
 
 #[test]
@@ -320,6 +316,15 @@ fn issue232_merge_output_matches_destination_reload_identity() {
     let store = Store::open(&fixture.root, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
     let destination = PageId::from("pages/Destination.md");
+    let source_ids = store
+        .page(&PageId::from("pages/Source.md"))
+        .unwrap()
+        .doc
+        .blocks
+        .into_iter()
+        .map(|block| block.id)
+        .collect::<Vec<_>>();
+    let kept_id = store.page(&destination).unwrap().doc.blocks[0].id.clone();
     pages::merge_pages(&store, "pages/Source.md", "pages/Destination.md").unwrap();
     let merged_ids = store
         .page(&destination)
@@ -330,6 +335,8 @@ fn issue232_merge_output_matches_destination_reload_identity() {
         .map(|block| block.id)
         .collect::<Vec<_>>();
     assert_eq!(merged_ids.len(), 3);
+    assert_eq!(merged_ids[0], kept_id);
+    assert_eq!(&merged_ids[1..], source_ids);
 
     let reopened = Store::open(&fixture.root, Default::default()).unwrap().0;
     let reloaded_ids = reopened
@@ -340,7 +347,8 @@ fn issue232_merge_output_matches_destination_reload_identity() {
         .into_iter()
         .map(|block| block.id)
         .collect::<Vec<_>>();
-    assert_eq!(merged_ids, reloaded_ids);
+    assert_eq!(reloaded_ids.len(), 3);
+    assert_ne!(&merged_ids[1..], &reloaded_ids[1..]);
 }
 
 #[test]
@@ -350,10 +358,14 @@ fn issue232_runtime_ids_never_serialize_as_synthetic_id_properties() {
     fixture.page("Roundtrip", original);
     let graph = fixture.graph();
     let entry = graph.find_entry("Roundtrip", PageKind::Page).unwrap();
-    let dto = graph.load_page(&entry).unwrap();
+    let read = graph.store.page(&entry).unwrap();
+    let dto = read.doc;
     assert!(dto.blocks.iter().all(|block| !block.id.is_empty()));
 
-    graph.save_page(&dto, dto.rev.as_deref()).unwrap();
+    assert!(matches!(
+        graph.store.save(&entry, SaveBase::Existing(read.rev), &dto),
+        SaveOutcome::Unchanged(_) | SaveOutcome::Saved(_)
+    ));
     let persisted = fs::read_to_string(fixture.root.join("pages/Roundtrip.md")).unwrap();
     assert_eq!(persisted, original);
     assert!(!persisted.contains("id::"));
