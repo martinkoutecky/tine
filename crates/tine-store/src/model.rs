@@ -10140,10 +10140,15 @@ mod tests {
 
     #[test]
     fn warmed_duplicate_name_cache_keeps_physical_owners_distinct() {
-        let dir = scratch("warmed-duplicate-name-owners");
-        fs::create_dir_all(dir.join("pages/duplicates")).unwrap();
-        let flat = dir.join("pages/Exact Storage Twin.md");
-        let nested = dir.join("pages/duplicates/Exact Storage Twin.md");
+        // Store::open canonicalizes the root (on Windows: `\\?\` and long
+        // names), so compare paths under the canonical root.
+        let dir = fs::canonicalize(scratch("warmed-duplicate-name-owners")).unwrap();
+        fs::create_dir_all(dir.join("pages").join("duplicates")).unwrap();
+        let flat = dir.join("pages").join("Exact Storage Twin.md");
+        let nested = dir
+            .join("pages")
+            .join("duplicates")
+            .join("Exact Storage Twin.md");
         fs::write(&flat, "- flat original sentinel\n").unwrap();
         fs::write(&nested, "- nested original sentinel\n").unwrap();
 

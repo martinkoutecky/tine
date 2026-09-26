@@ -275,7 +275,11 @@ fn test_writers_use_store_or_a_production_graph_boundary() {
         found.extend(
             violations(
                 &source,
-                &file.strip_prefix(&root).unwrap().to_string_lossy(),
+                &file
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
                 test_file,
             )
             .into_iter()

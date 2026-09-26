@@ -578,13 +578,13 @@ impl<'a> Transaction<'a> {
 
     fn absent(&self, file: &FileId) -> Result<(), Why> {
         let path = self.path(file)?;
-        match fs::read(path) {
+        match fs::read(&path) {
             Ok(bytes) => Err(Why::Conflict {
                 file: file.clone(),
                 disk: Some(FileRev::from_bytes(&bytes)),
             }),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(Why::Failed(error.into())),
+            Err(error) => Err(Why::Failed(directory_read_error(error, &path).into())),
         }
     }
 
@@ -1696,6 +1696,23 @@ impl<'a> Transaction<'a> {
 
 fn failed(error: io::Error) -> Why {
     Why::Failed(error.into())
+}
+
+/// Reading a directory fails with EISDIR on Unix but ERROR_ACCESS_DENIED on
+/// Windows. Report both as `IsADirectory` so a caller that treats an occupying
+/// directory as "name taken" (the Guide copy) behaves the same on every
+/// platform instead of failing with "Access is denied" on Windows.
+fn directory_read_error(error: io::Error, path: &Path) -> io::Error {
+    if error.kind() != io::ErrorKind::IsADirectory
+        && fs::metadata(path).is_ok_and(|metadata| metadata.is_dir())
+    {
+        io::Error::new(
+            io::ErrorKind::IsADirectory,
+            format!("{}: is a directory ({error})", path.display()),
+        )
+    } else {
+        error
+    }
 }
 
 fn failed_trash_dir(error: io::Error, parent: &Path) -> Why {

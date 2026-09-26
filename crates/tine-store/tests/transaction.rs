@@ -675,3 +675,22 @@ mod rename_faults {
         assert_eq!(f.bytes("assets/c.bin").unwrap(), b"old c");
     }
 }
+
+/// `IoError::kind` is platform-independent: creating over a directory reports
+/// `IsADirectory` everywhere, although Windows fails the read with
+/// ERROR_ACCESS_DENIED where Unix reports EISDIR. The Guide copy relies on it to
+/// skip an occupied name rather than abort ("Access is denied" on Windows).
+#[test]
+fn create_over_a_directory_reports_is_a_directory_on_every_platform() {
+    let f = Fixture::new();
+    fs::create_dir(f.root.join("assets").join("taken.png")).unwrap();
+    let id = f.id(Area::Assets, "taken.png");
+    let mut tx = f.store.transaction();
+    tx.create(&id, Content::Bytes(b"new".to_vec()));
+    let (why, _) = refused(tx.commit());
+    match why {
+        Why::Failed(error) => assert_eq!(error.kind, std::io::ErrorKind::IsADirectory, "{error:?}"),
+        other => panic!("expected an I/O failure: {other:?}"),
+    }
+    assert!(f.root.join("assets").join("taken.png").is_dir());
+}

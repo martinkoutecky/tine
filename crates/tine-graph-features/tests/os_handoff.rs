@@ -42,13 +42,16 @@ fn open_targets_require_existing_regular_files() {
     std::fs::create_dir(root.join("assets/directory.bin")).unwrap();
     let (store, _, _) = Store::open(&root, OpenOptions::default()).unwrap();
 
+    // Hand-off targets are resolved under the canonical root `Store::open`
+    // binds (on Windows a `\\?\` long-name path; on macOS `/private/var`).
+    let canonical = std::fs::canonicalize(&root).unwrap();
     assert_eq!(
         page_target(&store, "pages/Good.md").unwrap(),
-        root.join("pages/Good.md")
+        canonical.join("pages").join("Good.md")
     );
     assert_eq!(
         asset_target(&store, "good.bin").unwrap(),
-        root.join("assets/good.bin")
+        canonical.join("assets").join("good.bin")
     );
     assert!(page_target(&store, "pages/Missing.md").is_err());
     assert!(asset_target(&store, "missing.bin").is_err());

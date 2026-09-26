@@ -200,7 +200,11 @@ fn incremental_modify_len_change_matches_full_diff() {
 #[test]
 fn incremental_modify_same_len_mtime_change_matches_full_diff() {
     let graph = Fixture::new("modify-same-len", &[("pages/Edit.md", "- alpha\n")]);
-    let file = std::fs::File::open(graph.path("pages/Edit.md")).unwrap();
+    // Setting times needs write access on Windows (FILE_WRITE_ATTRIBUTES).
+    let file = std::fs::File::options()
+        .write(true)
+        .open(graph.path("pages/Edit.md"))
+        .unwrap();
     file.set_modified(SystemTime::now() - Duration::from_secs(5))
         .unwrap();
     graph.store.scan_refresh().unwrap();
@@ -222,7 +226,9 @@ fn explicit_event_reconciles_even_when_snapshot_metadata_is_equal() {
         .modified()
         .unwrap();
     graph.write("pages/Edit.md", "- bravo\n");
-    std::fs::File::open(graph.path("pages/Edit.md"))
+    std::fs::File::options()
+        .write(true)
+        .open(graph.path("pages/Edit.md"))
         .unwrap()
         .set_modified(previous)
         .unwrap();
@@ -369,7 +375,9 @@ fn own_config_commit_reloads_format_and_sets_config_changed() {
 #[test]
 fn external_touch_publishes_touched() {
     let graph = Fixture::new("touch", &[("pages/Edit.md", "- same\n")]);
-    std::fs::File::open(graph.path("pages/Edit.md"))
+    std::fs::File::options()
+        .write(true)
+        .open(graph.path("pages/Edit.md"))
         .unwrap()
         .set_modified(SystemTime::now() + Duration::from_secs(5))
         .unwrap();

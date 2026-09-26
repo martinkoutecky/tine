@@ -797,7 +797,10 @@ fn old_vs_new_matrix_on_identical_fixtures() {
     same("assets/capture");
     let same_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
     for name in ["photo.png", "photo_1.png", "X", "X_1", "capture"] {
-        fs::File::open(a.join("assets").join(name))
+        // Setting times needs write access on Windows (FILE_WRITE_ATTRIBUTES).
+        fs::File::options()
+            .write(true)
+            .open(a.join("assets").join(name))
             .unwrap()
             .set_modified(same_time)
             .unwrap();
@@ -987,11 +990,24 @@ fn blocked_trash_keeps_asset_and_legacy_error_text() {
     let new_error = assets::trash_asset(&store, "photo.png")
         .unwrap_err()
         .to_string();
+    assert_eq!(fs::read(a.join("assets/photo.png")).unwrap(), b"safe");
+    // The OS names this failure differently: Unix reports ENOTDIR while
+    // resolving the target, Windows reports ERROR_ALREADY_EXISTS (183) when
+    // creating the directory over the blocking file. The legacy text is the
+    // Unix one; elsewhere the refusal must still name the trash directory.
+    #[cfg(unix)]
     assert_eq!(
         new_error,
         "could not create trash directory logseq/.tine-trash/assets: Not a directory (os error 20)"
     );
-    assert_eq!(fs::read(a.join("assets/photo.png")).unwrap(), b"safe");
+    #[cfg(not(unix))]
+    assert!(
+        new_error.starts_with("could not create trash directory ")
+            && new_error
+                .replace('\\', "/")
+                .contains("logseq/.tine-trash/assets"),
+        "{new_error}"
+    );
 }
 
 #[test]
@@ -1064,8 +1080,21 @@ fn put(root: &std::path::Path, rel: &str, body: &str) {
 fn operation_result(result: &std::io::Result<()>, root: &std::path::Path) -> String {
     match result {
         Ok(()) => "ok".to_owned(),
-        Err(error) => format!("{:?}: {}", error.kind(), error)
-            .replace(&root.to_string_lossy().to_string(), "<root>"),
+        Err(error) => {
+            // The store reports paths under its canonical root (on Windows a
+            // `\\?\` long-name path with `\` separators); name the root and
+            // the separators portably.
+            let mut text = format!("{:?}: {}", error.kind(), error);
+            if let Ok(canonical) = fs::canonicalize(root) {
+                text = text.replace(&canonical.to_string_lossy().to_string(), "<root>");
+            }
+            let text = text.replace(&root.to_string_lossy().to_string(), "<root>");
+            if cfg!(windows) {
+                text.replace('\\', "/")
+            } else {
+                text
+            }
+        }
     }
 }
 
@@ -1168,8 +1197,15 @@ fn page_rename_matches_legacy_for_refs_namespace_alias_and_title() {
             );
         }
         if label == "case-only" {
-            assert!(a.join("pages/target.md").exists());
-            assert!(!a.join("pages/TARGET.md").exists());
+            // Compare the names the directory lists, not `exists()`: on a
+            // case-insensitive filesystem (Windows, default macOS)
+            // `pages/TARGET.md` "exists" because `pages/target.md` does.
+            let mut names = fs::read_dir(a.join("pages"))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            names.sort();
+            assert_eq!(names, ["target.md"]);
         }
     }
 }
