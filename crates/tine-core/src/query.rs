@@ -1,13 +1,13 @@
-//! Pure query request guards and result data.
+//! Pure query request limits and result data shared with graph clients.
+#![deny(missing_docs)]
 
 use crate::model::RefGroup;
 
-/// Query source crosses several boundaries (live macros, native IPC, static
-/// publication, and export). Keep one shared ceiling so no caller can make the
-/// parser or its cache key proportional to an unbounded graph-authored string.
+/// Maximum query source length accepted by evaluators, in UTF-8 bytes.
 pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
 const QUERY_NESTING_MAX: usize = 64;
 
+/// Whether `source` fits the shared byte limit.
 pub fn query_source_within_limit(source: &str) -> bool {
     source.len() <= QUERY_SOURCE_MAX_BYTES
 }
@@ -59,9 +59,13 @@ pub fn query_nesting_within_limit(source: &str) -> bool {
 /// "unsupported". `supported` is false only when nothing in the subset matched.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AdvancedResult {
+    /// Matched source-page groups.
     pub groups: Vec<RefGroup>,
+    /// Recognized clause heads that ran.
     pub ran: Vec<String>,
+    /// Unsupported clause heads that were ignored.
     pub ignored: Vec<String>,
+    /// Whether at least one supported clause was recognized.
     pub supported: bool,
 }
 
@@ -70,24 +74,33 @@ pub struct AdvancedResult {
 /// the WebView to fetch and retain its complete source page.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueryExportSpec {
+    /// Caller key returned with the corresponding result.
     pub key: String,
+    /// Query expression source.
     pub query: String,
+    /// Evaluate as advanced datalog when true, simple syntax otherwise.
     pub advanced: bool,
 }
 
 /// A single query macro's bounded, hierarchy-preserving export projection.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueryExportResult {
+    /// Caller key from the request.
     pub key: String,
+    /// Projected source-page groups.
     pub groups: Vec<RefGroup>,
+    /// Number of roots shown.
     pub shown: usize,
+    /// Total matching roots before truncation.
     pub total: usize,
+    /// Descendant nodes omitted by the node or byte budget.
     pub omitted_nodes: usize,
 }
 
 /// All query macros in one export session share the same construction budget.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueryExportBatch {
+    /// Results for evaluated query specs, in request order.
     pub results: Vec<QueryExportResult>,
     /// Query macros beyond the native request cap are not evaluated. The caller
     /// renders an explicit truncation note rather than silently expanding them
@@ -95,7 +108,7 @@ pub struct QueryExportBatch {
     pub omitted_queries: usize,
 }
 
-/// Is this query body an advanced datalog query we don't support?
+/// Whether the source uses advanced datalog syntax.
 pub fn is_advanced(query_src: &str) -> bool {
     let s = query_src.trim_start();
     s.starts_with("[:find") || s.contains(":where") || s.contains(":find")

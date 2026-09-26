@@ -36,7 +36,8 @@ pub struct RestoreReport {
     pub restored: u64,
     /// Same-filesystem recovery directories holding retired files.
     pub recovery: Vec<PathBuf>,
-    /// Live targets changed by another writer and left in place.
+    /// Live targets whose bytes changed after the baseline captured at the
+    /// start of this restore; they were left in place rather than overwritten.
     pub kept_external: Vec<FileId>,
     /// Generation published for the resulting disk state.
     pub graph_rev: GraphRev,
@@ -45,7 +46,8 @@ pub struct RestoreReport {
 /// A restore stopped at `phase`; `done` describes work already completed.
 #[derive(Debug)]
 pub struct RestoreFailed {
-    /// Name of the phase that stopped.
+    /// Human-readable phase description. This is not a stable enum or a value
+    /// suitable for programmatic branching.
     pub phase: String,
     /// Error that stopped the restore.
     pub cause: IoError,
@@ -69,12 +71,17 @@ fn fail(phase: &str, cause: io::Error, done: RestoreReport) -> RestoreFailed {
 }
 
 impl Store {
-    /// Restore page and journal text, asset EDN sidecars, and config from open
-    /// verified files. Retires replaced and extra text into same-filesystem
-    /// recovery roots, then copies by no-replace. Holds the writer mutex.
-    /// Cost O(input bytes + live text entries). A partial failure returns its
-    /// completed count and recovery locations. A changed restore invalidates
-    /// the interim cache and publishes one Own change for its final disk state.
+    /// Restore page and journal text, asset `.edn` sidecars, and config from
+    /// open verified files. The input is the complete desired set in those
+    /// areas: every unlisted live page, journal, and asset sidecar is retired
+    /// into a same-filesystem recovery root. Replaced files are retired too.
+    /// Other asset files are left in place. The method then copies new files
+    /// without replacing a concurrent winner. It blocks saves and transactions
+    /// for the full operation. Cost includes all input bytes, all live page,
+    /// journal, and sidecar bytes hashed for baseline and publication, and an
+    /// asset-tree walk, even for a small input. A changed restore publishes one
+    /// `Origin::Own` revision for the final disk state. Check `recovery` and
+    /// `kept_external` before discarding an editor's unsaved text.
     pub fn restore(&self, mut files: Vec<RestoreFile>) -> Result<RestoreReport, RestoreFailed> {
         let _writer = self.writer.lock().unwrap();
         let mut done = RestoreReport {

@@ -108,14 +108,45 @@ struct PublishStage {
     identity: FileIdentity,
 }
 
-/// A staged publish file writer. Each call writes and fsyncs one new file.
+// The stage may be moved to `publish` on success. A failed emit or commit
+// leaves its original name in place; remove only that same directory.
+struct StageCleanup {
+    path: PathBuf,
+    root: Dir,
+    identity: FileIdentity,
+}
+
+impl StageCleanup {
+    fn new(stage: &PublishStage) -> io::Result<Self> {
+        Ok(Self {
+            path: stage.path.clone(),
+            root: stage.root.try_clone()?,
+            identity: identity_from_path(&stage.path)?,
+        })
+    }
+}
+
+impl Drop for StageCleanup {
+    fn drop(&mut self) {
+        if !identity_from_path(&self.path).is_ok_and(|live| live == self.identity) {
+            return;
+        }
+        if let Some(name) = self.path.file_name() {
+            let _ = self.root.remove_dir_all(name);
+        }
+    }
+}
+
+/// A staged site file writer. Each call writes and fsyncs one new file.
 pub struct SiteWriter {
     stage: PublishStage,
     files: u64,
 }
 
 impl SiteWriter {
-    /// Write an area-relative file under the reserved stage. Cost O(bytes).
+    /// Write a unique relative file name. Empty or absolute names, backslashes,
+    /// empty components, `.`, and `..` are refused; writing the same name
+    /// twice returns `AlreadyExists`. Cost O(bytes).
     pub fn write(&mut self, rel: &str, bytes: &[u8]) -> Result<(), IoError> {
         write_publish_stage_file(&self.stage, rel, bytes).map_err(IoError::from)?;
         self.files += 1;
@@ -123,7 +154,8 @@ impl SiteWriter {
     }
 }
 
-/// A failed publish keeps any retired previous site in recovery.
+/// A failed site export removes its unpublished stage. Any retired previous
+/// site remains in recovery.
 #[derive(Debug)]
 pub struct PublishFailed {
     /// Error that prevented the new site from being published.
@@ -139,16 +171,20 @@ pub struct PublishReceipt {
     pub site: PathBuf,
     /// Number of files emitted by the caller.
     pub files: u64,
-    /// Always `None` on success; a retained previous site is reported by
-    /// [`PublishFailed::previous_kept`] on failure.
+    /// Always `None` on success. A previous site retired on success is kept
+    /// in recovery but its path is not returned here. A failed export reports
+    /// its retained path in [`PublishFailed::previous_kept`] when available.
     pub previous_kept: Option<PathBuf>,
 }
 
 impl Store {
-    /// Stage each emitted file with fsync, retire the previous site, move the
-    /// stage by no-replace, then verify its identity. Holds the writer mutex.
-    /// A late winner stays live; the previous site stays in recovery. Publishes
-    /// no graph generation. Cost O(emitted bytes).
+    /// Export a static site to `<graph root>/publish`. Each emitted file is
+    /// fsynced, then the previous site is retired and the new site is moved
+    /// into place without replacing a concurrent winner. A concurrent
+    /// directory that appears at the destination stays live; the prior site
+    /// remains in recovery. Failure removes the reserved stage. This does not
+    /// emit a graph `Change`. Cost O(emitted bytes + previous-site retirement);
+    /// it blocks page saves and other writes for the full operation.
     pub fn publish_site(
         &self,
         emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
@@ -166,6 +202,10 @@ impl Store {
             reserve_publish_stage(&self.graph)
         })();
         let stage = setup.map_err(|cause| PublishFailed {
+            cause: cause.into(),
+            previous_kept: None,
+        })?;
+        let _cleanup = StageCleanup::new(&stage).map_err(|cause| PublishFailed {
             cause: cause.into(),
             previous_kept: None,
         })?;
@@ -466,6 +506,32 @@ fn commit_publish_stage_report(
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    fn stage_names(root: &Path) -> Vec<String> {
+        fs::read_dir(root)
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with(".tine-publish-stage-"))
+            .collect()
+    }
+
+    #[test]
+    fn failed_publish_removes_its_reserved_stage() {
+        let (base, _) = roots("cleanup-on-error");
+        let store = Store::open(&base, Default::default()).unwrap().0;
+        let result = store.publish_site(&mut |writer| {
+            writer.write("index.html", b"partial")?;
+            Err(io::Error::other("emit failed").into())
+        });
+        assert!(result.is_err());
+        assert!(stage_names(&base).is_empty());
+
+        fs::write(base.join("publish"), b"not a directory").unwrap();
+        let result = store.publish_site(&mut |writer| writer.write("index.html", b"partial"));
+        assert!(result.is_err());
+        assert!(stage_names(&base).is_empty());
+    }
 
     fn roots(label: &str) -> (PathBuf, PathBuf) {
         let base =

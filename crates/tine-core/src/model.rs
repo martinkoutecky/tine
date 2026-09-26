@@ -1,5 +1,5 @@
-//! Pure DTOs that cross the Tauri IPC boundary, and file-name classification
-//! helpers. The graph itself (`Graph`, all file I/O) lives in `tine-store`.
+//! Pure graph data types and file-name classification helpers. File I/O lives
+//! in `tine-store`; these values can be serialized for clients or exports.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -47,10 +47,14 @@ pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> Strin
     String::from_utf8_lossy(&output).into_owned()
 }
 
+/// Whether a page file is a journal or an ordinary page.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PageKind {
+    /// Date-based journal page.
     Journal,
+    /// Ordinary named page.
     Page,
 }
 
@@ -58,12 +62,15 @@ pub enum PageKind {
 /// graphs use `.org`. A graph may mix the two — format is decided per file by
 /// extension, never graph-wide (matching OG, which stores `:block/format` per
 /// page). The graph's `:preferred-format` only chooses the extension for NEW
-/// files (see [`Graph::preferred_format`]).
+/// files through `Config::preferred_format`.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
+    /// Markdown page file.
     #[default]
     Md,
+    /// Org page file.
     Org,
 }
 
@@ -121,7 +128,9 @@ pub fn path_is_sync_conflict(path: &Path) -> bool {
         .is_some_and(is_sync_conflict)
 }
 
-/// Opaque graph-root-relative file identity. Validation belongs to the store.
+/// Opaque area-relative file identity, including assets whose approved target
+/// may be outside the graph root. Constructing one from a string does not
+/// validate it; the store revalidates identities when used.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FileId(String);
@@ -136,7 +145,9 @@ impl FileId {
     }
 }
 
-/// Page file identity with the v0.6.5 path string on the wire.
+/// Graph-root-relative, slash-separated page file identity, such as
+/// `pages/Example.md`. String constructors do not validate it; store calls
+/// revalidate before accessing disk. Compare identities, not display names.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PageId(String);
@@ -206,22 +217,26 @@ impl PageId {
     }
 }
 
-/// Lightweight entry for the page list / sidebar.
+/// Lightweight physical page-list entry. Duplicate names have separate entries.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageEntry {
+    /// Decoded page name or journal title.
     pub name: String,
+    /// Journal or ordinary page.
     pub kind: PageKind,
     /// Sort key `yyyymmdd` for journals; `None` for ordinary pages.
     pub date_key: Option<i64>,
-    /// Graph-root-relative path exposed to the frontend so duplicate basenames
-    /// can be opened by file, not by ambiguous `(kind,name)`.
+    /// Graph-root-relative slash-separated identity for opening this claimant.
     #[serde(rename = "path", default, with = "optional_page_path")]
     pub rel_path: Option<PageId>,
     #[serde(skip)]
+    /// Local filesystem path, omitted from serialized values.
     pub path: PathBuf,
 }
 
 impl PageEntry {
+    /// Slash-separated relative path, or an empty string for a virtual entry.
     pub fn rel_path_str(&self) -> &str {
         self.rel_path.as_ref().map_or("", PageId::as_str)
     }
@@ -249,13 +264,18 @@ mod optional_page_path {
     }
 }
 
-/// A block as sent to / received from the frontend.
+/// Editable block tree node and derived display facets.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BlockDto {
+    /// Runtime block identity; a persisted `id::` remains in `raw`.
     pub id: String,
+    /// Raw block text, including properties.
     pub raw: String,
+    /// Whether child blocks are collapsed in the outline.
     #[serde(default)]
     pub collapsed: bool,
+    /// Ordered child blocks.
     #[serde(default)]
     pub children: Vec<BlockDto>,
     /// Ancestor first-lines (page-relative path) for search/reference results;
@@ -272,27 +292,38 @@ pub struct BlockDto {
     // recomputes locally only for the block it is actively editing. Omitted from the
     // wire when empty to keep the payload small (most blocks have no marker/dates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Derived task marker, if present.
     pub marker: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Derived priority, if present.
     pub priority: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Derived heading level, if present.
     pub heading_level: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Derived scheduled date, if present.
     pub scheduled: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Derived deadline, if present.
     pub deadline: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Derived tags.
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Derived property names and values.
     pub properties: Vec<(String, String)>,
 }
 
 /// A group of blocks from one source page — used for both Linked References
 /// (backlinks) and `{{query}}` results.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefGroup {
+    /// Source page name.
     pub page: String,
+    /// Source page kind.
     pub kind: PageKind,
+    /// Matching blocks or projected subtrees.
     pub blocks: Vec<BlockDto>,
     /// Result-only source evidence keyed by block id. Empty for ordinary query
     /// groups and older callers; never crosses the block write boundary.
@@ -304,27 +335,43 @@ pub struct RefGroup {
 /// co-reference facets came from the cached lsdoc projection. This is fetched
 /// only when the Linked References filter opens; ordinary backlink DTOs remain
 /// shallow so their lazy-loading and bridge cost do not change.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacklinkFilterTarget {
+    /// Source page name.
     pub page: String,
+    /// Source page kind.
     pub kind: PageKind,
+    /// Root block identity.
     pub block_id: String,
 }
 
+/// One backlink root with projected text and co-reference facets.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacklinkFilterEntry {
+    /// Source page name.
     pub page: String,
+    /// Source page kind.
     pub kind: PageKind,
+    /// Root block identity.
     pub block_id: String,
+    /// Projected visible text.
     pub text: String,
+    /// Co-reference facet names.
     pub facets: Vec<String>,
+    /// Whether the projection omitted content.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
 }
 
+/// Bounded backlink-filter data; inspect `truncated` for omitted entries.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BacklinkFilterContext {
+    /// Returned root entries.
     pub entries: Vec<BacklinkFilterEntry>,
+    /// Whether entries were omitted.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
 }
@@ -332,10 +379,14 @@ pub struct BacklinkFilterContext {
 /// Cache-friendly bounded result metadata. The groups stay behind one `Arc` so
 /// routine frontend refreshes can reuse the generation-scoped native result
 /// without a deep clone while preserving the construction ceiling's outcome.
+#[deny(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct BoundedRefGroups {
+    /// Returned groups.
     pub groups: Arc<Vec<RefGroup>>,
+    /// Total matching rows before truncation.
     pub total: usize,
+    /// Whether a construction limit was exceeded.
     pub exceeded: bool,
 }
 
@@ -344,43 +395,64 @@ pub struct BoundedRefGroups {
 /// callers that genuinely need a subtree must ask for one explicitly and give
 /// it node and byte budgets so an outline cannot be multiplied across the IPC
 /// bridge.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockPreview {
+    /// Source page and projected subtree.
     pub group: RefGroup,
     /// Number of nodes omitted after either construction budget was reached.
     pub truncated: usize,
 }
 
+/// Explicit or plain-text reference evidence.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceKind {
+    /// Parsed link, tag, or embed.
     Explicit,
+    /// Unlinked text mention.
     Plain,
 }
 
+/// UTF-16 span in matching block text.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReferenceSpan {
     /// UTF-16 code-unit offsets into the matching `BlockDto.raw`.
     pub start: usize,
+    /// Exclusive end offset.
     pub end: usize,
 }
 
+/// One matched reference and its canonical target.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReferenceOccurrence {
+    /// Source spelling matched.
     pub matched_name: String,
+    /// Canonical target page name.
     pub canonical: String,
+    /// Parsed or plain-text reference.
     pub kind: ReferenceKind,
+    /// Match position.
     pub span: ReferenceSpan,
+    /// Matching rule identifier.
     pub rule: String,
 }
 
+/// Source evidence for one block in a reference result.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReferenceBlockEvidence {
+    /// Source block identity.
     pub block_id: String,
+    /// Bounded matched occurrences.
     pub occurrences: Vec<ReferenceOccurrence>,
     /// Total parser-owned matches before the bounded evidence cap.
     #[serde(default)]
     pub total: usize,
+    /// Whether occurrences were omitted by the evidence cap.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
 }
@@ -405,9 +477,12 @@ pub struct ReferenceDiagnostics {
 }
 
 /// A named template (a block with `template:: <name>`) and the blocks to insert.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateDto {
+    /// Template name.
     pub name: String,
+    /// Blocks to insert.
     pub blocks: Vec<BlockDto>,
     /// Page the template's defining block lives on (so the UI can jump to edit it).
     pub page: String,
@@ -482,14 +557,20 @@ pub struct SyncConflict {
     pub preview: String,
 }
 
-/// A full page as sent to / received from the frontend.
+/// Editable page tree. For a new page, the caller builds this value and uses
+/// `SaveBase::CreateNew`; the store does not apply a journal template.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageDto {
+    /// Decoded page name.
     pub name: String,
+    /// Journal or ordinary page.
     pub kind: PageKind,
+    /// Display title.
     pub title: String,
     /// Raw page-property pre-block (if any).
     pub pre_block: Option<String>,
+    /// Ordered root blocks.
     pub blocks: Vec<BlockDto>,
     /// Hash of the on-disk file content when this page was loaded — the editor's
     /// baseline. Sent back on save so we conflict against the version the editor
@@ -511,11 +592,15 @@ pub struct PageDto {
     #[serde(default)]
     pub guide: bool,
 }
+/// Effective graph settings returned when opening a store.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphMeta {
+    /// Canonical graph root for display and OS handoff.
     pub root: String,
     /// "now" (LATER/NOW) or "todo" (TODO/DOING) — drives the task cycle.
     pub preferred_workflow: String,
+    /// Configured keyboard shortcuts.
     pub shortcuts: std::collections::HashMap<String, String>,
     /// First day of week for the date picker (0=Sunday … 6=Saturday).
     pub start_of_week: u32,

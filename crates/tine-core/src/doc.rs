@@ -121,7 +121,7 @@ impl BlockProjection {
         self.refs_contains_norm(&crate::refs::normalize(name))
     }
 
-    /// Like [`refs_contains`] but takes an already-[`crate::refs::normalize`]d
+    /// Like [`Self::refs_contains`] but takes an already-[`crate::refs::normalize`]d
     /// target — for hot loops testing ONE target against every block, so the
     /// normalize is hoisted out of the per-block loop instead of repeated.
     pub fn refs_contains_norm(&self, normalized: &str) -> bool {

@@ -1,7 +1,8 @@
-//! Guarded multi-file writes for one graph. The cache updates through the
-//! existing page upsert path; after the final disk state is known, a changed
-//! transaction publishes one Own `Change`. Config writes reload the live
-//! config and journal format before that publication.
+//! Guarded multi-file graph writes. A transaction queues steps without disk
+//! I/O; commit checks them, applies them in order, and attempts undo on a
+//! failed apply. A changed final disk state publishes one `Origin::Own`
+//! change before return. Config writes update effective settings first.
+//! Transactions are not crash atomic and cannot exclude external processes.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
@@ -100,7 +101,8 @@ pub enum Refusal {
     },
     /// Page bytes are not UTF-8.
     Undecodable,
-    /// A transaction named the same file more than once.
+    /// A transaction named the same file more than once. Editing a page and
+    /// moving that same file require separate transactions.
     RepeatedFile(FileId),
     /// The store was closed before commit.
     Closed,
@@ -125,7 +127,9 @@ pub enum Why {
 /// Disk differences left after an unsuccessful transaction's undo.
 #[derive(Debug, Default)]
 pub struct Rollback {
-    /// External changes preserved; optional second id is their recovery location.
+    /// External changes preserved during undo. `Some(id)` names where changed
+    /// bytes were moved in recovery; `None` means they remain live. Check
+    /// `undo_failed` separately to learn whether old bytes were restored.
     pub kept_external: Vec<(FileId, Option<FileId>)>,
     /// Files undo could not restore, with their errors.
     pub undo_failed: Vec<(FileId, IoError)>,
@@ -141,7 +145,9 @@ pub enum TxOutcome {
         /// Generation publishing the disk state, or current one if unchanged.
         graph_rev: GraphRev,
     },
-    /// Step `step` did not happen; earlier steps were undone where possible.
+    /// Step `step` did not happen. Preflight checks every step before any
+    /// write; an apply failure attempts undo of earlier steps. If the final
+    /// disk state changed, an `Origin::Own` publication covers it.
     NotCommitted {
         /// Zero-based index of the failed step.
         step: usize,
@@ -279,15 +285,16 @@ struct Undo {
     moved: bool,
 }
 
-/// Builder for guarded file changes, applied together by [`Self::commit`].
+/// Builder for guarded file changes, applied by [`Self::commit`]. Dropping
+/// without commit performs no disk I/O.
 pub struct Transaction<'a> {
     store: &'a Store,
     steps: Vec<Step>,
 }
 
 impl Store {
-    /// Begin a transaction. Commit takes the writer mutex, then each named
-    /// path lock in sorted order. Cost grows with the named files and their bytes.
+    /// Begin a transaction. Commit serializes writes through this Store; it
+    /// does not lock other Store instances or external processes.
     pub fn transaction(&self) -> Transaction<'_> {
         Transaction {
             store: self,
@@ -297,8 +304,9 @@ impl Store {
 }
 
 impl<'a> Transaction<'a> {
-    /// Queue a guarded page save. `CreateNew` requires the file to be absent;
-    /// `Existing` compares its raw-byte revision. No disk I/O until commit.
+    /// Queue a guarded page save. `CreateNew` requires absence; `Existing`
+    /// compares the current raw-byte revision. No disk I/O until commit.
+    /// Commit cost includes page bytes and O(P) graph metadata on publication.
     pub fn save_page(&mut self, id: &PageId, base: SaveBase, doc: &PageDto) -> &mut Self {
         self.steps.push(Step::Save {
             id: id.clone(),
@@ -349,8 +357,11 @@ impl<'a> Transaction<'a> {
         self
     }
 
-    /// Queue a guarded page-reference rewrite. Unchanged output reports
-    /// [`StepResult::Unchanged`]; unsafe Org edits are refused as read-only.
+    /// Queue a guarded page-reference rewrite. Obtain each referrer's
+    /// `FileRev` with `Store::page` or `Store::read` after locating it in a
+    /// graph view. Unchanged output reports [`StepResult::Unchanged`];
+    /// unsafe Org edits are refused as read-only. This rewrites file content,
+    /// not an unsaved editor buffer.
     pub fn rewrite_refs(
         &mut self,
         id: &PageId,
@@ -366,7 +377,8 @@ impl<'a> Transaction<'a> {
     }
 
     /// Queue a guarded no-replace move. Optional reference rewrites affect
-    /// the destination. If bytes change, the old source moves to trash; if
+    /// the destination's references, not its `title::`, aliases, or namespace
+    /// children. If bytes change, the old source moves to trash; if
     /// bytes stay equal, the source is renamed directly without a trash copy.
     /// Twin claims are refused.
     pub fn move_file(
@@ -1241,9 +1253,12 @@ impl<'a> Transaction<'a> {
         }
     }
 
-    /// Apply queued steps under the writer and file locks, then publish their
-    /// final state. Cost grows with named file bytes and snapshot publication.
-    /// On failure, attempts undo and reports any remaining disk differences.
+    /// Check all guards before writing, apply queued steps, then publish the
+    /// final state before returning. Each guard hashes its current disk file.
+    /// A changed transaction can scan O(P) page and journal metadata and
+    /// may wait for the initial graph parse. It blocks other writes for its
+    /// duration without a timeout. On apply failure, attempts undo and reports
+    /// remaining disk differences; a process crash can leave partial changes.
     pub fn commit(mut self) -> TxOutcome {
         let _writer = self.store.writer.lock().unwrap();
         let rev = || self.store.changes.rev();

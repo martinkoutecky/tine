@@ -1,7 +1,9 @@
-//! Backlinks and the `{{query}}` subset engine. Evaluated by scanning parsed
-//! pages (no datalog). Pragmatic subset: page/tag refs, boolean and/or/not,
-//! task markers, and property filters. Advanced datalog (`[:find ...]`) is
-//! detected and reported as unsupported rather than crashed.
+//! Graph-wide reference, simple-query, and advanced-query evaluation over
+//! parsed pages. Simple queries support page and tag references, Boolean
+//! clauses, task markers, and property filters. Advanced `[:find ...]`
+//! queries evaluate the supported `:where` subset for tasks, dates,
+//! references, properties, priority, and Boolean clauses. Unsupported
+//! clauses are returned as diagnostics in `AdvancedResult`.
 
 use crate::model::GraphRead;
 use tine_core::date::JournalDate;

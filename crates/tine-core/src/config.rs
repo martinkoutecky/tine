@@ -10,10 +10,16 @@
 
 use std::collections::HashMap;
 
+/// Effective graph configuration derived from `logseq/config.edn`. Missing or
+/// unrecognized individual values use defaults.
+#[deny(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Configured journal directory, relative to the graph root.
     pub journals_dir: String,
+    /// Configured ordinary-page directory, relative to the graph root.
     pub pages_dir: String,
+    /// Preferred task marker cycle.
     pub preferred_workflow: Workflow,
     /// User keybinding overrides from `:shortcuts {:cmd "binding"}` (string
     /// bindings only; vectors take the first binding, `false` disables).
@@ -89,6 +95,8 @@ pub struct Config {
 pub const DEFAULT_JOURNAL_FILE_FORMAT: &str = "yyyy_MM_dd";
 pub const DEFAULT_JOURNAL_TITLE_FORMAT: &str = "MMM do, yyyy";
 
+/// Preferred task marker cycle.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Workflow {
     /// NOW / LATER
@@ -107,15 +115,23 @@ pub enum Workflow {
 ///
 /// Both decode percent-escapes on read; triple-lowbar additionally maps `___`↔`/`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[deny(missing_docs)]
 pub enum FileNameFormat {
+    /// Percent-encoded namespace separators.
     Legacy,
+    /// Triple-underscore namespace separators.
     TripleLowbar,
 }
 
+/// Effective logbook display and timestamp settings.
+#[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogbookSettings {
+    /// Whether timestamps include seconds.
     pub with_second_support: bool,
+    /// Whether logbooks appear in timestamped blocks.
     pub enabled_in_timestamped_blocks: bool,
+    /// Whether logbooks appear in every block.
     pub enabled_in_all_blocks: bool,
 }
 

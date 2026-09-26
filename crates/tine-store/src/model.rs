@@ -1,10 +1,7 @@
-//! Graph model: opening a graph directory, listing/loading/saving pages, and
-//! the DTOs that cross the Tauri IPC boundary.
-//!
-//! For M0/M1 the canonical state is the on-disk files; Rust loads a page into a
-//! [`PageDto`] tree and writes it back from one. The frontend owns the live
-//! editing tree (see plan). File-backed runtime UUIDs are deterministic structural
-//! locators; persisted `id::` values remain a separate external reference identity.
+//! Disk-backed page parsing, serialization, and graph data used by the store.
+//! A page is read as a [`PageDto`] tree and can be written from one. File-backed
+//! runtime UUIDs are deterministic structural locators; persisted `id::`
+//! values remain separate external reference identities.
 
 use std::collections::HashMap;
 use std::fs;

@@ -1,16 +1,19 @@
 //! Open, read, observe, and safely change a Logseq graph rooted on disk.
 //!
 //! [`Store::open`] returns after listing graph files and starts parsing in the
-//! background. [`Store::whole_graph`] waits for that first parse and returns an
-//! immutable generation for graph-wide queries. [`Store::page`] reads one page;
+//! background. [`Store::whole_graph`] waits for that first parse and returns a
+//! stable view for graph-wide queries. [`Store::page`] reads one page;
 //! [`Store::read`] and [`Store::open_read`] provide raw file data. These calls
 //! are synchronous and should run off a UI thread.
 //!
 //! Use [`Store::save`] for one guarded page edit, or [`Transaction`] for a set
 //! of guarded file changes. A [`FileRev`] identifies the bytes an edit was
-//! based on; a changed file produces a conflict instead of silently replacing
-//! those bytes. [`Store::subscribe`] delivers published changes in order.
-//! [`Store::close`] stops observation and releases callers waiting for load.
+//! based on. Guards compare current disk bytes, but an external process can
+//! replace a file between that comparison and the final rename. Keep unsaved
+//! edits on every refusal. [`Store::subscribe`] delivers published changes in
+//! order to one consumer. [`Store::close`] stops observation and releases
+//! callers waiting for load. Writes, restore, publication, and graph acquisition
+//! can block without a timeout; run them off a UI thread.
 #![deny(missing_docs)]
 
 #[cfg(test)]

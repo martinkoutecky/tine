@@ -1,74 +1,31 @@
-//! Store boundary. `Store` owns the graph, its watcher, publication queue and
-//! guarded writer. `open` validates the layout, lists pages and journals, then
-//! starts background parsing and the per-store watcher. Cost O(P metadata) on
-//! the caller; the load and watch run in the background. `subscribe` delivers
-//! every published generation in order with no replay or queue bound; a second
-//! subscription ends the first. Own commits and restore publish `Origin::Own`;
-//! watcher reconciliation and `scan_refresh` publish `Origin::External`.
-//! `set_watch_mode` changes between notify with a 200 ms debounce and a 3 s
-//! poll, with notify failure falling back to polling. `scan_refresh` reads
-//! metadata for all page files and config, then changed bytes, at cost
-//! O(P metadata + changed bytes). It reports `LoadError::Closed` after close or
-//! `Failed` for a lost root or unsafe config layout. `close` stops observation,
-//! waits for a writer, releases load waiters and ends the subscription. Callers
-//! need no watcher, cache, lock or file layout state.
+//! Synchronous graph I/O and stable published graph views. `Store::open`
+//! lists page and journal files before returning; parsing then runs in the
+//! background. `Store::whole_graph` waits for that work and returns a view
+//! whose answers remain stable across later changes. `GraphRev` identifies
+//! the publication captured by that view. A new view is needed to see edits.
 //!
-//! `page` reads and
-//! parses one page in O(page bytes + its blocks), updating the live cache when
-//! it observes an external edit. `read` returns raw bytes in O(file bytes),
-//! optionally bounded by `max_bytes`; `open_read` returns an open handle and
-//! length in O(1) metadata; `path_for_os_handoff` validates an absolute path
-//! for an OS opener in O(1) metadata. Invalid identities, missing files,
-//! undecodable pages, oversized reads, and I/O errors are typed `StoreError`s.
-//! Callers need no cache state, disk layout, or path for file reads.
+//! One `Store::subscribe` consumer receives later publications in order.
+//! A new subscription ends the previous one; the queue has no size bound.
+//! Subscribe before acquiring a view, then ignore events at or below its
+//! revision to avoid a missed update. Own writes and restore use
+//! `Origin::Own`; file observation and explicit refresh use
+//! `Origin::External`. `Origin::Own` does not identify a window or operation.
 //!
-//! Whole-graph questions below read the live cache. A first call can build
-//! that cache in O(P + B + disk). The selected reads are bounded here.
-//! `WholeGraph` still uses the interim live cache: two calls on one view may
-//! observe different states. The `GraphRev` on a view records the publication
-//! generation observed when it was acquired.
-//! `trash_stats` scans recoverable entries in O(trash entries), returning typed
-//! counts and bytes or an I/O error. `purge_asset_trash` irreversibly removes
-//! asset and legacy-asset entries in O(asset trash entries + metadata), leaving
-//! other kinds intact. On an error it returns completed removal counts and
-//! bytes. Callers need no trash layout or legacy name classifier.
-//! `scan_area` lists regular files in O(entries), sorted by area-relative name,
-//! and reports stat/list failures. `WholeGraph::referenced_assets` walks page
-//! text in O(B) on the interim live view. Clients compare these answers without
-//! opening graph paths.
-//! `create_graph` selects an empty parent or first unused demo child and writes
-//! the scaffold and seed by no-replace create. Cost O(siblings probed + seed
-//! bytes). Invalid folders and partial creation failures are typed `OpenError`s;
-//! callers need no folder naming or scaffold protocol.
-//! `restore` takes verified open backup files and replaces graph text by
-//! no-replace publication, retiring replaced and extra files into recovery on
-//! each live filesystem. Cost O(input bytes + live text entries). It reports
-//! completed work and recovery locations on a partial failure; callers need no
-//! graph layout, recovery path, or file move protocol.
+//! `Store::save` and `Transaction::commit` guard against bytes already on
+//! disk when they check. They serialize writers through the same Store, but
+//! cannot exclude another process replacing a file between check and rename.
+//! Changed writes publish before returning. A changed page write or read can
+//! also scan metadata for all P page and journal files; the first publication
+//! can wait for the graph-wide parse. Keep the caller's unsaved edits on a
+//! refusal. Multi-file commit is not crash atomic.
 //!
-//! `WholeGraph::resolve` answers a name with an existing or proposed `PageId`.
-//! It may build the graph cache on first use (O(P + B + disk)); a warm absent or
-//! alias lookup still scans O(aliases).
-//! `transaction` collects named file steps. Commit preflights all steps before
-//! writing, applies them under sorted path locks, and undoes a failed apply into
-//! recoverable trash. Its cost is O(bytes of named files + affected page blocks).
-//! `save` is one `save_page` step: it writes exactly the supplied `PageId`,
-//! preserving legacy formatting, no-op, Org, preamble, and cache rules. Its
-//! cost is O(page bytes + its blocks). Conflicts, deletion, read-only pages,
-//! twins, invalid targets, and I/O are typed outcomes; callers keep unsaved
-//! edits on refusal. No caller manages page locks, cache state, or paths.
-//!
-//! Questions and costs after cache construction (`P` pages, `B` blocks):
-//! `rev` O(1); `backlinks`, `unlinked_references`, `block_referrers`,
-//! `block_ref_counts`, `find_blocks`, `property_facets`, and `templates` O(B)
-//! worst case; `backlink_filter_context` O(B) with selected roots;
-//! `blocks` and `preview_block` O(blocks of hinted pages), O(B) without a hint;
-//! `complete_page_names` O(P + aliases + referenced names);
-//! `export_query_subtrees` O(64 × B + selected nodes); `page_icons`
-//! O(names + aliases); `journal_content_days` O(journals + their blocks).
-//! Calls that exceed fixed request or result limits return `QueryError`; a
-//! cancelled block search returns `Cancelled`, never a partial answer. Callers
-//! need no cache state, budget constants, lane IDs, or disk paths.
+//! `Store::scan_refresh` compares file modification time and length, so a
+//! same-length edit with unchanged timestamp may remain unseen. It waits for
+//! the initial parse. Poll mode scans O(P) file metadata every three seconds;
+//! notification mode silently falls back to polling if needed.
+//! `Store::close` waits for an in-flight writer and ends observation and the
+//! subscription. These calls have no general timeout. Run blocking calls off
+//! a UI thread.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::collections::{HashMap, HashSet};
@@ -123,7 +80,8 @@ const QUERY_EXPORT_MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PREVIEW_NODES: usize = 2_000;
 const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 
-/// Open graph root, its live file observation, and guarded write access.
+/// Open graph root and guarded write access. Dropping the store calls
+/// [`Self::close`], which can wait for a current writer.
 /// Opening lists page files and starts background parsing; see [`Self::open`].
 pub struct Store {
     pub(crate) graph: Arc<Graph>,
@@ -169,7 +127,7 @@ impl LoadState {
     }
 }
 
-/// Consent supplied by the device for a graph's external assets directory.
+/// Open-time external-asset approval and initial file observation mode.
 #[derive(Default)]
 pub struct OpenOptions {
     /// Canonical device path approved for an external `assets/` link, if any.
@@ -181,17 +139,19 @@ pub struct OpenOptions {
 /// How the store observes graph files after opening.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WatchMode {
-    /// Use filesystem notifications with a 200 ms debounce, falling back to polling.
+    /// Default: use filesystem notifications with a 200 ms debounce, silently
+    /// falling back to three-second polling if notifications fail.
     #[default]
     Notify,
-    /// Poll graph files every three seconds.
+    /// Poll graph files every three seconds, scanning O(P) page metadata per tick.
     Poll,
 }
 
 /// Source of a published change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
-    /// A transaction or restore through this store.
+    /// A save, transaction, or restore through this store. This does not
+    /// identify the originating window or distinguish those operations.
     Own,
     /// Watcher or explicit scan reconciliation.
     External,
@@ -204,7 +164,8 @@ pub enum ChangeKind {
     Created,
     /// File bytes changed.
     Modified,
-    /// Metadata changed without a known byte change.
+    /// Metadata changed without a known byte change; refresh any metadata
+    /// displayed for this file, but its parsed content need not be reloaded.
     Touched,
     /// A file disappeared.
     Removed,
@@ -217,7 +178,9 @@ pub struct Change {
     pub graph_rev: GraphRev,
     /// Whether this store or an external actor caused the change.
     pub origin: Origin,
-    /// Affected ids, byte-level kind, and resulting revision when present.
+    /// Affected graph files and config, with resulting revisions when present.
+    /// Trash destinations are not listed. Asset sidecars are not observed as
+    /// external changes; own asset writes can appear here.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     /// Whether graph config changed in this publication.
     pub config_changed: bool,
@@ -225,11 +188,10 @@ pub struct Change {
 }
 
 impl Change {
-    /// The graph page this external file change altered, named as the graph
-    /// names it (by `title::` if set; the name before removal for `Removed`).
-    /// `None` when the parsed document did not change, or the file is not a
-    /// graph page (a shadow journal, a conflict copy), as v0.6.5's watcher.
-    /// Not in rev 5: `ChangeKind` is byte-level, window events are page-level.
+    /// The graph page this own or external change altered, using its
+    /// `title::` name when present (the old name for a removal). Returns
+    /// `None` for a file with no parsed page change, including a duplicate
+    /// journal claimant or sync-conflict copy.
     /// Cost O(files in this publication).
     pub fn page(&self, file: &FileId) -> Option<(PageKind, &str)> {
         self.pages
@@ -494,7 +456,9 @@ pub struct GraphAccessInspection {
 }
 
 impl GraphAccessInspection {
-    /// Compare a user-approved device path with the live external assets target.
+    /// Canonicalize `path` and compare it with the target captured by this
+    /// inspection. Returns an I/O error if canonicalization fails. This does
+    /// not reread a link changed since inspection; `Store::open` revalidates it.
     pub fn approves_external_assets(&self, path: &Path) -> std::io::Result<bool> {
         Ok(self.external_assets.as_ref() == Some(&fs::canonicalize(path)?))
     }
@@ -558,12 +522,16 @@ impl std::fmt::Display for OpenError {
     }
 }
 
-/// Effective config; unreadable config is already defaulted by legacy open.
+/// Effective config. File operations remain available when `problem` is set;
+/// callers should resolve the read failure before creating files under
+/// possibly defaulted directories or journal formats.
 #[derive(Clone)]
 pub struct ConfigState {
     /// Effective graph config, defaulted when loading config failed.
     pub config: Arc<tine_core::config::Config>,
-    /// Original config read or parse failure, if defaults were used.
+    /// Config read error, if one occurred. Missing config is not an error.
+    /// Unrecognized or malformed values default individually and do not set
+    /// this field.
     pub problem: Option<crate::IoError>,
 }
 
@@ -705,8 +673,9 @@ impl Store {
         }
     }
 
-    /// Scaffold a graph in an empty parent, or in the first unused tine-demo
-    /// child. Cost O(siblings probed + seed bytes). Partial failures leave the
+    /// Scaffold a graph in an empty parent, or in the first unused `tine-demo`
+    /// child when the parent is nonempty. Use the returned path as the actual
+    /// graph root. Cost O(siblings probed + seed bytes). Partial failures leave
     /// created files in place and identify the failing path.
     pub fn create_graph(
         parent: &Path,
@@ -823,9 +792,15 @@ impl Store {
 
     /// Open a graph after validating its layout and any external assets target.
     /// Returns the store, graph metadata, and effective config. Lists pages and
-    /// journals before returning (O(page-file metadata)); parsing runs in the
-    /// background and [`Self::whole_graph`] waits for it. An unsafe layout,
-    /// unapproved external target, or I/O failure returns [`OpenError`].
+    /// journals, including their journal-day identities, before returning
+    /// (O(P) file metadata). Parsing runs in the background and
+    /// [`Self::whole_graph`] waits for it. A write during parsing is included
+    /// in the first published view. One unreadable page can be skipped and
+    /// later reported by `unreadable_files`; a failed entire parse makes
+    /// graph-wide queries unavailable until [`Self::scan_refresh`] retries it.
+    /// Direct file reads and guarded writes remain available after a parse
+    /// failure. An unsafe layout, unapproved external target, or I/O failure
+    /// returns [`OpenError`].
     pub fn open(
         root: &Path,
         opts: OpenOptions,
@@ -947,7 +922,8 @@ impl Store {
         self.config_state.read().unwrap().clone()
     }
 
-    /// Stop the background load and refuse later I/O. Idempotent.
+    /// Stop observation, wait for an in-flight writer, end the subscription,
+    /// release load waiters, and refuse later I/O. Idempotent; no timeout.
     pub fn close(&self) {
         self.watch.stop();
         let _writer = self.writer.lock().unwrap();
@@ -958,8 +934,11 @@ impl Store {
         self.changes.close();
     }
 
-    /// Start a change stream at the next publication. Replaces any prior
-    /// subscription, discards queued changes, and never waits for a load.
+    /// Start the sole app-wide change stream at the next publication. Replaces
+    /// the previous subscriber and discards queued changes. The queue is
+    /// unbounded; consumers must drain it. To avoid a subscription gap,
+    /// subscribe first, then acquire `whole_graph()` and ignore changes with
+    /// `graph_rev <= view.rev()`. Initial load completion is a publication.
     pub fn subscribe(&self) -> Subscription {
         let mut state = self.changes.state.lock().unwrap();
         state.subscription += 1;
@@ -971,16 +950,22 @@ impl Store {
         }
     }
 
-    /// Change observation mode without waiting for a load; has no effect after close.
+    /// Change observation mode without waiting for a load; has no effect after
+    /// close. The return value does not report whether Notify fell back to Poll.
     pub fn set_watch_mode(&self, mode: WatchMode) {
         if !self.is_closed() {
             self.watch.set_mode(mode);
         }
     }
 
-    /// Reconcile observed graph files and config now. Reads metadata for all
-    /// page files and changed bytes; cost O(P metadata + changed bytes).
-    /// Returns [`LoadError`] when closed or reconciliation cannot continue.
+    /// Wait for the initial graph parse, retrying it if it previously failed,
+    /// then reconcile page, journal and
+    /// config files. Assets are not scanned. A file is considered unchanged
+    /// when its modification time and length both match the previous scan;
+    /// same-length edits with preserved timestamps can therefore be missed.
+    /// Cost O(P metadata + bytes of files detected as changed), plus the
+    /// initial load wait. Returns `LoadError::Closed` after close or
+    /// `LoadError::Failed` for a lost root or unsafe config layout.
     pub fn scan_refresh(&self) -> Result<(), LoadError> {
         self.watch.scan_refresh()
     }
@@ -1006,9 +991,12 @@ impl Store {
         *self.journal_ids.lock().unwrap() = found;
     }
 
-    /// Resolve the canonical journal file for a day, or the preferred new file.
-    /// Uses the in-memory day index; no disk read or load wait. An unobserved
-    /// external creation may change the answer after watcher reconciliation.
+    /// Resolve the canonical journal file for a valid day, or a proposed new
+    /// file. The day index is complete from the file listing before `open`
+    /// returns; no parse or disk read is needed here. This does not indicate
+    /// existence: call `page(id)` and handle `NotFound`. An invalid `Day`
+    /// is not rejected and can yield a nonsensical proposed name. An
+    /// unobserved external creation can change the answer later.
     pub fn journal_id(&self, day: Day) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
         if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
@@ -1021,10 +1009,24 @@ impl Store {
             self.graph.current_config().preferred_format.ext()
         ))
     }
-    /// Save one page with the editor's [`SaveBase`] guard. Blocks for the writer
-    /// and disk I/O, and publishes a generation when bytes change. Refusal
-    /// preserves the caller's edits; [`SaveOutcome`] describes conflict,
-    /// read-only, twin, invalid target, I/O, and closed cases.
+    /// Save one page with a raw-byte [`SaveBase`] guard. Revalidates the
+    /// caller-constructible identity, reads current disk bytes, and uses
+    /// temporary-file replacement; directory sync is best effort. A stale
+    /// base returns `Conflict` even if the proposed bytes equal current disk
+    /// bytes. With a matching base, equal bytes return `Unchanged` without a
+    /// publication. A changed save publishes
+    /// before returning. Cost includes reading and hashing the page, writing
+    /// its new bytes, and O(P) metadata for graph-wide publication; it can
+    /// wait for the first parse and other writers without a timeout. A
+    /// separate process can still write between guard check and rename.
+    /// `CreateNew` on an existing target returns `Conflict` with its disk
+    /// revision, unless another file claims its page name or journal day,
+    /// which returns `Twin`. Re-read with `page(id)` for parsed content or
+    /// `read(id.file(), None)` for raw bytes; both revisions hash the same
+    /// bytes as `Conflict::disk`. This call does not preserve a separate
+    /// conflict copy of bytes it replaces. Its own observed write is not
+    /// republished as an external watcher echo. Keep unsaved edits on every
+    /// refusal.
     pub fn save(&self, id: &PageId, base: SaveBase, doc: &PageDto) -> SaveOutcome {
         if self.is_closed() {
             return SaveOutcome::Closed;
@@ -1067,7 +1069,9 @@ impl Store {
         }
     }
 
-    /// Count entries and bytes by kind in the recoverable trash. Cost: O(trash entries).
+    /// Count entries and bytes by kind in graph trash. The store exposes no
+    /// list or untrash call; recovery of pages requires file-level work outside
+    /// this API. Only asset trash has an in-API purge. Cost O(trash entries).
     pub fn trash_stats(&self) -> Result<Vec<(TrashKind, u64, u64)>, StoreError> {
         if self.is_closed() {
             return Err(StoreError::Closed);
@@ -1197,7 +1201,8 @@ impl Store {
     }
 
     /// Type a valid `.md` or `.org` file in pages or journals as a page id.
-    /// Sync-conflict copies and invalid ids return `None`; no disk read or wait.
+    /// Syncthing `.sync-conflict-` and Dropbox `(conflicted copy)` names,
+    /// and invalid ids, return `None`; no disk read or wait.
     pub fn as_page(&self, file: &FileId) -> Option<PageId> {
         self.validate_file(file).ok()?;
         let path = file.as_str();
@@ -1369,8 +1374,10 @@ impl Store {
         self.graph.root.join("logseq/.tine-trash/assets")
     }
 
-    /// Read one file's bytes, with an optional limit checked before and after
-    /// reading. Cost: O(file bytes).
+    /// Read one file's bytes and its raw-byte revision, with an optional limit
+    /// checked before and after reading. A final symlink can be followed only
+    /// when its resolved target remains inside the approved area; `open_read`
+    /// refuses final symlinks. Cost O(file bytes).
     pub fn read(
         &self,
         file: &FileId,
@@ -1434,8 +1441,11 @@ impl Store {
     }
 
     /// Recursively list regular files in one area, sorted by area-relative name.
-    /// Hidden entries and symlinked directories are skipped; stat/list failures
-    /// are reported in `unreadable`. An absent `under` is empty. Cost O(entries).
+    /// Hidden entries and symlinked files or directories are skipped. For
+    /// `Area::Meta`, only `config.edn` and `custom.css` are included;
+    /// other visible metadata is omitted, including from `unreadable`.
+    /// Stat/list failures for included entries appear in `unreadable`.
+    /// An absent `under` is empty. Cost O(entries).
     pub fn scan_area(&self, area: Area, under: Option<&str>) -> Result<Listing, StoreError> {
         if self.is_closed() {
             return Err(StoreError::Closed);
@@ -1609,9 +1619,10 @@ impl Store {
         Ok(listing)
     }
 
-    /// Read and parse one page. If disk bytes advance the parsed cache, publish
-    /// that change before returning so later graph views see the new page.
-    /// Cost: O(page bytes + its blocks).
+    /// Read and parse one page, returning `NotFound` if it is absent. A
+    /// newly observed external edit publishes `Origin::External` before
+    /// returning; later observation of the same bytes does not duplicate it.
+    /// Cost O(page bytes + blocks), plus O(P) metadata if publication occurs.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         let _writer = self.writer.lock().unwrap();
         let before_generation = self.graph.cache_generation();
@@ -1688,7 +1699,9 @@ impl Store {
         })
     }
 
-    /// Wait for the initial load, then clone its current immutable generation.
+    /// Wait without a timeout for the initial parse (or close), then acquire
+    /// the current stable publication. Acquisition and clone are O(1) after
+    /// the wait; later writes do not alter this view.
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         let mut status = self.load.status.lock().unwrap();
         while matches!(*status, LoadStatus::Loading) {
@@ -1733,16 +1746,19 @@ pub enum Area {
     Pages,
     /// Configured journals directory.
     Journals,
-    /// Assets directory, possibly an approved external target.
+    /// Assets directory, possibly an approved external target. Guarded reads
+    /// and writes use that approved target; a cross-filesystem move into graph
+    /// trash can fail rather than silently copying and deleting.
     Assets,
-    /// `logseq/` metadata directory; `.tine-*` entries cannot be named here.
+    /// `logseq/` metadata directory; names starting with `.tine-` at its root
+    /// are refused by `file_id`.
     Meta,
     /// Graph-local `logseq/.tine-trash` area.
     Trash,
 }
 
-/// One listed file. `rel` is the exact name within its area; metadata is
-/// present only when the file could be statted. Cost O(1) to inspect.
+/// One successfully listed and statted file. `rel` is the exact name within
+/// its area. Cost O(1) to inspect.
 pub struct FileEntry {
     /// Opaque identity of this file.
     pub id: FileId,
@@ -1756,7 +1772,8 @@ pub struct FileEntry {
     pub day: Option<Day>,
     /// Whether the stem is the configured filename form; cost O(1).
     pub date_stem: bool,
-    /// Observed metadata, absent when stat failed or no stat was requested.
+    /// Metadata for a successfully statted entry. Stat failures appear in
+    /// `Listing::unreadable` instead.
     pub meta: Option<FileMeta>,
 }
 
@@ -1785,7 +1802,8 @@ thread_local! {
         const { std::cell::RefCell::new((None, None)) };
 }
 
-/// Journal day encoded as a `yyyymmdd` integer.
+/// Journal day encoded as a `yyyymmdd` integer. The public constructor does
+/// not validate dates; pass a real calendar day to `Store::journal_id`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Day(pub i64);
 
@@ -1829,7 +1847,9 @@ fn invalid_data_io_error_is_not_a_page_decode_error() {
     assert!(matches!(StoreError::from_io(error), StoreError::Io(_)));
 }
 
-/// Opaque FNV-1a/64 content revision with the v0.6.5 hex string on the wire.
+/// Opaque FNV-1a/64 raw-byte revision. Constructing one from a string does not
+/// validate it; guarded writes compare it with a newly computed disk hash in
+/// O(file bytes). This is a conflict marker, not a cryptographic digest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FileRev(String);
@@ -1888,18 +1908,21 @@ pub enum SaveBase {
 pub enum SaveOutcome {
     /// New page bytes were written; contains their revision.
     Saved(FileRev),
-    /// New bytes equal current disk bytes; no write or publication occurred.
+    /// New bytes equal current disk bytes with a matching base; no write or
+    /// publication occurred.
     Unchanged(FileRev),
     /// Disk holds different bytes; read the current file before resolving.
     Conflict {
         /// Revision of the current disk bytes.
         disk: FileRev,
     },
-    /// Existing base was requested, but the file disappeared.
+    /// Existing base was requested, but the file disappeared. Retrying as
+    /// `CreateNew` would recreate a page that another device may have deleted.
     Deleted,
     /// Page cannot be safely rewritten; reason is for display.
     ReadOnly(String),
-    /// Another file claims the page name or journal day.
+    /// Another file claims the page name or journal day. Creation and moves
+    /// check this; an ordinary guarded save of an existing claimant may proceed.
     Twin {
         /// Existing claimant.
         existing: PageId,
@@ -1910,7 +1933,7 @@ pub enum SaveOutcome {
     Io(std::io::Error),
     /// Store was closed before the save.
     Closed,
-    /// Interim bundled-guide result; guide pages have no disk identity.
+    /// Bundled guide pages have no disk identity and are not saved here.
     GuideEphemeral,
 }
 
@@ -1922,13 +1945,15 @@ pub struct PageRead {
     pub doc: PageDto,
     /// Revision of the bytes that produced `doc`.
     pub rev: FileRev,
-    /// Reason the page cannot be saved without losing data, if any.
+    /// Reason a file cannot round-trip safely, if any. A twin claim alone
+    /// does not set this field.
     pub read_only: Option<String>,
 }
 
 /// Result of resolving a page name or journal day in one snapshot.
 pub enum Resolved {
-    /// One or more files claim the name; the canonical file comes first.
+    /// One or more files claim the name. The canonical file comes first;
+    /// removing it can reveal another claimant with different content.
     Existing {
         /// Canonical claimant.
         id: PageId,
@@ -1989,8 +2014,9 @@ pub enum QueryResult {
     Advanced(AdvancedResult),
 }
 
-/// Cache generation seen at `whole_graph()`. It is not a consistency guard.
-/// Ordered and serialized as a decimal string.
+/// Sequence number of a published stable view, ordered within one Store.
+/// A view with `rev() >= change.graph_rev` includes that publication. This
+/// is not a file-write guard. Serialized as a decimal string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct GraphRev(pub(crate) u64);
@@ -2007,10 +2033,13 @@ impl From<GraphRev> for String {
     }
 }
 
-/// Initial load failure. The interim `Store::whole_graph` cannot produce one.
+/// Failure to acquire or refresh a graph view.
 #[derive(Debug)]
 pub enum LoadError {
-    /// Background load stopped before a snapshot was available.
+    /// Initial parse or explicit refresh could not continue. Individual
+    /// unreadable page files are skipped and reported by
+    /// `WholeGraph::unreadable_files`; a lost root or unsafe config layout
+    /// can fail the operation.
     Failed {
         /// Human-readable failure reason.
         reason: String,
@@ -2033,8 +2062,7 @@ pub enum QueryError {
         /// Maximum accepted count.
         limit: usize,
     },
-    /// Export request exceeds the fixed macro or source-byte budget. Extra
-    /// counts retain the existing frontend error text during this migration.
+    /// Export request exceeds the macro or source-byte budget.
     ExportRequestTooLarge {
         /// Requested macro count.
         macros: usize,
@@ -2060,7 +2088,8 @@ pub enum QueryError {
         /// Maximum serialized bytes.
         byte_limit: usize,
     },
-    /// Query syntax error (reserved for later batches).
+    /// Query source exceeds its byte or nesting limit, or has invalid syntax
+    /// in an evaluator that reports parse errors.
     Parse(String),
     /// Caller set the cancellation flag; no partial answer is returned.
     Cancelled,
@@ -2073,7 +2102,7 @@ pub enum Budget {
     BacklinkFilterRoots,
     /// Matching block rows.
     MatchingBlocks,
-    /// Matching block rows returned through the bridge.
+    /// Matching block rows in a serialized response.
     BridgeMatchingBlocks,
     /// Requested block-reference ids.
     RequestedBlockRefs,
@@ -2085,12 +2114,12 @@ pub enum Budget {
     PropertyFacets,
     /// Advanced query matches.
     AdvancedQueryMatches,
-    /// Search hits returned through the bridge.
+    /// Search hits in a serialized response.
     SearchHits,
 }
 
 impl QueryError {
-    /// Check the final transport estimate after the adapter has assembled groups.
+    /// Check a final serialized response estimate after assembling groups.
     pub fn bridge_matching_blocks(rows: usize, bytes: usize) -> Option<Self> {
         (rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES).then_some(
             Self::ResultTooLarge {
@@ -2120,8 +2149,8 @@ impl QueryError {
 /// Caller-owned cancellation flag, checked before each search page and block.
 pub struct Cancel(pub Arc<AtomicBool>);
 
-/// Facet answer policy: reject oversized query-builder results or return the
-/// editor's bounded autocomplete prefix. Both cost O(B) on a cold cache.
+/// Facet answer policy: reject oversized results or return a bounded prefix.
+/// Both can cost O(B) over the view's blocks.
 pub enum FacetPolicy {
     /// Reject a result that exceeds the fixed facet budget.
     Budgeted,
@@ -2129,8 +2158,8 @@ pub enum FacetPolicy {
     Truncated,
 }
 
-/// One published graph generation. Clone is O(1); reads use its owned parse,
-/// indexes and memos without consulting the live store or the filesystem.
+/// One stable published graph view. Clone is O(1); answers use captured
+/// parsed pages and indexes without rereading files or later publications.
 #[derive(Clone)]
 pub struct WholeGraph {
     _snapshot: Arc<Snapshot>,
@@ -2163,15 +2192,15 @@ impl WholeGraph {
     pub(crate) fn test_read_snapshot(&self) -> Arc<ReadSnapshot> {
         Arc::clone(&self.graph)
     }
-    /// Page files and subdirectories skipped during the initial or latest cache
-    /// build, with a displayable reason for each. Cost O(1).
+    /// Page files and subdirectories skipped during the parse captured by this
+    /// view, with a displayable reason. Their content is absent from graph-wide
+    /// answers. Cost O(1).
     pub fn unreadable_files(&self) -> &[(FileId, String)] {
         &self.unreadable
     }
 
-    /// Copy the current parsed-page table into a read-only evaluator input.
-    /// Interim cost is O(P) after a possible first cache build of O(P + B + disk).
-    /// Parsed documents are shared by `Arc`.
+    /// Copy this view's parsed-page table into a read-only evaluator input.
+    /// Cost O(P); parsed documents are shared.
     pub fn corpus(&self) -> tine_core::Corpus {
         let pages = self.graph.with_pages(|pages| {
             pages
@@ -2191,8 +2220,8 @@ impl WholeGraph {
 
     /// Asset names mentioned in page preambles or blocks, including decoded URL
     /// spellings and the first segment of nested image references. Cost
-    /// O(P + B + disk) on the first live-cache build, O(B) thereafter; the
-    /// interim view rescans the loaded blocks on every call.
+    /// O(B) over the captured blocks on every call. This does not infer a
+    /// sidecar reference merely from its PDF base name.
     pub fn referenced_assets(&self) -> Arc<HashSet<String>> {
         let mut names = HashSet::new();
         self.graph.with_pages(|pages| {
@@ -2208,8 +2237,8 @@ impl WholeGraph {
         Arc::new(names)
     }
 
-    /// Names and file claimants for the graph. Cost O(P + aliases + referenced
-    /// names); the interim graph may refresh its live directory index.
+    /// Names and file claimants in this view. Cost O(P + aliases + referenced
+    /// names); the result does not change after acquisition.
     pub fn inventory(&self) -> Arc<Inventory> {
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
@@ -2341,8 +2370,14 @@ impl WholeGraph {
         self.observed_mtimes.get(id.as_str()).copied()
     }
 
-    /// Resolve a name using the configured file naming rules. Real files win
-    /// before aliases; all claimants share the same deterministic order.
+    /// Resolve a name in this captured view. The caller supplies whether the
+    /// name is a journal title; using the wrong kind searches that other
+    /// namespace and may propose a new file. Real files win over aliases.
+    /// Journal files with a configured date stem rank first, then Markdown
+    /// before Org, then filename and full path lexicographically. Ordinary
+    /// page claimants use the latter three rules. Claims come from decoded
+    /// filenames and journal dates, not a parsed `title::` property. Cost
+    /// O(alias owners) when no real file wins.
     pub fn resolve(&self, name: &str, is_journal: bool) -> Resolved {
         let kind = if is_journal {
             PageKind::Journal
@@ -2416,8 +2451,11 @@ impl WholeGraph {
         Ok(())
     }
 
-    /// Execute one query macro with the same bounded evaluator as v0.6.5.
-    /// The current evaluator ignores the current page; the id is validated.
+    /// Execute one simple or advanced query macro over this stable view.
+    /// `current_page` is validated but not used for evaluation. A simple
+    /// source above 64 KiB or 64 parenthesis levels returns
+    /// `QueryError::Parse`; advanced unsupported clauses appear in its
+    /// diagnostics. Results are bounded to 20,000 rows and 32 MiB.
     pub fn query(
         &self,
         source: &str,
@@ -2426,6 +2464,17 @@ impl WholeGraph {
     ) -> Result<QueryResult, QueryError> {
         if let Some(id) = current_page {
             self.validated_page(id)?;
+        }
+        if matches!(dialect, QueryDialect::Simple) {
+            if !tine_core::query::query_source_within_limit(source) {
+                return Err(QueryError::Parse(format!(
+                    "query exceeds {} bytes",
+                    tine_core::query::QUERY_SOURCE_MAX_BYTES
+                )));
+            }
+            if !tine_core::query::query_nesting_within_limit(source) {
+                return Err(QueryError::Parse("query nesting exceeds 64 levels".into()));
+            }
         }
         match dialect {
             QueryDialect::Simple => bounded(
@@ -2460,6 +2509,8 @@ impl WholeGraph {
     }
 
     /// Graph search, including an exact file scope and caller cancellation.
+    /// Requested page and block hit limits are clamped to a combined 20,000;
+    /// inspect `QueryExecution::has_more` for omitted hits.
     pub fn search(
         &self,
         req: &SearchRequest,
@@ -2493,12 +2544,14 @@ impl WholeGraph {
         }
     }
 
-    /// Cache generation at acquisition, O(1); later reads may see newer data.
+    /// Publication revision captured at acquisition, O(1). Later reads of
+    /// this view remain at the same revision.
     pub fn rev(&self) -> GraphRev {
         self.rev
     }
 
-    /// Backlinks, worst case O(B), with early stop at fixed row/byte limits.
+    /// Backlinks to a decoded page name or alias, compared by normalized page
+    /// key. Worst case O(B), with limits of 20,000 rows and 32 MiB.
     pub fn backlinks(&self, name: &str) -> Result<Arc<Vec<RefGroup>>, QueryError> {
         bounded(
             self.graph
@@ -2507,7 +2560,8 @@ impl WholeGraph {
         )
     }
 
-    /// Unlinked mentions, worst case O(B), with fixed row/byte limits.
+    /// Unlinked mentions of a decoded page name or alias, worst case O(B),
+    /// with limits of 20,000 rows and 32 MiB.
     pub fn unlinked_references(&self, name: &str) -> Result<Arc<Vec<RefGroup>>, QueryError> {
         bounded(
             self.graph
@@ -2538,7 +2592,8 @@ impl WholeGraph {
     }
 
     /// Resolve block identities in request order; unknown ids yield `None`.
-    /// Cost: hinted pages' blocks, or O(B) for unhinted ids. Fixed result cap.
+    /// Cost: hinted pages' blocks, or O(B) for unhinted ids. At most 20,000
+    /// requested/result rows and 32 MiB of result data.
     pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
         if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
             return Err(QueryError::ResultTooLarge {
@@ -2568,8 +2623,10 @@ impl WholeGraph {
         }
     }
 
-    /// Bounded subtree preview; 1..=2000 nodes and a fixed byte cap. Cost:
-    /// one hinted page's blocks, or O(B) if no hint. Unknown id yields `None`.
+    /// Bounded subtree preview. `max_nodes` is clamped to 1..=2,000 and
+    /// output is capped below 32 MiB. Inspect `BlockPreview::truncated`:
+    /// `Some` can omit descendants or even the root under the byte cap.
+    /// Cost: one hinted page's blocks, or O(B) without a hint.
     pub fn preview_block(
         &self,
         uuid: &str,
@@ -2609,18 +2666,20 @@ impl WholeGraph {
         )
     }
 
-    /// Referenced block counts; O(B) on a cache miss.
+    /// Referenced block counts; up to O(B) over this view.
     pub fn block_ref_counts(&self) -> Arc<HashMap<String, usize>> {
         self.graph.block_ref_counts()
     }
 
     /// `[[` completion over pages, journals, aliases and referenced names.
-    /// Cost O(P + aliases + referenced names), at most `limit` entries.
+    /// Cost O(P + aliases + referenced names) per call, at most `limit`
+    /// entries. Frequent calls on large graphs have that scan cost.
     pub fn complete_page_names(&self, text: &str, limit: usize) -> Vec<PageEntry> {
         self.graph.quick_switch(text, limit)
     }
 
-    /// Literal `((` block search, O(B), at most `limit` blocks. Checks `cancel`
+    /// Literal `((` block search, O(B) per call, at most `limit` blocks.
+    /// Frequent calls on large graphs repeat that scan. Checks `cancel`
     /// before each page and block; cancellation returns no partial result.
     pub fn find_blocks(
         &self,
@@ -2650,8 +2709,11 @@ impl WholeGraph {
         }
     }
 
-    /// Selected query subtrees, O(64 × B) plus selected nodes. Fixed request,
-    /// root, node and byte limits; oversized requests fail before evaluation.
+    /// Selected query subtrees. Accepts at most 1,024 specs and 64 KiB of
+    /// source, but evaluates only the first 64. Each result can omit roots or
+    /// nodes (50 roots and 2,000 nodes maximum); output is capped at 8 MiB.
+    /// Inspect `omitted_queries`, `shown`, `total`, and `omitted_nodes`
+    /// before treating `Ok` as complete. Cost up to O(64 × B + selected nodes).
     pub fn export_query_subtrees(
         &self,
         specs: &[QueryExportSpec],
@@ -2705,8 +2767,8 @@ impl WholeGraph {
         }
     }
 
-    /// Query-builder facets reject overflow; editor autocomplete returns a
-    /// bounded prefix. O(B), fixed item and byte limits.
+    /// Budgeted facets reject over 20,000 items or 32 MiB; truncated facets
+    /// return a prefix of at most 2,000 items and 2 MiB. Cost O(B).
     pub fn property_facets(
         &self,
         policy: FacetPolicy,
@@ -2739,12 +2801,13 @@ impl WholeGraph {
         }
     }
 
-    /// Template blocks, O(B) on a cache miss.
+    /// Template blocks; up to O(B) over this view.
     pub fn templates(&self) -> Vec<TemplateDto> {
         self.graph.templates()
     }
 
-    /// Icons for requested names, O(names + aliases).
+    /// Icons for requested names, O(P + names + aliases), including a scan of
+    /// every parsed page even for one requested name.
     pub fn page_icons(&self, names: &[String]) -> HashMap<String, String> {
         self.graph.page_icons(names)
     }

@@ -317,3 +317,18 @@ fn query_and_scoped_search_use_page_identity() {
         ));
     }
 }
+#[test]
+fn simple_query_rejects_source_and_nesting_limits() {
+    let fixture = Fixture::new();
+    let graph = fixture.view();
+    let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
+    assert!(matches!(
+        graph.query(&oversized, QueryDialect::Simple, None),
+        Err(QueryError::Parse(_))
+    ));
+    let nested = format!("{}x{}", "(".repeat(65), ")".repeat(65));
+    assert!(matches!(
+        graph.query(&nested, QueryDialect::Simple, None),
+        Err(QueryError::Parse(_))
+    ));
+}

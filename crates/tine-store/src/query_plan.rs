@@ -1,10 +1,6 @@
-//! Typed execution plan for friendly graph search.
-//!
-//! This module is deliberately narrower than the full `{{query}}` DSL today:
-//! it unifies the two graph-backed parts of Ctrl-K (page names and block text)
-//! without changing the command/create-page providers or the established
-//! block-query result contract.  The plan/result types are the seam that a
-//! durable query workspace can grow into later.
+//! Typed execution plans for page-name and block-text graph search.
+//! This covers friendly search expressions and exact page scopes; `{{query}}`
+//! expressions use the separate query evaluator.
 
 use crate::model::GraphRead;
 use regex::Regex;
