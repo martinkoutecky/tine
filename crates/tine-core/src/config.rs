@@ -83,8 +83,8 @@ pub struct Config {
     /// `:logbook/settings` — OG logbook write/display settings.
     pub logbook: LogbookSettings,
     /// Tine-owned graph-local flag for the one-time bundled Guide announcement.
-    /// Stored in `logseq/config.edn` so it survives WebKitGTK's ephemeral
-    /// localStorage and stays scoped to the graph.
+    /// Stored in `logseq/config.edn` and scoped to this graph.
+    // Graph config persists this instead of relying on WebKitGTK localStorage.
     pub guide_announced: bool,
 }
 

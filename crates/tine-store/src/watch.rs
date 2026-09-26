@@ -260,6 +260,8 @@ pub(crate) struct Core {
     snapshot: Mutex<HashMap<PathBuf, Stamp>>,
     config_stamp: Mutex<Option<Stamp>>,
     closed: AtomicBool,
+    #[cfg(test)]
+    pub(crate) recovery_reconcile_pause: Mutex<Option<crate::store::TestPause>>,
 }
 
 impl Core {
@@ -299,6 +301,16 @@ impl Core {
         scan_semantics: bool,
     ) -> Result<(), LoadError> {
         let _writer = self.writer.lock().unwrap();
+        self.reconcile_locked(paths, include_config, scan_semantics)
+    }
+
+    // Caller holds writer through reconciliation and any recovery publication.
+    fn reconcile_locked(
+        &self,
+        paths: Option<&HashSet<PathBuf>>,
+        include_config: bool,
+        scan_semantics: bool,
+    ) -> Result<(), LoadError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(LoadError::Closed);
         }
@@ -487,6 +499,8 @@ impl WatchHandle {
             snapshot: Mutex::new(snapshot),
             config_stamp: Mutex::new(config_stamp),
             closed: AtomicBool::new(false),
+            #[cfg(test)]
+            recovery_reconcile_pause: Mutex::new(None),
         });
         let mode = Arc::new(Mutex::new(watch));
         let (wake, rx) = mpsc::channel();
@@ -525,7 +539,21 @@ impl WatchHandle {
                         reason: "graph load failed".into(),
                     });
                 }
+                let _writer = self.core.writer.lock().unwrap();
+                let result = self.core.reconcile_locked(None, true, true);
+                #[cfg(test)]
+                crate::store::pause_at_hook(&self.core.recovery_reconcile_pause);
+                if let Err(error) = result {
+                    *self.core.load.status.lock().unwrap() =
+                        LoadStatus::Failed(format!("{error:?}"));
+                    return Err(error);
+                }
                 *self.core.load.status.lock().unwrap() = LoadStatus::Ready;
+                self.core
+                    .changes
+                    .publish(Origin::External, Vec::new(), false, Vec::new());
+                let _ = self.wake.send(());
+                return Ok(());
             }
             LoadStatus::Ready => drop(status),
             LoadStatus::Loading => unreachable!(),
@@ -578,6 +606,11 @@ impl WatchHandle {
             self.core.graph.list_pages_shared().as_ref(),
         );
         if files.is_empty() && !config_changed {
+            self.core.changes.rev()
+        } else if matches!(
+            *self.core.load.status.lock().unwrap(),
+            LoadStatus::Failed(_)
+        ) {
             self.core.changes.rev()
         } else {
             self.core

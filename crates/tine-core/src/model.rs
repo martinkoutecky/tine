@@ -272,13 +272,15 @@ mod optional_page_path {
 pub struct BlockDto {
     /// Runtime block identity; a persisted `id::` remains in `raw`. Structural
     /// edits can change this identity across graph publications, so reacquire
-    /// it after a page changes.
+    /// it after a page changes. A new block may use an empty id; saves derive
+    /// identity from its position and raw text, not this field.
     pub id: String,
     /// Raw block text, including properties. Page saves serialize this body;
     /// derived facets and `breadcrumb` do not add text. The `page_property`
     /// flag does not suppress serialization of this raw body.
     pub raw: String,
-    /// Whether child blocks are collapsed in the outline.
+    /// Whether child blocks are collapsed in the outline. This display facet
+    /// alone does not write `collapsed::`; edit `raw` to persist that property.
     #[serde(default)]
     pub collapsed: bool,
     /// Ordered child blocks.
@@ -400,8 +402,8 @@ pub struct BoundedRefGroups {
 /// A deliberately bounded block-reference hover preview. Ordinary query,
 /// reference, and batched-resolution results carry shallow block identities;
 /// callers that genuinely need a subtree must ask for one explicitly and give
-/// it node and byte budgets so an outline cannot be multiplied across the IPC
-/// bridge.
+/// it node and byte budgets to bound the returned outline.
+// The preview can be multiplied across an IPC bridge, so keep both budgets.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockPreview {

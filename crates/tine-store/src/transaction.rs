@@ -1,8 +1,9 @@
 //! Guarded multi-file graph writes. A transaction queues steps without disk
 //! I/O; commit checks them, applies them in order, and attempts undo on a
-//! failed apply. A changed final disk state publishes one `Origin::Own`
-//! change before return. A config-file write reloads effective settings before
-//! publication of the final state; undo or a failed apply reconciles them
+//! failed apply. Changed final bytes publish before return, with external
+//! bytes from undo in a separate `Origin::External` change. A config-file
+//! write reloads effective settings before publication of the final state;
+//! undo or a failed apply reconciles them
 //! against the final disk file.
 //! Transactions are not crash atomic and cannot exclude external processes.
 
@@ -18,7 +19,7 @@ use crate::model::{
     trash_stamp, Withdrawal,
 };
 use crate::store::{
-    Area, ChangeKind, FileId, FileRev, GraphRev, PageId, SaveBase, Store, StoreError,
+    Area, ChangeKind, FileId, FileRev, GraphRev, Origin, PageId, SaveBase, Store, StoreError,
 };
 
 /// Content staged for a new file. Streams are bounded while being copied.
@@ -144,6 +145,9 @@ pub struct Rollback {
     /// it with the transaction's bytes, and tries a no-replace move back. It
     /// remains in recovery only if a new live winner took the name. Check
     /// `undo_failed` separately to learn whether old bytes were restored.
+    /// Pre-transaction bytes are held in memory during commit; undo writes
+    /// them back when possible, or preserves a copy in conflict recovery
+    /// when a different live file wins the name.
     pub kept_external: Vec<(FileId, Option<FileId>)>,
     /// Files undo could not restore, with their errors.
     pub undo_failed: Vec<(FileId, IoError)>,
@@ -162,9 +166,11 @@ pub enum TxOutcome {
     /// The transaction did not commit. Preflight checks every step before any
     /// write; an apply failure attempts undo of prior steps and the failed
     /// step, which may already have written. Inspect the final disk state and
-    /// `rollback`, including for `step`. If the final disk state changed, an
-    /// `Origin::Own` publication covers it, even if part of that difference
-    /// came from an external writer. A watcher echo is not guaranteed.
+    /// `rollback`, including for `step`. Changed final disk bytes publish after
+    /// a successful initial load. Store-written bytes use `Origin::Own`;
+    /// concurrent external bytes surviving undo use `Origin::External`.
+    /// A watcher echo is not guaranteed. After a failed initial load, publication waits
+    /// for successful `scan_refresh()` recovery.
     NotCommitted {
         /// Zero-based index of the failed step.
         step: usize,
@@ -335,7 +341,8 @@ impl<'a> Transaction<'a> {
 
     /// Queue a no-replace file creation. Page text must be UTF-8 and cannot
     /// claim a name or journal day already held by another file in the store's
-    /// current file-list index (built before open returns). This takes
+    /// current file-list index (built before open returns and updated by later
+    /// observations). This takes
     /// raw content, unlike `save_page`'s structured `PageDto` serialization.
     pub fn create(&mut self, file: &FileId, content: Content) -> &mut Self {
         self.steps.push(Step::Create {
@@ -348,7 +355,8 @@ impl<'a> Transaction<'a> {
     /// Queue a no-replace creation of `stem` + `ext`, trying `stem_1`,
     /// `stem_2`, and so on on collision. `stem` is one path component; `ext`
     /// includes its leading dot, or is empty. An invalid name is refused.
-    /// The chosen id appears in the step result. Cost O(bytes + collisions).
+    /// `Area::Trash` is refused. The chosen id appears in the step result.
+    /// Cost O(bytes + collisions).
     pub fn create_unique(
         &mut self,
         area: Area,
@@ -369,8 +377,9 @@ impl<'a> Transaction<'a> {
     /// `Store::file_id(Area::Meta, "config.edn")` to replace graph config.
     /// If its final bytes change, commit reloads effective config before the
     /// publication; a clean rollback leaves effective config at the baseline.
-    /// Reload invalidates parsed graph caches, so publication can reparse
-    /// O(P + B) page and block data in addition to reading the new config.
+    /// A config replacement can reparse O(P + B) page and block data in
+    /// addition to reading the new config.
+    // Reload invalidates parsed graph caches before publication.
     /// Page text must instead use [`Self::save_page`]; passing a page target
     /// is refused as `Refusal::InvalidTarget`.
     pub fn replace(&mut self, file: &FileId, expected: FileRev, bytes: Vec<u8>) -> &mut Self {
@@ -411,8 +420,14 @@ impl<'a> Transaction<'a> {
     /// After a move, `resolve` follows the destination filename. A retained
     /// `title::` can still supply a different `Change::page` display name;
     /// loading the destination gives a `PageDto.name` from its file claim.
+    /// Updating `title::` requires a separate page save and is not atomic with
+    /// this move. Referrers created after the source view are not included in
+    /// queued rewrites; query referrers again after commit if that matters.
     /// Twin claims are refused. A read-only Org source may move without a
     /// rewrite; asking to rewrite its bytes invokes the round-trip check.
+    /// Moves between pages and journals change the file's area identity and
+    /// still require a guarded source and free destination. Moving into graph
+    /// trash is refused; use [`Self::trash`] for that operation.
     pub fn move_file(
         &mut self,
         file: &FileId,
@@ -433,7 +448,8 @@ impl<'a> Transaction<'a> {
     /// step result, and changed source bytes are preserved on guard failure.
     /// This acts on one `FileId`; for a twinned name the caller decides which
     /// claimant or claimants to remove. A duplicate-day journal is typed as
-    /// `TrashKind::Journal`. Trashing an Org file does not serialize its content, so its page-edit
+    /// `TrashKind::Journal`; a sync-conflict-named page or journal copy is
+    /// typed as `TrashKind::Conflict`. Trashing an Org file does not serialize its content, so its page-edit
     /// read-only flag does not bar this move.
     pub fn trash(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
         self.steps.push(Step::Trash {
@@ -1384,6 +1400,7 @@ impl<'a> Transaction<'a> {
                 before.insert(dst.as_str().to_owned(), None);
             }
         }
+        let original_pages = self.store.graph.list_pages_shared();
         let fixed_names = self.fixed_step_names();
         let mut steps = std::mem::take(&mut self.steps);
         let mut done = Vec::new();
@@ -1447,7 +1464,8 @@ impl<'a> Transaction<'a> {
             }
         }
         let mut changed_any = false;
-        let mut published = Vec::new();
+        let mut published_own = Vec::new();
+        let mut published_external = Vec::new();
         for (name, baseline) in &before {
             let id = FileId::from(name.clone());
             let path = match self.path(&id) {
@@ -1486,11 +1504,36 @@ impl<'a> Transaction<'a> {
                     (Some(_), None) => ChangeKind::Removed,
                     _ => ChangeKind::Modified,
                 };
-                published.push((
+                let tuple = (
                     id.clone(),
                     kind,
                     now.as_ref().map(|bytes| FileRev::from_bytes(bytes)),
-                ));
+                );
+                let external_after_undo = failure.is_some()
+                    && (rollback
+                        .kept_external
+                        .iter()
+                        .any(|(kept, recovery)| kept == &id && recovery.is_none())
+                        || !done.iter().any(|record| {
+                            if record.src == id && record.moved && now.is_none() {
+                                return true;
+                            }
+                            if record.src != id && record.dst.as_ref() != Some(&id) {
+                                return false;
+                            }
+                            match (&record.new, &now) {
+                                (Some(Expected::Bytes(written)), Some(bytes)) => written == bytes,
+                                (Some(Expected::File(stage)), Some(bytes)) => {
+                                    fs::read(stage).is_ok_and(|written| written == *bytes)
+                                }
+                                _ => false,
+                            }
+                        }));
+                if external_after_undo {
+                    published_external.push(tuple);
+                } else {
+                    published_own.push(tuple);
+                }
             }
             if self.page(&id) {
                 if now.as_ref() != baseline.as_ref() {
@@ -1506,11 +1549,31 @@ impl<'a> Transaction<'a> {
         if changed_any && self.store.graph.cache_generation() == starting_rev {
             self.store.graph.transaction_bump_generation();
         }
-        let published_rev = if published.is_empty() {
-            self.store.changes.rev()
-        } else {
-            self.store.publish_own(published)
-        };
+        let mut published_rev = self.store.changes.rev();
+        if !published_own.is_empty() {
+            published_rev = self.store.publish_own(published_own);
+        }
+        if !published_external.is_empty() {
+            let current_pages = self.store.graph.list_pages_shared();
+            let pages = published_external
+                .iter()
+                .filter_map(|(id, _, _)| {
+                    current_pages
+                        .iter()
+                        .chain(original_pages.iter())
+                        .find(|entry| {
+                            entry
+                                .rel_path
+                                .as_ref()
+                                .is_some_and(|path| path.file() == *id)
+                        })
+                        .map(|entry| (id.clone(), entry.kind, entry.name.clone()))
+                })
+                .collect();
+            published_rev =
+                self.store
+                    .publish_transaction_change(Origin::External, published_external, pages);
+        }
         // A clean rollback needs no second copy of bytes written by this
         // transaction. Keep every staged inode if recovery failed or an
         // external writer won; otherwise verify the entire named baseline

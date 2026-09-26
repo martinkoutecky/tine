@@ -163,13 +163,14 @@ pub enum QueryHit {
     },
 }
 
-/// Whether additional results existed beyond the per-category limits.
+/// Whether additional matches were found beyond enabled category limits.
+/// A `false` value for a category with a zero limit means it was not checked.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryHasMore {
-    /// More page hits existed.
+    /// More page hits existed when the page limit was nonzero.
     #[serde(default)]
     pub pages: bool,
-    /// More block hits existed.
+    /// More block hits existed when the block limit was nonzero.
     #[serde(default)]
     pub blocks: bool,
 }
@@ -186,6 +187,7 @@ pub struct QueryExecution {
     /// Per-category top-k truncation, detected during the existing candidate scan.
     #[serde(default)]
     pub has_more: QueryHasMore,
-    /// A cancelled latest-wins lane returns no partial results.
+    /// Whether execution was cancelled; cancelled work returns no partial results.
+    // A cancelled latest-wins lane returns no partial results.
     pub cancelled: bool,
 }

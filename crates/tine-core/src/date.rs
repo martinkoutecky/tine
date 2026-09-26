@@ -462,8 +462,9 @@ impl JournalFormat {
         Self::new(None, None)
     }
 
-    /// Parse a journal filename stem OR display title to a date (tries every
-    /// fallback format). `None` ⇒ not a journal date.
+    /// Parse a journal filename stem or display title to a date. Tries the
+    /// configured file and title formats, then `MMM do, yyyy`, `yyyy-MM-dd`,
+    /// and `yyyy_MM_dd` in that order. `None` means no format matched.
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
         let s = s.trim();
         self.parse_list.iter().find_map(|f| f.parse(s))

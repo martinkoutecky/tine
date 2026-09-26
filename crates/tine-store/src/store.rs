@@ -155,10 +155,11 @@ pub enum WatchMode {
 /// Source of a published change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
-    /// A save, transaction, or restore through this store. This does not
+    /// Bytes saved, written, or restored through this store. This does not
     /// identify the originating window or distinguish those operations.
     Own,
-    /// Watcher or explicit scan reconciliation.
+    /// Watcher or explicit scan reconciliation, including the initial
+    /// load-completion publication with no file tuple.
     External,
 }
 
@@ -181,12 +182,14 @@ pub enum ChangeKind {
 pub struct Change {
     /// Generation after this change.
     pub graph_rev: GraphRev,
-    /// Whether this store or an external actor caused the change.
+    /// Whether this store or an external actor supplied the final bytes in
+    /// this publication. Rollback can emit separate Own and External changes.
     pub origin: Origin,
     /// Affected graph files, including `logseq/config.edn` when observed, with
     /// resulting revisions when present. `config_changed` also marks config.
     /// Trash destinations are not listed. Asset sidecars are not observed as
-    /// external changes; own asset writes can appear here. Sync-conflict
+    /// external changes; a committed transaction or restore that changes an
+    /// asset path can include its own file tuple here. Sync-conflict
     /// copies may appear as files while [`Self::page`] returns `None` for them;
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
@@ -196,15 +199,16 @@ pub struct Change {
 }
 
 impl Change {
-    /// The parsed graph page altered by an external observation, using its
-    /// `title::` name when present (the old name for a removal). Own writes
+    /// The parsed graph page altered by an external observation or an external
+    /// writer whose bytes survived transaction undo, using its graph filename
+    /// name (the old name for a removal). A `title::` property does not replace
+    /// that identity. Own writes
     /// list changed files but carry no parsed page entries, so this returns
     /// `None` for them. It also returns `None` for a file with no parsed page
     /// change, including a duplicate journal claimant or sync-conflict copy.
     /// A move lists its old file as removed and its destination as created;
     /// `page()` can describe either only when parsed page evidence is present.
-    /// This accessor may use a parsed `title::`; `resolve()` instead uses
-    /// filename and journal-date claims. An own event's file id and revision
+    /// An own event's file id and revision
     /// describe disk state but cannot identify the originating window.
     /// Cost O(parsed page entries in this publication) per call; calling it
     /// for every file can be quadratic in a large publication.
@@ -539,7 +543,8 @@ impl std::fmt::Display for OpenError {
 
 /// Effective config. File operations remain available when `problem` is set;
 /// callers should resolve the read failure before creating files under
-/// possibly defaulted directories or journal formats.
+/// possibly defaulted directories or journal formats. `scan_refresh()` retries
+/// the config read and updates `problem` after the underlying error is fixed.
 #[derive(Clone)]
 pub struct ConfigState {
     /// Effective graph config, defaulted when loading config failed. A changed
@@ -832,23 +837,24 @@ impl Store {
     /// Open a graph after validating its layout and any external assets target.
     /// Returns the store, graph metadata, and effective config. Lists pages and
     /// journals, including their journal-day identities, before returning
-    /// (O(P) file metadata). Parsing runs in the background and
+    /// (O(P) file metadata). An unreadable page/journal subtree is omitted
+    /// from the file-list index and later reported as unreadable; an exact
+    /// destination guard cannot detect every unseen same-name claimant.
+    /// Parsing runs in the background and
     /// [`Self::whole_graph`] waits for it. A write during parsing is included
     /// in the first published view. One unreadable page can be skipped and
     /// later reported by `unreadable_files`; a failed entire parse makes
     /// graph-wide queries unavailable until [`Self::scan_refresh`] retries it.
-    /// Direct file reads and guarded writes remain available after a parse
-    /// failure; a changed write can still emit `Origin::Own` with the next
-    /// publication revision, while
-    /// `whole_graph()` remains unavailable until recovery. The returned
+    /// Direct page reads and guarded writes remain available after a parse
+    /// failure. Neither publishes a graph generation until a successful
+    /// `scan_refresh()`. The returned
     /// `GraphMeta` is a snapshot of open-time settings. After a config change,
     /// callers can derive fresh display metadata with
     /// `GraphMeta::from_config` and `JournalFormat::new` from `Store::config()`;
     /// reopening also refreshes it but restarts this store's revision sequence.
     /// External observations during loading publish after the initial parse.
-    /// On failed initial load, the watcher does not publish external changes
-    /// until `scan_refresh()` successfully retries; direct page reads and
-    /// writes can still cause their own publications.
+    /// On failed initial load, the watcher also defers external publication
+    /// until `scan_refresh()` successfully retries.
     /// An unsafe layout, unapproved external target, or I/O failure
     /// returns [`OpenError`].
     pub fn open(
@@ -991,8 +997,9 @@ impl Store {
     /// subscribe first, then acquire `whole_graph()` and ignore changes with
     /// `graph_rev <= view.rev()`. Initial load completion is an
     /// `Origin::External` publication with no file tuples; a during-load save
-    /// has a separate `Origin::Own` publication.
-    /// failure is observed by calling `whole_graph()`, not as a `Change`.
+    /// has a separate `Origin::Own` publication after a successful load.
+    /// Failed load is observed by calling `whole_graph()`, not as a `Change`;
+    /// no page read or write publishes while it remains failed.
     /// Multi-window clients must fan this single stream out themselves. A slow
     /// consumer can retain an unbounded number of queued changes in memory;
     /// each change also holds its file tuples and parsed external page names.
@@ -1021,7 +1028,9 @@ impl Store {
     /// when its modification time and length both match the previous scan;
     /// same-length edits with preserved timestamps can therefore be missed.
     /// Cost O(P metadata + bytes of files detected as changed), plus the
-    /// initial load wait. Returns `LoadError::Closed` after close or
+    /// initial load wait. After a failed initial load, a successful retry
+    /// publishes a fresh graph generation even if no file changed during
+    /// reconciliation or an older snapshot exists. Returns `LoadError::Closed` after close or
     /// `LoadError::Failed` for a lost root or unsafe config layout.
     pub fn scan_refresh(&self) -> Result<(), LoadError> {
         self.watch.scan_refresh()
@@ -1031,12 +1040,23 @@ impl Store {
         &self,
         files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     ) -> GraphRev {
+        self.publish_transaction_change(Origin::Own, files, Vec::new())
+    }
+
+    pub(crate) fn publish_transaction_change(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        pages: Vec<(FileId, PageKind, String)>,
+    ) -> GraphRev {
         let ids: Vec<FileId> = files.iter().map(|(id, _, _)| id.clone()).collect();
         self.watch.note_own(&ids);
         let config_changed = ids.iter().any(|id| id.as_str() == "logseq/config.edn");
         self.refresh_journal_ids();
-        self.changes
-            .publish(Origin::Own, files, config_changed, Vec::new())
+        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_)) {
+            return self.changes.rev();
+        }
+        self.changes.publish(origin, files, config_changed, pages)
     }
 
     pub(crate) fn is_closed(&self) -> bool {
@@ -1078,13 +1098,18 @@ impl Store {
     /// base returns `Conflict` even if the proposed bytes equal current disk
     /// bytes. With a matching base, equal bytes return `Unchanged` without a
     /// publication. A changed save publishes
-    /// before returning as its own `Origin::Own` change, even when the write
-    /// began during the initial parse. Cost includes reading and hashing the page, writing
+    /// before returning as its own `Origin::Own` change when the initial load
+    /// has not failed. A save begun during parsing can finish before or after
+    /// the separate load-completion event; its publication captures a complete
+    /// graph view. After a failed
+    /// initial load it still writes on a matching guard, but publishes no
+    /// generation until a successful `scan_refresh()`. Cost includes reading and hashing the page, writing
     /// its new bytes, and O(P) metadata for graph-wide publication; it can
-    /// wait for the first parse and other writers without a timeout. A changed
-    /// save begun during load waits for the first parse before publication.
+    /// wait for graph snapshot capture and other writers without a timeout.
     /// Missing target parent directories are created during apply. A
-    /// separate process can still write between guard check and rename.
+    /// separate process can still write between guard check and rename;
+    /// serialization precedes the final guard recheck, while temp-file sync
+    /// occurs between that recheck and the rename.
     /// `doc.rev` does not replace `base`; `doc.format`, `doc.name`, and
     /// `doc.title` do not override the target file identity or extension. Only
     /// `doc.pre_block` and the block tree's `raw` and children become page
@@ -1104,10 +1129,11 @@ impl Store {
     /// revision, unless another file claims its page name or journal day,
     /// which returns `Twin`. Re-read with `page(id)` for parsed content or
     /// `read(id.file(), None)` for raw bytes; both revisions hash the same
-    /// bytes as `Conflict::disk`. That revision is a technically valid new
+    /// bytes as `Conflict::disk` if the file has not changed again. That revision is a technically valid new
     /// base, but inspect the current bytes before choosing to overwrite. A
     /// guard conflict does not publish an external change. This call does not preserve a separate
-    /// conflict copy of bytes it replaces. Its own observed write is not
+    /// conflict copy of bytes it replaces. A caller choosing "keep mine"
+    /// must preserve the other bytes separately if they are needed. Its own observed write is not
     /// republished as an external watcher echo. Keep unsaved edits on every
     /// refusal.
     pub fn save(&self, id: &PageId, base: SaveBase, doc: &PageDto) -> SaveOutcome {
@@ -1705,9 +1731,12 @@ impl Store {
     /// newly observed external edit publishes `Origin::External` before
     /// returning; later observation of the same bytes does not duplicate it.
     /// A missing file returns `NotFound` without waiting for the initial parse.
+    /// A file under an unreadable directory is read directly when its path is
+    /// accessible; the returned error reflects that read or path validation.
     /// An observed edit can wait for that parse while publishing. After a
-    /// failed initial parse, direct page loading remains available, but a
-    /// publication still depends on the graph snapshot. Cost O(page
+    /// failed initial parse, a present file still returns its current parsed
+    /// content, but publishes no generation until successful `scan_refresh()`.
+    /// Cost O(page
     /// bytes + blocks), plus O(P) metadata if publication occurs.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         let _writer = self.writer.lock().unwrap();
@@ -1768,7 +1797,9 @@ impl Store {
         let read_only = doc
             .read_only
             .then(|| "Org file does not round-trip".to_owned());
-        if self.graph.cache_generation() != before_generation {
+        if self.graph.cache_generation() != before_generation
+            && !matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_))
+        {
             self.watch.note_own(&[id.file()]);
             self.changes.publish(
                 Origin::External,
@@ -1791,6 +1822,7 @@ impl Store {
     /// later calls return `LoadError::Failed` without another parse attempt
     /// until `scan_refresh()` retries it. There is no nonblocking load-state
     /// query; call this from a worker thread to learn completion or failure.
+    /// No partial graph generation is available after failure.
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         let mut status = self.load.status.lock().unwrap();
         while matches!(*status, LoadStatus::Loading) {
@@ -1875,13 +1907,15 @@ pub struct FileMeta {
     pub mtime: Option<SystemTime>,
 }
 
-/// Files found by `scan_area`; unreadable entries retain their area-relative
-/// names and I/O errors. Cost O(files + unreadable entries) to inspect.
+/// Files found by `scan_area`; unreadable entries carry I/O errors and an
+/// area-relative name when one could be identified. Cost O(files + unreadable
+/// entries) to inspect.
 #[derive(Default)]
 pub struct Listing {
     /// Files successfully listed in this area.
     pub files: Vec<FileEntry>,
-    /// Area-relative names that could not be read, with their errors.
+    /// Area-relative names that could not be read, with their errors. An empty
+    /// name means directory iteration failed before an entry name was available.
     pub unreadable: Vec<(String, crate::IoError)>,
 }
 
@@ -2094,7 +2128,8 @@ pub struct Inventory(pub Vec<InventoryEntry>);
 pub struct SearchRequest {
     /// Search expression.
     pub text: String,
-    /// Restrict search to this page, if present.
+    /// Restrict search to this syntactically valid file id. An absent file
+    /// produces an empty result; check existence separately if it matters.
     pub within: Option<PageId>,
     /// Maximum page hits requested.
     pub page_limit: usize,
@@ -2145,7 +2180,9 @@ pub enum LoadError {
     /// unreadable page files and page/journal subdirectories, including a
     /// top-level page or journal directory, are skipped and reported by
     /// `WholeGraph::unreadable_files`; a lost root or unsafe config layout
-    /// can fail the operation.
+    /// can fail the operation. After an initial failure, `page()` can still
+    /// read a present file and guarded saves can write, but neither publishes
+    /// a graph generation until successful `scan_refresh()` recovery.
     Failed {
         /// Human-readable failure reason.
         reason: String,
@@ -2352,8 +2389,15 @@ impl WholeGraph {
         Arc::new(names)
     }
 
-    /// Names and file claimants in this view. Cost O(P + aliases + referenced
-    /// names) on each call; the result does not change after acquisition.
+    /// Names and file claimants in this view. Physical twins with the same
+    /// decoded spelling produce one name entry whose target contains the
+    /// canonical id and the other claimants; `scan_area` lists physical files.
+    /// Ordinary page twins can both contribute parsed search and backlink
+    /// content; duplicate-day journal strays are omitted from the parsed
+    /// whole-graph cache until addressed by their file id.
+    /// A first call can traverse all
+    /// page blocks and reference text to build indexes; later calls cost
+    /// O(P + aliases + referenced names). The result is stable in this view.
     pub fn inventory(&self) -> Arc<Inventory> {
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
@@ -2637,13 +2681,16 @@ impl WholeGraph {
         }
     }
 
-    /// Graph search, including an exact file scope and caller cancellation.
+    /// Graph search, with an optional syntactically checked file scope and
+    /// caller cancellation. An absent scoped file yields an empty answer;
+    /// check existence separately when it matters.
     /// The combined page and block hit allowance is 20,000. The page limit is
     /// clamped first, then the block limit to the remaining allowance; asking
     /// for 20,000 page hits leaves no block-hit allowance. A cancelled call
     /// returns `QueryError::Cancelled`
     /// without a partial result. Inspect `QueryExecution::has_more` for
-    /// omitted hits. A successful result has `cancelled == false` through this
+    /// omitted hits in enabled categories; a zero category limit is not
+    /// checked. A successful result has `cancelled == false` through this
     /// API; the lower-level execution type also represents cancelled work.
     pub fn search(
         &self,
@@ -2814,8 +2861,9 @@ impl WholeGraph {
     }
 
     /// `[[` completion over pages, journals, aliases and referenced names.
-    /// Cost O(P + aliases + referenced names) per call, at most `limit`
-    /// entries. Frequent calls on large graphs have that scan cost.
+    /// A first call can traverse all page blocks and reference text to build
+    /// indexes; later calls cost O(P + aliases + referenced names), returning
+    /// at most `limit` entries.
     pub fn complete_page_names(&self, text: &str, limit: usize) -> Vec<PageEntry> {
         self.graph.quick_switch(text, limit)
     }
@@ -2898,13 +2946,7 @@ impl WholeGraph {
             })
             .sum::<usize>();
         if bytes > QUERY_EXPORT_MAX_BYTES {
-            Err(QueryError::ResultTooLarge {
-                what: Budget::ExportBytes,
-                count: bytes,
-                limit: QUERY_EXPORT_MAX_BYTES,
-                bytes: Some(bytes),
-                byte_limit: RESULT_BRIDGE_MAX_BYTES,
-            })
+            Err(export_bytes_error(bytes))
         } else {
             Ok(batch)
         }
@@ -2966,11 +3008,178 @@ impl WholeGraph {
     }
 }
 
+fn export_bytes_error(bytes: usize) -> QueryError {
+    QueryError::ResultTooLarge {
+        what: Budget::ExportBytes,
+        count: bytes,
+        limit: QUERY_EXPORT_MAX_BYTES,
+        bytes: Some(bytes),
+        byte_limit: QUERY_EXPORT_MAX_BYTES,
+    }
+}
+
 #[cfg(test)]
 mod rev5_tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn export_error_reports_effective_byte_limit() {
+        match export_bytes_error(QUERY_EXPORT_MAX_BYTES + 1) {
+            QueryError::ResultTooLarge {
+                limit, byte_limit, ..
+            } => {
+                assert_eq!(limit, QUERY_EXPORT_MAX_BYTES);
+                assert_eq!(byte_limit, QUERY_EXPORT_MAX_BYTES);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failed_initial_load_defers_page_and_save_publication_until_recovery() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-failed-load-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- before\n").unwrap();
+        let pause = root.join(".tine-test-pause-load");
+        fs::write(&pause, "").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let changes = store.subscribe();
+        *store.load.status.lock().unwrap() = LoadStatus::Failed("injected failure".into());
+        store.load.ready.notify_all();
+        fs::write(root.join("pages/A.md"), "- changed outside\n").unwrap();
+        let id = PageId::from("pages/A.md");
+        let read = store.page(&id).unwrap();
+        assert!(read.doc.blocks[0].raw.contains("changed outside"));
+        assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
+        assert!(changes.try_recv().unwrap().is_none());
+
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "changed here".into();
+        assert!(matches!(
+            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            SaveOutcome::Saved(_)
+        ));
+        assert!(changes.try_recv().unwrap().is_none());
+        assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
+
+        store.scan_refresh().unwrap();
+        let view = store.whole_graph().unwrap();
+        assert!(view.corpus().pages.iter().any(|page| {
+            page.name == "A" && page.document.roots[0].raw().contains("changed here")
+        }));
+        assert!(store.page(&id).unwrap().doc.blocks[0]
+            .raw
+            .contains("changed here"));
+        assert!(changes.try_recv().unwrap().is_some());
+        fs::remove_file(pause).unwrap();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_publishes_save_attempted_after_reconcile() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-recovery-save-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- before\n").unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let old = store.whole_graph().unwrap();
+        let id = PageId::from("pages/A.md");
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "saved during recovery".into();
+        *store.load.status.lock().unwrap() = LoadStatus::Failed("injected failure".into());
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store
+            .watch
+            .core_for_load()
+            .recovery_reconcile_pause
+            .lock()
+            .unwrap() = Some(Arc::clone(&pause));
+        let recovery_store = Arc::clone(&store);
+        let recovery = std::thread::spawn(move || recovery_store.scan_refresh().unwrap());
+        wait_hook(&pause);
+        let save_store = Arc::clone(&store);
+        let (attempting, attempted) = mpsc::channel();
+        let save = std::thread::spawn(move || {
+            attempting.send(()).unwrap();
+            save_store.save(&id, SaveBase::Existing(read.rev), &doc)
+        });
+        attempted.recv_timeout(Duration::from_secs(5)).unwrap();
+        // On the old path the save can complete while recovery is paused;
+        // after the fix it waits for recovery's writer critical section.
+        std::thread::sleep(Duration::from_millis(100));
+        release_hook(&pause);
+        recovery.join().unwrap();
+        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        let view = store.whole_graph().unwrap();
+        assert!(view.rev() > old.rev());
+        assert!(view.corpus().pages.iter().any(|page| {
+            page.name == "A"
+                && page.document.roots[0]
+                    .raw()
+                    .contains("saved during recovery")
+        }));
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollback_external_live_bytes_publish_as_external() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-rollback-origin-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
+        fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        let a = PageId::from("pages/A.md");
+        let b = PageId::from("pages/B.md");
+        let read_a = store.page(&a).unwrap();
+        let read_b = store.page(&b).unwrap();
+        let mut doc_a = read_a.doc;
+        let mut doc_b = read_b.doc;
+        doc_a.blocks[0].raw = "new A".into();
+        doc_b.blocks[0].raw = "new B".into();
+        let mut tx = store.transaction();
+        tx.save_page(&a, SaveBase::Existing(read_a.rev), &doc_a);
+        tx.save_page(&b, SaveBase::Existing(read_b.rev), &doc_b);
+        store.inject_fault(crate::FaultPoint::MidStepIoAt(1));
+        store.inject_fault(crate::FaultPoint::UndoLiveWrite);
+        assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
+        let found: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
+        assert!(
+            found.iter().any(|change| {
+                change.origin == Origin::External
+                    && change.files.iter().any(|(id, _, _)| id == &b.file())
+            }),
+            "{found:?}"
+        );
+        let view = store.whole_graph().unwrap();
+        assert!(view.corpus().pages.iter().any(|page| {
+            page.name == "B"
+                && page
+                    .document
+                    .pre_block
+                    .as_ref()
+                    .is_some_and(|block| block.contains("external during undo"))
+        }));
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn partial_directory_purge_reports_deleted_bytes() {

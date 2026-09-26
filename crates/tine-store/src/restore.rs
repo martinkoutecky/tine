@@ -91,7 +91,10 @@ impl Store {
     /// `Origin::Own` revision for the final disk state, including `Removed`
     /// tuples for retired live files and `config_changed` when config changed.
     /// The config is reloaded before the resulting view is published. A changed
-    /// partial result on failure. An in-flight save holding the writer lock
+    /// partial result on failure publishes the final disk state after a
+    /// successful initial load. After a failed initial load, writes remain
+    /// guarded but publication waits for successful `scan_refresh()` recovery.
+    /// An in-flight save holding the writer lock
     /// finishes before this restore; a later save checks against restored
     /// bytes. Check `recovery` and
     /// `kept_external` when reconciling disk state. An editor must separately

@@ -51,9 +51,8 @@ pub struct DocBlock {
     /// Runtime/store identity assigned from the document's physical owner and
     /// structural sibling-index path. Persisted `id::` is a separate external
     /// reference identity. This key round-trips through an in-memory save but is
-    /// never serialized. It is NOT part of block *content*, so it is excluded
-    /// from equality — otherwise the conflict guard (`parse(disk) == cached`)
-    /// would always see a "change".
+    /// never serialized. It is not part of block content, so it is excluded
+    /// from equality. Store write conflicts use raw-byte `FileRev` guards.
     #[serde(default, skip_serializing)]
     pub uuid: String,
     /// Whether this block's page is Org (vs Markdown) — the format lsdoc needs to
@@ -62,14 +61,14 @@ pub struct DocBlock {
     /// parse time. `#[serde(default)]` → false on any legacy deserialize.
     #[serde(default)]
     pub(crate) is_org: bool,
-    /// Derived projection of the block body. Reset on clone and raw-text edits.
+    /// Derived projection of the current block body.
+    // set_raw clears this memo; cloning starts with an empty memo.
     #[serde(skip)]
     pub(crate) proj: std::sync::OnceLock<BlockProjection>,
 }
 
-/// Memoized projection of a block's `raw`, so whole-graph scans (full-text
-/// search per keystroke, backlink/page-ref matching, `(content …)`) don't
-/// re-parse every block's `raw` on each run.
+/// Parsed values derived from a block's current raw text.
+// Memoization avoids reparsing each block during whole-graph scans.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct BlockProjection {
@@ -84,8 +83,8 @@ pub struct BlockProjection {
     pub refs_norm: Vec<String>,
     /// The SAME page references in lsdoc's original case — for `referenced_page_names`
     /// (the virtual-page list behind `[[`/`#`/Ctrl-K autocomplete), which needs display
-    /// case. Kept on the projection so that hot path reads the memoized parse instead of
-    /// re-parsing every block on each cache generation (audit F1).
+    /// case.
+    // Keep this on the projection to reuse the parse across cache generations.
     pub refs_page: Vec<String>,
     /// Block references (`((uuid))` / `[l](((uuid)))` / `{{embed ((uuid))}}`),
     /// UUID-gated — for the block-referrers / ref-count scans. From the same
@@ -103,7 +102,7 @@ pub struct BlockProjection {
     /// `key:: value` block properties (md trailer / org `:PROPERTIES:` drawer) as
     /// lsdoc projects them — the ONE property recognizer for the read path.
     pub properties: Vec<(String, String)>,
-    /// SCHEDULED / DEADLINE planning date text (the `<…>` content) when lsdoc emits
+    /// SCHEDULED planning date text (the `<…>` content) when lsdoc emits
     /// a real `Timestamp` for it — code/fence-robust by construction (a `SCHEDULED:`
     /// inside inline code is NOT a Timestamp, so never badged). `None` otherwise.
     pub scheduled: Option<String>,
@@ -119,8 +118,7 @@ pub struct BlockProjection {
 }
 
 impl BlockProjection {
-    /// Whether this block references page `name` (case-insensitive) — checks the
-    /// lsdoc-extracted normalized refs (`refs_norm`), the live ref index.
+    /// Whether this block references page `name` under page-name normalization.
     pub fn refs_contains(&self, name: &str) -> bool {
         self.refs_contains_norm(&crate::refs::normalize(name))
     }
@@ -134,8 +132,8 @@ impl BlockProjection {
 }
 
 // Identity is metadata, not content: two blocks are equal iff their body and
-// subtree match, regardless of uuid. Keeps the external-change conflict guard
-// and the round-trip tests comparing on content alone.
+// subtree match, regardless of uuid. Store write guards compare raw FileRev;
+// content equality is useful for in-memory comparison and round-trip tests.
 impl PartialEq for DocBlock {
     fn eq(&self, other: &Self) -> bool {
         self.raw == other.raw && self.children == other.children
