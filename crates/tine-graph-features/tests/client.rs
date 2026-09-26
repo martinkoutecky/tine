@@ -28,18 +28,47 @@ use tine_core::pdf::{Highlight, Position, Rect};
 use tine_graph_features::{assets, config, conflicts, guide, journals, pages, pdf};
 use tine_store::{Area, Content, Day, FaultPoint, Store};
 
-fn assert_golden(actual: impl std::fmt::Debug, test: &str, line: &str, index: usize) {
-    static GOLDENS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
-    let goldens = GOLDENS.get_or_init(|| {
-        serde_json::from_str(include_str!("fixtures/b15a_client_assertions.json")).unwrap()
-    });
-    let expected = goldens[test][line][index]
-        .as_str()
-        .expect("captured legacy assertion");
+fn assert_disk_tree(root: &std::path::Path, test: &str, case: &str) {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(test)
+        .join(case);
+    let actual = disk_tree(root);
+    let expected = disk_tree(&fixture);
+    for (index, (path, bytes)) in expected.iter().enumerate() {
+        match actual.get(index) {
+            Some((found_path, found)) if found_path == path => {
+                assert_eq!(found, bytes, "first differing path: {path}")
+            }
+            Some((found_path, _)) => panic!("first differing path: {path} (found {found_path})"),
+            None => panic!("first differing path: {path} (missing)"),
+        }
+    }
+    if let Some((path, _)) = actual.get(expected.len()) {
+        panic!("first differing path: {path} (unexpected)");
+    }
+}
+
+fn assert_json_value(actual: serde_json::Value, test: &str, case: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(test)
+        .join(case)
+        .join("expected.json");
+    let expected: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(actual, expected, "{test}/{case}");
+}
+
+fn assert_fixture_file(root: &std::path::Path, test: &str, case: &str, rel: &str) {
+    let expected = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(test)
+        .join(case)
+        .join(rel);
     assert_eq!(
-        format!("{actual:?}"),
-        expected,
-        "legacy golden {test}:{line}:{index}"
+        fs::read(root.join(rel)).unwrap(),
+        fs::read(expected).unwrap(),
+        "first differing path: {rel}"
     );
 }
 
@@ -132,30 +161,27 @@ fn guide_creation_matches_legacy_tree_and_folder_choice() {
     fs::remove_dir(empty.join("pages")).unwrap();
     fs::remove_dir(empty.join("assets")).unwrap();
     assert_eq!(guide::create_demo_graph(&empty).unwrap(), empty);
-    assert_golden(
-        disk_tree(&empty),
+    assert_disk_tree(
+        &empty,
         "guide_creation_matches_legacy_tree_and_folder_choice",
-        "0134",
-        0,
+        "empty_graph",
     );
 
     let (parent, _) = fixture("demo-parent");
     fs::write(parent.join("keep"), b"keep").unwrap();
     let first = guide::create_demo_graph(&parent).unwrap();
     assert_eq!(first, parent.join("tine-demo"));
-    assert_golden(
-        disk_tree(&first),
+    assert_disk_tree(
+        &first,
         "guide_creation_matches_legacy_tree_and_folder_choice",
-        "0140",
-        0,
+        "first_demo",
     );
     let second = guide::create_demo_graph(&parent).unwrap();
     assert_eq!(second, parent.join("tine-demo-2"));
-    assert_golden(
-        disk_tree(&second),
+    assert_disk_tree(
+        &second,
         "guide_creation_matches_legacy_tree_and_folder_choice",
-        "0143",
-        0,
+        "second_demo",
     );
     assert_eq!(fs::read(parent.join("keep")).unwrap(), b"keep");
 
@@ -230,17 +256,27 @@ fn guide_copy_matches_legacy_independent_steps() {
                 .copied_assets
                 .contains(&"quick-capture.png".to_string()));
         }
-        assert_golden(
+        assert_json_value(
             serde_json::to_value(actual).unwrap(),
             "guide_copy_matches_legacy_independent_steps",
-            "0223",
-            case_idx,
+            match case_idx {
+                0 => "copy_value_empty",
+                1 => "copy_value_page",
+                2 => "copy_value_asset",
+                3 => "copy_value_asset_dir",
+                _ => unreachable!(),
+            },
         );
-        assert_golden(
-            disk_tree(&new_root),
+        assert_disk_tree(
+            &new_root,
             "guide_copy_matches_legacy_independent_steps",
-            "0228",
-            case_idx,
+            match case_idx {
+                0 => "empty",
+                1 => "page",
+                2 => "asset",
+                3 => "asset_dir",
+                _ => unreachable!(),
+            },
         );
     }
     let (_, store) = fixture("guide-unknown");
@@ -284,8 +320,8 @@ fn config_setters_match_legacy_values_and_bytes() {
         ("absent", None),
         ("comments", Some("{ ; :favorites [\"comment\"]\n :favorites ; odd spacing\n [\"Old\"]\n :preferred-workflow  ; comment\n :now\n :start-of-week   2\n :default-templates { :pages \"P\" ; keep\n :journals \"Old\"}}\n")),
     ];
-    for (op_index, (op_name, new)) in operations.into_iter().enumerate() {
-        for (case_index, (case_name, input)) in cases.into_iter().enumerate() {
+    for (op_name, new) in operations {
+        for (case_name, input) in cases {
             let (new_root, store) = fixture(&format!("config-{op_name}-{case_name}-new"));
             fs::create_dir_all(new_root.join("logseq")).unwrap();
             if let Some(input) = input {
@@ -293,20 +329,11 @@ fn config_setters_match_legacy_values_and_bytes() {
             }
             store.scan_refresh().unwrap();
             let actual = new(&store);
-            assert_golden(
-                actual
-                    .as_ref()
-                    .map(|_| ())
-                    .map_err(|e| (e.kind(), e.to_string())),
+            assert!(actual.is_ok(), "{op_name}/{case_name}: {actual:?}");
+            assert_disk_tree(
+                &new_root,
                 "config_setters_match_legacy_values_and_bytes",
-                "0319",
-                op_index * 4 + case_index,
-            );
-            assert_golden(
-                fs::read(new_root.join("logseq/config.edn")).unwrap(),
-                "config_setters_match_legacy_values_and_bytes",
-                "0330",
-                op_index * 4 + case_index,
+                &format!("{op_name}_{case_name}"),
             );
         }
     }
@@ -327,11 +354,14 @@ fn custom_css_matches_legacy_present_absent_and_unreadable() {
         if let Some(contents) = contents {
             fs::write(root.join("logseq/custom.css"), contents).unwrap();
         }
-        assert_golden(
-            config::custom_css(&store),
-            "custom_css_matches_legacy_present_absent_and_unreadable",
-            "0351",
-            index,
+        assert_eq!(
+            format!("{:?}", config::custom_css(&store)),
+            match index {
+                0 => "\"body { color: red }\"",
+                1 => "\"\"",
+                2 => "\"\"",
+                _ => unreachable!(),
+            }
         );
     }
 }
@@ -356,7 +386,7 @@ fn config_invalid_utf8_error_matches_legacy() {
     let new = config::set_start_of_week(&store, 1)
         .unwrap_err()
         .to_string();
-    assert_golden(new, "config_invalid_utf8_error_matches_legacy", "0386", 0);
+    assert_eq!(new, "stream did not contain valid UTF-8");
     assert_eq!(
         fs::read(new_root.join("logseq/config.edn")).unwrap(),
         b"\xff"
@@ -372,21 +402,19 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
     fs::write(new_root.join("pages/Foo.md"), "- mine\n").unwrap();
     fs::write(new_root.join("pages").join(conflict_name), "- theirs\n").unwrap();
     store.scan_refresh().unwrap();
-    assert_golden(
+    assert_json_value(
         serde_json::to_value(conflicts::list_sync_conflicts(&store)).unwrap(),
         "conflict_clients_match_legacy_values_and_disk_bytes",
-        "0405",
-        0,
+        "sync_conflicts",
     );
     let conflict = format!("pages/{conflict_name}");
     let new_diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", &conflict)
         .unwrap()
         .unwrap();
-    assert_golden(
+    assert_json_value(
         serde_json::to_value(&new_diff).unwrap(),
         "conflict_clients_match_legacy_values_and_disk_bytes",
-        "0417",
-        0,
+        "sync_conflict_diff",
     );
     conflicts::resolve_sync_conflict(
         &store,
@@ -398,22 +426,20 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
         "union",
     )
     .unwrap();
-    assert_golden(
-        disk_tree(&new_root),
+    assert_disk_tree(
+        &new_root,
         "conflict_clients_match_legacy_values_and_disk_bytes",
-        "0440",
-        0,
+        "resolved_conflict",
     );
 
     // The separate discard operation preserves the same bytes too.
     fs::write(new_root.join("pages").join(conflict_name), "- next\n").unwrap();
     store.scan_refresh().unwrap();
     conflicts::trash_sync_conflict(&store, &conflict).unwrap();
-    assert_golden(
-        disk_tree(&new_root),
+    assert_disk_tree(
+        &new_root,
         "conflict_clients_match_legacy_values_and_disk_bytes",
-        "0448",
-        0,
+        "discarded_conflict",
     );
 }
 
@@ -432,55 +458,44 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
     }
     store.scan_refresh().unwrap();
     let new_feed = journals::feed_journals_desc_through(&store, Day(20260620));
-    assert_golden(
+    assert_eq!(
         new_feed.iter().map(|(day, _)| day.0).collect::<Vec<_>>(),
-        "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
-        "0471",
-        0,
+        &[20260620, 20260619, 20260618]
     );
-    assert_golden(
+    assert_json_value(
         serde_json::to_value(journals::journal_conflicts(&store)).unwrap(),
         "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
-        "0478",
-        0,
+        "journal_conflicts",
     );
-    assert_golden(
+    assert_eq!(
         journals::read_journal_file(&store, "Jun 18th, 2026.org").unwrap(),
-        "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
-        "0482",
-        0,
+        "- duplicate\n"
     );
-    assert_golden(
-        journals::has_journal_filename_migrations(&store),
-        "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
-        "0486",
-        0,
+    assert_eq!(
+        format!("{:?}", journals::has_journal_filename_migrations(&store)),
+        "true"
     );
     // One deliberate difference: v0.6.5 renamed `Jun 18th, 2026.org` to
     // `2026_06_18.org` beside `2026_06_18.md`, creating an md/org twin. The
     // twin rule refuses that move, so the title-named duplicate stays as it was
     // (still listed by `journal_conflicts`). Every other file matches.
-    assert_golden(
-        journals::migrate_journal_filenames(&store) + 1,
-        "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
-        "0494",
-        0,
+    assert_eq!(
+        format!("{:?}", journals::migrate_journal_filenames(&store) + 1),
+        "2"
     );
     assert!(new_root.join("journals/Jun 20th, 2026.md").exists());
     assert!(new_root.join("journals/Jun 18th, 2026.org").exists());
     assert!(!new_root.join("journals/2026_06_18.org").exists());
-    assert_golden(
-        disk_tree(&new_root),
+    assert_disk_tree(
+        &new_root,
         "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
-        "0506",
-        0,
+        "after_migration",
     );
     journals::trash_journal_file(&store, "Jun 20th, 2026.md").unwrap();
-    assert_golden(
-        disk_tree(&new_root),
+    assert_disk_tree(
+        &new_root,
         "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
-        "0509",
-        0,
+        "after_trash",
     );
 }
 
@@ -531,11 +546,14 @@ fn resolve_preblock_keep_choices_match_legacy_bytes() {
             choice,
         )
         .unwrap();
-        assert_golden(
-            disk_tree(&new_root),
+        assert_disk_tree(
+            &new_root,
             "resolve_preblock_keep_choices_match_legacy_bytes",
-            "0571",
-            index,
+            match index {
+                0 => "keep_mine",
+                1 => "keep_theirs",
+                _ => unreachable!(),
+            },
         );
     }
 }
@@ -690,11 +708,30 @@ fn old_vs_new_matrix_on_identical_fixtures() {
     store.scan_refresh().unwrap();
     let mut same_index = 0;
     let mut same = |rel: &str| {
-        assert_golden(
+        let cases = [
+            "saved_photo",
+            "second_photo",
+            "first_stream",
+            "second_stream",
+            "captured_stream",
+            "first_area_image",
+            "replaced_area_image",
+            "opened_pdf",
+            "opened_pdf_notes",
+            "view_state",
+            "first_highlight",
+            "first_highlight_notes",
+            "second_highlight",
+            "second_highlight_notes",
+        ];
+        let expected = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/old_vs_new_matrix_on_identical_fixtures")
+            .join(cases[same_index])
+            .join(rel);
+        assert_eq!(
             fs::read(a.join(rel)).unwrap(),
-            "old_vs_new_matrix_on_identical_fixtures",
-            "0731",
-            same_index,
+            fs::read(expected).unwrap(),
+            "first differing path: {rel}"
         );
         same_index += 1;
     };
@@ -702,11 +739,16 @@ fn old_vs_new_matrix_on_identical_fixtures() {
         .into_iter()
         .enumerate()
     {
-        assert_golden(
-            assets::save_asset(&store, "photo.png", bytes).unwrap(),
-            "old_vs_new_matrix_on_identical_fixtures",
-            "0738",
-            index,
+        assert_eq!(
+            format!(
+                "{:?}",
+                assets::save_asset(&store, "photo.png", bytes).unwrap()
+            ),
+            match index {
+                0 => "\"photo.png\"",
+                1 => "\"photo_1.png\"",
+                _ => unreachable!(),
+            }
         );
     }
     same("assets/photo.png");
@@ -724,27 +766,30 @@ fn old_vs_new_matrix_on_identical_fixtures() {
         )
         .unwrap();
         assert_eq!(actual, expected);
-        assert_golden(
-            actual,
-            "old_vs_new_matrix_on_identical_fixtures",
-            "0748",
-            index,
+        assert_eq!(
+            format!("{:?}", actual),
+            match index {
+                0 => "\"X\"",
+                1 => "\"X_1\"",
+                _ => unreachable!(),
+            }
         );
         same(&format!("assets/{expected}"));
     }
-    assert_golden(
-        assets::import_asset_file(
-            &store,
-            "capture",
-            Content::Stream {
-                source: fs::File::open(&source).unwrap(),
-                max_bytes: 100,
-            },
-        )
-        .unwrap(),
-        "old_vs_new_matrix_on_identical_fixtures",
-        "0764",
-        0,
+    assert_eq!(
+        format!(
+            "{:?}",
+            assets::import_asset_file(
+                &store,
+                "capture",
+                Content::Stream {
+                    source: fs::File::open(&source).unwrap(),
+                    max_bytes: 100,
+                },
+            )
+            .unwrap()
+        ),
+        "\"capture\""
     );
     same("assets/capture");
     let same_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
@@ -761,19 +806,15 @@ fn old_vs_new_matrix_on_identical_fixtures() {
     assert!(!new_orphans
         .iter()
         .any(|(name, _, _)| name == "referenced.png"));
-    assert_golden(
-        new_orphans,
-        "old_vs_new_matrix_on_identical_fixtures",
-        "0794",
-        0,
-    );
-    assert_golden(
-        assets::trash_asset(&store, "missing")
-            .unwrap_err()
-            .to_string(),
-        "old_vs_new_matrix_on_identical_fixtures",
-        "0801",
-        0,
+    assert_eq!(format!("{:?}", new_orphans), "[(\"X\", 6, Some(1700000000)), (\"X_1\", 6, Some(1700000000)), (\"capture\", 6, Some(1700000000)), (\"photo.png\", 3, Some(1700000000)), (\"photo_1.png\", 3, Some(1700000000))]");
+    assert_eq!(
+        format!(
+            "{:?}",
+            assets::trash_asset(&store, "missing")
+                .unwrap_err()
+                .to_string()
+        ),
+        "\"no such asset\""
     );
     assets::trash_asset(&store, "photo.png").unwrap();
     assert!(!a.join("assets/photo.png").exists());
@@ -792,50 +833,53 @@ fn old_vs_new_matrix_on_identical_fixtures() {
         files.sort();
         files
     };
-    assert_golden(
-        trash_payloads(&a),
-        "old_vs_new_matrix_on_identical_fixtures",
-        "0825",
-        0,
+    assert_eq!(
+        format!("{:?}", trash_payloads(&a)),
+        "[(\"photo.png\", [111, 110, 101])]"
     );
 
     for (index, bytes) in [b"first".as_slice(), b"second".as_slice()]
         .into_iter()
         .enumerate()
     {
-        assert_golden(
-            pdf::write_pdf_area_image(&store, "paper.pdf", 2, "area", 42, bytes).unwrap(),
-            "old_vs_new_matrix_on_identical_fixtures",
-            "0828",
-            index,
+        assert_eq!(
+            format!(
+                "{:?}",
+                pdf::write_pdf_area_image(&store, "paper.pdf", 2, "area", 42, bytes).unwrap()
+            ),
+            match index {
+                0 => "\"paper/2_area_42.png\"",
+                1 => "\"paper/2_area_42.png\"",
+                _ => unreachable!(),
+            }
         );
         same("assets/paper/2_area_42.png");
     }
-    assert_golden(
-        pdf::write_pdf_area_image(&store, "paper.pdf", 2, "../escape", 42, b"x")
-            .unwrap_err()
-            .to_string(),
-        "old_vs_new_matrix_on_identical_fixtures",
-        "0835",
-        0,
+    assert_eq!(
+        format!(
+            "{:?}",
+            pdf::write_pdf_area_image(&store, "paper.pdf", 2, "../escape", 42, b"x")
+                .unwrap_err()
+                .to_string()
+        ),
+        "\"bad asset name\""
     );
-    assert_golden(
-        pdf::open_pdf(&store, "paper.pdf", "Paper").unwrap(),
-        "old_vs_new_matrix_on_identical_fixtures",
-        "0843",
-        0,
+    assert_eq!(
+        format!("{:?}", pdf::open_pdf(&store, "paper.pdf", "Paper").unwrap()),
+        "PdfState { highlights: [], page: None, scale: None }"
     );
     same("assets/paper.edn");
     same("pages/hls__paper.md");
     pdf::write_pdf_view_state(&store, "paper.pdf", 3, 1.5).unwrap();
     same("assets/paper.edn");
-    assert_golden(
-        pdf::write_pdf_view_state(&store, "paper.pdf", 0, 1.0)
-            .unwrap_err()
-            .to_string(),
-        "old_vs_new_matrix_on_identical_fixtures",
-        "0852",
-        0,
+    assert_eq!(
+        format!(
+            "{:?}",
+            pdf::write_pdf_view_state(&store, "paper.pdf", 0, 1.0)
+                .unwrap_err()
+                .to_string()
+        ),
+        "\"invalid PDF view state\""
     );
     for (items, base) in [
         (vec![highlight("a")], vec![]),
@@ -845,12 +889,7 @@ fn old_vs_new_matrix_on_identical_fixtures() {
         same("assets/paper.edn");
         same("pages/hls__paper.md");
     }
-    assert_golden(
-        pdf::read_highlights(&store, "paper.pdf"),
-        "old_vs_new_matrix_on_identical_fixtures",
-        "0870",
-        0,
-    );
+    assert_eq!(format!("{:?}", pdf::read_highlights(&store, "paper.pdf")), "[Highlight { id: \"a\", page: 1, position: Position { page: 1, bounding: Rect { top: 0.0, left: 0.0, width: 1.0, height: 1.0, source_width: None, source_height: None }, rects: [] }, color: \"yellow\", text: Some(\"a\"), image: None }, Highlight { id: \"b\", page: 1, position: Position { page: 1, bounding: Rect { top: 0.0, left: 0.0, width: 1.0, height: 1.0, source_width: None, source_height: None }, rects: [] }, color: \"yellow\", text: Some(\"b\"), image: None }]");
 }
 
 #[test]
@@ -921,22 +960,14 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
     store.scan_refresh().unwrap();
     pdf::open_pdf(&store, pdf_name, "My Paper").unwrap();
     assert!(!a.join("assets").join(format!("{key}.edn")).exists());
-    assert_golden(
-        fs::read(a.join("assets").join(format!("{legacy}.edn"))).unwrap(),
-        "legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration",
-        "0948",
-        0,
-    );
+    assert_eq!(fs::read(a.join("assets").join(format!("{legacy}.edn"))).unwrap(), b"{:highlights [{:id \"one\" :page 1 :position {:page 1 :bounding {:top 0 :left 0 :width 1 :height 1} :rects ()} :content {:text \"one\"} :properties {:color \"yellow\"}}] :extra {}}\n");
     pdf::write_highlights(&store, pdf_name, "My Paper", &[h.clone()], &[h.id.clone()]).unwrap();
-    for (index, rel) in [format!("assets/{key}.edn"), format!("pages/hls__{key}.md")]
-        .into_iter()
-        .enumerate()
-    {
-        assert_golden(
-            fs::read(a.join(&rel)).unwrap(),
+    for rel in [format!("assets/{key}.edn"), format!("pages/hls__{key}.md")] {
+        assert_fixture_file(
+            &a,
             "legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration",
-            "0956",
-            index,
+            "after_migration",
+            &rel,
         );
     }
     assert!(!a.join("assets").join(format!("{legacy}.edn")).exists());
@@ -953,11 +984,9 @@ fn blocked_trash_keeps_asset_and_legacy_error_text() {
     let new_error = assets::trash_asset(&store, "photo.png")
         .unwrap_err()
         .to_string();
-    assert_golden(
+    assert_eq!(
         new_error,
-        "blocked_trash_keeps_asset_and_legacy_error_text",
-        "0980",
-        0,
+        "could not create trash directory logseq/.tine-trash/assets: Not a directory (os error 20)"
     );
     assert_eq!(fs::read(a.join("assets/photo.png")).unwrap(), b"safe");
 }
@@ -968,21 +997,23 @@ fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
     let malformed = b"{:highlights []} trailing";
     fs::write(a.join("assets/paper.edn"), malformed).unwrap();
     store.scan_refresh().unwrap();
-    assert_golden(
-        pdf::open_pdf(&store, "paper.pdf", "Paper")
-            .unwrap_err()
-            .to_string(),
-        "malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes",
-        "0996",
-        0,
+    assert_eq!(
+        format!(
+            "{:?}",
+            pdf::open_pdf(&store, "paper.pdf", "Paper")
+                .unwrap_err()
+                .to_string()
+        ),
+        "\"highlight sidecar is malformed; refusing to replace it\""
     );
-    assert_golden(
-        pdf::write_highlights(&store, "paper.pdf", "Paper", &[highlight("h")], &[])
-            .unwrap_err()
-            .to_string(),
-        "malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes",
-        "1002",
-        0,
+    assert_eq!(
+        format!(
+            "{:?}",
+            pdf::write_highlights(&store, "paper.pdf", "Paper", &[highlight("h")], &[])
+                .unwrap_err()
+                .to_string()
+        ),
+        "\"highlight sidecar is malformed; refusing to replace it\""
     );
     assert_eq!(fs::read(a.join("assets/paper.edn")).unwrap(), malformed);
 }
@@ -1006,12 +1037,7 @@ fn annotation_notes_survive_update_with_legacy_bytes() {
     pdf::write_highlights(&store, "paper.pdf", "Paper", &[h.clone()], &[h.id.clone()]).unwrap();
     let new_page = fs::read(a.join("pages/hls__paper.md")).unwrap();
     assert!(String::from_utf8_lossy(&new_page).contains("private note"));
-    assert_golden(
-        new_page,
-        "annotation_notes_survive_update_with_legacy_bytes",
-        "1038",
-        0,
-    );
+    assert_eq!(new_page, b"file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\n\n- one\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: one\n\t- private note\n");
 }
 
 #[test]
@@ -1019,18 +1045,11 @@ fn empty_sanitized_pdf_key_keeps_legacy_crop_location() {
     let (a, store) = fixture("empty-key-new");
     let pdf_name = "??.pdf";
     assert_eq!(tine_core::pdf::asset_key(pdf_name), "");
-    assert_golden(
+    assert_eq!(
         pdf::write_pdf_area_image(&store, pdf_name, 1, "crop", 5, b"png").unwrap(),
-        "empty_sanitized_pdf_key_keeps_legacy_crop_location",
-        "1048",
-        0,
+        "/1_crop_5.png"
     );
-    assert_golden(
-        fs::read(a.join("assets/1_crop_5.png")).unwrap(),
-        "empty_sanitized_pdf_key_keeps_legacy_crop_location",
-        "1053",
-        0,
-    );
+    assert_eq!(fs::read(a.join("assets/1_crop_5.png")).unwrap(), b"png");
 }
 
 fn put(root: &std::path::Path, rel: &str, body: &str) {
@@ -1114,17 +1133,28 @@ fn page_rename_matches_legacy_for_refs_namespace_alias_and_title() {
         }
         let store = Store::open(&a, Default::default()).unwrap().0;
         let client = pages::rename_page_expected(&store, old_name, new_name, None);
-        assert_golden(
-            operation_result(&client, &a),
-            "page_rename_matches_legacy_for_refs_namespace_alias_and_title",
-            "1149",
-            index,
+        assert_eq!(
+            format!("{:?}", operation_result(&client, &a)),
+            match index {
+                0 => "\"ok\"",
+                1 => "\"ok\"",
+                2 => "\"ok\"",
+                3 => "\"ok\"",
+                4 => "\"ok\"",
+                _ => unreachable!(),
+            }
         );
-        assert_golden(
-            disk_tree(&a),
+        assert_disk_tree(
+            &a,
             "page_rename_matches_legacy_for_refs_namespace_alias_and_title",
-            "1154",
-            index,
+            match index {
+                0 => "simple",
+                1 => "namespace",
+                2 => "title_alias",
+                3 => "case_change",
+                4 => "tags",
+                _ => unreachable!(),
+            },
         );
         if label == "plain" {
             let moved = store.file_id(Area::Pages, "Next Name.md").unwrap();
@@ -1167,18 +1197,16 @@ fn page_rename_refusals_match_legacy_and_keep_disk() {
         let before = disk_tree(&a);
         let to = if label == "target-exists" { "y" } else { "z" };
         let client = pages::rename_page_expected(&store, "x", to, None);
-        assert_golden(
-            operation_result(&client, &a),
-            "page_rename_refusals_match_legacy_and_keep_disk",
-            "1198",
-            index,
-        );
+        assert_eq!(format!("{:?}", operation_result(&client, &a)), match index { 0 => "\"AlreadyExists: target page identity already exists elsewhere in the graph\"", 1 => "\"PermissionDenied: cannot rename: <root>/pages/ref.org is a read-only .org file (does not round-trip)\"", _ => unreachable!() });
         assert_eq!(disk_tree(&a), before, "{label} client changed disk");
-        assert_golden(
-            disk_tree(&a),
+        assert_disk_tree(
+            &a,
             "page_rename_refusals_match_legacy_and_keep_disk",
-            "1204",
-            index,
+            match index {
+                0 => "existing_target",
+                1 => "invalid_target",
+                _ => unreachable!(),
+            },
         );
     }
 }
@@ -1198,18 +1226,16 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
     put(&a, "pages/ref.md", "- [[src]] and [[dst]]\n");
     let store = Store::open(&a, Default::default()).unwrap().0;
     pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
-    assert_golden(
-        disk_tree(&a),
+    assert_disk_tree(
+        &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
-        "1228",
-        0,
+        "merge",
     );
     pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued").unwrap();
-    assert_golden(
-        disk_tree(&a),
+    assert_disk_tree(
+        &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
-        "1232",
-        0,
+        "rescue",
     );
     let id = store.file_id(Area::Pages, "delete.md").unwrap();
     let stale = store.read(&id, None).unwrap().1;
@@ -1221,11 +1247,10 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
     assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");
     store.scan_refresh().unwrap();
     pages::delete_page_expected(&store, "delete", PageKind::Page, None, None).unwrap();
-    assert_golden(
-        disk_tree(&a),
+    assert_disk_tree(
+        &a,
         "page_merge_delete_and_rescue_match_legacy_bytes",
-        "1245",
-        0,
+        "delete_again",
     );
 }
 
@@ -1239,24 +1264,13 @@ fn org_merge_and_binary_rescue_match_legacy() {
     fs::write(a.join("journals/Loose.md"), [0xff, 0xfe, 0x00]).unwrap();
     let store = Store::open(&a, Default::default()).unwrap().0;
     let client = pages::merge_pages(&store, "pages/src.org", "pages/dst.org");
-    assert_golden(
-        operation_result(&client, &a),
-        "org_merge_and_binary_rescue_match_legacy",
-        "1263",
-        0,
-    );
-    assert_golden(
-        disk_tree(&a),
-        "org_merge_and_binary_rescue_match_legacy",
-        "1264",
-        0,
-    );
+    assert_eq!(operation_result(&client, &a), "ok");
+    assert_disk_tree(&a, "org_merge_and_binary_rescue_match_legacy", "org_merge");
     pages::rename_file_to_page(&store, "journals/Loose.md", "Rescued").unwrap();
-    assert_golden(
-        disk_tree(&a),
+    assert_disk_tree(
+        &a,
         "org_merge_and_binary_rescue_match_legacy",
-        "1268",
-        0,
+        "binary_rescue",
     );
 }
 

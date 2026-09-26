@@ -1,0 +1,32 @@
+{
+  "base_rev": "eb859457eef7db1b",
+  "blocks_identical": false,
+  "conflict_rev": "16b358bd5eb56fad",
+  "mine_pre": null,
+  "pre_differs": false,
+  "rows": [
+    {
+      "children": [],
+      "id": "0",
+      "kind": "added",
+      "mine": {
+        "child_count": 0,
+        "text": "mine",
+        "uuid": ""
+      },
+      "theirs": null
+    },
+    {
+      "children": [],
+      "id": "1",
+      "kind": "removed",
+      "mine": null,
+      "theirs": {
+        "child_count": 0,
+        "text": "theirs",
+        "uuid": ""
+      }
+    }
+  ],
+  "theirs_pre": null
+}

@@ -1,0 +1,36 @@
+[
+  {
+    "files": [
+      {
+        "canonical": true,
+        "name": "2026_06_18.md",
+        "path": "journals/2026_06_18.md",
+        "preview": "canonical"
+      },
+      {
+        "canonical": false,
+        "name": "Jun 18th, 2026.org",
+        "path": "journals/Jun 18th, 2026.org",
+        "preview": "duplicate"
+      }
+    ],
+    "title": "Jun 18th, 2026"
+  },
+  {
+    "files": [
+      {
+        "canonical": true,
+        "name": "2026_06_20.md",
+        "path": "journals/2026_06_20.md",
+        "preview": "keeper"
+      },
+      {
+        "canonical": false,
+        "name": "Jun 20th, 2026.md",
+        "path": "journals/Jun 20th, 2026.md",
+        "preview": "occupied"
+      }
+    ],
+    "title": "Jun 20th, 2026"
+  }
+]

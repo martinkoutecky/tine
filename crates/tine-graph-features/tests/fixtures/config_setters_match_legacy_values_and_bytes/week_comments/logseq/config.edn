@@ -1,0 +1,8 @@
+{ ; :favorites ["comment"]
+ :favorites ; odd spacing
+ ["Old"]
+ :preferred-workflow  ; comment
+ :now
+ :start-of-week   6
+ :default-templates { :pages "P" ; keep
+ :journals "Old"}}

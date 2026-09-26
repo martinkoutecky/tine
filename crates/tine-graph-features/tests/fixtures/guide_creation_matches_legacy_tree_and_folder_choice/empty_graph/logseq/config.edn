@@ -1,0 +1,17 @@
+{:meta/version 1
+
+ ;; Created by Tine's "new graph" onboarding. This is a normal Logseq config —
+ ;; open this graph in Logseq too; it's the same files.
+ :preferred-format "Markdown"
+ :preferred-workflow :todo
+ :journals-directory "journals"
+ :pages-directory "pages"
+ :journal/page-title-format "MMM do, yyyy"
+ :journal/file-name-format "yyyy_MM_dd"
+
+ ;; Modern Logseq writes namespace separators as triple underscores in filenames
+ ;; (so "Project/Roadmap" is stored as "Project___Roadmap.md").
+ :file/name-format :triple-lowbar
+
+ ;; Pin the tour so it's one click away while you explore.
+ :favorites ["Welcome to Tine"]}

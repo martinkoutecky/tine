@@ -1,0 +1,22 @@
+icon:: 🧩
+
+- # Plugins
+	- Tine plugins are capability-limited WebAssembly guests. They are **not Logseq or Obsidian plugins** and cannot use those apps' plugin APIs.
+	- Plugins cannot directly access the DOM, Tauri, files, processes, the network, or arbitrary graph paths. Tine owns the commands, slash actions, decorations, settings controls, and any narrowly authorized block edit that a plugin can request.
+- ## Browse and install
+	- Open **Settings → Plugins → Browse** for the signed community catalogue. Each entry shows its source, supported platforms, declared capabilities, publication review, and a digest-verified safety report.
+	- Choose **Install** on a compatible entry. Local developers can instead choose **Install a local package** and select its `manifest.json` and `.wasm` together.
+	- Every version is installed disabled. Open **Installed**, review its identity and capabilities, then enable it explicitly.
+- ## Control a plugin
+	- Open a plugin's **Details** or **Settings** page to change its host-rendered options. Plugins receive only validated scalar values; they do not draw their own settings UI.
+	- Disable a plugin at any time without removing it. **Uninstall** removes only that app-local package version and never changes your graph or notes.
+	- Signed revocations are checked before saved plugins start. A revoked version stays disabled even when the live catalogue is temporarily unavailable.
+- ## Themes
+	- Token themes live under **Settings → Appearance → Themes**, separately from executable plugins. They contain validated color tokens rather than code.
+	- A selected token theme remains subordinate to your graph's `logseq/custom.css`, so your own CSS still wins.
+- ## Create one yourself
+	- 1. Open **Settings → Plugins → Browse**.
+	- 2. Inspect a plugin's capabilities and safety report, then install it.
+	- 3. Switch to **Installed**, open its details, and enable it.
+	- 4. What you should see: only the host-owned command, slash action, or decoration that the plugin declared; disabling it removes that behavior while leaving your graph readable.
+	- For authoring, packaging, API versioning, and registry submission, see the [developer guide](https://github.com/martinkoutecky/tine/blob/master/docs/plugins/README.md).

@@ -1,0 +1,10 @@
+{
+ :shortcut/doc-mode-enter-for-new-block? true
+ ; :favorites ["comment"]
+ :favorites ; odd spacing
+ ["Old"]
+ :preferred-workflow  ; comment
+ :now
+ :start-of-week   2
+ :default-templates { :pages "P" ; keep
+ :journals "Old"}}

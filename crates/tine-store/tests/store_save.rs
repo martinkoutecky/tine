@@ -220,6 +220,39 @@ fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
     (result, fixture.files())
 }
 
+fn assert_save_tree(actual: &BTreeMap<String, Vec<u8>>, case: Case) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/legacy_and_store_saves_match_on_data_safety_matrix")
+        .join(format!("{case:?}"));
+    let mut expected = BTreeMap::new();
+    fn visit(root: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, out);
+            } else {
+                out.insert(
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    visit(&root, &root, &mut expected);
+    for (path, bytes) in &expected {
+        match actual.get(path) {
+            Some(found) => assert_eq!(found, bytes, "first differing path: {path}"),
+            None => panic!("first differing path: {path} (missing)"),
+        }
+    }
+    if let Some(path) = actual.keys().find(|path| !expected.contains_key(*path)) {
+        panic!("first differing path: {path} (unexpected)");
+    }
+}
+
 #[test]
 fn legacy_and_store_saves_match_on_data_safety_matrix() {
     for case in [
@@ -241,13 +274,32 @@ fn legacy_and_store_saves_match_on_data_safety_matrix() {
         Case::KeepMineDeleted,
         Case::KeepMineUndecodable,
     ] {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/b15a_save/{case:?}.json"));
-        let old: (Result<String, String>, BTreeMap<String, Vec<u8>>) =
-            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         let new = run(case);
-        assert_eq!(new.0, old.0, "wire result for {case:?}");
-        assert_eq!(new.1, old.1, "disk bytes for {case:?}");
+        let expected_result = match case {
+            Case::Alias => Ok("eb859457eef7db1b".to_string()),
+            Case::Appeared => Err("conflict".to_string()),
+            Case::Crlf => Ok("2be7206b0f37adb0".to_string()),
+            Case::Deleted => Err("conflict".to_string()),
+            Case::Guide => Ok("guide-ephemeral".to_string()),
+            Case::KeepMine => Ok("eb859457eef7db1b".to_string()),
+            Case::KeepMineDeleted => Ok("eb859457eef7db1b".to_string()),
+            Case::KeepMineUndecodable => Err("stream did not contain valid UTF-8".to_string()),
+            Case::Matching => Ok("eb859457eef7db1b".to_string()),
+            Case::New => Ok("eb859457eef7db1b".to_string()),
+            Case::OrgEditable => Ok("bf0ecc2919540932".to_string()),
+            Case::OrgReadOnly => Err("org file is read-only (does not round-trip)".to_string()),
+            Case::PinnedJournal => Ok("bf0ecc2919540932".to_string()),
+            Case::Preamble => Err("refusing to move page-header property into outline content: B:: 2".to_string()),
+            Case::Stale => Err("conflict".to_string()),
+            Case::Trivia => Ok("7d8a07fd9b40a488".to_string()),
+            Case::Twin => Err("\"Note\" exists as both a .md and a .org file — remove one (e.g. in Logseq) to edit it in Tine".to_string()),
+        };
+        assert_eq!(new.0, expected_result, "wire result for {case:?}");
+        if matches!(case, Case::Deleted | Case::Guide) {
+            assert!(new.1.is_empty(), "disk tree for {case:?}");
+        } else {
+            assert_save_tree(&new.1, case);
+        }
         if matches!(case, Case::Appeared | Case::Stale | Case::Deleted) {
             assert_eq!(new.0, Err("conflict".into()), "{case:?}");
         }
