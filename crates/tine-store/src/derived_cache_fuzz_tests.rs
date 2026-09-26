@@ -1,15 +1,13 @@
-//! Differential fuzz for the derived-result cache (backlinks / queries / unlinked
-//! refs). The oracle: after every edit applied through the real
-//! `save_page → cache_upsert` path, a graph whose cache stayed WARM across edits
-//! must return byte-identical results to a graph freshly opened (cold) on the
-//! same files. Any divergence = a memoized result that should have been
-//! invalidated but wasn't — the exact failure scoped invalidation could
-//! introduce. This guards both the current (full-invalidation) cache and the
-//! scoped one.
+//! Differential fuzz for published derived-result memos. Each Store edit
+//! publishes a new generation. Compare its carried memos against a memo-free
+//! capture of the same parsed pages, and verify an older view stays unchanged.
 
-use crate::model::Graph;
+use crate::model::ReadSnapshot;
+use crate::store::{
+    PageId, SaveBase, SaveOutcome, Store, RESULT_BRIDGE_MAX_BYTES, RESULT_BRIDGE_MAX_ROWS,
+};
 use std::sync::Arc;
-use tine_core::{BlockDto, PageKind, RefGroup};
+use tine_core::{BlockDto, RefGroup};
 
 // --- deterministic PRNG (xorshift64) so a failure reproduces from its seed ----
 struct Rng(u64);
@@ -97,7 +95,7 @@ fn gen_pre(r: &mut Rng, page_idx: usize) -> Option<String> {
 // Order-sensitive fingerprint (page order + within-page block order both matter,
 // e.g. for sorted queries). uuid-free: compares block first-lines, since the two
 // graphs assign generated uuids independently.
-fn fingerprint(g: &Graph) -> String {
+fn fingerprint(g: &ReadSnapshot) -> String {
     let fmt = |label: String, groups: Arc<Vec<RefGroup>>| {
         let body = groups
             .iter()
@@ -116,15 +114,32 @@ fn fingerprint(g: &Graph) -> String {
     };
     let mut out = Vec::new();
     for p in PAGES {
-        out.push(fmt(format!("bl:{p}"), g.backlinks(p)));
-        out.push(fmt(format!("ul:{p}"), g.unlinked_refs(p)));
+        out.push(fmt(
+            format!("bl:{p}"),
+            g.backlinks_bounded(p, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES)
+                .groups,
+        ));
+        out.push(fmt(
+            format!("ul:{p}"),
+            g.unlinked_refs_bounded(p, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES)
+                .groups,
+        ));
         out.push(fmt(
             format!("blAlt:{p}"),
-            g.backlinks(&format!("Alt{}", &p[1..])),
+            g.backlinks_bounded(
+                &format!("Alt{}", &p[1..]),
+                RESULT_BRIDGE_MAX_ROWS,
+                RESULT_BRIDGE_MAX_BYTES,
+            )
+            .groups,
         ));
     }
     for q in QUERIES {
-        out.push(fmt(format!("q:{q}"), g.run_query(q)));
+        out.push(fmt(
+            format!("q:{q}"),
+            g.run_query_bounded(q, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES)
+                .groups,
+        ));
     }
     out.join("\n")
 }
@@ -157,15 +172,17 @@ fn run_seed(seed: u64) {
         std::fs::write(root.join("pages").join(format!("{p}.md")), s).unwrap();
     }
 
-    // The LIVE graph keeps its cache warm across every edit.
-    let live = Graph::open(&root);
-    live.warm_cache();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let mut previous = store.whole_graph().unwrap();
+    let mut previous_fp = fingerprint(&previous.graph);
 
-    for iter in 0..200 {
+    for iter in 0..220 {
         // Apply one random CONTENT edit to a random page through the real save path.
         let pi = r.below(PAGES.len());
         let name = PAGES[pi];
-        let mut dto = live.load_named(name, PageKind::Page).unwrap().unwrap();
+        let id = PageId::from(format!("pages/{name}.md"));
+        let read = store.page(&id).unwrap();
+        let mut dto = read.doc;
         match r.below(4) {
             0 => {
                 // Replace all blocks with a fresh random set.
@@ -183,12 +200,43 @@ fn run_seed(seed: u64) {
                 dto.pre_block = gen_pre(&mut r, pi);
             }
         }
-        live.save_page(&dto, dto.rev.as_deref()).expect("save");
+        match store.save(&id, SaveBase::Existing(read.rev), &dto) {
+            SaveOutcome::Saved(_) => {}
+            SaveOutcome::Unchanged(rev) => {
+                // Keep every random case while making this step a real generation.
+                dto.pre_block = Some(format!(
+                    "{}\nfuzz-step:: {iter}",
+                    dto.pre_block.unwrap_or_default()
+                ));
+                assert!(matches!(
+                    store.save(&id, SaveBase::Existing(rev), &dto),
+                    SaveOutcome::Saved(_)
+                ));
+            }
+            other => panic!("seed {seed} iter {iter}: save failed: {other:?}"),
+        }
 
-        // Oracle: warm live cache must equal a cold fresh graph on the same files.
-        let fresh = Graph::open(&root);
-        fresh.warm_cache();
-        let live_fp = fingerprint(&live);
+        let view = store.whole_graph().unwrap();
+        assert_ne!(
+            view.rev(),
+            previous.rev(),
+            "seed {seed} iter {iter}: no publication"
+        );
+        assert_eq!(
+            fingerprint(&previous.graph),
+            previous_fp,
+            "seed {seed} iter {iter}: old view changed"
+        );
+        // The same publication constructor, without a parent, gives this
+        // generation an empty memo table for the differential oracle.
+        let fresh = ReadSnapshot::capture(
+            &store.graph,
+            (*view.config.config).clone(),
+            Arc::clone(&view.list),
+            None,
+            &[],
+        );
+        let live_fp = fingerprint(&view.graph);
         let fresh_fp = fingerprint(&fresh);
         if live_fp != fresh_fp {
             // Find the first diverging probe line for a readable failure.
@@ -198,8 +246,10 @@ fn run_seed(seed: u64) {
                 .find(|(a, b)| a != b)
                 .map(|(a, b)| format!("\n  LIVE : {a}\n  FRESH: {b}"))
                 .unwrap_or_default();
-            panic!("seed {seed} iter {iter}: warm cache diverged from fresh after editing {name}{diff}");
+            panic!("seed {seed} iter {iter}: carried memos diverged from fresh after editing {name}{diff}");
         }
+        previous = view;
+        previous_fp = live_fp;
     }
     let _ = std::fs::remove_dir_all(&root);
 }

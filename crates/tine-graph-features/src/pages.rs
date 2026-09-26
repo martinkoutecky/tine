@@ -134,6 +134,14 @@ fn view(store: &Store) -> io::Result<tine_store::WholeGraph> {
     })
 }
 
+fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
+    store.scan_refresh().map_err(|failure| match failure {
+        tine_store::LoadError::Failed { reason } => error(io::ErrorKind::Other, &reason),
+        tine_store::LoadError::Closed => error(io::ErrorKind::BrokenPipe, "store closed"),
+    })?;
+    view(store)
+}
+
 fn existing(target: Resolved) -> Vec<PageId> {
     match target {
         Resolved::Existing { id, mut others } => {
@@ -224,7 +232,7 @@ pub fn delete_page_expected(
     expected_rev: Option<&FileRev>,
 ) -> io::Result<()> {
     for _ in 0..4 {
-        let graph = view(store)?;
+        let graph = refreshed_view(store)?;
         let ids = existing(graph.resolve(name, kind == PageKind::Journal));
         validate_target(&ids, expected_path)?;
         let Some(id) = ids.first() else {
@@ -288,7 +296,7 @@ fn rename_page_after_inventory(
         return Ok(()); // v0.6.5 model.rs 3549: case-only rename is a no-op.
     }
     for _ in 0..4 {
-        let graph = view(store)?;
+        let graph = refreshed_view(store)?;
         let inventory = graph.inventory();
         after_inventory();
         let source = existing(graph.resolve(old, false));
@@ -458,7 +466,7 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
     for _ in 0..4 {
-        if !existing(view(store)?.resolve(name, false)).is_empty() {
+        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty() {
             return Err(error(
                 io::ErrorKind::AlreadyExists,
                 "a page with that name already exists",

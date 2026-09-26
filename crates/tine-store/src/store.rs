@@ -110,8 +110,8 @@ pub(crate) fn pause_at_hook(hook: &Mutex<Option<TestPause>>) {
     }
 }
 
-const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
-const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
+pub(crate) const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const AUTOCOMPLETE_FACET_MAX_ITEMS: usize = 2_000;
 const AUTOCOMPLETE_FACET_MAX_BYTES: usize = 2 * 1024 * 1024;
 const QUERY_EXPORT_MAX_QUERIES: usize = 64;
@@ -282,7 +282,7 @@ impl Snapshot {
         let name_set_changed = config_changed || old.is_none() || !changed_names.is_empty();
         let (list, claimants) = if config_changed || old.is_none() {
             let (list, claimants) = graph.snapshot_name_index();
-            (Arc::new(list), Arc::new(claimants))
+            (list, Arc::new(claimants))
         } else if !changed_names.is_empty() {
             let previous = old.expect("name index from old generation");
             let mut list = Arc::clone(&previous.list);
@@ -600,13 +600,13 @@ fn trash_entry_bytes(path: &std::path::Path) -> std::io::Result<u64> {
 
 pub(crate) fn journal_ids_from_entries(
     graph: &Graph,
-    entries: Vec<PageEntry>,
+    entries: &[PageEntry],
 ) -> HashMap<Day, PageId> {
     let mut claimants: HashMap<Day, Vec<PageEntry>> = HashMap::new();
     for entry in entries {
         if entry.kind == PageKind::Journal {
             if let Some(day) = entry.date_key {
-                claimants.entry(Day(day)).or_default().push(entry);
+                claimants.entry(Day(day)).or_default().push(entry.clone());
             }
         }
     }
@@ -629,7 +629,7 @@ impl Store {
         let load = Arc::new(LoadState::new(LoadStatus::Ready));
         let journal_ids = Arc::new(Mutex::new(journal_ids_from_entries(
             &graph,
-            graph.list_pages(),
+            graph.list_pages_shared().as_ref(),
         )));
         let config_state = Arc::new(RwLock::new(ConfigState {
             config: Arc::new(graph.config.clone()),
@@ -805,7 +805,7 @@ impl Store {
         graph.install_live_config();
         // Build the legacy filename inventory before returning; parsing remains
         // in the cancellable worker below.
-        let journal_ids = journal_ids_from_entries(&graph, graph.list_pages());
+        let journal_ids = journal_ids_from_entries(&graph, graph.list_pages_shared().as_ref());
         let config_path = root.join("logseq/config.edn");
         let problem = match fs::read_to_string(config_path) {
             Ok(_) => None,
@@ -948,7 +948,7 @@ impl Store {
     }
 
     pub(crate) fn refresh_journal_ids(&self) {
-        let found = journal_ids_from_entries(&self.graph, self.graph.list_pages());
+        let found = journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
         *self.journal_ids.lock().unwrap() = found;
     }
 
@@ -1971,13 +1971,13 @@ pub enum FacetPolicy {
 #[derive(Clone)]
 pub struct WholeGraph {
     _snapshot: Arc<Snapshot>,
-    graph: Arc<ReadSnapshot>,
+    pub(crate) graph: Arc<ReadSnapshot>,
     rev: GraphRev,
     observed_mtimes: Arc<HashMap<String, SystemTime>>,
     unreadable: Arc<Vec<(FileId, String)>>,
-    config: ConfigState,
+    pub(crate) config: ConfigState,
     journal_format: JournalFormat,
-    list: Arc<Vec<PageEntry>>,
+    pub(crate) list: Arc<Vec<PageEntry>>,
     claimants: Arc<HashMap<(PageKind, String), Vec<PageEntry>>>,
 }
 
@@ -1996,6 +1996,10 @@ fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>,
 }
 
 impl WholeGraph {
+    #[cfg(test)]
+    pub(crate) fn test_read_snapshot(&self) -> Arc<ReadSnapshot> {
+        Arc::clone(&self.graph)
+    }
     /// Page files and subdirectories skipped during the initial or latest cache
     /// build, with a displayable reason for each. Cost O(1).
     pub fn unreadable_files(&self) -> &[(FileId, String)] {

@@ -6,8 +6,6 @@
 //! block-query result contract.  The plan/result types are the seam that a
 //! durable query workspace can grow into later.
 
-#[cfg(test)]
-use crate::model::Graph;
 use crate::model::GraphRead;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -1160,7 +1158,7 @@ fn execute_pages(
     if branch.limit == 0 {
         return Some((Vec::new(), false));
     }
-    let file_pages = graph.list_pages();
+    let file_pages = graph.page_list_arc();
     let mut aliases_by_owner: HashMap<String, Vec<String>> = HashMap::new();
     for (alias, _, owner_rel_path) in graph.page_aliases_with_owners() {
         aliases_by_owner
@@ -1457,9 +1455,11 @@ pub(crate) fn page_hits_to_entries(hits: Vec<QueryHit>) -> Vec<PageEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ReadSnapshot;
     use std::cell::Cell;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn text_pred(mode: TextMatchMode, value: &str) -> TextPredicate {
@@ -1471,7 +1471,30 @@ mod tests {
         }
     }
 
-    fn fixture() -> (PathBuf, Graph) {
+    fn snapshot_for_dir(dir: &std::path::Path) -> Arc<ReadSnapshot> {
+        let store = crate::store::Store::open(dir, Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap().test_read_snapshot()
+    }
+
+    impl ReadSnapshot {
+        fn run_graph_search(
+            &self,
+            source: &str,
+            page_limit: usize,
+            block_limit: usize,
+            explain: bool,
+        ) -> QueryExecution {
+            QueryPlan::friendly(source, page_limit, block_limit).execute_with_explain(
+                self,
+                || false,
+                explain,
+            )
+        }
+    }
+
+    fn fixture() -> (PathBuf, Arc<ReadSnapshot>) {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1497,8 +1520,7 @@ mod tests {
             "- [[Virtual Opdf]]\n",
         )
         .unwrap();
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = snapshot_for_dir(&dir);
         (dir, graph)
     }
 
@@ -1754,8 +1776,7 @@ mod tests {
             "alias:: Re\u{301}sume\u{301}\n\n- Re\u{301}sume\u{301}\n",
         )
         .unwrap();
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = snapshot_for_dir(&dir);
 
         let page = QueryPlan::page_name_fuzzy("Café", 8).execute(&graph, || false);
         assert!(matches!(
@@ -1823,8 +1844,7 @@ mod tests {
             "alias:: quux\n\n- unique alias owner\n",
         )
         .unwrap();
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = snapshot_for_dir(&dir);
 
         let alias_hits = graph
             .run_graph_search("bar", 10, 0, false)
@@ -2020,7 +2040,7 @@ mod tests {
             "- duplicate foo\n",
         )
         .unwrap();
-        graph.warm_cache();
+        let _ = graph.with_pages(|pages| pages.len());
 
         let execution = QueryPlan::friendly_for_page(
             "foo",

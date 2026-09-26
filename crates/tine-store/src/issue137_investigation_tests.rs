@@ -39,8 +39,66 @@ impl Fixture {
         fs::write(path.join(format!("{name}.md")), body).unwrap();
     }
 
-    fn graph(&self) -> Graph {
-        Graph::open(&self.root)
+    fn graph(&self) -> FixtureGraph {
+        FixtureGraph {
+            legacy: Graph::open(&self.root),
+            store: Store::open(&self.root, Default::default()).unwrap().0,
+        }
+    }
+}
+
+struct FixtureGraph {
+    legacy: Graph,
+    store: Store,
+}
+
+impl FixtureGraph {
+    fn backlinks(&self, name: &str) -> std::sync::Arc<Vec<RefGroup>> {
+        self.store.whole_graph().unwrap().backlinks(name).unwrap()
+    }
+
+    fn unlinked_refs(&self, name: &str) -> std::sync::Arc<Vec<RefGroup>> {
+        self.store
+            .whole_graph()
+            .unwrap()
+            .unlinked_references(name)
+            .unwrap()
+    }
+
+    fn warm_cache(&self) {
+        let _ = self.store.whole_graph().unwrap();
+    }
+
+    fn invalidate_cache(&self) {
+        self.store.scan_refresh().unwrap();
+    }
+
+    fn find_entry(&self, name: &str, kind: PageKind) -> Option<tine_core::model::PageEntry> {
+        self.legacy.find_entry(name, kind)
+    }
+
+    fn load_page(
+        &self,
+        entry: &tine_core::model::PageEntry,
+    ) -> std::io::Result<tine_core::model::PageDto> {
+        self.legacy.load_page(entry)
+    }
+
+    fn save_page(&self, dto: &tine_core::model::PageDto, rev: Option<&str>) -> std::io::Result<()> {
+        self.legacy.save_page(dto, rev)?;
+        self.store.scan_refresh().unwrap();
+        Ok(())
+    }
+
+    fn resolve_block(&self, uuid: &str) -> Option<RefGroup> {
+        self.store
+            .whole_graph()
+            .unwrap()
+            .blocks(&[uuid.to_owned()])
+            .unwrap()
+            .into_iter()
+            .next()
+            .flatten()
     }
 }
 

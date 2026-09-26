@@ -41,3 +41,25 @@ fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
     store.close();
     disk::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn delete_detects_an_external_twin_before_selecting_a_file() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-d3-delete-external-twin-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    disk::create_dir_all(root.join("pages")).unwrap();
+    disk::write(root.join("pages/Old.md"), "- markdown\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let _ = store.whole_graph().unwrap();
+    disk::write(root.join("pages/Old.org"), "* org\n").unwrap();
+
+    assert!(
+        delete_page_expected(&store, "Old", tine_core::model::PageKind::Page, None, None).is_err()
+    );
+    assert!(root.join("pages/Old.md").exists());
+    assert!(root.join("pages/Old.org").exists());
+    store.close();
+    disk::remove_dir_all(root).unwrap();
+}

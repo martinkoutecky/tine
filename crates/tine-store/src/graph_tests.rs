@@ -13,6 +13,37 @@ fn demo_graph() -> Graph {
     Graph::open(root)
 }
 
+fn store_at(root: &std::path::Path) -> Store {
+    Store::open(root, tine_store::OpenOptions::default())
+        .unwrap()
+        .0
+}
+
+fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model::PageDto)) {
+    let id = match store.whole_graph().unwrap().resolve(name, false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("missing page {name}"),
+    };
+    let mut read = store.page(&id).unwrap();
+    edit(&mut read.doc);
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+        SaveOutcome::Saved(_)
+    ));
+}
+
+fn query_simple(store: &Store, source: &str) -> Arc<Vec<tine_core::model::RefGroup>> {
+    match store
+        .whole_graph()
+        .unwrap()
+        .query(source, tine_store::QueryDialect::Simple, None)
+        .unwrap()
+    {
+        tine_store::QueryResult::Simple(groups) => groups,
+        _ => unreachable!(),
+    }
+}
+
 #[test]
 fn lists_journals_and_pages() {
     let g = demo_graph();
@@ -44,8 +75,13 @@ fn loads_a_page_with_nesting_and_properties() {
 
 #[test]
 fn backlinks_to_parameterized_complexity() {
-    let g = demo_graph();
-    let groups = g.backlinks("parameterized complexity");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
+    let store = store_at(&root);
+    let groups = store
+        .whole_graph()
+        .unwrap()
+        .backlinks("parameterized complexity")
+        .unwrap();
     let pages: Vec<&str> = groups.iter().map(|gr| gr.page.as_str()).collect();
     // Referenced from the journal, logseq-claude, and n-fold IP.
     assert!(pages.contains(&"logseq-claude"), "pages: {pages:?}");
@@ -70,18 +106,24 @@ fn unlinked_references_include_plain_text_alias_mentions() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
+    let store = store_at(&root);
     assert!(
-        g.unlinked_refs("20260713145345").is_empty(),
+        store
+            .whole_graph()
+            .unwrap()
+            .unlinked_references("20260713145345")
+            .unwrap()
+            .is_empty(),
         "warm the derived cache before the source edit"
     );
-    let entry = g
-        .find_entry("Alias Mention Test", tine_core::PageKind::Page)
+    save_named(&store, "Alias Mention Test", |page| {
+        page.blocks[0].raw = "This block mentions 20260713150352 as plain text.".into();
+    });
+    let groups = store
+        .whole_graph()
+        .unwrap()
+        .unlinked_references("20260713145345")
         .unwrap();
-    let mut page = g.load_page(&entry).unwrap();
-    page.blocks[0].raw = "This block mentions 20260713150352 as plain text.".into();
-    g.save_page(&page, page.rev.as_deref()).unwrap();
-    let groups = g.unlinked_refs("20260713145345");
     assert_eq!(
         groups
             .iter()
@@ -119,16 +161,24 @@ fn backlinks_include_explicit_links_in_page_properties() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
+    let store = store_at(&root);
     assert!(
-        g.backlinks("Jul 13th, 2026").is_empty(),
+        store
+            .whole_graph()
+            .unwrap()
+            .backlinks("Jul 13th, 2026")
+            .unwrap()
+            .is_empty(),
         "warm the derived cache before the page-property edit"
     );
-    let entry = g.find_entry("A", tine_core::PageKind::Page).unwrap();
-    let mut page = g.load_page(&entry).unwrap();
-    page.pre_block = Some("created:: [[Jul 13th, 2026]]".into());
-    g.save_page(&page, page.rev.as_deref()).unwrap();
-    let groups = g.backlinks("Jul 13th, 2026");
+    save_named(&store, "A", |page| {
+        page.pre_block = Some("created:: [[Jul 13th, 2026]]".into());
+    });
+    let groups = store
+        .whole_graph()
+        .unwrap()
+        .backlinks("Jul 13th, 2026")
+        .unwrap();
     let source = groups
         .iter()
         .find(|group| group.page == "A")
@@ -155,17 +205,21 @@ fn backlinks_include_bare_tags_page_properties() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
+    let store = store_at(&root);
     assert!(
-        g.backlinks("page1").is_empty(),
+        store
+            .whole_graph()
+            .unwrap()
+            .backlinks("page1")
+            .unwrap()
+            .is_empty(),
         "warm the derived cache before the bare tags property edit"
     );
-    let entry = g.find_entry("page2", tine_core::PageKind::Page).unwrap();
-    let mut page = g.load_page(&entry).unwrap();
-    page.pre_block = Some("tags:: page1".into());
-    g.save_page(&page, page.rev.as_deref()).unwrap();
+    save_named(&store, "page2", |page| {
+        page.pre_block = Some("tags:: page1".into());
+    });
 
-    let groups = g.backlinks("page1");
+    let groups = store.whole_graph().unwrap().backlinks("page1").unwrap();
     let source = groups
         .iter()
         .find(|group| group.page == "page2")
@@ -205,11 +259,11 @@ fn block_ref_counts_and_referrers() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
+    let store = store_at(&root);
 
     // Count = distinct referrer blocks: 1 (same page) + 3 (Other) = 4. The double
     // ref on the last Other block counts once.
-    let counts = g.block_ref_counts();
+    let counts = store.whole_graph().unwrap().block_ref_counts();
     assert_eq!(
         counts.get("aaaaaaaa-0000-0000-0000-000000000001").copied(),
         Some(4),
@@ -218,7 +272,11 @@ fn block_ref_counts_and_referrers() {
 
     // Referrers grouped by page, and the same-page referrer IS included (unlike
     // page backlinks).
-    let groups = g.block_referrers("aaaaaaaa-0000-0000-0000-000000000001");
+    let groups = store
+        .whole_graph()
+        .unwrap()
+        .block_referrers("aaaaaaaa-0000-0000-0000-000000000001")
+        .unwrap();
     let mut by_page: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for gr in groups.iter() {
         by_page.insert(gr.page.as_str(), gr.blocks.len());
@@ -603,7 +661,7 @@ fn load_reflects_external_change_then_save_is_clean() {
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
     let g = Graph::open(&root);
-    g.warm_cache();
+    g.warm_parsed_pages();
     let _ = g.load_named("N", PageKind::Page).unwrap().unwrap(); // cache built
 
     // External writer changes the file; the 3s watcher hasn't run yet.
@@ -910,9 +968,11 @@ fn query_between_filters_by_journal_date() {
     )
     .unwrap();
 
-    let g = Graph::open(&root);
-    let groups = g
-        .run_query("(and (task TODO) (and [[scs]] (between [[Jan 1st, 2021]] [[Jan 1st, 2100]])))");
+    let store = store_at(&root);
+    let groups = query_simple(
+        &store,
+        "(and (task TODO) (and [[scs]] (between [[Jan 1st, 2021]] [[Jan 1st, 2100]])))",
+    );
     let raws: Vec<String> = groups
         .iter()
         .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
@@ -1184,9 +1244,8 @@ fn query_and_not_includes_everything_except_excluded() {
         "- TODO alpha\n- TODO beta [[X]]\n- TODO gamma\n- DONE delta\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    let raws: Vec<String> = g
-        .run_query("(and (task TODO) (not [[X]]))")
+    let store = store_at(&root);
+    let raws: Vec<String> = query_simple(&store, "(and (task TODO) (not [[X]]))")
         .iter()
         .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
         .collect();
@@ -1230,8 +1289,12 @@ fn page_aliases_resolve_and_collect_backlinks() {
         .expect("alias resolves");
     assert!(dto.blocks.iter().any(|b| b.raw.contains("canonical page")));
     // Backlinks of the canonical page include the alias-referencing page.
-    let pages: Vec<String> = g
+    let store = store_at(&root);
+    let pages: Vec<String> = store
+        .whole_graph()
+        .unwrap()
         .backlinks("Parameterized Complexity")
+        .unwrap()
         .iter()
         .map(|gr| gr.page.clone())
         .collect();
@@ -1241,7 +1304,14 @@ fn page_aliases_resolve_and_collect_backlinks() {
         "alias ref counted: {pages:?}"
     );
     // Backlinks queried via the alias name also resolve to the canonical set.
-    let via_alias: Vec<String> = g.backlinks("PC").iter().map(|gr| gr.page.clone()).collect();
+    let via_alias: Vec<String> = store
+        .whole_graph()
+        .unwrap()
+        .backlinks("PC")
+        .unwrap()
+        .iter()
+        .map(|gr| gr.page.clone())
+        .collect();
     assert!(
         via_alias.contains(&"A".to_string()) && via_alias.contains(&"B".to_string()),
         "{via_alias:?}"
@@ -1891,8 +1961,9 @@ fn deleted_journal_is_not_served_from_stale_cache() {
 
 #[test]
 fn query_open_tasks() {
-    let g = demo_graph();
-    let groups = g.run_query("(task TODO DOING)");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
+    let store = store_at(&root);
+    let groups = query_simple(&store, "(task TODO DOING)");
     let raws: Vec<String> = groups
         .iter()
         .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
@@ -1929,12 +2000,10 @@ fn agenda_query_excludes_finished_tasks() {
          - plain meeting\n  SCHEDULED: <2026-06-27 Sat>\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
+    let store = store_at(&root);
     let q = "(and (or (between scheduled -36500d +36500d) (between deadline -36500d +36500d)) \
              (not (task DONE CANCELED CANCELLED)))";
-    let raws: Vec<String> = g
-        .run_query(q)
+    let raws: Vec<String> = query_simple(&store, q)
         .iter()
         .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
         .collect();

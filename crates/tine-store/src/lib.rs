@@ -14,6 +14,8 @@ mod graph_tests;
 #[cfg(test)]
 mod issue137_investigation_tests;
 pub mod model;
+#[cfg(test)]
+mod production_index_guard_tests;
 pub mod publish;
 pub mod query;
 pub mod query_plan;

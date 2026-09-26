@@ -3,8 +3,6 @@
 //! task markers, and property filters. Advanced datalog (`[:find ...]`) is
 //! detected and reported as unsupported rather than crashed.
 
-#[cfg(test)]
-use crate::model::Graph;
 use crate::model::GraphRead;
 use tine_core::date::JournalDate;
 use tine_core::doc::{property_key_norm, DocBlock, Document};
@@ -498,27 +496,6 @@ fn sorted_alias_owners(
         .collect()
 }
 
-pub(crate) fn page_aliases_with_owners(graph: &impl GraphRead) -> Vec<(String, String, String)> {
-    graph.with_pages(|pages| {
-        let mut owned = Vec::new();
-        for (entry, doc) in pages {
-            for alias in document_aliases(doc) {
-                owned.push((
-                    entry.path.clone(),
-                    alias,
-                    entry.name.clone(),
-                    entry.rel_path_str().to_owned(),
-                ));
-            }
-        }
-        owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-        owned
-            .into_iter()
-            .map(|(_, alias, owner, owner_rel_path)| (alias, owner, owner_rel_path))
-            .collect()
-    })
-}
-
 pub(crate) type RealPageNames = std::collections::HashMap<String, (std::path::PathBuf, String)>;
 
 pub(crate) fn real_page_names(graph: &impl GraphRead) -> std::sync::Arc<RealPageNames> {
@@ -771,6 +748,7 @@ fn collect_reference_occurrences_bounded(
     let exclude = refs::page_key(self_page);
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
     let candidate_pages = graph.reference_candidate_pages(names_norm, kind);
+    let config = graph.config();
     let groups = {
         let pages = candidate_pages.pages.as_slice();
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
@@ -789,11 +767,11 @@ fn collect_reference_occurrences_bounded(
                 .and_then(|pre| page_property_block(entry, pre))
             {
                 if budget.closed() {
-                    if block_has_reference(&block, names_norm, kind, graph.config()) {
+                    if block_has_reference(&block, names_norm, kind, config) {
                         budget.deny_match();
                     }
                 } else if let Some(hit) =
-                    block_reference_evidence(&block, canonical, names_norm, kind, graph.config())
+                    block_reference_evidence(&block, canonical, names_norm, kind, config)
                 {
                     let mut dto = block_to_shallow_dto(&block);
                     dto.page_property = true;
@@ -814,9 +792,9 @@ fn collect_reference_occurrences_bounded(
                 &mut path,
                 &mut |block, _| {
                     if construction_closed.get() {
-                        block_has_reference(block, names_norm, kind, graph.config()).then_some(None)
+                        block_has_reference(block, names_norm, kind, config).then_some(None)
                     } else {
-                        block_reference_evidence(block, canonical, names_norm, kind, graph.config())
+                        block_reference_evidence(block, canonical, names_norm, kind, config)
                             .map(Some)
                     }
                 },
@@ -3737,6 +3715,12 @@ fn parse_opt_value(toks: &[Tok], pos: &mut usize) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn test_snapshot(dir: &std::path::Path) -> std::sync::Arc<crate::model::ReadSnapshot> {
+        let (store, _, _) =
+            crate::store::Store::open(dir, crate::store::OpenOptions::default()).unwrap();
+        store.whole_graph().unwrap().test_read_snapshot()
+    }
+
     // Fixed "today" so relative-date tests are deterministic: 2026-06-16.
     const TODAY: JournalDate = JournalDate {
         year: 2026,
@@ -3824,8 +3808,8 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
-        let runtime_id = graph.backlinks("Target")[0].blocks[0].id.clone();
+        let graph = test_snapshot(&dir);
+        let runtime_id = backlinks(&graph, "Target")[0].blocks[0].id.clone();
         let context = backlink_filter_context(
             &graph,
             "Target",
@@ -4193,7 +4177,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let ids = run_query(&graph, "(between [[Dec 5th, 2020]] [[Dec 7th, 2020]])")
             .into_iter()
             .flat_map(|group| group.blocks.into_iter().map(persisted_dto_id))
@@ -4395,7 +4379,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         assert_eq!(
             property_facets_bounded(&graph, usize::MAX, usize::MAX).0,
             vec![(
@@ -4429,7 +4413,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         assert_eq!(
             autocomplete_property_facets_bounded(&graph, usize::MAX, usize::MAX),
             (
@@ -4509,7 +4493,7 @@ mod tests {
             .collect()
     }
 
-    fn graph_from_page_snapshot(pages: &[(&str, &str, &str)]) -> Graph {
+    fn graph_from_page_snapshot(pages: &[(&str, &str, &str)]) -> crate::model::ReadSnapshot {
         let pages = pages
             .iter()
             .map(|(name, rel_path, source)| {
@@ -4525,7 +4509,7 @@ mod tests {
                 )
             })
             .collect();
-        Graph::from_page_snapshot("", pages)
+        crate::model::ReadSnapshot::from_page_snapshot(pages)
     }
 
     fn persisted_dto_id(block: BlockDto) -> String {
@@ -4638,15 +4622,22 @@ mod tests {
             "pages/search.md",
             "- foo safe\n- foo x excluded\n- bar safe\n- unrelated\n",
         )]);
+        let search = |source| {
+            crate::query_plan::QueryPlan::friendly(source, 8, 8).execute_with_explain(
+                &graph,
+                || false,
+                false,
+            )
+        };
 
-        let or_hits = graph_search_block_texts(graph.run_graph_search("foo OR bar", 8, 8, false));
+        let or_hits = graph_search_block_texts(search("foo OR bar"));
         assert!(or_hits.iter().any(|text| text == "foo safe"));
         assert!(or_hits.iter().any(|text| text == "bar safe"));
         assert!(!or_hits.iter().any(|text| text == "unrelated"));
 
-        let excluded = graph_search_block_texts(graph.run_graph_search("foo -x", 8, 8, false));
+        let excluded = graph_search_block_texts(search("foo -x"));
         assert_eq!(excluded, ["foo safe"]);
-        assert!(graph.run_graph_search("-x", 8, 8, false).hits.is_empty());
+        assert!(search("-x").hits.is_empty());
 
         let scoped = graph_search_block_texts(graph.run_graph_search_latest_scoped(
             &crate::store::Cancel(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
@@ -4728,8 +4719,7 @@ mod tests {
             .join(" ");
         fs::write(dir.join("pages").join("zzsource.md"), format!("- {refs}\n")).unwrap();
 
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = test_snapshot(&dir);
 
         for query in [
             "",
@@ -4772,8 +4762,7 @@ mod tests {
         .unwrap();
         fs::write(dir.join("pages/zz-best.md"), "- needle\n").unwrap();
 
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = test_snapshot(&dir);
         let ranked = search(&graph, "needle", 2)
             .into_iter()
             .flat_map(|group| {
@@ -4810,8 +4799,7 @@ mod tests {
             .unwrap();
         }
 
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = test_snapshot(&dir);
         let pages = search(&graph, "needle", 3)
             .into_iter()
             .flat_map(|group| std::iter::repeat_n(group.page, group.blocks.len()))
@@ -4839,7 +4827,7 @@ mod tests {
                 )
             })
             .collect();
-        let graph = Graph::from_page_snapshot("", pages);
+        let graph = crate::model::ReadSnapshot::from_page_snapshot(pages);
 
         let pages = search(&graph, "needle", 3)
             .into_iter()
@@ -4863,8 +4851,7 @@ mod tests {
         fs::write(dir.join("pages/aa.md"), "- needle\n- xneedle\n").unwrap();
         fs::write(dir.join("pages/bb.md"), "- needle plus\n").unwrap();
 
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = test_snapshot(&dir);
         let groups = search(&graph, "needle", 3);
         assert_eq!(
             groups
@@ -4917,7 +4904,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let ids = |query: &str| {
             run_query(&graph, query)
                 .into_iter()
@@ -4977,7 +4964,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let ids = |query: &str| {
             run_query(&graph, query)
                 .into_iter()
@@ -5115,8 +5102,8 @@ mod tests {
         )
         .unwrap();
 
-        let g = crate::model::Graph::open(&dir);
-        let groups = g.backlinks("Common");
+        let g = test_snapshot(&dir);
+        let groups = backlinks(&g, "Common");
         // Identify each group by its block text (robust to the journal title format).
         let tags: Vec<&str> = groups
             .iter()
@@ -5172,8 +5159,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = test_snapshot(&dir);
         let linked = backlinks(&graph, "Target");
         let source = linked.iter().find(|group| group.page == "Source").unwrap();
         assert_eq!(source.blocks.len(), 1);
@@ -5243,7 +5229,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let refs = backlinks_bounded(&graph, "url", 100, usize::MAX);
         let pages = refs
             .groups
@@ -5310,7 +5296,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         assert_eq!(backlinks(&graph, "done-at")[0].page, "Source");
         assert!(backlinks(&graph, "id").is_empty());
         assert!(backlinks(&graph, "background-color").is_empty());
@@ -5344,7 +5330,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let refs = backlinks(&graph, "url");
         assert_eq!(
             refs.iter()
@@ -5369,7 +5355,7 @@ mod tests {
         )
         .unwrap();
         fs::write(dir.join("pages/Ascii.md"), "- [[cafe]]\n").unwrap();
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let linked = backlinks(&graph, "Café");
         assert_eq!(
             linked.iter().filter(|group| group.page == "Source").count(),
@@ -5396,7 +5382,7 @@ mod tests {
         fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
         fs::write(dir.join("pages/PageProps.md"), "note:: Target\n\n- body\n").unwrap();
         fs::write(dir.join("pages/BlockProps.md"), "- note:: Target\n").unwrap();
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let groups = unlinked_refs(&graph, "Target");
         for page in ["PageProps", "BlockProps"] {
             assert_eq!(
@@ -5429,7 +5415,7 @@ mod tests {
         fs::create_dir_all(dir.join("pages/b")).unwrap();
         fs::write(dir.join("pages/a/Note.md"), "- first [[Target]]\n").unwrap();
         fs::write(dir.join("pages/b/Note.md"), "- second [[Target]]\n").unwrap();
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let groups = backlinks(&graph, "Target");
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].page, "Note");
@@ -5450,7 +5436,7 @@ mod tests {
             "- id:: 6a55b643-1234-5678-9abc-def012345678\n",
         )
         .unwrap();
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         assert!(unlinked_refs(&graph, "6a55b643").is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5467,7 +5453,7 @@ mod tests {
             format!("- {}\n", "Target ".repeat(70)),
         )
         .unwrap();
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let groups = unlinked_refs(&graph, "Target");
         let evidence = &groups[0].evidence[0];
         assert_eq!(evidence.occurrences.len(), 64);
@@ -5487,7 +5473,7 @@ mod tests {
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/X.md"), "- real title\n").unwrap();
         fs::write(dir.join("pages/Y.md"), "alias:: X\n\n- [[X]]\n").unwrap();
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         assert!(backlinks(&graph, "X").iter().any(|group| group.page == "Y"));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5555,16 +5541,20 @@ mod tests {
             .collect::<String>();
         fs::write(dir.join("pages").join("Nested.md"), nested).unwrap();
 
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
-        let entry = graph
-            .list_pages()
-            .into_iter()
-            .find(|entry| entry.name == "Nested")
+        let graph = test_snapshot(&dir);
+        let page = graph
+            .pages
+            .iter()
+            .find(|(entry, _)| entry.name == "Nested")
             .unwrap();
-        let page = graph.load_page(&entry).unwrap();
+        let blocks: Vec<_> = page
+            .1
+            .roots
+            .iter()
+            .map(tine_core::projection::block_to_dto)
+            .collect();
         let mut ids = Vec::new();
-        collect_ids(&page.blocks, &mut ids);
+        collect_ids(&blocks, &mut ids);
         assert_eq!(ids.len(), DEPTH);
 
         let query = run_query(&graph, "(task TODO)");
@@ -5646,8 +5636,7 @@ mod tests {
         .unwrap();
         fs::write(dir.join("pages").join("PlainName.md"), "- target\n").unwrap();
 
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = test_snapshot(&dir);
         let raws = |groups: &[RefGroup]| {
             groups
                 .iter()
@@ -5727,8 +5716,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = Graph::open(&dir);
-        graph.warm_cache();
+        let graph = test_snapshot(&dir);
         let batch = export_query_subtrees(
             &graph,
             &[
@@ -5790,7 +5778,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         fs::write(dir.join("pages").join("Large.md"), content).unwrap();
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
         let checks = Cell::new(0usize);
         let result = search_cancellable(&graph, "never-matches", 10, || {
             checks.set(checks.get() + 1);
@@ -5823,7 +5811,7 @@ mod tests {
             .join("\n");
         fs::write(dir.join("pages/Source.md"), content).unwrap();
         fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
-        let graph = Graph::open(&dir);
+        let graph = test_snapshot(&dir);
 
         RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(0));
         let query = run_query_bounded(&graph, "(task TODO)", 3, usize::MAX);

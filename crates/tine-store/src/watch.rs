@@ -403,7 +403,7 @@ impl Core {
         drop(snapshot);
         if !files.is_empty() || config_changed {
             *self.journal_ids.lock().unwrap() =
-                journal_ids_from_entries(&self.graph, self.graph.list_pages());
+                journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
             self.changes
                 .publish(Origin::External, files, config_changed, pages);
         }
@@ -573,8 +573,10 @@ impl WatchHandle {
             }
         }
         *self.core.snapshot.lock().unwrap() = collect_with_revs(&self.core.dirs.read().unwrap());
-        *self.core.journal_ids.lock().unwrap() =
-            journal_ids_from_entries(&self.core.graph, self.core.graph.list_pages());
+        *self.core.journal_ids.lock().unwrap() = journal_ids_from_entries(
+            &self.core.graph,
+            self.core.graph.list_pages_shared().as_ref(),
+        );
         if files.is_empty() && !config_changed {
             self.core.changes.rev()
         } else {

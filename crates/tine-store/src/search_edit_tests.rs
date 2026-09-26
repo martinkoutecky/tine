@@ -18,6 +18,63 @@ fn mk(tag: &str) -> std::path::PathBuf {
     root
 }
 
+fn store_at(root: &std::path::Path) -> Store {
+    Store::open(root, tine_store::OpenOptions::default())
+        .unwrap()
+        .0
+}
+
+fn query_simple(store: &Store, source: &str) -> Arc<Vec<tine_core::model::RefGroup>> {
+    match store
+        .whole_graph()
+        .unwrap()
+        .query(source, tine_store::QueryDialect::Simple, None)
+        .unwrap()
+    {
+        tine_store::QueryResult::Simple(groups) => groups,
+        _ => unreachable!(),
+    }
+}
+
+fn toggle_and_save(store: &Store, name: &str, journal: bool) {
+    let id = match store.whole_graph().unwrap().resolve(name, journal) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("missing page {name}"),
+    };
+    let mut read = store.page(&id).unwrap();
+    read.doc.blocks[0].raw = read.doc.blocks[0].raw.replace("TODO", "DOING");
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::Existing(read.rev), &read.doc),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+}
+
+fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model::PageDto)) {
+    let id = match store.whole_graph().unwrap().resolve(name, false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("missing page {name}"),
+    };
+    let mut read = store.page(&id).unwrap();
+    edit(&mut read.doc);
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::Existing(read.rev), &read.doc),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+}
+
+fn search_matches(store: &Store, text: &str) -> bool {
+    let view = store.whole_graph().unwrap();
+    let req = tine_store::SearchRequest {
+        text: text.into(),
+        within: None,
+        page_limit: 20,
+        block_limit: 20,
+        explain: false,
+    };
+    let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    !view.search(&req, &cancel).unwrap().hits.is_empty()
+}
+
 // `(sort-by priority)` must sort the WHOLE result set, not within each page — so
 // priority-A tasks float to the top no matter which page they're on. Read the
 // global order ACROSS blocks (a sort may coalesce adjacent same-page results into
@@ -35,10 +92,9 @@ fn sort_by_priority_is_global_across_pages() {
         "- TODO [#B] b-two\n- TODO [#A] a-two\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
+    let store = store_at(&root);
     let prios = |q: &str| -> Vec<char> {
-        g.run_query(q)
+        query_simple(&store, q)
             .iter()
             .flat_map(|grp| grp.blocks.iter())
             .map(|b| {
@@ -81,8 +137,7 @@ fn sort_by_modified_interleaves_journal_and_pages() {
     )
     .unwrap();
     std::fs::write(root.join("pages").join("Proj.md"), "- TODO p-now\n").unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
+    let store = store_at(&root);
     let tag = |grp: &tine_core::RefGroup| {
         grp.blocks[0]
             .raw
@@ -91,8 +146,7 @@ fn sort_by_modified_interleaves_journal_and_pages() {
             .unwrap()
             .to_string()
     };
-    let desc: Vec<String> = g
-        .run_query("(and (task TODO) (sort-by modified desc))")
+    let desc: Vec<String> = query_simple(&store, "(and (task TODO) (sort-by modified desc))")
         .iter()
         .map(tag)
         .collect();
@@ -101,8 +155,7 @@ fn sort_by_modified_interleaves_journal_and_pages() {
         vec!["p-now", "j-new", "j-old"],
         "newest first: page(mtime now) > 2020-01-02 > 2020-01-01"
     );
-    let asc: Vec<String> = g
-        .run_query("(and (task TODO) (sort-by modified asc))")
+    let asc: Vec<String> = query_simple(&store, "(and (task TODO) (sort-by modified asc))")
         .iter()
         .map(tag)
         .collect();
@@ -126,9 +179,8 @@ fn sort_by_deadline_soonest_first() {
         "- TODO later\n  DEADLINE: <2026-12-01 Tue>\n- TODO soon\n  DEADLINE: <2026-01-05 Mon>\n- TODO none\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
-    let groups = g.run_query("(and (task TODO) (sort-by deadline asc))");
+    let store = store_at(&root);
+    let groups = query_simple(&store, "(and (task TODO) (sort-by deadline asc))");
     assert_eq!(groups.len(), 1, "same-page results share one heading");
     let asc: Vec<String> = groups[0]
         .blocks
@@ -164,9 +216,8 @@ fn sort_coalesces_consecutive_same_page_results() {
     )
     .unwrap();
     std::fs::write(root.join("journals").join("2020_01_01.md"), "- TODO b1\n").unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
-    let groups = g.run_query("(and (task TODO) (sort-by modified desc))");
+    let store = store_at(&root);
+    let groups = query_simple(&store, "(and (task TODO) (sort-by modified desc))");
     assert_eq!(
         groups.len(),
         2,
@@ -202,9 +253,8 @@ fn sort_does_not_over_merge_nonadjacent_same_page() {
     )
     .unwrap();
     std::fs::write(root.join("pages").join("Q.md"), "- TODO [#B] qb\n").unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
-    let groups = g.run_query("(and (task TODO) (sort-by priority asc))");
+    let store = store_at(&root);
+    let groups = query_simple(&store, "(and (task TODO) (sort-by priority asc))");
     let seq: Vec<(String, usize)> = groups
         .iter()
         .map(|g| (g.page.clone(), g.blocks.len()))
@@ -269,17 +319,14 @@ fn search_reflects_toggle_on_named_page() {
         "- TODO ship the thing\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
-    let mut dto = g.load_named("Tasks", PageKind::Page).unwrap().unwrap();
-    dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
-    g.save_page(&dto, dto.rev.as_deref()).expect("save");
+    let store = store_at(&root);
+    toggle_and_save(&store, "Tasks", false);
     assert!(
-        !g.search("DOING", 20).is_empty(),
+        search_matches(&store, "DOING"),
         "named: DOING found after save"
     );
     assert!(
-        g.search("TODO", 20).is_empty(),
+        !search_matches(&store, "TODO"),
         "named: TODO gone after toggle"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -293,18 +340,15 @@ fn search_reflects_toggle_on_journal_page() {
         "- TODO ship the thing\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
-    let title = g.run_query("(task TODO)")[0].page.clone();
-    let mut dto = g.load_named(&title, PageKind::Journal).unwrap().unwrap();
-    dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
-    g.save_page(&dto, dto.rev.as_deref()).expect("journal save");
+    let store = store_at(&root);
+    let title = query_simple(&store, "(task TODO)")[0].page.clone();
+    toggle_and_save(&store, &title, true);
     assert!(
-        !g.search("DOING", 20).is_empty(),
+        search_matches(&store, "DOING"),
         "journal: DOING found after save"
     );
     assert!(
-        g.search("TODO", 20).is_empty(),
+        !search_matches(&store, "TODO"),
         "journal: TODO gone after toggle"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -319,7 +363,7 @@ fn new_journal_appears_in_journals_desc_via_cache() {
     let root = mk("newjournal");
     std::fs::write(root.join("journals").join("2026_06_16.md"), "- old day\n").unwrap();
     let g = Graph::open(&root);
-    g.warm_cache(); // build the cache BEFORE the new journal exists
+    g.warm_parsed_pages(); // build the cache BEFORE the new journal exists
     assert_eq!(g.journals_desc().len(), 1);
 
     let dto = tine_core::model::PageDto {
@@ -357,7 +401,7 @@ fn own_write_is_suppressed_by_watcher() {
     // A block WITHOUT id:: (the common case): cache uuid is generated, disk has none.
     std::fs::write(&path, "- TODO ship the thing\n- another line\n").unwrap();
     let g = Graph::open(&root);
-    g.warm_cache();
+    g.warm_parsed_pages();
 
     // Before any edit, an unchanged file is already suppressed.
     assert!(g.sync_file(&path).is_none(), "unchanged file → suppressed");
@@ -391,7 +435,7 @@ fn journal_content_days_distinguishes_empty() {
     std::fs::write(root.join("journals").join("2026_06_15.md"), "- \n").unwrap();
     std::fs::write(root.join("journals").join("2026_06_14.md"), "title:: x\n").unwrap();
     let g = Graph::open(&root);
-    g.warm_cache();
+    g.warm_parsed_pages();
     let days = g.journal_content_days();
     assert!(days.contains(&20260616), "non-empty day present: {days:?}");
     assert!(!days.contains(&20260615), "empty bullet day absent");
@@ -407,16 +451,22 @@ fn frontend_added_id_survives_reload_and_resolves() {
         "- {{query (task TODO)}}\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
+    let store = store_at(&root);
 
     // Simulate the frontend save: load the page, append `id:: <uuid>` to the
     // query block's raw (what ensureStableBlockId does), save back.
-    let mut dto = g.load_named("TODOs", PageKind::Page).unwrap().unwrap();
-    let uuid = dto.blocks[0].id.clone();
+    let id = match store.whole_graph().unwrap().resolve("TODOs", false) {
+        tine_store::Resolved::Existing { id, .. } => id,
+        _ => panic!("TODOs missing"),
+    };
+    let mut read = store.page(&id).unwrap();
+    let uuid = read.doc.blocks[0].id.clone();
     eprintln!("store uuid = {uuid}");
-    dto.blocks[0].raw = format!("{}\nid:: {}", dto.blocks[0].raw, uuid);
-    g.save_page(&dto, dto.rev.as_deref()).expect("save");
+    read.doc.blocks[0].raw = format!("{}\nid:: {}", read.doc.blocks[0].raw, uuid);
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::Existing(read.rev), &read.doc),
+        tine_store::SaveOutcome::Saved(_)
+    ));
 
     eprintln!(
         "--- file on disk ---\n{}",
@@ -424,16 +474,21 @@ fn frontend_added_id_survives_reload_and_resolves() {
     );
 
     // Reopen from scratch (fresh process would do this).
-    let g2 = Graph::open(&root);
-    g2.warm_cache();
-    let dto2 = g2.load_named("TODOs", PageKind::Page).unwrap().unwrap();
+    drop(store);
+    let reopened = store_at(&root);
+    let dto2 = reopened.page(&id).unwrap().doc;
     eprintln!("reloaded uuid = {}", dto2.blocks[0].id);
     assert_eq!(
         dto2.blocks[0].id, uuid,
         "block uuid stable across reload via id::"
     );
     assert!(
-        g2.resolve_block(&uuid).is_some(),
+        reopened
+            .whole_graph()
+            .unwrap()
+            .blocks(&[uuid.clone()])
+            .unwrap()[0]
+            .is_some(),
         "resolve_block finds it by id::"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -444,30 +499,35 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
     let root = mk("querycache");
     std::fs::write(root.join("pages").join("Tasks.md"), "- TODO a\n- DONE b\n").unwrap();
     std::fs::write(root.join("pages").join("Note.md"), "- see [[Tasks]]\n").unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
+    let store = store_at(&root);
     let total = |r: &[tine_core::RefGroup]| r.iter().map(|g| g.blocks.len()).sum::<usize>();
 
     // Prime the memo: one open TODO, one backlink to Tasks.
-    assert_eq!(total(&g.run_query("(task TODO)")), 1);
-    assert_eq!(total(&g.backlinks("Tasks")), 1);
+    let old = store.whole_graph().unwrap();
+    let old_query = match old
+        .query("(task TODO)", tine_store::QueryDialect::Simple, None)
+        .unwrap()
+    {
+        tine_store::QueryResult::Simple(groups) => groups,
+        _ => unreachable!(),
+    };
+    assert_eq!(total(&old_query), 1);
+    assert_eq!(total(&old.backlinks("Tasks").unwrap()), 1);
 
     // Edit Tasks (flip DONE→TODO) and Note (drop the [[Tasks]] link) via saves.
-    let mut tasks = g.load_named("Tasks", PageKind::Page).unwrap().unwrap();
-    tasks.blocks[1].raw = "TODO b".into();
-    g.save_page(&tasks, tasks.rev.as_deref()).unwrap();
-    let mut note = g.load_named("Note", PageKind::Page).unwrap().unwrap();
-    note.blocks[0].raw = "no link anymore".into();
-    g.save_page(&note, note.rev.as_deref()).unwrap();
+    save_named(&store, "Tasks", |page| page.blocks[1].raw = "TODO b".into());
+    save_named(&store, "Note", |page| {
+        page.blocks[0].raw = "no link anymore".into()
+    });
 
     // The memo MUST reflect the edits, not serve the primed results.
     assert_eq!(
-        total(&g.run_query("(task TODO)")),
+        total(&query_simple(&store, "(task TODO)")),
         2,
         "query must see the flipped task"
     );
     assert_eq!(
-        total(&g.backlinks("Tasks")),
+        total(&store.whole_graph().unwrap().backlinks("Tasks").unwrap()),
         0,
         "backlinks must see the removed link"
     );
@@ -635,7 +695,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     let root = mk("listmemo");
     std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();
     let g = Arc::new(Graph::open(&root));
-    g.warm_cache();
+    g.warm_parsed_pages();
     let store = InternalStore::from_graph_for_tests(Arc::clone(&g));
     let names = |graph: &Graph| {
         let mut v: Vec<String> = graph.list_pages().into_iter().map(|e| e.name).collect();
@@ -830,7 +890,7 @@ fn page_icons_answer_from_cached_pages_with_page_key_lookup() {
     .unwrap();
     std::fs::write(root.join("pages").join("NoIcon.md"), "- body\n").unwrap();
     let g = Graph::open(&root);
-    g.warm_cache();
+    g.warm_parsed_pages();
     std::fs::rename(root.join("pages"), root.join("pages.offline")).unwrap();
 
     let icons = g.page_icons(&[
@@ -859,7 +919,7 @@ fn resolve_blocks_uses_indexed_hinted_page_lookup() {
 fn run_advanced_query_uses_generation_keyed_memo_cache() {
     let src = include_str!("../src/model.rs");
     assert!(
-        src.contains("fn advanced_memo("),
+        src.contains("fn advanced_memo_bounded("),
         "advanced queries should have a dedicated memo cache"
     );
     assert!(
@@ -876,10 +936,16 @@ fn resolve_block_index_refreshes_after_cache_change() {
         "- alpha\n  id:: aaaa-1111\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
-    // First resolve builds the gen-keyed uuid index.
-    assert_eq!(g.resolve_block("aaaa-1111").unwrap().page, "A");
+    let (store, _, _) =
+        crate::store::Store::open(&root, crate::store::OpenOptions::default()).unwrap();
+    let original = store.whole_graph().unwrap();
+    assert_eq!(
+        original.blocks(&["aaaa-1111".into()]).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .page,
+        "A"
+    );
 
     // A new page appears on disk; invalidate the cache as the watcher would.
     std::fs::write(
@@ -887,11 +953,23 @@ fn resolve_block_index_refreshes_after_cache_change() {
         "- beta\n  id:: bbbb-2222\n",
     )
     .unwrap();
-    g.invalidate_cache();
-    // The index must rebuild against the fresh cache — not serve a stale "not
-    // found" for the new block, nor lose the old one.
-    assert_eq!(g.resolve_block("bbbb-2222").unwrap().page, "B");
-    assert_eq!(g.resolve_block("aaaa-1111").unwrap().page, "A");
+    store.scan_refresh().unwrap();
+    let current = store.whole_graph().unwrap();
+    assert_eq!(
+        current.blocks(&["bbbb-2222".into()]).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .page,
+        "B"
+    );
+    assert_eq!(
+        current.blocks(&["aaaa-1111".into()]).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .page,
+        "A"
+    );
+    assert!(original.blocks(&["bbbb-2222".into()]).unwrap()[0].is_none());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -915,8 +993,9 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
         "- beta\n  id:: bbbb-3333\n",
     )
     .unwrap();
-    let g = Graph::open(&root);
-    g.warm_cache();
+    let (store, _, _) =
+        crate::store::Store::open(&root, crate::store::OpenOptions::default()).unwrap();
+    let view = store.whole_graph().unwrap();
 
     let req = vec![
         "aaaa-1111".to_string(), // page A
@@ -925,7 +1004,7 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
         "nope-0000".to_string(), // unknown
         "aaaa-1111".to_string(), // duplicate input
     ];
-    let out = g.resolve_blocks(&req);
+    let out = view.blocks(&req).unwrap();
     assert_eq!(out.len(), req.len(), "one result slot per input");
     assert_eq!(out[0].as_ref().unwrap().page, "A");
     assert_eq!(
@@ -948,12 +1027,15 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
     // Batch agrees with N single resolves (same semantics, just one pass).
     for u in &req {
         assert_eq!(
-            g.resolve_blocks(std::slice::from_ref(u))
+            view.blocks(std::slice::from_ref(u))
+                .unwrap()
                 .into_iter()
                 .next()
                 .unwrap()
                 .map(|r| r.page),
-            g.resolve_block(u).map(|r| r.page),
+            view.blocks(std::slice::from_ref(u)).unwrap()[0]
+                .as_ref()
+                .map(|r| r.page.clone()),
         );
     }
     let _ = std::fs::remove_dir_all(&root);
@@ -963,7 +1045,7 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
 fn new_journal_saved_with_date_stem_not_title() {
     let root = mk("journalname");
     let g = Graph::open(&root);
-    g.warm_cache();
+    g.warm_parsed_pages();
     // Save a brand-new journal by its title (no file yet).
     let dto = tine_core::model::PageDto {
         name: "Jun 18th, 2026".into(),
@@ -1040,7 +1122,7 @@ fn crlf_files_round_trip_without_churn() {
     let path = root.join("pages").join("Win.md");
     std::fs::write(&path, original).unwrap();
     let g = Graph::open(&root);
-    g.warm_cache();
+    g.warm_parsed_pages();
 
     let dto = g.load_named("Win", PageKind::Page).unwrap().unwrap();
     // (1) no stray CR leaks into the in-memory model

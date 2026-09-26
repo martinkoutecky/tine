@@ -88,6 +88,9 @@ pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopy
     let mut created_pages = Vec::new();
     let mut skipped_pages = Vec::new();
     for template in GUIDE_TEMPLATES {
+        store
+            .scan_refresh()
+            .map_err(|error| io::Error::other(format!("{error:?}")))?;
         let graph = store
             .whole_graph()
             .map_err(|error| io::Error::other(format!("{error:?}")))?;

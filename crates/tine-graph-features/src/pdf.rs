@@ -101,6 +101,9 @@ fn page_id(store: &Store, name: &str) -> io::Result<(PageId, Option<(String, Fil
     if let Some(value) = b {
         return Ok((store.as_page(&org).expect("org page"), Some(value)));
     }
+    store
+        .scan_refresh()
+        .map_err(|error| io::Error::other(format!("{error:?}")))?;
     let id = match store
         .whole_graph()
         .map_err(|_| io::Error::other("graph unavailable"))?
