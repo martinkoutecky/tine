@@ -4,10 +4,10 @@
 //! owned by lsdoc >= v0.5.4; this test pins the user-visible outcome — the page
 //! loads and stays searchable — against a future parser regression.
 
+use crate::model::Graph;
+use crate::{Cancel, SearchRequest, Store};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tine_store::model::Graph;
-use tine_store::{Cancel, SearchRequest, Store};
 
 #[test]
 fn gh221_malformed_html_fragment_indexes_without_panic() {
@@ -17,7 +17,7 @@ fn gh221_malformed_html_fragment_indexes_without_panic() {
     // The reporter's minimal repro: one line, no trailing newline.
     std::fs::write(dir.join("pages/test-page.md"), b"- <div </div><").unwrap();
 
-    let g = Arc::new(Graph::open(&dir));
+    let g = Graph::open(&dir);
     let entries = g.list_pages();
     let entry = entries
         .iter()
@@ -25,7 +25,9 @@ fn gh221_malformed_html_fragment_indexes_without_panic() {
         .expect("page listed")
         .clone();
     let dto = g.load_page(&entry).expect("load ok");
-    let exec = Store::from_legacy(Arc::clone(&g))
+    let exec = Store::open(&dir, Default::default())
+        .unwrap()
+        .0
         .whole_graph()
         .unwrap()
         .search(
@@ -39,6 +41,7 @@ fn gh221_malformed_html_fragment_indexes_without_panic() {
             &Cancel(Arc::new(AtomicBool::new(false))),
         )
         .unwrap();
+    g.warm_cache();
     let failures = g.page_index_failures();
 
     let _ = std::fs::remove_dir_all(&dir);

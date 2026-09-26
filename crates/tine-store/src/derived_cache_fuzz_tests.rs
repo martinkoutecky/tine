@@ -7,9 +7,9 @@
 //! introduce. This guards both the current (full-invalidation) cache and the
 //! scoped one.
 
+use crate::model::Graph;
 use std::sync::Arc;
 use tine_core::{BlockDto, PageKind, RefGroup};
-use tine_store::model::Graph;
 
 // --- deterministic PRNG (xorshift64) so a failure reproduces from its seed ----
 struct Rng(u64);

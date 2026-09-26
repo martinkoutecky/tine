@@ -2,8 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::model::{PageDto, PageKind};
-use tine_store::model::{content_rev, Graph};
-use tine_store::{Area, PageId, Resolved, Store, StoreError};
+use tine_store::{Area, OpenOptions, PageId, Resolved, Store, StoreError};
 
 struct Fixture(std::path::PathBuf);
 
@@ -26,7 +25,17 @@ impl Fixture {
     }
 
     fn store(&self) -> Store {
-        Store::from_legacy(Arc::new(Graph::open(&self.0)))
+        Store::open(&self.0, OpenOptions::default()).unwrap().0
+    }
+
+    fn put(&self, rel: &str, bytes: &[u8]) {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let temp = self.0.join(format!(
+            ".read-fixture-{}",
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&temp, bytes).unwrap();
+        std::fs::rename(temp, self.0.join(rel)).unwrap();
     }
 }
 
@@ -48,10 +57,11 @@ fn page_reads_and_publishes_external_edit() {
     assert!(first.read_only.is_none());
     assert_eq!(
         serde_json::to_string(&first.rev).unwrap(),
-        serde_json::to_string(&content_rev("- before\n")).unwrap()
+        serde_json::to_string(&store.read(&id.file(), None).unwrap().1).unwrap()
     );
     let _ = store.whole_graph().unwrap().complete_page_names("Note", 10);
-    std::fs::write(f.0.join("pages/Note.md"), "- after edit\n").unwrap();
+    f.put("pages/Note.md", b"- after edit\n");
+    store.scan_refresh().unwrap();
     let second = store.page(&id).unwrap();
     assert_eq!(second.doc.blocks[0].raw, "after edit");
     assert_ne!(first.rev, second.rev);
@@ -246,8 +256,15 @@ fn approved_external_assets_reject_retarget() {
     std::fs::remove_file(f.0.join("assets/pic.bin")).unwrap();
     std::fs::remove_dir(f.0.join("assets")).unwrap();
     std::os::unix::fs::symlink(&approved, f.0.join("assets")).unwrap();
-    let graph = Graph::open_checked_with_assets(&f.0, Some(&approved)).unwrap();
-    let store = Store::from_legacy(Arc::new(graph));
+    let store = Store::open(
+        &f.0,
+        OpenOptions {
+            approved_external_assets: Some(approved.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .0;
     let id = store.file_id(Area::Assets, "asset.bin").unwrap();
     assert_eq!(store.read(&id, None).unwrap().0, b"approved");
     std::fs::remove_file(f.0.join("assets")).unwrap();

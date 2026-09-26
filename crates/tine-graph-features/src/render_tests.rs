@@ -1,6 +1,5 @@
 use super::*;
 use std::fs;
-use tine_store::model::Graph;
 
 fn no_refs() -> RefIndex {
     RefIndex::new()
@@ -22,7 +21,7 @@ mod tests {
             "- TODO repeated query memo target\n",
         )
         .unwrap();
-        let store = Store::from_legacy(Arc::new(Graph::open(&dir)));
+        let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
         let graph = RenderGraph {
@@ -68,7 +67,7 @@ mod tests {
             dir.join("pages/Dashboard.md"),
             "- {{embed [[Target]]}}\n- {{embed [[Target]]}}\n- {{embed [[Target]]}}\n- {{embed [[Target]]}}\n",
         ).unwrap();
-        let store = Store::from_legacy(Arc::new(Graph::open(&dir)));
+        let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
         fs::remove_file(dir.join("pages/Target.md")).unwrap();
@@ -111,7 +110,7 @@ mod tests {
         fs::write(dir.join("assets/one.png"), b"1234").unwrap();
         fs::write(dir.join("assets/two.png"), b"5678").unwrap();
         fs::write(dir.join("assets/large.png"), b"123456").unwrap();
-        let store = Store::from_legacy(Arc::new(Graph::open(&dir)));
+        let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
         let graph = RenderGraph {
@@ -175,7 +174,7 @@ mod tests {
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
         fs::write(dir.join("pages").join("P.md"), "- TODO target\n").unwrap();
-        let store = Store::from_legacy(Arc::new(Graph::open(&dir)));
+        let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
         let graph = RenderGraph {

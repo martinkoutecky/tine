@@ -1,14 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use tine_core::pdf::{Highlight, Position, Rect};
 use tine_graph_features::pdf;
-use tine_store::{model::Graph, Store};
+use tine_store::Store;
 
 fn store(root: &Path) -> Store {
-    Store::from_legacy(Arc::new(Graph::open(root)))
+    Store::open(root, Default::default()).unwrap().0
 }
 
 fn scratch(label: &str) -> PathBuf {

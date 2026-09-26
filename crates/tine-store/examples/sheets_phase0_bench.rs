@@ -5,8 +5,26 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use tine_core::{BlockDto, PageKind, RefGroup};
-use tine_store::model::Graph;
+use tine_core::{BlockDto, RefGroup};
+use tine_store::{QueryDialect, QueryResult, SaveBase, SaveOutcome, Store};
+
+fn open_store(root: &Path) -> io::Result<Store> {
+    Store::open(root, Default::default())
+        .map(|(store, _, _)| store)
+        .map_err(|error| io::Error::other(error.to_string()))
+}
+
+fn query_store(store: &Store, source: &str) -> std::sync::Arc<Vec<RefGroup>> {
+    match store
+        .whole_graph()
+        .unwrap()
+        .query(source, QueryDialect::Simple, None)
+        .unwrap()
+    {
+        QueryResult::Simple(groups) => groups,
+        QueryResult::Advanced(_) => unreachable!(),
+    }
+}
 
 const DEFAULT_SCALES: &[usize] = &[10_000, 50_000, 100_000, 200_000];
 const BLOCKS_PER_FILE: usize = 50;
@@ -341,9 +359,9 @@ struct BenchRow {
 fn bench_scale(scale: usize, root: &Path, generated: GeneratedGraph) -> io::Result<BenchRow> {
     let mut cold_total = Vec::with_capacity(COLD_RUNS);
     for _ in 0..COLD_RUNS {
-        let graph = Graph::open(root);
+        let store = open_store(root)?;
         let started = Instant::now();
-        let groups = graph.run_query(PRIMARY_QUERY);
+        let groups = query_store(&store, PRIMARY_QUERY);
         cold_total.push(started.elapsed());
         let primary_results = result_count(groups.as_ref());
         assert_nonzero(primary_results, PRIMARY_QUERY);
@@ -352,33 +370,33 @@ fn bench_scale(scale: usize, root: &Path, generated: GeneratedGraph) -> io::Resu
 
     let mut cache_build = Vec::with_capacity(CACHE_BUILD_RUNS);
     for _ in 0..CACHE_BUILD_RUNS {
-        let graph = Graph::open(root);
+        let store = open_store(root)?;
         let started = Instant::now();
-        let page_count = graph.with_pages(|pages| pages.len());
+        let page_count = store.whole_graph().unwrap().corpus().pages.len();
         cache_build.push(started.elapsed());
         assert_eq!(page_count, generated.files);
         black_box(page_count);
     }
 
-    let warm_graph = Graph::open(root);
-    warm_graph.with_pages(|pages| black_box(pages.len()));
+    let warm_store = open_store(root)?;
+    black_box(warm_store.whole_graph().unwrap().corpus().pages.len());
     let mut warm_scan = Vec::with_capacity(WARM_SCAN_RUNS);
     for i in 0..WARM_SCAN_RUNS {
         let query = primary_query_variant(i);
         let started = Instant::now();
-        let groups = warm_graph.run_query(&query);
+        let groups = query_store(&warm_store, &query);
         warm_scan.push(started.elapsed());
         assert_nonzero(result_count(groups.as_ref()), &query);
         black_box(groups.len());
     }
 
-    let memo_graph = Graph::open(root);
-    let seeded = memo_graph.run_query(PRIMARY_QUERY);
+    let memo_store = open_store(root)?;
+    let seeded = query_store(&memo_store, PRIMARY_QUERY);
     assert_nonzero(result_count(seeded.as_ref()), PRIMARY_QUERY);
     let mut memo_hits = Vec::with_capacity(MEMO_HIT_RUNS);
     for _ in 0..MEMO_HIT_RUNS {
         let started = Instant::now();
-        let groups = memo_graph.run_query(PRIMARY_QUERY);
+        let groups = query_store(&memo_store, PRIMARY_QUERY);
         memo_hits.push(started.elapsed());
         black_box(groups.len());
     }
@@ -418,8 +436,8 @@ struct EditCycleResult {
 }
 
 fn run_edit_cycles(root: &Path, query: &str) -> io::Result<EditCycleResult> {
-    let graph = Graph::open(root);
-    let initial = graph.run_query(query);
+    let store = open_store(root)?;
+    let initial = query_store(&store, query);
     assert_nonzero(result_count(initial.as_ref()), query);
 
     let mut save_durations = Vec::with_capacity(EDIT_CYCLES);
@@ -427,10 +445,12 @@ fn run_edit_cycles(root: &Path, query: &str) -> io::Result<EditCycleResult> {
     let mut last_result_count = result_count(initial.as_ref());
 
     for _ in 0..EDIT_CYCLES {
-        let mut page = graph
-            .load_named(EDIT_PAGE_NAME, PageKind::Page)?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, EDIT_PAGE_NAME))?;
-        let base_rev = page.rev.clone();
+        let id = tine_store::PageId::from(format!("pages/{EDIT_PAGE_NAME}.md"));
+        let read = store
+            .page(&id)
+            .map_err(|error| io::Error::other(format!("{error:?}")))?;
+        let mut page = read.doc;
+        let base_rev = read.rev;
         if !flip_edit_marker(&mut page.blocks) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -439,12 +459,15 @@ fn run_edit_cycles(root: &Path, query: &str) -> io::Result<EditCycleResult> {
         }
 
         let started = Instant::now();
-        let new_rev = graph.save_page(&page, base_rev.as_deref())?;
+        let new_rev = match store.save(&id, SaveBase::Existing(base_rev), &page) {
+            SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => rev,
+            other => return Err(io::Error::other(format!("save failed: {other:?}"))),
+        };
         save_durations.push(started.elapsed());
-        black_box(new_rev.len());
+        black_box(format!("{new_rev:?}").len());
 
         let started = Instant::now();
-        let groups = graph.run_query(query);
+        let groups = query_store(&store, query);
         query_durations.push(started.elapsed());
         last_result_count = result_count(groups.as_ref());
         assert_nonzero(last_result_count, query);

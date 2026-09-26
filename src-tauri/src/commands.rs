@@ -549,7 +549,6 @@ fn aliases_from_inventory(inventory: &Inventory) -> Vec<(String, String)> {
 #[cfg(test)]
 mod inventory_adapter_tests {
     use super::*;
-    use tine_store::model::Graph;
 
     fn sorted_pages(pages: Vec<PageEntry>) -> Vec<String> {
         let mut rows: Vec<_> = pages
@@ -601,22 +600,41 @@ mod inventory_adapter_tests {
         ] {
             std::fs::write(root.join(path), body).unwrap();
         }
-        let graph = Arc::new(Graph::open(&root));
-        graph.warm_cache();
         let (store, _, _) =
             tine_store::Store::open(&root, tine_store::OpenOptions::default()).unwrap();
         let view = store.whole_graph().unwrap();
         let inventory = view.inventory();
 
-        let old_pages = graph.list_pages();
         let new_pages = list_pages_from_inventory(&inventory);
-        let old_multiset = sorted_pages(old_pages.clone());
         let new_multiset = sorted_pages(new_pages.clone());
-        assert_eq!(old_multiset, new_multiset);
-        assert_eq!(graph.page_aliases(), aliases_from_inventory(&inventory));
         assert_eq!(
-            visible_names(old_pages, graph.referenced_page_names()),
-            visible_names(new_pages, referenced_names_from_inventory(&inventory))
+            new_multiset,
+            vec![
+                r#"{"name":"Alpha","kind":"page","date_key":null,"path":"pages/Alpha.md"}"#,
+                r#"{"name":"Alpha","kind":"page","date_key":null,"path":"pages/nested/Alpha.org"}"#,
+                r#"{"name":"Beta","kind":"page","date_key":null,"path":"pages/Beta.org"}"#,
+                r#"{"name":"Jun 26th, 2026","kind":"journal","date_key":20260626,"path":"journals/2026_06_26.md"}"#,
+                r#"{"name":"Team/Child","kind":"page","date_key":null,"path":"pages/Team%2FChild.md"}"#,
+            ]
+        );
+        assert_eq!(
+            aliases_from_inventory(&inventory),
+            vec![
+                ("shared".to_string(), "Alpha".to_string()),
+                ("shared".to_string(), "Beta".to_string()),
+            ]
+        );
+        assert_eq!(
+            visible_names(new_pages, referenced_names_from_inventory(&inventory)),
+            vec![
+                "Alpha",
+                "Another Ref",
+                "Beta",
+                "Jun 26th, 2026",
+                "Only Linked",
+                "Shared",
+                "Team/Child"
+            ]
         );
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -7,24 +7,24 @@
 //! locators; persisted `id::` values remain a separate external reference identity.
 
 use std::fs;
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 use std::io::Seek;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::RwLock;
 use tine_core::config::{Config, FileNameFormat};
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 use tine_core::date::JournalDate;
 use tine_core::date::JournalFormat;
 use tine_core::doc::{self, DocBlock, Document};
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 use tine_core::model::AssetInfo;
 use tine_core::model::{
     is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BlockDto, BlockPreview,
     BoundedRefGroups, Format, PageDto, PageEntry, PageKind, ReferenceKind, TemplateDto,
 };
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 use tine_core::model::{
     sync_conflict_base, GraphMeta, JournalConflict, JournalFile, RefGroup, SyncConflict,
 };
@@ -55,6 +55,7 @@ fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
 /// Error for an ambiguous page that exists as both a `.md` and a `.org` file.
 /// Deliberately NOT the `AlreadyExists`/"conflict" signal, so the UI surfaces it
 /// as a plain error (a toast) instead of a keep-mine/use-disk conflict prompt.
+#[cfg(test)]
 fn twin_error(name: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::Other,
@@ -70,6 +71,7 @@ pub(crate) enum SaveTargetError {
 }
 
 impl SaveTargetError {
+    #[cfg(test)]
     fn into_io(self, name: &str) -> io::Error {
         match self {
             Self::Twin => twin_error(name),
@@ -80,7 +82,7 @@ impl SaveTargetError {
 
 /// The error for a path-addressed op (#21) whose graph-root-relative path is
 /// invalid — outside `journals/`/`pages/`, a traversal, or the wrong extension.
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 fn bad_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
 }
@@ -94,14 +96,14 @@ fn parse_doc(path: &Path, content: &str) -> Document {
     }
 }
 
-pub struct Graph {
-    pub root: PathBuf,
+pub(crate) struct Graph {
+    pub(crate) root: PathBuf,
     /// The canonical filesystem capability used for every asset operation. For
     /// ordinary graphs this is `<root>/assets`; when the runtime has explicitly
     /// approved an external assets symlink/junction it is that exact resolved
     /// directory. No other managed graph path may use this capability.
     assets_root: PathBuf,
-    pub config: Config,
+    pub(crate) config: Config,
     live_config: RwLock<Option<Arc<Config>>>,
     /// Journal date formats (filename + title) resolved from `config.edn`, used to
     /// recognize journal files in the user's format and render new ones. The
@@ -748,16 +750,6 @@ fn guide_twin_race_hook(path: &Path) -> io::Result<()> {
     })
 }
 
-#[cfg(all(not(test), feature = "legacy-fixtures"))]
-fn guide_twin_race_hook(_path: &Path) -> io::Result<()> {
-    Ok(())
-}
-
-#[cfg(all(not(test), feature = "legacy-fixtures"))]
-fn rename_source_remove_failpoint() -> io::Result<()> {
-    Ok(())
-}
-
 pub(crate) enum CheckedOpenError {
     ExternalAssetsUnapproved(PathBuf),
     Io(io::Error),
@@ -855,7 +847,7 @@ impl Graph {
     /// boundary: an external `assets` link/junction is accepted only when its
     /// current canonical target exactly matches the caller's approved target.
     /// This makes a retargeted link fail closed instead of inheriting old trust.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn open_checked_with_assets(
         root: impl AsRef<Path>,
         approved_assets: Option<&Path>,
@@ -937,7 +929,7 @@ impl Graph {
     }
 
     /// Open a graph directory, reading `logseq/config.edn` if present.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn open(root: impl AsRef<Path>) -> Graph {
         Self::open_inner(root)
     }
@@ -1016,7 +1008,7 @@ impl Graph {
             .clone()
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn meta(&self) -> GraphMeta {
         GraphMeta::from_config(
             self.root.display().to_string(),
@@ -1029,13 +1021,13 @@ impl Graph {
     /// the key that memoized queries/backlinks/derived results invalidate against.
     /// Exposed for observability and tests (e.g. asserting a no-op save doesn't
     /// needlessly invalidate everything).
-    pub fn cache_generation(&self) -> u64 {
+    pub(crate) fn cache_generation(&self) -> u64 {
         self.cache_gen.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Pages skipped by the latest whole-graph search-cache build because their
     /// parse/projection panicked. Paths are graph-relative and safe to surface.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn page_index_failures(&self) -> Vec<String> {
         self.page_index_failures.read().unwrap().clone()
     }
@@ -1135,7 +1127,7 @@ impl Graph {
     }
 
     /// List all pages and journals in the graph.
-    pub fn list_pages(&self) -> Vec<PageEntry> {
+    pub(crate) fn list_pages(&self) -> Vec<PageEntry> {
         let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         if let Some((g, entries)) = self.page_list_cache.read().unwrap().as_ref() {
             if *g == gen {
@@ -1174,7 +1166,7 @@ impl Graph {
     /// Computed from the whole-graph cache and memoized by `cache_gen`. If the
     /// cache isn't warm yet it returns empty and memoizes nothing — we never force
     /// a full-graph parse from here (this runs on autocomplete keystrokes).
-    pub fn referenced_page_names(&self) -> Vec<String> {
+    pub(crate) fn referenced_page_names(&self) -> Vec<String> {
         let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         if let Some((g, names)) = self.referenced_names_cache.read().unwrap().as_ref() {
             if *g == gen {
@@ -1249,7 +1241,7 @@ impl Graph {
     }
 
     /// Journals sorted newest-first.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn journals_desc(&self) -> Vec<PageEntry> {
         // Prefer the warmed whole-graph cache — its PageEntry list is kept current
         // by cache_upsert/cache_remove, so we avoid a directory read + parse on
@@ -1283,7 +1275,7 @@ impl Graph {
 
     /// Feed membership is narrower than the raw journal inventory: future
     /// journals remain directly reachable graph pages, but are not in Journals.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn feed_journals_desc_through(&self, cutoff: JournalDate) -> Vec<PageEntry> {
         let cutoff = cutoff.ordinal_key();
         self.journals_desc()
@@ -1295,7 +1287,7 @@ impl Graph {
     /// Journal `date_key`s (yyyymmdd) whose page has real content — i.e. at
     /// least one block with a non-empty, non-property line. Drives the calendar
     /// picker's empty/non-empty day marking. Served from the cache.
-    pub fn journal_content_days(&self) -> Vec<i64> {
+    pub(crate) fn journal_content_days(&self) -> Vec<i64> {
         self.with_pages(|pages| {
             pages
                 .iter()
@@ -1305,27 +1297,7 @@ impl Graph {
         })
     }
 
-    /// One-time recovery: a journal that was saved under its display title
-    /// ("Jun 18th, 2026.md") instead of its date stem ("2026_06_18.md") can't be
-    /// parsed back to a date, so it drops out of the feed and the day looks
-    /// empty. Rename such files to their stem — but only when the stem file
-    /// doesn't already exist (never clobber/merge). Returns how many were fixed.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub fn has_journal_filename_migrations(&self) -> bool {
-        let dir = self.journals_path();
-        let Ok(rd) = fs::read_dir(&dir) else {
-            return false;
-        };
-        for e in rd.flatten() {
-            let p = e.path();
-            if self.journal_filename_migration_target(&p).is_some() {
-                return true;
-            }
-        }
-        false
-    }
-
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn journal_filename_migration_target(&self, p: &std::path::Path) -> Option<PathBuf> {
         // Both formats — an org graph's title-named journals are `.org`.
         let ext = match p.extension().and_then(|x| x.to_str()) {
@@ -1351,7 +1323,7 @@ impl Graph {
         Some(target)
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn migrate_journal_filenames(&self) -> usize {
         let dir = self.journals_path();
         let Ok(rd) = fs::read_dir(&dir) else { return 0 };
@@ -1370,7 +1342,7 @@ impl Graph {
     /// Journal days that resolve to more than one file — the migration leaves these
     /// alone (it never clobbers), so they're reported for the user to reconcile.
     /// Each file gets a one-line preview and a `canonical` flag (date-stem name).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn journal_conflicts(&self) -> Vec<JournalConflict> {
         let dir = self.journals_path();
         let mut by_date: std::collections::BTreeMap<i64, Vec<(String, PathBuf, bool)>> =
@@ -1448,7 +1420,7 @@ impl Graph {
     /// one-line preview — everything the conflicts panel needs to offer a merge.
     /// These files are deliberately excluded from `list_pages`/the cache
     /// (see [`is_sync_conflict`]); this is the ONLY place they're surfaced.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn list_sync_conflicts(&self) -> Vec<SyncConflict> {
         let mut out = Vec::new();
         for (dir, kind) in [
@@ -1518,208 +1490,6 @@ impl Graph {
         out
     }
 
-    /// Structural block-level diff of a conflict copy against its winner (both
-    /// graph-root-relative paths). Loads each file directly by path — the conflict
-    /// copy is deliberately not in the page cache — and aligns the two block trees
-    /// (see [`tine_core::sync_diff`]). This is a READ; nothing is written. `Ok(None)`
-    /// if either path is invalid or the file is gone.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub fn sync_conflict_diff(
-        &self,
-        winner_rel: &str,
-        conflict_rel: &str,
-    ) -> io::Result<Option<tine_core::sync_diff::SyncConflictDiff>> {
-        let (Some(win), Some(conf)) =
-            (self.resolve_rel(winner_rel), self.resolve_rel(conflict_rel))
-        else {
-            return Ok(None);
-        };
-        let (win_c, conf_c) = match (fs::read_to_string(&win), fs::read_to_string(&conf)) {
-            (Ok(a), Ok(b)) => (a, b),
-            (Err(e), _) | (_, Err(e)) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-            (Err(e), _) | (_, Err(e)) => return Err(e),
-        };
-        let mine = parse_doc(&win, &win_c);
-        let theirs = parse_doc(&conf, &conf_c);
-        let mut diff = tine_core::sync_diff::diff_docs(&mine, &theirs);
-        diff.base_rev = content_rev(&win_c);
-        diff.conflict_rev = content_rev(&conf_c);
-        Ok(Some(diff))
-    }
-
-    /// Resolve a sync-conflict copy: build the merged winner from the user's
-    /// per-row `decisions` (row id → `"mine"`/`"theirs"`/`"both"`, see
-    /// [`tine_core::sync_diff::merge_blocks`]), write it through the NORMAL round-
-    /// tripping save path, and move the conflict copy to the recoverable trash.
-    ///
-    /// Data-safety invariants (ADR 0012 one-writer + ADR 0007 never-silently-
-    /// overwrite), mirroring [`merge_pages`]:
-    /// - Everything runs under the winner's `page_lock`.
-    /// - `base_rev` guard: if the winner changed on disk since the UI diffed it,
-    ///   returns `AlreadyExists` ("conflict") WITHOUT writing, so the UI re-diffs
-    ///   against fresh content instead of merging a stale alignment.
-    /// - Org round-trip firewall: if either side is a non-round-trippable `.org`,
-    ///   refuses rather than risk corrupting it.
-    /// - Stage-before-commit: the conflict copy is moved to trash BEFORE the
-    ///   merged winner is written, and the move is rolled back if the write fails
-    ///   — so a retry can never duplicate content, and nothing is lost.
-    ///
-    /// `pre_choice` decides the page-property pre-block: `"mine"`, `"theirs"`, or
-    /// `"union"` (default; markdown only — keep the winner's and add any property
-    /// the conflict defines that the winner doesn't, so an `alias::`/`tags::` from
-    /// the other device isn't dropped; org keeps the winner's, gated by the
-    /// firewall).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub fn resolve_sync_conflict(
-        &self,
-        winner_rel: &str,
-        conflict_rel: &str,
-        decisions: &std::collections::HashMap<String, String>,
-        base_rev: &str,
-        conflict_rev: &str,
-        pre_choice: &str,
-    ) -> io::Result<()> {
-        let win = self.resolve_rel(winner_rel).ok_or_else(bad_path)?;
-        let conf = self.resolve_rel(conflict_rel).ok_or_else(bad_path)?;
-        if win == conf {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "winner and conflict are the same file",
-            ));
-        }
-        let win_entry = self.entry_for_path(&win).ok_or_else(bad_path)?;
-        // Lock the winner so a concurrent editor/watcher write can't race the merge.
-        let lock = self.page_lock(&win);
-        let _guard = lock.lock().unwrap();
-        let win_content = fs::read_to_string(&win)?;
-        let conf_content = fs::read_to_string(&conf)?;
-        // base_rev guard — the winner must still be what the UI diffed against.
-        if content_rev(&win_content) != base_rev {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "winner changed on disk",
-            ));
-        }
-        if content_rev(&conf_content) != conflict_rev {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "conflict copy changed on disk",
-            ));
-        }
-        // Org round-trip firewall (same as merge_pages).
-        if Format::from_path(&win) == Format::Org
-            && (!tine_core::org::org_editable(&win_content)
-                || !tine_core::org::org_editable(&conf_content))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "an org file in this pair does not round-trip; not merging",
-            ));
-        }
-        let mine_doc = parse_doc(&win, &win_content);
-        let theirs_doc = parse_doc(&conf, &conf_content);
-        let merged_roots =
-            tine_core::sync_diff::merge_blocks(&mine_doc.roots, &theirs_doc.roots, decisions);
-        let pre_block = match pre_choice {
-            "theirs" => theirs_doc.pre_block.clone(),
-            "mine" => mine_doc.pre_block.clone(),
-            _ if Format::from_path(&win) == Format::Md => union_pre(
-                mine_doc.pre_block.as_deref(),
-                theirs_doc.pre_block.as_deref(),
-            ),
-            _ => mine_doc.pre_block.clone(),
-        };
-        let mut merged = Document {
-            pre_block,
-            roots: merged_roots,
-        };
-        assign_doc_runtime_ids(&mut merged.roots, win_entry.rel_path_str());
-        let dto = page_dto(&win_entry, &merged);
-        let win_cacheable = self.path_is_cacheable(&win);
-        // Stage-before-commit (L5): move the conflict copy out first, then write the
-        // merged winner; roll the move back if the write fails.
-        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
-        self.ensure_write_target(&trash)?;
-        fs::create_dir_all(&trash)?;
-        let conf_name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
-        let staged = trash.join(format!("{}__{conf_name}", trash_stamp()));
-        move_file_noreplace(&conf, &staged)?;
-        if fs::read_to_string(&staged)? != conf_content {
-            let _ = move_file_noreplace(&staged, &conf);
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "conflict copy changed during merge",
-            ));
-        }
-        if let Err(e) = self.write_page(&dto, &win, Some(&win_content), true, win_cacheable) {
-            let _ = move_file_noreplace(&staged, &conf); // rollback: restore the conflict copy
-            return Err(e);
-        }
-        Ok(())
-    }
-
-    /// Move a sync-conflict copy to the recoverable trash WITHOUT merging (the
-    /// "I've reviewed it, the winner is fine, discard the copy" affordance). Guards
-    /// that the target actually IS a conflict copy so this can never trash a real
-    /// page. Recoverable in `logseq/.tine-trash` (ADR 0007).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub fn trash_sync_conflict(&self, conflict_rel: &str) -> io::Result<()> {
-        let conf = self.resolve_rel(conflict_rel).ok_or_else(bad_path)?;
-        if !path_is_sync_conflict(&conf) {
-            return Err(bad_path()); // refuse anything that isn't a conflict copy
-        }
-        if !conf.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "no such conflict file",
-            ));
-        }
-        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
-        self.ensure_write_target(&trash)?;
-        let name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
-        let dest = trash.join(format!("{}__{name}", trash_stamp()));
-        move_to_trash(&conf, &dest, &trash)
-    }
-
-    /// Raw contents of ONE journal file (by exact filename) — lets the UI show a
-    /// duplicate day's individual files (which can't be navigated to separately,
-    /// as pages are keyed by date) so the user can inspect before reconciling.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub fn read_journal_file(&self, name: &str) -> io::Result<String> {
-        if name.is_empty() || name.contains('/') || name.contains('\\') {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "bad journal file name",
-            ));
-        }
-        fs::read_to_string(self.journals_path().join(name))
-    }
-
-    /// Move ONE journal file (by its exact filename) to the recoverable trash —
-    /// the affordance for reconciling a duplicate day. Refuses a path separator so
-    /// it can't reach outside `journals/`.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub fn trash_journal_file(&self, name: &str) -> io::Result<()> {
-        if name.is_empty() || name.contains('/') || name.contains('\\') {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "bad journal file name",
-            ));
-        }
-        let src = self.journals_path().join(name);
-        if !src.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "no such journal file",
-            ));
-        }
-        let trash = typed_trash_dir(&self.root, TrashEntryKind::Journal);
-        self.ensure_write_target(&trash)?;
-        let dest = trash.join(format!("{}__{name}", trash_stamp()));
-        move_to_trash(&src, &dest, &trash)?;
-        Ok(())
-    }
-
     /// Whether a file participates in the `(kind,name)` page cache. False only for a
     /// shadow journal (a title-named duplicate of a canonical date-stem file, #21),
     /// whose cache slot belongs to the canonical file.
@@ -1746,7 +1516,7 @@ impl Graph {
     /// dst wins on a clash) so an alias/tags/icon isn't silently lost; src free-text
     /// in the pre-block is dropped. The src is trashed ONLY after `dst` is durably
     /// written.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn merge_pages(&self, src_rel: &str, dst_rel: &str) -> io::Result<()> {
         let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
         let dst = self.resolve_rel(dst_rel).ok_or_else(bad_path)?;
@@ -1860,7 +1630,7 @@ impl Graph {
     /// `new_name` already exists in EITHER extension (never clobbers) or the name is
     /// empty. Inbound references are NOT rewritten (a stray rarely has any); the
     /// file's own content is unchanged.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn rename_file_to_page(&self, src_rel: &str, new_name: &str) -> io::Result<()> {
         let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
         let name = new_name.trim();
@@ -1934,7 +1704,7 @@ impl Graph {
     ///
     /// Returns `true` when a file was created and `false` when an existing page
     /// won. Existing content is never overwritten.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub(crate) fn create_markdown_page_if_absent(
         &self,
         name: &str,
@@ -1982,22 +1752,6 @@ impl Graph {
         Ok(true)
     }
 
-    /// Create one named top-level asset without replacing an existing file. The
-    /// approved asset capability is revalidated at the actual write target so a
-    /// managed-directory symlink/junction swap cannot redirect this creation.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub(crate) fn create_asset_if_absent(&self, name: &str, bytes: &[u8]) -> io::Result<bool> {
-        top_level_asset_name(name)?;
-        let path = self.assets_path().join(name);
-        self.ensure_asset_write_target(&path)?;
-        fs::create_dir_all(self.assets_path())?;
-        match atomic_write_new(&path, bytes) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-
     /// Whether BOTH a `.md` and a `.org` file exist for the same logical page —
     /// an ambiguous identity, since Tine keys pages by `(kind, name)`. Writes
     /// (save/rename/delete) are refused on such a page so a save can't serve one
@@ -2037,7 +1791,7 @@ impl Graph {
     /// (`path_for`), instead of whichever the directory listing happened to yield
     /// first (which could mismatch the save target and raise a phantom conflict).
     /// The stray is reached by path via `load_by_path`.
-    pub fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
+    pub(crate) fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
         self.find_claimants(name, kind).into_iter().next()
     }
 
@@ -2101,7 +1855,7 @@ impl Graph {
 
     /// Load a page by name; returns `None` if it doesn't exist on disk. Falls
     /// back to alias resolution (`alias::`) for named pages.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn load_named(&self, name: &str, kind: PageKind) -> io::Result<Option<PageDto>> {
         // A file that vanished between listing and load (external delete) reports
         // NotFound from load_page — map it to "no page" rather than an error, so
@@ -2137,7 +1891,7 @@ impl Graph {
     /// cached pages once, then answers the requested names; only pages WITH an
     /// icon appear in the result. On-demand (e.g. a `{{namespace}}` macro), not at
     /// index time.
-    pub fn page_icons(&self, names: &[String]) -> std::collections::HashMap<String, String> {
+    pub(crate) fn page_icons(&self, names: &[String]) -> std::collections::HashMap<String, String> {
         let (mut icons_by_name, real_page_names) = self.with_pages(|pages| {
             let mut icons = std::collections::HashMap::new();
             let mut real = std::collections::HashSet::new();
@@ -2174,7 +1928,7 @@ impl Graph {
     }
 
     /// Alias → canonical-page-name pairs (for the UI to resolve links/navigation).
-    pub fn page_aliases(&self) -> Vec<(String, String)> {
+    pub(crate) fn page_aliases(&self) -> Vec<(String, String)> {
         self.page_aliases_with_owners()
             .into_iter()
             .map(|(alias, canonical, _)| (alias, canonical))
@@ -2385,7 +2139,7 @@ impl Graph {
     /// Candidate paths for rename after validating the index covers the exact
     /// page-list/collision snapshot rename already collected. `None` means the
     /// caller must retain its correct whole-list scan.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn reference_candidate_paths_for_entries(
         &self,
         names_norm: &[String],
@@ -2442,7 +2196,7 @@ impl Graph {
     /// `{{embed ((uuid))}}`); multiple refs from one block count once (OG semantics).
     /// O(graph) to build initially or after a reference-bearing edit, then O(1)
     /// reuse across ordinary edits.
-    pub fn block_ref_counts(&self) -> Arc<std::collections::HashMap<String, usize>> {
+    pub(crate) fn block_ref_counts(&self) -> Arc<std::collections::HashMap<String, usize>> {
         use std::sync::atomic::Ordering;
         loop {
             let gen = self.cache_gen.load(Ordering::Acquire);
@@ -2532,7 +2286,7 @@ impl Graph {
     /// Load a page by entry. Served from the in-memory cache so block uuids are
     /// stable and consistent with queries / refs / the sidebar. Falls back to a
     /// disk parse for a page not yet in the cache (e.g. just created externally).
-    pub fn load_page(&self, entry: &PageEntry) -> io::Result<PageDto> {
+    pub(crate) fn load_page(&self, entry: &PageEntry) -> io::Result<PageDto> {
         // Reconcile any external change into the cache FIRST. Otherwise a stale
         // cache (an edit the 3s watcher hasn't folded in yet) would be served as
         // the editor's content while the rev below reflects the NEW disk bytes —
@@ -2719,7 +2473,7 @@ impl Graph {
     /// contents. The cache read lock is held only while cloning the Arc; mutations
     /// use copy-on-write under `cache.write()` when a scan still holds an older
     /// snapshot.
-    pub fn with_pages<T>(&self, f: impl FnOnce(&[(PageEntry, Arc<Document>)]) -> T) -> T {
+    pub(crate) fn with_pages<T>(&self, f: impl FnOnce(&[(PageEntry, Arc<Document>)]) -> T) -> T {
         let snapshot = {
             let guard = self.cache.read().unwrap();
             guard.as_ref().map(Arc::clone)
@@ -2756,7 +2510,7 @@ impl Graph {
 
     /// Eagerly build the page cache plus graph-open derived maps (call once after
     /// opening, off the hot path).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn warm_cache(&self) {
         let _ = self.warm_cache_cancellable(|| false);
     }
@@ -2846,7 +2600,7 @@ impl Graph {
 
     /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
     /// external change may have touched many files.
-    pub fn invalidate_cache(&self) {
+    pub(crate) fn invalidate_cache(&self) {
         let mut guard = self.cache.write().unwrap();
         *guard = None;
         self.page_index_failures.write().unwrap().clear();
@@ -3167,7 +2921,7 @@ impl Graph {
     }
 
     /// Drop one page from the cache after deleting its file.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn cache_remove(&self, name: &str, kind: PageKind) {
         // A page delete is a page-set change (affects namespaces, exists-by-ref,
         // every backlink/query) — drop the whole derived cache.
@@ -3338,7 +3092,7 @@ impl Graph {
         result
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn derived_memo(
         &self,
         key: String,
@@ -3498,7 +3252,7 @@ impl Graph {
 
     /// Backlinks for a page: blocks across the graph that reference it,
     /// grouped by source page. Delegates to the query module (memoized).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn backlinks(&self, target: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("b\0{}", tine_core::refs::normalize(target)), || {
             crate::query::backlinks(self, target)
@@ -3520,7 +3274,7 @@ impl Graph {
     /// Block-level referrers for a block uuid: every block across the graph that
     /// references it, grouped by source page (memoized). Includes same-page
     /// referrers (see `query::block_referrers`).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn block_referrers(&self, uuid: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("br\0{}", uuid.trim()), || {
             crate::query::block_referrers(self, uuid)
@@ -3540,7 +3294,7 @@ impl Graph {
     }
 
     /// Evaluate a `{{query ...}}` body over the graph (memoized).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn run_query(&self, query_src: &str) -> Arc<Vec<RefGroup>> {
         if !tine_core::query::query_source_within_limit(query_src)
             || !tine_core::query::query_nesting_within_limit(query_src)
@@ -3588,7 +3342,7 @@ impl Graph {
 
     /// Unlinked references: plain-text mentions of a page that aren't links
     /// (memoized).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn unlinked_refs(&self, target: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("u\0{}", tine_core::refs::normalize(target)), || {
             crate::query::unlinked_refs(self, target)
@@ -3616,12 +3370,12 @@ impl Graph {
     /// every touched file, re-verifies each is unchanged since collection, commits,
     /// and rolls back every write on any failure. Aborts (no change) if a target
     /// name already exists or a touched file changed under us.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn rename_page(&self, old: &str, new: &str) -> io::Result<()> {
         self.rename_page_expected(old, new, None)
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn rename_page_expected(
         &self,
         old: &str,
@@ -3945,12 +3699,12 @@ impl Graph {
     /// never re-loaded) — so a delete that races an unseen external edit, or a
     /// simple misclick, is recoverable. If the trash move fails, the live file is
     /// left in place and the error is returned.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
         self.delete_page_expected(name, kind, None)
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn delete_page_expected(
         &self,
         name: &str,
@@ -3998,7 +3752,7 @@ impl Graph {
     /// Validate the snapshot captured by a page menu/title before any mutation.
     /// Even an exact path does not authorize choosing one logical duplicate: the
     /// semantics of rewriting `[[page]]` references remain ambiguous.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn validate_page_mutation_target(
         &self,
         name: &str,
@@ -4032,7 +3786,7 @@ impl Graph {
     }
 
     /// Full-text search across all blocks.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn search(&self, query: &str, limit: usize) -> Vec<RefGroup> {
         crate::query::search(self, query, limit)
     }
@@ -4105,7 +3859,7 @@ impl Graph {
     }
 
     /// Resolve a `((uuid))` block reference to its shallow identity row.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn resolve_block(&self, uuid: &str) -> Option<RefGroup> {
         crate::query::resolve_block(self, uuid)
     }
@@ -4114,7 +3868,7 @@ impl Graph {
     /// refs / embeds) — one IPC instead of N, and one graph pass instead of N:
     /// hinted ids are grouped + each hinted page scanned once, with a single
     /// whole-graph fallback for hint misses.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn resolve_blocks(&self, uuids: &[String]) -> Vec<Option<RefGroup>> {
         crate::query::resolve_blocks(self, uuids)
     }
@@ -4128,15 +3882,9 @@ impl Graph {
         crate::query::preview_block_with_budget(self, uuid, max_nodes, max_bytes)
     }
 
-    /// The graph's `logseq/custom.css`, if present (for user theming).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub fn custom_css(&self) -> String {
-        std::fs::read_to_string(self.root.join("logseq").join("custom.css")).unwrap_or_default()
-    }
-
     // ---- Assets & PDF highlights ----
 
-    pub fn assets_path(&self) -> PathBuf {
+    pub(crate) fn assets_path(&self) -> PathBuf {
         self.assets_root.clone()
     }
 
@@ -4146,7 +3894,7 @@ impl Graph {
     /// media". Conservative: scans every block's `raw` + page `pre_block` for any
     /// `assets/<name>` mention; skips subdirectories (PDF area-image stores) and
     /// `.edn`/dotfiles (sidecars, not media) so nothing in use is ever flagged.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn orphan_assets(&self) -> Vec<AssetInfo> {
         let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
         self.with_pages(|pages| {
@@ -4199,7 +3947,7 @@ impl Graph {
     /// Move an asset file to `logseq/.tine-trash` (recoverable), never a hard
     /// delete by default. Refuses any name with a path separator (top-level
     /// assets only) so it can't reach outside `assets/`.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn trash_asset(&self, name: &str) -> io::Result<()> {
         if name.is_empty() || name.contains('/') || name.contains('\\') {
             return Err(io::Error::new(
@@ -4228,7 +3976,7 @@ impl Graph {
     /// Resolve an existing top-level regular asset through the canonical asset
     /// capability. A symlink may point elsewhere inside that approved root, but
     /// can never turn a read/open into access outside it.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub(crate) fn asset_file_for_read(&self, name: &str) -> io::Result<PathBuf> {
         top_level_asset_name(name)?;
         let assets = fs::canonicalize(self.assets_path())?;
@@ -4271,7 +4019,7 @@ impl Graph {
 
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
         let assets = self.assets_path();
         self.ensure_asset_write_target(&assets)?;
@@ -4295,7 +4043,7 @@ impl Graph {
 
     /// Copy a file into `assets/`, returning the stored filename. De-duplicates
     /// against existing assets (never overwrites one already referenced by notes).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn import_asset(&self, src: &Path, name: Option<&str>) -> io::Result<String> {
         // Desired stored name (a timestamped name from the frontend), else the
         // source basename. `reserve_asset` still dedups same-name collisions.
@@ -4330,7 +4078,7 @@ impl Graph {
     /// Stream an already-open native capture into `assets/` without ever
     /// materializing it as a bridge/base64 value. The source handle is the
     /// capability validated by the native caller; collision retries rewind it.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn import_asset_file(
         &self,
         src: &mut fs::File,
@@ -4366,7 +4114,7 @@ impl Graph {
     /// **Non-dedup on purpose:** the filename IS the stable link from the `.edn`
     /// entry to the file, so a re-save must overwrite in place rather than rename
     /// on collision (which `reserve_asset` would do, breaking the link).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn write_pdf_area_image(
         &self,
         pdf_filename: &str,
@@ -4400,7 +4148,7 @@ impl Graph {
     /// is already committed, so a cleanup failure must not make the frontend
     /// restore stale state. Any sidecar change before or immediately after a move
     /// aborts cleanup, rolling that move back when possible.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn trash_deleted_pdf_area_images(
         &self,
         source_key: &str,
@@ -4482,12 +4230,12 @@ impl Graph {
     /// `legacy_asset_key` exists, read that instead (it is migrated forward to
     /// the new key on the next `write_highlights`). This keeps highlights made
     /// by pre-launch Tine builds from disappearing after the key change.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn read_highlights(&self, pdf_filename: &str) -> Vec<tine_core::pdf::Highlight> {
         self.read_pdf_state(pdf_filename).highlights
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn read_pdf_state(&self, pdf_filename: &str) -> tine_core::pdf::PdfState {
         let key = tine_core::pdf::asset_key(pdf_filename);
         let s = self
@@ -4508,7 +4256,7 @@ impl Graph {
             .unwrap_or_default()
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn existing_hls_page_path(&self, key: &str) -> io::Result<Option<PathBuf>> {
         let name = tine_core::pdf::hls_page_name(key);
         let md = self.pages_path().join(format!("{name}.md"));
@@ -4523,7 +4271,7 @@ impl Graph {
         }
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn hls_page_path(&self, pdf_filename: &str, key: &str) -> io::Result<PathBuf> {
         if let Some(existing) = self.existing_hls_page_path(key)? {
             return Ok(existing);
@@ -4551,7 +4299,7 @@ impl Graph {
         )))
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn pdf_sidecar_for_update(&self, pdf_filename: &str) -> io::Result<PathBuf> {
         let key = tine_core::pdf::asset_key(pdf_filename);
         let primary = self.assets_path().join(format!("{key}.edn"));
@@ -4572,7 +4320,7 @@ impl Graph {
     /// sidecars/pages are read without being rewritten; only missing artifacts are
     /// created. Old Tine-key artifacts remain in place until the established
     /// edit-time migration path can carry their notes forward safely.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn open_pdf(
         &self,
         pdf_filename: &str,
@@ -4645,7 +4393,7 @@ impl Graph {
     /// with highlight writes so an in-app highlight update cannot race this
     /// read-modify-write; external writers are handled by the same bounded
     /// compare/retry discipline.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn write_pdf_view_state(
         &self,
         pdf_filename: &str,
@@ -4694,7 +4442,7 @@ impl Graph {
         ))
     }
 
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn asset_key_in_use_by_pdf(&self, candidate_key: &str) -> bool {
         let Ok(entries) = fs::read_dir(self.assets_path()) else {
             return false;
@@ -4715,7 +4463,7 @@ impl Graph {
     /// `base_ids` are the highlight ids the editor LOADED (its baseline) — used for
     /// a 3-way merge so a highlight the user deleted is honored while one added
     /// externally (e.g. by OG between load and write) is still preserved.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn write_highlights(
         &self,
         pdf_filename: &str,
@@ -5051,6 +4799,7 @@ impl Graph {
     /// the cache_upsert), bounding it to its write window so it can never outlive
     /// this save and later suppress a real external change. Removes it only if it's
     /// still OURS (a concurrent same-path writer may have replaced it).
+    #[cfg(test)]
     fn drop_self_write_marker(&self, path: &Path, rev: &str) {
         let mut recent = self.recent_writes.lock().unwrap();
         if recent.get(path).is_some_and(|r| r == rev) {
@@ -5063,7 +4812,7 @@ impl Graph {
     /// bytes this call published; a later external edit is never knowingly
     /// replaced. A newly-created sidecar is moved to recoverable conflict trash
     /// rather than hard-deleted.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     fn rollback_highlight_sidecar(
         &self,
         path: &Path,
@@ -5105,7 +4854,7 @@ impl Graph {
     /// conflict trash. Exact expected bytes stay there as the withdrawn copy; a
     /// different inode is restored if the live name is free, or retained in
     /// recovery if another writer has already recreated the name.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub(crate) fn withdraw_file_to_conflict_if_exact(
         &self,
         path: &Path,
@@ -5213,6 +4962,7 @@ impl Graph {
     /// so the watcher still sees the external change. Returns the new content rev.
     /// The post-publish marker drop is `drop_self_write_marker` (it must run AFTER
     /// the caller's cache_upsert, so it stays the caller's responsibility).
+    #[cfg(test)]
     fn commit_write(
         &self,
         path: &Path,
@@ -5257,7 +5007,7 @@ impl Graph {
     /// Returns the entry only if its parsed content actually differs from the
     /// cache (i.e. a real external change) — Tine's own writes keep the cache in
     /// sync, so they return None. No-op if the cache hasn't been built yet.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn sync_file(&self, path: &Path) -> Option<PageEntry> {
         self.sync_file_internal(path)
     }
@@ -5406,7 +5156,7 @@ impl Graph {
 
     /// Drop a file deleted on disk from the cache; returns the entry if it was
     /// cached (so the UI can react).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn forget_file(&self, path: &Path) -> Option<PageEntry> {
         self.forget_file_internal(path)
     }
@@ -5468,10 +5218,12 @@ impl Graph {
     /// no longer matches what Tine last knew (another app or a Syncthing pull
     /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
     /// so the caller can surface it and keep the in-memory edits.
-    pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
+    #[cfg(test)]
+    pub(crate) fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
         self.save_with_base(page, base_rev).map(|(rev, _)| rev)
     }
 
+    #[cfg(test)]
     pub(crate) fn save_with_base(
         &self,
         page: &PageDto,
@@ -5488,6 +5240,7 @@ impl Graph {
         self.save_at(page, &path, cache, base_rev)
     }
 
+    #[cfg(test)]
     pub(crate) fn save_at(
         &self,
         page: &PageDto,
@@ -5536,7 +5289,7 @@ impl Graph {
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
-    #[cfg(any(test, feature = "legacy-fixtures"))]
+    #[cfg(test)]
     pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
         if page.guide {
             #[cfg(debug_assertions)]
@@ -5730,6 +5483,7 @@ impl Graph {
     /// Write a page to `path` (already resolved + locked by the caller), reproducing
     /// `existing`'s formatting, and return the new on-disk content rev (computed from
     /// what was written — no extra read).
+    #[cfg(test)]
     fn write_page(
         &self,
         page: &PageDto,
@@ -5966,7 +5720,7 @@ fn newly_reclassified_page_property_line(existing: &str, proposed: &Document) ->
 /// `assets/` (defense-in-depth; mirrors `trash_asset`). `create_new` already
 /// blocks overwriting an existing file, so the realistic pre-guard outcome was a
 /// stray file, not corruption — but reject it outright anyway.
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 fn top_level_asset_name(name: &str) -> io::Result<()> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err(io::Error::new(
@@ -5982,7 +5736,7 @@ fn top_level_asset_name(name: &str) -> io::Result<()> {
 /// real edit produces a minimal diff instead of flipping every line (Syncthing
 /// churn vs a Windows editor). New files stay LF. Shared by write_page +
 /// write_highlights so the two can't drift on it.
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 fn serialize_pdf_hls_page(
     path: &Path,
     document: &Document,
@@ -6013,6 +5767,7 @@ fn preserve_crlf(content: String, existing: Option<&str>) -> String {
 /// Read an optional UTF-8 text file without conflating "missing" with "could not
 /// safely read". Mutation paths use this for their baselines: only NotFound may
 /// become `None`; every other error must stop the write.
+#[cfg(test)]
 fn read_optional_text(path: &Path) -> io::Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(Some(content)),
@@ -6021,7 +5776,7 @@ fn read_optional_text(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 fn validate_highlight_edn(raw: &str) -> io::Result<()> {
     if raw.trim().is_empty() {
         return Ok(());
@@ -6102,13 +5857,13 @@ const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_PANIC__";
 /// `flow.drawio_1.svg` (a naive last-dot split), which would still end in `.svg`
 /// but no longer match `\.drawio\.svg$` and silently lose the editor button
 /// (GH #38). Longest match wins; case-insensitive.
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 const COMPOUND_ASSET_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.png"];
 
 /// Split an asset filename into (stem, extension) for de-dup counter insertion,
 /// preserving known compound extensions (see `COMPOUND_ASSET_EXTS`). Falls back
 /// to a last-dot split for ordinary single extensions.
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 fn split_asset_stem_ext(name: &str) -> (String, String) {
     let lower = name.to_ascii_lowercase();
     for ext in COMPOUND_ASSET_EXTS {
@@ -6258,40 +6013,6 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
     }
 }
 
-/// Union of two markdown page-property pre-blocks: keep `mine` and append any
-/// `key:: value` line `theirs` defines that `mine` doesn't (mine wins on a clash),
-/// so a sync-conflict resolve doesn't silently drop the other device's
-/// `alias::`/`tags::`/`icon::`. Free text in `theirs`' pre-block is dropped (rare;
-/// the conflict copy is trashed-recoverable). Mirrors the property-carry in
-/// [`Graph::merge_pages`].
-#[cfg(any(test, feature = "legacy-fixtures"))]
-fn union_pre(mine: Option<&str>, theirs: Option<&str>) -> Option<String> {
-    let mine = mine.unwrap_or("");
-    let Some(theirs) = theirs else {
-        return (!mine.is_empty()).then(|| mine.to_string());
-    };
-    let mine_keys: std::collections::HashSet<String> = mine
-        .lines()
-        .filter_map(|l| doc::parse_property_line(l).map(|(k, _)| k.to_ascii_lowercase()))
-        .collect();
-    let extra: Vec<&str> = theirs
-        .lines()
-        .filter(|l| {
-            doc::parse_property_line(l)
-                .is_some_and(|(k, _)| !mine_keys.contains(&k.to_ascii_lowercase()))
-        })
-        .collect();
-    if extra.is_empty() {
-        return (!mine.is_empty()).then(|| mine.to_string());
-    }
-    let mut pre = mine.to_string();
-    if !pre.is_empty() && !pre.ends_with('\n') {
-        pre.push('\n');
-    }
-    pre.push_str(&extra.join("\n"));
-    Some(pre)
-}
-
 /// True if any block in the subtree has a non-empty line that isn't a `key::`
 /// property line — i.e. the page is more than an empty/placeholder bullet.
 fn doc_has_content(blocks: &[DocBlock]) -> bool {
@@ -6372,7 +6093,7 @@ fn pre_block_icon(pre: &str) -> Option<String> {
 /// Stable (deterministic, seed-free) content hash — FNV-1a/64 as hex. Used as a
 /// per-load baseline so a save can detect that the file changed underneath the
 /// editor. Deterministic so a rev returned from one save matches the next read.
-pub fn content_rev(s: &str) -> String {
+pub(crate) fn content_rev(s: &str) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.bytes() {
         h ^= b as u64;
@@ -6639,7 +6360,7 @@ pub(crate) fn trash_stamp() -> String {
     format!("{ms}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 fn move_to_trash(src: &Path, dest: &Path, trash: &Path) -> io::Result<()> {
     fs::create_dir_all(trash).map_err(|e| {
         io::Error::new(
@@ -6793,7 +6514,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// in the destination dir, fsync it, then atomically rename into place. The temp
 /// is removed on any failure, and the directory entry is fsynced on success. The
 /// temp name is hidden (`.`-prefixed) so the orphan-asset scanner never lists it.
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -6898,26 +6619,7 @@ pub(crate) fn atomic_copy_file_new(
     res
 }
 
-/// Read–modify–write a small text file (config.edn, device settings) under a lock,
-/// committed via [`atomic_write`]. The ONE guarded path every settings writer goes
-/// through, so the discipline is uniform rather than re-derived per call site:
-///   - a MISSING file is the empty document `{}`, but any OTHER read error
-///     (permission, NFS stale handle, transient I/O) ABORTS — otherwise `edit` would
-///     rebuild the whole file from `{}` and destroy every other key (audit H2);
-///   - the `lock` serializes concurrent writers to the same logical file so a
-///     read-modify-write can't clobber a concurrent one (audit M1/M2);
-///   - `edit` returns the new full contents, or an `Err` to abort without writing;
-///   - the commit is atomic (temp + fsync + rename), so a crash can't truncate it.
-#[cfg(any(test, feature = "legacy-fixtures"))]
-pub(crate) fn atomic_update(
-    path: &Path,
-    lock: &std::sync::Mutex<()>,
-    edit: impl Fn(&str) -> io::Result<String>,
-) -> io::Result<()> {
-    atomic_update_with_hooks(path, lock, edit, |_| {}, |_| {})
-}
-
-#[cfg(any(test, feature = "legacy-fixtures"))]
+#[cfg(test)]
 fn atomic_update_with_hooks(
     path: &Path,
     lock: &std::sync::Mutex<()>,
@@ -8469,7 +8171,9 @@ mod tests {
         assert!(!g.search("future-search-sentinel", 8).is_empty());
         assert_eq!(g.path_for(future_title, PageKind::Journal), future);
         assert_eq!(
-            crate::store::Store::from_legacy(std::sync::Arc::new(Graph::open(&dir)))
+            crate::store::Store::open(&dir, Default::default())
+                .unwrap()
+                .0
                 .path_for_os_handoff(&crate::store::PageId::from(g.rel_path(&future)).file())
                 .unwrap(),
             future.canonicalize().unwrap()
@@ -9002,14 +8706,18 @@ mod tests {
         let g = Graph::open(&dir);
         g.trash_asset("junk1.png").unwrap();
         g.trash_asset("junk2.png").unwrap();
-        let store = crate::store::Store::from_legacy(std::sync::Arc::new(g));
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
         let stats = store.trash_stats().unwrap();
         assert_eq!(stats[0], (crate::store::TrashKind::Asset, 2, 5));
         assert_eq!(store.purge_asset_trash().unwrap(), (2, 5));
         assert_eq!(store.trash_stats().unwrap()[0].1, 0);
         // Emptying a never-created trash is a no-op, not an error.
         let dir2 = scratch("empty-trash-missing");
-        let empty = crate::store::Store::from_legacy(std::sync::Arc::new(Graph::open(&dir2)));
+        let empty = crate::store::Store::open(&dir2, Default::default())
+            .unwrap()
+            .0;
         assert_eq!(empty.purge_asset_trash().unwrap(), (0, 0));
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&dir2);
@@ -9025,7 +8733,9 @@ mod tests {
         fs::write(&asset, b"img").unwrap();
         fs::write(&page, b"- recovered page\n").unwrap();
 
-        let store = crate::store::Store::from_legacy(std::sync::Arc::new(Graph::open(&dir)));
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
         let stats = store.trash_stats().unwrap();
         assert_eq!(stats[0], (crate::store::TrashKind::Asset, 1, 3));
         assert_eq!(stats[1].1, 1, "legacy page trash is protected-counted");
@@ -9064,7 +8774,9 @@ mod tests {
         let folder = trash.join("assets/6__folder");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("inside.png"), b"nested").unwrap();
-        let store = crate::store::Store::from_legacy(std::sync::Arc::new(Graph::open(&dir)));
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
         assert_eq!(store.purge_asset_trash().unwrap(), (3, 17));
         for name in [
             "pages/1__Page.md",
@@ -11010,7 +10722,9 @@ mod tests {
         fs::write(&canonical, "- canonical\n").unwrap();
         fs::write(&nested, "- nested\n").unwrap();
         let g = Graph::open(&dir);
-        let store = crate::store::Store::from_legacy(std::sync::Arc::new(Graph::open(&dir)));
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
 
         assert_eq!(
             store

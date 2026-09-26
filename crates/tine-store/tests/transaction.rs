@@ -8,10 +8,9 @@ use std::sync::{mpsc, Arc, Barrier};
 use std::time::Duration;
 
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::model::Graph;
 use tine_store::{
-    Area, Content, FileId, FileRev, PageId, Refusal, RenameMap, SaveBase, StepResult, Store,
-    TxOutcome, Why,
+    Area, Content, FileId, FileRev, OpenOptions, PageId, Refusal, RenameMap, SaveBase, StepResult,
+    Store, TxOutcome, WatchMode, Why,
 };
 
 struct Fixture {
@@ -21,6 +20,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_watch(WatchMode::Notify, &[])
+    }
+
+    fn with_watch(watch: WatchMode, files: &[(&str, &[u8])]) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "tine-transaction-{}-{}",
@@ -30,7 +33,23 @@ impl Fixture {
         for dir in ["pages", "journals", "assets", "logseq"] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
-        let store = Arc::new(Store::from_legacy(Arc::new(Graph::open(&root))));
+        for (rel, bytes) in files {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        let store = Arc::new(
+            Store::open(
+                &root,
+                OpenOptions {
+                    watch,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0,
+        );
+        store.whole_graph().unwrap();
         Self { root, store }
     }
 
@@ -39,9 +58,15 @@ impl Fixture {
     }
 
     fn put(&self, rel: &str, bytes: &[u8]) {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = self.root.join(rel);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, bytes).unwrap();
+        let temp = self.root.join(format!(
+            ".transaction-fixture-{}",
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&temp, bytes).unwrap();
+        fs::rename(temp, path).unwrap();
     }
 
     fn bytes(&self, rel: &str) -> Option<Vec<u8>> {
@@ -352,8 +377,10 @@ fn unique_names_and_stream_limit() {
 
 #[test]
 fn transaction_revision_advances_only_for_disk_change() {
-    let f = Fixture::new();
-    f.put("assets/x.bin", b"old");
+    let f = Fixture::with_watch(
+        WatchMode::Poll,
+        &[("assets/x.bin", b"old"), ("pages/A.md", b"- same\n")],
+    );
     let x = f.id(Area::Assets, "x.bin");
     let initial = f.store.whole_graph().unwrap().rev();
     let mut tx = f.store.transaction();
@@ -363,8 +390,9 @@ fn transaction_revision_advances_only_for_disk_change() {
         other => panic!("{other:?}"),
     };
     assert!(changed > initial);
+    f.store.scan_refresh().unwrap();
+    let before_unchanged = f.store.whole_graph().unwrap().rev();
     let a = PageId::from("pages/A.md");
-    f.put("pages/A.md", b"- same\n");
     let mut tx = f.store.transaction();
     tx.save_page(&a, SaveBase::Existing(f.rev(&a.file())), &doc("A", "same"));
     let unchanged = match tx.commit() {
@@ -374,7 +402,7 @@ fn transaction_revision_advances_only_for_disk_change() {
         }
         other => panic!("{other:?}"),
     };
-    assert_eq!(unchanged, changed);
+    assert_eq!(unchanged, before_unchanged);
 }
 
 #[cfg(feature = "test-faults")]

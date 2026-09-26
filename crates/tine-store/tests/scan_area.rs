@@ -1,8 +1,17 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use tine_store::{model::Graph, Area, Day, Store};
+use tine_store::{Area, Day, Store};
+
+fn put(root: &std::path::Path, rel: &str, bytes: &[u8]) {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let temp = root.join(format!(
+        ".scan-fixture-{}",
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&temp, bytes).unwrap();
+    fs::rename(temp, root.join(rel)).unwrap();
+}
 
 fn fixture() -> (PathBuf, Store) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -14,10 +23,8 @@ fn fixture() -> (PathBuf, Store) {
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
-    (
-        root.clone(),
-        Store::from_legacy(Arc::new(Graph::open(&root))),
-    )
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    (root, store)
 }
 
 #[test]
@@ -25,7 +32,7 @@ fn scan_is_sorted_skips_hidden_reports_unreadable_and_limits_meta() {
     let (root, store) = fixture();
     fs::create_dir_all(root.join("assets/nested")).unwrap();
     for name in ["z.png", "a.png", ".hidden", "nested/b.png"] {
-        fs::write(root.join("assets").join(name), b"x").unwrap();
+        put(&root, &format!("assets/{name}"), b"x");
     }
     let listing = store.scan_area(Area::Assets, None).unwrap();
     assert_eq!(
@@ -51,9 +58,9 @@ fn scan_is_sorted_skips_hidden_reports_unreadable_and_limits_meta() {
             .len(),
         1
     );
-    fs::write(root.join("logseq/config.edn"), b"{}").unwrap();
-    fs::write(root.join("logseq/custom.css"), b"body{}").unwrap();
-    fs::write(root.join("logseq/other.txt"), b"x").unwrap();
+    put(&root, "logseq/config.edn", b"{}");
+    put(&root, "logseq/custom.css", b"body{}");
+    put(&root, "logseq/other.txt", b"x");
     assert_eq!(
         store
             .scan_area(Area::Meta, None)
@@ -84,11 +91,11 @@ fn scan_is_sorted_skips_hidden_reports_unreadable_and_limits_meta() {
 #[test]
 fn referenced_assets_keeps_raw_decoded_and_nested_first_segment() {
     let (root, store) = fixture();
-    fs::write(
-        root.join("pages/Refs.md"),
-        "- ![](../assets/my%20file.png)\n- ![](../assets/pdfkey/crop.png)\n",
-    )
-    .unwrap();
+    put(
+        &root,
+        "pages/Refs.md",
+        b"- ![](../assets/my%20file.png)\n- ![](../assets/pdfkey/crop.png)\n",
+    );
     store.scan_refresh().unwrap();
     let names = store.whole_graph().unwrap().referenced_assets();
     for name in ["my%20file.png", "my file.png", "pdfkey", "pdfkey/crop.png"] {
@@ -100,9 +107,9 @@ fn referenced_assets_keeps_raw_decoded_and_nested_first_segment() {
 fn journal_scan_and_canonical_id_follow_configured_format() {
     let (root, store) = fixture();
     for name in ["2026_06_18.md", "Jun 18th, 2026.org", "notes.txt"] {
-        fs::write(root.join("journals").join(name), b"- body\n").unwrap();
+        put(&root, &format!("journals/{name}"), b"- body\n");
     }
-    fs::write(root.join("pages/2026_06_18.md"), b"- page\n").unwrap();
+    put(&root, "pages/2026_06_18.md", b"- page\n");
     let listing = store.scan_area(Area::Journals, None).unwrap();
     let dated = listing
         .files
@@ -136,14 +143,14 @@ fn journal_scan_and_canonical_id_follow_configured_format() {
         "journals/2026_06_18.md"
     );
 
-    fs::write(
-        root.join("logseq/config.edn"),
+    put(
+        &root,
+        "logseq/config.edn",
         b"{:journal/file-name-format \"yyyy-MM-dd\"}",
-    )
-    .unwrap();
-    fs::write(root.join("journals/2026-06-19.org"), b"- custom\n").unwrap();
-    fs::write(root.join("journals/Jun 19th, 2026.md"), b"- title\n").unwrap();
-    let custom = Store::from_legacy(Arc::new(Graph::open(&root)));
+    );
+    put(&root, "journals/2026-06-19.org", b"- custom\n");
+    put(&root, "journals/Jun 19th, 2026.md", b"- title\n");
+    let custom = Store::open(&root, Default::default()).unwrap().0;
     let listing = custom.scan_area(Area::Journals, None).unwrap();
     assert!(
         listing

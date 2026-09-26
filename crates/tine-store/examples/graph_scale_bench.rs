@@ -6,8 +6,33 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use tine_core::{PageKind, RefGroup};
-use tine_store::model::Graph;
+use tine_core::RefGroup;
+use tine_store::{Area, QueryDialect, QueryResult, Resolved, Store};
+
+fn open_store(root: &Path) -> io::Result<Store> {
+    Store::open(root, Default::default())
+        .map(|(store, _, _)| store)
+        .map_err(|error| io::Error::other(error.to_string()))
+}
+
+fn page_count(store: &Store) -> usize {
+    [Area::Pages, Area::Journals]
+        .into_iter()
+        .map(|area| store.scan_area(area, None).unwrap().files.len())
+        .sum()
+}
+
+fn query_store(store: &Store, source: &str) -> std::sync::Arc<Vec<RefGroup>> {
+    match store
+        .whole_graph()
+        .unwrap()
+        .query(source, QueryDialect::Simple, None)
+        .unwrap()
+    {
+        QueryResult::Simple(groups) => groups,
+        QueryResult::Advanced(_) => unreachable!(),
+    }
+}
 
 const DEFAULT_SCALES: &[usize] = &[2_000, 10_000, 20_000];
 const BLOCKS_PER_PAGE: usize = 5;
@@ -380,8 +405,8 @@ fn bench_scale(scale: usize, root: &Path, generated: GeneratedGraph) -> io::Resu
     let mut cold_open = Vec::with_capacity(COLD_RUNS);
     for _ in 0..COLD_RUNS {
         let started = Instant::now();
-        let graph = Graph::open(root);
-        let page_count = graph.with_pages(|pages| pages.len());
+        let store = open_store(root)?;
+        let page_count = page_count(&store);
         cold_open.push(started.elapsed());
         assert_eq!(page_count, generated.pages + generated.journals);
         black_box(page_count);
@@ -389,9 +414,9 @@ fn bench_scale(scale: usize, root: &Path, generated: GeneratedGraph) -> io::Resu
 
     let mut cache_build = Vec::with_capacity(CACHE_BUILD_RUNS);
     for _ in 0..CACHE_BUILD_RUNS {
-        let graph = Graph::open(root);
+        let store = open_store(root)?;
         let started = Instant::now();
-        let page_count = graph.with_pages(|pages| pages.len());
+        let page_count = store.whole_graph().unwrap().corpus().pages.len();
         cache_build.push(started.elapsed());
         assert_eq!(page_count, generated.pages + generated.journals);
         black_box(page_count);
@@ -443,17 +468,19 @@ fn bench_find_entry(root: &Path, names: &[String]) -> io::Result<(f64, f64)> {
     let mut totals = Vec::with_capacity(FIND_ENTRY_RUNS);
     let mut per_lookup = Vec::with_capacity(FIND_ENTRY_RUNS * names.len());
     for _ in 0..FIND_ENTRY_RUNS {
-        let graph = Graph::open(root);
-        let page_count = graph.with_pages(|pages| pages.len());
+        let store = open_store(root)?;
+        let page_count = page_count(&store);
         black_box(page_count);
         let started = Instant::now();
         for name in names {
             let call_started = Instant::now();
-            let page = graph
-                .load_named(name, PageKind::Page)?
-                .unwrap_or_else(|| panic!("generated page not found: {name}"));
+            let id = match store.whole_graph().unwrap().resolve(name, false) {
+                Resolved::Existing { id, .. } => id,
+                _ => panic!("generated page not found: {name}"),
+            };
+            let page = store.page(&id).unwrap();
             per_lookup.push(call_started.elapsed());
-            black_box(page.blocks.len());
+            black_box(page.doc.blocks.len());
         }
         totals.push(started.elapsed());
     }
@@ -461,10 +488,10 @@ fn bench_find_entry(root: &Path, names: &[String]) -> io::Result<(f64, f64)> {
 }
 
 fn bench_switcher(root: &Path) -> io::Result<f64> {
-    let graph = std::sync::Arc::new(Graph::open(root));
-    let page_count = graph.with_pages(|pages| pages.len());
+    let store = open_store(root)?;
+    let page_count = page_count(&store);
     black_box(page_count);
-    let view = tine_store::Store::from_legacy(graph).whole_graph().unwrap();
+    let view = store.whole_graph().unwrap();
     let mut durations = Vec::with_capacity(SWITCHER_RUNS);
     for _ in 0..SWITCHER_RUNS {
         let started = Instant::now();
@@ -477,14 +504,14 @@ fn bench_switcher(root: &Path) -> io::Result<f64> {
 }
 
 fn bench_warm_query(root: &Path) -> io::Result<f64> {
-    let graph = Graph::open(root);
-    let page_count = graph.with_pages(|pages| pages.len());
+    let store = open_store(root)?;
+    let page_count = page_count(&store);
     black_box(page_count);
     let mut durations = Vec::with_capacity(WARM_QUERY_RUNS);
     for i in 0..WARM_QUERY_RUNS {
         let query = primary_query_variant(i);
         let started = Instant::now();
-        let groups = graph.run_query(&query);
+        let groups = query_store(&store, &query);
         durations.push(started.elapsed());
         assert_nonzero(result_count(groups.as_ref()), &query);
         black_box(groups.len());
@@ -496,11 +523,10 @@ fn bench_publish(root: &Path) -> io::Result<(f64, usize)> {
     let mut durations = Vec::with_capacity(PUBLISH_RUNS);
     let mut publish_pages = 0usize;
     for _ in 0..PUBLISH_RUNS {
-        let graph = Graph::open(root);
-        let page_count = graph.with_pages(|pages| pages.len());
+        let store = open_store(root)?;
+        let page_count = page_count(&store);
         black_box(page_count);
         let started = Instant::now();
-        let store = tine_store::Store::from_legacy(std::sync::Arc::new(graph));
         let (out, count) = tine_graph_features::publish::publish_html(&store)?;
         durations.push(started.elapsed());
         assert!(count > 0, "publish_graph returned no pages");

@@ -11,6 +11,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-tine-store = { path = "../tine-store", features = ["legacy-fixtures", "test-faults"] }
+tine-store = { path = "../tine-store", features = ["test-faults"] }
 serde_json = { workspace = true }
 sha2 = "0.10"

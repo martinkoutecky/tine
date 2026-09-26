@@ -1,9 +1,8 @@
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::print::PrintOpts;
 use tine_graph_features::{print, publish};
-use tine_store::model::Graph;
 use tine_store::Store;
 
 fn publish_graph(store: &Store) -> std::io::Result<(String, usize)> {
@@ -11,6 +10,18 @@ fn publish_graph(store: &Store) -> std::io::Result<(String, usize)> {
 }
 
 const PRINT_ASSET_MAX_BYTES: u64 = 12 * 1024 * 1024;
+
+fn atomic_fixture_write(path: &Path, bytes: impl AsRef<[u8]>) {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = path.parent().unwrap().parent().unwrap();
+    let temp = root.join(format!(
+        ".publish-fixture-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&temp, bytes).unwrap();
+    fs::rename(temp, path).unwrap();
+}
 
 #[test]
 fn publication_snapshot_uses_live_file_runtime_identity() {
@@ -25,7 +36,7 @@ fn publication_snapshot_uses_live_file_runtime_identity() {
     fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
     fs::write(dir.join("pages/Source.md"), "- [[Target]] from source\n").unwrap();
 
-    let store = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let store = Store::open(&dir, Default::default()).unwrap().0;
     let whole = store.whole_graph().unwrap();
     let live_id = whole.backlinks("Target").unwrap()[0].blocks[0].id.clone();
     let corpus = whole.corpus();
@@ -64,7 +75,7 @@ fn publish_emits_sidebar_search_and_block_anchors() {
     // A non-public page must NOT be exported.
     fs::write(dir.join("pages").join("Secret.md"), "- private stuff\n").unwrap();
 
-    let g = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let g = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&g).unwrap();
     assert_eq!(count, 2, "only the two public pages");
     let out = std::path::Path::new(&outdir);
@@ -148,7 +159,7 @@ fn publish_fails_closed_when_public_and_private_files_claim_one_page_identity() 
     fs::write(dir.join("journals/Twin.md"), "- PRIVATE SENTINEL\n").unwrap();
     fs::write(dir.join("pages/Visible.md"), "public:: true\n- visible\n").unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&graph).unwrap();
     let out = Path::new(&outdir);
     assert_eq!(count, 1);
@@ -187,7 +198,7 @@ fn publish_macros_never_expand_private_graph_content() {
     )
     .unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&graph).unwrap();
     assert_eq!(count, 1);
     let dashboard =
@@ -227,17 +238,16 @@ fn publish_uses_one_fresh_snapshot_after_external_visibility_rewrite() {
     )
     .unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     graph.whole_graph().unwrap().corpus();
 
     // Simulate a sync/editor outside Tine changing both visibility and body
     // after the live graph cache was populated. Publication must not combine
     // the fresh public classification with stale cached query/embed DTOs.
-    fs::write(
-        dir.join("pages/Source.md"),
+    atomic_fixture_write(
+        &dir.join("pages/Source.md"),
         format!("public:: true\n- harmless current body\n  id:: {source_id}\n"),
-    )
-    .unwrap();
+    );
 
     let (outdir, count) = publish_graph(&graph).unwrap();
     assert_eq!(count, 2);
@@ -278,14 +288,14 @@ fn republish_retires_pages_that_are_no_longer_public() {
     )
     .unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&graph).unwrap();
     assert_eq!(count, 2);
     let out = std::path::Path::new(&outdir);
     assert!(out.join("secret.html").exists());
 
-    fs::write(dir.join("pages/Secret.md"), "- stale private token\n").unwrap();
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    atomic_fixture_write(&dir.join("pages/Secret.md"), "- stale private token\n");
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&graph).unwrap();
     assert_eq!(count, 1);
     let out = std::path::Path::new(&outdir);
@@ -321,7 +331,7 @@ fn publish_uses_welcome_home_and_public_reverse_block_refs() {
     )
     .unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&graph).unwrap();
     assert_eq!(count, 2);
     let out = std::path::Path::new(&outdir);
@@ -374,7 +384,7 @@ fn publish_gives_distinct_nonempty_files_on_slug_collision() {
     .unwrap();
     fs::write(dir.join("pages").join("日本語.md"), "- charlie body\n").unwrap();
 
-    let g = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let g = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&g).unwrap();
     assert_eq!(count, 3, "all three public pages exported");
     let out = std::path::Path::new(&outdir);
@@ -454,7 +464,7 @@ fn page_print_html_is_self_contained_with_inlined_image() {
         )
         .unwrap();
 
-    let g = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let g = Store::open(&dir, Default::default()).unwrap().0;
     let html = print::page_print_html(&g, "Report", PrintOpts::default())
         .unwrap()
         .expect("page exists");
@@ -522,7 +532,7 @@ fn page_print_html_is_self_contained_with_inlined_image() {
         "- Parent\n  collapsed:: true\n\t- hidden child text\n",
     )
     .unwrap();
-    let g2 = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let g2 = Store::open(&dir, Default::default()).unwrap().0;
     let expanded = print::page_print_html(&g2, "Folded", PrintOpts::default())
         .unwrap()
         .unwrap();
@@ -570,7 +580,7 @@ fn publish_begin_query_renders_authored_title_and_results() {
         )
         .unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, _) = publish_graph(&graph).unwrap();
     let dashboard =
         fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
@@ -613,7 +623,7 @@ fn publish_begin_query_reports_private_rows_without_leaking_them() {
     )
     .unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&graph).unwrap();
     assert_eq!(count, 1);
     let dashboard =
@@ -647,7 +657,7 @@ fn publish_malformed_begin_query_is_inert_and_hides_its_payload() {
         )
         .unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, _) = publish_graph(&graph).unwrap();
     let dashboard =
         fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
@@ -693,7 +703,7 @@ fn publish_renders_facets_queries_and_embeds() {
     )
     .unwrap();
 
-    let g = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let g = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, _) = publish_graph(&g).unwrap();
     let main = fs::read_to_string(std::path::Path::new(&outdir).join("main.html")).unwrap();
 
@@ -780,7 +790,7 @@ fn publish_memoizes_repeated_query_macros() {
     )
     .unwrap();
 
-    let g = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let g = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, _) = publish_graph(&g).unwrap();
 
     let dash = fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
@@ -816,7 +826,7 @@ fn publish_query_keeps_and_hydrates_a_match_below_a_nonmatching_gap() {
     )
     .unwrap();
 
-    let graph = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, _) = publish_graph(&graph).unwrap();
     let dashboard =
         fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
@@ -868,7 +878,7 @@ fn publish_reuses_pass1_docs_for_repeated_page_embeds() {
     )
     .unwrap();
 
-    let g = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let g = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, _) = publish_graph(&g).unwrap();
 
     let dash = fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
@@ -935,7 +945,7 @@ fn gen_sample_export() {
     )
     .unwrap();
 
-    let g = Store::from_legacy(Arc::new(Graph::open(&dir)));
+    let g = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&g).unwrap();
     println!("SAMPLE_EXPORT_DIR={outdir} pages={count}");
 

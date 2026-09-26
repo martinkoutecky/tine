@@ -1,11 +1,10 @@
-//! Public whole-graph read contract while Store adopts the legacy graph.
+//! Public whole-graph read contract.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::model::{BacklinkFilterTarget, PageEntry, PageKind};
 use tine_core::query::QueryExportSpec;
-use tine_store::model::Graph;
 use tine_store::{
     Area, Cancel, FacetPolicy, PageId, QueryDialect, QueryError, QueryResult, Resolved,
     SearchRequest, Store, StoreError,
@@ -54,7 +53,9 @@ impl Fixture {
     }
 
     fn view(&self) -> tine_store::WholeGraph {
-        Store::from_legacy(Arc::new(Graph::open(&self.0)))
+        Store::open(&self.0, Default::default())
+            .unwrap()
+            .0
             .whole_graph()
             .unwrap()
     }
@@ -177,7 +178,7 @@ fn identity_resolution_and_wire_paths() {
         "- journal twin\n",
     )
     .unwrap();
-    let store = Store::from_legacy(Arc::new(Graph::open(&fixture.0)));
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let view = store.whole_graph().unwrap();
     let Resolved::Existing { id, others } = view.resolve("a", false) else {
         panic!("a must exist")
@@ -224,10 +225,8 @@ fn query_and_scoped_search_use_page_identity() {
         "- TODO archived duplicate\n",
     )
     .unwrap();
-    let graph = Arc::new(Graph::open(&fixture.0));
-    let view = Store::from_legacy(Arc::clone(&graph))
-        .whole_graph()
-        .unwrap();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let view = store.whole_graph().unwrap();
     let QueryResult::Simple(groups) = view
         .query("(task TODO)", QueryDialect::Simple, None)
         .unwrap()
@@ -313,7 +312,7 @@ fn query_and_scoped_search_use_page_identity() {
             Err(QueryError::InvalidTarget(_))
         ));
         assert!(matches!(
-            Store::from_legacy(Arc::clone(&graph)).file_id(Area::Pages, bad),
+            store.file_id(Area::Pages, bad),
             Err(StoreError::InvalidTarget(_))
         ));
     }

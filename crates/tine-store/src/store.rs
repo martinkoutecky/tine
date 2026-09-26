@@ -448,6 +448,41 @@ pub(crate) fn journal_ids_from_entries(
 }
 
 impl Store {
+    #[cfg(test)]
+    pub(crate) fn from_graph_for_tests(graph: Arc<Graph>) -> Self {
+        graph.install_live_config();
+        let writer = Arc::new(Mutex::new(()));
+        let load = Arc::new(LoadState::new(LoadStatus::Ready));
+        let changes = Arc::new(ChangeFeed::new());
+        let journal_ids = Arc::new(Mutex::new(journal_ids_from_entries(
+            &graph,
+            graph.list_pages(),
+        )));
+        let config_state = Arc::new(RwLock::new(ConfigState {
+            config: Arc::new(graph.config.clone()),
+            problem: None,
+        }));
+        let watch = crate::watch::WatchHandle::start(
+            Arc::clone(&graph),
+            Arc::clone(&writer),
+            Arc::clone(&load),
+            Arc::clone(&changes),
+            Arc::clone(&journal_ids),
+            Arc::clone(&config_state),
+            WatchMode::Notify,
+        );
+        Self {
+            config_state,
+            graph,
+            writer,
+            load,
+            journal_ids,
+            changes,
+            watch,
+            faults: Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+
     /// Scaffold a graph in an empty parent, or in the first unused tine-demo
     /// child. Cost O(siblings probed + seed bytes). Partial failures leave the
     /// created files in place and identify the failing path.
@@ -745,43 +780,6 @@ impl Store {
             self.graph.current_config().preferred_format.ext()
         ))
     }
-    /// Adopt a legacy fixture without loading it.
-    #[cfg(any(test, feature = "legacy-fixtures"))]
-    pub fn from_legacy(graph: Arc<Graph>) -> Self {
-        graph.install_live_config();
-        let writer = Arc::new(Mutex::new(()));
-        let load = Arc::new(LoadState::new(LoadStatus::Ready));
-        let changes = Arc::new(ChangeFeed::new());
-        let journal_ids = Arc::new(Mutex::new(journal_ids_from_entries(
-            &graph,
-            graph.list_pages(),
-        )));
-        let config_state = Arc::new(RwLock::new(ConfigState {
-            config: Arc::new(graph.config.clone()),
-            problem: None,
-        }));
-        let watch = crate::watch::WatchHandle::start(
-            Arc::clone(&graph),
-            Arc::clone(&writer),
-            Arc::clone(&load),
-            Arc::clone(&changes),
-            Arc::clone(&journal_ids),
-            Arc::clone(&config_state),
-            WatchMode::Notify,
-        );
-        Self {
-            config_state,
-            graph,
-            writer,
-            load,
-            journal_ids,
-            changes,
-            watch,
-            #[cfg(any(test, feature = "test-faults"))]
-            faults: std::sync::Mutex::new(std::collections::HashSet::new()),
-        }
-    }
-
     /// Resolve the exact file a DTO would save, including pinned stray pages.
     pub fn target_for_save(&self, doc: &PageDto) -> Result<PageId, SaveOutcome> {
         if self.is_closed() {
@@ -797,11 +795,14 @@ impl Store {
             SaveTargetError::InvalidTarget(message) => SaveOutcome::InvalidTarget(message.into()),
         })?;
         if doc.path.is_none() {
-            match self
-                .whole_graph()
-                .expect("interim Store view is always available")
-                .resolve(&doc.name, doc.kind == PageKind::Journal)
-            {
+            // Transaction preflight holds `writer`; the load worker needs that
+            // lock before it can mark `whole_graph()` ready. Resolve against the
+            // live graph directly here so a save during initial load can finish.
+            let view = WholeGraph {
+                graph: Arc::clone(&self.graph),
+                rev: self.changes.rev(),
+            };
+            match view.resolve(&doc.name, doc.kind == PageKind::Journal) {
                 Resolved::Existing { id, .. } | Resolved::Absent { id } => return Ok(id),
                 Resolved::Alias { .. } => {}
             }

@@ -3,12 +3,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use tine_graph_features::{print, publish};
-use tine_store::model::Graph;
 use tine_store::Store;
+
+fn atomic_fixture_write(path: &Path, bytes: impl AsRef<[u8]>) {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = path.parent().unwrap().parent().unwrap();
+    let temp = root.join(format!(
+        ".print-fixture-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&temp, bytes).unwrap();
+    fs::rename(temp, path).unwrap();
+}
 
 fn scratch(label: &str) -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -61,18 +71,22 @@ fn site_files(root: &Path) -> BTreeMap<String, Vec<u8>> {
 }
 
 fn dump(root: &Path) -> BTreeMap<String, Vec<u8>> {
-    let graph = Arc::new(Graph::open(root));
-    let store = Store::from_legacy(Arc::clone(&graph));
+    let (store, _, _) = Store::open(root, Default::default()).unwrap();
     let (site, _) = publish::publish_html(&store).unwrap();
     let mut out = site_files(Path::new(&site))
         .into_iter()
         .map(|(path, bytes)| (format!("site/{path}"), bytes))
         .collect::<BTreeMap<_, _>>();
-    let mut pages = graph.list_pages();
-    pages.sort_by(|a, b| a.rel_path_str().cmp(b.rel_path_str()));
+    let mut pages = [tine_store::Area::Pages, tine_store::Area::Journals]
+        .into_iter()
+        .flat_map(|area| store.scan_area(area, None).unwrap().files)
+        .filter_map(|file| file.page.map(|id| (file.id, id)))
+        .collect::<Vec<_>>();
+    pages.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
     let stride = pages.len().div_ceil(30).max(1);
     for (index, page) in pages.iter().enumerate().step_by(stride) {
-        let html = print::page_print_html(&store, &page.name, print::PrintOpts::default())
+        let name = store.page(&page.1).unwrap().doc.name;
+        let html = print::page_print_html(&store, &name, print::PrintOpts::default())
             .unwrap()
             .expect("listed page");
         out.insert(format!("print/{index:06}.html"), html.into_bytes());
@@ -121,13 +135,12 @@ fn external_visibility_edit_is_seen_after_corpus_warmup() {
         "public:: true\n- before edit\n",
     )
     .unwrap();
-    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
+    let store = Store::open(&root, Default::default()).unwrap().0;
     assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
-    fs::write(
-        root.join("pages/Alpha.md"),
+    atomic_fixture_write(
+        &root.join("pages/Alpha.md"),
         "public:: false\n- after edit\n",
-    )
-    .unwrap();
+    );
     let (site, count) = publish::publish_html(&store).unwrap();
     assert_eq!(count, 0);
     assert!(!Path::new(&site).join("alpha.html").exists());
@@ -143,7 +156,7 @@ fn colliding_public_identity_does_not_publish_private_twin() {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(root.join("pages/Twin.md"), "public:: true\n- visible\n").unwrap();
     fs::write(root.join("pages/twin.md"), "- private twin token\n").unwrap();
-    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
+    let store = Store::open(&root, Default::default()).unwrap().0;
     let (site, count) = publish::publish_html(&store).unwrap();
     assert_eq!(count, 0);
     let files = site_files(Path::new(&site));

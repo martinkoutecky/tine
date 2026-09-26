@@ -1,12 +1,10 @@
-//! Save migration matrix: run v0.6.5 and Store against separate identical graphs.
+//! Save matrix against values captured from v0.6.5 Graph at 9c3d7c376.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::model::Graph;
 use tine_store::{PageId, SaveBase, SaveOutcome, Store, StoreError};
 
 #[derive(Clone, Copy, Debug)]
@@ -46,7 +44,13 @@ impl Fixture {
     }
 
     fn write(&self, rel: &str, bytes: impl AsRef<[u8]>) {
-        fs::write(self.0.join(rel), bytes).unwrap();
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let temp = self.0.join(format!(
+            ".save-fixture-{}",
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&temp, bytes).unwrap();
+        fs::rename(temp, self.0.join(rel)).unwrap();
     }
 
     fn files(&self) -> BTreeMap<String, Vec<u8>> {
@@ -98,16 +102,6 @@ fn fresh(name: &str, kind: PageKind) -> PageDto {
     }
 }
 
-fn legacy_wire(result: std::io::Result<String>) -> Result<String, String> {
-    result.map_err(|error| {
-        if error.kind() == std::io::ErrorKind::AlreadyExists {
-            "conflict".into()
-        } else {
-            error.to_string()
-        }
-    })
-}
-
 fn store_wire(outcome: SaveOutcome, doc: &PageDto) -> Result<String, String> {
     match outcome {
         SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => Ok(rev.into()),
@@ -123,7 +117,7 @@ fn store_wire(outcome: SaveOutcome, doc: &PageDto) -> Result<String, String> {
     }
 }
 
-fn run(case: Case, use_store: bool) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
+fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
     let fixture = Fixture::new();
     match case {
         Case::Matching
@@ -150,8 +144,7 @@ fn run(case: Case, use_store: bool) -> (Result<String, String>, BTreeMap<String,
         }
         Case::New | Case::Appeared | Case::Guide => {}
     }
-    let graph = Arc::new(Graph::open(&fixture.0));
-    let store = Store::from_legacy(Arc::clone(&graph));
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let mut doc = match case {
         Case::New | Case::Appeared => fresh("New", PageKind::Page),
         Case::Alias => fresh("Alt", PageKind::Page),
@@ -195,40 +188,34 @@ fn run(case: Case, use_store: bool) -> (Result<String, String>, BTreeMap<String,
         case,
         Case::KeepMine | Case::KeepMineDeleted | Case::KeepMineUndecodable
     );
-    let result = if use_store {
-        if doc.guide {
-            store_wire(SaveOutcome::GuideEphemeral, &doc)
-        } else {
-            let id = match store.target_for_save(&doc) {
-                Ok(id) => id,
-                Err(outcome) => return (store_wire(outcome, &doc), fixture.files()),
-            };
-            let base = if force {
-                match store.read(&id.file(), None) {
-                    Ok((bytes, rev)) => {
-                        if std::str::from_utf8(&bytes).is_err() {
-                            return (
-                                Err("stream did not contain valid UTF-8".into()),
-                                fixture.files(),
-                            );
-                        }
-                        SaveBase::Existing(rev)
-                    }
-                    Err(StoreError::NotFound) => SaveBase::CreateNew,
-                    Err(error) => panic!("unexpected pre-read error: {error:?}"),
-                }
-            } else {
-                doc.rev
-                    .clone()
-                    .map(|rev| SaveBase::Existing(rev.into()))
-                    .unwrap_or(SaveBase::CreateNew)
-            };
-            store_wire(store.save(&id, base, &doc), &doc)
-        }
-    } else if force {
-        legacy_wire(graph.force_save_page(&doc))
+    let result = if doc.guide {
+        store_wire(SaveOutcome::GuideEphemeral, &doc)
     } else {
-        legacy_wire(graph.save_page(&doc, doc.rev.as_deref()))
+        let id = match store.target_for_save(&doc) {
+            Ok(id) => id,
+            Err(outcome) => return (store_wire(outcome, &doc), fixture.files()),
+        };
+        let base = if force {
+            match store.read(&id.file(), None) {
+                Ok((bytes, rev)) => {
+                    if std::str::from_utf8(&bytes).is_err() {
+                        return (
+                            Err("stream did not contain valid UTF-8".into()),
+                            fixture.files(),
+                        );
+                    }
+                    SaveBase::Existing(rev)
+                }
+                Err(StoreError::NotFound) => SaveBase::CreateNew,
+                Err(error) => panic!("unexpected pre-read error: {error:?}"),
+            }
+        } else {
+            doc.rev
+                .clone()
+                .map(|rev| SaveBase::Existing(rev.into()))
+                .unwrap_or(SaveBase::CreateNew)
+        };
+        store_wire(store.save(&id, base, &doc), &doc)
     };
     (result, fixture.files())
 }
@@ -254,8 +241,11 @@ fn legacy_and_store_saves_match_on_data_safety_matrix() {
         Case::KeepMineDeleted,
         Case::KeepMineUndecodable,
     ] {
-        let old = run(case, false);
-        let new = run(case, true);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/fixtures/b15a_save/{case:?}.json"));
+        let old: (Result<String, String>, BTreeMap<String, Vec<u8>>) =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        let new = run(case);
         assert_eq!(new.0, old.0, "wire result for {case:?}");
         assert_eq!(new.1, old.1, "disk bytes for {case:?}");
         if matches!(case, Case::Appeared | Case::Stale | Case::Deleted) {
@@ -304,7 +294,7 @@ fn legacy_and_store_saves_match_on_data_safety_matrix() {
 fn keep_mine_rechecks_the_version_read_for_the_banner_action() {
     let fixture = Fixture::new();
     fixture.write("pages/Note.md", "- original\n");
-    let store = Store::from_legacy(Arc::new(Graph::open(&fixture.0)));
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let id = PageId::from("pages/Note.md");
     let mut doc = store.page(&id).unwrap().doc;
     doc.blocks[0].raw = "mine".into();

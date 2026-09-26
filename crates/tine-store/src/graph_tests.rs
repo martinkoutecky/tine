@@ -1,9 +1,11 @@
 //! Integration tests against the on-disk demo graph (standard layout).
 
+use crate::model::Graph;
+use crate::store::Store as InternalStore;
+use crate::test_config_client::ConfigClient;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tine_graph_features::{conflicts, pages};
-use tine_store::model::Graph;
 use tine_store::{PageId, SaveBase, SaveOutcome, Store};
 
 fn demo_graph() -> Graph {
@@ -260,8 +262,7 @@ fn publishes_only_public_pages() {
     .unwrap();
     std::fs::write(root.join("pages").join("Secret.md"), "- private notes\n").unwrap();
 
-    let g = Graph::open(&root);
-    let store = Store::from_legacy(Arc::new(g));
+    let store = Store::open(&root, Default::default()).unwrap().0;
     let (dir, n) = tine_graph_features::publish::publish_html(&store).unwrap();
     assert_eq!(n, 1, "only the public page is published");
     let p = std::fs::read_to_string(format!("{dir}/shared.html")).unwrap();
@@ -283,9 +284,16 @@ fn search_cache_reflects_saves_and_deletes() {
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(root.join("pages").join("Seed.md"), "- a seed block\n").unwrap();
 
-    let g = Arc::new(Graph::open(&root));
-    // Warms the cache on first search.
-    assert_eq!(g.search("zonkwort", 10).len(), 0, "token absent initially");
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    let find = || {
+        store
+            .whole_graph()
+            .unwrap()
+            .find_blocks("zonkwort", 10, &cancel)
+            .unwrap()
+    };
+    assert_eq!(find().len(), 0, "token absent initially");
 
     // Saving a page with the token must be visible to a subsequent search
     // without any disk re-scan (cache upsert).
@@ -305,25 +313,17 @@ fn search_cache_reflects_saves_and_deletes() {
         path: None,
         guide: false,
     };
-    g.save_page(&page, None).unwrap();
-    let hits = g.search("zonkwort", 10);
+    assert!(matches!(
+        store.save(&PageId::from("pages/Fresh.md"), SaveBase::CreateNew, &page),
+        SaveOutcome::Saved(_)
+    ));
+    let hits = find();
     assert_eq!(hits.len(), 1, "saved page should be searchable");
     assert_eq!(hits[0].page, "Fresh");
 
     // Deleting the page removes it from the cache too.
-    pages::delete_page_expected(
-        &Store::from_legacy(Arc::clone(&g)),
-        "Fresh",
-        PageKind::Page,
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(
-        g.search("zonkwort", 10).len(),
-        0,
-        "deleted page should drop out"
-    );
+    pages::delete_page_expected(&store, "Fresh", PageKind::Page, None, None).unwrap();
+    assert_eq!(find().len(), 0, "deleted page should drop out");
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -532,13 +532,14 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
 
 #[test]
 fn save_refuses_to_clobber_external_change() {
+    use crate::store::{SaveBase, SaveOutcome};
     let root = std::env::temp_dir().join(format!("tine-conflict-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
 
     let g = Arc::new(Graph::open(&root));
-    let store = Store::from_legacy(Arc::clone(&g));
+    let store = InternalStore::from_graph_for_tests(Arc::clone(&g));
     let id = PageId::from("pages/N.md");
     // Build the cache (Tine now "knows" N = "- one"), then load it for editing.
     g.search("one", 10);
@@ -546,7 +547,7 @@ fn save_refuses_to_clobber_external_change() {
     let dto = read.doc;
 
     // An external writer (another app / Syncthing) changes the file.
-    std::fs::write(&path, "- EXTERNAL EDIT").unwrap();
+    crate::test_fixture_io::atomic_write(&path, "- EXTERNAL EDIT").unwrap();
 
     // Saving the now-stale page must fail with a conflict and NOT overwrite.
     assert!(matches!(
@@ -568,12 +569,13 @@ fn save_refuses_to_clobber_external_change() {
 
 #[test]
 fn save_conflicts_when_file_deleted_externally() {
+    use crate::store::{SaveBase, SaveOutcome};
     let root = std::env::temp_dir().join(format!("tine-del-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
     let g = Arc::new(Graph::open(&root));
-    let store = Store::from_legacy(Arc::clone(&g));
+    let store = InternalStore::from_graph_for_tests(Arc::clone(&g));
     let id = PageId::from("pages/N.md");
     g.search("one", 10); // warm cache
     let read = store.page(&id).unwrap();
@@ -944,9 +946,8 @@ fn rename_page_moves_file_and_updates_refs() {
     )
     .unwrap();
 
-    let g = Arc::new(Graph::open(&root));
     pages::rename_page_expected(
-        &Store::from_legacy(Arc::clone(&g)),
+        &Store::open(&root, Default::default()).unwrap().0,
         "Old Name",
         "New Name",
         None,
@@ -1010,9 +1011,13 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     )
     .unwrap();
 
-    let g = Arc::new(Graph::open(&root));
-    pages::rename_page_expected(&Store::from_legacy(Arc::clone(&g)), "Proj", "Renamed", None)
-        .unwrap();
+    pages::rename_page_expected(
+        &Store::open(&root, Default::default()).unwrap().0,
+        "Proj",
+        "Renamed",
+        None,
+    )
+    .unwrap();
 
     let p = root.join("pages");
     // Subtree moved.
@@ -1088,8 +1093,13 @@ fn rename_rewrites_bare_tags_property() {
     )
     .unwrap();
 
-    let g = Arc::new(Graph::open(&root));
-    pages::rename_page_expected(&Store::from_legacy(Arc::clone(&g)), "Old", "New", None).unwrap();
+    pages::rename_page_expected(
+        &Store::open(&root, Default::default()).unwrap().0,
+        "Old",
+        "New",
+        None,
+    )
+    .unwrap();
 
     assert!(!root.join("pages").join("Old.md").exists());
     assert!(root.join("pages").join("New.md").exists());
@@ -1113,9 +1123,14 @@ fn rename_aborts_on_target_collision_without_changes() {
     std::fs::write(root.join("pages").join("A.md"), "- a body [[B]]\n").unwrap();
     std::fs::write(root.join("pages").join("B.md"), "- b body\n").unwrap();
 
-    let g = Arc::new(Graph::open(&root));
     assert!(
-        pages::rename_page_expected(&Store::from_legacy(Arc::clone(&g)), "A", "B", None).is_err(),
+        pages::rename_page_expected(
+            &Store::open(&root, Default::default()).unwrap().0,
+            "A",
+            "B",
+            None
+        )
+        .is_err(),
         "rename onto existing page must fail"
     );
     assert_eq!(
@@ -1143,9 +1158,13 @@ fn rename_ref_only_page_rewrites_refs_without_a_file() {
     )
     .unwrap();
 
-    let g = Arc::new(Graph::open(&root));
-    pages::rename_page_expected(&Store::from_legacy(Arc::clone(&g)), "Ghost", "Spirit", None)
-        .unwrap();
+    pages::rename_page_expected(
+        &Store::open(&root, Default::default()).unwrap().0,
+        "Ghost",
+        "Spirit",
+        None,
+    )
+    .unwrap();
 
     assert!(!root.join("pages").join("Ghost.md").exists());
     let r = std::fs::read_to_string(root.join("pages").join("Ref.md")).unwrap();
@@ -1962,17 +1981,10 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     )
     .unwrap();
 
-    let g = Arc::new(Graph::open(&root));
-    g.warm_cache();
-    let _ = g.backlinks("Testtest"); // populate the derived cache, as the UI does
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let _ = store.whole_graph().unwrap().backlinks("Testtest").unwrap();
 
-    pages::rename_page_expected(
-        &Store::from_legacy(Arc::clone(&g)),
-        "Testtest",
-        "TesttestTest",
-        None,
-    )
-    .unwrap();
+    pages::rename_page_expected(&store, "Testtest", "TesttestTest", None).unwrap();
 
     let my = std::fs::read_to_string(root.join("pages").join("MyPage.md")).unwrap();
     let jr = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
@@ -1981,7 +1993,11 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
         "non-journal: {my}"
     );
     assert!(jr.contains("[[TesttestTest]]"), "journal: {jr}");
-    let bl = g.backlinks("TesttestTest");
+    let bl = store
+        .whole_graph()
+        .unwrap()
+        .backlinks("TesttestTest")
+        .unwrap();
     let after: Vec<&str> = bl.iter().map(|x| x.page.as_str()).collect();
     assert!(
         after.contains(&"MyPage"),
@@ -1992,7 +2008,6 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
 
 #[test]
 fn rename_rewrites_nested_ref_in_open_page() {
-    use tine_core::PageKind;
     // Mirror the reported "Tine" page: a NESTED ref (sub-bullet) with a block
     // id::, the page already LOADED (open/pinned), cache warm + backlinks queried.
     let root = std::env::temp_dir().join(format!("tine-rename-nested-{}", std::process::id()));
@@ -2010,18 +2025,11 @@ fn rename_rewrites_nested_ref_in_open_page() {
     )
     .unwrap();
 
-    let g = Arc::new(Graph::open(&root));
-    g.warm_cache();
-    let _ = g.load_page(&g.find_entry("Tine", PageKind::Page).unwrap()); // simulate it being open
-    let _ = g.backlinks("Testtest");
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let _ = store.page(&PageId::from("pages/Tine.md")).unwrap();
+    let _ = store.whole_graph().unwrap().backlinks("Testtest").unwrap();
 
-    pages::rename_page_expected(
-        &Store::from_legacy(Arc::clone(&g)),
-        "Testtest",
-        "TesttestTest",
-        None,
-    )
-    .unwrap();
+    pages::rename_page_expected(&store, "Testtest", "TesttestTest", None).unwrap();
 
     let tine = std::fs::read_to_string(root.join("pages").join("Tine.md")).unwrap();
     assert!(
@@ -2029,7 +2037,11 @@ fn rename_rewrites_nested_ref_in_open_page() {
         "nested ref NOT rewritten: {tine:?}"
     );
     assert!(!tine.contains("[[Testtest]]"), "old ref remains: {tine:?}");
-    let bl = g.backlinks("TesttestTest");
+    let bl = store
+        .whole_graph()
+        .unwrap()
+        .backlinks("TesttestTest")
+        .unwrap();
     let pages: Vec<&str> = bl.iter().map(|x| x.page.as_str()).collect();
     assert!(pages.contains(&"Tine"), "backlinks miss Tine: {pages:?}");
     std::fs::remove_dir_all(&root).ok();
@@ -2045,7 +2057,7 @@ fn trash_sync_conflict_refuses_real_pages() {
     let conflict = "Real.sync-conflict-20260705-120000-ABCDEFG.md";
     std::fs::write(pages.join(conflict), "- other device\n").unwrap();
 
-    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
+    let store = Store::open(&root, Default::default()).unwrap().0;
     // Refuses a genuine page — never trashes real data.
     assert!(conflicts::trash_sync_conflict(&store, "pages/Real.md").is_err());
     assert!(pages.join("Real.md").exists(), "real page must survive");
@@ -2111,7 +2123,7 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
     .unwrap();
 
     let g = Graph::open(&root);
-    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
+    let store = Store::open(&root, Default::default()).unwrap().0;
 
     // The conflict copies must NOT appear as pages/journals.
     let names: Vec<String> = g.list_pages().into_iter().map(|p| p.name).collect();
@@ -2161,7 +2173,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     let conflict_name = "Foo.sync-conflict-20260705-120000-ABCDEFG.md";
     std::fs::write(pages.join(conflict_name), conflict).unwrap();
 
-    let store = Store::from_legacy(Arc::new(Graph::open(&root)));
+    let store = Store::open(&root, Default::default()).unwrap().0;
     let win_rel = "pages/Foo.md";
     let conf_rel = format!("pages/{conflict_name}");
 
@@ -2180,10 +2192,10 @@ fn resolve_sync_conflict_merges_and_trashes() {
         .find(|r| format!("{:?}", r.kind) == "Removed")
         .expect("removed row");
 
-    assert_eq!(diff.base_rev, tine_store::model::content_rev(winner));
+    assert_eq!(diff.base_rev, crate::model::content_rev(winner));
     // Guard: decisions from the diff must not apply after the winner changes.
     let changed_winner = winner.replace("beta line here", "beta line NEW!");
-    std::fs::write(pages.join("Foo.md"), &changed_winner).unwrap();
+    crate::test_fixture_io::atomic_write(pages.join("Foo.md"), &changed_winner).unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
         win_rel,
@@ -2204,12 +2216,12 @@ fn resolve_sync_conflict_merges_and_trashes() {
         changed_winner,
         "winner untouched on guard"
     );
-    std::fs::write(pages.join("Foo.md"), winner).unwrap();
+    crate::test_fixture_io::atomic_write(pages.join("Foo.md"), winner).unwrap();
 
     // The conflict side is revision-bound too. Otherwise decisions aligned to
     // an old copy could silently merge after a sync tool rewrites that copy.
     let changed_conflict = conflict.replace("beta line there", "beta line LATER");
-    std::fs::write(pages.join(conflict_name), &changed_conflict).unwrap();
+    crate::test_fixture_io::atomic_write(pages.join(conflict_name), &changed_conflict).unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
         win_rel,
@@ -2229,15 +2241,15 @@ fn resolve_sync_conflict_merges_and_trashes() {
         std::fs::read_to_string(pages.join("Foo.md")).unwrap(),
         winner
     );
-    std::fs::write(pages.join(conflict_name), conflict).unwrap();
+    crate::test_fixture_io::atomic_write(pages.join(conflict_name), conflict).unwrap();
 
     // Resolve: take theirs for the modified block, pull in the removed one.
     let decisions = HashMap::from([
         (modified.id.clone(), "theirs".to_string()),
         (removed.id.clone(), "theirs".to_string()),
     ]);
-    let base = tine_store::model::content_rev(winner);
-    let conflict_rev = tine_store::model::content_rev(conflict);
+    let base = crate::model::content_rev(winner);
+    let conflict_rev = crate::model::content_rev(conflict);
     conflicts::resolve_sync_conflict(
         &store,
         win_rel,

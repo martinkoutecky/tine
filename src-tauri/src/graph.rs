@@ -493,7 +493,6 @@ pub(crate) fn warm_done(
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
-    use tine_store::model::Graph;
 
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("tine-graph-{tag}-{}", std::process::id()));
@@ -582,13 +581,15 @@ mod tests {
         let outside = scratch("layout-outside");
         std::fs::remove_dir(dir.join("pages")).unwrap();
         std::os::unix::fs::symlink(outside.join("pages"), dir.join("pages")).unwrap();
-        let old = Graph::open_checked_with_assets(&dir, None).err().unwrap();
         let new = open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), |_| {
             (0, false)
         })
         .err()
         .unwrap();
-        assert_eq!(new, format!("unsafe graph layout: {old}"));
+        assert_eq!(
+            new,
+            "unsafe graph layout: pages directory escapes graph root: \"pages\""
+        );
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(outside);
     }

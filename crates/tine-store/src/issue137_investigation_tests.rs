@@ -1,13 +1,12 @@
 //! Test-only evidence for GitHub issue #137. No production behavior is changed.
 
+use crate::model::Graph;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use tine_core::model::ReferenceKind;
 use tine_core::{PageKind, RefGroup};
 use tine_graph_features::pages;
-use tine_store::model::Graph;
 use tine_store::{PageId, Store};
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
@@ -226,7 +225,7 @@ fn issue232_runtime_ids_distinguish_structure_and_physical_owner() {
     fixture.nested_page("client-b", "Foo", "- same\n");
     let graph = fixture.graph();
 
-    let store = Store::from_legacy(Arc::new(fixture.graph()));
+    let store = Store::open(&fixture.root, Default::default()).unwrap().0;
     let identity = store.page(&PageId::from("pages/Identity.md")).unwrap().doc;
     let ids = identity
         .blocks
@@ -260,25 +259,25 @@ fn issue232_merge_output_matches_destination_reload_identity() {
     let fixture = Fixture::new("merge-destination-identity");
     fixture.page("Source", "- moved one\n- moved two\n");
     fixture.page("Destination", "- kept\n");
-    let graph = Arc::new(fixture.graph());
-    graph.warm_cache();
-    let destination = graph.find_entry("Destination", PageKind::Page).unwrap();
-
-    let store = Store::from_legacy(Arc::clone(&graph));
+    let store = Store::open(&fixture.root, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    let destination = PageId::from("pages/Destination.md");
     pages::merge_pages(&store, "pages/Source.md", "pages/Destination.md").unwrap();
-    let merged_ids = graph
-        .load_page(&destination)
+    let merged_ids = store
+        .page(&destination)
         .unwrap()
+        .doc
         .blocks
         .into_iter()
         .map(|block| block.id)
         .collect::<Vec<_>>();
     assert_eq!(merged_ids.len(), 3);
 
-    graph.invalidate_cache();
-    let reloaded_ids = graph
-        .load_page(&destination)
+    let reopened = Store::open(&fixture.root, Default::default()).unwrap().0;
+    let reloaded_ids = reopened
+        .page(&destination)
         .unwrap()
+        .doc
         .blocks
         .into_iter()
         .map(|block| block.id)

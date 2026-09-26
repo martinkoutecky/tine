@@ -17,12 +17,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use tine_graph_features::guide::create_demo_graph;
 use tine_graph_features::publish::publish_html;
-use tine_store::model::Graph;
-use tine_store::Store;
+use tine_store::{Area, Store, TxOutcome};
 
 fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
@@ -52,9 +50,15 @@ fn main() {
 
     create_demo_graph(&tmp).expect("scaffold demo graph");
 
-    let mut graph = Graph::open(&tmp);
-    graph.config.all_pages_public = true;
-    let store = Store::from_legacy(Arc::new(graph));
+    let (store, _, _) = Store::open(&tmp, Default::default()).expect("open demo graph");
+    let config = store.file_id(Area::Meta, "config.edn").unwrap();
+    let (bytes, rev) = store.read(&config, None).expect("read demo config");
+    let mut text = String::from_utf8(bytes).expect("UTF-8 demo config");
+    let end = text.rfind('}').expect("EDN config map");
+    text.insert_str(end, "\n :publishing/all-pages-public? true\n");
+    let mut tx = store.transaction();
+    tx.replace(&config, rev, text.into_bytes());
+    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
     let (publish_dir, count) = publish_html(&store).expect("publish demo graph");
     let publish_dir = PathBuf::from(publish_dir);
 

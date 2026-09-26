@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tine_store::model::Graph;
 use tine_store::{Area, LoadError, OpenOptions, Refusal, Store, TxOutcome, Why};
 
 struct Fixture(PathBuf);
@@ -30,8 +29,7 @@ impl Drop for Fixture {
     }
 }
 
-fn compare_checked_open(root: &Path, approved: Option<&Path>) {
-    let old = Graph::open_checked_with_assets(root, approved).map(|_| ());
+fn compare_checked_open(root: &Path, approved: Option<&Path>, expected_error: Option<&str>) {
     let new = Store::open(
         root,
         OpenOptions {
@@ -42,9 +40,9 @@ fn compare_checked_open(root: &Path, approved: Option<&Path>) {
     .map(|(store, _, _)| {
         store.close();
     });
-    assert_eq!(old.is_ok(), new.is_ok());
-    if let (Err(old), Err(new)) = (old, new) {
-        assert_eq!(old.to_string(), new.to_string());
+    assert_eq!(expected_error.is_none(), new.is_ok());
+    if let (Some(expected), Err(actual)) = (expected_error, new) {
+        assert_eq!(actual.to_string(), expected);
     }
 }
 
@@ -52,11 +50,11 @@ fn compare_checked_open(root: &Path, approved: Option<&Path>) {
 fn checked_open_matches_legacy_layout_and_consent() {
     let ordinary = Fixture::new("ordinary");
     std::fs::write(ordinary.root().join("pages/A.md"), "- hello\n").unwrap();
-    compare_checked_open(ordinary.root(), None);
+    compare_checked_open(ordinary.root(), None, None);
 
     let missing_pages = Fixture::new("missing-pages");
     std::fs::remove_dir(missing_pages.root().join("pages")).unwrap();
-    compare_checked_open(missing_pages.root(), None);
+    compare_checked_open(missing_pages.root(), None, None);
 
     let file = Fixture::new("not-folder");
     let file_path = file.root().join("a-file");
@@ -80,7 +78,11 @@ fn checked_open_matches_legacy_layout_and_consent() {
             linked_pages.root().join("pages"),
         )
         .unwrap();
-        compare_checked_open(linked_pages.root(), None);
+        compare_checked_open(
+            linked_pages.root(),
+            None,
+            Some("pages directory escapes graph root: \"pages\""),
+        );
 
         let external = Fixture::new("external-assets");
         let first = Fixture::new("first-assets");
@@ -89,12 +91,28 @@ fn checked_open_matches_legacy_layout_and_consent() {
         std::fs::create_dir(second.root().join("target")).unwrap();
         std::os::unix::fs::symlink(first.root().join("target"), external.root().join("assets"))
             .unwrap();
-        compare_checked_open(external.root(), None);
-        compare_checked_open(external.root(), Some(&first.root().join("target")));
+        let first_target = first.root().join("target");
+        compare_checked_open(
+            external.root(),
+            None,
+            Some(&format!(
+                "external assets directory requires approval: {}",
+                first_target.display()
+            )),
+        );
+        compare_checked_open(external.root(), Some(&first_target), None);
         std::fs::remove_file(external.root().join("assets")).unwrap();
         std::os::unix::fs::symlink(second.root().join("target"), external.root().join("assets"))
             .unwrap();
-        compare_checked_open(external.root(), Some(&first.root().join("target")));
+        compare_checked_open(
+            external.root(),
+            Some(&first_target),
+            Some(&format!(
+                "external assets directory changed; approved {} but graph now resolves to {}",
+                first_target.display(),
+                second.root().join("target").display()
+            )),
+        );
     }
 }
 
@@ -123,16 +141,15 @@ fn unreadable_config_reports_problem_without_changing_legacy_defaults() {
     let fixture = Fixture::new("bad-config");
     std::fs::create_dir_all(fixture.root().join("logseq")).unwrap();
     std::fs::write(fixture.root().join("logseq/config.edn"), [0xff]).unwrap();
-    let old = Graph::open_checked_with_assets(fixture.root(), None).unwrap();
     let (store, _, state) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
     assert!(state.problem.is_some());
-    assert_eq!(state.config.pages_dir, old.config.pages_dir);
+    assert_eq!(state.config.pages_dir, "pages");
     assert_eq!(
         store.config().problem.unwrap().kind,
         std::io::ErrorKind::InvalidData
     );
     store.close();
-    assert_eq!(store.config().pages_dir, old.config.pages_dir);
+    assert_eq!(store.config().pages_dir, "pages");
 }
 
 #[test]

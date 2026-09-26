@@ -1,22 +1,30 @@
 //! `tine-store` — the only owner of a Logseq graph root (og batch 1).
 //!
-//! v0.6.5's `Graph` remains behind the store boundary. `Transaction` owns
+//! v0.6.5's `Graph` is private behind the store boundary. `Transaction` owns
 //! guarded multi-file writes, and `Store::save` is one transaction step. The
 //! store also owns observation and publication; `src-tauri` only turns a
 //! subscription into window events.
-//! `SHALLOW.txt` lists legacy public items awaiting later batches; the target
-//! interface is `og/batches/01-step1-interface.rs`.
 
-#[cfg(any(test, feature = "legacy-fixtures"))]
-pub mod config_edit;
+#[cfg(test)]
+mod derived_cache_fuzz_tests;
+#[cfg(test)]
+mod gh221_malformed_html_tests;
+#[cfg(test)]
+mod graph_tests;
+#[cfg(test)]
+mod issue137_investigation_tests;
 pub mod model;
-#[cfg(any(test, feature = "legacy-fixtures"))]
-pub mod onboarding;
 pub mod publish;
 pub mod query;
 pub mod query_plan;
 pub mod restore;
+#[cfg(test)]
+mod search_edit_tests;
 pub mod store;
+#[cfg(test)]
+mod test_config_client;
+#[cfg(test)]
+mod test_fixture_io;
 pub mod transaction;
 mod watch;
 pub use publish::{PublishFailed, PublishReceipt, SiteWriter};

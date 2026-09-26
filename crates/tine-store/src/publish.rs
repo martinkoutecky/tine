@@ -460,7 +460,6 @@ fn commit_publish_stage_report(
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
-    use std::sync::Arc;
 
     fn roots(label: &str) -> (PathBuf, PathBuf) {
         let base =
@@ -496,7 +495,7 @@ mod tests {
         let (base, outside) = roots("stage-swap");
         fs::write(outside.join("style.css"), "outside sentinel").unwrap();
         PUBLISH_STAGE_WRITE_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
-        let store = Store::from_legacy(Arc::new(Graph::open(&base)));
+        let store = Store::open(&base, Default::default()).unwrap().0;
         let result = store.publish_site(&mut |writer| writer.write("style.css", b"generated"));
         assert!(result.is_err());
         assert_eq!(
@@ -512,7 +511,7 @@ mod tests {
         fs::write(base.join("publish/index.html"), "previous site").unwrap();
         fs::write(outside.join("previous"), "outside sentinel").unwrap();
         PUBLISH_RECOVERY_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
-        let store = Store::from_legacy(Arc::new(Graph::open(&base)));
+        let store = Store::open(&base, Default::default()).unwrap().0;
         let receipt = store
             .publish_site(&mut |writer| writer.write("index.html", b"generated"))
             .unwrap();
