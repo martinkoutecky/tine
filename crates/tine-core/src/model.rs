@@ -128,8 +128,10 @@ pub fn path_is_sync_conflict(path: &Path) -> bool {
         .is_some_and(is_sync_conflict)
 }
 
-/// Opaque area-relative file identity, including assets whose approved target
-/// may be outside the graph root. Constructing one from a string does not
+/// Opaque graph-root-relative file identity, such as `pages/Example.md` or
+/// `logseq/config.edn`, including assets whose approved target may be outside
+/// the graph root. `Store::file_id` takes an area-relative name and adds its
+/// configured area prefix. Constructing one from a string does not
 /// validate it; the store revalidates identities when used.
 #[deny(missing_docs)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -141,7 +143,7 @@ impl From<String> for FileId {
     }
 }
 impl FileId {
-    /// Borrow the unvalidated area-relative identity string.
+    /// Borrow the unvalidated graph-root-relative identity string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -620,7 +622,8 @@ pub struct PageDto {
 pub struct GraphMeta {
     /// Canonical graph root for display and OS handoff.
     pub root: String,
-    /// "now" (LATER/NOW) or "todo" (TODO/DOING) — drives the task cycle.
+    /// "now" (LATER/NOW) or "todo" (TODO/DOING) — display form of the
+    /// graph configuration's `Workflow`, not an independent edit setting.
     pub preferred_workflow: String,
     /// Configured keyboard shortcuts.
     pub shortcuts: std::collections::HashMap<String, String>,
@@ -642,7 +645,8 @@ pub struct GraphMeta {
     pub journal_file_name_format: String,
     /// Format new pages/journals are created in (`"md"` or `"org"`), from
     /// `:preferred-format`. The frontend uses it to label the toggle and pick the
-    /// new-page extension.
+    /// new-page extension. This string reflects the graph configuration's
+    /// `Format`; a page DTO's `format` reflects its physical file extension.
     pub preferred_format: String,
     /// User-defined `:macros {"name" "template"}` — the frontend substitutes
     /// `$1..$N` args into the template and renders the result as markdown.

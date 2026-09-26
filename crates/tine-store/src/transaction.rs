@@ -6,6 +6,8 @@
 //! undo or a failed apply reconciles them
 //! against the final disk file.
 //! Transactions are not crash atomic and cannot exclude external processes.
+//! Steps may mix page, journal, asset, and metadata files; changed final
+//! files share one publication after a successful initial load.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
@@ -99,7 +101,7 @@ pub enum StepResult {
         /// Revision of its new bytes.
         rev: FileRev,
     },
-    /// Save or reference rewrite found the same bytes on disk after its
+    /// Save, replace, or reference rewrite found the same bytes on disk after its
     /// revision guard matched. A stale base still returns `Why::Conflict`.
     Unchanged {
         /// Unchanged file.
@@ -197,7 +199,8 @@ pub enum TxOutcome {
     },
     /// The transaction did not commit. Preflight checks every step before any
     /// write; an apply failure attempts undo of prior steps and the failed
-    /// step, which may already have written. Inspect the final disk state and
+    /// step, which may already have written, in reverse application order.
+    /// Inspect the final disk state and
     /// `rollback`, including for `step`. Changed final disk bytes publish after
     /// a successful initial load. Store-written bytes use `Origin::Own`;
     /// concurrent external bytes surviving undo use `Origin::External`.
@@ -370,7 +373,10 @@ impl Store {
 
 impl<'a> Transaction<'a> {
     /// Queue a guarded page save. `CreateNew` requires absence; `Existing`
-    /// compares the current raw-byte revision. No disk I/O until commit.
+    /// compares the current raw-byte revision. A Guide DTO is refused as
+    /// ephemeral before disk access. `CreateNew` checks both the exact target
+    /// and an alternate extension, and refuses an indexed name or day twin.
+    /// No disk I/O until commit.
     /// Commit cost includes page bytes and O(P) graph metadata on publication.
     pub fn save_page(&mut self, id: &PageId, base: SaveBase, doc: &PageDto) -> &mut Self {
         self.steps.push(Step::Save {
@@ -403,7 +409,9 @@ impl<'a> Transaction<'a> {
     /// includes its leading dot, or is empty. An invalid name is refused.
     /// `Area::Trash` is refused. The chosen id appears in the step result.
     /// Cost O(bytes + collisions). A page target uses the same raw UTF-8 and
-    /// target-safety checks as `create`, not `PageDto` serialization.
+    /// target-safety and indexed twin checks as `create`, not `PageDto`
+    /// serialization. An exact occupied candidate tries the next suffix;
+    /// an alternate name or journal-day claimant refuses creation.
     pub fn create_unique(
         &mut self,
         area: Area,
@@ -632,6 +640,11 @@ impl<'a> Transaction<'a> {
         match step {
             Step::Save { id, base, doc } => {
                 let file = id.file();
+                if doc.guide {
+                    return Err(Why::Refused(Refusal::InvalidTarget(
+                        "Guide pages are ephemeral".into(),
+                    )));
+                }
                 if !self.page(&file) {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
@@ -755,6 +768,7 @@ impl<'a> Transaction<'a> {
                         .map_err(|_| Why::Refused(Refusal::InvalidTarget(rel)))?;
                     match self.absent(&candidate) {
                         Ok(()) => {
+                            self.twin(&candidate, None)?;
                             if self.fixed_step_names().contains(&candidate) {
                                 return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
                             }
@@ -1079,6 +1093,9 @@ impl<'a> Transaction<'a> {
                     };
                     if unique && fixed_names.contains(&file) {
                         return Err(Why::Refused(Refusal::RepeatedFile(file)));
+                    }
+                    if unique {
+                        self.twin(&file, None)?;
                     }
                     let path = self.path(&file)?;
                     if let Some(parent) = path.parent() {
@@ -1415,6 +1432,9 @@ impl<'a> Transaction<'a> {
     /// writer window between that check and rename. Undo
     /// stages live bytes in recoverable conflict trash and uses no-replace
     /// moves; another writer can still race those filesystem operations.
+    /// Depending on ordering, racing bytes can remain live, be moved to
+    /// conflict recovery, or be overwritten by a later external write. Inspect
+    /// final disk state and `rollback` rather than assuming a winner.
     /// Prior page bytes are kept in memory until commit finishes, so undo can
     /// require O(changed bytes) memory and additional file reads and writes.
     pub fn commit(mut self) -> TxOutcome {

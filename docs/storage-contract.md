@@ -24,7 +24,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 |---|---:|---|
 | `transaction.rs::path::InvalidTarget` | 3 | A sync update changes a path into a symlink or invalid area while an operation resolves it; refuse access outside the approved graph root. |
 | `transaction.rs::twin::Twin` | 1 | Sync introduces a second physical file for the same page name or journal day; refuse a write that could choose the wrong one. |
-| `transaction.rs::preflight::InvalidTarget` | 11 | A legitimate caller supplies a malformed path or unsupported operation (including moving config), or an external rename changes target shape; refuse before any step changes disk. Config moves require live config publication. |
+| `transaction.rs::preflight::InvalidTarget` | 12 | A legitimate caller supplies a malformed path or unsupported operation (including moving config), an external rename changes target shape, or a caller attempts to save a virtual Guide DTO in a transaction; refuse before any step changes disk. Config moves require live config publication; Guide content needs an explicit graph copy. |
 | `transaction.rs::preflight::Twin` | 1 | A sync-created same-name page appears between page creation and commit; refuse the ambiguous create. |
 | `transaction.rs::preflight::ReadOnly` | 1 | An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. |
 | `transaction.rs::preflight::Undecodable` | 2 | A pasted or imported page stream is invalid UTF-8; refuse before making an unreadable page. |

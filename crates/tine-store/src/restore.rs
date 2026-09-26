@@ -101,14 +101,19 @@ impl Store {
     /// Replaced files are retired too. An unlisted `config.edn` and
     /// `custom.css` stay live. Only `config.edn` is accepted in the Meta area;
     /// Trash targets and non-`.edn` assets are refused. Any `.edn` file under
-    /// assets counts as a sidecar, regardless of a matching PDF.
+    /// assets counts as a sidecar, regardless of a matching PDF. The store
+    /// copies sidecar bytes and supplies no EDN parser or sidecar schema.
     /// Other asset files are left in place. The method then copies new files
     /// without replacing a concurrent winner. It blocks saves and transactions
     /// for the full operation. Cost includes all input bytes, all live page,
     /// journal, and sidecar bytes hashed for baseline and publication, and an
-    /// asset-tree walk, even for a small input. A changed restore publishes one
+    /// asset-tree walk, and a whole-graph reparse under the writer lock, even
+    /// for a small input. The file lists and baseline stamps retain O(live +
+    /// input file count) memory; payloads are copied through files. A changed
+    /// restore publishes one
     /// `Origin::Own` revision for the final disk state, including `Removed`
-    /// tuples for retired live files and `config_changed` when config changed.
+    /// tuples for retired live files and a `logseq/config.edn` file tuple when
+    /// config changed.
     /// The config is reloaded before the resulting view is published. A changed
     /// partial result on failure publishes the final disk state after a
     /// successful initial load. After a failed initial load, writes remain
@@ -117,9 +122,9 @@ impl Store {
     /// finishes before this restore; a later save checks against restored
     /// bytes. Check `recovery` and
     /// `kept_external` when reconciling disk state. Existing `WholeGraph` views
-    /// remain captured snapshots until the final publication; direct `page()`
-    /// and `scan_area()` calls can observe intermediate files because they read
-    /// disk without the restore writer lock. The watcher waits for that lock.
+    /// remain captured snapshots until the final publication. `page()` and the
+    /// watcher wait for the writer lock; `scan_area()` can observe intermediate
+    /// files because it reads disk without that lock.
     /// A crash can leave a partial restore with whole individual files and
     /// recovery directories; there is no store import or cleanup call.
     /// An editor must separately

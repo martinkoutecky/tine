@@ -394,7 +394,25 @@ fn config_edit_via_scan_refresh_publishes_and_updates_config() {
     let changes = graph.changes();
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].origin, Origin::External);
+    assert_eq!(
+        changes[0]
+            .files
+            .iter()
+            .map(|(id, kind, _)| (id.as_str(), *kind))
+            .collect::<Vec<_>>(),
+        vec![("logseq/config.edn", ChangeKind::Created)]
+    );
     assert_eq!(graph.store.config().preferred_format.ext(), "org");
+    graph.write("logseq/config.edn", "{:preferred-format :md}\n");
+    assert_eq!(
+        graph.file_changes(),
+        vec![("logseq/config.edn".into(), ChangeKind::Modified)]
+    );
+    std::fs::remove_file(graph.path("logseq/config.edn")).unwrap();
+    assert_eq!(
+        graph.file_changes(),
+        vec![("logseq/config.edn".into(), ChangeKind::Removed)]
+    );
 }
 
 #[cfg(unix)]

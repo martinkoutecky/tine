@@ -320,6 +320,7 @@ impl Core {
             });
         }
         let mut config_changed = false;
+        let mut config_file = None;
         if include_config {
             let path = self.graph.root.join("logseq/config.edn");
             let current = stamp(&path);
@@ -329,6 +330,16 @@ impl Core {
             {
                 self.read_config(&path)?;
                 config_changed = true;
+                let kind = match (previous.as_ref(), current.as_ref()) {
+                    (None, Some(_)) => ChangeKind::Created,
+                    (Some(_), None) => ChangeKind::Removed,
+                    _ => ChangeKind::Modified,
+                };
+                config_file = Some((
+                    FileId::from("logseq/config.edn".to_owned()),
+                    kind,
+                    current.as_ref().and_then(|value| value.rev.clone()),
+                ));
             }
             *previous = current;
         }
@@ -352,6 +363,9 @@ impl Core {
         let mut names: Vec<_> = names.into_iter().collect();
         names.sort();
         let mut files = Vec::new();
+        if let Some(config_file) = config_file {
+            files.push(config_file);
+        }
         let mut pages = Vec::new();
         for path in names {
             let before = snapshot.get(&path);

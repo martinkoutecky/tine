@@ -340,6 +340,34 @@ fn indexed_twin_is_refused_before_any_write() {
 }
 
 #[test]
+fn transaction_refuses_guide_dto_without_writing() {
+    let f = Fixture::new();
+    let mut guide = doc("Guide", "should stay ephemeral");
+    guide.guide = true;
+    let mut tx = f.store.transaction();
+    tx.save_page(&PageId::from("pages/Guide.md"), SaveBase::CreateNew, &guide);
+    assert!(matches!(refused(tx.commit()).0, Why::Refused(_)));
+    assert!(f.bytes("pages/Guide.md").is_none());
+}
+
+#[test]
+fn create_unique_refuses_an_indexed_page_twin() {
+    let f = Fixture::with_watch(WatchMode::Poll, &[("pages/Twin.md", b"- existing\n")]);
+    let mut tx = f.store.transaction();
+    tx.create_unique(
+        Area::Pages,
+        "twin",
+        ".org",
+        Content::Bytes(b"* duplicate\n".to_vec()),
+    );
+    assert!(matches!(
+        refused(tx.commit()).0,
+        Why::Refused(Refusal::Twin { .. })
+    ));
+    assert!(f.bytes("pages/twin.org").is_none());
+}
+
+#[test]
 fn unique_names_and_stream_limit() {
     let f = Fixture::new();
     f.put("assets/x.png", b"old");

@@ -28,10 +28,13 @@ pub fn get_page(
     name: &str,
     kind: PageKind,
 ) -> Result<Option<PageRead>, PageReadError> {
-    let resolved = store
-        .whole_graph()
-        .map_err(PageReadError::Load)?
-        .resolve(name, kind == PageKind::Journal);
+    let resolved = match store.whole_graph() {
+        Ok(view) => view.resolve(name, kind == PageKind::Journal),
+        Err(LoadError::Failed { .. }) => {
+            return store.page_named(name, kind).map_err(PageReadError::Store)
+        }
+        Err(error) => return Err(PageReadError::Load(error)),
+    };
     let id = match resolved {
         Resolved::Existing { id, .. } => id,
         Resolved::Alias { owners } => owners.into_iter().next().ok_or(PageReadError::EmptyAlias)?,

@@ -2,7 +2,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::model::{PageDto, PageKind};
-use tine_store::{Area, OpenOptions, PageId, Resolved, Store, StoreError};
+use tine_store::{
+    Area, ChangeKind, Content, OpenOptions, PageId, Refusal, Resolved, Store, StoreError,
+    TxOutcome, Why,
+};
 
 struct Fixture(std::path::PathBuf);
 
@@ -84,6 +87,48 @@ fn page_reads_and_publishes_external_edit() {
             .len()
             > 0
     );
+}
+
+#[test]
+fn direct_first_read_publishes_creation_and_updates_name_claimants() {
+    let f = Fixture::new();
+    let store = f.store();
+    store.whole_graph().unwrap();
+    let subscription = store.subscribe();
+    f.put("pages/Arrived.md", b"- newly arrived\n");
+    let id = PageId::from("pages/Arrived.md");
+    assert_eq!(store.page(&id).unwrap().doc.blocks[0].raw, "newly arrived");
+    let change = subscription
+        .try_recv()
+        .unwrap()
+        .expect("direct read publication");
+    assert_eq!(change.files[0].0, id.file());
+    assert_eq!(change.files[0].1, ChangeKind::Created);
+    let view = store.whole_graph().unwrap();
+    assert!(
+        matches!(view.resolve("Arrived", false), Resolved::Existing { id: found, .. } if found == id)
+    );
+    assert!(view
+        .inventory()
+        .0
+        .iter()
+        .any(|entry| entry.name == "Arrived"));
+    assert!(view
+        .complete_page_names("Arr", 10)
+        .iter()
+        .any(|entry| entry.name == "Arrived"));
+    let mut tx = store.transaction();
+    tx.create(
+        &store.file_id(Area::Pages, "arrived.org").unwrap(),
+        Content::Bytes(b"* duplicate\n".to_vec()),
+    );
+    assert!(matches!(
+        tx.commit(),
+        TxOutcome::NotCommitted {
+            why: Why::Refused(Refusal::Twin { .. }),
+            ..
+        }
+    ));
 }
 
 #[test]

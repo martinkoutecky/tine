@@ -292,6 +292,25 @@ fn query_and_scoped_search_use_page_identity() {
 }
 
 #[test]
+fn scoped_search_keeps_block_allowance_when_page_limit_is_large() {
+    let fixture = Fixture::new();
+    let view = fixture.view();
+    let hits = view
+        .search(
+            &SearchRequest {
+                text: "searchable".into(),
+                within: Some(PageId::from("pages/Source.md")),
+                page_limit: 20_000,
+                block_limit: 10,
+                explain: false,
+            },
+            &Cancel(Arc::new(AtomicBool::new(false))),
+        )
+        .unwrap();
+    assert!(!hits.hits.is_empty());
+}
+
+#[test]
 fn simple_query_rejects_source_and_nesting_limits() {
     let fixture = Fixture::new();
     let graph = fixture.view();
