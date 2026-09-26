@@ -131,7 +131,7 @@ fn bounded_preview_dto(
         return None;
     }
     let minimum_bytes = block
-        .raw
+        .raw()
         .len()
         .saturating_add(if block.uuid.is_empty() {
             36
@@ -416,12 +416,12 @@ type ReverseRefIndex = std::collections::HashMap<String, Vec<Referrer>>;
 
 fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
     for b in blocks {
-        if let Some(id) = block_id(&b.raw) {
+        if let Some(id) = block_id(b.raw()) {
             refs.insert(
                 id,
                 RefTarget {
                     slug: slug.to_string(),
-                    text: ref_target_text(&b.raw),
+                    text: ref_target_text(b.raw()),
                 },
             );
         }
@@ -438,7 +438,7 @@ fn collect_reverse_refs(
     reverse: &mut ReverseRefIndex,
 ) {
     for block in blocks {
-        let anchor = block_id(&block.raw).unwrap_or_else(|| {
+        let anchor = block_id(block.raw()).unwrap_or_else(|| {
             let anchor = format!("b{}", *counter);
             *counter += 1;
             anchor
@@ -452,7 +452,7 @@ fn collect_reverse_refs(
                 slug: slug.to_string(),
                 page: page.to_string(),
                 anchor: anchor.clone(),
-                text: ref_target_text(&block.raw),
+                text: ref_target_text(block.raw()),
             });
         }
         collect_reverse_refs(
@@ -1415,7 +1415,7 @@ fn render_query_groups(
 /// Render an embedded page's block (a `DocBlock`) as an `<li>`, mirroring `render_result_block`.
 fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8) {
     out.push_str("<li>");
-    emit_block_inner(&b.raw, out, ctx, depth);
+    emit_block_inner(b.raw(), out, ctx, depth);
     if !b.children.is_empty() {
         out.push_str("<ul>");
         for c in &b.children {
@@ -1703,17 +1703,19 @@ fn render_block(
 ) {
     // ONE lsdoc parse → the canonical body skeleton (M3), property/planning-filtered like
     // the app's `bodyBlocks`. No second hand-rolled inline parser (the old `render_inline`).
-    let blocks = body_blocks(&b.raw);
+    let blocks = body_blocks(b.raw());
     // BEGIN_QUERY is a static-site feature. The print context deliberately has
     // no public-page capability (`pages: None`) and retains its prior rendering
     // and whole-graph query behavior.
-    let begin_query = ctx.pages.and_then(|_| inspect_begin_query(&b.raw, &blocks));
+    let begin_query = ctx
+        .pages
+        .and_then(|_| inspect_begin_query(b.raw(), &blocks));
 
     // Every block gets a stable anchor so a search hit can deep-link straight to it: its
     // `id::` uuid when present, else a generated per-page `b{n}` (never collides with a
     // 36-char uuid). Emitting the `<li id>` and the search-index entry in the SAME place
     // keeps the HTML anchor and the index in lock-step.
-    let anchor = match block_id(&b.raw) {
+    let anchor = match block_id(b.raw()) {
         Some(id) => id,
         None => {
             let a = format!("b{}", *counter);
@@ -1765,7 +1767,7 @@ fn render_block(
     }
     out.push_str("</div>");
     emit_trailer_facets(b.scheduled(), b.deadline(), &b.properties(), out);
-    if let (Some(id), Some(reverse)) = (block_id(&b.raw), ctx.reverse_refs) {
+    if let (Some(id), Some(reverse)) = (block_id(b.raw()), ctx.reverse_refs) {
         if let Some(referrers) = reverse.get(&id).filter(|items| !items.is_empty()) {
             let count = referrers.len();
             out.push_str(&format!(

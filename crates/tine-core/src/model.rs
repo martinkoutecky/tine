@@ -274,7 +274,9 @@ pub struct BlockDto {
     /// edits can change this identity across graph publications, so reacquire
     /// it after a page changes.
     pub id: String,
-    /// Raw block text, including properties.
+    /// Raw block text, including properties. Page saves serialize this body;
+    /// derived facets and `breadcrumb` do not add text. The `page_property`
+    /// flag does not suppress serialization of this raw body.
     pub raw: String,
     /// Whether child blocks are collapsed in the outline.
     #[serde(default)]
@@ -287,7 +289,9 @@ pub struct BlockDto {
     #[serde(default)]
     pub breadcrumb: Vec<String>,
     /// Synthetic, read-only result row representing references from the source
-    /// page's property pre-block rather than an editable outline block.
+    /// page's property pre-block rather than an editable outline block. Do not
+    /// put such a result row in an editable `PageDto`: save would serialize its
+    /// `raw` as an outline block because this flag is only result metadata.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub page_property: bool,
     // --- M1: block-header facets, computed ONCE off the lsdoc projection (the one
@@ -561,37 +565,41 @@ pub struct SyncConflict {
 }
 
 /// Editable page tree. For a new page, the caller builds this value and uses
-/// `SaveBase::CreateNew`; the store does not apply a journal template.
+/// `SaveBase::CreateNew`; the caller applies any journal template before saving.
+/// For saves, the target `PageId` controls file identity and format. The
+/// pre-block and block raw text/children supply content; metadata fields do
+/// not write an implicit `title::` property.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageDto {
-    /// Decoded page name.
+    /// Display name decoded from the file claim when loaded. On save this
+    /// field does not rename the target or inject a `title::` property.
     pub name: String,
-    /// Journal or ordinary page.
+    /// Journal or ordinary page. The target file area determines save identity.
     pub kind: PageKind,
-    /// Display title.
+    /// Display title; not serialized as a `title::` property by the store.
     pub title: String,
     /// Raw page-property pre-block (if any).
     pub pre_block: Option<String>,
     /// Ordered root blocks.
     pub blocks: Vec<BlockDto>,
-    /// Hash of the on-disk file content when this page was loaded. The store's
+    /// Raw-byte `FileRev` string of the on-disk content when loaded. The store's
     /// guarded save uses the separate `SaveBase` argument, not this field;
     /// callers should pass the revision they edited from as that base.
     /// `None` for a page with no file yet.
     #[serde(default)]
     pub rev: Option<String>,
-    /// On-disk format of this page (markdown vs org), so the editor renders org
-    /// inline syntax and shows the right bullet. New pages default to markdown.
+    /// On-disk format for editor display. The save serializer uses the target
+    /// file extension, even if this field disagrees. New pages default to Markdown.
     #[serde(default)]
     pub format: Format,
-    /// True for an org page Tine can't round-trip byte-for-byte: the editor shows
-    /// it but disables editing, so Tine never rewrites (and risks corrupting) it.
+    /// True when a loaded Org page cannot round-trip byte-for-byte, for editor
+    /// display. Save rechecks current disk bytes; changing this flag cannot
+    /// bypass a read-only refusal or make an editable file read-only.
     #[serde(default)]
     pub read_only: bool,
-    /// True for bundled in-app Guide pages. Guide pages are ephemeral/read-only
-    /// virtual pages and must never be persisted into the user's graph by the
-    /// normal save/writeback path.
+    /// True for bundled in-app Guide pages. `Store::save` rejects this DTO
+    /// before disk access even if the caller supplies a real `PageId`.
     #[serde(default)]
     pub guide: bool,
 }
@@ -610,7 +618,8 @@ pub struct GraphMeta {
     pub start_of_week: u32,
     /// Extra property keys to hide from the rendered properties area.
     pub block_hidden_properties: Vec<String>,
-    /// Template name applied to a new, empty journal page (if configured).
+    /// Template name for the caller to apply to a new, empty journal page (if
+    /// configured); the store does not insert its body on save.
     pub default_journal_template: Option<String>,
     /// Favorited page names (read from config.edn `:favorites`).
     pub favorites: Vec<String>,

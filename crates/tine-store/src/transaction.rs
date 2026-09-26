@@ -1,7 +1,9 @@
 //! Guarded multi-file graph writes. A transaction queues steps without disk
 //! I/O; commit checks them, applies them in order, and attempts undo on a
 //! failed apply. A changed final disk state publishes one `Origin::Own`
-//! change before return. Config writes update effective settings first.
+//! change before return. A config-file write reloads effective settings before
+//! publication of the final state; undo or a failed apply reconciles them
+//! against the final disk file.
 //! Transactions are not crash atomic and cannot exclude external processes.
 
 use std::collections::{BTreeMap, HashSet};
@@ -35,8 +37,10 @@ pub enum Content {
 
 /// Old page or tag name to new name, compared using normalized references.
 /// Rewrites `[[page]]`, bare and bracketed tags, supported Org page links,
-/// embeds containing those references, and bare `tags::` values. Code spans,
-/// `alias::`, `title::`, and query arguments are not rewritten.
+/// embeds containing those references, and bare `tags::` values. Other
+/// reference-bearing property values can be found by `explicit_referrers`
+/// without being rewritten. Code spans, `alias::`, `title::`, and query
+/// arguments are not rewritten.
 #[derive(Clone, Debug, Default)]
 pub struct RenameMap(pub Vec<(String, String)>);
 
@@ -83,7 +87,8 @@ pub enum StepResult {
         /// New identity in the trash area.
         trashed: FileId,
     },
-    /// File was moved to a new identity.
+    /// File was moved to a new identity. If rewritten bytes required retiring
+    /// the source into trash, that trash id is not returned here.
     Moved {
         /// Destination identity.
         to: FileId,
@@ -135,7 +140,9 @@ pub enum Why {
 pub struct Rollback {
     /// External changes preserved during undo. `Some(id)` names where changed
     /// bytes were moved into the trash recovery area; `None` means they remain
-    /// live. Check
+    /// live. On a changed live file, undo stages it in conflict trash, compares
+    /// it with the transaction's bytes, and tries a no-replace move back. It
+    /// remains in recovery only if a new live winner took the name. Check
     /// `undo_failed` separately to learn whether old bytes were restored.
     pub kept_external: Vec<(FileId, Option<FileId>)>,
     /// Files undo could not restore, with their errors.
@@ -156,7 +163,8 @@ pub enum TxOutcome {
     /// write; an apply failure attempts undo of prior steps and the failed
     /// step, which may already have written. Inspect the final disk state and
     /// `rollback`, including for `step`. If the final disk state changed, an
-    /// `Origin::Own` publication covers it.
+    /// `Origin::Own` publication covers it, even if part of that difference
+    /// came from an external writer. A watcher echo is not guaranteed.
     NotCommitted {
         /// Zero-based index of the failed step.
         step: usize,
@@ -326,7 +334,8 @@ impl<'a> Transaction<'a> {
     }
 
     /// Queue a no-replace file creation. Page text must be UTF-8 and cannot
-    /// claim a name or journal day already held by another file. This takes
+    /// claim a name or journal day already held by another file in the store's
+    /// current file-list index (built before open returns). This takes
     /// raw content, unlike `save_page`'s structured `PageDto` serialization.
     pub fn create(&mut self, file: &FileId, content: Content) -> &mut Self {
         self.steps.push(Step::Create {
@@ -356,7 +365,12 @@ impl<'a> Transaction<'a> {
         self
     }
 
-    /// Queue replacement of a non-page file guarded by `expected`.
+    /// Queue replacement of a non-page file guarded by `expected`. Use
+    /// `Store::file_id(Area::Meta, "config.edn")` to replace graph config.
+    /// If its final bytes change, commit reloads effective config before the
+    /// publication; a clean rollback leaves effective config at the baseline.
+    /// Reload invalidates parsed graph caches, so publication can reparse
+    /// O(P + B) page and block data in addition to reading the new config.
     /// Page text must instead use [`Self::save_page`]; passing a page target
     /// is refused as `Refusal::InvalidTarget`.
     pub fn replace(&mut self, file: &FileId, expected: FileRev, bytes: Vec<u8>) -> &mut Self {
@@ -372,7 +386,9 @@ impl<'a> Transaction<'a> {
     /// `FileRev` with `Store::page` or `Store::read` after locating it in a
     /// graph view. Recheck revisions if the view may be stale; each referrer
     /// needs its own file read. Unchanged output reports [`StepResult::Unchanged`];
-    /// unsafe Org edits are refused as read-only. This rewrites file content,
+    /// unsafe Org edits are refused as read-only. There is no partial rename
+    /// mode: omit that referrer from the queued steps if leaving its old link
+    /// is acceptable. This rewrites file content,
     /// not an unsaved editor buffer.
     pub fn rewrite_refs(
         &mut self,
@@ -392,7 +408,11 @@ impl<'a> Transaction<'a> {
     /// the destination's references, not its `title::`, aliases, or namespace
     /// children. If bytes change, the old source moves to trash; if
     /// bytes stay equal, the source is renamed directly without a trash copy.
-    /// Twin claims are refused.
+    /// After a move, `resolve` follows the destination filename. A retained
+    /// `title::` can still supply a different `Change::page` display name;
+    /// loading the destination gives a `PageDto.name` from its file claim.
+    /// Twin claims are refused. A read-only Org source may move without a
+    /// rewrite; asking to rewrite its bytes invokes the round-trip check.
     pub fn move_file(
         &mut self,
         file: &FileId,
@@ -411,6 +431,10 @@ impl<'a> Transaction<'a> {
 
     /// Queue a guarded move into graph trash. The new id is returned in the
     /// step result, and changed source bytes are preserved on guard failure.
+    /// This acts on one `FileId`; for a twinned name the caller decides which
+    /// claimant or claimants to remove. A duplicate-day journal is typed as
+    /// `TrashKind::Journal`. Trashing an Org file does not serialize its content, so its page-edit
+    /// read-only flag does not bar this move.
     pub fn trash(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
         self.steps.push(Step::Trash {
             file: file.clone(),
@@ -1273,7 +1297,11 @@ impl<'a> Transaction<'a> {
     /// remaining disk differences; a process crash can leave partial changes.
     /// Preflight reports the first failing step. Apply rechecks each changed
     /// source against the preflight bytes before replacing it, subject to the
-    /// external writer window between that check and the final rename.
+    /// external writer window between that check and the final rename. Undo
+    /// stages live bytes in recoverable conflict trash and uses no-replace
+    /// moves; another writer can still race those filesystem operations.
+    /// Prior page bytes are kept in memory until commit finishes, so undo can
+    /// require O(changed bytes) memory and additional file reads and writes.
     pub fn commit(mut self) -> TxOutcome {
         let _writer = self.store.writer.lock().unwrap();
         let rev = || self.store.changes.rev();

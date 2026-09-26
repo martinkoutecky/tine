@@ -39,7 +39,7 @@ impl JournalDate {
         let year: i32 = parts[0].parse().ok()?;
         let month: u32 = parts[1].parse().ok()?;
         let day: u32 = parts[2].parse().ok()?;
-        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
             return None;
         }
         Some(JournalDate { year, month, day })
@@ -354,7 +354,7 @@ impl Format {
             return None;
         }
         let (y, m, d) = (year?, month?, day?);
-        if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        if !(1..=12).contains(&m) || d == 0 || d > days_in_month(y, m) {
             return None;
         }
         Some(JournalDate {
@@ -497,6 +497,22 @@ mod fmt_tests {
             month: m,
             day,
         }
+    }
+
+    #[test]
+    fn rejects_impossible_calendar_days() {
+        for stem in ["2026_02_31", "2026-02-29", "2026_04_31"] {
+            assert_eq!(JournalDate::from_file_stem(stem), None, "{stem}");
+            assert_eq!(JournalFormat::default().parse(stem), None, "{stem}");
+        }
+        assert_eq!(
+            Format::compile("MMM do, yyyy").parse("Feb 31st, 2026"),
+            None
+        );
+        assert_eq!(
+            JournalDate::from_file_stem("2024_02_29"),
+            Some(d(2024, 2, 29))
+        );
     }
 
     #[test]

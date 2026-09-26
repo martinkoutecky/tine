@@ -676,7 +676,7 @@ fn refresh_annotation(mut block: DocBlock, h: &Highlight, format: Format) -> Doc
             None => lines.extend(add),
         }
     }
-    block.raw = lines.join("\n");
+    block.set_raw(lines.join("\n"));
     block
 }
 

@@ -27,7 +27,7 @@ pub const MARKERS: &[&str] = &[
     "IN-PROGRESS",
 ];
 
-/// A parsed `.md` document: an optional page-property pre-block plus a forest
+/// A parsed Markdown or Org document: an optional page-property pre-block plus a forest
 /// of blocks.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -45,7 +45,7 @@ pub struct Document {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocBlock {
     /// Dedented block body: first line + continuation lines joined with `\n`.
-    pub raw: String,
+    pub(crate) raw: String,
     /// Child blocks in document order.
     pub children: Vec<DocBlock>,
     /// Runtime/store identity assigned from the document's physical owner and
@@ -54,20 +54,17 @@ pub struct DocBlock {
     /// never serialized. It is NOT part of block *content*, so it is excluded
     /// from equality — otherwise the conflict guard (`parse(disk) == cached`)
     /// would always see a "change".
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub uuid: String,
     /// Whether this block's page is Org (vs Markdown) — the format lsdoc needs to
     /// parse inline refs correctly (e.g. org `[[target][alias]]`). Page-level
     /// metadata, not content, so excluded from equality (like `uuid`); set at
     /// parse time. `#[serde(default)]` → false on any legacy deserialize.
     #[serde(default)]
-    pub is_org: bool,
-    /// Lazily-computed, memoized projection of `raw` for the hot read paths
-    /// (see [`DocBlock::projection`]). Derived metadata, not content: excluded
-    /// from equality + serialization, and reset on clone. `pub(crate)` only so
-    /// the constructors in sibling modules can initialize it empty.
+    pub(crate) is_org: bool,
+    /// Derived projection of the block body. Reset on clone and raw-text edits.
     #[serde(skip)]
-    pub proj: std::sync::OnceLock<BlockProjection>,
+    pub(crate) proj: std::sync::OnceLock<BlockProjection>,
 }
 
 /// Memoized projection of a block's `raw`, so whole-graph scans (full-text
@@ -172,11 +169,32 @@ impl DocBlock {
         }
     }
 
-    /// Lazily-computed, memoized projection of `raw` (visible lowercased text +
-    /// normalized refs). Safe to memoize because it's a pure function of `raw`
-    /// and a cached DocBlock is REPLACED wholesale (a fresh, empty cell) whenever
-    /// its content changes — cached blocks are never mutated in place — so the
-    /// memo can't outlive the `raw` it was derived from.
+    /// Raw block body, including continuation lines and properties.
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    /// Replace the block body and invalidate its derived projection.
+    pub fn set_raw(&mut self, raw: impl Into<String>) {
+        self.raw = raw.into();
+        self.proj = std::sync::OnceLock::new();
+    }
+
+    /// Whether this block is parsed with Org inline syntax.
+    pub fn is_org(&self) -> bool {
+        self.is_org
+    }
+
+    /// Change inline syntax and invalidate its derived projection.
+    pub fn set_org(&mut self, is_org: bool) {
+        if self.is_org != is_org {
+            self.is_org = is_org;
+            self.proj = std::sync::OnceLock::new();
+        }
+    }
+
+    /// Visible text, references, and facets derived from the current raw body.
+    /// [`Self::set_raw`] clears this cache when the body changes.
     pub fn projection(&self) -> &BlockProjection {
         self.proj.get_or_init(|| {
             // ONE lsdoc parse of the block body yields every header facet (marker,
@@ -1401,6 +1419,24 @@ mod org_container_outline_tests {
 #[cfg(test)]
 mod projection_tests {
     use super::*;
+
+    #[test]
+    fn runtime_uuid_is_not_serialized() {
+        let mut block = DocBlock::new("body");
+        block.uuid = "runtime-only".into();
+        let value = serde_json::to_value(&block).unwrap();
+        assert!(value.get("uuid").is_none());
+    }
+
+    #[test]
+    fn editing_raw_invalidates_projection() {
+        let mut block = DocBlock::new("before [[Old]]");
+        assert!(block.projection().refs_contains("Old"));
+        block.set_raw("after [[New]]");
+        assert_eq!(block.visible_text(), "after [[New]]");
+        assert!(block.projection().refs_contains("New"));
+        assert!(!block.projection().refs_contains("Old"));
+    }
 
     #[test]
     fn projection_matches_direct_computation() {

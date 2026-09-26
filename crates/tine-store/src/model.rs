@@ -933,7 +933,7 @@ fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
         for name in &block.projection().refs_page {
             add(seen, name.clone());
         }
-        property_refs(seen, &block.raw);
+        property_refs(seen, block.raw());
         for child in &block.children {
             visit(child, seen);
         }
@@ -1046,7 +1046,7 @@ fn snapshot_index_shard(bytes: &[u8]) -> usize {
 fn reference_signature(doc: &Document) -> ReferenceTokenSignature {
     fn add_blocks(signature: &mut ReferenceTokenSignature, blocks: &[DocBlock]) {
         for block in blocks {
-            signature.insert_text(&block.raw);
+            signature.insert_text(block.raw());
             add_blocks(signature, &block.children);
         }
     }
@@ -5944,8 +5944,8 @@ fn first_root_is_promotable_page_header(doc: &Document) -> bool {
         return false;
     };
     first.children.is_empty()
-        && page_header_properties_only(&first.raw)
-        && !first.raw.split('\n').any(|line| {
+        && page_header_properties_only(first.raw())
+        && !first.raw().split('\n').any(|line| {
             page_header_property_line(line).is_some_and(|(key, _)| key.eq_ignore_ascii_case("id"))
         })
 }
@@ -5955,7 +5955,7 @@ fn promote_first_root_page_header(doc: &mut Document) {
         return;
     }
     let first = doc.roots.remove(0);
-    doc.pre_block = Some(first.raw);
+    doc.pre_block = Some(first.raw().to_owned());
 }
 
 /// Return the first property-shaped outline line that has no outline provenance
@@ -5993,7 +5993,7 @@ fn newly_reclassified_page_property_line(existing: &str, proposed: &Document) ->
         for block in blocks {
             out.extend(
                 block
-                    .raw
+                    .raw()
                     .split('\n')
                     .filter(|line| page_header_property(line)),
             );
@@ -6384,7 +6384,7 @@ fn page_walk_errors(root: &Path, dir: &Path) -> Vec<(String, String)> {
 /// property line — i.e. the page is more than an empty/placeholder bullet.
 fn doc_has_content(blocks: &[DocBlock]) -> bool {
     blocks.iter().any(|b| {
-        b.raw
+        b.raw()
             .lines()
             .any(|l| !l.trim().is_empty() && tine_core::doc::parse_property_line(l).is_none())
             || doc_has_content(&b.children)
@@ -6394,13 +6394,11 @@ fn doc_has_content(blocks: &[DocBlock]) -> bool {
 /// Convert a frontend DTO subtree back to a doc block, preserving the frontend's
 /// block id as the node uuid so the cache and the frontend agree on identity.
 fn dto_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
-    DocBlock {
-        raw: b.raw.clone(),
-        children: b.children.iter().map(|c| dto_to_doc(c, is_org)).collect(),
-        uuid: b.id.clone(),
-        is_org,
-        proj: std::sync::OnceLock::new(),
-    }
+    let mut block = DocBlock::new(&b.raw);
+    block.children = b.children.iter().map(|c| dto_to_doc(c, is_org)).collect();
+    block.uuid = b.id.clone();
+    block.set_org(is_org);
+    block
 }
 
 /// Build a page DTO from a cached document. `read_only` is left false here (the
@@ -6570,7 +6568,7 @@ fn insert_asset_ref(into: &mut std::collections::HashSet<String>, raw: &str) {
 }
 
 pub(crate) fn collect_block_asset_refs(b: &DocBlock, into: &mut std::collections::HashSet<String>) {
-    collect_asset_refs(&b.raw, into);
+    collect_asset_refs(b.raw(), into);
     for c in &b.children {
         collect_block_asset_refs(c, into);
     }
@@ -8253,12 +8251,12 @@ mod tests {
                     .iter()
                     .find(|(entry, _)| entry.kind == PageKind::Page && entry.name == "A")
                     .expect("cached page exists");
-                let before = doc.roots[0].raw.clone();
+                let before = doc.roots[0].raw().to_owned();
                 entered_tx.send(()).unwrap();
                 release_rx
                     .recv_timeout(std::time::Duration::from_secs(2))
                     .expect("test should release the blocked snapshot scan");
-                let after = doc.roots[0].raw.clone();
+                let after = doc.roots[0].raw().to_owned();
                 observed_tx.send((before, after)).unwrap();
             });
         });
@@ -9488,6 +9486,10 @@ mod tests {
         let store = crate::store::Store::open(&dir, Default::default())
             .unwrap()
             .0;
+        assert_eq!(
+            store.trash_stats().unwrap()[0],
+            (crate::store::TrashKind::Asset, 3, 17)
+        );
         assert_eq!(store.purge_asset_trash().unwrap(), (3, 17));
         for name in [
             "pages/1__Page.md",
@@ -12053,7 +12055,7 @@ mod tests {
             pages
                 .iter()
                 .filter(|(entry, _)| entry.name == "Exact Storage Twin")
-                .map(|(entry, doc)| (entry.path.clone(), doc.roots[0].raw.clone()))
+                .map(|(entry, doc)| (entry.path.clone(), doc.roots[0].raw().to_owned()))
                 .collect::<Vec<_>>()
         });
         assert!(cached.iter().any(|(path, raw)| {

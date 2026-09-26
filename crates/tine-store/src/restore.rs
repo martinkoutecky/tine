@@ -16,16 +16,17 @@ const ASSET_RECOVERY: &str = ".tine-restore-recovery";
 static RECOVERY_SEQ: AtomicU64 = AtomicU64::new(0);
 static COPY_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// One verified snapshot file. `rel` is relative to `area`; `source` is an
-/// already-open regular file, and `len` is its verified length.
+/// One caller-supplied snapshot file. `rel` is relative to `area`; `source` is
+/// an already-open file. Restore checks regular-file metadata and `len`, but
+/// does not verify file content against a backup checksum.
 pub struct RestoreFile {
     /// Destination graph area.
     pub area: Area,
     /// Destination name relative to `area`.
     pub rel: String,
-    /// Open, verified source file copied from its beginning.
+    /// Open source file copied from its beginning.
     pub source: File,
-    /// Verified source length, checked again before copying.
+    /// Expected source length, checked before and after copying.
     pub len: u64,
 }
 
@@ -39,7 +40,8 @@ pub struct RestoreReport {
     /// Live targets left in place when no-replace copying found a concurrent
     /// target. Its bytes need not differ from the restore baseline.
     pub kept_external: Vec<FileId>,
-    /// Generation published for the resulting disk state.
+    /// Generation published for a changed disk state, or the current generation
+    /// if restore made no change.
     pub graph_rev: GraphRev,
 }
 
@@ -76,13 +78,19 @@ impl Store {
     /// caller is responsible for stronger source verification. The input is
     /// the complete desired set in those
     /// areas: every unlisted live page, journal, and asset sidecar is retired
-    /// into a same-filesystem recovery root. Replaced files are retired too.
+    /// into same-filesystem recovery roots. Graph files are retired under
+    /// `logseq/.tine-trash/<restore-id>`; asset sidecars under
+    /// `assets/.tine-restore-recovery/<restore-id>`. The returned `recovery`
+    /// paths locate them; the store has no restore-import or cleanup call.
+    /// Replaced files are retired too.
     /// Other asset files are left in place. The method then copies new files
     /// without replacing a concurrent winner. It blocks saves and transactions
     /// for the full operation. Cost includes all input bytes, all live page,
     /// journal, and sidecar bytes hashed for baseline and publication, and an
     /// asset-tree walk, even for a small input. A changed restore publishes one
-    /// `Origin::Own` revision for the final disk state, including a changed
+    /// `Origin::Own` revision for the final disk state, including `Removed`
+    /// tuples for retired live files and `config_changed` when config changed.
+    /// The config is reloaded before the resulting view is published. A changed
     /// partial result on failure. An in-flight save holding the writer lock
     /// finishes before this restore; a later save checks against restored
     /// bytes. Check `recovery` and

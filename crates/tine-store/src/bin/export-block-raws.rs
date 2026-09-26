@@ -32,7 +32,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 
 fn collect(blocks: &[DocBlock], fmt: &str, out: &mut Vec<serde_json::Value>) {
     for b in blocks {
-        out.push(serde_json::json!({ "raw": b.raw, "format": fmt }));
+        out.push(serde_json::json!({ "raw": b.raw(), "format": fmt }));
         collect(&b.children, fmt, out);
     }
 }

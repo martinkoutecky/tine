@@ -245,7 +245,7 @@ fn shallow_dto_estimated_bytes(block: &DocBlock, ancestors: &[&DocBlock]) -> usi
         block.uuid.len()
     };
     id_bytes
-        .saturating_add(block.raw.len())
+        .saturating_add(block.raw().len())
         .saturating_add(
             ancestors
                 .iter()
@@ -454,8 +454,8 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
         None => doc
             .roots
             .first()
-            .filter(|b| is_properties_only(&b.raw))
-            .map(|b| b.raw.as_str()),
+            .filter(|b| is_properties_only(b.raw()))
+            .map(|b| b.raw()),
     };
     let Some(text) = alias_text else {
         return Vec::new();
@@ -616,13 +616,9 @@ fn page_property_raw(pre: &str, is_org: bool) -> String {
 }
 
 fn property_projection(raw: &str, is_org: bool) -> DocBlock {
-    DocBlock {
-        raw: raw.to_string(),
-        children: Vec::new(),
-        uuid: String::new(),
-        is_org,
-        proj: std::sync::OnceLock::new(),
-    }
+    let mut block = DocBlock::new(raw);
+    block.set_org(is_org);
+    block
 }
 
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
@@ -688,7 +684,7 @@ fn block_reference_evidence(
     config: &tine_core::config::Config,
 ) -> Option<ReferenceBlockEvidence> {
     let result = tine_core::reference_evidence::occurrences_of_kind_bounded(
-        &block.raw,
+        block.raw(),
         &block.projection().reference_source,
         canonical,
         names_norm,
@@ -710,7 +706,7 @@ fn block_has_reference(
     config: &tine_core::config::Config,
 ) -> bool {
     tine_core::reference_evidence::has_occurrence_kind(
-        &block.raw,
+        block.raw(),
         &block.projection().reference_source,
         names_norm,
         kind,
@@ -2200,7 +2196,7 @@ pub(crate) fn templates(graph: &impl GraphRead) -> Vec<TemplateDto> {
 /// copies get fresh ids) and, at the root, the `template*` properties.
 fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
     let raw = b
-        .raw
+        .raw()
         .lines()
         .filter(|l| {
             let t = l.trim();
@@ -2647,7 +2643,7 @@ fn block_to_bounded_dto(
         return None;
     }
     let minimum_bytes = block
-        .raw
+        .raw()
         .len()
         .saturating_add(if block.uuid.is_empty() {
             36
@@ -3251,23 +3247,23 @@ impl Pred {
                     .iter()
                     .any(|(k, v)| property_key_norm(k) == key && value_matches(v, val.as_deref()))
             }
-            Pred::Scheduled => block.raw.contains("SCHEDULED:"),
-            Pred::Deadline => block.raw.contains("DEADLINE:"),
+            Pred::Scheduled => block.raw().contains("SCHEDULED:"),
+            Pred::Deadline => block.raw().contains("DEADLINE:"),
             Pred::Journal => ctx.is_journal,
             Pred::Between(field, lo, hi) => {
                 let in_range = |c: i64| lo.map_or(true, |l| c >= l) && hi.map_or(true, |h| c <= h);
                 match field {
                     BetweenField::Any => {
                         ctx.journal.is_some_and(in_range)
-                            || block_date_ordinals(&block.raw, None)
+                            || block_date_ordinals(block.raw(), None)
                                 .into_iter()
                                 .any(in_range)
                     }
                     BetweenField::Journal => ctx.journal.is_some_and(in_range),
-                    BetweenField::Scheduled => block_date_ordinals(&block.raw, Some("SCHEDULED:"))
+                    BetweenField::Scheduled => block_date_ordinals(block.raw(), Some("SCHEDULED:"))
                         .into_iter()
                         .any(in_range),
-                    BetweenField::Deadline => block_date_ordinals(&block.raw, Some("DEADLINE:"))
+                    BetweenField::Deadline => block_date_ordinals(block.raw(), Some("DEADLINE:"))
                         .into_iter()
                         .any(in_range),
                 }
@@ -3968,8 +3964,7 @@ mod tests {
     fn eval_colon_property_and_query_matches_block() {
         let none = ctx_named();
         let mut b = DocBlock::new("assignment one");
-        b.raw
-            .push_str("\nfach:: [[Management der digitalen Transformation]]\ntype:: #assignment");
+        b.set_raw("assignment one\nfach:: [[Management der digitalen Transformation]]\ntype:: #assignment");
         // The reported query now matches a block carrying both properties.
         assert!(pred(
             r##"(and (property :fach [[Management der digitalen Transformation]]) (property :type "#assignment"))"##
@@ -4115,7 +4110,7 @@ mod tests {
         assert!(pred("(not [[Work]])").eval(&task, &none));
 
         let mut withprop = DocBlock::new("a book");
-        withprop.raw.push_str("\ntype:: book");
+        withprop.set_raw("a book\ntype:: book");
         assert!(pred("(property type book)").eval(&withprop, &none));
         assert!(pred("(property type)").eval(&withprop, &none));
         assert!(!pred("(property type article)").eval(&withprop, &none));
@@ -4348,7 +4343,7 @@ mod tests {
         assert!(!pred("\"slow\"").eval(&b, &none));
         // multi-value + page-ref property value matching
         let mut mv = DocBlock::new("x");
-        mv.raw.push_str("\ntags:: [[research]], optimization");
+        mv.set_raw("x\ntags:: [[research]], optimization");
         assert!(pred("(property tags research)").eval(&mv, &none));
         assert!(pred("(property tags optimization)").eval(&mv, &none));
         assert!(!pred("(property tags cooking)").eval(&mv, &none));
@@ -4358,7 +4353,7 @@ mod tests {
     fn property_query_matches_folded_source_key() {
         let none = ctx_named();
         let mut block = DocBlock::new("shipped task");
-        block.raw.push_str("\ndone_at:: 2026-07-19");
+        block.set_raw("shipped task\ndone_at:: 2026-07-19");
 
         assert!(pred("(property done-at 2026-07-19)").eval(&block, &none));
         assert!(pred("(property DONE_AT)").eval(&block, &none));

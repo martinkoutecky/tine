@@ -1556,7 +1556,7 @@ mod tests {
                     }
                     let projection = block.projection();
                     if fuzzy_name_score(&projection.visible_lower, query).is_some() {
-                        out.push((page.to_string(), block.raw.clone()));
+                        out.push((page.to_string(), block.raw().to_owned()));
                         *remaining -= 1;
                     }
                     visit(page, &block.children, query, remaining, out);

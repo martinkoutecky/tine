@@ -30,7 +30,7 @@ fn nested_blocks_tabs() {
     assert_eq!(doc.roots.len(), 2);
     assert_eq!(doc.roots[0].children.len(), 2);
     assert_eq!(doc.roots[0].children[1].children.len(), 1);
-    assert_eq!(doc.roots[0].children[1].children[0].raw, "grandchild");
+    assert_eq!(doc.roots[0].children[1].children[0].raw(), "grandchild");
 }
 
 #[test]
@@ -39,8 +39,8 @@ fn multiline_block_continuation() {
     let input = "- first line\n  second line\n  third line\n\t- child\n\t  child cont\n";
     assert_roundtrip(input);
     let doc = doc::parse(input);
-    assert_eq!(doc.roots[0].raw, "first line\nsecond line\nthird line");
-    assert_eq!(doc.roots[0].children[0].raw, "child\nchild cont");
+    assert_eq!(doc.roots[0].raw(), "first line\nsecond line\nthird line");
+    assert_eq!(doc.roots[0].children[0].raw(), "child\nchild cont");
 }
 
 #[test]
@@ -57,10 +57,10 @@ fn fenced_code_with_bullet_line_stays_one_block() {
         "code fence must not become children"
     );
     assert_eq!(
-        doc.roots[0].raw,
+        doc.roots[0].raw(),
         "```clojure\n(defn f [x] x)\n- not a child\n```"
     );
-    assert_eq!(doc.roots[1].raw, "after");
+    assert_eq!(doc.roots[1].raw(), "after");
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn nested_backtick_fence_not_closed_early() {
         0,
         "inner ``` must not split the block"
     );
-    assert_eq!(doc.roots[0].raw, "````\n```\n- still code\n````");
+    assert_eq!(doc.roots[0].raw(), "````\n```\n- still code\n````");
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn tilde_fence_protects_bullet_lines() {
     let doc = doc::parse(input);
     assert_eq!(doc.roots.len(), 2);
     assert_eq!(doc.roots[0].children.len(), 0);
-    assert_eq!(doc.roots[0].raw, "~~~\n- not a child\n~~~");
+    assert_eq!(doc.roots[0].raw(), "~~~\n- not a child\n~~~");
 }
 
 #[test]
@@ -95,9 +95,9 @@ fn fenced_code_on_child_block() {
     assert_roundtrip(input);
     let doc = doc::parse(input);
     assert_eq!(doc.roots[0].children.len(), 2);
-    assert_eq!(doc.roots[0].children[0].raw, "```\n- inner\n```");
+    assert_eq!(doc.roots[0].children[0].raw(), "```\n- inner\n```");
     assert_eq!(doc.roots[0].children[0].children.len(), 0);
-    assert_eq!(doc.roots[0].children[1].raw, "real sibling");
+    assert_eq!(doc.roots[0].children[1].raw(), "real sibling");
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn property_names_fold_for_lookup_without_changing_source_bytes() {
     let block = &parsed.roots[0];
     assert_eq!(block.property("done-at").as_deref(), Some("1"));
     assert_eq!(block.property("DONE_AT").as_deref(), Some("1"));
-    assert_eq!(block.raw, "task\nDone_At:: 1");
+    assert_eq!(block.raw(), "task\nDone_At:: 1");
 }
 
 #[test]
@@ -171,13 +171,13 @@ fn preamble_collapsed_heading_owns_the_following_outline() {
     assert_eq!(parsed.pre_block.as_deref(), Some("title:: Imported feed"));
     assert_eq!(parsed.roots.len(), 1);
     assert_eq!(
-        parsed.roots[0].raw,
+        parsed.roots[0].raw(),
         "# Park Ji Hyun Confirmed To Reunite\ncollapsed:: true"
     );
     assert!(parsed.roots[0].collapsed());
     assert_eq!(parsed.roots[0].children.len(), 2);
-    assert_eq!(parsed.roots[0].children[0].raw, "article link");
-    assert_eq!(parsed.roots[0].children[1].raw, "article body");
+    assert_eq!(parsed.roots[0].children[0].raw(), "article link");
+    assert_eq!(parsed.roots[0].children[1].raw(), "article body");
 
     let saved = doc::serialize_with(&parsed, &doc::SerializeOpts::detect(Some(input)));
     assert_eq!(
@@ -201,14 +201,14 @@ fn ordinary_markdown_preamble_is_not_promoted() {
         Some("# A normal Markdown introduction\nprose remains page-level")
     );
     assert_eq!(parsed.roots.len(), 1);
-    assert_eq!(parsed.roots[0].raw, "first list item");
+    assert_eq!(parsed.roots[0].raw(), "first list item");
 }
 
 #[test]
 fn empty_block() {
     assert_roundtrip("- before\n-\n- after\n");
     let doc = doc::parse("- before\n-\n- after\n");
-    assert_eq!(doc.roots[1].raw, "");
+    assert_eq!(doc.roots[1].raw(), "");
 }
 
 #[test]

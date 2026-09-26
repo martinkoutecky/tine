@@ -156,7 +156,7 @@ impl SiteWriter {
 
 /// A failed site export attempts to remove its unpublished stage. An early
 /// setup failure or cleanup error may leave it on disk. Any retired previous
-/// site remains in recovery.
+/// site remains under `logseq/.tine-trash/conflicts/`.
 #[derive(Debug)]
 pub struct PublishFailed {
     /// Error that prevented the new site from being published.
@@ -174,7 +174,8 @@ pub struct PublishReceipt {
     pub files: u64,
     /// Always `None` on success. `site` names the published directory; a
     /// concurrent destination collision returns an error instead. A previous
-    /// site retired on success is kept in recovery but its path is not returned
+    /// site retired on success is kept under `logseq/.tine-trash/conflicts/`
+    /// but its path is not returned
     /// here. A failed export reports
     /// its retained path in [`PublishFailed::previous_kept`] when available.
     pub previous_kept: Option<PathBuf>,
@@ -190,7 +191,8 @@ impl Store {
     /// an early setup or cleanup error may leave it on disk. This does not
     /// emit a graph `Change`. Cost O(emitted bytes + previous-site retirement);
     /// it blocks page saves and other writes for the full operation, including
-    /// the caller's `emit` closure and each output file's fsync.
+    /// the caller's `emit` closure and each output file's fsync. Prepare
+    /// expensive content before calling and keep `emit` bounded.
     pub fn publish_site(
         &self,
         emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,

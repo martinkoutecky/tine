@@ -14,6 +14,8 @@
 //! order to one consumer. [`Store::close`] stops observation and releases
 //! callers waiting for load. Writes, restore, publication, and graph acquisition
 //! can block without a timeout; run them off a UI thread.
+//! [`FileId`] and [`PageId`] are re-exports of the same types in
+//! `tine_core::model`, not separate store-specific identities.
 #![deny(missing_docs)]
 
 #[cfg(test)]

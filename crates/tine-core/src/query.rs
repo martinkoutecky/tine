@@ -95,7 +95,8 @@ pub struct QueryExportResult {
     pub shown: usize,
     /// Total matching roots before truncation.
     pub total: usize,
-    /// Descendant nodes omitted by the node or byte budget.
+    /// Nodes omitted by the node or byte budget, including a root that did not
+    /// fit and a selected root absent when hydrated.
     pub omitted_nodes: usize,
 }
 
