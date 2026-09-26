@@ -1,14 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PageEntry } from "./types";
+import type { PageEntry, PageInventory, PageInventoryEntry } from "./types";
 
 const backendMock = vi.hoisted(() => ({
-  listPages: vi.fn(),
-  referencedPageNames: vi.fn(),
+  pageInventory: vi.fn(),
 }));
-const waitForWarmCache = vi.hoisted(() => vi.fn(async () => true));
 
 vi.mock("./backend", () => ({ backend: () => backendMock }));
-vi.mock("./warmCache", () => ({ waitForWarmCache }));
 
 const page = (name: string): PageEntry => ({
   name,
@@ -16,6 +13,21 @@ const page = (name: string): PageEntry => ({
   date_key: null,
   path: `pages/${name.replaceAll("/", "___")}.md`,
 });
+const physical = (name: string): PageInventoryEntry => ({
+  key: name.toLowerCase(),
+  name,
+  is_journal: false,
+  day: null,
+  target: { kind: "existing", id: page(name).path, others: [] },
+});
+const referenced = (name: string): PageInventoryEntry => ({
+  key: name.toLowerCase(),
+  name,
+  is_journal: false,
+  day: null,
+  target: { kind: "absent", id: page(name).path },
+});
+const inventory = (rev: number, ...entries: PageInventoryEntry[]): PageInventory => ({ rev: String(rev), entries });
 
 async function loadInventory() {
   const ui = await import("./ui");
@@ -25,16 +37,16 @@ async function loadInventory() {
 
 beforeEach(() => {
   vi.resetModules();
-  backendMock.listPages.mockReset();
-  backendMock.referencedPageNames.mockReset();
-  waitForWarmCache.mockReset();
-  waitForWarmCache.mockResolvedValue(true);
+  backendMock.pageInventory.mockReset();
 });
 
+// All Pages and the complete name list are views of the one page index. The
+// old test file pinned two IPCs (list_pages, referenced_page_names); each test
+// keeps its outcome, now over the single page_inventory.
 describe("GH #229 complete page-name inventory", () => {
   it("keeps All Pages physical-only while physical spelling wins its reference-only fold", async () => {
-    backendMock.listPages.mockResolvedValue([page("Test")]);
-    backendMock.referencedPageNames.mockResolvedValue(["test", "test/testy test"]);
+    backendMock.pageInventory.mockResolvedValue(inventory(1,
+      physical("Test"), referenced("test"), referenced("test/testy test")));
     const { allPageNames, allPages } = await loadInventory();
 
     await vi.waitFor(() => {
@@ -43,70 +55,58 @@ describe("GH #229 complete page-name inventory", () => {
     });
   });
 
-  it("refreshes only reference names after dataRev", async () => {
+  it("refreshes reference names after dataRev with one inventory IPC", async () => {
     let refs = ["test/first"];
-    backendMock.listPages.mockResolvedValue([page("test")]);
-    backendMock.referencedPageNames.mockImplementation(async () => refs);
+    backendMock.pageInventory.mockImplementation(async () =>
+      inventory(refs.length, physical("test"), ...refs.map(referenced)));
     const { allPageNames, bumpDataRev } = await loadInventory();
 
     await vi.waitFor(() => expect(allPageNames()).toEqual(["test", "test/first"]));
-    backendMock.listPages.mockClear();
-    backendMock.referencedPageNames.mockClear();
+    backendMock.pageInventory.mockClear();
     refs = ["test/second"];
     bumpDataRev();
 
     await vi.waitFor(() => expect(allPageNames()).toEqual(["test", "test/second"]));
-    expect(backendMock.listPages).not.toHaveBeenCalled();
-    expect(backendMock.referencedPageNames).toHaveBeenCalledTimes(1);
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes physical pages after pageInventoryRev on both create and delete", async () => {
-    let physical = [page("test")];
-    backendMock.listPages.mockImplementation(async () => physical);
-    backendMock.referencedPageNames.mockResolvedValue(["test/linked"]);
+    let names = ["test"];
+    let rev = 1;
+    backendMock.pageInventory.mockImplementation(async () =>
+      inventory(rev++, ...names.map(physical), referenced("test/linked")));
     const { allPages, bumpPageInventoryRev } = await loadInventory();
 
     await vi.waitFor(() => expect(allPages()).toEqual([page("test")]));
-    backendMock.listPages.mockClear();
-    physical = [page("test"), page("created")];
+    backendMock.pageInventory.mockClear();
+    names = ["created", "test"];
     bumpPageInventoryRev();
-    await vi.waitFor(() => expect(allPages()).toEqual([page("test"), page("created")]));
-    expect(backendMock.listPages).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(allPages()).toEqual([page("created"), page("test")]));
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(1);
 
-    backendMock.listPages.mockClear();
-    physical = [page("test")];
+    backendMock.pageInventory.mockClear();
+    names = ["test"];
     bumpPageInventoryRev();
     await vi.waitFor(() => expect(allPages()).toEqual([page("test")]));
-    expect(backendMock.listPages).toHaveBeenCalledTimes(1);
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(1);
   });
 
   it("rejects physical and reference-name responses from a superseded graph", async () => {
-    const physicalResolvers: Array<(pages: PageEntry[]) => void> = [];
-    const referenceResolvers: Array<(names: string[]) => void> = [];
-    backendMock.listPages.mockImplementation(() => new Promise<PageEntry[]>((resolve) => {
-      physicalResolvers.push(resolve);
-    }));
-    backendMock.referencedPageNames.mockImplementation(() => new Promise<string[]>((resolve) => {
-      referenceResolvers.push(resolve);
+    const resolvers: Array<(value: PageInventory) => void> = [];
+    backendMock.pageInventory.mockImplementation(() => new Promise<PageInventory>((resolve) => {
+      resolvers.push(resolve);
     }));
     const { allPageNames, bumpGraphEpoch } = await loadInventory();
 
-    await vi.waitFor(() => {
-      expect(physicalResolvers).toHaveLength(1);
-      expect(referenceResolvers).toHaveLength(1);
-    });
+    await vi.waitFor(() => expect(allPageNames()).toEqual([]));
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1));
     bumpGraphEpoch();
-    await vi.waitFor(() => {
-      expect(physicalResolvers).toHaveLength(2);
-      expect(referenceResolvers).toHaveLength(2);
-    });
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
 
-    physicalResolvers[1]([page("fresh")]);
-    referenceResolvers[1](["fresh/child"]);
+    resolvers[1](inventory(1, physical("fresh"), referenced("fresh/child")));
     await vi.waitFor(() => expect(allPageNames()).toEqual(["fresh", "fresh/child"]));
 
-    physicalResolvers[0]([page("stale")]);
-    referenceResolvers[0](["stale/child"]);
+    resolvers[0](inventory(5, physical("stale"), referenced("stale/child")));
     await Promise.resolve();
     await Promise.resolve();
     expect(allPageNames()).toEqual(["fresh", "fresh/child"]);

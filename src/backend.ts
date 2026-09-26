@@ -205,9 +205,10 @@ export interface Backend {
    *  the created graph's root path to then `loadGraph`. Creates the graph in
    *  `dir` if empty, else in a fresh `tine-demo` subfolder. */
   createGraph(dir: string): Promise<string>;
-  /** Page names that exist only through references in the warmed graph cache. */
-  referencedPageNames(): Promise<string[]>;
-  listPages(): Promise<PageEntry[]>;
+  /** The whole name inventory (physical pages/journals, aliases, reference-only
+   *  names), each with the backend's resolved target. Cached only by
+   *  `pageIndex.ts`; the frontend keeps no other name map. */
+  pageInventory(): Promise<import("./types").PageInventory>;
   journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
@@ -254,8 +255,6 @@ export interface Backend {
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
   queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
-  /** `alias::` → canonical page name pairs. */
-  pageAliases(): Promise<[string, string][]>;
   /** `icon::` property for each named page that has one (page-name → icon). */
   pageIcons(names: string[]): Promise<Record<string, string>>;
   /** Persist favorited page names to config.edn `:favorites`. */
@@ -634,11 +633,8 @@ class TauriBackend implements Backend {
   createGraph(dir: string) {
     return this.call<string>("create_graph", { dir });
   }
-  referencedPageNames() {
-    return this.call<string[]>("referenced_page_names");
-  }
-  listPages() {
-    return this.call<PageEntry[]>("list_pages");
+  pageInventory() {
+    return this.call<import("./types").PageInventory>("page_inventory");
   }
   journalFeedPage(limit: number, beforeDay: number | null) {
     return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay });
@@ -711,9 +707,6 @@ class TauriBackend implements Backend {
       "query_facets",
       autocomplete ? { autocomplete: true } : undefined,
     );
-  }
-  pageAliases() {
-    return this.call<[string, string][]>("page_aliases");
   }
   pageIcons(names: string[]) {
     return this.call<Record<string, string>>("page_icons", { names });

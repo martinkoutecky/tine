@@ -4,7 +4,8 @@ import { backend } from "../backend";
 import { installMobileDrawerMode } from "../mobileDrawers";
 import { openPage, resetTabsToJournals, route } from "../router";
 import type { LoadGraphPathOutcome } from "../graph";
-import type { PageEntry } from "../types";
+import type { PageEntry, PageInventoryEntry } from "../types";
+import { resetPageIndex } from "../pageIndex";
 import {
   activeDrawer,
   bumpGraphEpoch,
@@ -12,7 +13,6 @@ import {
   closeSwitcher,
   completeActiveLeftNavigation,
   resetLeftSidebarSections,
-  setAliasMap,
   setFavorites,
   setLeftSidebarOpen,
   setRecentPages,
@@ -65,7 +65,7 @@ function dispatch(element: Element, type = "click", init: MouseEventInit = {}) {
 afterEach(() => {
   closeContextMenu();
   closeSwitcher();
-  setAliasMap({});
+  resetPageIndex();
   setFavorites([]);
   setRecentPages([]);
   setRightSidebar([]);
@@ -90,7 +90,14 @@ describe("GH #161 successful left-navigation boundary", () => {
       page("Namespace/Child"),
       ...Array.from({ length: 303 }, (_, index) => page(`Filler ${String(index).padStart(3, "0")}`)),
     ];
-    vi.spyOn(backend(), "listPages").mockResolvedValue(pages);
+    const entries: PageInventoryEntry[] = pages.map((row) => ({
+      key: row.name.toLowerCase(),
+      name: row.name,
+      is_journal: false,
+      day: null,
+      target: { kind: "existing", id: row.path, others: [] },
+    }));
+    vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
     vi.spyOn(backend(), "listKnownGraphs").mockResolvedValue([
       { name: "Known graph", path: "/graphs/known" },
     ]);

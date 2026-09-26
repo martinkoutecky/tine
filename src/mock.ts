@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -632,6 +632,17 @@ export function mockBackend(): Backend {
   const all = [...PAGES, ...NAMED];
   const find = (name: string) =>
     all.find((p) => p.name.toLowerCase() === name.toLowerCase()) ?? null;
+  const mockResolve = (name: string, kind: "journal" | "page"): ResolvedPage => {
+    const page = all.find((p) => p.kind === kind && p.name.toLowerCase() === name.toLowerCase());
+    if (page) return { kind: "existing", id: mockPagePath(page), others: [] };
+    if (kind === "page") {
+      const owners = all.filter((p) => p.pre_block?.split(/\n/).some((line) =>
+        /^alias::\s*/i.test(line) && line.replace(/^alias::\s*/i, "").split(",").some((alias) => alias.trim().toLowerCase() === name.toLowerCase())
+      )).map(mockPagePath).sort();
+      if (owners.length) return { kind: "alias", owners };
+    }
+    return { kind: "absent", id: mockPagePath({ name, kind, title: name, pre_block: null, blocks: [] }) };
+  };
 
   // Parse a block's `key:: value` property lines (mirrors the real backend's
   // block_to_dto), so query results carry `properties` for the table columns and
@@ -806,11 +817,28 @@ export function mockBackend(): Backend {
     async defaultGraphParent(): Promise<string> {
       return "/mock";
     },
-    async referencedPageNames(): Promise<string[]> {
-      return mockReferencedPageNames(all);
-    },
-    async listPages(): Promise<PageEntry[]> {
-      return all.map(mockPageEntry);
+    async pageInventory(): Promise<PageInventory> {
+      // One row per (kind, folded name), like the real inventory: physical
+      // pages/journals first, then reference-only (and alias) names.
+      const key = (name: string) => name.trim().toLowerCase().normalize("NFC");
+      const rows = new Map<string, PageInventoryEntry>();
+      const add = (name: string, kind: "journal" | "page") => {
+        const slot = `${kind}:${key(name)}`;
+        if (!key(name) || rows.has(slot)) return;
+        rows.set(slot, {
+          key: key(name),
+          name,
+          is_journal: kind === "journal",
+          day: kind === "journal" ? mockJournalDayKey(name) : null,
+          target: mockResolve(name, kind),
+        });
+      };
+      for (const page of all) add(page.name, page.kind);
+      for (const name of mockReferencedPageNames(all)) {
+        if (!rows.has(`journal:${key(name)}`)) add(name, "page");
+      }
+      const entries = [...rows.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      return { rev: "0", entries };
     },
     async journalFeedPage(limit: number, beforeDay: number | null) {
       const now = new Date();
@@ -839,15 +867,7 @@ export function mockBackend(): Backend {
       return page ? { ...page, id: mockPagePath(page) } : null;
     },
     async resolvePage(name: string, kind: "journal" | "page") {
-      const page = all.find((p) => p.kind === kind && p.name.toLowerCase() === name.toLowerCase());
-      if (page) return { kind: "existing" as const, id: mockPagePath(page), others: [] };
-      if (kind === "page") {
-        const owners = all.filter((p) => p.pre_block?.split(/\n/).some((line) =>
-          /^alias::\s*/i.test(line) && line.replace(/^alias::\s*/i, "").split(",").some((alias) => alias.trim().toLowerCase() === name.toLowerCase())
-        )).map(mockPagePath).sort();
-        if (owners.length) return { kind: "alias" as const, owners };
-      }
-      return { kind: "absent" as const, id: mockPagePath({ name, kind, title: name, pre_block: null, blocks: [] }) };
+      return mockResolve(name, kind);
     },
     async graphSourceFiles(includeJournals: boolean) {
       // Synthetic sources so the diff panel is exercisable against the mock
@@ -1090,9 +1110,6 @@ export function mockBackend(): Backend {
     },
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
-    },
-    async pageAliases(): Promise<[string, string][]> {
-      return [];
     },
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};

@@ -10,6 +10,7 @@ import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat, isJournalTitle } from "./journal";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { currentPdfOwnership, type PdfOwnership } from "./pdfOwnership";
+import { navigationName } from "./pageIndex";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -702,9 +703,9 @@ export interface FavItem {
 }
 export const [favorites, setFavorites] = createSignal<FavItem[]>([]);
 export function isFavorite(name: string): boolean {
-  const target = resolveAlias(name);
+  const target = navigationName(name);
   return favorites().some((f) =>
-    f.kind === "page" ? resolveAlias(f.name) === target : f.name === name
+    f.kind === "page" ? navigationName(f.name) === target : f.name === name
   );
 }
 function persistFavorites(next: FavItem[]) {
@@ -714,9 +715,9 @@ function persistFavorites(next: FavItem[]) {
 }
 export function toggleFavorite(name: string, kind: "page" | "journal" = "page") {
   const f = favorites();
-  const target = kind === "page" ? resolveAlias(name) : name;
+  const target = kind === "page" ? navigationName(name) : name;
   const matches = (item: FavItem) => item.kind === kind &&
-    (kind === "page" ? resolveAlias(item.name) === target : item.name === name);
+    (kind === "page" ? navigationName(item.name) === target : item.name === name);
   const next = f.some(matches)
     ? f.filter((x) => !matches(x))
     : [...f, { name, kind }];
@@ -1184,7 +1185,7 @@ export function openPageInSidebar(
     : targetOrName;
   pageKind = kind;
   path = targetPath;
-  if (pageKind === "page" && !path) name = resolveAlias(name);
+  if (pageKind === "page" && !path) name = navigationName(name);
   setRightSidebarOpen(true);
   // The working set is intentionally name-keyed. A duplicate physical file with
   // the same logical page name therefore replaces that one live sidebar slot;
@@ -1519,8 +1520,6 @@ export const [lightbox, setLightbox] = createSignal<string | null>(null);
 export const [audioPlayer, setAudioPlayer] =
   createSignal<{ url: string; name: string } | null>(null);
 
-// Page aliases (alias:: → canonical), keyed by normalized alias; loaded per graph.
-export const [aliasMap, setAliasMap] = createSignal<Record<string, string>>({});
 /** Mirror core `refs::page_key`: trim, Unicode lowercase, remove one boundary
  *  slash at each side, then NFC. Lowercasing is contextual (`ΟΣ` → `ος`). */
 export function pageIdentityKey(name: string): string {
@@ -1530,10 +1529,6 @@ export function pageIdentityKey(name: string): string {
     ? withoutLeading.slice(0, -1)
     : withoutLeading;
   return withoutBoundaries.normalize("NFC");
-}
-/** Resolve a page name through `alias::` to its canonical page (else unchanged). */
-export function resolveAlias(name: string): string {
-  return aliasMap()[pageIdentityKey(name)] ?? name;
 }
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);

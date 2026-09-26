@@ -1,4 +1,4 @@
-import { Show, Suspense, createEffect, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, Suspense, createEffect, lazy, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, toLoadablePage, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
@@ -35,7 +35,8 @@ import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
-import { loadGraphPath, persistedGraphPath, refreshAliases, refreshPageIdentities } from "./graph";
+import { loadGraphPath, persistedGraphPath } from "./graph";
+import { installPageIndex } from "./pageIndex";
 import { checkForUpdate } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, sameRoute, type PaneRouter, type QueryRoute } from "./router";
@@ -66,9 +67,7 @@ import {
   focusMode,
   dimInactiveBlocks,
   exitFocusMode,
-  dataRev,
   bumpDataRev,
-  pageInventoryRev,
   bumpPageInventoryRev,
   installPaneTracker,
   markConflict,
@@ -793,13 +792,10 @@ export function App(): JSX.Element {
     })();
   });
 
-  // After edits settle (dataRev bumps), refresh the alias map so changing an
-  // alias:: doesn't leave navigation resolving to the old canonical page. The
-  // Rust side caches aliases, so this is cheap unless a save actually changed them.
-  createEffect(on(dataRev, () => void refreshAliases(), { defer: true }));
-  // Page creation/deletion has its own rare invalidation lane: canonical-name
-  // precedence stays current without listing every page after ordinary saves.
-  createEffect(on(pageInventoryRev, () => void refreshPageIdentities(), { defer: true }));
+  // The page index refetches `page_inventory` on graph bind, after edits settle
+  // (dataRev: an alias:: edit must not leave navigation on the old page), and on
+  // create/delete/rename (pageInventoryRev); one IPC per trigger tick.
+  installPageIndex();
 
   // (Re)install keybindings whenever config or the user's local overrides change
   // (precedence: defaults < config.edn :shortcuts < Settings overrides). We also

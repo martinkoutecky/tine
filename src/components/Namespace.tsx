@@ -124,8 +124,8 @@ export function NamespaceTree(props: {
   onPageContextMenu?: (e: MouseEvent, name: string, kind: PageKind) => void;
   onActiveNavigationComplete?: () => void;
 } = {}): JSX.Element {
-  // Pure CPU derivation off the shared page-name inventory (src/pages.ts) —
-  // no longer its own whole-graph listPages() fetch.
+  // Pure CPU derivation off the shared page-name inventory (src/pageIndex.ts,
+  // one page_inventory for every consumer), not its own whole-graph fetch.
   const tree = createMemo(() => buildNamespaceTree(allPageNames()));
   return (
     <Show when={tree().length > 0}>

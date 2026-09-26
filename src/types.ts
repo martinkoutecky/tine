@@ -84,6 +84,22 @@ export type ResolvedPage =
   | { kind: "alias"; owners: string[] }
   | { kind: "absent"; id: string };
 
+/** One `page_inventory` row. `key` is core `refs::page_key(name)`; `target` is
+ *  the backend's answer for that name (precedence already decided). */
+export interface PageInventoryEntry {
+  key: string;
+  name: string;
+  is_journal: boolean;
+  day: number | null;
+  target: ResolvedPage;
+}
+
+/** `page_inventory` result; `rev` is the graph revision it was read at. */
+export interface PageInventory {
+  rev: string;
+  entries: PageInventoryEntry[];
+}
+
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {

@@ -8,8 +8,8 @@
 import { createSignal, type Accessor } from "solid-js";
 import {
   pushRecent,
-  resolveAlias,
 } from "./ui";
+import { navigationName } from "./pageIndex";
 import {
   doc,
   persistentBlockRef,
@@ -490,7 +490,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // An exact physical owner is authoritative. Alias resolution is only valid
     // for deliberately logical targets.
     const name = target.pageKind === "page" && !target.path && !isGuideRouteName(target.name)
-      ? resolveAlias(target.name)
+      ? navigationName(target.name)
       : target.name;
     navigate(
       { kind: "page", name, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) },
@@ -650,7 +650,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function openPageTargetInNewTab(target: PageTarget, foreground = false) {
     const name = target.pageKind === "page" && !target.path && !isGuideRouteName(target.name)
-      ? resolveAlias(target.name)
+      ? navigationName(target.name)
       : target.name;
     openInNewTab({ kind: "page", name, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) }, foreground);
   }

@@ -1,6 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import { openKnownGraph, openSidebarPageTarget, type KnownGraphOpenDeps, type SidebarPageOpenDeps } from "./Sidebar";
-import { favorites, isFavorite, pageIdentityKey, setAliasMap, setFavorites, toggleFavorite } from "../ui";
+import { favorites, isFavorite, pageIdentityKey, setFavorites, toggleFavorite } from "../ui";
+import { backend } from "../backend";
+import { refreshPageIndex, resetPageIndex } from "../pageIndex";
+import type { PageInventoryEntry, ResolvedPage } from "../types";
+
+// Seed the one page index the way the backend would answer (ported from the
+// deleted frontend alias-map seeding: the same names, now as inventory rows).
+async function seedIndex(...rows: Array<[name: string, target: ResolvedPage]>) {
+  const entries: PageInventoryEntry[] = rows.map(([name, target]) => ({
+    key: pageIdentityKey(name), name, is_journal: false, day: null, target,
+  }));
+  vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
+  resetPageIndex();
+  await refreshPageIndex();
+}
+const file = (id: string): ResolvedPage => ({ kind: "existing", id, others: [] });
 
 describe("known graph open gesture", () => {
   it("uses an in-place switch for an ordinary click", async () => {
@@ -25,8 +40,8 @@ describe("known graph open gesture", () => {
 });
 
 describe("favorite alias navigation", () => {
-  it("resolves the canonical page for normal, sidebar, new-tab, and context gestures", () => {
-    setAliasMap({ shortcut: "Canonical" });
+  it("resolves the canonical page for normal, sidebar, new-tab, and context gestures", async () => {
+    await seedIndex(["Canonical", file("pages/Canonical.md")], ["shortcut", { kind: "alias", owners: ["pages/Canonical.md"] }]);
     const deps: SidebarPageOpenDeps = {
       normal: vi.fn(),
       sidebar: vi.fn(),
@@ -48,11 +63,12 @@ describe("favorite alias navigation", () => {
     toggleFavorite("Canonical", "page");
     expect(favorites()).toEqual([]);
 
-    setAliasMap({});
+    resetPageIndex();
+    vi.restoreAllMocks();
   });
 
-  it("resolves mixed-case real-page identities across every sidebar gesture", () => {
-    setAliasMap({ page1: "page1" });
+  it("resolves mixed-case real-page identities across every sidebar gesture", async () => {
+    await seedIndex(["page1", file("pages/page1.md")]);
     const deps: SidebarPageOpenDeps = {
       normal: vi.fn(),
       sidebar: vi.fn(),
@@ -69,13 +85,14 @@ describe("favorite alias navigation", () => {
     expect(deps.sidebar).toHaveBeenCalledWith("page1", "page");
     expect(deps.newTab).toHaveBeenCalledWith("page1", "page");
     expect(deps.context).toHaveBeenCalledWith(4, 8, "page1", "page");
-    setAliasMap({});
+    resetPageIndex();
+    vi.restoreAllMocks();
   });
 
-  it("uses the same contextual Unicode lowercase key as core refs::page_key", () => {
+  it("uses the same contextual Unicode lowercase key as core refs::page_key", async () => {
     expect(pageIdentityKey(" ΟΣ ")).toBe("ος");
     expect(pageIdentityKey("/Cafe\u{301}/")).toBe("café");
-    setAliasMap({ ος: "ΟΣ" });
+    await seedIndex(["ΟΣ", file("pages/ΟΣ.md")]);
     const normal = vi.fn();
     openSidebarPageTarget("ΟΣ", "page", "normal", undefined, {
       normal,
@@ -84,6 +101,7 @@ describe("favorite alias navigation", () => {
       context: vi.fn(),
     });
     expect(normal).toHaveBeenCalledWith("ΟΣ", "page");
-    setAliasMap({});
+    resetPageIndex();
+    vi.restoreAllMocks();
   });
 });

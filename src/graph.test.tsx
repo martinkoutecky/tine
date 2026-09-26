@@ -52,13 +52,11 @@ async function loadHarness(
       return "new-rev";
     }),
     readCustomCss: vi.fn(async () => ""),
-    pageAliases: vi.fn(async () => [["page1", "other"], ["shortcut", "other"]] as [string, string][]),
-    listPages: vi.fn(async () => [
-      { name: "page1", kind: "page" as const, date_key: null, path: "pages/page1.md" },
-      { name: "Jul 10th, 2026", kind: "journal" as const, date_key: 20260710, path: "journals/2026_07_10.md" },
-    ]),
   };
-  const setAliasMap = vi.fn();
+  // Records how many events preceded each reset (order without adding events).
+  const resetPageIndex = vi.fn(() => { resetAt.push(events.length); });
+  const resetAt: number[] = [];
+  const waitForWarmCache = vi.fn(async () => warm);
   const applyTemplateVars = vi.fn((raw: string, _currentPage?: string) => raw);
   const prepareTemplateVars = vi.fn(async () => {});
   const drainPdfWork = vi.fn(async () => {
@@ -77,16 +75,8 @@ async function loadHarness(
     bumpGraphEpoch: () => { events.push("bump-epoch"); },
     setWorkflow: vi.fn(),
     setRightSidebar: vi.fn(),
-    setAliasMap,
-    pageIdentityKey: (name: string) => {
-      const lowered = name.trim().toLowerCase();
-      const withoutLeading = lowered.startsWith("/") ? lowered.slice(1) : lowered;
-      const withoutBoundaries = withoutLeading.endsWith("/")
-        ? withoutLeading.slice(0, -1)
-        : withoutLeading;
-      return withoutBoundaries.normalize("NFC");
-    },
     seedFavorites: vi.fn(),
+    renamePageInNavigation: vi.fn(),
     pruneSidebarBlocks: vi.fn(),
     pushToast: vi.fn(),
     refreshJournalConflicts: vi.fn(async () => {}),
@@ -116,16 +106,17 @@ async function loadHarness(
     setJournalTitleFormat: vi.fn(),
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
-  vi.doMock("./warmCache", () => ({ waitForWarmCache: vi.fn(async () => warm) }));
+  vi.doMock("./warmCache", () => ({ waitForWarmCache }));
+  vi.doMock("./pageIndex", () => ({ resetPageIndex }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
   vi.doMock("./platform", () => ({ isMobile: () => false, platformKind: vi.fn(async () => "desktop") }));
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { loadGraphPath, refreshAliases, refreshPageIdentities } = await import("./graph");
+  const { loadGraphPath, refreshAfterRename } = await import("./graph");
   return {
-    loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap,
+    loadGraphPath, refreshAfterRename, api, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
     applyTemplateVars, prepareTemplateVars,
   };
@@ -140,78 +131,29 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
-  it("loads real page identities once and lets them win colliding aliases", async () => {
-    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
+  // Ported from "loads real page identities once and lets them win colliding
+  // aliases" (with "refreshes real-page precedence after a same-session page
+  // creation", "folds NFD alias keys…" and "discards an older same-epoch
+  // page-inventory response"): the name answering and its refresh moved to
+  // pageIndex.ts and are pinned in pageIndex.test.ts. graph.ts keeps only the
+  // reset on bind, before the epoch bump that refetches, and waits for no warm
+  // cache (page_inventory waits for the load itself).
+  it("resets the page index on bind before the epoch bump, with no warm-cache gate", async () => {
+    const { loadGraphPath, events, resetPageIndex, resetAt, waitForWarmCache } = await loadHarness(null, undefined, true, true);
 
     await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(setAliasMap).toHaveBeenLastCalledWith({
-      page1: "page1",
-      shortcut: "other",
-    }));
-    expect(api.listPages).toHaveBeenCalledTimes(1);
-
-    await refreshAliases();
-    expect(api.pageAliases).toHaveBeenCalledTimes(2);
-    expect(api.listPages).toHaveBeenCalledTimes(1);
-
-    await refreshPageIdentities();
-    expect(api.listPages).toHaveBeenCalledTimes(2);
+    expect(resetPageIndex).toHaveBeenCalledTimes(1);
+    expect(resetAt[0]).toBe(events.indexOf("bump-epoch"));
+    expect(waitForWarmCache).not.toHaveBeenCalled();
   });
 
-  it("refreshes real-page precedence after a same-session page creation", async () => {
-    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
-    await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
+  it("resets the page index after a rename, before the epoch bump", async () => {
+    const { refreshAfterRename, events, resetPageIndex, resetAt } = await loadHarness(null);
 
-    api.pageAliases.mockResolvedValue([["new page", "Alias target"]]);
-    api.listPages.mockResolvedValue([
-      { name: "page1", kind: "page" as const, date_key: null, path: "pages/page1.md" },
-      { name: "New Page", kind: "page" as const, date_key: null, path: "pages/New Page.md" },
-    ]);
-    await Promise.all([refreshAliases(), refreshPageIdentities()]);
-
-    expect(setAliasMap).toHaveBeenLastCalledWith({
-      "new page": "New Page",
-      page1: "page1",
-    });
-  });
-
-  it("folds NFD alias keys before real-page precedence is applied", async () => {
-    const { loadGraphPath, api, setAliasMap } = await loadHarness(null, undefined, true, true);
-    api.pageAliases.mockResolvedValue([["Cafe\u{301}", "Alias owner"]]);
-    api.listPages.mockResolvedValue([
-      { name: "Café", kind: "page" as const, date_key: null, path: "pages/Café.md" },
-    ]);
-
-    await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(setAliasMap).toHaveBeenLastCalledWith({ café: "Café" }));
-  });
-
-  it("discards an older same-epoch page-inventory response", async () => {
-    const { loadGraphPath, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
-    await loadGraphPath(META.root);
-    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
-
-    let releaseStale!: (entries: Awaited<ReturnType<typeof api.listPages>>) => void;
-    const stale = new Promise<Awaited<ReturnType<typeof api.listPages>>>((resolve) => {
-      releaseStale = resolve;
-    });
-    api.listPages
-      .mockImplementationOnce(() => stale)
-      .mockResolvedValueOnce([
-        { name: "Newest", kind: "page" as const, date_key: null, path: "pages/Newest.md" },
-      ]);
-
-    const older = refreshPageIdentities();
-    const newer = refreshPageIdentities();
-    await newer;
-    releaseStale([
-      { name: "Stale", kind: "page" as const, date_key: null, path: "pages/Stale.md" },
-    ]);
-    await older;
-
-    expect(setAliasMap).toHaveBeenLastCalledWith(expect.objectContaining({ newest: "Newest" }));
-    expect(setAliasMap).not.toHaveBeenLastCalledWith(expect.objectContaining({ stale: "Stale" }));
+    refreshAfterRename("Old", "New");
+    expect(resetPageIndex).toHaveBeenCalledTimes(1);
+    expect(resetAt).toEqual([0]);
+    expect(events).toEqual(["bump-epoch"]);
   });
 
   it("invalidates stale loads before awaiting template work, then refreshes after save", async () => {

@@ -1742,6 +1742,7 @@ impl WholeGraph {
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
         let mut claimed_names = HashSet::new();
+        let mut page_claimed_names = HashSet::new();
         for page in self.graph.list_pages() {
             let key = tine_core::refs::page_key(&page.name);
             if !visited.insert((page.kind, key.clone())) {
@@ -1754,7 +1755,11 @@ impl WholeGraph {
                 }
             }
             for (name, mut ids) in by_name {
-                claimed_names.insert(tine_core::refs::page_key(&name));
+                let key = tine_core::refs::page_key(&name);
+                if page.kind == PageKind::Page {
+                    page_claimed_names.insert(key.clone());
+                }
+                claimed_names.insert(key);
                 let id = ids.remove(0);
                 entries.push(InventoryEntry {
                     name,
@@ -1770,11 +1775,15 @@ impl WholeGraph {
             .map(|name| (tine_core::refs::page_key(name), name.as_str()))
             .collect();
         // One entry per alias name, owners sorted by path (rev 5
-        // `Resolved::Alias`). An alias that is also a file's name is kept:
-        // v0.6.5 `page_aliases` listed it; `resolve` still prefers the file.
+        // `Resolved::Alias`). An alias that is also a page file's name gets no
+        // entry: `resolve` prefers the file, and every entry's target must be
+        // the answer `resolve` gives for its name.
         let mut alias_owners: BTreeMap<String, (String, Vec<PageId>)> = BTreeMap::new();
         for (alias, _, owner) in self.graph.page_aliases_with_owners() {
             let key = tine_core::refs::page_key(&alias);
+            if page_claimed_names.contains(&key) {
+                continue;
+            }
             let spelling = reference_spelling
                 .get(&key)
                 .copied()

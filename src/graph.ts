@@ -2,14 +2,14 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, pageIdentityKey, closePdf } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
 import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
-import { waitForWarmCache } from "./warmCache";
+import { resetPageIndex } from "./pageIndex";
 import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
 import { ensureThemeStyle } from "./themeGallery";
 import { isMobile, platformKind } from "./platform";
@@ -124,7 +124,7 @@ export async function loadGraphPath(
   }
   if (!hadGraph || rebindsPdfOwner) activatePdfOwnership(meta.root);
   resetStore();
-  resetNavigationIndex();
+  resetPageIndex();
   clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one
   if (switching) {
     // A graph switch is a full workspace reset (OG opens one graph at a time):
@@ -159,7 +159,6 @@ export async function loadGraphPath(
   await ensureJournalTemplate();
   bumpGraphEpoch();
   void injectCustomCss();
-  void loadAliases();
   if (!switching) void pruneSidebarBlocks();
   maybeShowGuideAnnouncement();
   // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
@@ -182,83 +181,6 @@ export async function loadGraphPath(
   }
 }
 
-let navigationEpoch = -1;
-let aliasEntries: Record<string, string> = {};
-let pageIdentities: Record<string, string> = {};
-let aliasRequest = 0;
-let pageIdentityRequest = 0;
-
-function resetNavigationIndex(): void {
-  navigationEpoch = -1;
-  aliasEntries = {};
-  pageIdentities = {};
-  aliasRequest++;
-  pageIdentityRequest++;
-  setAliasMap({});
-}
-
-function bindNavigationIndex(epoch: number): void {
-  if (navigationEpoch === epoch) return;
-  navigationEpoch = epoch;
-  aliasEntries = {};
-  pageIdentities = {};
-  aliasRequest++;
-  pageIdentityRequest++;
-  setAliasMap({});
-}
-
-function commitNavigationIndex(): void {
-  // Existing files win a colliding alias, matching core `load_named`.
-  setAliasMap({ ...aliasEntries, ...pageIdentities });
-}
-
-/** Refresh semantic aliases after content saves. Request sequencing prevents an
- *  older same-epoch response from overwriting a newer alias edit. */
-export async function refreshAliases(): Promise<void> {
-  const epoch = graphEpoch();
-  bindNavigationIndex(epoch);
-  const request = ++aliasRequest;
-  const result = await Promise.allSettled([backend().pageAliases()]);
-  if (epoch !== graphEpoch() || navigationEpoch !== epoch || request !== aliasRequest) return;
-  aliasEntries = {};
-  if (result[0].status === "fulfilled") {
-    for (const [alias, owner] of result[0].value) {
-      const key = pageIdentityKey(alias);
-      // Core returns owners in deterministic path order; preserve its first-wins
-      // fallback when duplicate owners contribute the same folded alias.
-      if (!Object.prototype.hasOwnProperty.call(aliasEntries, key)) {
-        aliasEntries[key] = owner;
-      }
-    }
-  }
-  commitNavigationIndex();
-}
-
-/** Refresh the real-page identity inventory only after graph bind, create,
- *  delete, or rename. Ordinary content saves refresh aliases but never pay for
- *  this whole-page-list IPC. Real pages override colliding semantic aliases. */
-export async function refreshPageIdentities(): Promise<void> {
-  const epoch = graphEpoch();
-  bindNavigationIndex(epoch);
-  const request = ++pageIdentityRequest;
-  const result = await Promise.allSettled([backend().listPages()]);
-  if (epoch !== graphEpoch() || navigationEpoch !== epoch || request !== pageIdentityRequest) return;
-  pageIdentities = result[0].status === "fulfilled"
-    ? Object.fromEntries(
-        result[0].value
-          .filter((entry) => entry.kind === "page")
-          .map((entry) => [pageIdentityKey(entry.name), entry.name])
-      )
-    : {};
-  commitNavigationIndex();
-}
-async function loadAliases(): Promise<void> {
-  const epoch = graphEpoch();
-  if (!(await waitForWarmCache(epoch))) return;
-  if (epoch !== graphEpoch()) return;
-  await Promise.all([refreshAliases(), refreshPageIdentities()]);
-}
-
 /** Refresh frontend state after a successful page rename. The backend rename
  *  rewrites `[[refs]]` across many files through the self-write guard, which
  *  SUPPRESSES the watcher reload — so every in-memory page (the renamed page, the
@@ -266,9 +188,10 @@ async function loadAliases(): Promise<void> {
  *  of one would silently revert the rename's rewrite on disk. Reset the store
  *  (cancels pending/in-flight saves + clears the shared `byId`) and bump the graph
  *  epoch (drops the block-resolve cache and forces the open view + Linked
- *  References to refetch from the now-correct backend). Aliases may have moved with
- *  the renamed file, so refresh those too. Caller must have run flushAll() first
- *  (so resetStore discards nothing unsaved) and then navigate to the new name. */
+ *  References to refetch from the now-correct backend). Names and aliases moved with
+ *  the renamed file, so the page index is reset and refetched. Caller must have
+ *  run flushAll() first (so resetStore discards nothing unsaved) and then
+ *  navigate to the new name. */
 export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget): void {
   if (exactTarget) {
     removePageTargetAcrossPanes(exactTarget);
@@ -277,9 +200,9 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
     renamePageInNavigation(from, to);
   }
   resetStore();
-  resetNavigationIndex();
+  // The epoch bump refreshes the page index (`pageIndex.ts`).
+  resetPageIndex();
   bumpGraphEpoch();
-  void Promise.all([refreshAliases(), refreshPageIdentities()]);
 }
 
 // If config.edn sets :default-templates {:journals "X"}, create today's journal

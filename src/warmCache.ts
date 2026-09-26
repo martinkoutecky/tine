@@ -47,8 +47,8 @@ export async function waitForWarmCache(
         }
         unlisten = u;
         // Subscribe first, then probe the command so small graphs cannot lose the
-        // event/command race. During this warm window aliases render as page names
-        // and block-ref badges stay absent/zero; neither path blocks first paint.
+        // event/command race. During this warm window block-ref badges stay
+        // absent/zero; this does not block first paint.
         void deps
           .warmDone()
           .then((ready) => {

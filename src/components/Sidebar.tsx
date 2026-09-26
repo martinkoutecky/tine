@@ -1,9 +1,10 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
+import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
 import { backend } from "../backend";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
+import { navigationName } from "../pageIndex";
 import { EmojiText } from "../render/emoji";
 import { NamespaceTree } from "./Namespace";
 import type { PageKind } from "../types";
@@ -16,7 +17,7 @@ import { registerTransientLayer } from "../transientLayers";
 const ALL_PAGES_CAP = 300;
 
 export function sidebarPageTarget(name: string, kind: PageKind): { name: string; kind: PageKind } {
-  return { name: kind === "page" ? resolveAlias(name) : name, kind };
+  return { name: kind === "page" ? navigationName(name) : name, kind };
 }
 
 export interface SidebarPageOpenDeps {
