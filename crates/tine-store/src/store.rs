@@ -187,7 +187,7 @@ pub struct Change {
     /// this publication. Rollback can emit separate Own and External changes.
     pub origin: Origin,
     /// Affected graph files, including `logseq/config.edn` when observed, with
-    /// resulting revisions when present. `config_changed` also marks config.
+    /// resulting revisions when present.
     /// Trash destinations are not listed. Assets are not watched for external
     /// changes. A committed transaction or restore lists an asset path here
     /// when its final bytes differ from the operation's starting bytes.
@@ -195,8 +195,6 @@ pub struct Change {
     /// copies may appear as files while [`Self::page`] returns `None` for them;
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
-    /// Whether graph config changed in this publication.
-    pub config_changed: bool,
     pages: Vec<(FileId, PageKind, String)>,
 }
 
@@ -251,7 +249,6 @@ struct Snapshot {
     journal_format: JournalFormat,
     list: Arc<Vec<PageEntry>>,
     claimants: Arc<HashMap<(PageKind, String), Vec<PageEntry>>>,
-    observed_mtimes: Arc<HashMap<String, SystemTime>>,
     unreadable: Arc<Vec<(FileId, String)>>,
 }
 
@@ -357,7 +354,6 @@ impl Snapshot {
             journal_format,
             list,
             claimants,
-            observed_mtimes: graph.observed_page_mtimes(),
             unreadable: graph.unreadable_pages(),
         }
     }
@@ -416,7 +412,6 @@ impl ChangeFeed {
                 graph_rev: rev,
                 origin,
                 files,
-                config_changed,
                 pages,
             });
             self.ready.notify_all();
@@ -483,8 +478,9 @@ impl GraphAccessInspection {
     /// Canonicalize `path` and compare it with the target captured by this
     /// inspection. Returns an I/O error if canonicalization fails. This does
     /// not reread a link changed since inspection; `Store::open` revalidates it.
-    pub fn approves_external_assets(&self, path: &Path) -> std::io::Result<bool> {
-        Ok(self.external_assets.as_ref() == Some(&fs::canonicalize(path)?))
+    pub fn approves_external_assets(&self, path: &Path) -> Result<bool, crate::IoError> {
+        Ok(self.external_assets.as_ref()
+            == Some(&fs::canonicalize(path).map_err(crate::IoError::from)?))
     }
 }
 
@@ -992,6 +988,21 @@ impl Store {
         self.config_state.read().unwrap().clone()
     }
 
+    /// Whether graph-wide answers are ready, without waiting for parsing or
+    /// recovery. `Ok(false)` means still loading; `Err(Failed)` means `page()`
+    /// can still read files but graph publication waits for `scan_refresh()`;
+    /// `Err(Closed)` means this store is closed.
+    pub fn is_graph_ready(&self) -> Result<bool, LoadError> {
+        match &*self.load.status.lock().unwrap() {
+            LoadStatus::Loading => Ok(false),
+            LoadStatus::Ready => Ok(true),
+            LoadStatus::Failed(reason) => Err(LoadError::Failed {
+                reason: reason.clone(),
+            }),
+            LoadStatus::Closed => Err(LoadError::Closed),
+        }
+    }
+
     /// Stop observation, wait for an in-flight writer, end the subscription,
     /// release load waiters, and refuse later I/O. Idempotent; no timeout.
     pub fn close(&self) {
@@ -1203,9 +1214,7 @@ impl Store {
                 }
                 crate::Why::Refused(crate::Refusal::Closed) => SaveOutcome::Closed,
                 crate::Why::Refused(other) => SaveOutcome::InvalidTarget(format!("{other:?}")),
-                crate::Why::Failed(error) => {
-                    SaveOutcome::Io(std::io::Error::new(error.kind, error.message))
-                }
+                crate::Why::Failed(error) => SaveOutcome::Io(error),
             },
         }
     }
@@ -1726,23 +1735,6 @@ impl Store {
                                     } else {
                                         None
                                     },
-                                    date_stem: area == Area::Journals
-                                        && std::path::Path::new(&rel)
-                                            .file_stem()
-                                            .and_then(|stem| stem.to_str())
-                                            .is_some_and(|stem| {
-                                                store
-                                                    .graph
-                                                    .current_journal_format()
-                                                    .parse(stem)
-                                                    .is_some_and(|date| {
-                                                        store
-                                                            .graph
-                                                            .current_journal_format()
-                                                            .file_stem(date)
-                                                            == stem
-                                                    })
-                                            }),
                                     id,
                                     area,
                                     rel,
@@ -1868,8 +1860,8 @@ impl Store {
     /// the current stable publication. Acquisition and clone are O(1) after
     /// the wait; later writes do not alter this view. After a failed parse,
     /// later calls return `LoadError::Failed` without another parse attempt
-    /// until `scan_refresh()` retries it. There is no nonblocking load-state
-    /// query; call this from a worker thread to learn completion or failure.
+    /// until `scan_refresh()` retries it. Use `is_graph_ready()` to inspect the
+    /// state without waiting, or call this from a worker thread to wait.
     /// No partial graph generation is available after failure.
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         let mut status = self.load.status.lock().unwrap();
@@ -1897,7 +1889,6 @@ impl Store {
         Ok(WholeGraph {
             graph: Arc::clone(&snapshot.graph),
             rev: snapshot.rev,
-            observed_mtimes: Arc::clone(&snapshot.observed_mtimes),
             unreadable: Arc::clone(&snapshot.unreadable),
             config: snapshot.config.clone(),
             journal_format: snapshot.journal_format.clone(),
@@ -1939,8 +1930,6 @@ pub struct FileEntry {
     pub page: Option<PageId>,
     /// Parsed journal day under configured and fallback formats; cost O(1).
     pub day: Option<Day>,
-    /// Whether the stem is the configured filename form; cost O(1).
-    pub date_stem: bool,
     /// Metadata for a successfully statted entry. Stat failures appear in
     /// `Listing::unreadable` instead.
     pub meta: Option<FileMeta>,
@@ -1999,7 +1988,7 @@ pub enum StoreError {
         len: u64,
     },
     /// Other filesystem failure.
-    Io(std::io::Error),
+    Io(crate::IoError),
     /// Store was closed before this disk operation.
     Closed,
 }
@@ -2017,7 +2006,7 @@ impl StoreError {
         }
         match error.kind() {
             std::io::ErrorKind::NotFound => Self::NotFound,
-            _ => Self::Io(error),
+            _ => Self::Io(error.into()),
         }
     }
 }
@@ -2117,7 +2106,7 @@ pub enum SaveOutcome {
     /// Invalid or unsafe target; reason is for display.
     InvalidTarget(String),
     /// Filesystem operation failed.
-    Io(std::io::Error),
+    Io(crate::IoError),
     /// Store was closed before the save.
     Closed,
     /// A `PageDto` with `guide: true` is refused before disk access, regardless
@@ -2379,7 +2368,6 @@ pub struct WholeGraph {
     _snapshot: Arc<Snapshot>,
     pub(crate) graph: Arc<ReadSnapshot>,
     rev: GraphRev,
-    observed_mtimes: Arc<HashMap<String, SystemTime>>,
     unreadable: Arc<Vec<(FileId, String)>>,
     pub(crate) config: ConfigState,
     journal_format: JournalFormat,
@@ -2611,14 +2599,6 @@ impl WholeGraph {
         ids
     }
 
-    /// Last published observation of the file's modification time. A view
-    /// acquired later may reuse that observation without another filesystem
-    /// read. `None` means no timestamp was recorded for this identity.
-    /// Cost O(1), without a filesystem read.
-    pub fn page_mtime(&self, id: &PageId) -> Option<std::time::SystemTime> {
-        self.observed_mtimes.get(id.as_str()).copied()
-    }
-
     /// Resolve a name in this captured view. The caller supplies whether the
     /// name is a journal title; using the wrong kind searches that other
     /// namespace and may propose a new file. Real files win over aliases.
@@ -2706,23 +2686,13 @@ impl WholeGraph {
     }
 
     /// Execute one simple or advanced query macro over this stable view.
-    /// `current_page`, when supplied, must be a syntactically valid page id in
-    /// this graph. Existence is not checked. It does not affect evaluation:
     /// `:current-page` inputs are not supported, as in v0.6.5. A simple
     /// source above 64 KiB or 64 parenthesis levels returns
     /// `QueryError::Parse`; advanced unsupported clauses appear in its
     /// diagnostics. Results are bounded to 20,000 rows and 32 MiB. Query cost
     /// depends on the evaluated clauses; a cold full-graph query can visit
     /// O(P + B) pages and blocks before result materialization.
-    pub fn query(
-        &self,
-        source: &str,
-        dialect: QueryDialect,
-        current_page: Option<&PageId>,
-    ) -> Result<QueryResult, QueryError> {
-        if let Some(id) = current_page {
-            self.validated_page(id)?;
-        }
+    pub fn query(&self, source: &str, dialect: QueryDialect) -> Result<QueryResult, QueryError> {
         if matches!(dialect, QueryDialect::Simple) {
             if !tine_core::query::query_source_within_limit(source) {
                 return Err(QueryError::Parse(format!(
@@ -2747,7 +2717,6 @@ impl WholeGraph {
             QueryDialect::Advanced => {
                 let (result, exceeded, total) = self.graph.run_advanced_query_bounded_cached(
                     source,
-                    None,
                     RESULT_BRIDGE_MAX_ROWS,
                     RESULT_BRIDGE_MAX_BYTES,
                 );
@@ -3210,8 +3179,12 @@ mod rev5_tests {
         fs::write(&pause, "").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let changes = store.subscribe();
+        assert!(matches!(store.is_graph_ready(), Ok(false)));
         *store.load.status.lock().unwrap() = LoadStatus::Failed("injected failure".into());
         store.load.ready.notify_all();
+        assert!(
+            matches!(store.is_graph_ready(), Err(LoadError::Failed { reason }) if reason == "injected failure")
+        );
         fs::write(root.join("pages/A.md"), "- changed outside\n").unwrap();
         let id = PageId::from("pages/A.md");
         let read = store.page(&id).unwrap();
@@ -3229,6 +3202,7 @@ mod rev5_tests {
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
 
         store.scan_refresh().unwrap();
+        assert!(matches!(store.is_graph_ready(), Ok(true)));
         let view = store.whole_graph().unwrap();
         assert!(view.corpus().pages.iter().any(|page| {
             page.name == "A" && page.document.roots[0].raw().contains("changed here")
@@ -3238,6 +3212,8 @@ mod rev5_tests {
             .contains("changed here"));
         assert!(changes.try_recv().unwrap().is_some());
         fs::remove_file(pause).unwrap();
+        store.close();
+        assert!(matches!(store.is_graph_ready(), Err(LoadError::Closed)));
         drop(store);
         fs::remove_dir_all(root).unwrap();
     }
@@ -3497,9 +3473,7 @@ mod rev5_tests {
                     let rev = view.rev();
                     let page_count = view.corpus().pages.len();
                     let _ = view.backlinks("Target").unwrap();
-                    let _ = view
-                        .query("[[Target]]", QueryDialect::Simple, None)
-                        .unwrap();
+                    let _ = view.query("[[Target]]", QueryDialect::Simple).unwrap();
                     let _ = view.resolve("External", false);
                     let _ = view.inventory();
                     assert_eq!(view.rev(), rev);
@@ -3550,8 +3524,7 @@ mod rev5_tests {
 
     fn view_answers(view: &WholeGraph) -> Vec<(&'static str, String)> {
         let cancel = Cancel(Arc::new(AtomicBool::new(false)));
-        let id = PageId::from("pages/Source.md");
-        let query_rows = |dialect| match view.query("[[Target]]", dialect, Some(&id)).unwrap() {
+        let query_rows = |dialect| match view.query("[[Target]]", dialect).unwrap() {
             QueryResult::Simple(rows) => format!("{rows:?}"),
             QueryResult::Advanced(rows) => format!("{rows:?}"),
         };
@@ -3565,7 +3538,6 @@ mod rev5_tests {
         vec![
             ("rev", format!("{:?}", view.rev())),
             ("unreadable_files", format!("{:?}", view.unreadable_files())),
-            ("page_mtime", format!("{:?}", view.page_mtime(&id))),
             (
                 "corpus",
                 format!(

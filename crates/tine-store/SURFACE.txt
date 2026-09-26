@@ -24,7 +24,6 @@ field store::GraphAccessInspection.external_assets
 field store::GraphAccessInspection.root
 field store::OpenOptions.approved_external_assets
 field store::OpenOptions.watch
-field store::Change.config_changed
 field store::Change.files
 field store::Change.graph_rev
 field store::Change.origin
@@ -76,7 +75,6 @@ field store::FileEntry.id
 field store::FileEntry.meta
 field store::FileEntry.page
 field store::FileEntry.day
-field store::FileEntry.date_stem
 field store::FileEntry.rel
 field store::FileMeta.len
 field store::FileMeta.mtime
@@ -98,6 +96,7 @@ fn store::Change::page
 fn store::Subscription::recv
 fn store::Subscription::try_recv
 fn store::Store::journal_id
+fn store::Store::is_graph_ready
 fn store::Store::open_read
 fn store::Store::page
 fn store::Store::path_for_os_handoff
@@ -134,6 +133,7 @@ field publish::PublishReceipt.site
 field publish::PublishReceipt.files
 field publish::PublishReceipt.previous_kept
 fn store::QueryError::bridge_matching_blocks
+fn transaction::IoError::kind
 fn store::QueryError::bridge_search_hits
 fn store::WholeGraph::backlink_filter_context
 fn store::WholeGraph::backlinks
@@ -148,7 +148,6 @@ fn store::WholeGraph::inventory
 fn store::WholeGraph::corpus
 fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::page_icons
-fn store::WholeGraph::page_mtime
 fn store::WholeGraph::parsed_page_ids
 fn store::WholeGraph::preview_block
 fn store::WholeGraph::property_facets

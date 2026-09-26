@@ -27,7 +27,7 @@ fn query_simple(store: &Store, source: &str) -> Arc<Vec<tine_core::model::RefGro
     match store
         .whole_graph()
         .unwrap()
-        .query(source, tine_store::QueryDialect::Simple, None)
+        .query(source, tine_store::QueryDialect::Simple)
         .unwrap()
     {
         tine_store::QueryResult::Simple(groups) => groups,
@@ -542,7 +542,7 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
     // Prime the memo: one open TODO, one backlink to Tasks.
     let old = store.whole_graph().unwrap();
     let old_query = match old
-        .query("(task TODO)", tine_store::QueryDialect::Simple, None)
+        .query("(task TODO)", tine_store::QueryDialect::Simple)
         .unwrap()
     {
         tine_store::QueryResult::Simple(groups) => groups,

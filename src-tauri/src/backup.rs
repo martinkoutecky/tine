@@ -362,7 +362,7 @@ fn copy_store_area(
     store: &Store,
     area: Area,
     dest: &std::path::Path,
-    include: fn(&std::path::Path) -> bool,
+    include: fn(&tine_store::FileId) -> bool,
     cancelled: &dyn Fn() -> bool,
 ) -> (usize, usize, Option<BackupFailure>) {
     let phase = match area {
@@ -430,7 +430,7 @@ fn copy_store_area(
                 }),
             );
         }
-        if !include(std::path::Path::new(&entry.rel)) {
+        if !include(&entry.id) {
             continue;
         }
         let target = dest.join(&entry.rel);
@@ -490,7 +490,7 @@ fn count_store_text(store: &Store, area: Area) -> Option<usize> {
         listing
             .files
             .iter()
-            .filter(|entry| is_graph_text(std::path::Path::new(&entry.rel)))
+            .filter(|entry| is_graph_text(&entry.id))
             .count(),
     )
 }
@@ -879,8 +879,8 @@ fn restore_from_backup_source(
                     .files
                     .iter()
                     .filter(|entry| match area {
-                        Area::Assets => is_asset_sidecar(std::path::Path::new(&entry.rel)),
-                        _ => is_graph_text(std::path::Path::new(&entry.rel)),
+                        Area::Assets => is_asset_sidecar(&entry.id),
+                        _ => is_graph_text(&entry.id),
                     })
                     .count()
             })
@@ -968,8 +968,12 @@ fn open_verified_restore_files(
                 continue;
             };
             let accepted = match area {
-                Area::Journals | Area::Pages => is_graph_text(std::path::Path::new(rel)),
-                Area::Assets => is_asset_sidecar(std::path::Path::new(rel)),
+                Area::Journals | Area::Pages => {
+                    is_graph_text(&tine_store::FileId::from(format!("{prefix}/{rel}")))
+                }
+                Area::Assets => {
+                    is_asset_sidecar(&tine_store::FileId::from(format!("{prefix}/{rel}")))
+                }
                 Area::Meta => rel == "config.edn",
                 Area::Trash => false,
             };

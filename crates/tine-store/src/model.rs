@@ -663,7 +663,6 @@ impl ReadSnapshot {
     pub(crate) fn run_advanced_query_bounded_cached(
         &self,
         source: &str,
-        current_page: Option<&str>,
         max_rows: usize,
         max_bytes: usize,
     ) -> (tine_core::query::AdvancedResult, bool, usize) {
@@ -681,21 +680,10 @@ impl ReadSnapshot {
                 0,
             );
         }
-        let page_key = current_page
-            .map(|page| format!("p:{}", tine_core::refs::page_key(page)))
-            .unwrap_or_else(|| "n:".to_string());
         let cached = self.memos.advanced_memo_bounded(
             0,
-            format!("AQ\0{max_rows}\0{max_bytes}\0{page_key}\0{source}"),
-            || {
-                crate::query::run_advanced_query_bounded(
-                    self,
-                    source,
-                    current_page,
-                    max_rows,
-                    max_bytes,
-                )
-            },
+            format!("AQ\0{max_rows}\0{max_bytes}\0{source}"),
+            || crate::query::run_advanced_query_bounded(self, source, max_rows, max_bytes),
         );
         (
             cached.result.as_ref().clone(),
@@ -3378,26 +3366,17 @@ impl SnapshotMemos {
             // Split only structural fields; the final query source is opaque and
             // may itself contain NUL bytes. Treating it as another delimiter used
             // to make warm invalidation evaluate a truncated query.
-            let (page_key, query_src) = if let Some(rest) = key.strip_prefix("aq\0") {
-                rest.split_once('\0')
-                    .map_or((None, None), |(page, query)| (Some(page), Some(query)))
-            } else if let Some(rest) = key.strip_prefix("AQ\0") {
-                let mut parts = rest.splitn(4, '\0');
+            let query_src = if let Some(rest) = key.strip_prefix("AQ\0") {
+                let mut parts = rest.splitn(3, '\0');
                 let _max_rows = parts.next();
                 let _max_bytes = parts.next();
-                (parts.next(), parts.next())
+                parts.next()
             } else {
-                (None, None)
+                None
             };
             let page_affects = |candidate: &Document| {
-                page_key.zip(query_src).is_none_or(|(page_key, query_src)| {
-                    let current_page = page_key.strip_prefix("p:");
-                    crate::query::page_affects_advanced_query(
-                        query_src,
-                        current_page,
-                        entry,
-                        candidate,
-                    )
+                query_src.is_none_or(|query_src| {
+                    crate::query::page_affects_advanced_query(query_src, entry, candidate)
                 })
             };
             let affects = page_affects(doc) || previous_doc.is_some_and(page_affects);
@@ -5867,7 +5846,7 @@ mod tests {
 
     fn advanced_result(snapshot: &ReadSnapshot, source: &str) -> tine_core::query::AdvancedResult {
         snapshot
-            .run_advanced_query_bounded_cached(source, None, 20_000, 32 * 1024 * 1024)
+            .run_advanced_query_bounded_cached(source, 20_000, 32 * 1024 * 1024)
             .0
     }
 
@@ -5877,8 +5856,8 @@ mod tests {
         max_rows: usize,
     ) -> Arc<tine_core::query::AdvancedResult> {
         let max_bytes = 32 * 1024 * 1024;
-        let _ = snapshot.run_advanced_query_bounded_cached(source, None, max_rows, max_bytes);
-        let key = format!("AQ\0{max_rows}\0{max_bytes}\0n:\0{source}");
+        let _ = snapshot.run_advanced_query_bounded_cached(source, max_rows, max_bytes);
+        let key = format!("AQ\0{max_rows}\0{max_bytes}\0{source}");
         snapshot
             .memos
             .advanced_cache

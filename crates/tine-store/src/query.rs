@@ -1562,12 +1562,11 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
 /// scoped cache invalidation cannot drift into a second query dialect.
 pub(crate) fn page_affects_advanced_query(
     query_src: &str,
-    current_page: Option<&str>,
     entry: &PageEntry,
     doc: &Document,
 ) -> bool {
     let today = JournalDate::today();
-    let (Some(pred), _, _) = advanced_pred(query_src, current_page, today) else {
+    let (Some(pred), _, _) = advanced_pred(query_src, today) else {
         return false;
     };
     let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
@@ -1609,18 +1608,13 @@ pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
 /// joins, `:view`/`:result-transform`) are listed in `ignored` and skipped, never
 /// guessed (a wrong result is worse than "unsupported").
 #[cfg(test)]
-pub(crate) fn run_advanced_query(
-    graph: &impl GraphRead,
-    query_src: &str,
-    current_page: Option<&str>,
-) -> AdvancedResult {
-    run_advanced_query_bounded(graph, query_src, current_page, usize::MAX, usize::MAX).0
+pub(crate) fn run_advanced_query(graph: &impl GraphRead, query_src: &str) -> AdvancedResult {
+    run_advanced_query_bounded(graph, query_src, usize::MAX, usize::MAX).0
 }
 
 pub(crate) fn run_advanced_query_bounded(
     graph: &impl GraphRead,
     query_src: &str,
-    current_page: Option<&str>,
     max_rows: usize,
     max_bytes: usize,
 ) -> (AdvancedResult, bool, usize) {
@@ -1631,7 +1625,7 @@ pub(crate) fn run_advanced_query_bounded(
         return (rejected_advanced_query("query-nesting-too-deep"), false, 0);
     }
     let today = JournalDate::today();
-    let (pred, ran, ignored) = advanced_pred(query_src, current_page, today);
+    let (pred, ran, ignored) = advanced_pred(query_src, today);
     let Some(pred) = pred else {
         return (
             AdvancedResult {
@@ -1659,15 +1653,11 @@ pub(crate) fn run_advanced_query_bounded(
     )
 }
 
-fn advanced_pred(
-    query_src: &str,
-    current_page: Option<&str>,
-    today: JournalDate,
-) -> (Option<Pred>, Vec<String>, Vec<String>) {
+fn advanced_pred(query_src: &str, today: JournalDate) -> (Option<Pred>, Vec<String>, Vec<String>) {
     if !query_nesting_within_limit(query_src) {
         return (None, Vec::new(), vec!["query-nesting-too-deep".to_string()]);
     }
-    let inputs = resolve_inputs(query_src, current_page, today);
+    let inputs = resolve_inputs(query_src, today);
     let mut ran = Vec::new();
     let mut ignored = Vec::new();
     let groups = where_groups(query_src);
@@ -2006,11 +1996,7 @@ fn adv_bound(
 /// `:inputs [ … ]` values (Logseq's positional binding). Only date inputs resolve
 /// to an ordinal; others (e.g. `:current-page`) are skipped — their pattern
 /// clause is ignored anyway.
-fn resolve_inputs(
-    src: &str,
-    _current_page: Option<&str>,
-    today: JournalDate,
-) -> std::collections::HashMap<String, i64> {
+fn resolve_inputs(src: &str, today: JournalDate) -> std::collections::HashMap<String, i64> {
     let mut map = std::collections::HashMap::new();
     let vars: Vec<String> = match src.find(":in") {
         Some(i) => {
@@ -2674,7 +2660,6 @@ pub(crate) fn export_query_subtrees(
             let (result, exceeded, total) = run_advanced_query_bounded(
                 graph,
                 &spec.query,
-                None,
                 QUERY_EXPORT_CONSTRUCTION_ROWS,
                 QUERY_EXPORT_CONSTRUCTION_BYTES,
             );
@@ -3709,7 +3694,7 @@ mod tests {
             "[:find (pull ?b [*]) :where {}]",
             nested_boolean("and", QUERY_NESTING_MAX - 1, "(task ?b #{\"TODO\"})")
         );
-        let (accepted, _, rejected) = advanced_pred(&advanced_at_limit, None, TODAY);
+        let (accepted, _, rejected) = advanced_pred(&advanced_at_limit, TODAY);
         assert!(
             accepted.is_some(),
             "unexpected ignored clauses: {rejected:?}"
@@ -3718,7 +3703,7 @@ mod tests {
             "[:find (pull ?b [*]) :where {}]",
             nested_boolean("and", QUERY_NESTING_MAX, "(task ?b #{\"TODO\"})")
         );
-        let (rejected, ran, ignored) = advanced_pred(&advanced_too_deep, None, TODAY);
+        let (rejected, ran, ignored) = advanced_pred(&advanced_too_deep, TODAY);
         assert!(rejected.is_none());
         assert!(ran.is_empty());
         assert!(ignored.iter().any(|item| item == "query-nesting-too-deep"));
@@ -4038,7 +4023,7 @@ mod tests {
                          :where
                          [?p :block/properties ?props]
                          [(get ?props :class)]]"#;
-        let (lowered, ran, ignored) = advanced_pred(source, None, TODAY);
+        let (lowered, ran, ignored) = advanced_pred(source, TODAY);
 
         assert_eq!(lowered, Some(pred("(page-property :class)")));
         assert_eq!(ran, vec!["page-property"]);
@@ -4051,7 +4036,7 @@ mod tests {
                          :where
                          [?p :block/name ?name]
                          [(get ?name :class)]]"#;
-        let (lowered, ran, ignored) = advanced_pred(source, None, TODAY);
+        let (lowered, ran, ignored) = advanced_pred(source, TODAY);
 
         assert_eq!(lowered, None);
         assert!(ran.is_empty());
@@ -4966,7 +4951,6 @@ mod tests {
             ));
             assert!(page_affects_advanced_query(
                 r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "Target"))]"#,
-                None,
                 entry,
                 doc,
             ));
@@ -5605,11 +5589,8 @@ mod tests {
         assert!(simple.iter().any(|raw| raw.contains("ancestor")));
         assert!(simple.iter().any(|raw| raw.contains("grandchild")));
 
-        let advanced = run_advanced_query(
-            &graph,
-            "[:find (pull ?b [*]) :where (task ?b \"TODO\")]",
-            None,
-        );
+        let advanced =
+            run_advanced_query(&graph, "[:find (pull ?b [*]) :where (task ?b \"TODO\")]");
         assert!(advanced.supported);
         assert_eq!(raws(&advanced.groups).len(), 2);
 

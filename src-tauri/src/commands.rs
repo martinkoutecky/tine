@@ -821,10 +821,10 @@ mod save_wire_tests {
         );
         assert_eq!(
             save_outcome_to_wire(
-                SaveOutcome::Io(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "/secret/path"
-                )),
+                SaveOutcome::Io(
+                    std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/secret/path")
+                        .into()
+                ),
                 &page
             ),
             Err("io:PermissionDenied".into()),
@@ -1119,17 +1119,12 @@ pub(crate) async fn run_graph_search(
 #[tauri::command]
 pub(crate) async fn run_advanced_query(
     query: String,
-    current_page: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::AdvancedResult, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_advanced_query(
-            &slot.store,
-            &query,
-            current_page.as_deref(),
-        )
-        .map_err(feature_search_error)
+        tine_graph_features::search::run_advanced_query(&slot.store, &query)
+            .map_err(feature_search_error)
     })
     .await
     .map_err(|error| error.to_string())?

@@ -2,7 +2,6 @@
 
 use crate::store::{Area, FileId, GraphRev, Store};
 use crate::IoError;
-use crate::{is_asset_sidecar, is_graph_text};
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
@@ -142,9 +141,11 @@ impl Store {
         }
         for file in &files {
             let allowed = match file.area {
-                Area::Pages | Area::Journals => is_graph_text(Path::new(&file.rel)),
+                Area::Pages | Area::Journals => {
+                    crate::file_kind::is_graph_text_path(Path::new(&file.rel))
+                }
                 Area::Assets => {
-                    is_asset_sidecar(Path::new(&file.rel))
+                    crate::file_kind::is_asset_sidecar_path(Path::new(&file.rel))
                         && !file.rel.split('/').any(|part| part == ASSET_RECOVERY)
                 }
                 Area::Meta => file.rel == "config.edn",
@@ -592,10 +593,12 @@ fn retire_extras(
                 area,
                 changed,
             )?;
-        } else if ((area == Area::Assets && kind.is_file() && is_asset_sidecar(&child))
+        } else if ((area == Area::Assets
+            && kind.is_file()
+            && crate::file_kind::is_asset_sidecar_path(&child))
             || (area != Area::Assets
                 && (kind.is_file() || kind.is_symlink())
-                && is_graph_text(&child)))
+                && crate::file_kind::is_graph_text_path(&child)))
             && !restored.contains(&child)
         {
             let live = live_dir.join(&child);

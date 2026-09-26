@@ -95,7 +95,7 @@ describe("terminated whole-block BEGIN_QUERY", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       await expectRenderedQuery(root);
-      expect(backend().runAdvancedQuery).toHaveBeenCalledWith(expect.any(String), "Source");
+      expect(backend().runAdvancedQuery).toHaveBeenCalledWith(expect.any(String));
     } finally {
       dispose();
     }

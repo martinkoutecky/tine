@@ -251,8 +251,8 @@ export interface Backend {
   /** Resolve all Copy / Export query macros under one cumulative native budget. */
   exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch>;
   /** Advanced (datalog-subset) query: maps the supported clauses onto the engine
-   *  and reports what ran vs was ignored. `currentPage` resolves `:current-page`. */
-  runAdvancedQuery(query: string, currentPage?: string): Promise<AdvancedQueryResult>;
+   *  and reports what ran vs was ignored. */
+  runAdvancedQuery(query: string): Promise<AdvancedQueryResult>;
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
   queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
@@ -703,8 +703,8 @@ class TauriBackend implements Backend {
   exportQuerySubtrees(specs: QueryExportSpec[]) {
     return this.call<QueryExportBatch>("export_query_subtrees", { specs });
   }
-  runAdvancedQuery(query: string, currentPage?: string) {
-    return this.call<AdvancedQueryResult>("run_advanced_query", { query, currentPage });
+  runAdvancedQuery(query: string) {
+    return this.call<AdvancedQueryResult>("run_advanced_query", { query });
   }
   queryFacets(autocomplete = false) {
     return this.call<[string, string[]][]>(

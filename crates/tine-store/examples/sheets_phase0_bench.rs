@@ -18,7 +18,7 @@ fn query_store(store: &Store, source: &str) -> std::sync::Arc<Vec<RefGroup>> {
     match store
         .whole_graph()
         .unwrap()
-        .query(source, QueryDialect::Simple, None)
+        .query(source, QueryDialect::Simple)
         .unwrap()
     {
         QueryResult::Simple(groups) => groups,

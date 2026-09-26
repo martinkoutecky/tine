@@ -6,6 +6,13 @@ replace that file between the final comparison and rename; mandatory cross-proce
 locks are outside this plain-file contract. The editor retains unsaved content
 on every refusal and offers conflict resolution or retry.
 
+`Store::is_graph_ready()` reports initial graph loading without waiting.
+`Ok(false)` means graph-wide answers can still block. After `Err(Failed(reason))`,
+`page()` can read and parse an existing file, but saves and observed edits do
+not publish a graph generation. `whole_graph()` returns the load error. A
+successful `scan_refresh()` retries the load and publishes a fresh generation;
+the answer becomes `Ok(true)`. `Err(Closed)` is terminal for that store.
+
 ## I-8 refusal scenarios
 
 Each row below is keyed by the source file, owning function and refusal family.

@@ -649,7 +649,9 @@ pub fn run() {
                     let config = slot.store.config();
                     let journals = slot.store.scan_area(tine_store::Area::Journals, None).ok();
                     let pages = slot.store.scan_area(tine_store::Area::Pages, None).ok();
-                    let inventory = slot.store.whole_graph().ok().map(|view| view.inventory());
+                    let inventory = matches!(slot.store.is_graph_ready(), Ok(true))
+                        .then(|| slot.store.whole_graph().ok().map(|view| view.inventory()))
+                        .flatten();
                     let physical: Vec<_> = inventory
                         .iter()
                         .flat_map(|items| &items.0)

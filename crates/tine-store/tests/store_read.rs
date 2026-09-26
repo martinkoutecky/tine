@@ -211,27 +211,6 @@ fn graph_meta_omits_layout_directories() {
 }
 
 #[test]
-fn page_mtime_remains_the_observed_snapshot_value() {
-    let f = Fixture::new();
-    let store = f.store();
-    let id = PageId::from("pages/Note.md");
-    let view = store.whole_graph().unwrap();
-    let observed = view.page_mtime(&id).unwrap();
-    let later = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
-    // Setting times needs write access on Windows (FILE_WRITE_ATTRIBUTES).
-    std::fs::File::options()
-        .write(true)
-        .open(f.0.join("pages/Note.md"))
-        .unwrap()
-        .set_modified(later)
-        .unwrap();
-    assert_ne!(observed, later);
-    assert_eq!(view.page_mtime(&id), Some(observed));
-    store.scan_refresh().unwrap();
-    assert_eq!(store.whole_graph().unwrap().page_mtime(&id), Some(later));
-}
-
-#[test]
 fn unreadable_files_reports_skipped_non_utf8_page() {
     let f = Fixture::new();
     let store = f.store();

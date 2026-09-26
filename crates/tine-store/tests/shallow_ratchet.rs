@@ -402,17 +402,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
             &mut actual,
         );
     }
-    // Each path is a user-selected input or an OS/user hand-off. New signatures
-    // require an explicit reason here, even if SURFACE.txt accepts the item.
+    // Each path is a user-selected OS path input or a path handed to the OS or
+    // user for opening, serving, or recovery. Internal graph identities use
+    // FileId/PageId. New signatures require a reason even if SURFACE accepts them.
     let allowed = [
-        (
-            "file_kind::is_graph_text",
-            "validated file path input for backup and restore inclusion",
-        ),
-        (
-            "file_kind::is_asset_sidecar",
-            "validated asset path input for backup and restore inclusion",
-        ),
         (
             "store::Store::create_graph",
             "user-chosen parent input; created root to user",
@@ -484,5 +477,5 @@ fn public_paths_are_only_inputs_and_handoffs() {
             (*item).to_owned()
         })
         .collect();
-    assert_eq!(actual, allowed, "tine-store Rule 1: every public Path/PathBuf signature needs an input or hand-off reason; imitate crates/tine-store/tests/shallow_ratchet.rs");
+    assert_eq!(actual, allowed, "tine-store Rule 1: a public Path/PathBuf signature is only an OS hand-off; graph identities use FileId/PageId. Exemplar: Store::path_for_os_handoff. Update this allow-list only with an OS hand-off reason");
 }

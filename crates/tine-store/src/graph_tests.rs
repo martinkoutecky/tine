@@ -36,7 +36,7 @@ fn query_simple(store: &Store, source: &str) -> Arc<Vec<tine_core::model::RefGro
     match store
         .whole_graph()
         .unwrap()
-        .query(source, tine_store::QueryDialect::Simple, None)
+        .query(source, tine_store::QueryDialect::Simple)
         .unwrap()
     {
         tine_store::QueryResult::Simple(groups) => groups,

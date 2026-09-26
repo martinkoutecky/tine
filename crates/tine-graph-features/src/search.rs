@@ -192,7 +192,7 @@ pub fn run_query(store: &Store, query: &str) -> Result<Arc<Vec<RefGroup>>, Searc
     validate_source(query).map_err(SearchError::Query)?;
     let view = store.whole_graph().map_err(SearchError::Load)?;
     match view
-        .query(query, QueryDialect::Simple, None)
+        .query(query, QueryDialect::Simple)
         .map_err(SearchError::Query)?
     {
         QueryResult::Simple(groups) => Ok(groups),
@@ -200,30 +200,24 @@ pub fn run_query(store: &Store, query: &str) -> Result<Arc<Vec<RefGroup>>, Searc
     }
 }
 
-/// Resolve the optional current page, then run an advanced query. Cost O(query candidates + output).
+/// Run an advanced query. Cost O(query candidates + output).
 pub fn run_advanced_query(
     store: &Store,
     query: &str,
-    current_page: Option<&str>,
 ) -> Result<tine_core::query::AdvancedResult, SearchError> {
-    run_advanced_query_after_scope(store, query, current_page, || {})
+    run_advanced_query_after_scope(store, query, || {})
 }
 
 fn run_advanced_query_after_scope(
     store: &Store,
     query: &str,
-    current_page: Option<&str>,
     after_scope: impl FnOnce(),
 ) -> Result<tine_core::query::AdvancedResult, SearchError> {
     validate_source(query).map_err(SearchError::Query)?;
     let view = store.whole_graph().map_err(SearchError::Load)?;
-    let current_id = current_page.map(|name| match view.resolve(name, false) {
-        Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
-        Resolved::Alias { owners } => owners.into_iter().next().expect("alias has an owner"),
-    });
     after_scope();
     match view
-        .query(query, QueryDialect::Advanced, current_id.as_ref())
+        .query(query, QueryDialect::Advanced)
         .map_err(SearchError::Query)?
     {
         QueryResult::Advanced(result) => Ok(result),
@@ -294,7 +288,6 @@ mod tests {
         let advanced = run_advanced_query_after_scope(
             &store,
             r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#,
-            Some("Scope"),
             || {
                 let writer = Arc::clone(&store);
                 std::thread::spawn(move || {

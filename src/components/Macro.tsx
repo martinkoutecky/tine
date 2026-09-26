@@ -293,11 +293,10 @@ export function QueryMacro(props: {
       // Advanced (datalog) queries take a separate path that maps the supported
       // clause subset onto the engine and reports what ran vs was ignored.
       if (isAdvanced()) {
-        const page = currentPage();
         const r = await sharedQueryResult(
           scope,
-          `advanced\0${page ?? ""}\0${requestKey}`,
-          () => backend().runAdvancedQuery(form(), page),
+          `advanced\0${requestKey}`,
+          () => backend().runAdvancedQuery(form()),
         );
         setAdvInfo({ ran: r.ran, ignored: r.ignored, supported: r.supported });
         return r.groups;

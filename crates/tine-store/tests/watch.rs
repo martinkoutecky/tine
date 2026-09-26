@@ -363,7 +363,10 @@ fn own_config_commit_reloads_format_and_sets_config_changed() {
     ));
     let change = graph.subscription.recv().unwrap();
     assert_eq!(change.origin, Origin::Own);
-    assert!(change.config_changed);
+    assert!(change
+        .files
+        .iter()
+        .any(|(id, _, _)| id.as_str() == "logseq/config.edn"));
     assert_eq!(graph.store.config().preferred_format.ext(), "org");
     assert!(graph
         .store
@@ -385,12 +388,11 @@ fn external_touch_publishes_touched() {
 }
 
 #[test]
-fn config_edit_via_scan_refresh_sets_config_changed() {
+fn config_edit_via_scan_refresh_publishes_and_updates_config() {
     let graph = Fixture::new("config", &[]);
     graph.write("logseq/config.edn", "{:preferred-format :org}\n");
     let changes = graph.changes();
     assert_eq!(changes.len(), 1);
-    assert!(changes[0].config_changed);
     assert_eq!(changes[0].origin, Origin::External);
     assert_eq!(graph.store.config().preferred_format.ext(), "org");
 }

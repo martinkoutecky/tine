@@ -117,14 +117,12 @@ fn journal_scan_and_canonical_id_follow_configured_format() {
         .find(|entry| entry.rel == "2026_06_18.md")
         .unwrap();
     assert_eq!(dated.day, Some(Day(20260618)));
-    assert!(dated.date_stem);
     let titled = listing
         .files
         .iter()
         .find(|entry| entry.rel == "Jun 18th, 2026.org")
         .unwrap();
     assert_eq!(titled.day, Some(Day(20260618)));
-    assert!(!titled.date_stem);
     assert_eq!(
         listing
             .files
@@ -151,23 +149,6 @@ fn journal_scan_and_canonical_id_follow_configured_format() {
     put(&root, "journals/2026-06-19.org", b"- custom\n");
     put(&root, "journals/Jun 19th, 2026.md", b"- title\n");
     let custom = Store::open(&root, Default::default()).unwrap().0;
-    let listing = custom.scan_area(Area::Journals, None).unwrap();
-    assert!(
-        listing
-            .files
-            .iter()
-            .find(|entry| entry.rel == "2026-06-19.org")
-            .unwrap()
-            .date_stem
-    );
-    assert!(
-        !listing
-            .files
-            .iter()
-            .find(|entry| entry.rel == "Jun 19th, 2026.md")
-            .unwrap()
-            .date_stem
-    );
     assert_eq!(
         custom.journal_id(Day(20260619)).as_str(),
         "journals/2026-06-19.org"

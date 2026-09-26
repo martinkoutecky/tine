@@ -87,7 +87,7 @@ impl RenderGraph<'_> {
         } else {
             QueryDialect::Simple
         };
-        match self.whole.query(source, dialect, None) {
+        match self.whole.query(source, dialect) {
             Ok(QueryResult::Simple(groups)) => BoundedGroups {
                 total: groups.iter().map(|group| group.blocks.len()).sum(),
                 groups: groups.as_ref().clone(),

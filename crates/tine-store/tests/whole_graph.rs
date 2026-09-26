@@ -227,43 +227,20 @@ fn query_and_scoped_search_use_page_identity() {
     .unwrap();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let view = store.whole_graph().unwrap();
-    let QueryResult::Simple(groups) = view
-        .query("(task TODO)", QueryDialect::Simple, None)
-        .unwrap()
+    let QueryResult::Simple(groups) = view.query("(task TODO)", QueryDialect::Simple).unwrap()
     else {
         panic!("simple result")
     };
     assert!(!groups.is_empty());
-    for name in ["Named", "Shortcut"] {
-        let id = match view.resolve(name, false) {
-            Resolved::Existing { id, .. } | Resolved::Absent { id } => id,
-            Resolved::Alias { owners } => owners[0].clone(),
-        };
-        let QueryResult::Advanced(actual) = view
-            .query(
-                "[:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]",
-                QueryDialect::Advanced,
-                Some(&id),
-            )
-            .unwrap()
-        else {
-            panic!("advanced result")
-        };
-        let QueryResult::Advanced(expected) = view
-            .query(
-                "[:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]",
-                QueryDialect::Advanced,
-                None,
-            )
-            .unwrap()
-        else {
-            panic!("advanced result")
-        };
-        assert_eq!(
-            serde_json::to_value(actual).unwrap(),
-            serde_json::to_value(expected).unwrap()
-        );
-    }
+    let QueryResult::Advanced(_) = view
+        .query(
+            "[:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]",
+            QueryDialect::Advanced,
+        )
+        .unwrap()
+    else {
+        panic!("advanced result")
+    };
     let within = PageId::from("pages/archive/Named.md");
     let search = view
         .search(
@@ -295,10 +272,6 @@ fn query_and_scoped_search_use_page_identity() {
     for bad in ["../x.md", "pages/../../x.md", "/tmp/x.md"] {
         let id = PageId::from(bad);
         assert!(matches!(
-            view.query("(task TODO)", QueryDialect::Simple, Some(&id)),
-            Err(QueryError::InvalidTarget(_))
-        ));
-        assert!(matches!(
             view.search(
                 &SearchRequest {
                     text: "x".into(),
@@ -324,12 +297,12 @@ fn simple_query_rejects_source_and_nesting_limits() {
     let graph = fixture.view();
     let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
     assert!(matches!(
-        graph.query(&oversized, QueryDialect::Simple, None),
+        graph.query(&oversized, QueryDialect::Simple),
         Err(QueryError::Parse(_))
     ));
     let nested = format!("{}x{}", "(".repeat(65), ")".repeat(65));
     assert!(matches!(
-        graph.query(&nested, QueryDialect::Simple, None),
+        graph.query(&nested, QueryDialect::Simple),
         Err(QueryError::Parse(_))
     ));
 }

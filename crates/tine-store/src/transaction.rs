@@ -68,6 +68,27 @@ impl From<io::Error> for IoError {
     }
 }
 
+impl IoError {
+    /// Platform-independent error category for caller dispatch.
+    pub fn kind(&self) -> io::ErrorKind {
+        self.kind
+    }
+}
+
+impl std::fmt::Display for IoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for IoError {}
+
+impl From<IoError> for io::Error {
+    fn from(error: IoError) -> Self {
+        Self::new(error.kind, error.message)
+    }
+}
+
 /// Result of an individual committed transaction step.
 #[derive(Debug)]
 pub enum StepResult {
@@ -500,7 +521,7 @@ impl<'a> Transaction<'a> {
                         && error.kind() == io::ErrorKind::NotADirectory =>
                 {
                     let target = self.store.graph.root.join(file.as_str());
-                    failed_trash_dir(error, target.parent().unwrap_or(&target))
+                    failed_trash_dir(error.into(), target.parent().unwrap_or(&target))
                 }
                 StoreError::Io(error) => Why::Failed(error.into()),
                 other => Why::Refused(Refusal::InvalidTarget(format!("{other:?}"))),

@@ -26,7 +26,7 @@ fn store_error(error: StoreError) -> io::Error {
         StoreError::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
         StoreError::Unparseable(message) => io::Error::new(io::ErrorKind::InvalidData, message),
         StoreError::TooLarge { .. } => io::Error::new(io::ErrorKind::InvalidData, "file too large"),
-        StoreError::Io(error) => error,
+        StoreError::Io(error) => error.into(),
         StoreError::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
     }
 }
