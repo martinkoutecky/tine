@@ -51,7 +51,8 @@ pub struct DocBlock {
     /// Runtime/store identity assigned from the document's physical owner and
     /// structural sibling-index path. Persisted `id::` is a separate external
     /// reference identity. This key round-trips through an in-memory save but is
-    /// never serialized. It is not part of block content, so it is excluded
+    /// skipped by serde serialization; deserialization defaults it to an empty
+    /// string until a parse assigns runtime identities. It is not part of block content, so it is excluded
     /// from equality. Store write conflicts use raw-byte `FileRev` guards.
     #[serde(default, skip_serializing)]
     pub uuid: String,
@@ -111,9 +112,9 @@ pub struct BlockProjection {
     /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
     /// stay separate in `refs_page`; this is only the tag field.
     pub tags: Vec<String>,
-    /// Parser-owned source spans used by both linked and unlinked reference
-    /// surfaces. Kept on the memoized projection so reference queries do not
-    /// parse every block again.
+    /// Parser-owned source byte spans used by linked and unlinked reference
+    /// surfaces. Browser-facing reference spans instead use UTF-16 offsets.
+    // Keep this on the memoized projection so reference queries avoid reparsing.
     pub reference_source: crate::reference_evidence::ReferenceSourceProjection,
 }
 

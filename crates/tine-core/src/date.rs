@@ -18,6 +18,7 @@ const MONTHS: [&str; 12] = [
 ];
 
 impl JournalDate {
+    /// Encode this date as `yyyymmdd` for `Day` and journal indexes.
     pub fn ordinal_key(&self) -> i64 {
         self.year as i64 * 10000 + self.month as i64 * 100 + self.day as i64
     }
@@ -58,11 +59,13 @@ impl JournalDate {
     pub fn to_days(&self) -> i64 {
         days_from_civil(self.year, self.month, self.day)
     }
+    /// Convert days since 1970-01-01 back to a Gregorian date.
     pub fn from_days(z: i64) -> JournalDate {
         let (year, month, day) = civil_from_days(z);
         JournalDate { year, month, day }
     }
 
+    /// Add signed calendar days and return the resulting date.
     pub fn add_days(&self, n: i64) -> JournalDate {
         JournalDate::from_days(self.to_days() + n)
     }
@@ -425,7 +428,9 @@ pub struct JournalFormat {
 }
 
 impl JournalFormat {
-    /// Build from the config strings (`None`/empty → Logseq defaults).
+    /// Build from config strings (`None`/empty → Logseq defaults). Supported
+    /// field tokens are compiled; unrecognized characters become literals.
+    /// This does not validate that a format can parse the dates it renders.
     pub fn new(file_fmt: Option<&str>, title_fmt: Option<&str>) -> JournalFormat {
         let file_pat = file_fmt
             .filter(|s| !s.is_empty())
@@ -480,9 +485,11 @@ impl JournalFormat {
         self.file.format(d)
     }
 
+    /// Configured page-title format string, including unsupported literals.
     pub fn title_format(&self) -> &str {
         &self.title_pat
     }
+    /// Configured filename format string, including unsupported literals.
     pub fn file_format(&self) -> &str {
         &self.file_pat
     }

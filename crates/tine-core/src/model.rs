@@ -141,6 +141,7 @@ impl From<String> for FileId {
     }
 }
 impl FileId {
+    /// Borrow the unvalidated area-relative identity string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -205,15 +206,19 @@ impl AsRef<str> for PageId {
     }
 }
 impl PageId {
+    /// Treat this physical page identity as a file identity.
     pub fn file(&self) -> FileId {
         FileId::from(self.0.clone())
     }
+    /// Borrow the unvalidated graph-relative identity string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
+    /// Whether this identity string is empty.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// Byte length of the identity string.
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -233,7 +238,9 @@ pub struct PageEntry {
     #[serde(rename = "path", default, with = "optional_page_path")]
     pub rel_path: Option<PageId>,
     #[serde(skip)]
-    /// Local filesystem path, omitted from serialized values.
+    /// Local filesystem path from the listing, omitted from serialized values.
+    /// Revalidate the `rel_path` through `Store::path_for_os_handoff` before
+    /// opening it in another process; this field is not a handoff guarantee.
     pub path: PathBuf,
 }
 
@@ -273,7 +280,8 @@ pub struct BlockDto {
     /// Runtime block identity; a persisted `id::` remains in `raw`. Structural
     /// edits can change this identity across graph publications, so reacquire
     /// it after a page changes. A new block may use an empty id; saves derive
-    /// identity from its position and raw text, not this field.
+    /// identity from the physical page and structural sibling-index path, not
+    /// this field or the raw text.
     pub id: String,
     /// Raw block text, including properties. Page saves serialize this body;
     /// derived facets and `breadcrumb` do not add text. The `page_property`
@@ -336,7 +344,8 @@ pub struct RefGroup {
     /// Matching blocks or projected subtrees.
     pub blocks: Vec<BlockDto>,
     /// Result-only source evidence keyed by block id. Empty for ordinary query
-    /// groups and older callers; never crosses the block write boundary.
+    /// groups and when deserializing older values without this field; never
+    /// crosses the block write boundary.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<ReferenceBlockEvidence>,
 }
@@ -351,7 +360,7 @@ pub struct BacklinkFilterTarget {
     pub page: String,
     /// Source page kind.
     pub kind: PageKind,
-    /// Root block identity.
+    /// Runtime structural root block identity, not a persisted `id::` value.
     pub block_id: String,
 }
 
@@ -363,7 +372,7 @@ pub struct BacklinkFilterEntry {
     pub page: String,
     /// Source page kind.
     pub kind: PageKind,
-    /// Root block identity.
+    /// Runtime structural root block identity, not a persisted `id::` value.
     pub block_id: String,
     /// Projected visible text.
     pub text: String,
@@ -710,6 +719,9 @@ pub fn ref_groups_estimated_bytes(groups: &[RefGroup]) -> usize {
         .sum()
 }
 impl GraphMeta {
+    /// Rebuild display metadata after a config change. Pass the canonical
+    /// graph-root string returned by `Store::open` (or its canonical path),
+    /// the current config, and a `JournalFormat` built from that config.
     pub fn from_config(
         root: String,
         config: &crate::config::Config,

@@ -6848,6 +6848,15 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// each other's temp; the rename is still atomic. The temp is removed if the
 /// write fails, so a unique name never leaks an orphan behind.
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_write_with_check(path, bytes, || Ok(()))
+}
+
+/// Sync the replacement before the caller's final disk guard and rename.
+pub(crate) fn atomic_write_with_check(
+    path: &Path,
+    bytes: &[u8],
+    check: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
@@ -6862,6 +6871,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
+        check()?;
         fs::rename(&tmp, path)
     })();
     if res.is_err() {

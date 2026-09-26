@@ -174,6 +174,8 @@ impl Default for LogbookSettings {
 }
 
 impl Config {
+    /// Parse supported EDN keys independently, defaulting missing or malformed
+    /// values. This does not report a validation error for a bad format string.
     pub fn parse(edn: &str) -> Config {
         // Each key is located independently with the comment/string-aware
         // `find_keyword`, then its value read with the shared scanners — no

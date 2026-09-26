@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use tine_core::model::PageDto;
 
 use crate::model::{
-    atomic_copy_file_new, atomic_copy_new, atomic_write, atomic_write_new, move_file_noreplace,
-    trash_stamp, Withdrawal,
+    atomic_copy_file_new, atomic_copy_new, atomic_write, atomic_write_new, atomic_write_with_check,
+    move_file_noreplace, trash_stamp, Withdrawal,
 };
 use crate::store::{
     Area, ChangeKind, FileId, FileRev, GraphRev, Origin, PageId, SaveBase, Store, StoreError,
@@ -37,6 +37,10 @@ pub enum Content {
 }
 
 /// Old page or tag name to new name, compared using normalized references.
+/// Matching trims surrounding space, removes one boundary slash, then uses
+/// Unicode lowercase plus NFC: a `Foo` entry
+/// does not rewrite `Foo/Child`. Destination spelling is written as supplied;
+/// bare tags use brackets for multiword names.
 /// Rewrites `[[page]]`, bare and bracketed tags, supported Org page links,
 /// embeds containing those references, and bare `tags::` values. Other
 /// reference-bearing property values can be found by `explicit_referrers`
@@ -147,7 +151,9 @@ pub struct Rollback {
     /// `undo_failed` separately to learn whether old bytes were restored.
     /// Pre-transaction bytes are held in memory during commit; undo writes
     /// them back when possible, or preserves a copy in conflict recovery
-    /// when a different live file wins the name.
+    /// when a different live file wins the name. If an external file remains
+    /// live, those prior bytes are preserved separately in conflict recovery;
+    /// `kept_external` names the external file, not that prior-byte copy.
     pub kept_external: Vec<(FileId, Option<FileId>)>,
     /// Files undo could not restore, with their errors.
     pub undo_failed: Vec<(FileId, IoError)>,
@@ -156,11 +162,15 @@ pub struct Rollback {
 /// A committed set of steps or a refusal with its undo result.
 #[derive(Debug)]
 pub enum TxOutcome {
-    /// All steps completed; one generation represents their final state.
+    /// All steps completed. A changed transaction normally publishes a view
+    /// of its final state. After a failed initial load, its writes stand but
+    /// publication waits for successful `scan_refresh()` recovery.
     Committed {
         /// Results in input order.
         steps: Vec<StepResult>,
         /// Generation publishing the disk state, or current one if unchanged.
+        /// During a failed initial load this is the unchanged current revision:
+        /// no view covers the write until recovery's first view does.
         graph_rev: GraphRev,
     },
     /// The transaction did not commit. Preflight checks every step before any
@@ -178,7 +188,10 @@ pub enum TxOutcome {
         why: Why,
         /// Differences undo could not remove; empty on preflight failure.
         rollback: Rollback,
-        /// Generation covering the final disk state.
+        /// Last generation published for the final disk state. If both own and
+        /// external changes survive undo, the external publication comes last.
+        /// During a failed initial load this is the unchanged current revision:
+        /// no view covers a changed result until recovery's first view does.
         graph_rev: GraphRev,
     },
 }
@@ -191,6 +204,8 @@ pub enum FaultPoint {
     Stage2Mismatch,
     /// Simulate a changed file at the indexed step's second guard.
     Stage2MismatchAt(usize),
+    /// Simulate an external write after the replacement temp file is synced.
+    AfterTempSync,
     /// Simulate a changed but valid sidecar at the second guard.
     Stage2ValidSidecar,
     /// Simulate an external config edit at the second guard.
@@ -212,6 +227,7 @@ pub enum FaultPoint {
 pub(crate) enum FaultPoint {
     Stage2Mismatch,
     Stage2MismatchAt(usize),
+    AfterTempSync,
     Stage2ValidSidecar,
     Stage2ConfigExternal,
     NoReplaceCollision,
@@ -344,6 +360,10 @@ impl<'a> Transaction<'a> {
     /// current file-list index (built before open returns and updated by later
     /// observations). This takes
     /// raw content, unlike `save_page`'s structured `PageDto` serialization.
+    /// Queueing bytes copies O(input bytes); commit writes and syncs them and
+    /// can spend O(P) on publication metadata.
+    /// It checks target safety and UTF-8 for page files, but does not run the
+    /// Org round-trip editability check because no prior page is rewritten.
     pub fn create(&mut self, file: &FileId, content: Content) -> &mut Self {
         self.steps.push(Step::Create {
             file: file.clone(),
@@ -356,7 +376,8 @@ impl<'a> Transaction<'a> {
     /// `stem_2`, and so on on collision. `stem` is one path component; `ext`
     /// includes its leading dot, or is empty. An invalid name is refused.
     /// `Area::Trash` is refused. The chosen id appears in the step result.
-    /// Cost O(bytes + collisions).
+    /// Cost O(bytes + collisions). A page target uses the same raw UTF-8 and
+    /// target-safety checks as `create`, not `PageDto` serialization.
     pub fn create_unique(
         &mut self,
         area: Area,
@@ -398,7 +419,8 @@ impl<'a> Transaction<'a> {
     /// unsafe Org edits are refused as read-only. There is no partial rename
     /// mode: omit that referrer from the queued steps if leaving its old link
     /// is acceptable. This rewrites file content,
-    /// not an unsaved editor buffer.
+    /// not an unsaved editor buffer. Commit reads, parses, rewrites and writes
+    /// each named referrer, O(its text bytes), plus publication metadata.
     pub fn rewrite_refs(
         &mut self,
         id: &PageId,
@@ -418,8 +440,8 @@ impl<'a> Transaction<'a> {
     /// children. If bytes change, the old source moves to trash; if
     /// bytes stay equal, the source is renamed directly without a trash copy.
     /// After a move, `resolve` follows the destination filename. A retained
-    /// `title::` can still supply a different `Change::page` display name;
-    /// loading the destination gives a `PageDto.name` from its file claim.
+    /// `title::` can still affect display text, but `Change::page` and
+    /// `PageDto.name` use the destination's decoded filename claim.
     /// Updating `title::` requires a separate page save and is not atomic with
     /// this move. Referrers created after the source view are not included in
     /// queued rewrites; query referrers again after commit if that matters.
@@ -427,7 +449,9 @@ impl<'a> Transaction<'a> {
     /// rewrite; asking to rewrite its bytes invokes the round-trip check.
     /// Moves between pages and journals change the file's area identity and
     /// still require a guarded source and free destination. Moving into graph
-    /// trash is refused; use [`Self::trash`] for that operation.
+    /// trash is refused; use [`Self::trash`] for that operation. Commit hashes
+    /// source bytes and may rewrite/sync the destination, plus O(P) metadata
+    /// for publication.
     pub fn move_file(
         &mut self,
         file: &FileId,
@@ -450,7 +474,8 @@ impl<'a> Transaction<'a> {
     /// claimant or claimants to remove. A duplicate-day journal is typed as
     /// `TrashKind::Journal`; a sync-conflict-named page or journal copy is
     /// typed as `TrashKind::Conflict`. Trashing an Org file does not serialize its content, so its page-edit
-    /// read-only flag does not bar this move.
+    /// read-only flag does not bar this move. Commit hashes the source bytes,
+    /// moves the file, and can spend O(P) on publication metadata.
     pub fn trash(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
         self.steps.push(Step::Trash {
             file: file.clone(),
@@ -942,8 +967,24 @@ impl<'a> Transaction<'a> {
                 if old.is_none() {
                     self.fault_collision(&src);
                 }
-                let result = if old.is_some() {
-                    atomic_write(&src, new)
+                let result = if let Some(old) = old {
+                    atomic_write_with_check(&src, new, || {
+                        if fault(self.store, FaultPoint::AfterTempSync) {
+                            atomic_write(&src, b"external after temp sync")?;
+                        }
+                        let unchanged = match fs::read(&src) {
+                            Ok(current) => current == old,
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+                            Err(error) => return Err(error),
+                        };
+                        if !unchanged {
+                            return Err(io::Error::new(
+                                io::ErrorKind::AlreadyExists,
+                                "source changed after temp sync",
+                            ));
+                        }
+                        Ok(())
+                    })
                 } else {
                     atomic_write_new(&src, new)
                 };
@@ -1311,9 +1352,12 @@ impl<'a> Transaction<'a> {
     /// may wait for the initial graph parse. It blocks other writes for its
     /// duration without a timeout. On apply failure, attempts undo and reports
     /// remaining disk differences; a process crash can leave partial changes.
-    /// Preflight reports the first failing step. Apply rechecks each changed
-    /// source against the preflight bytes before replacing it, subject to the
-    /// external writer window between that check and the final rename. Undo
+    /// Preflight reports the first failing step. Neither a preflight nor an
+    /// apply guard conflict publishes the observed external bytes by itself;
+    /// a changed final state after undo can publish. Apply rechecks each changed
+    /// source against the preflight bytes after syncing the replacement temp
+    /// file and immediately before rename, subject to the remaining external
+    /// writer window between that check and rename. Undo
     /// stages live bytes in recoverable conflict trash and uses no-replace
     /// moves; another writer can still race those filesystem operations.
     /// Prior page bytes are kept in memory until commit finishes, so undo can

@@ -89,7 +89,8 @@ const OG_HIDDEN_BUILT_IN_PROPERTIES: &[&str] = &[
 pub struct ProjectedPageRef {
     /// Reference target spelling.
     pub name: String,
-    /// Byte range in the parsed source.
+    /// Byte range in the block's raw source. Browser-facing
+    /// `ReferenceSpan` values convert these offsets to UTF-16 code units.
     pub range: Range<usize>,
     /// Parser rule that recognized this reference.
     pub rule: &'static str,
@@ -101,7 +102,7 @@ pub struct ProjectedPageRef {
 pub struct ReferenceSourceProjection {
     /// Explicit page references recognized by the parser.
     pub explicit: Vec<ProjectedPageRef>,
-    /// Source byte ranges eligible for plain-text reference matching.
+    /// Byte ranges in the block's raw source eligible for plain-text matching.
     pub plain_ranges: Vec<Range<usize>>,
 }
 

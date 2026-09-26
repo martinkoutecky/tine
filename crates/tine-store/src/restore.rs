@@ -41,7 +41,9 @@ pub struct RestoreReport {
     /// target. Its bytes need not differ from the restore baseline.
     pub kept_external: Vec<FileId>,
     /// Generation published for a changed disk state, or the current generation
-    /// if restore made no change.
+    /// if restore made no change. During a failed initial load this is the
+    /// unchanged current revision even if restore wrote files: no view covers
+    /// those writes until recovery's first view does.
     pub graph_rev: GraphRev,
 }
 
@@ -82,7 +84,10 @@ impl Store {
     /// `logseq/.tine-trash/<restore-id>`; asset sidecars under
     /// `assets/.tine-restore-recovery/<restore-id>`. The returned `recovery`
     /// paths locate them; the store has no restore-import or cleanup call.
-    /// Replaced files are retired too.
+    /// Replaced files are retired too. An unlisted `config.edn` and
+    /// `custom.css` stay live. Only `config.edn` is accepted in the Meta area;
+    /// Trash targets and non-`.edn` assets are refused. Any `.edn` file under
+    /// assets counts as a sidecar, regardless of a matching PDF.
     /// Other asset files are left in place. The method then copies new files
     /// without replacing a concurrent winner. It blocks saves and transactions
     /// for the full operation. Cost includes all input bytes, all live page,
@@ -97,7 +102,13 @@ impl Store {
     /// An in-flight save holding the writer lock
     /// finishes before this restore; a later save checks against restored
     /// bytes. Check `recovery` and
-    /// `kept_external` when reconciling disk state. An editor must separately
+    /// `kept_external` when reconciling disk state. Existing `WholeGraph` views
+    /// remain captured snapshots until the final publication; direct `page()`
+    /// and `scan_area()` calls can observe intermediate files because they read
+    /// disk without the restore writer lock. The watcher waits for that lock.
+    /// A crash can leave a partial restore with whole individual files and
+    /// recovery directories; there is no store import or cleanup call.
+    /// An editor must separately
     /// preserve its unsaved buffer and compare its base revision before saving.
     pub fn restore(&self, mut files: Vec<RestoreFile>) -> Result<RestoreReport, RestoreFailed> {
         let _writer = self.writer.lock().unwrap();
