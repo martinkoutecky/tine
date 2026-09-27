@@ -202,7 +202,6 @@ async function trial(kind, corpus, index) {
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 120000 });
     await paint(browser);
     result.metrics.openMs = performance.now() - started;
-    result.metrics.rssAfterOpenBytes = corpus === "10k" ? rssFor(binaries[kind], graph) : null;
 
     await journey(browser, "search");
     let t = performance.now();
@@ -210,6 +209,10 @@ async function trial(kind, corpus, index) {
     await browser.$(".switcher-row.block-result").waitForExist({ timeout: 30000 });
     await paint(browser);
     result.metrics.searchMs = performance.now() - t;
+    // The first graph-wide search cannot finish before the background load.
+    // Sample here so rssAfterOpenBytes describes a loaded graph while openMs
+    // still measures first paint and searchMs still measures search at launch.
+    result.metrics.rssAfterOpenBytes = corpus === "10k" ? rssFor(binaries[kind], graph) : null;
     await browser.keys(["Escape"]);
 
     await journey(browser, "openPage");

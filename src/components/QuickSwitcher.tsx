@@ -570,7 +570,10 @@ export function QuickSwitcher(): JSX.Element {
                 {graphResults()!.diagnostics.map((diagnostic) => diagnostic.message).join(" · ")}
               </div>
             </Show>
-            <Show when={query().trim() && flat().length === 0 && !(graphResults()?.diagnostics.length ?? 0)}>
+            <Show when={query().trim() && (graphResults.loading || debouncedQuery() !== query())}>
+              <div class="switcher-empty" role="status">Searching…</div>
+            </Show>
+            <Show when={query().trim() && !graphResults.loading && debouncedQuery() === query() && flat().length === 0 && !(graphResults()?.diagnostics.length ?? 0)}>
               <div class="switcher-empty">No matched results</div>
             </Show>
           </div>
