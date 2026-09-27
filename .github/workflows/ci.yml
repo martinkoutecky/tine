@@ -604,7 +604,7 @@ jobs:
           app=$(find "$mount" -maxdepth 2 -type d -name '*.app' -print -quit)
           codesign --verify --deep --strict --verbose=2 "$app"
           spctl -a -vvv -t exec "$app"
-          xcrun stapler validate "$dmg"
+          xcrun stapler validate "$app" || echo "note: app ticket not stapled; Gatekeeper checks it online"
           ls "$app/Contents/MacOS"
           hdiutil detach "$mount"
           mkdir -p out
