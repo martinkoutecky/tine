@@ -1,13 +1,15 @@
-// An async asset write owns the graph and editor that started it. Capturing is
-// O(1); checking is O(1). A stale completion keeps its stored bytes but cannot
-// insert a reference or reclaim focus. There is no observable failure here;
-// callers report a stale stored asset through reportStaleAsset.
+// Capture the graph binding for asset writes/opens before any await. Rust rejects
+// stale bindings before touching a graph. The editor check separately prevents a
+// completed write from inserting a reference or reclaiming focus in a new editor.
+// Both checks are O(1); a stale binding rejects, while a stale editor reports a
+// stored but uninserted asset through reportStaleAsset.
+import { captureBinding, stillBound, type Binding } from "./binding";
 import { editingId, editingOwner, editingSurface } from "./editorController";
-import { graphEpoch, graphMeta } from "./graphSession";
+import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
 
 export interface AssetEditorToken {
-  readonly graphEpoch: number;
+  readonly binding: Binding;
   readonly graphRoot: string | undefined;
   readonly textarea: HTMLTextAreaElement;
   readonly editingBlockId: string | null;
@@ -17,7 +19,7 @@ export interface AssetEditorToken {
 
 export function captureAssetEditor(textarea: HTMLTextAreaElement): AssetEditorToken {
   return {
-    graphEpoch: graphEpoch(),
+    binding: captureBinding(),
     graphRoot: graphMeta()?.root,
     textarea,
     editingBlockId: editingId(),
@@ -27,7 +29,7 @@ export function captureAssetEditor(textarea: HTMLTextAreaElement): AssetEditorTo
 }
 
 export function assetEditorIsCurrent(token: AssetEditorToken, textarea: HTMLTextAreaElement, mounted: boolean): boolean {
-  return token.graphEpoch === graphEpoch()
+  return stillBound(token.binding)
     && token.graphRoot === graphMeta()?.root
     && mounted
     && textarea === token.textarea

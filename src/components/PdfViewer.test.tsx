@@ -414,7 +414,7 @@ describe("PdfViewer OG area-highlight selection", () => {
       await flush();
       host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       await flush(); await drainPdfWork();
-      expect(rollback).toHaveBeenCalledWith("paper.pdf", 1, id, 5678); expect(host.querySelector(`[data-highlight-id="${id}"]`)).toBeNull();
+      expect(rollback).toHaveBeenCalledWith("paper.pdf", 1, id, 5678, expect.any(Number)); expect(host.querySelector(`[data-highlight-id="${id}"]`)).toBeNull();
     } finally { dispose(); }
   });
 
@@ -543,7 +543,7 @@ describe("PdfViewer OG area-highlight selection", () => {
       await flush();
       await expect(drainPdfWork()).resolves.toBe(true);
 
-      expect(saveArea).toHaveBeenCalledWith("paper.pdf", 1, id, 1234, new Uint8Array([1, 2, 3]));
+      expect(saveArea).toHaveBeenCalledWith("paper.pdf", 1, id, 1234, new Uint8Array([1, 2, 3]), 1);
       expect(writeHighlights).toHaveBeenCalledOnce();
       expect(writeHighlights.mock.calls[0][2]).toEqual([
         expect.objectContaining({ id, page: 1, color: "blue", text: null, image: 1234 }),
@@ -598,7 +598,7 @@ describe("PdfViewer OG state and reference behavior", () => {
     const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
     try {
       await flush();
-      expect(openPdf).toHaveBeenCalledWith("paper.pdf", "Paper", "create-page");
+      expect(openPdf).toHaveBeenCalledWith("paper.pdf", "Paper", "create-page", 1);
       expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("2");
       expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("200%");
       expect(writeState).not.toHaveBeenCalled();
@@ -608,7 +608,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       await vi.advanceTimersByTimeAsync(3999);
       expect(writeState).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
-      expect(writeState).toHaveBeenCalledWith("paper.pdf", 2, 2.2);
+      expect(writeState).toHaveBeenCalledWith("paper.pdf", 2, 2.2, 1);
     } finally {
       dispose();
     }

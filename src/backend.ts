@@ -308,23 +308,23 @@ export interface Backend {
   openExternal(url: string): Promise<void>;
   /** Open a graph asset (by its `assets/`-relative name) in the OS default app —
    *  e.g. a video/audio file in the system player. */
-  openAsset(name: string): Promise<void>;
+  openAsset(name: string, bindingGeneration: number): Promise<void>;
   openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean): Promise<void>;
   /** Open a graph asset in a SPECIFIC external editor (drawio/Excalidraw/…) so a
    *  diagram can be edited in place. `command` is that editor's configured command
    *  template (empty = OS opener). See GH #38 / mediaEditors.ts. */
-  editAssetExternal(name: string, command: string): Promise<void>;
+  editAssetExternal(name: string, command: string, bindingGeneration: number): Promise<void>;
   /** Best-effort autodetect of an installed editor's launch command (probes disk,
    *  never executes). Returns a command template or "" if not found. */
   detectMediaEditor(id: string): Promise<string>;
   /** Top-level `assets/` files no block references (orphans), for cleanup. */
   listOrphanAssets(): Promise<AssetInfo[]>;
   /** Move an orphaned asset to the recoverable trash. */
-  trashAsset(name: string): Promise<void>;
+  trashAsset(name: string, bindingGeneration: number): Promise<void>;
   /** Count + total bytes of the recoverable asset trash (logseq/.tine-trash). */
   assetTrashStats(): Promise<TrashStats>;
   /** Permanently delete everything in the asset trash; returns files removed. */
-  emptyAssetTrash(): Promise<number>;
+  emptyAssetTrash(bindingGeneration: number): Promise<number>;
   /** Journal days that resolve to >1 file (date-stem + title-named, or md/org
    *  twin) — for the user to reconcile. */
   listJournalConflicts(): Promise<JournalConflict[]>;
@@ -393,20 +393,20 @@ export interface Backend {
    *  user opted into via Settings). Rejects when the opt-in is off or the path
    *  isn't a permitted image. */
   readLocalImage(path: string): Promise<Uint8Array>;
-  saveAsset(name: string, bytes: Uint8Array): Promise<string>;
+  saveAsset(name: string, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
   /** If the OS clipboard holds an image, save it to assets/ and return the
    *  filename; otherwise null. */
-  pasteImage(): Promise<string | null>;
+  pasteImage(bindingGeneration: number): Promise<string | null>;
   /** Decode an image off the OS clipboard to PNG bytes WITHOUT saving (the
    *  caller seeds the render cache + writes to disk in the background, so the
    *  pasted image appears instantly). Null if the clipboard has no image. */
   readClipboardImage(): Promise<Uint8Array | null>;
   /** Copy a file (by absolute path) into assets/, returning the stored name.
    *  `name` (optional) is the desired stored filename (timestamped). */
-  importAsset(path: string, name?: string): Promise<string>;
+  importAsset(path: string, name: string | undefined, bindingGeneration: number): Promise<string>;
   /** Stream a bounded native Android voice-memo temp into assets and retire the
    *  temp only after the graph copy commits. */
-  importNativeCapture(path: string, name: string): Promise<string>;
+  importNativeCapture(path: string, name: string, bindingGeneration: number): Promise<string>;
   /** Paths explicitly copied in the OS file manager. Empty when the clipboard
    *  has no native file-list flavor or the platform cannot expose one. */
   clipboardFiles(): Promise<ClipboardFileList>;
@@ -446,14 +446,14 @@ export interface Backend {
   readHighlights(pdf: string): Promise<Highlight[]>;
   /** Ensure OG's PDF sidecar/annotation page exist and return highlights plus
    * the persisted last-view page and scale. */
-  openPdf(pdf: string, label: string, kind: "create-page"): Promise<PdfState>;
-  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[], kind: "replace-page"): Promise<void>;
-  writePdfViewState(pdf: string, page: number, scale: number): Promise<void>;
+  openPdf(pdf: string, label: string, kind: "create-page", bindingGeneration: number): Promise<PdfState>;
+  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[], kind: "replace-page", bindingGeneration: number): Promise<void>;
+  writePdfViewState(pdf: string, page: number, scale: number, bindingGeneration: number): Promise<void>;
   /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
    *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
    *  Returns the assets-relative path. */
-  savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array): Promise<string>;
-  rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number): Promise<void>;
+  savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
+  rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
   /** How many launch snapshots to keep. */
@@ -569,6 +569,12 @@ class TauriBackend implements Backend {
       ? { ...(args ?? {}), bindingGeneration }
       : args;
     return this.invoke<T>(cmd, leasedArgs);
+  }
+
+  private assetCall<T>(cmd: string, args: Record<string, unknown> | undefined, bindingGeneration: number): Promise<T> {
+    if (!Number.isSafeInteger(bindingGeneration) || bindingGeneration <= 0)
+      return Promise.reject(new Error("missing-graph-binding"));
+    return this.call<T>(cmd, args, bindingGeneration);
   }
 
   async loadGraph(path: string) {
@@ -772,14 +778,14 @@ class TauriBackend implements Backend {
   openExternal(url: string) {
     return this.call<void>("open_external", { url });
   }
-  openAsset(name: string) {
-    return this.call<void>("open_asset", { name });
+  openAsset(name: string, bindingGeneration: number) {
+    return this.assetCall<void>("open_asset", { name }, bindingGeneration);
   }
   openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean) {
     return this.call<void>("open_page_file", { name, kind, path: path || null, reveal });
   }
-  editAssetExternal(name: string, command: string) {
-    return this.call<void>("edit_asset_external", { name, command });
+  editAssetExternal(name: string, command: string, bindingGeneration: number) {
+    return this.assetCall<void>("edit_asset_external", { name, command }, bindingGeneration);
   }
   detectMediaEditor(id: string) {
     return this.call<string>("detect_media_editor", { id });
@@ -787,8 +793,8 @@ class TauriBackend implements Backend {
   listOrphanAssets() {
     return this.call<AssetInfo[]>("list_orphan_assets");
   }
-  trashAsset(name: string) {
-    return this.call<void>("trash_asset", { name });
+  trashAsset(name: string, bindingGeneration: number) {
+    return this.assetCall<void>("trash_asset", { name }, bindingGeneration);
   }
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
@@ -832,9 +838,9 @@ class TauriBackend implements Backend {
     const buf = await this.call<ArrayBuffer>("read_local_image", { path });
     return new Uint8Array(buf);
   }
-  saveAsset(name: string, bytes: Uint8Array) {
+  saveAsset(name: string, bytes: Uint8Array, bindingGeneration: number) {
     if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("asset exceeds 64 MiB ingress limit"));
-    return this.call<string>("save_asset", { name, bytesB64: bytesToBase64(bytes) });
+    return this.assetCall<string>("save_asset", { name, bytesB64: bytesToBase64(bytes) }, bindingGeneration);
   }
   async readClipboardImage(): Promise<Uint8Array | null> {
     try {
@@ -845,16 +851,16 @@ class TauriBackend implements Backend {
       return null; // no image in clipboard, or plugin unavailable
     }
   }
-  async pasteImage(): Promise<string | null> {
+  async pasteImage(bindingGeneration: number): Promise<string | null> {
     const bytes = await this.readClipboardImage();
     if (!bytes) return null;
-    return await this.saveAsset(assetFileName(), bytes);
+    return await this.saveAsset(assetFileName(), bytes, bindingGeneration);
   }
   assetTrashStats() {
     return this.call<TrashStats>("asset_trash_stats");
   }
-  emptyAssetTrash() {
-    return this.call<number>("empty_asset_trash");
+  emptyAssetTrash(bindingGeneration: number) {
+    return this.assetCall<number>("empty_asset_trash", undefined, bindingGeneration);
   }
   listJournalConflicts() {
     return this.call<JournalConflict[]>("list_journal_conflicts");
@@ -905,11 +911,11 @@ class TauriBackend implements Backend {
     const { listen } = await import("@tauri-apps/api/event");
     return listen("conflicts-changed", () => cb());
   }
-  importAsset(path: string, name?: string) {
-    return this.call<string>("import_asset", { path, name });
+  importAsset(path: string, name: string | undefined, bindingGeneration: number) {
+    return this.assetCall<string>("import_asset", { path, name }, bindingGeneration);
   }
-  importNativeCapture(path: string, name: string) {
-    return this.call<string>("import_native_capture", { path, name });
+  importNativeCapture(path: string, name: string, bindingGeneration: number) {
+    return this.assetCall<string>("import_native_capture", { path, name }, bindingGeneration);
   }
   clipboardFiles() {
     return this.call<ClipboardFileList>("clipboard_files");
@@ -990,27 +996,27 @@ class TauriBackend implements Backend {
   readHighlights(pdf: string) {
     return this.call<Highlight[]>("read_highlights", { pdf });
   }
-  openPdf(pdf: string, label: string) {
-    return this.call<PdfState>("open_pdf", { pdf, label });
+  openPdf(pdf: string, label: string, _kind: "create-page", bindingGeneration: number) {
+    return this.assetCall<PdfState>("open_pdf", { pdf, label }, bindingGeneration);
   }
-  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[]) {
-    return this.call<void>("write_highlights", { pdf, label, highlights, baseIds });
+  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[], _kind: "replace-page", bindingGeneration: number) {
+    return this.assetCall<void>("write_highlights", { pdf, label, highlights, baseIds }, bindingGeneration);
   }
-  writePdfViewState(pdf: string, page: number, scale: number) {
-    return this.call<void>("write_pdf_view_state", { pdf, page, scale });
+  writePdfViewState(pdf: string, page: number, scale: number, bindingGeneration: number) {
+    return this.assetCall<void>("write_pdf_view_state", { pdf, page, scale }, bindingGeneration);
   }
-  savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array) {
+  savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array, bindingGeneration: number) {
     if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("PDF area image exceeds 64 MiB ingress limit"));
-    return this.call<string>("save_pdf_area_image", {
+    return this.assetCall<string>("save_pdf_area_image", {
       pdf,
       page,
       id,
       stamp,
       bytesB64: bytesToBase64(bytes),
-    });
+    }, bindingGeneration);
   }
-  rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number) {
-    return this.call<void>("rollback_pdf_area_image", { pdf, page, id, stamp });
+  rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number) {
+    return this.assetCall<void>("rollback_pdf_area_image", { pdf, page, id, stamp }, bindingGeneration);
   }
   async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");

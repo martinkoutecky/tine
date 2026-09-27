@@ -38,7 +38,9 @@
  * read, so an external file change surfaces a reasoned conflict rather than
  * an overwrite. `resolveConflict` reloads the pinned file for Use disk, or
  * guards Keep mine with the disk revision observed when the conflict arose;
- * a later disk edit raises a fresh conflict. `flushPage` / `flushAll` wait for
+ * a later disk edit raises a fresh conflict. For an alias-owner draft, Keep mine
+ * appends the draft to the owner's current content at that observed revision.
+ * `flushPage` / `flushAll` wait for
  * pending requests. An incomplete page-header draft remains dirty without an
  * autosave toast; exiting that editor reports invalid syntax once. A crash
  * between file writes can duplicate a moved block, but sinks-first order keeps

@@ -26,6 +26,7 @@ import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
 import { backend } from "../backend";
+import { captureBinding, stillBound } from "../binding";
 import { writeClipboardText } from "../clipboard";
 import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
@@ -781,19 +782,21 @@ function AssetImage(props: {
   };
   const onTrashAsset = async (e: MouseEvent) => {
     e.stopPropagation();
+    const binding = captureBinding();
     const name = assetRelPath(props.url);
     if (!name || !props.blockId) return;
     const ok = await backend().confirm(
       `Move "${name}" to the trash and remove it from this block? It stays recoverable in logseq/.tine-trash.`,
       "Trash asset",
     );
-    if (!ok) return;
+    if (!ok || !stillBound(binding)) return;
     removeMediaToken(props.blockId, props.alt, props.url); // drop the reference first (saves the block)
     try {
-      await backend().trashAsset(name);
+      await backend().trashAsset(name, binding.backendGeneration);
+      if (!stillBound(binding)) return;
       pushToast("Asset moved to trash", "success");
     } catch (err) {
-      pushToast(`Couldn't trash the asset (${String(err)})`, "error");
+      if (stillBound(binding)) pushToast(`Couldn't trash the asset (${String(err)})`, "error");
     }
   };
 
@@ -805,13 +808,15 @@ function AssetImage(props: {
     assetActions() && !isMobilePlatform ? mediaEditorForAsset(assetRelPath(props.url)) : undefined;
   const onEditAsset = async (e: MouseEvent) => {
     e.stopPropagation();
+    const binding = captureBinding();
     const name = assetRelPath(props.url);
     const ed = editor();
     if (!name || !ed) return;
     const cmd = await resolveMediaEditorCommand(ed);
+    if (!stillBound(binding)) return;
     void backend()
-      .editAssetExternal(name, cmd)
-      .catch(() => pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"));
+      .editAssetExternal(name, cmd, binding.backendGeneration)
+      .catch(() => { if (stillBound(binding)) pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"); });
     refreshAssetOnReturn(name);
   };
 
@@ -921,7 +926,7 @@ function MediaEmbed(props: {
   const open = (e: MouseEvent) => {
     e.stopPropagation();
     const r = rel();
-    if (r && !external) void backend().openAsset(r);
+    if (r && !external) void backend().openAsset(r, backend().graphBindingGeneration());
     else void backend().openExternal(props.url);
   };
   let tryingBlobFallback = false;
@@ -1233,14 +1238,16 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           // OG opens a referenced PDF annotation at its source page. Modifier
           // clicks retain Tine's existing pane/sidebar navigation semantics.
           if (ann && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+            const binding = captureBinding();
             void backend()
               .getPage(g.page, g.kind)
               .then((page) => {
+                if (!stillBound(binding)) return;
                 const file = pdfFileFromPreBlock(page?.pre_block);
                 if (file) openPdf(file, file, ann.hlPage, props.id);
                 else pushToast("Couldn't find the PDF for this highlight", "error");
               })
-              .catch(() => pushToast("Couldn't open the PDF for this highlight", "error"));
+              .catch(() => { if (stillBound(binding)) pushToast("Couldn't open the PDF for this highlight", "error"); });
             return;
           }
           // Shift-click opens the referenced block in the right sidebar. Plain click:

@@ -31,7 +31,7 @@ describe("Android voice-recording bounds", () => {
     );
     expect(result).toMatch(/path:\s*Option<String>/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/backend\(\)\.importNativeCapture\(res\.path, candidate\)/);
+    expect(block).toMatch(/backend\(\)\.importNativeCapture\(res\.path, candidate, editorToken\.binding\.backendGeneration\)/);
   });
 
   it("streams captured and picked photos through a bounded native cache token", () => {
@@ -52,6 +52,6 @@ describe("Android voice-recording bounds", () => {
     expect(commands).toMatch(/tine_photo_/);
     expect(commands).toMatch(/MAX_PHOTO_BYTES/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/capturePhoto[\s\S]*importNativeCapture\(res\.path, candidate\)/);
+    expect(block).toMatch(/capturePhoto[\s\S]*importNativeCapture\(res\.path, candidate, editorToken\.binding\.backendGeneration\)/);
   });
 });

@@ -1724,6 +1724,7 @@ pub(crate) fn import_native_capture(
     use cap_std::{ambient_authority, fs::Dir};
     use tauri::Manager;
 
+    let slot = slot_for_context(&state)?;
     const MAX_PHOTO_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_RECORDING_BYTES: u64 = 32 * 1024 * 1024;
     let source = std::path::Path::new(&path);
@@ -1778,7 +1779,6 @@ pub(crate) fn import_native_capture(
             max_bytes / (1024 * 1024)
         ));
     }
-    let slot = slot_for_context(&state)?;
     let stored = tine_graph_features::assets::import_asset_file(
         &slot.store,
         &name,
