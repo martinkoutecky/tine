@@ -138,7 +138,11 @@ impl Store {
     /// recovery directories; there is no store import or cleanup call.
     /// An editor must separately
     /// preserve its unsaved buffer and compare its base revision before saving.
-    pub fn restore(&self, mut files: Vec<RestoreFile>) -> Result<RestoreReport, RestoreFailed> {
+    pub fn restore(
+        &self,
+        _kind: crate::EditKind,
+        mut files: Vec<RestoreFile>,
+    ) -> Result<RestoreReport, RestoreFailed> {
         let _writer = self.writer.lock().unwrap();
         let mut done = RestoreReport {
             restored: 0,
@@ -427,7 +431,9 @@ mod config_directory_tests {
             source: File::open(path).unwrap(),
             len: fs::metadata(path).unwrap().len(),
         };
-        assert!(store.restore(vec![candidate(&source)]).is_err());
+        assert!(store
+            .restore(crate::EditKind::ReplacePage, vec![candidate(&source)])
+            .is_err());
         assert_eq!(fs::read(root.join("pages/A.md")).unwrap(), b"- keep me\n");
         fs::write(
             &source,
@@ -436,15 +442,18 @@ mod config_directory_tests {
         .unwrap();
         let page_source = root.join("page-source.md");
         fs::write(&page_source, "- keep me\n").unwrap();
-        let result = store.restore(vec![
-            candidate(&source),
-            RestoreFile {
-                area: Area::Pages,
-                rel: "A.md".into(),
-                source: File::open(&page_source).unwrap(),
-                len: fs::metadata(&page_source).unwrap().len(),
-            },
-        ]);
+        let result = store.restore(
+            crate::EditKind::ReplacePage,
+            vec![
+                candidate(&source),
+                RestoreFile {
+                    area: Area::Pages,
+                    rel: "A.md".into(),
+                    source: File::open(&page_source).unwrap(),
+                    len: fs::metadata(&page_source).unwrap().len(),
+                },
+            ],
+        );
         assert!(result.is_ok(), "{result:?}");
         store.close();
         drop(store);

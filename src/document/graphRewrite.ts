@@ -29,8 +29,8 @@ export async function renamePageOnDisk(from: string, to: string, target?: PageTa
     // Delayed intents now fail pageWritable even if they started before this.
     endEdit("graph-switch");
     if (!(await flushAll()) || !stillBound(binding)) return false;
-    if (target?.path) await backend().renamePage(from, to, target.path);
-    else await backend().renamePage(from, to);
+    if (target?.path) await backend().renamePage(from, to, "rename-page", target.path);
+    else await backend().renamePage(from, to, "rename-page");
     if (!stillBound(binding)) return false;
     resetStore();
     refreshRenamedNavigation?.(from, to, target);

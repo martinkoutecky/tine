@@ -24,7 +24,12 @@ fn bounded_outline_round_trips_unchanged() {
     let id = PageId::from("pages/Outline.md");
     let read = store.page(&id).unwrap();
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc
+        ),
         tine_store::SaveOutcome::Unchanged(_)
     ));
     assert_eq!(
@@ -290,9 +295,15 @@ fn hostile_child() {
         );
     }
     if let Ok(read) = page_result {
-        let _ = store.save(&id, SaveBase::Existing(read.rev), &read.doc);
+        let _ = store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc,
+        );
     } else {
         let _ = store.save(
+            tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::Existing(FileRev::from("missing".to_string())),
             &tine_core::model::PageDto {

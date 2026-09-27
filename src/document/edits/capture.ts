@@ -68,7 +68,7 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
           s.pages[s.pages.findIndex((p) => p.name === name)].roots.push(anchor);
         })
       );
-      markDirty(name);
+      markDirty(name, "insert-blocks");
       insertOutlineAfter(anchor, nodes);
       deleteBlock(anchor);
     });

@@ -117,8 +117,8 @@ export function cycleSelectionTasks(): boolean {
       }
     })
   );
-  if (pages.length > 1) void persistTogether(pages);
-  else for (const page of pages) markDirty(page);
+  if (pages.length > 1) void persistTogether(pages, "save-block");
+  else for (const page of pages) markDirty(page, "save-block");
   return true;
 }
 
@@ -239,8 +239,8 @@ export function deleteSelection() {
   );
   const ed = editingId();
   if (ed && !doc.byId[ed]) endEdit("delete-selection");
-  if (pages.size > 1) void persistTogether(pages);
-  else for (const p of pages) markDirty(p);
+  if (pages.size > 1) void persistTogether(pages, "delete-blocks");
+  else for (const p of pages) markDirty(p, "delete-blocks");
   reselectSurvivingBlock(survivor);
 }
 

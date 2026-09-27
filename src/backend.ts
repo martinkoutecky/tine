@@ -29,6 +29,7 @@ import type {
   QueryExportSpec,
 } from "./types";
 import { assetFileName } from "./media";
+import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
 
 export interface SavePageEntry {
@@ -36,6 +37,7 @@ export interface SavePageEntry {
   page: PageDto;
   baseRev: string | null;
   force: boolean;
+  kinds: EditKinds;
 }
 
 export type SavePagesResult =
@@ -242,7 +244,7 @@ export interface Backend {
   /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
   guidePages(): Promise<GuidePage[]>;
   /** Copy the bundled Guide into the real graph under `tine-guide/`. */
-  copyGuideIntoGraph(title: string): Promise<GuideCopyResult>;
+  copyGuideIntoGraph(title: string, kind: "replace-page"): Promise<GuideCopyResult>;
   /** Persist the graph-local one-time Guide announcement flag. */
   setGuideAnnounced(announced: boolean): Promise<void>;
   getBacklinks(name: string): Promise<RefGroup[]>;
@@ -258,7 +260,7 @@ export interface Backend {
   getBlockReferrers(uuid: string): Promise<RefGroup[]>;
   deletePage(name: string, kind: "journal" | "page", expectedPath?: string): Promise<void>;
   /** Rename a page and update all [[refs]]/#tags across the graph. */
-  renamePage(old: string, next: string, expectedPath?: string): Promise<void>;
+  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string): Promise<void>;
   publishHtml(): Promise<[string, number]>;
   /** Render one page to a self-contained HTML document (assets inlined, no
    *  sidebar) for the print-to-PDF export, with the dialog's options. Rejects if
@@ -293,7 +295,7 @@ export interface Backend {
   /** Persist the journal display-title format to config.edn
    *  `:journal/page-title-format` (e.g. "MMM do, yyyy"). Display-only — does not
    *  rename journal files (`:journal/file-name-format` is separate). */
-  setJournalTitleFormat(format: string): Promise<import("./types").JournalMigrationResult>;
+  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<import("./types").JournalMigrationResult>;
   /** Set (or clear, with null) the new-journal default template in config.edn
    *  `:default-templates {:journals "Name"}`. */
   setDefaultJournalTemplate(name: string | null): Promise<void>;
@@ -327,7 +329,7 @@ export interface Backend {
    *  twin) — for the user to reconcile. */
   listJournalConflicts(): Promise<JournalConflict[]>;
   /** Move one journal file (by exact filename) to the recoverable trash. */
-  trashJournalFile(name: string): Promise<void>;
+  trashJournalFile(name: string, kind: "delete-page"): Promise<void>;
   /** Raw contents of one journal file (by exact filename), for inspecting a
    *  duplicate day's files before reconciling. */
   readJournalFile(name: string): Promise<string>;
@@ -336,10 +338,10 @@ export interface Backend {
   getPageByPath(path: string): Promise<import("./types").PageRead | null>;
   /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
    *  `src` — fold a duplicate-day stray into the canonical day (#21). */
-  mergePages(src: string, dst: string): Promise<void>;
+  mergePages(src: string, dst: string, kinds: EditKinds): Promise<void>;
   /** Move a stray file (graph-root-relative path) to a uniquely-named page so it
    *  stops colliding and becomes normally navigable (#21). */
-  renameFileToPage(path: string, newName: string): Promise<void>;
+  renameFileToPage(path: string, newName: string, kind: "rename-page"): Promise<void>;
   /** Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
    *  user to review + merge instead of them showing as garbage pages. */
   listSyncConflicts(): Promise<SyncConflict[]>;
@@ -356,10 +358,11 @@ export interface Backend {
     decisions: Record<string, MergeDecision>,
     baseRev: string,
     conflictRev: string,
+    kinds: EditKinds,
     preChoice?: "mine" | "theirs" | "union"
   ): Promise<void>;
   /** Discard a conflict copy without merging (move it to the recoverable trash). */
-  trashSyncConflict(conflict: string): Promise<void>;
+  trashSyncConflict(conflict: string, kind: "delete-page"): Promise<void>;
   /** Subscribe to the watcher's `conflicts-changed` event (a conflict copy
    *  appeared or vanished). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
@@ -443,8 +446,8 @@ export interface Backend {
   readHighlights(pdf: string): Promise<Highlight[]>;
   /** Ensure OG's PDF sidecar/annotation page exist and return highlights plus
    * the persisted last-view page and scale. */
-  openPdf(pdf: string, label: string): Promise<PdfState>;
-  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[]): Promise<void>;
+  openPdf(pdf: string, label: string, kind: "create-page"): Promise<PdfState>;
+  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[], kind: "replace-page"): Promise<void>;
   writePdfViewState(pdf: string, page: number, scale: number): Promise<void>;
   /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
    *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
@@ -470,7 +473,7 @@ export interface Backend {
   listBackups(): Promise<BackupInfo[]>;
   /** Restore a snapshot (overwrites journals/pages/config; snapshots current
    *  state first). Destructive — confirm before calling. */
-  restoreBackup(stamp: string): Promise<void>;
+  restoreBackup(stamp: string, kind: "replace-page"): Promise<void>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
    *  Stored atomically in a backend file so structured session state is independent
    *  of a particular WebView/origin and can be shared across windows. */
@@ -705,7 +708,7 @@ class TauriBackend implements Backend {
   deletePage(name: string, kind: "journal" | "page", expectedPath?: string) {
     return this.call<void>("delete_page", { name, kind, expectedPath });
   }
-  renamePage(old: string, next: string, expectedPath?: string) {
+  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string) {
     return this.call<void>("rename_page", { old, new: next, expectedPath });
   }
   publishHtml() {
@@ -882,6 +885,7 @@ class TauriBackend implements Backend {
     decisions: Record<string, MergeDecision>,
     baseRev: string,
     conflictRev: string,
+    _kinds: EditKinds,
     preChoice?: "mine" | "theirs" | "union"
   ) {
     return this.call<void>("resolve_sync_conflict", {

@@ -189,7 +189,7 @@ fn close_releases_load_waiter_and_refuses_commit() {
     store.close();
     assert!(matches!(waiting.join().unwrap(), Err(LoadError::Closed)));
     let id = store.file_id(Area::Pages, "AfterClose.md").unwrap();
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&id, tine_store::Content::Bytes(b"- forbidden\n".to_vec()));
     assert!(matches!(
         tx.commit(),
@@ -220,7 +220,7 @@ fn same_root_scan_keeps_old_commands_open() {
     store.scan_refresh().unwrap();
     assert!(store.whole_graph().is_ok());
     let id = store.file_id(Area::Pages, "AfterCancel.md").unwrap();
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&id, tine_store::Content::Bytes(b"- after\n".to_vec()));
     assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
     store.close();
@@ -232,7 +232,7 @@ fn journal_identity_stays_available_after_close_without_disk() {
     std::fs::write(fixture.root().join("journals/2026_09_25.md"), "- one\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
     let added = store.file_id(Area::Journals, "2026_09_26.md").unwrap();
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&added, tine_store::Content::Bytes(b"- two\n".to_vec()));
     assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
     store.close();

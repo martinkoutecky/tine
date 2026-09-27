@@ -107,6 +107,7 @@ resolveGuideBlockRef
 resolveGuidePageDto
 restoreTodayJournalInFeed
 revealNode
+sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
 selectBlock
 selectedIds
 selectionMarkdown

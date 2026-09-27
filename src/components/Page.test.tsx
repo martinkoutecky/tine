@@ -753,7 +753,7 @@ describe("page actions entry point", () => {
       blurred.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
       await flushMicrotasks();
       expect(rename).toHaveBeenCalledTimes(1);
-      expect(rename).toHaveBeenLastCalledWith("Rename me", "Blurred name", dto.id);
+      expect(rename).toHaveBeenLastCalledWith("Rename me", "Blurred name", "rename-page", dto.id);
       setRaw("rename-root", "typed during rename", { timetracking: false });
       expect(doc.byId["rename-root"].raw).toBe("Body");
       finishFirstRename();

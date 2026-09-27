@@ -96,6 +96,7 @@ pub fn source_path_for_os_handoff(
 /// later edits. Cost O(page bytes + transaction publication).
 pub fn save_page(
     store: &Store,
+    kind: tine_store::EditKind,
     id: &PageId,
     page: &PageDto,
     base_rev: Option<String>,
@@ -105,10 +106,15 @@ pub fn save_page(
         return Ok(SaveOutcome::GuideEphemeral);
     }
     let base = save_base(store, id, base_rev, force)?;
-    Ok(store.save(id, base, page))
+    Ok(store.save(kind, id, base, page))
 }
 
-fn save_base(store: &Store, id: &PageId, base_rev: Option<String>, force: bool) -> Result<SaveBase, StoreError> {
+fn save_base(
+    store: &Store,
+    id: &PageId,
+    base_rev: Option<String>,
+    force: bool,
+) -> Result<SaveBase, StoreError> {
     Ok(if force {
         match store.read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((bytes, rev)) => {
@@ -128,15 +134,26 @@ fn save_base(store: &Store, id: &PageId, base_rev: Option<String>, force: bool) 
 /// Compute each requested base, then save every page in one store transaction.
 pub fn save_pages(
     store: &Store,
-    entries: &[(PageId, PageDto, Option<String>, bool)],
+    entries: &[(
+        PageId,
+        PageDto,
+        Option<String>,
+        bool,
+        Vec<tine_store::EditKind>,
+    )],
 ) -> Result<SavePagesOutcome, (usize, StoreError)> {
     let mut prepared = Vec::with_capacity(entries.len());
-    for (index, (id, page, base_rev, force)) in entries.iter().enumerate() {
+    for (index, (id, page, base_rev, force, kinds)) in entries.iter().enumerate() {
         if page.guide {
-            prepared.push((id.clone(), SaveBase::CreateNew, page.clone()));
+            prepared.push((id.clone(), SaveBase::CreateNew, page.clone(), kinds.clone()));
             continue;
         }
-        prepared.push((id.clone(), save_base(store, id, base_rev.clone(), *force).map_err(|error| (index, error))?, page.clone()));
+        prepared.push((
+            id.clone(),
+            save_base(store, id, base_rev.clone(), *force).map_err(|error| (index, error))?,
+            page.clone(),
+            kinds.clone(),
+        ));
     }
     Ok(store.save_pages(&prepared))
 }
@@ -244,7 +261,7 @@ pub fn delete_page_expected(
         if expected_rev.is_some_and(|expected| *expected != rev) {
             return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
         }
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(tine_store::EditKind::DeletePage));
         tx.trash(&file, rev);
         let outcome = tx.commit();
         if is_conflict(&outcome) {
@@ -429,7 +446,7 @@ fn rename_page_after_inventory(
         if edits.is_empty() {
             return Ok(Some(()));
         }
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
         for (id, rev) in edits {
             if let Some(to) = moves.get(&id) {
                 tx.move_file(&id.file(), rev, to, Some(&map));
@@ -471,7 +488,7 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
         let (_, rev) = store
             .read(&src, Some(tine_store::PARSE_INPUT_MAX_BYTES))
             .map_err(store_error)?;
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
         tx.move_file(&src, rev, &to, None);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })
@@ -569,8 +586,16 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
             }
         }
         survivor.blocks.extend(source.doc.blocks);
-        let mut tx = store.transaction();
-        tx.save_page(&dst_id, SaveBase::Existing(dst_rev), &survivor);
+        let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
+        tx.save_page(
+            &[
+                tine_store::EditKind::InsertBlocks,
+                tine_store::EditKind::DeletePage,
+            ],
+            &dst_id,
+            SaveBase::Existing(dst_rev),
+            &survivor,
+        );
         tx.trash(&src, src_rev);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })

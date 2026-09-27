@@ -98,7 +98,7 @@ fn set_preferred_format_round_trips() {
     assert_eq!(Config::parse(&after).preferred_format, Format::Org);
     let id = store.file_id(tine_store::Area::Meta, "config.edn").unwrap();
     let rev = store.read(&id, None).unwrap().1;
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(&id, rev, b"{}\n".to_vec());
     assert!(matches!(
         tx.commit(),

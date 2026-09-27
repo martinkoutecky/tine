@@ -92,14 +92,14 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
     // NOT read back as a property (same class as GH #25 for id::). Mirrors
     // rawWithBlockId's canonical placement: title, planning, drawer, body.
     setDoc("byId", id, "raw", orgRawWithProperty(node.raw, key, value));
-    markDirty(node.page);
+    markDirty(node.page, "save-block");
     return;
   }
   // Canonical head-region placement plus legacy trailing-property cleanup lives
   // in the shared pure writer so compound mutations (heading transitions) can
   // remain one undo-safe raw rewrite.
   setDoc("byId", id, "raw", markdownRawWithProperty(node.raw, key, value));
-  markDirty(node.page);
+  markDirty(node.page, "save-block");
 }
 
 /** Read a page-level property from the page's pre-block (the leading
@@ -136,11 +136,11 @@ export function setPageProperty(pageName: string, key: string, value: string | n
     } else {
       setDoc("byId", first.id, "raw", next);
     }
-    markDirty(pageName);
+    markDirty(pageName, "save-block");
     return;
   }
   setDoc("pages", idx, "preBlock", upsertPropertyLine(doc.pages[idx].preBlock, key, value));
-  markDirty(pageName);
+  markDirty(pageName, "save-block");
 }
 
 /** Materialize an existing canonical Markdown page header as Tine's ordinary
@@ -210,7 +210,7 @@ export function promotePagePreamble(pageName: string): string | null {
       s.pages[index].roots.splice(markedHeader ? 1 : 0, 0, id);
     })
   );
-  markDirty(pageName);
+  markDirty(pageName, ["save-block", "insert-blocks"]);
   return id;
 }
 
@@ -263,7 +263,7 @@ function setOwnNumberedList(id: string, enabled: boolean, visibleText?: string):
   if (next === node.raw) return false;
   pushUndo(`own-numbered:${id}`, [node.page]);
   setDoc("byId", id, "raw", next);
-  markDirty(node.page);
+  markDirty(node.page, "save-block");
   return true;
 }
 
@@ -353,7 +353,7 @@ export function toggleListItemAtIndex(id: string, lineIndex: number) {
   pushUndo(`listcheck:${id}`, [node.page]);
   lines[lineIndex] = next;
   setDoc("byId", id, "raw", lines.join("\n"));
-  markDirty(node.page);
+  markDirty(node.page, "save-block");
 }
 
 export type HeadingState = number | true | null;
@@ -391,7 +391,7 @@ export function setHeading(id: string, state: HeadingState) {
   if (next === node.raw) return;
   pushUndo(`heading:${id}`, [node.page]);
   setDoc("byId", id, "raw", next);
-  markDirty(node.page);
+  markDirty(node.page, "save-block");
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -477,7 +477,7 @@ export function setSchedule(
     lines.splice(Math.min(1, lines.length), 0, stamp);
   }
   setDoc("byId", id, "raw", lines.join("\n"));
-  markDirty(node.page);
+  markDirty(node.page, "save-block");
 }
 
 /** A block's raw with `collapsed:: true` added or removed so the persisted
@@ -512,7 +512,7 @@ export function setCollapsedDeep(id: string, collapsed: boolean) {
     n.children.forEach(walk);
   };
   walk(id);
-  markDirty(doc.byId[id].page);
+  markDirty(doc.byId[id].page, "save-block");
 }
 
 /** Every descendant that can itself be folded, including descendants hidden by
@@ -561,5 +561,5 @@ export function setCollapsedDescendants(id: string, collapsed: boolean) {
       }
     })
   );
-  markDirty(root.page);
+  markDirty(root.page, "save-block");
 }

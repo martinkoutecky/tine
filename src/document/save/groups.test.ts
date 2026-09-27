@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend, type SavePageEntry, type SavePagesResult } from "../../backend";
-import { loadFeed, resetStore, pageByName, moveBlock, undo, setRaw, flushAll, flushPage, isConflicted, ensurePageLoaded, deletePage, selectBlock, extendSelectionTo, cycleSelectionTasks, deleteSelection } from "../index";
+import { loadFeed, resetStore, pageByName, moveBlock, undo, setRaw, insertEmptyChildBlock, flushAll, flushPage, isConflicted, ensurePageLoaded, deletePage, selectBlock, extendSelectionTo, cycleSelectionTasks, deleteSelection } from "../index";
 import { conflictReason, group, markConflict, persistTogether, resolveConflict, waitingOn } from "./engine";
 import { doc } from "../model";
 import { carryUnfinished } from "../edits/carry";
@@ -37,6 +37,19 @@ beforeEach(() => { serial = 0; resetStore(); setToasts([]); });
 afterEach(() => vi.restoreAllMocks());
 
 describe("save groups", () => {
+  it("carries distinct edit kinds in first-seen order through one debounced save", async () => {
+    const root = block("initial");
+    loadFeed([{ ...page("A", []), blocks: [root] }]);
+    const { requests } = diskBackend({ A: ["initial"] });
+    setRaw(root.id, "first");
+    insertEmptyChildBlock(root.id, 0);
+    setRaw(root.id, "second");
+    expect(await flushPage("A")).toBe(true);
+    expect(requests[0][0].kinds).toEqual(["save-block", "insert-blocks"]);
+    setRaw(root.id, "third");
+    expect(await flushPage("A")).toBe(true);
+    expect(requests[1][0].kinds).toEqual(["save-block"]);
+  });
   it("B1: choosing disk for a conflicted destination releases its source without removing the disk copy", async () => {
     const moved = block("X");
     loadFeed([page("A", []), { ...page("B", []), blocks: [moved] }]);
@@ -64,6 +77,7 @@ describe("save groups", () => {
     expect(await resolveConflict("A", "mine")).toBe(true);
     expect(save.mock.calls.at(-1)![0].map((entry) => entry.page.name)).toEqual(["B", "A"]);
     expect(save.mock.calls.at(-1)![0][1].force).toBe(true);
+    expect(save.mock.calls.at(-1)![0][1].kinds).toContain("replace-page");
     expect(disk.get("B")).toContain("X");
     expect(disk.get("A")).not.toContain("X");
   });
@@ -147,7 +161,7 @@ describe("save groups", () => {
     loadFeed([page("A", ["a"]), page("B", ["b"])]);
     const { save } = diskBackend({ A: ["a"], B: ["b"] });
     markConflict("A"); markConflict("B");
-    void persistTogether(["A", "B"]);
+    void persistTogether(["A", "B"], "move-blocks");
     expect(waitingOn("A")).toEqual([]);
     expect(await resolveConflict("A", "mine")).toBe(true);
     expect(save).not.toHaveBeenCalled();
@@ -158,7 +172,7 @@ describe("save groups", () => {
 
   it("P4: a conflicted member lists the pages waiting on it", () => {
     loadFeed([page("A", ["a"]), page("B", ["b"]), page("C", ["c"])]);
-    void persistTogether(["A", "B", "C"]);
+    void persistTogether(["A", "B", "C"], "move-blocks");
     markConflict("A");
     expect(waitingOn("A")).toEqual(["B", "C"]);
   });
@@ -288,7 +302,7 @@ describe("save groups", () => {
     try {
       loadFeed([page("A", ["a"]), page("B", ["b"])]);
       const { save } = diskBackend({ A: ["a"], B: ["b"] });
-      const settled = persistTogether(["A", "B"]);
+      const settled = persistTogether(["A", "B"], "move-blocks");
       await vi.advanceTimersByTimeAsync(400);
       expect(await settled).toBe(true);
       expect(save).toHaveBeenCalledTimes(1);
@@ -302,7 +316,7 @@ describe("save groups", () => {
     ensurePageLoaded(page("B", ["b"]));
     const pending = deferred<SavePagesResult>();
     const save = vi.spyOn(backend(), "savePages").mockImplementation(() => pending.promise);
-    void persistTogether(["A", "B"]);
+    void persistTogether(["A", "B"], "move-blocks");
     const first = flushPage("A");
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     for (let i = 0; i < 85; i++) ensurePageLoaded(page(`Extra ${i}`, []));
@@ -326,7 +340,7 @@ describe("save groups", () => {
 
   it("F4: a grouped page cannot be replaced by a later path-pinned load", async () => {
     loadFeed([page("A", ["local"], "pages/original.md"), page("B", ["b"])]);
-    void persistTogether(["A", "B"]);
+    void persistTogether(["A", "B"], "move-blocks");
     ensurePageLoaded(page("A", ["stray"], "pages/stray.md"));
     expect(pageByName("A")?.id).toBe("pages/original.md");
     expect(memory("A")).toEqual(["local"]);
@@ -340,7 +354,7 @@ describe("save groups", () => {
     vi.spyOn(backend(), "getPageByPath").mockResolvedValue(page("Owner", ["owner"]));
     const save = vi.spyOn(backend(), "savePages");
     setRaw(pageByName("Owner")!.roots[0], "owner edited");
-    void persistTogether(["Draft", "Other"]);
+    void persistTogether(["Draft", "Other"], "move-blocks");
     expect(await flushPage("Draft")).toBe(false);
     expect(conflictReason("Draft")?.kind).toBe("alias-owner-busy");
     expect(save).not.toHaveBeenCalled();

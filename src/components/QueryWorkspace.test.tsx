@@ -113,7 +113,7 @@ describe("materializeQueryWorkspace", () => {
     expect(deps.resolvePage).toHaveBeenCalledWith("Project dashboard", "page");
     expect(deps.savePages).toHaveBeenCalledTimes(1);
     // Saved to the backend's Absent id (its name format and preferred format).
-    expect(deps.savePages).toHaveBeenCalledWith([{ id: "pages/Project dashboard.md", page: result.page, baseRev: null, force: false }], 1);
+    expect(deps.savePages).toHaveBeenCalledWith([{ id: "pages/Project dashboard.md", page: result.page, baseRev: null, force: false, kinds: ["create-page"] }], 1);
     expect(pageInventoryRev()).toBeGreaterThan(beforeInventory);
   });
 
@@ -455,7 +455,7 @@ describe("QueryWorkspace", () => {
     const saved = vi.mocked(deps.savePages).mock.calls[0][0][0].page;
     expect(saved.blocks).toHaveLength(1);
     expect(saved.blocks[0].raw).toBe('{{query (search "alpha OR beta")}}\ntine.view:: board');
-    expect(deps.savePages).toHaveBeenCalledWith([{ id: "pages/Saved search.md", page: saved, baseRev: null, force: false }], 1);
+    expect(deps.savePages).toHaveBeenCalledWith([{ id: "pages/Saved search.md", page: saved, baseRev: null, force: false, kinds: ["create-page"] }], 1);
 
     dispose();
   });

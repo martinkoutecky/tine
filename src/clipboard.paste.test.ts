@@ -7,7 +7,7 @@ import {
   type ClipboardBlock,
   type ClipboardPayloadData,
 } from "./clipboard";
-import { buildClipboardPayload, deleteBlock, ensurePageLoaded, flushPage, loadFeed, markDirty, pageByName, pasteClipboardPayload, redo, resetStore, setRaw, toggleUndoRedoMode, undo } from "./document";
+import { buildClipboardPayload, deleteBlock, ensurePageLoaded, flushPage, insertOutlineAfter, loadFeed, markDirty, pageByName, pasteClipboardPayload, sanitizeOutlineIdsForPaste, redo, resetStore, setRaw, toggleUndoRedoMode, undo } from "./document";
 import { forgetPage, reloadPage } from "./document/workingSet";
 import { historyPageOnlyMode } from "./document/history";
 import { loadSingle } from "./document/workingSet";
@@ -18,6 +18,7 @@ import type { BlockDto, Format, PageDto } from "./types";
 import { graphEpoch, setGraphEpoch, setGraphMeta } from "./graphSession";
 import { setGraphTransitioning } from "./ui";
 import { setToasts, toasts } from "./toasts";
+import { parseOutline } from "./editor/outline";
 
 const HOST = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ID1 = "11111111-1111-4111-8111-111111111111";
@@ -86,6 +87,42 @@ afterEach(() => {
 });
 
 describe("clipboard payload insertion and identity validation", () => {
+  it("keeps the in-memory key of a cut block without id::", async () => {
+    seed([page("Source", [block("plain-key", "plain")]), page("Target", [block(HOST, "")])]);
+    const payload = buildClipboardPayload(["plain-key"])!;
+    await record("cut", "- plain", payload);
+    deleteBlock("plain-key");
+    await paste();
+    expect(backend().savePages).toHaveBeenCalledTimes(1);
+    expect(roots("Target")).toEqual(["plain-key"]);
+  });
+
+  it("warns when a cut must be pasted as a copy", async () => {
+    seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
+    const payload = buildClipboardPayload([ID1])!;
+    await record("cut", "- source", payload);
+    deleteBlock(ID1);
+    vi.mocked(backend().savePages).mockRejectedValueOnce(new Error("disk full"));
+    await paste();
+    expect(toasts().some((toast) => /references.*will not follow/i.test(toast.message))).toBe(true);
+  });
+
+  it("strips a live id from plain outline paste and keeps an unused id", () => {
+    seed([page("Target", [block(HOST, `host\nid:: ${ID1}`)])]);
+    insertOutlineAfter(HOST, parseOutline(`- duplicate\n  id:: ${ID1}\n- new\n  id:: ${ID2}`));
+    const raws = roots("Target").slice(1).map((id) => doc.byId[id].raw);
+    expect(raws).toEqual(["duplicate", `new\nid:: ${ID2}`]);
+  });
+  it("checks off-screen IDs before ordinary outline insertion", async () => {
+    seed([page("Target", [block(HOST, "host")])]);
+    vi.mocked(backend().resolveBlocks).mockResolvedValueOnce([
+      { page: "Offscreen", kind: "page", blocks: [] }, null,
+    ]);
+    const nodes = parseOutline(`- duplicate\n  id:: ${ID1}\n- new\n  id:: ${ID2}`);
+    const clean = await sanitizeOutlineIdsForPaste(HOST, nodes);
+    expect(clean?.map((node) => node.raw)).toEqual(["duplicate", `new\nid:: ${ID2}`]);
+    expect(backend().resolveBlocks).toHaveBeenCalledWith([ID1, ID2]);
+  });
   it("clears a rejected cut slot without clearing a newer clipboard generation", async () => {
     let rejectFirst!: (error: Error) => void;
     vi.mocked(backend().writeRich).mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject; }));
@@ -451,7 +488,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
     const pending = paste();
     await vi.waitFor(() => expect(backend().resolveBlocks).toHaveBeenCalled());
-    markDirty("Source");
+    markDirty("Source", "save-block");
     release([null]);
 
     await pending;

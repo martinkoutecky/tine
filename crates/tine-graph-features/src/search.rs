@@ -270,7 +270,12 @@ mod tests {
                     let mut doc = read.doc;
                     doc.blocks[0].raw = "DONE newtoken".into();
                     assert!(matches!(
-                        writer.save(&id, SaveBase::Existing(read.rev), &doc),
+                        writer.save(
+                            tine_store::EditKind::ReplacePage,
+                            &id,
+                            SaveBase::Existing(read.rev),
+                            &doc
+                        ),
                         SaveOutcome::Saved(_)
                     ));
                 })
@@ -289,7 +294,12 @@ mod tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "TODO oldtoken".into();
         assert!(matches!(
-            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            store.save(
+                tine_store::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc
+            ),
             SaveOutcome::Saved(_)
         ));
         let advanced = run_advanced_query_after_scope(
@@ -303,7 +313,12 @@ mod tests {
                     let mut doc = read.doc;
                     doc.blocks[0].raw = "DONE newtoken".into();
                     assert!(matches!(
-                        writer.save(&id, SaveBase::Existing(read.rev), &doc),
+                        writer.save(
+                            tine_store::EditKind::ReplacePage,
+                            &id,
+                            SaveBase::Existing(read.rev),
+                            &doc
+                        ),
                         SaveOutcome::Saved(_)
                     ));
                 })

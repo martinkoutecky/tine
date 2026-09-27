@@ -103,6 +103,6 @@ export function carryUnfinished(
       todayPage.roots.push(...carried);
     })
   );
-  void persistTogether([today, ...sources], sources.map((source) => [source, today] as const));
+  void persistTogether([today, ...sources], ["move-blocks", "insert-blocks", "delete-blocks"], sources.map((source) => [source, today] as const));
   return plan.length;
 }

@@ -27,7 +27,12 @@ fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model
     let mut read = store.page(&id).unwrap();
     edit(&mut read.doc);
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc
+        ),
         SaveOutcome::Saved(_)
     ));
 }
@@ -392,7 +397,12 @@ fn search_cache_reflects_saves_and_deletes() {
         guide: false,
     };
     assert!(matches!(
-        store.save(&PageId::from("pages/Fresh.md"), SaveBase::CreateNew, &page),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &PageId::from("pages/Fresh.md"),
+            SaveBase::CreateNew,
+            &page
+        ),
         SaveOutcome::Saved(_)
     ));
     let hits = find();
@@ -435,7 +445,12 @@ fn search_ignores_hidden_property_metadata() {
     };
     let id = PageId::from("pages/Meta.md");
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &page),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &page
+        ),
         SaveOutcome::Saved(_)
     ));
     assert_eq!(
@@ -474,7 +489,12 @@ fn save_preserves_file_format_no_churn() {
         let id = PageId::from(format!("pages/{name}.md"));
         let read = store.page(&id).unwrap();
         assert!(matches!(
-            store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+            store.save(
+                tine_store::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &read.doc
+            ),
             SaveOutcome::Unchanged(_) | SaveOutcome::Saved(_)
         ));
     }
@@ -560,7 +580,12 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
         );
     owner.children[0].raw = owner.children[0].raw.replace(":occurrence: 2", ":OCC: 2");
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(read.rev), &page),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &page
+        ),
         SaveOutcome::Saved(_)
     ));
 
@@ -640,7 +665,12 @@ fn save_refuses_to_clobber_external_change() {
     crate::test_fixture_io::atomic_write(&path, "- EXTERNAL EDIT").unwrap();
 
     // Saving the now-stale page must fail with a conflict and NOT overwrite.
-    let outcome = store.save(&id, SaveBase::Existing(read.rev), &dto);
+    let outcome = store.save(
+        crate::EditKind::ReplacePage,
+        &id,
+        SaveBase::Existing(read.rev),
+        &dto,
+    );
     assert!(
         matches!(outcome, SaveOutcome::Conflict { .. }),
         "stale save over an external edit: {outcome:?}"
@@ -650,7 +680,12 @@ fn save_refuses_to_clobber_external_change() {
     // "Keep mine" force-saves over it.
     let (_, disk_rev) = store.read(&id.file(), None).unwrap();
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(disk_rev), &dto),
+        store.save(
+            crate::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(disk_rev),
+            &dto
+        ),
         SaveOutcome::Saved(_)
     ));
     assert!(std::fs::read_to_string(&path).unwrap().contains("one"));
@@ -677,7 +712,12 @@ fn save_conflicts_when_file_deleted_externally() {
     std::fs::remove_file(&path).unwrap();
 
     // Saving must conflict, NOT silently resurrect the deleted note.
-    let outcome = store.save(&id, SaveBase::Existing(read.rev), &read.doc);
+    let outcome = store.save(
+        crate::EditKind::ReplacePage,
+        &id,
+        SaveBase::Existing(read.rev),
+        &read.doc,
+    );
     assert!(
         matches!(outcome, SaveOutcome::Deleted),
         "stale save over an external delete: {outcome:?}"
@@ -711,7 +751,12 @@ fn load_reflects_external_change_then_save_is_clean() {
         "load reflects external change"
     );
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc
+        ),
         SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)
     ));
     store.close();
@@ -749,6 +794,7 @@ fn consecutive_self_saves_do_not_conflict() {
     // 1) date picker inserts a SCHEDULED line (page is new — no baseline yet).
     let id = PageId::from("pages/D.md");
     let r1 = match store.save(
+        tine_store::EditKind::ReplacePage,
         &id,
         SaveBase::CreateNew,
         &mk("TODO task\nSCHEDULED: <2026-06-16 Tue>"),
@@ -757,13 +803,23 @@ fn consecutive_self_saves_do_not_conflict() {
         outcome => panic!("first save failed: {outcome:?}"),
     };
     // 2) user deletes the inserted text — must NOT be read as an external edit.
-    let r2 = match store.save(&id, SaveBase::Existing(r1), &mk("TODO task")) {
+    let r2 = match store.save(
+        tine_store::EditKind::ReplacePage,
+        &id,
+        SaveBase::Existing(r1),
+        &mk("TODO task"),
+    ) {
         SaveOutcome::Saved(rev) => rev,
         outcome => panic!("second save failed: {outcome:?}"),
     };
     // 3) and a further edit still saves cleanly.
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(r2), &mk("TODO task edited")),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(r2),
+            &mk("TODO task edited")
+        ),
         SaveOutcome::Saved(_)
     ));
     assert!(std::fs::read_to_string(root.join("pages").join("D.md"))
@@ -850,13 +906,23 @@ fn noop_save_does_not_bump_cache_generation() {
         guide: false,
     };
     let id = PageId::from("pages/N.md");
-    let r1 = match store.save(&id, SaveBase::CreateNew, &mk("hello")) {
+    let r1 = match store.save(
+        tine_store::EditKind::ReplacePage,
+        &id,
+        SaveBase::CreateNew,
+        &mk("hello"),
+    ) {
         SaveOutcome::Saved(rev) => rev,
         outcome => panic!("first save failed: {outcome:?}"),
     };
     let rev1 = store.whole_graph().unwrap().rev();
     // Re-save byte-identical content (no-op) with the returned baseline.
-    let r2 = match store.save(&id, SaveBase::Existing(r1.clone()), &mk("hello")) {
+    let r2 = match store.save(
+        tine_store::EditKind::ReplacePage,
+        &id,
+        SaveBase::Existing(r1.clone()),
+        &mk("hello"),
+    ) {
         SaveOutcome::Unchanged(rev) => rev,
         outcome => panic!("unchanged save failed: {outcome:?}"),
     };
@@ -868,7 +934,12 @@ fn noop_save_does_not_bump_cache_generation() {
     );
     // A real edit DOES bump it.
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(r2), &mk("hello world")),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(r2),
+            &mk("hello world")
+        ),
         SaveOutcome::Saved(_)
     ));
     assert!(
@@ -911,7 +982,12 @@ fn self_write_marker_does_not_outlive_its_save() {
     };
     let id = PageId::from("pages/C.md");
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &page),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &page
+        ),
         SaveOutcome::Saved(_)
     ));
     let path = root.join("pages").join("C.md");
@@ -966,7 +1042,12 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
     };
     let id = PageId::from("pages/R.md");
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &page),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &page
+        ),
         SaveOutcome::Saved(_)
     ));
     let path = root.join("pages").join("R.md");
@@ -1036,7 +1117,12 @@ fn self_write_is_not_reported_as_external_change() {
     };
     let id = PageId::from("pages/W.md");
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &page),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &page
+        ),
         SaveOutcome::Saved(_)
     ));
     assert!(std::fs::read_to_string(&path).unwrap().contains("hello"));
@@ -1232,7 +1318,12 @@ fn legacy_namespace_file_round_trips() {
     assert_eq!(read.doc.name, "math/algebra");
     // An edited save round-trips to the SAME file; no `___` twin appears.
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(read.rev), &read.doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &read.doc
+        ),
         SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)
     ));
     assert!(root.join("pages").join("math%2Falgebra.md").exists());

@@ -277,7 +277,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
       } else {
         setDoc("byId", e.id, "raw", e.raw);
       }
-      addDirty(e.page);
+      addDirty(e.page, "save-block");
     } else if (e.headerRoot) {
       const restored = { ...cloneNode(e.headerRoot.node), raw: e.raw };
       setDoc(produce((s) => {
@@ -287,7 +287,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
       }));
       inverse.headerRoot = { node: cloneNode(restored), rootIndex: e.headerRoot.rootIndex };
       inverse.removeHeaderOnApply = true;
-      addDirty(e.page);
+      addDirty(e.page, "save-block");
     }
     return inverse;
   }
@@ -329,7 +329,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
   }
   // Multi-page replay is registered as one group by undo/redo immediately after
   // applyEntry returns; a one-page replay needs only its ordinary dirty bit.
-  if (e.dirty.length === 1) addDirty(e.dirty[0]);
+  if (e.dirty.length === 1) addDirty(e.dirty[0], "replace-page");
   invalidateAllMatrixDimensions();
   return inverse;
 }
@@ -376,7 +376,7 @@ export function undo() {
   const entry = popHistoryEntry(undoStack);
   if (!entry) return;
   const inverse = applyEntry(entry);
-  if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, transferOrder(entry, inverse));
+  if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
   redoStack.push(inverse);
   lastUndoTag = null;
   endEdit("undo");
@@ -397,7 +397,7 @@ export function redo() {
     return;
   }
   const inverse = applyEntry(entry);
-  if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, transferOrder(entry, inverse));
+  if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
   undoStack.push(inverse);
   lastUndoTag = null;
   endEdit("redo");

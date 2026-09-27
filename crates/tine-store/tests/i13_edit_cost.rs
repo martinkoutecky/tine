@@ -39,7 +39,12 @@ fn edit(pages: usize, blocks: usize) -> (Counts, usize) {
     let mut doc = read.doc;
     doc.blocks[0].raw = "after".into();
     cost_counters::reset();
-    let outcome = store.save(&id, SaveBase::Existing(read.rev), &doc);
+    let outcome = store.save(
+        tine_store::EditKind::ReplacePage,
+        &id,
+        SaveBase::Existing(read.rev),
+        &doc,
+    );
     let counts = cost_counters::snapshot();
     assert!(
         matches!(outcome, SaveOutcome::Saved(_)),

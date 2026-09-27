@@ -504,10 +504,8 @@ mod tests {
 
     #[test]
     fn moved_last_graph_reaches_a_canonical_root_error() {
-        let missing = std::env::temp_dir().join(format!(
-            "tine-moved-last-graph-{}",
-            std::process::id()
-        ));
+        let missing =
+            std::env::temp_dir().join(format!("tine-moved-last-graph-{}", std::process::id()));
         assert!(Store::canonical_root(&missing).is_err());
         assert_eq!(
             usable_last_graph_path(Some(missing.display().to_string())),

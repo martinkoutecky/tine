@@ -43,7 +43,12 @@ fn toggle_and_save(store: &Store, name: &str, journal: bool) {
     let mut read = store.page(&id).unwrap();
     read.doc.blocks[0].raw = read.doc.blocks[0].raw.replace("TODO", "DOING");
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::Existing(read.rev), &read.doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc
+        ),
         tine_store::SaveOutcome::Saved(_)
     ));
 }
@@ -56,7 +61,12 @@ fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model
     let mut read = store.page(&id).unwrap();
     edit(&mut read.doc);
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::Existing(read.rev), &read.doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc
+        ),
         tine_store::SaveOutcome::Saved(_)
     ));
 }
@@ -384,7 +394,12 @@ fn new_journal_appears_in_journals_desc_via_cache() {
     };
     let id = store.journal_id(tine_store::Day(20260618));
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::CreateNew, &dto),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::CreateNew,
+            &dto
+        ),
         tine_store::SaveOutcome::Saved(_)
     ));
 
@@ -427,7 +442,12 @@ fn own_write_is_suppressed_by_watcher() {
     let mut dto = read.doc;
     dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::Existing(read.rev), &dto),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &dto
+        ),
         tine_store::SaveOutcome::Saved(_)
     ));
 
@@ -501,7 +521,12 @@ fn frontend_added_id_survives_reload_and_resolves() {
     eprintln!("store uuid = {uuid}");
     read.doc.blocks[0].raw = format!("{}\nid:: {}", read.doc.blocks[0].raw, uuid);
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::Existing(read.rev), &read.doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc
+        ),
         tine_store::SaveOutcome::Saved(_)
     ));
 
@@ -715,6 +740,7 @@ fn save_new_page_while_initial_load_is_pending() {
     b.rev = None;
     assert!(matches!(
         store.save(
+            tine_store::EditKind::ReplacePage,
             &tine_store::PageId::from("pages/B.md"),
             tine_store::SaveBase::CreateNew,
             &b,
@@ -760,6 +786,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     b.rev = None;
     assert!(matches!(
         store.save(
+            tine_store::EditKind::ReplacePage,
             &tine_store::PageId::from("pages/B.md"),
             tine_store::SaveBase::CreateNew,
             &b
@@ -776,7 +803,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     let (_, rev) = store
         .read(&tine_store::PageId::from("pages/A.md").file(), None)
         .unwrap();
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.trash(&tine_store::PageId::from("pages/A.md").file(), rev);
     assert!(matches!(
         tx.commit(),
@@ -1117,7 +1144,12 @@ fn new_journal_saved_with_date_stem_not_title() {
     };
     let id = store.journal_id(tine_store::Day(20260618));
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::CreateNew, &dto),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::CreateNew,
+            &dto
+        ),
         tine_store::SaveOutcome::Saved(_)
     ));
     // It must land on the date-stem file, and reopening must show it in the feed.
@@ -1199,7 +1231,12 @@ fn crlf_files_round_trip_without_churn() {
     }
     // (2) an unchanged save is byte-identical — CRLF preserved, no churn
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::Existing(read.rev), &dto),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &dto
+        ),
         tine_store::SaveOutcome::Unchanged(_) | tine_store::SaveOutcome::Saved(_)
     ));
     assert_eq!(
@@ -1212,7 +1249,12 @@ fn crlf_files_round_trip_without_churn() {
     let mut dto2 = read2.doc;
     dto2.blocks[0].raw = dto2.blocks[0].raw.replace("ship it", "shipped");
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::Existing(read2.rev), &dto2),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read2.rev),
+            &dto2
+        ),
         tine_store::SaveOutcome::Saved(_)
     ));
     let after = std::fs::read_to_string(&path).unwrap();

@@ -179,7 +179,7 @@ pub fn open_pdf(store: &Store, pdf_name: &str, label: &str) -> io::Result<PdfSta
     }
     if current.is_none() {
         let skeleton = pdf::write_highlights(&[], "");
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(None);
         tx.create(&sidecar_id, Content::Bytes(skeleton.clone().into_bytes()));
         let outcome = tx.commit();
         if !is_conflict(&outcome) {
@@ -202,8 +202,13 @@ pub fn open_pdf(store: &Store, pdf_name: &str, label: &str) -> io::Result<PdfSta
         let doc =
             pdf::hls_page_document_for_format(pdf_name, label, &state.highlights, format(&page));
         let page_dto = dto(&page, &name, &doc);
-        let mut tx = store.transaction();
-        tx.save_page(&page, SaveBase::CreateNew, &page_dto);
+        let mut tx = store.transaction(Some(tine_store::EditKind::CreatePage));
+        tx.save_page(
+            &[tine_store::EditKind::CreatePage],
+            &page,
+            SaveBase::CreateNew,
+            &page_dto,
+        );
         let outcome = tx.commit();
         if is_conflict(&outcome) {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
@@ -234,7 +239,7 @@ pub fn write_pdf_view_state(
                 scale,
             )
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PDF view state"))?;
-            let mut tx = store.transaction();
+            let mut tx = store.transaction(None);
             match baseline {
                 Some((_, rev)) => {
                     tx.replace(&id, rev, next.into_bytes());
@@ -280,7 +285,7 @@ pub fn write_pdf_area_image(
             Err(StoreError::NotFound) => None,
             Err(error) => return Err(store_error(error)),
         };
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(None);
         match baseline {
             Some(rev) => {
                 tx.replace(&file, rev, bytes.to_vec());
@@ -373,7 +378,7 @@ pub fn write_highlights(
         let doc =
             pdf::merge_hls_page_for_format(prior.as_ref(), pdf_name, label, &merged, format(&page));
         let page_dto = dto(&page, &name, &doc);
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
         match current.as_ref() {
             Some((_, rev)) => {
                 tx.replace(&primary, rev.clone(), next.clone().into_bytes());
@@ -391,7 +396,7 @@ pub fn write_highlights(
             }
         }
         let base = existing.map_or(SaveBase::CreateNew, |(_, rev)| SaveBase::Existing(rev));
-        tx.save_page(&page, base, &page_dto);
+        tx.save_page(&[tine_store::EditKind::ReplacePage], &page, base, &page_dto);
         if !crate::commit_retry(tx.commit())? {
             return Ok(None);
         }
@@ -433,7 +438,7 @@ pub fn write_highlights(
                     continue;
                 }
             }
-            let mut cleanup = store.transaction();
+            let mut cleanup = store.transaction(None);
             cleanup.trash(&crop, crop_rev.clone());
             let Ok(steps) = tx_error(cleanup.commit()) else {
                 continue;
@@ -452,19 +457,19 @@ pub fn write_highlights(
                 _ => true,
             };
             if !primary_stable || !source_stable {
-                let mut restore = store.transaction();
+                let mut restore = store.transaction(None);
                 restore.move_file(trashed, crop_rev, &crop, None);
                 let _ = restore.commit();
                 break;
             }
         }
         if let (Some(id), Some((_, rev))) = (legacy_id.as_ref(), old) {
-            let mut cleanup = store.transaction();
+            let mut cleanup = store.transaction(None);
             cleanup.trash(id, rev);
             let _ = cleanup.commit();
         }
         if let (Some(id), Some((_, rev))) = (legacy_page_id, legacy_page) {
-            let mut cleanup = store.transaction();
+            let mut cleanup = store.transaction(Some(tine_store::EditKind::DeletePage));
             cleanup.trash(&id.file(), rev);
             let _ = cleanup.commit();
         }

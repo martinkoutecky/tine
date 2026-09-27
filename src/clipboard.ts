@@ -9,6 +9,8 @@ export const CLIPBOARD_PAYLOAD_MAX_BLOCKS = 10_000;
 export const CLIPBOARD_PAYLOAD_MAX_RAW_BYTES = 4 * 1024 * 1024;
 
 export interface ClipboardBlock {
+  /** Live store key, retained only for the first successful paste of a cut. */
+  key?: string;
   raw: string;
   children: ClipboardBlock[];
   sourceFormat: Format;

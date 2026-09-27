@@ -36,7 +36,7 @@ fn update(store: &Store, edit: impl Fn(&str) -> io::Result<String>) -> io::Resul
     crate::retry_on_conflict("config changed repeatedly during update", || {
         let current = read_config(store, &id)?;
         let next = edit(current.as_ref().map_or("{}\n", |(text, _)| text))?;
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(None);
         if let Some((_, rev)) = current {
             tx.replace(&id, rev, next.into_bytes());
         } else {

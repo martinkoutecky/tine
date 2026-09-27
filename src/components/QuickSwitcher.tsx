@@ -394,11 +394,15 @@ export function QuickSwitcher(): JSX.Element {
     try {
       const resolved = await backend().resolvePage(name, "page");
       if (!stillBound(binding)) return null;
-      if (resolved.kind === "alias") {
-        const owner = await backend().getPageByPath(resolved.owners[0]);
+      // Create means open-or-create: the Create row can be chosen before search
+      // results arrive, so any name that already resolves (a page or an alias)
+      // opens its target. Only an absent name writes a file.
+      if (resolved.kind !== "absent") {
+        const path = resolved.kind === "existing" ? resolved.id : resolved.owners[0];
+        const target = await backend().getPageByPath(path);
         if (!stillBound(binding)) return null;
-        if (!owner) throw new Error("alias owner disappeared");
-        return { name: owner.name, pageKind: owner.kind, path: owner.id };
+        if (!target) throw new Error("resolved page disappeared");
+        return { name: target.name, pageKind: target.kind, path: target.id };
       }
       await saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration });
       if (!stillBound(binding)) return null;

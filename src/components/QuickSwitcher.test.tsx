@@ -540,6 +540,46 @@ describe("QuickSwitcher search syntax help", () => {
     }
   });
 
+  it("Create on an existing page name opens that page and writes no file (open-or-create)", async () => {
+    // The Create row shows before the search debounce, so a fast Enter can reach
+    // it for a page that exists. Creating over it was refused and left an unsaved
+    // phantom page whose every edit conflicted (og bench, 2026-09-27).
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["created-rev"] });
+    const resolve = vi.spyOn(backend(), "resolvePage")
+      .mockResolvedValue({ kind: "existing", id: "pages/Bench Hub.md", others: [] });
+    const existing: PageRead = {
+      name: "Bench Hub", kind: "page", title: "Bench Hub", pre_block: null, id: "pages/Bench Hub.md",
+      blocks: [{ id: "hub-root", raw: "hub body", collapsed: false, children: [] }],
+    };
+    const byPath = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(existing);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    try {
+      openSwitcher();
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      input.value = "bench hub";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await vi.waitFor(() => {
+        expect([...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]
+          .some((row) => row.textContent?.includes("Create page: bench hub"))).toBe(true);
+      });
+      const create = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]
+        .find((row) => row.textContent?.includes("Create page: bench hub"))!;
+      create.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      await vi.waitFor(() => expect(route()).toMatchObject({
+        kind: "page", name: "Bench Hub", pageKind: "page", path: "pages/Bench Hub.md",
+      }));
+      expect(save).not.toHaveBeenCalled();
+      expect(toasts().some((toast) => toast.message.includes("Could not create “bench hub”"))).toBe(false);
+    } finally {
+      save.mockRestore();
+      resolve.mockRestore();
+      byPath.mockRestore();
+      dispose();
+    }
+  });
+
   it("Create on an alias name opens the alias owner and writes no file (B15b, Martin 2026-09-26)", async () => {
     // The Create row shows before the 110 ms search debounce, so an alias name
     // can reach it. v0.6.5 created `Nickname.md`; now it opens owners[0].

@@ -2187,7 +2187,11 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
         .lines()
         .filter(|l| {
             let t = l.trim();
-            let drop = t.starts_with("id::")
+            let drop = t
+                .get(..4)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("id::"))
+                || t.get(..4)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(":id:"))
                 || (strip_template
                     && (t.starts_with("template::")
                         || t.starts_with("template-including-parent::")));
@@ -2203,6 +2207,14 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
         breadcrumb: Vec::new(),
         ..Default::default()
     }
+}
+
+#[cfg(test)]
+#[test]
+fn template_copy_drops_markdown_and_org_ids_regardless_of_case() {
+    let block = DocBlock::new("body\nID:: md-id\n:PROPERTIES:\n:Id: org-id\n:END:\nkeep:: yes");
+    let copied = template_dto(&block, false);
+    assert_eq!(copied.raw, "body\n:PROPERTIES:\n:END:\nkeep:: yes");
 }
 
 /// Properties that are internal/metadata and shouldn't be offered as query

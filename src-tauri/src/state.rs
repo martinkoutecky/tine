@@ -365,7 +365,9 @@ mod tests {
             .store
             .file_id(tine_store::Area::Pages, "DuringRefresh.md")
             .unwrap();
-        let mut tx = old.store.transaction();
+        let mut tx = old
+            .store
+            .transaction(Some(tine_store::EditKind::CreatePage));
         tx.create(&id, tine_store::Content::Bytes(b"- retained\n".to_vec()));
         assert!(matches!(
             tx.commit(),

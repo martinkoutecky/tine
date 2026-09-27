@@ -28,7 +28,7 @@ import { typoTypeReplace } from "../render/typography";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistentBlockRef, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
+import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistentBlockRef, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
 import {
   clearFocusSurface,
   editingId,
@@ -3169,8 +3169,7 @@ export function Editor(props: { id: string }): JSX.Element {
     const sheetGridNode = structuralSheetPasteNode(text);
     if (sheetGridNode) {
       e.preventDefault();
-      commit(ref.value);
-      insertOutlineChildren(props.id, [sheetGridNode]);
+      insertPastedOutline([sheetGridNode], "sheet-outline-paste", true);
       return;
     }
     // Preserve only structure explicitly represented by the clipboard HTML.
@@ -3180,14 +3179,7 @@ export function Editor(props: { id: string }): JSX.Element {
     const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text, pageFmt());
     if (htmlNodes) {
       e.preventDefault();
-      const wasEmpty = ref.value.trim() === "" && docNode(props.id).children.length === 0;
-      const lastId = withUndoUnit("structured-paste", [docNode(props.id).page], () => {
-        commit(ref.value);
-        return wasEmpty
-          ? replaceEmptyBlockWithOutline(props.id, htmlNodes)
-          : insertOutlineAfter(props.id, htmlNodes);
-      });
-      startEditing(lastId, docNode(lastId).raw.length);
+      insertPastedOutline(htmlNodes, "structured-paste");
       return;
     }
     // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:168-177 parses only
@@ -3207,15 +3199,7 @@ export function Editor(props: { id: string }): JSX.Element {
         ? parseOutline(text)
         : segmentedPlainText(text);
       if (!nodes.length) return;
-      const wasEmpty =
-        ref.value.trim() === "" && docNode(props.id).children.length === 0;
-      const lastId = withUndoUnit("outline-paste", [docNode(props.id).page], () => {
-        commit(ref.value);
-        return wasEmpty
-          ? replaceEmptyBlockWithOutline(props.id, nodes)
-          : insertOutlineAfter(props.id, nodes);
-      });
-      startEditing(lastId, docNode(lastId).raw.length);
+      insertPastedOutline(nodes, "outline-paste");
       return;
     }
     // A bare URL pasted over a non-empty selection wraps the selection as a
@@ -3283,6 +3267,32 @@ export function Editor(props: { id: string }): JSX.Element {
       insertAssetBytes(bytes);
     })();
   };
+
+  function insertPastedOutline(nodes: OutlineNode[], tag: string, asChildren = false) {
+    const current = docNode(props.id);
+    if (!current) return;
+    const rawAtPaste = ref.value;
+    const pageAtPaste = current.page;
+    const insert = (prepared: OutlineNode[] | null) => {
+      if (!prepared?.length || !ref.isConnected || ref.value !== rawAtPaste || docNode(props.id)?.page !== pageAtPaste) return;
+      if (asChildren) {
+        commit(rawAtPaste);
+        insertOutlineChildren(props.id, prepared);
+        return;
+      }
+      const wasEmpty = rawAtPaste.trim() === "" && docNode(props.id).children.length === 0;
+      const lastId = withUndoUnit(tag, [pageAtPaste], () => {
+        commit(rawAtPaste);
+        return wasEmpty
+          ? replaceEmptyBlockWithOutline(props.id, prepared)
+          : insertOutlineAfter(props.id, prepared);
+      });
+      if (docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
+    };
+    const prepared = sanitizeOutlineIdsForPaste(props.id, nodes);
+    if (prepared instanceof Promise) void prepared.then(insert);
+    else insert(prepared);
+  }
 
   return (
     <div class="editor-wrap" classList={{ "calc-wrap": isCalc() }}>

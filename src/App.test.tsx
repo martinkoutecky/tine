@@ -127,7 +127,7 @@ describe("journal watcher feed reconciliation", () => {
   it("marks a dirty page conflicted and preserves its edits after an external change", async () => {
     const name = "Dirty";
     setDoc({ byId: { local: { ...node("local", name), raw: "local edit" } }, pages: [page(name, "page", ["local"])], feed: [], loaded: true });
-    markDirty(name);
+    markDirty(name, "save-block");
     const read = vi.spyOn(backend(), "getPage");
 
     await handleGraphChange({ name, kind: "page", created: false, removed: false });
@@ -140,7 +140,7 @@ describe("journal watcher feed reconciliation", () => {
     const name = "Removed while dirty";
     resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
     setDoc({ byId: { local: node("local", name) }, pages: [page(name, "page", ["local"])], feed: [name], loaded: true });
-    markDirty(name);
+    markDirty(name, "save-block");
     await handleGraphChange({ name, kind: "page", created: false, removed: true });
     expect(isConflicted(name)).toBe(true);
     expect(paneRouter("main").route()).toMatchObject({ kind: "page", name });
@@ -202,7 +202,7 @@ describe("journal watcher feed reconciliation", () => {
   it("restarts Journals while preserving a dirty journal removed on disk", async () => {
     const name = "15th July, 2030";
     setDoc({ byId: { local: node("local", name) }, pages: [page(name, "journal", ["local"])], feed: [], loaded: true });
-    markDirty(name);
+    markDirty(name, "save-block");
     const now = new Date();
     const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
       pages: [], next_before_day: null, done: true,
@@ -225,7 +225,7 @@ describe("journal watcher feed reconciliation", () => {
   it("does not mark a new graph page conflicted from an old watcher event (I-20)", async () => {
     const name = "Same name";
     setDoc({ byId: { fresh: node("fresh", name) }, pages: [page(name, "page", ["fresh"])], feed: [], loaded: true });
-    markDirty(name);
+    markDirty(name, "save-block");
     await handleGraphChange({ name, kind: "page", created: false, removed: true, binding_generation: Number.MAX_SAFE_INTEGER });
     expect(isConflicted(name), "I-20: old watcher events must not block the new graph; exemplar src/App.tsx handleGraphChange").toBe(false);
   });

@@ -459,7 +459,12 @@ fn run_edit_cycles(root: &Path, query: &str) -> io::Result<EditCycleResult> {
         }
 
         let started = Instant::now();
-        let new_rev = match store.save(&id, SaveBase::Existing(base_rev), &page) {
+        let new_rev = match store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(base_rev),
+            &page,
+        ) {
             SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => rev,
             other => return Err(io::Error::other(format!("save failed: {other:?}"))),
         };

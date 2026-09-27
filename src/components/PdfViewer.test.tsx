@@ -583,7 +583,7 @@ describe("PdfViewer OG state and reference behavior", () => {
     const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
     try {
       await flush();
-      expect(openPdf).toHaveBeenCalledWith("paper.pdf", "Paper");
+      expect(openPdf).toHaveBeenCalledWith("paper.pdf", "Paper", "create-page");
       expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("2");
       expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("200%");
       expect(writeState).not.toHaveBeenCalled();

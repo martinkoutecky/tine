@@ -5507,19 +5507,28 @@ mod tests {
 
     #[test]
     fn journal_content_matches_shared_frontend_fixture() {
-        let cases: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/journal-content.json"
-        ))
-        .unwrap();
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/journal-content.json"))
+                .unwrap();
         fn blocks(values: &serde_json::Value) -> Vec<DocBlock> {
-            values.as_array().unwrap().iter().map(|value| {
-                let mut block = DocBlock::new(value["raw"].as_str().unwrap());
-                block.children = blocks(&value["children"]);
-                block
-            }).collect()
+            values
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| {
+                    let mut block = DocBlock::new(value["raw"].as_str().unwrap());
+                    block.children = blocks(&value["children"]);
+                    block
+                })
+                .collect()
         }
         for case in cases.as_array().unwrap() {
-            assert_eq!(doc_has_content(&blocks(&case["blocks"])), case["hasContent"].as_bool().unwrap(), "{}", case["name"]);
+            assert_eq!(
+                doc_has_content(&blocks(&case["blocks"])),
+                case["hasContent"].as_bool().unwrap(),
+                "{}",
+                case["name"]
+            );
         }
     }
 
@@ -6083,7 +6092,7 @@ mod tests {
         let base = base
             .map(|rev| tine_store::SaveBase::Existing(rev.to_owned().into()))
             .unwrap_or(tine_store::SaveBase::CreateNew);
-        store.save(&id, base, page)
+        store.save(tine_store::EditKind::ReplacePage, &id, base, page)
     }
 
     fn saved_rev(outcome: tine_store::SaveOutcome) -> String {
@@ -6103,7 +6112,12 @@ mod tests {
         let mut read = store.page(&id).unwrap();
         edit(&mut read.doc);
         assert!(matches!(
-            store.save(&id, crate::store::SaveBase::Existing(read.rev), &read.doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                crate::store::SaveBase::Existing(read.rev),
+                &read.doc
+            ),
             crate::store::SaveOutcome::Saved(_)
         ));
     }
@@ -6194,6 +6208,7 @@ mod tests {
         source.doc.blocks[0].raw = "nothing here".into();
         assert!(matches!(
             store.save(
+                crate::EditKind::ReplacePage,
                 &source_id,
                 crate::store::SaveBase::Existing(source.rev),
                 &source.doc,
@@ -7597,7 +7612,7 @@ mod tests {
         let rev = store.read(&from, None).unwrap().1;
         store.inject_fault(crate::FaultPoint::MidStepIo);
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.move_file(&from, rev, &to, None);
         assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
         assert_eq!(
@@ -7755,6 +7770,7 @@ mod tests {
 
         assert!(matches!(
             store.save(
+                tine_store::EditKind::ReplacePage,
                 &tine_store::PageId::from("pages/Guide.md"),
                 tine_store::SaveBase::CreateNew,
                 &page,
@@ -7808,7 +7824,14 @@ mod tests {
         assert_eq!(dto.format, Format::Org);
         assert!(dto.read_only, "non-round-tripping org loads read-only");
         assert!(matches!(
-            tine_graph_features::pages::save_page(&store, &id, &dto, None, true),
+            tine_graph_features::pages::save_page(
+                &store,
+                tine_store::EditKind::ReplacePage,
+                &id,
+                &dto,
+                None,
+                true
+            ),
             Ok(tine_store::SaveOutcome::ReadOnly(_))
         ));
         assert_eq!(
@@ -8266,7 +8289,12 @@ mod tests {
                 ..Default::default()
             }];
 
-            let err = match store.save(&id, tine_store::SaveBase::Existing(read.rev), &dto) {
+            let err = match store.save(
+                tine_store::EditKind::ReplacePage,
+                &id,
+                tine_store::SaveBase::Existing(read.rev),
+                &dto,
+            ) {
                 tine_store::SaveOutcome::Io(error) => error,
                 outcome => panic!("header rewrite was accepted: {outcome:?}"),
             };
@@ -8348,6 +8376,7 @@ mod tests {
 
                 let outcome = tine_graph_features::pages::save_page(
                     &store,
+                    tine_store::EditKind::ReplacePage,
                     &id,
                     &dto,
                     Some(cached_before.rev.clone().into()),
@@ -10224,7 +10253,7 @@ mod tests {
         let store = loaded_store(&dir);
         store.inject_fault(crate::FaultPoint::TwinAfterPublish);
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.create(
             &crate::FileId::from("pages/Guide.md".to_owned()),
             crate::Content::Bytes(b"- bundled guide\n".to_vec()),
@@ -10472,7 +10501,12 @@ mod tests {
         };
         let id = store.journal_id(tine_store::Day(20260710));
         assert!(matches!(
-            store.save(&id, tine_store::SaveBase::CreateNew, &page),
+            store.save(
+                tine_store::EditKind::ReplacePage,
+                &id,
+                tine_store::SaveBase::CreateNew,
+                &page
+            ),
             tine_store::SaveOutcome::InvalidTarget(_)
         ));
         assert!(!dir.parent().unwrap().join("2026_07_10.md").exists());
@@ -10523,7 +10557,12 @@ mod tests {
         let read = store.page(&id).unwrap();
         let mut stray = read.doc;
         stray.blocks[0].raw = "stray body edited".into();
-        let rev = match store.save(&id, crate::SaveBase::Existing(read.rev), &stray) {
+        let rev = match store.save(
+            crate::EditKind::ReplacePage,
+            &id,
+            crate::SaveBase::Existing(read.rev),
+            &stray,
+        ) {
             crate::SaveOutcome::Saved(rev) => rev,
             other => panic!("stray save must succeed, got {other:?}"),
         };
@@ -10564,7 +10603,12 @@ mod tests {
         let bad = crate::PageId::from("../escape.md");
         assert!(
             matches!(
-                store.save(&bad, crate::SaveBase::Existing(read.rev), &read.doc),
+                store.save(
+                    crate::EditKind::ReplacePage,
+                    &bad,
+                    crate::SaveBase::Existing(read.rev),
+                    &read.doc
+                ),
                 crate::SaveOutcome::InvalidTarget(_)
             ),
             "save must refuse an out-of-graph path"
@@ -10640,7 +10684,12 @@ mod tests {
         let mut dto = read.doc;
         dto.blocks[0].raw = "after".into();
         assert!(matches!(
-            store.save(&id, crate::SaveBase::Existing(read.rev), &dto),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                crate::SaveBase::Existing(read.rev),
+                &dto
+            ),
             crate::SaveOutcome::Saved(_)
         ));
 
@@ -10687,11 +10736,21 @@ mod tests {
         a_doc.blocks[0].raw = "after a".into();
         b_doc.blocks[0].raw = "after b".into();
         assert!(matches!(
-            store.save(&a_id, crate::SaveBase::Existing(a.rev), &a_doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &a_id,
+                crate::SaveBase::Existing(a.rev),
+                &a_doc
+            ),
             crate::SaveOutcome::Saved(_)
         ));
         assert!(matches!(
-            store.save(&b_id, crate::SaveBase::Existing(b.rev), &b_doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &b_id,
+                crate::SaveBase::Existing(b.rev),
+                &b_doc
+            ),
             crate::SaveOutcome::Saved(_)
         ));
 
@@ -10749,6 +10808,7 @@ mod tests {
         non_winner.blocks[0].raw = "nested saved sentinel".into();
         assert!(matches!(
             store.save(
+                crate::EditKind::ReplacePage,
                 &non_winner_id,
                 crate::SaveBase::Existing(read.rev),
                 &non_winner

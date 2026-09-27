@@ -303,8 +303,16 @@ pub fn resolve_sync_conflict(
             _ => mine_doc.pre_block.clone(),
         };
         let merged = dto(store, &page, Document { pre_block, roots });
-        let mut tx = store.transaction();
-        tx.save_page(&page, SaveBase::Existing(win_rev), &merged);
+        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[
+                tine_store::EditKind::ReplacePage,
+                tine_store::EditKind::DeletePage,
+            ],
+            &page,
+            SaveBase::Existing(win_rev),
+            &merged,
+        );
         tx.trash(&conf, conf_rev);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })

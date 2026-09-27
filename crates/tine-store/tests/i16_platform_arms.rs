@@ -71,7 +71,7 @@ fn windows_no_replace_keeps_the_existing_destination() {
     let src_id = store.file_id(tine_store::Area::Pages, "source.md").unwrap();
     let dest_id = store.file_id(tine_store::Area::Pages, "dest.md").unwrap();
     let rev = store.read(&src_id, None).unwrap().1;
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.move_file(&src_id, rev, &dest_id, None);
     assert!(matches!(tx.commit(), tine_store::TxOutcome::NotCommitted { .. }),
         "I-16: Windows no-replace must refuse an existing destination; exemplar no_replace.rs move_windows");

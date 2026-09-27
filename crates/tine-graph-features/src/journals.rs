@@ -372,7 +372,7 @@ pub fn migrate_journal_filenames(store: &Store) -> MigrationResult {
                 .push(skip("target filename is invalid".to_owned()));
             continue;
         };
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
         tx.move_file(&entry.id, rev, &to, None);
         match tx_error(tx.commit()) {
             Ok(_) => {

@@ -100,7 +100,7 @@ describe("cross-page moves save as one ordered request", () => {
   it("a conflicted source aborts before any memory move and tells the user", async () => {
     const moved = block("portable task");
     loadFeed([page("Newer", []), page("Older", [moved])]);
-    markDirty("Older");
+    markDirty("Older", "save-block");
     markConflict("Older");
     expect(await moveBlockFeed(moved.id, -1)).toBe("none");
     await moveBlock(moved.id, null, 0, "Newer");
@@ -263,7 +263,7 @@ describe("save conflict set as observed through flushAll", () => {
     expect(isConflicted("Notes")).toBe(true);
     expect(conflicts()).toContain("Notes");
     clearConflict("Notes");
-    markDirty("Notes");
+    markDirty("Notes", "save-block");
     expect(await flushAll()).toBe(true);
     expect(isConflicted("Notes")).toBe(false);
     expect(save.mock.calls.at(-1)?.[0][0].page.blocks[0].raw).toBe("edited");

@@ -54,7 +54,7 @@ describe("guide copy inventory", () => {
     });
     const before = pageInventoryRev();
     await copyGuideIntoGraph("Tine-guide/Tine Guide");
-    expect(copy).toHaveBeenCalledWith("Tine Guide");
+    expect(copy).toHaveBeenCalledWith("Tine Guide", "replace-page");
     expect(pageInventoryRev()).toBeGreaterThan(before);
   });
 

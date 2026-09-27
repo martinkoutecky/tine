@@ -71,7 +71,7 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
   const page = pageByName(pageName);
   const title = guideTitleFromName(page?.name ?? pageName);
   try {
-    const result = await backend().copyGuideIntoGraph(title);
+    const result = await backend().copyGuideIntoGraph(title, "replace-page");
     if ((result.created_pages?.length ?? 0) > 0) bumpPageInventoryRev();
     pushToast(
       result.created

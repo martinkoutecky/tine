@@ -1,5 +1,5 @@
 import { blockWritable, pageWritable, rawWithInheritedOrderListType, isOrdered, rawWithOrderListType, rawWithCollapsed, writeCollapsed } from "./properties";
-import { doc, formatForBlock, setDoc, freshId, formatForPage, pageByName } from "../model";
+import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, formatForPage, pageByName } from "../model";
 
 /** Reveal a search result without creating an edit, undo entry, or save. */
 export function revealNode(id: string): void {
@@ -20,6 +20,16 @@ import { existingBlockId } from "./identity";
 // Mutations (each schedules a debounced save of the affected page)
 // ---------------------------------------------------------------------------
 
+/** Keep imported properties except an id already owned by a live block. */
+function outlineRaw(raw: string, format: "md" | "org", incoming: Set<string>): string {
+  const id = existingBlockId(raw, format)?.toLowerCase();
+  if (!id) return raw;
+  if (incoming.has(id) || docHasBlockIdentity(id))
+    return splitProps(raw, (key) => key.toLowerCase() === "id", format).visible;
+  incoming.add(id);
+  return raw;
+}
+
 export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean }) {
   if (!blockWritable(id)) return;
   const prev = doc.byId[id].raw;
@@ -35,7 +45,7 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
         );
   pushRawUndo(id, prev);
   setDoc("byId", id, "raw", next);
-  markDirty(doc.byId[id].page);
+  markDirty(doc.byId[id].page, "save-block");
 }
 
 export function insertEmptyChildBlock(parentId: string, at: number): string | null {
@@ -50,7 +60,7 @@ export function insertEmptyChildBlock(parentId: string, at: number): string | nu
       s.byId[parentId].children.splice(at, 0, id);
     })
   );
-  markDirty(pageName);
+  markDirty(pageName, "insert-blocks");
   return id;
 }
 
@@ -80,7 +90,7 @@ export function replaceChildOrders(nextByParent: Record<string, readonly string[
       }
     })
   );
-  for (const pageName of pages) markDirty(pageName);
+  for (const pageName of pages) markDirty(pageName, "move-blocks");
   return true;
 }
 
@@ -94,6 +104,7 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
   let lastId: string | null = null;
   pushUndo("paste-children", [pageName]);
   const format = formatForPage(pageName);
+  const incoming = new Set<string>();
   setDoc(
     produce((s) => {
       const create = (n: OutlineNode, par: string): string => {
@@ -101,7 +112,7 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
         const childIds = n.children.map((c) => create(c, id));
         s.byId[id] = {
           id,
-          raw: rawWithInheritedOrderListType(n.raw, format, parentId),
+          raw: rawWithInheritedOrderListType(outlineRaw(n.raw, format, incoming), format, parentId),
           collapsed: false,
           parent: par,
           page: pageName,
@@ -114,7 +125,7 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
       lastId = created[created.length - 1] ?? null;
     })
   );
-  markDirty(pageName);
+  markDirty(pageName, "insert-blocks");
   return lastId;
 }
 
@@ -175,7 +186,7 @@ export function splitBlock(
       })
     );
     startEditing(emptyId, 0, null, editingSurface);
-    markDirty(pageName);
+    markDirty(pageName, "insert-blocks");
     return;
   }
 
@@ -202,7 +213,7 @@ export function splitBlock(
     })
   );
   startEditing(newId, 0, null, editingSurface);
-  markDirty(pageName);
+  markDirty(pageName, ["save-block", "insert-blocks"]);
 }
 
 /** Tab: make the block the last child of its previous sibling. */
@@ -230,7 +241,7 @@ export function indentBlock(id: string, caretOffset: number) {
     })
   );
   startEditing(id, caretOffset);
-  markDirty(pageName);
+  markDirty(pageName, ["move-blocks", "save-block"]);
 }
 
 /** Shift+Tab: move the block out to be the next sibling of its parent. */
@@ -266,7 +277,7 @@ export function outdentBlock(id: string, caretOffset: number) {
     })
   );
   startEditing(id, caretOffset);
-  markDirty(pageName);
+  markDirty(pageName, "move-blocks");
 }
 
 /** Backspace at offset 0: merge into the previous visible block (same page). */
@@ -316,7 +327,7 @@ export function mergeWithPrev(
     })
   );
   startEditing(prev, joinOffset, null, editingSurface);
-  markDirty(pageName);
+  markDirty(pageName, ["save-block", "move-blocks", "delete-blocks"]);
   return true;
 }
 
@@ -332,6 +343,7 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
   const parent = doc.byId[afterId].parent;
   const pageName = doc.byId[afterId].page;
   const format = formatForPage(pageName);
+  const incoming = new Set<string>();
   let lastId = afterId;
   setDoc(
     produce((s) => {
@@ -340,7 +352,7 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
         const childIds = n.children.map((c) => create(c, id));
         s.byId[id] = {
           id,
-          raw: rawWithInheritedOrderListType(n.raw, format, afterId),
+          raw: rawWithInheritedOrderListType(outlineRaw(n.raw, format, incoming), format, afterId),
           collapsed: false,
           parent: par,
           page: pageName,
@@ -357,7 +369,7 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
       lastId = created[created.length - 1];
     })
   );
-  markDirty(pageName);
+  markDirty(pageName, "insert-blocks");
   return lastId;
 }
 
@@ -368,6 +380,7 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
   const current = doc.byId[id];
   if (!nodes.length || !current || current.children.length || !blockWritable(id)) return id;
   const format = formatForBlock(id);
+  const incoming = new Set<string>();
   const split = splitProps(current.raw, isBuiltinHidden, format);
   if (split.visible.trim()) return id;
   pushUndo("paste-replace-empty", [current.page]);
@@ -376,7 +389,8 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
     const create = (outline: OutlineNode, parent: string | null, reuseId?: string): string => {
       const created = reuseId ?? freshId();
       const children = outline.children.map((child) => create(child, created));
-      const sourceRaw = reuseId ? joinProps(outline.raw, split.hidden, format) : outline.raw;
+      const imported = outlineRaw(outline.raw, format, incoming);
+      const sourceRaw = reuseId ? joinProps(imported, split.hidden, format) : imported;
       const raw = rawWithInheritedOrderListType(sourceRaw, format, id);
       state.byId[created] = { id: created, raw, collapsed: false, parent, page: current.page, children };
       return created;
@@ -390,7 +404,7 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
     siblings.splice(siblings.indexOf(id), 1, ...created);
     lastId = created[created.length - 1];
   }));
-  markDirty(current.page);
+  markDirty(current.page, ["save-block", "insert-blocks"]);
   return lastId;
 }
 
@@ -427,7 +441,7 @@ function deleteBlockInternal(id: string) {
   );
   removeDeletedBlocksFromSidebar(removedSidebarIds);
   if (editingId() === id) endEdit("delete-block");
-  markDirty(pageName);
+  markDirty(pageName, "delete-blocks");
 }
 
 export function deleteBlock(id: string) {
@@ -468,7 +482,7 @@ export function toggleCollapse(id: string) {
   if (!n || !blockWritable(id) || n.children.length === 0) return;
   pushUndo("collapse", [n.page]);
   writeCollapsed(id, !n.collapsed);
-  markDirty(n.page);
+  markDirty(n.page, "save-block");
 }
 
 /** Explicitly collapse or expand a block (no-op if it has no children or is
@@ -478,5 +492,5 @@ export function setCollapsed(id: string, collapsed: boolean) {
   if (!n || !blockWritable(id) || n.children.length === 0 || n.collapsed === collapsed) return;
   pushUndo("collapse", [n.page]);
   writeCollapsed(id, collapsed);
-  markDirty(n.page);
+  markDirty(n.page, "save-block");
 }

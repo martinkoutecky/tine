@@ -7,7 +7,11 @@
 //! are synchronous and should run off a UI thread.
 //!
 //! Use [`Store::save`] for one guarded page edit, or [`Transaction`] for a set
-//! of guarded file changes. A [`FileRev`] identifies the bytes an edit was
+//! of guarded file changes. Structured page saves require an [`EditKind`]; raw
+//! page-file changes use [`Store::transaction`] with `Some(kind)`, while
+//! asset/config changes pass `None`. Restore also declares
+//! `replace-page`. The kinds remain in memory and add no disk bytes. Missing
+//! structured-save kinds are refused before writing. A [`FileRev`] identifies the bytes an edit was
 //! based on. Creates use a no-clobber rename; replacements use an ordinary
 //! rename after the final revision guard. An external process can replace a
 //! file between that comparison and the rename. Keep unsaved
@@ -49,7 +53,9 @@
 
 #[cfg(test)]
 mod derived_cache_fuzz_tests;
+pub mod edit_kind;
 pub mod file_kind;
+pub use edit_kind::EditKind;
 #[cfg(test)]
 mod gh221_malformed_html_tests;
 #[cfg(test)]
@@ -86,8 +92,8 @@ pub use store::{
     Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, FacetPolicy, FileEntry, FileId,
     FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, Listing,
     LoadError, OpenError, OpenOptions, Origin, PageId, PageRead, QueryDialect, QueryError,
-    QueryResult, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest, Store, StoreError, Subscription,
-    SubscriptionEnd, TrashKind, WatchMode, WholeGraph,
+    QueryResult, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest, Store,
+    StoreError, Subscription, SubscriptionEnd, TrashKind, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;

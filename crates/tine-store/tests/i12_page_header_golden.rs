@@ -30,7 +30,12 @@ fn rust_save_matches_shared_page_header_golden() {
     for (index, case) in cases.iter_mut().enumerate() {
         let doc: PageDto = serde_json::from_value(case["input"].clone()).unwrap();
         let id = PageId::from(format!("pages/I12_{index}.md"));
-        let outcome = store.save(&id, SaveBase::CreateNew, &doc);
+        let outcome = store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &doc,
+        );
         assert!(
             matches!(outcome, SaveOutcome::Saved { .. }),
             "I-12: Rust save oracle rejected fixture {index}: {outcome:?}"

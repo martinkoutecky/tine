@@ -303,9 +303,19 @@ mod tests {
         let mut doc_b = read_b.doc;
         doc_a.blocks[0].raw = "new A".into();
         doc_b.blocks[0].raw = "new B".into();
-        let mut tx = store.transaction();
-        tx.save_page(&a, SaveBase::Existing(read_a.rev), &doc_a);
-        tx.save_page(&b, SaveBase::Existing(read_b.rev), &doc_b);
+        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[tine_store::EditKind::ReplacePage],
+            &a,
+            SaveBase::Existing(read_a.rev),
+            &doc_a,
+        );
+        tx.save_page(
+            &[tine_store::EditKind::ReplacePage],
+            &b,
+            SaveBase::Existing(read_b.rev),
+            &doc_b,
+        );
         store.inject_fault(FaultPoint::MidStepIoAt(1));
         store.inject_fault(FaultPoint::UndoLiveWrite);
         assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
