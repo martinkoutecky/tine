@@ -73,6 +73,32 @@ fn stamp(path: &Path) -> Option<Stamp> {
     Some(value)
 }
 
+fn directory_identity(path: &Path) -> Option<u128> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_dir() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(((metadata.dev() as u128) << 64) | metadata.ino() as u128)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        Some(metadata.creation_time() as u128)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        metadata
+            .created()
+            .ok()?
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .map(|time| time.as_nanos())
+    }
+}
+
 fn collect_dir(
     dir: &Path,
     files: &mut HashMap<PathBuf, Stamp>,
@@ -521,6 +547,24 @@ impl Core {
             let path = self.graph.root.join(id.as_str());
             let current = stamp(&path);
             if current.as_ref().and_then(|value| value.rev.as_ref()) != expected.as_ref() {
+                // Reconciliation must compare disk with the revision just
+                // published, not with the pre-operation watcher stamp.
+                if let Some(rev) = expected {
+                    let mut published = current
+                        .clone()
+                        .or_else(|| snapshot.get(&path).cloned())
+                        .unwrap_or(Stamp {
+                            modified: None,
+                            len: 0,
+                            identity: 0,
+                            changed: 0,
+                            rev: None,
+                        });
+                    published.rev = Some(rev.clone());
+                    snapshot.insert(path.clone(), published);
+                } else {
+                    snapshot.remove(&path);
+                }
                 raced.insert(path);
                 continue;
             }
@@ -639,14 +683,13 @@ impl WatchHandle {
                     *status = LoadStatus::Failed(format!("{error:?}"));
                     return Err(error);
                 }
-                self.core
-                    .changes
-                    .publish(Origin::External, Vec::new(), false, Vec::new());
-                let mut status = self.core.load.status.lock().unwrap();
-                if matches!(*status, LoadStatus::Closed) {
-                    return Err(LoadError::Closed);
-                }
-                *status = LoadStatus::Ready;
+                self.core.changes.publish_with(
+                    Origin::External,
+                    Vec::new(),
+                    false,
+                    Vec::new(),
+                    || *self.core.load.status.lock().unwrap() = LoadStatus::Ready,
+                );
                 self.core.load.ready.notify_all();
                 let _ = self.wake.send(());
                 return Ok(());
@@ -737,13 +780,19 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
     let mut watcher: Option<notify::RecommendedWatcher> = None;
     let mut active = None;
     let mut active_dirs: Option<[PathBuf; 2]> = None;
+    let mut active_dir_ids: Option<[Option<u128>; 2]> = None;
     while !core.closed.load(Ordering::Acquire) {
         let selected = *mode.lock().unwrap();
         let dirs = core.dirs.read().unwrap().clone();
-        if active != Some(selected) || active_dirs.as_ref() != Some(&dirs) {
+        let dir_ids = [directory_identity(&dirs[0]), directory_identity(&dirs[1])];
+        if active != Some(selected)
+            || active_dirs.as_ref() != Some(&dirs)
+            || active_dir_ids.as_ref() != Some(&dir_ids)
+        {
             watcher = None;
             active = Some(selected);
             active_dirs = Some(dirs.clone());
+            active_dir_ids = Some(dir_ids);
             if selected == WatchMode::Notify {
                 let pending = Arc::clone(&pending);
                 let wake = wake.clone();
@@ -761,10 +810,17 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                     }
                 }
             }
+            if core.ready() {
+                // A recreated root can already contain files before its new
+                // backend watch is installed. Reconcile that gap once.
+                let _ = core.reconcile(None, false, false);
+            }
         }
         if watcher.is_some() {
-            if rx.recv().is_err() {
-                break;
+            match rx.recv_timeout(Duration::from_secs(3)) {
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Ok(()) => {}
             }
             std::thread::sleep(Duration::from_millis(200));
             while rx.try_recv().is_ok() {}

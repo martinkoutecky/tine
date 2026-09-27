@@ -47,7 +47,9 @@ pub fn page_print_html(store: &Store, name: &str, opts: PrintOpts) -> io::Result
             .map_err(crate::store_error)?;
         let source = String::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if !tine_store::parse_input_depth_within_limit(&source) {
+        if !tine_store::parse_input_depth_within_limit(&source)
+            || !tine_core::org::headline_levels_within_limit(&source, 512)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "I-22: input nesting exceeds 512 levels",

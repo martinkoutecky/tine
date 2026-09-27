@@ -9,6 +9,140 @@
 
 use lsdoc::ast::{Block, Inline, ListItem, Projection, Span};
 
+const MAX_PARSED_TREE_DEPTH: usize = 1024;
+
+// lsdoc's parser uses heap frames, but its returned AST has recursive drop.
+// Check the *actual* AST before any of Tine's recursive consumers see it.
+fn parsed_tree_within_limit(blocks: &[Block], limit: usize) -> bool {
+    enum Node<'a> {
+        Block(&'a Block, usize),
+        Item(&'a ListItem, usize),
+        Inline(&'a Inline, usize),
+    }
+    let mut todo: Vec<_> = blocks.iter().map(|block| Node::Block(block, 1)).collect();
+    while let Some(node) = todo.pop() {
+        match node {
+            Node::Block(block, depth) => {
+                if depth > limit {
+                    return false;
+                }
+                match block {
+                    Block::Quote { children, .. } | Block::Custom { children, .. } => {
+                        todo.extend(children.iter().map(|child| Node::Block(child, depth + 1)));
+                    }
+                    Block::List { items, .. } => {
+                        todo.extend(items.iter().map(|item| Node::Item(item, depth + 1)));
+                    }
+                    Block::Paragraph { inline, .. }
+                    | Block::Heading { inline, .. }
+                    | Block::Bullet { inline, .. }
+                    | Block::FootnoteDef { inline, .. } => {
+                        todo.extend(inline.iter().map(|item| Node::Inline(item, depth + 1)));
+                    }
+                    _ => {}
+                }
+            }
+            Node::Item(item, depth) => {
+                if depth > limit {
+                    return false;
+                }
+                todo.extend(item.items.iter().map(|child| Node::Item(child, depth + 1)));
+                todo.extend(
+                    item.content
+                        .iter()
+                        .map(|child| Node::Block(child, depth + 1)),
+                );
+                todo.extend(item.name.iter().map(|child| Node::Inline(child, depth + 1)));
+            }
+            Node::Inline(item, depth) => {
+                if depth > limit {
+                    return false;
+                }
+                let children = match item {
+                    Inline::Emphasis { children, .. }
+                    | Inline::Subscript { children, .. }
+                    | Inline::Superscript { children, .. }
+                    | Inline::Tag { children, .. } => Some(children),
+                    Inline::Link { label, .. } => Some(label),
+                    Inline::Fnref { definition, .. } => Some(definition),
+                    _ => None,
+                };
+                if let Some(children) = children {
+                    todo.extend(children.iter().map(|child| Node::Inline(child, depth + 1)));
+                }
+            }
+        }
+    }
+    true
+}
+
+// Drain children before dropping a refused tree. Ordinary `Drop` on a deep
+// `Block`/`ListItem`/`Inline` chain would overflow the parser thread's stack.
+fn drop_parsed_tree(blocks: Vec<Block>) {
+    enum Node {
+        Block(Block),
+        Item(ListItem),
+        Inline(Inline),
+    }
+    let mut todo: Vec<_> = blocks.into_iter().map(Node::Block).collect();
+    while let Some(node) = todo.pop() {
+        match node {
+            Node::Block(mut block) => match &mut block {
+                Block::Quote { children, .. } | Block::Custom { children, .. } => {
+                    todo.extend(std::mem::take(children).into_iter().map(Node::Block));
+                }
+                Block::List { items, .. } => {
+                    todo.extend(std::mem::take(items).into_iter().map(Node::Item));
+                }
+                Block::Paragraph { inline, .. }
+                | Block::Heading { inline, .. }
+                | Block::Bullet { inline, .. }
+                | Block::FootnoteDef { inline, .. } => {
+                    todo.extend(std::mem::take(inline).into_iter().map(Node::Inline));
+                }
+                _ => {}
+            },
+            Node::Item(mut item) => {
+                todo.extend(std::mem::take(&mut item.items).into_iter().map(Node::Item));
+                todo.extend(
+                    std::mem::take(&mut item.content)
+                        .into_iter()
+                        .map(Node::Block),
+                );
+                todo.extend(std::mem::take(&mut item.name).into_iter().map(Node::Inline));
+            }
+            Node::Inline(mut item) => {
+                let children = match &mut item {
+                    Inline::Emphasis { children, .. }
+                    | Inline::Subscript { children, .. }
+                    | Inline::Superscript { children, .. }
+                    | Inline::Tag { children, .. } => Some(children),
+                    Inline::Link { label, .. } => Some(label),
+                    Inline::Fnref { definition, .. } => Some(definition),
+                    _ => None,
+                };
+                if let Some(children) = children {
+                    todo.extend(std::mem::take(children).into_iter().map(Node::Inline));
+                }
+            }
+        }
+    }
+}
+
+fn bounded_blocks(blocks: Vec<Block>) -> Vec<Block> {
+    if parsed_tree_within_limit(&blocks, MAX_PARSED_TREE_DEPTH) {
+        blocks
+    } else {
+        drop_parsed_tree(blocks);
+        panic!("lsdoc parsed tree exceeds 1024 levels");
+    }
+}
+
+fn bounded_projection(mut projection: Projection) -> Projection {
+    projection.blocks = bounded_blocks(std::mem::take(&mut projection.blocks));
+    projection
+}
+
 #[derive(Debug)]
 struct ProtectedCode {
     start: usize,
@@ -274,7 +408,7 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
 pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
-            return lsdoc::parse(&input, if is_org { "org" } else { "md" })
+            return bounded_blocks(lsdoc::parse(&input, if is_org { "org" } else { "md" }))
         }
         Preparation::Protected(prepared) => prepared,
     };
@@ -282,11 +416,11 @@ pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
     let mut restored = vec![false; prepared.protected.len()];
     restore_blocks(&mut blocks, &prepared.protected, &mut restored);
     if restored.iter().all(|value| *value) {
-        blocks
+        bounded_blocks(blocks)
     } else {
         // Fail closed: an unanticipated parser shape may retain lsdoc's original
         // classification, but transformed bytes must never leak into the AST.
-        lsdoc::parse(&format!("- {}", raw.trim_start()), "md")
+        bounded_blocks(lsdoc::parse(&format!("- {}", raw.trim_start()), "md"))
     }
 }
 
@@ -294,7 +428,10 @@ pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
 pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
-            return lsdoc::parse_format(&input, if is_org { "org" } else { "md" })
+            return bounded_projection(lsdoc::parse_format(
+                &input,
+                if is_org { "org" } else { "md" },
+            ))
         }
         Preparation::Protected(prepared) => prepared,
     };
@@ -302,15 +439,65 @@ pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
     let mut restored = vec![false; prepared.protected.len()];
     restore_blocks(&mut projection.blocks, &prepared.protected, &mut restored);
     if restored.iter().all(|value| *value) {
-        projection
+        bounded_projection(projection)
     } else {
-        lsdoc::parse_format(&format!("- {}", raw.trim_start()), "md")
+        bounded_projection(lsdoc::parse_format(
+            &format!("- {}", raw.trim_start()),
+            "md",
+        ))
     }
 }
 
 #[cfg(test)]
 mod preparation_tests {
     use super::*;
+
+    #[test]
+    fn actual_parsed_tree_depth_is_checked_and_drained_iteratively() {
+        let make_tree = |depth| {
+            let mut tree = vec![Block::Paragraph {
+                inline: Vec::new(),
+                span: None,
+            }];
+            for _ in 0..depth {
+                tree = vec![Block::Quote {
+                    children: tree,
+                    span: None,
+                }];
+            }
+            tree
+        };
+        assert_eq!(bounded_blocks(make_tree(510)).len(), 1);
+        assert_eq!(bounded_blocks(make_tree(1_020)).len(), 1);
+        assert!(std::panic::catch_unwind(|| bounded_blocks(make_tree(20_000))).is_err());
+    }
+
+    #[test]
+    fn lsdoc_nesting_forms_are_actual_deep_trees() {
+        let mut callouts = String::from("- root\n");
+        for index in 0..600 {
+            callouts.push_str(&format!("  #+BEGIN_a{index}\n"));
+        }
+        callouts.push_str("  text\n");
+        for index in (0..600).rev() {
+            callouts.push_str(&format!("  #+END_a{index}\n"));
+        }
+        let mut lists = String::from("- root\n");
+        for depth in 0..600 {
+            lists.push_str(&" ".repeat(depth + 2));
+            lists.push_str("+ item\n");
+        }
+        for (source, format) in [
+            (callouts, "md"),
+            (lists, "md"),
+            (format!("{}x\n", ">".repeat(1_200)), "org"),
+        ] {
+            let blocks = lsdoc::parse(&source, format);
+            let deep = !parsed_tree_within_limit(&blocks, 512);
+            drop_parsed_tree(blocks);
+            assert!(deep, "{format} construct should build a deep lsdoc tree");
+        }
+    }
 
     #[test]
     fn ordinary_blocks_keep_the_single_input_fast_path() {

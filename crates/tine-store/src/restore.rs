@@ -105,7 +105,10 @@ impl Store {
     /// with ordinary filesystem access or raw `Store::read` file ids.
     /// Replaced files are retired too. An unlisted `config.edn` and
     /// `custom.css` stay live. Only `config.edn` is accepted in the Meta area;
-    /// Trash targets and non-`.edn` assets are refused. Any `.edn` file under
+    /// Trash targets and non-`.edn` assets are refused. A supplied config is
+    /// refused if it exceeds 64 MiB, names unsafe managed directories, or
+    /// changes the current pages/journals directories: this restore places
+    /// files in the current directories. Any `.edn` file under
     /// assets counts as a sidecar, regardless of a matching PDF. The store
     /// copies sidecar bytes and supplies no EDN parser or sidecar schema.
     /// Other asset files are left in place. The method then copies new files
@@ -199,6 +202,15 @@ impl Store {
                     if let Ok(text) = std::str::from_utf8(&bytes) {
                         let config = tine_core::config::Config::parse(text);
                         self.graph.validate_config_layout(&config)?;
+                        let current = self.graph.current_config();
+                        if config.pages_dir != current.pages_dir
+                            || config.journals_dir != current.journals_dir
+                        {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "restore config changes managed directories",
+                            ));
+                        }
                     }
                     Ok(())
                 })();
@@ -386,6 +398,57 @@ impl Store {
         }
         done.graph_rev = self.watch.publish_restore(&baseline);
         Ok(done)
+    }
+}
+
+#[cfg(test)]
+mod config_directory_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn restore_refuses_directory_switch_and_accepts_current_layout() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-restore-layout-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("journals")).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("pages/A.md"), "- keep me\n").unwrap();
+        let source = root.join("candidate.edn");
+        fs::write(&source, "{:pages-directory \"other\"}\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let candidate = |path: &Path| RestoreFile {
+            area: Area::Meta,
+            rel: "config.edn".into(),
+            source: File::open(path).unwrap(),
+            len: fs::metadata(path).unwrap().len(),
+        };
+        assert!(store.restore(vec![candidate(&source)]).is_err());
+        assert_eq!(fs::read(root.join("pages/A.md")).unwrap(), b"- keep me\n");
+        fs::write(
+            &source,
+            "{:pages-directory \"pages\" :journals-directory \"journals\"}\n",
+        )
+        .unwrap();
+        let page_source = root.join("page-source.md");
+        fs::write(&page_source, "- keep me\n").unwrap();
+        let result = store.restore(vec![
+            candidate(&source),
+            RestoreFile {
+                area: Area::Pages,
+                rel: "A.md".into(),
+                source: File::open(&page_source).unwrap(),
+                len: fs::metadata(&page_source).unwrap().len(),
+            },
+        ]);
+        assert!(result.is_ok(), "{result:?}");
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
     }
 }
 

@@ -48,7 +48,10 @@ fn read_text(store: &Store, id: &FileId) -> io::Result<(String, FileRev)> {
             "stream did not contain valid UTF-8",
         )
     })?;
-    if !tine_store::parse_input_depth_within_limit(&content) {
+    if !tine_store::parse_input_depth_within_limit(&content)
+        || (id.as_str().to_ascii_lowercase().ends_with(".org")
+            && !tine_core::org::headline_levels_within_limit(&content, 512))
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "I-22: input nesting exceeds 512 levels",

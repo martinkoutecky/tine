@@ -6,8 +6,15 @@ use std::path::Path;
 // revocation signal; join-or-cancel describes who reaps or bounds the work.
 const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
+        "crates/tine-store/src/model.rs",
+        ".spawn(move || {",
+        1,
+        "Graph::with_pages snapshot build scope",
+        "std::thread::scope joins its child before return",
+    ),
+    (
         "crates/tine-store/src/store.rs",
-        "thread::spawn(",
+        ".spawn(move || {",
         1,
         "Store slot close",
         "load worker checks cancellation per page",
@@ -71,7 +78,12 @@ fn counts(sources: &[(String, String)]) -> BTreeMap<(String, String), usize> {
         } else {
             source.split("mod tests {").next().unwrap()
         };
-        for needle in ["thread::spawn(", "recommended_watcher(", "spawn_blocking("] {
+        for needle in [
+            "thread::spawn(",
+            ".spawn(move || {",
+            "recommended_watcher(",
+            "spawn_blocking(",
+        ] {
             let count = source
                 .lines()
                 .filter(|line| !line.trim_start().starts_with("//") && line.contains(needle))

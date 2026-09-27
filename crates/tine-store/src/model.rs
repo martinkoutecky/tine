@@ -50,7 +50,7 @@ impl std::error::Error for ParseInputTooLarge {}
 
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     let bytes = read_parse_bytes(path)?;
-    validate_parse_bytes(&bytes)?;
+    validate_parse_bytes_for_path(&bytes, path)?;
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
@@ -80,7 +80,11 @@ pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(crate) fn validate_parse_bytes(bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn validate_parse_bytes_for_path(bytes: &[u8], path: &Path) -> io::Result<()> {
+    validate_parse_bytes_format(bytes, path.extension().is_some_and(|ext| ext == "org"))
+}
+
+fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<()> {
     if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -95,6 +99,12 @@ pub(crate) fn validate_parse_bytes(bytes: &[u8]) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "input nesting exceeds 512 levels",
+        ));
+    }
+    if org && !tine_core::org::headline_levels_within_limit(text, PARSE_INPUT_MAX_DEPTH) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Org headline nesting exceeds 512 levels",
         ));
     }
     Ok(())
@@ -112,18 +122,122 @@ pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
 }
 
 /// Whether source text stays below the parser and renderer nesting ceiling.
+/// Counts list/outline columns, closed callouts, quote markers, and matched
+/// inline delimiters; Org headline levels are checked by the path-aware reader.
 pub fn parse_input_depth_within_limit(input: &str) -> bool {
+    let mut bullet_columns = Vec::new();
+    let mut containers = Vec::<String>::new();
+    let mut literal: Option<String> = None;
+    let mut fence: Option<(u8, usize)> = None;
     for line in input.lines() {
         let indent = line
             .bytes()
             .take_while(|byte| matches!(byte, b' ' | b'\t'))
-            .map(|byte| if byte == b'\t' { 2 } else { 1 })
-            .sum::<usize>();
-        if indent / 2 > PARSE_INPUT_MAX_DEPTH {
-            return false;
+            .count();
+        let body = &line[indent..];
+        let marker = body.as_bytes().first().copied();
+        let fence_run = marker
+            .filter(|marker| matches!(marker, b'`' | b'~'))
+            .map(|marker| {
+                (
+                    marker,
+                    body.bytes().take_while(|byte| *byte == marker).count(),
+                )
+            })
+            .filter(|(_, len)| *len >= 3);
+        if let Some((open, minimum)) = fence {
+            if fence_run.is_some_and(|(candidate, len)| candidate == open && len >= minimum) {
+                fence = None;
+            }
+            continue;
         }
-        let stars = line.bytes().take_while(|byte| *byte == b'*').count();
-        if stars > PARSE_INPUT_MAX_DEPTH && line.as_bytes().get(stars) == Some(&b' ') {
+        if let Some(open) = literal.as_deref() {
+            if body
+                .get(..6)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("#+END_"))
+                .then(|| &body[6..])
+                .is_some_and(|name| {
+                    name.split_whitespace()
+                        .next()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(open))
+                })
+            {
+                literal = None;
+            }
+            continue;
+        }
+        if let Some(marker) = fence_run {
+            fence = Some(marker);
+            continue;
+        }
+        let list_item = body == "-"
+            || body.starts_with("- ")
+            || body == "+"
+            || body.starts_with("+ ")
+            || body == "*"
+            || body.starts_with("* ")
+            || body
+                .bytes()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count()
+                .checked_add(1)
+                .is_some_and(|marker_end| {
+                    marker_end > 1
+                        && matches!(body.as_bytes().get(marker_end - 1), Some(b'.' | b')'))
+                        && matches!(body.as_bytes().get(marker_end), Some(b' '))
+                });
+        if list_item {
+            while bullet_columns
+                .last()
+                .is_some_and(|column| *column >= indent)
+            {
+                bullet_columns.pop();
+            }
+            bullet_columns.push(indent);
+            if bullet_columns.len() > PARSE_INPUT_MAX_DEPTH {
+                return false;
+            }
+        }
+        // lsdoc builds closed custom/quote callouts as nested Block values,
+        // even when every physical line has only two spaces of indentation.
+        if body
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("#+BEGIN_"))
+        {
+            let name = &body[8..];
+            let name = name
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if literal.is_none()
+                && matches!(name.as_str(), "src" | "example" | "export" | "comment")
+            {
+                literal = Some(name);
+            } else if literal.is_none() && !name.is_empty() {
+                containers.push(name);
+                if containers.len() > PARSE_INPUT_MAX_DEPTH {
+                    return false;
+                }
+            }
+        } else if body
+            .get(..6)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("#+END_"))
+        {
+            let name = &body[6..];
+            let name = name
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if literal.as_deref() == Some(name.as_str()) {
+                literal = None;
+            } else if literal.is_none() && containers.last().is_some_and(|open| *open == name) {
+                containers.pop();
+            }
+        }
+        let quotes = body.bytes().take_while(|byte| *byte == b'>').count();
+        if bullet_columns.len() + containers.len() + quotes > PARSE_INPUT_MAX_DEPTH {
             return false;
         }
         // Inline parsing starts afresh for each source line. Only paired
@@ -158,7 +272,9 @@ pub fn parse_input_depth_within_limit(input: &str) -> bool {
             }
             if matches!(byte, b'[' | b'{' | b'(') {
                 depth += 1;
-                if depth > PARSE_INPUT_MAX_DEPTH {
+                if depth > PARSE_INPUT_MAX_DEPTH
+                    || depth + containers.len() + quotes > PARSE_INPUT_MAX_DEPTH
+                {
                     return false;
                 }
             } else {
@@ -167,6 +283,63 @@ pub fn parse_input_depth_within_limit(input: &str) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod depth_contract_tests {
+    use super::*;
+
+    #[test]
+    fn outline_columns_count_levels_instead_of_half_the_indent() {
+        let outline = |levels: usize, step: usize| {
+            let mut text = String::new();
+            for depth in 0..levels {
+                text.push_str(&" ".repeat(depth * step));
+                text.push_str("- item\n");
+            }
+            text
+        };
+        assert!(parse_input_depth_within_limit(&outline(258, 4)));
+        assert!(parse_input_depth_within_limit(&outline(512, 1)));
+        assert!(!parse_input_depth_within_limit(&outline(513, 1)));
+    }
+
+    #[test]
+    fn org_headline_forms_and_markdown_stars_are_format_specific() {
+        let org = Path::new("page.org");
+        let markdown = Path::new("page.md");
+        assert!(
+            validate_parse_bytes_for_path(format!("{}\n", "*".repeat(512)).as_bytes(), org).is_ok()
+        );
+        for suffix in ["", "\tTitle", "\r"] {
+            let source = format!("{}{}\n", "*".repeat(513), suffix);
+            assert!(validate_parse_bytes_for_path(source.as_bytes(), org).is_err());
+            assert!(validate_parse_bytes_for_path(source.as_bytes(), markdown).is_ok());
+        }
+    }
+
+    #[test]
+    fn cold_page_reads_preserve_lookup_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-cold-page-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- first\n").unwrap();
+        let graph = Graph::open(&root);
+        let entry = graph.find_entry("A", PageKind::Page).unwrap();
+        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.load_page(&entry).unwrap().blocks[0]
+            .raw
+            .contains("first"));
+        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        assert!(graph.load_page(&entry).unwrap().blocks[0]
+            .raw
+            .contains("first"));
+        assert!(graph.find_entry_cache.read().unwrap().is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 /// Whether `path` is a page file Tine reads (markdown or org).
@@ -224,6 +397,10 @@ pub(crate) struct Graph {
     cache: RwLock<Option<Arc<Vec<(PageEntry, Arc<Document>)>>>>,
     #[cfg(test)]
     pub(crate) cache_publish_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) warm_passes: std::sync::atomic::AtomicUsize,
     /// File times observed while publishing the parsed page cache. Readers
     /// clone the table with their graph view, so later disk edits cannot alter it.
     observed_mtimes: RwLock<Arc<std::collections::HashMap<String, std::time::SystemTime>>>,
@@ -2199,6 +2376,10 @@ impl Graph {
             cache: RwLock::new(None),
             #[cfg(test)]
             cache_publish_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            warm_after_first_page_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            warm_passes: std::sync::atomic::AtomicUsize::new(0),
             observed_mtimes: RwLock::new(Arc::new(std::collections::HashMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
             unreadable_pages: RwLock::new(Arc::new(Vec::new())),
@@ -2880,8 +3061,11 @@ impl Graph {
         // disagree via a write landing between two reads), and — on a cache miss —
         // parse it below.
         let read = read_parse_input(&entry.path);
+        let cache_ready = self.cache.read().unwrap().is_some();
         if let Ok(content) = &read {
-            self.sync_file_content(&entry.path, content, false);
+            if cache_ready {
+                self.sync_file_content(&entry.path, content, false);
+            }
         } else if read
             .as_ref()
             .err()
@@ -2907,10 +3091,12 @@ impl Graph {
         // uuids that may differ from the warm cache until the page is reloaded —
         // benign: id:: ref targets are stable, and live-ref views fall back to a
         // read-only render for an unmatched uuid, never losing edits.)
-        if let Some(mut dto) = self.peek_cached_page(entry) {
-            dto.read_only = read_only_org(&entry.path, &content);
-            dto.rev = rev;
-            return Ok(dto);
+        if cache_ready {
+            if let Some(mut dto) = self.peek_cached_page(entry) {
+                dto.read_only = read_only_org(&entry.path, &content);
+                dto.rev = rev;
+                return Ok(dto);
+            }
         }
         // Cache miss: parse the bytes we already read (propagate the original read
         // error if it failed).
@@ -3122,18 +3308,22 @@ impl Graph {
         // `with_pages` (a user query) can still take build_lock and build fast
         // without waiting on our sleeps. If it wins, we discard our work.
         let gen0 = self.cache_gen.load(Ordering::Acquire);
+        #[cfg(test)]
+        self.warm_passes.fetch_add(1, Ordering::Relaxed);
         let entries = self.list_pages();
         let mut built = PageCacheBuild::with_capacity(entries.len());
         // Record each file's mtime BEFORE reading it, so a re-stat before install
         // catches any external edit that landed during the paced parse (external
         // writers don't bump cache_gen, so the gen check below can't see them).
-        let mut mtimes: Vec<(PathBuf, Option<std::time::SystemTime>)> =
+        let mut mtimes: Vec<(PathBuf, Option<(std::time::SystemTime, u64)>)> =
             Vec::with_capacity(entries.len());
         for (i, e) in entries.into_iter().enumerate() {
             if cancelled() {
                 return false;
             }
-            let mtime = fs::metadata(&e.path).and_then(|m| m.modified()).ok();
+            let mtime = fs::metadata(&e.path)
+                .and_then(|metadata| metadata.modified().map(|time| (time, metadata.len())))
+                .ok();
             let path = e.path.clone();
             let indexed = match read_parse_input(&e.path) {
                 Ok(content) => built.collect(isolate_page_parse(e, |entry| {
@@ -3147,6 +3337,10 @@ impl Graph {
             if indexed {
                 mtimes.push((path, mtime));
             }
+            #[cfg(test)]
+            if i == 0 {
+                crate::store::pause_at_hook(&self.warm_after_first_page_pause);
+            }
             if i % 24 == 23 {
                 if self.cache.read().unwrap().is_some() {
                     return true; // a query built the cache while we parsed
@@ -3157,10 +3351,12 @@ impl Graph {
         // If any built file changed during the paced parse, our snapshot may be
         // stale and the watcher might not yet baseline-track it — discard and let
         // the next on-demand build read fresh. (A false positive just rebuilds.)
-        if mtimes
-            .iter()
-            .any(|(p, m)| fs::metadata(p).and_then(|md| md.modified()).ok() != *m)
-        {
+        if mtimes.iter().any(|(p, m)| {
+            fs::metadata(p)
+                .and_then(|metadata| metadata.modified().map(|time| (time, metadata.len())))
+                .ok()
+                != *m
+        }) {
             return false;
         }
         if cancelled() {
@@ -4097,7 +4293,7 @@ impl Graph {
         let before_gen = self.cache_generation();
         match bytes {
             Some(bytes) => {
-                if validate_parse_bytes(bytes).is_err() {
+                if validate_parse_bytes_for_path(bytes, path).is_err() {
                     self.invalidate_cache();
                     return;
                 }

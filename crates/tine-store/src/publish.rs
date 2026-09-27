@@ -193,6 +193,9 @@ impl Store {
     /// it blocks page saves and other writes for the full operation, including
     /// the caller's `emit` closure and each output file's fsync. Prepare
     /// expensive content before calling and keep `emit` bounded.
+    /// `emit` must not call methods on this store: they can wait for the
+    /// writer lock held here. A callback panic is returned as a failure after
+    /// stage cleanup, so later store calls remain usable.
     pub fn publish_site(
         &self,
         emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
@@ -218,10 +221,21 @@ impl Store {
             previous_kept: None,
         })?;
         let mut writer = SiteWriter { stage, files: 0 };
-        emit(&mut writer).map_err(|cause| PublishFailed {
-            cause,
-            previous_kept: None,
-        })?;
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| emit(&mut writer))) {
+            Ok(Ok(())) => {}
+            Ok(Err(cause)) => {
+                return Err(PublishFailed {
+                    cause,
+                    previous_kept: None,
+                });
+            }
+            Err(_) => {
+                return Err(PublishFailed {
+                    cause: io::Error::other("static-site emit callback panicked").into(),
+                    previous_kept: None,
+                });
+            }
+        }
         let files = writer.files;
         commit_publish_stage_report(&self.graph, writer.stage, &out).map_err(
             |(cause, previous_kept)| PublishFailed {
@@ -539,6 +553,27 @@ mod tests {
         let result = store.publish_site(&mut |writer| writer.write("index.html", b"partial"));
         assert!(result.is_err());
         assert!(stage_names(&base).is_empty());
+    }
+
+    #[test]
+    fn panicking_emit_cleans_stage_and_leaves_writer_usable() {
+        let (base, _) = roots("panic-on-emit");
+        let store = Store::open(&base, Default::default()).unwrap().0;
+        let failed = store.publish_site(&mut |writer| {
+            writer.write("index.html", b"partial")?;
+            panic!("injected emitter panic")
+        });
+        assert!(failed.is_err());
+        assert!(stage_names(&base).is_empty());
+        let published = store
+            .publish_site(&mut |writer| writer.write("index.html", b"complete"))
+            .unwrap();
+        assert_eq!(published.files, 1);
+        assert_eq!(
+            fs::read(base.join("publish/index.html")).unwrap(),
+            b"complete"
+        );
+        store.close();
     }
 
     fn roots(label: &str) -> (PathBuf, PathBuf) {

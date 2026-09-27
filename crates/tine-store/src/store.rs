@@ -143,7 +143,10 @@ pub enum WatchMode {
     /// Default: use filesystem notifications with a 200 ms debounce. A
     /// notified file is hashed even if its length and mtime match the previous
     /// observation. Failure to install notifications for either managed
-    /// directory silently falls back to three-second polling. A backend that
+    /// directory silently falls back to three-second polling. Managed root
+    /// identity is checked every three seconds; a deleted and recreated root
+    /// is watched again, with one full reconcile for edits made in the gap.
+    /// A backend that
     /// installs successfully but never emits events is not detected.
     #[default]
     Notify,
@@ -401,6 +404,19 @@ impl ChangeFeed {
         config_changed: bool,
         pages: Vec<(FileId, PageKind, String)>,
     ) -> GraphRev {
+        self.publish_with(origin, files, config_changed, pages, || {})
+    }
+
+    // `before_notify` runs after the new snapshot exists, but before the
+    // subscriber can receive its Change. It must only make a short state update.
+    pub(crate) fn publish_with(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        config_changed: bool,
+        pages: Vec<(FileId, PageKind, String)>,
+        before_notify: impl FnOnce(),
+    ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
         let journals_dir = self.graph.current_config().journals_dir.clone();
         if old.is_none()
@@ -429,6 +445,7 @@ impl ChangeFeed {
         let rev = GraphRev(state.rev);
         debug_assert_eq!(snapshot.rev, rev);
         *self.snapshot.write().unwrap() = Some(snapshot);
+        before_notify();
         if !state.closed {
             state.queue.push_back(Change {
                 graph_rev: rev,
@@ -574,6 +591,9 @@ pub struct ConfigState {
     /// Effective graph config, defaulted when loading config failed. A changed
     /// journal title format affects names and date claims in new views after
     /// publication; existing file bytes and reference text are not rewritten.
+    /// Changing the journal filename format can leave old custom-stem files
+    /// without a date claim if neither the new format nor a fallback parses
+    /// their stem; callers must plan any file migration separately.
     pub config: Arc<tine_core::config::Config>,
     /// Config read error, if one occurred. Missing config is not an error.
     /// Unrecognized or malformed config values may default individually and do
@@ -960,38 +980,47 @@ impl Store {
         let worker_changes = Arc::clone(&changes);
         let worker_watch = watch.core_for_load();
         let worker_watch_wake = watch.wake_for_load();
-        std::thread::spawn(move || {
-            #[cfg(any(test, feature = "test-faults"))]
-            while worker_graph.root.join(".tine-test-pause-load").exists()
-                && !worker_load.cancelled.load(Ordering::Acquire)
-            {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loop {
-                let completed = worker_graph
-                    .warm_cache_cancellable(|| worker_load.cancelled.load(Ordering::Acquire));
-                if completed || worker_load.cancelled.load(Ordering::Acquire) {
-                    break completed;
+        std::thread::Builder::new()
+            .name("tine-graph-load".into())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                #[cfg(any(test, feature = "test-faults"))]
+                while worker_graph.root.join(".tine-test-pause-load").exists()
+                    && !worker_load.cancelled.load(Ordering::Acquire)
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
                 }
-            }));
-            let _writer = worker_writer.lock().unwrap();
-            if matches!(completed, Ok(true)) {
-                worker_watch.fill_revs();
-            }
-            let mut status = worker_load.status.lock().unwrap();
-            if matches!(*status, LoadStatus::Loading) {
-                *status = if matches!(completed, Ok(true)) {
-                    LoadStatus::Ready
+                let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loop {
+                    let completed = worker_graph
+                        .warm_cache_cancellable(|| worker_load.cancelled.load(Ordering::Acquire));
+                    if completed || worker_load.cancelled.load(Ordering::Acquire) {
+                        break completed;
+                    }
+                }));
+                let _writer = worker_writer.lock().unwrap();
+                if matches!(completed, Ok(true)) {
+                    worker_watch.fill_revs();
+                }
+                if matches!(completed, Ok(true)) {
+                    if matches!(*worker_load.status.lock().unwrap(), LoadStatus::Loading) {
+                        worker_changes.publish_with(
+                            Origin::External,
+                            Vec::new(),
+                            false,
+                            Vec::new(),
+                            || *worker_load.status.lock().unwrap() = LoadStatus::Ready,
+                        );
+                        let _ = worker_watch_wake.send(());
+                    }
                 } else {
-                    LoadStatus::Failed("background graph load stopped".into())
-                };
-                if matches!(*status, LoadStatus::Ready) {
-                    worker_changes.publish(Origin::External, Vec::new(), false, Vec::new());
-                    let _ = worker_watch_wake.send(());
+                    let mut status = worker_load.status.lock().unwrap();
+                    if matches!(*status, LoadStatus::Loading) {
+                        *status = LoadStatus::Failed("background graph load stopped".into());
+                    }
                 }
-            }
-            worker_load.ready.notify_all();
-        });
+                worker_load.ready.notify_all();
+            })
+            .expect("spawn graph load worker");
         Ok((
             Self {
                 graph,
@@ -1046,7 +1075,8 @@ impl Store {
         self.changes.close();
     }
 
-    /// Start the sole app-wide change stream at the next publication. A second
+    /// Start the sole app-wide change stream. The first subscriber receives
+    /// any publications still queued since this store opened. A second
     /// call replaces the first subscriber, which then receives `Closed`, and
     /// discards queued changes. The queue is unbounded and also accumulates
     /// publications before any subscription exists; consumers must drain it.
@@ -1097,8 +1127,11 @@ impl Store {
     /// accessible files can then enter the resulting view.
     /// After a failed initial load, a successful retry
     /// publishes a fresh completion generation with no file tuples even if no file changed during
-    /// reconciliation or an older snapshot exists. Returns `LoadError::Closed` after close or
-    /// `LoadError::Failed` for a lost root or unsafe config layout, such as a
+    /// reconciliation or an older snapshot exists.
+    /// Own writes made while failed update the watcher baseline and enter the
+    /// recovered view without being relabeled as External file changes.
+    /// Returns `LoadError::Closed` after close or `LoadError::Failed` for a
+    /// lost root or unsafe config layout, such as a
     /// configured page directory that escapes the graph through a symlink.
     /// A failed initial load is retried only by this explicit call; watcher
     /// ticks do not retry it. A continuous stream of edits can keep the
@@ -1856,7 +1889,9 @@ impl Store {
     /// failed initial parse, a present file still returns its current parsed
     /// content, but publishes no generation until successful `scan_refresh()`.
     /// Every call waits for the writer lock, including a missing or unchanged
-    /// file. After a cache-changing write or observation, finding the file can
+    /// file. A cold-cache or failed-load read parses only its target file;
+    /// repeated reads do not invalidate the directory lookup cache. After a
+    /// cache-changing write or observation, finding the file can
     /// walk O(P) page or journal directory entries; parsing costs O(page bytes
     /// + blocks), and publication can add O(P) metadata.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
@@ -1969,7 +2004,10 @@ impl Store {
     /// stem or parseable display title, using the
     /// file list built before `open` returns. This remains available after a
     /// failed initial parse; aliases require a successful graph view and are
-    /// not resolved here. A missing name returns `None`. The selected file is
+    /// not resolved here. When files claim the same name or journal day, it
+    /// uses the same claimant ranking as `WholeGraph::resolve` (canonical
+    /// date-stem journal first, then Markdown before Org). A missing name
+    /// returns `None`. The selected file is
     /// read through `page()`, with the same safety, revision, and publication
     /// rules. The file-list index becomes cold after a cache-changing write
     /// or observation; the next lookup can walk O(P) directory entries, then
@@ -2003,6 +2041,9 @@ impl Store {
     /// state without waiting, or call this from a worker thread to wait.
     /// The initial load restarts if an external edit invalidates a parse pass;
     /// continuous edits can keep this wait open indefinitely.
+    /// An own save during loading can build the first cache synchronously for
+    /// its publication; the background worker then uses that cache rather
+    /// than restarting the pass. The save can wait for that O(P + B) build.
     /// No partial graph generation is available after failure.
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         let mut status = self.load.status.lock().unwrap();
@@ -2248,7 +2289,10 @@ pub enum SaveOutcome {
     ReadOnly(String),
     /// Another file claims the page name or journal day. Creation and moves
     /// check this; an ordinary guarded save to either existing claimant is
-    /// allowed when its own revision guard and safety checks pass.
+    /// allowed when its own revision guard and safety checks pass. If a twin
+    /// appears after a `CreateNew` write, commit withdraws its newly written
+    /// bytes during undo before returning this result; the caller still owns
+    /// the unsaved DTO and must retain it.
     Twin {
         /// Existing claimant.
         existing: PageId,
@@ -3103,7 +3147,9 @@ impl WholeGraph {
     /// `[[` completion over pages, journals, aliases and referenced names.
     /// A first call can traverse all page blocks and reference text to build
     /// indexes; later calls scan page, alias, and referenced-name candidates
-    /// and rank or sort matches, returning at most `limit` entries.
+    /// and rank or sort matches, returning at most `limit` entries. Once an
+    /// index has been built, a later publication carries it forward by updating
+    /// changed pages; the first completion after every save does not rescan B.
     pub fn complete_page_names(&self, text: &str, limit: usize) -> Vec<PageEntry> {
         self.graph.quick_switch(text, limit)
     }
@@ -3144,7 +3190,9 @@ impl WholeGraph {
     /// batch shares a 50-root, 2,000-node, and 8 MiB output budget; later
     /// results may omit roots or nodes even when small on their own.
     /// Inspect `omitted_queries`, `shown`, `total`, and `omitted_nodes`
-    /// before treating `Ok` as complete. Cost up to O(64 × B + selected nodes).
+    /// before treating `Ok` as complete. The final bridge-size check can
+    /// return `ResultTooLarge` for the whole batch, with no partial `Ok`.
+    /// Cost up to O(64 × B + selected nodes).
     pub fn export_query_subtrees(
         &self,
         specs: &[QueryExportSpec],
@@ -3465,6 +3513,14 @@ mod rev5_tests {
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
         *store.load.status.lock().unwrap() = LoadStatus::Failed("injected failure".into());
         store.load.ready.notify_all();
+        let subscription = store.subscribe();
+        let observer_store = Arc::clone(&store);
+        let observer = std::thread::spawn(move || {
+            let change = subscription.recv().unwrap();
+            assert_eq!(change.origin, Origin::External);
+            assert!(observer_store.is_graph_ready().unwrap());
+            observer_store.whole_graph().unwrap().rev()
+        });
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
         *store.changes.snapshot_publish_pause.lock().unwrap() = Some(Arc::clone(&pause));
         let recovery_store = Arc::clone(&store);
@@ -3477,8 +3533,81 @@ mod rev5_tests {
         release_hook(&pause);
         assert!(recovery.join().unwrap().is_ok());
         assert!(store.whole_graph().is_ok());
+        assert_eq!(observer.join().unwrap(), store.whole_graph().unwrap().rev());
         store.close();
         fs::remove_file(root.join(".tine-test-pause-load")).unwrap();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn readiness_poll_does_not_wait_for_initial_snapshot_capture() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-ready-poll-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let hold_load = root.join(".tine-test-pause-load");
+        fs::write(&hold_load, "").unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.changes.snapshot_publish_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        fs::remove_file(hold_load).unwrap();
+        wait_hook(&pause);
+        let poll_store = Arc::clone(&store);
+        let (send, receive) = mpsc::channel();
+        let poll = std::thread::spawn(move || send.send(poll_store.is_graph_ready()).unwrap());
+        let observed = receive.recv_timeout(Duration::from_secs(2));
+        release_hook(&pause);
+        poll.join().unwrap();
+        assert!(matches!(observed, Ok(Ok(false))));
+        assert!(store.whole_graph().is_ok());
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn own_save_during_initial_parse_does_not_restart() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-load-delta-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
+        fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
+        let hold_load = root.join(".tine-test-pause-load");
+        fs::write(&hold_load, "").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        fs::remove_file(hold_load).unwrap();
+        wait_hook(&pause);
+        let id = PageId::from("pages/A.md");
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "new A".into();
+        fs::write(root.join("pages/B.md"), "- external B\n").unwrap();
+        assert!(matches!(
+            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            SaveOutcome::Saved(_)
+        ));
+        release_hook(&pause);
+        let view = store.whole_graph().unwrap();
+        assert!(view
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| page.name == "A" && page.document.roots[0].raw().contains("new A")));
+        assert!(view
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| page.name == "B" && page.document.roots[0].raw().contains("external B")));
+        assert_eq!(store.graph.warm_passes.load(Ordering::Relaxed), 1);
+        store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();
     }
@@ -3607,6 +3736,352 @@ mod rev5_tests {
             .any(|page| {
                 page.name == "A" && page.document.roots[0].raw().contains("external winner")
             }));
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn revert_and_delete_after_own_publication_are_external() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-own-race-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let path = root.join("pages/A.md");
+        fs::write(&path, "- before\n").unwrap();
+        let store = Arc::new(
+            Store::open(
+                &root,
+                OpenOptions {
+                    watch: WatchMode::Poll,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0,
+        );
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        let id = PageId::from("pages/A.md");
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "own save".into();
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.watch.core_for_load().note_own_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        let saving = Arc::clone(&store);
+        let save = std::thread::spawn(move || saving.save(&id, SaveBase::Existing(read.rev), &doc));
+        wait_hook(&pause);
+        fs::write(&path, "- before\n").unwrap();
+        release_hook(&pause);
+        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
+        assert!(observed
+            .iter()
+            .any(|change| change.origin == Origin::External
+                && change
+                    .files
+                    .iter()
+                    .any(|(file, kind, _)| file.as_str() == "pages/A.md"
+                        && *kind == ChangeKind::Modified)));
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| page.name == "A" && page.document.roots[0].raw().contains("before")));
+        let read = store.page(&PageId::from("pages/A.md")).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "second own save".into();
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.watch.core_for_load().note_own_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        let saving = Arc::clone(&store);
+        let save = std::thread::spawn(move || {
+            saving.save(
+                &PageId::from("pages/A.md"),
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
+        });
+        wait_hook(&pause);
+        fs::remove_file(&path).unwrap();
+        release_hook(&pause);
+        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
+        assert!(observed
+            .iter()
+            .any(|change| change.origin == Origin::External
+                && change
+                    .files
+                    .iter()
+                    .any(|(file, kind, _)| file.as_str() == "pages/A.md"
+                        && *kind == ChangeKind::Removed)));
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .all(|page| page.name != "A"));
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notify_rewatches_recreated_managed_directory() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-rewatch-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("journals")).unwrap();
+        fs::write(root.join("pages/A.md"), "- before\n").unwrap();
+        let store = Store::open(
+            &root,
+            OpenOptions {
+                watch: WatchMode::Notify,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        fs::remove_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/B.md"), "- after\n").unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        let mut observed = false;
+        while std::time::Instant::now() < deadline {
+            if let Some(change) = changes.try_recv().unwrap() {
+                if change.origin == Origin::External
+                    && change.files.iter().any(|(id, kind, _)| {
+                        id.as_str() == "pages/B.md" && *kind == ChangeKind::Created
+                    })
+                {
+                    observed = true;
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(observed, "recreated directory contents must be observed");
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| page.name == "B"));
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_save_external_delete_is_external_and_own_trash_stays_own() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-delete-origin-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
+        fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        let a = PageId::from("pages/A.md");
+        let b = PageId::from("pages/B.md");
+        let read_a = store.page(&a).unwrap();
+        let read_b = store.page(&b).unwrap();
+        let mut doc = read_a.doc;
+        doc.blocks[0].raw = "new A".into();
+        store.inject_fault(crate::FaultPoint::Stage2ExternalDelete);
+        assert!(matches!(
+            store.save(&a, SaveBase::Existing(read_a.rev), &doc),
+            SaveOutcome::Deleted
+        ));
+        let deleted = changes
+            .try_recv()
+            .unwrap()
+            .expect("external deletion change");
+        assert_eq!(deleted.origin, Origin::External);
+        assert!(deleted
+            .files
+            .iter()
+            .any(|(id, kind, _)| { id == &a.file() && *kind == ChangeKind::Removed }));
+        let mut tx = store.transaction();
+        tx.trash(&b.file(), read_b.rev);
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        let trashed = changes.try_recv().unwrap().expect("own trash change");
+        assert_eq!(trashed.origin, Origin::Own);
+        assert!(trashed
+            .files
+            .iter()
+            .any(|(id, kind, _)| { id == &b.file() && *kind == ChangeKind::Removed }));
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn streamed_create_uses_recorded_revision_for_own_publication() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-stream-own-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        let source = root.join("stream-source.bin");
+        fs::write(&source, b"stream content").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        let stream_id = store.file_id(Area::Assets, "stream.bin").unwrap();
+        let bytes_id = store.file_id(Area::Assets, "bytes.bin").unwrap();
+        store.inject_fault(crate::FaultPoint::RemoveStreamStageAfterWrite);
+        let mut tx = store.transaction();
+        tx.create(
+            &stream_id,
+            crate::Content::Stream {
+                source: File::open(&source).unwrap(),
+                max_bytes: 1024,
+            },
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        let stream_change = changes.try_recv().unwrap().unwrap();
+        assert_eq!(stream_change.origin, Origin::Own);
+        assert!(stream_change
+            .files
+            .iter()
+            .any(|(id, _, _)| id == &stream_id));
+        let mut tx = store.transaction();
+        tx.create(&bytes_id, crate::Content::Bytes(b"byte content".to_vec()));
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn create_new_twin_after_write_withdraws_own_bytes() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-create-twin-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/Small.md"), "- edit stays in caller\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let mut doc = store.page(&PageId::from("pages/Small.md")).unwrap().doc;
+        doc.name = "New".into();
+        doc.title = "New".into();
+        store.inject_fault(crate::FaultPoint::TwinAfterPublish);
+        assert!(matches!(
+            store.save(&PageId::from("pages/New.md"), SaveBase::CreateNew, &doc),
+            SaveOutcome::Twin { .. }
+        ));
+        assert!(!root.join("pages/New.md").exists());
+        assert_eq!(
+            fs::read(root.join("pages/New.org")).unwrap(),
+            b"external twin"
+        );
+        assert!(doc.blocks[0].raw.contains("edit stays in caller"));
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_page_refuses_save_but_moves_and_trashes_as_opaque_file() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-opaque-page-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let a_path = root.join("pages/A.md");
+        let b_path = root.join("pages/B.md");
+        for path in [&a_path, &b_path] {
+            let file = File::create(path).unwrap();
+            file.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
+        }
+        fs::write(root.join("pages/Small.md"), "- small\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        let a = PageId::from("pages/A.md");
+        let a_rev = FileRev::from_file(&a_path).unwrap();
+        let b_rev = FileRev::from_file(&b_path).unwrap();
+        let doc = store.page(&PageId::from("pages/Small.md")).unwrap().doc;
+        assert!(matches!(
+            store.save(&a, SaveBase::Existing(a_rev.clone()), &doc),
+            SaveOutcome::InvalidTarget(_)
+        ));
+        let mut move_tx = store.transaction();
+        let moved = FileId::from("pages/Moved.md".to_string());
+        move_tx.move_file(&a.file(), a_rev, &moved, None);
+        assert!(matches!(
+            move_tx.commit(),
+            crate::TxOutcome::Committed { .. }
+        ));
+        assert_eq!(
+            fs::metadata(root.join("pages/Moved.md")).unwrap().len(),
+            crate::PARSE_INPUT_MAX_BYTES + 1
+        );
+        let change = changes.try_recv().unwrap().unwrap();
+        assert_eq!(change.origin, Origin::Own);
+        assert!(change
+            .files
+            .iter()
+            .any(|(id, kind, _)| id == &moved && *kind == ChangeKind::Created));
+        let view = store.whole_graph().unwrap();
+        assert!(view.unreadable_files().iter().any(|(id, _)| id == &moved));
+        assert!(!view
+            .unreadable_files()
+            .iter()
+            .any(|(id, _)| id == &a.file()));
+        let mut trash_tx = store.transaction();
+        let b = PageId::from("pages/B.md");
+        trash_tx.trash(&b.file(), b_rev);
+        assert!(matches!(
+            trash_tx.commit(),
+            crate::TxOutcome::Committed { .. }
+        ));
+        assert!(!b_path.exists());
+        assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
+        assert!(!store
+            .whole_graph()
+            .unwrap()
+            .unreadable_files()
+            .iter()
+            .any(|(id, _)| id == &b.file()));
+        let d_path = root.join("pages/D.md");
+        let file = File::create(&d_path).unwrap();
+        file.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
+        let d_rev = FileRev::from_file(&d_path).unwrap();
+        store.inject_fault(crate::FaultPoint::MidStepIo);
+        let mut rollback_tx = store.transaction();
+        rollback_tx.move_file(
+            &FileId::from("pages/D.md".to_string()),
+            d_rev,
+            &FileId::from("pages/E.md".to_string()),
+            None,
+        );
+        assert!(matches!(
+            rollback_tx.commit(),
+            crate::TxOutcome::NotCommitted { .. }
+        ));
+        assert!(d_path.exists());
+        assert!(!root.join("pages/E.md").exists());
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();

@@ -70,6 +70,15 @@ fn scan_headlines(lines: &[&str]) -> Vec<(usize, usize)> {
     out
 }
 
+/// Whether every real Org headline, excluding lines inside `#+BEGIN_` blocks,
+/// is at or below `max_level`. Uses the parser's headline scanner.
+pub fn headline_levels_within_limit(content: &str, max_level: usize) -> bool {
+    let lines: Vec<_> = content.lines().collect();
+    scan_headlines(&lines)
+        .iter()
+        .all(|(_, level)| *level <= max_level)
+}
+
 /// Number of trailing `\n` bytes (the document-level trailing-newline run),
 /// stripped on parse and reproduced on serialize so block bodies stay free of
 /// trailing-blank artifacts.

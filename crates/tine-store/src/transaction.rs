@@ -49,8 +49,9 @@ pub enum Content {
 /// Rewrites `[[page]]`, bare and bracketed tags, supported Org page links,
 /// embeds containing those references, and bare `tags::` values. Other
 /// reference-bearing property values can be found by `explicit_referrers`
-/// without being rewritten. Code spans, `alias::`, `title::`, and query
-/// arguments are not rewritten.
+/// without being rewritten. Code spans are not rewritten. Bracketed references
+/// inside `alias::`, `title::`, and query arguments are rewritten because the
+/// raw-text rewriter scans those regions too.
 #[derive(Clone, Debug, Default)]
 pub struct RenameMap(pub Vec<(String, String)>);
 
@@ -231,6 +232,10 @@ pub enum FaultPoint {
     Stage2Mismatch,
     /// Simulate a changed file at the indexed step's second guard.
     Stage2MismatchAt(usize),
+    /// Simulate an external deletion at the second revision guard.
+    Stage2ExternalDelete,
+    /// Remove a copied stream stage after its successful write/revision check.
+    RemoveStreamStageAfterWrite,
     /// Simulate an external write after the replacement temp file is synced.
     AfterTempSync,
     /// Simulate a changed but valid sidecar at the second guard.
@@ -258,6 +263,8 @@ pub enum FaultPoint {
 pub(crate) enum FaultPoint {
     Stage2Mismatch,
     Stage2MismatchAt(usize),
+    Stage2ExternalDelete,
+    RemoveStreamStageAfterWrite,
     AfterTempSync,
     Stage2ValidSidecar,
     Stage2ConfigExternal,
@@ -286,6 +293,11 @@ fn fault(store: &Store, point: FaultPoint) -> bool {
 #[cfg(not(any(test, feature = "test-faults")))]
 fn fault(_store: &Store, _point: FaultPoint) -> bool {
     false
+}
+
+#[cfg(any(test, feature = "test-faults"))]
+fn inject_external_delete(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
 }
 
 enum Step {
@@ -332,6 +344,7 @@ struct Prepared {
     old: Option<Vec<u8>>,
     new: Option<Vec<u8>>,
     saved_page: Option<Document>,
+    opaque_rev: Option<FileRev>,
 }
 
 enum Expected {
@@ -354,6 +367,8 @@ struct Undo {
     trash: Option<FileId>,
     old: Option<Vec<u8>>,
     new: Option<Expected>,
+    new_rev: Option<FileRev>,
+    opaque_rev: Option<FileRev>,
     created: bool,
     moved: bool,
 }
@@ -605,6 +620,9 @@ impl<'a> Transaction<'a> {
             Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
                 Err(content_refusal(error))
             }
+            Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
+                Err(content_refusal(error))
+            }
             Err(error) => Err(Why::Failed(error.into())),
         }
     }
@@ -625,8 +643,43 @@ impl<'a> Transaction<'a> {
                 file: file.clone(),
                 disk: None,
             }),
+            Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
+                Err(content_refusal(error))
+            }
             Err(error) => Err(Why::Failed(error.into())),
         }
+    }
+
+    fn oversized_page_rev(
+        &self,
+        file: &FileId,
+        expected: &FileRev,
+    ) -> Result<Option<FileRev>, Why> {
+        if !self.page(file) {
+            return Ok(None);
+        }
+        let path = self.path(file)?;
+        let len = match fs::metadata(&path) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(Why::Conflict {
+                    file: file.clone(),
+                    disk: None,
+                })
+            }
+            Err(error) => return Err(failed(error)),
+        };
+        if len <= crate::model::PARSE_INPUT_MAX_BYTES {
+            return Ok(None);
+        }
+        let disk = FileRev::from_file(&path).map_err(failed)?;
+        if disk != *expected {
+            return Err(Why::Conflict {
+                file: file.clone(),
+                disk: Some(disk),
+            });
+        }
+        Ok(Some(disk))
     }
 
     fn absent(&self, file: &FileId) -> Result<(), Why> {
@@ -687,7 +740,8 @@ impl<'a> Transaction<'a> {
                     SaveBase::CreateNew => None,
                 };
                 if let Some(old) = old.as_ref() {
-                    crate::model::validate_parse_bytes(old).map_err(content_refusal)?;
+                    crate::model::validate_parse_bytes_for_path(old, &self.path(&file)?)
+                        .map_err(content_refusal)?;
                 }
                 let path = self.path(&file)?;
                 let text = match old.as_deref() {
@@ -707,13 +761,15 @@ impl<'a> Transaction<'a> {
                             Why::Failed(error.into())
                         }
                     })?;
-                crate::model::validate_parse_bytes(&new).map_err(content_refusal)?;
+                crate::model::validate_parse_bytes_for_path(&new, &path)
+                    .map_err(content_refusal)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
                     old,
                     new: Some(new),
                     saved_page: Some(saved_page),
+                    opaque_rev: None,
                 })
             }
             Step::Create { file, content } => {
@@ -729,7 +785,7 @@ impl<'a> Transaction<'a> {
                     validate_config_content(self.store, content)?;
                 }
                 if self.page(file) {
-                    validate_page_content(content)?;
+                    validate_page_content(&file, content)?;
                 } else if let Content::Stream { source, max_bytes } = content {
                     validate_stream(source, *max_bytes)?;
                 }
@@ -739,6 +795,7 @@ impl<'a> Transaction<'a> {
                     old: None,
                     new: None,
                     saved_page: None,
+                    opaque_rev: None,
                 })
             }
             Step::Unique {
@@ -768,7 +825,7 @@ impl<'a> Transaction<'a> {
                 }
                 self.path(&file)?;
                 if self.page(&file) {
-                    validate_page_content(content)?;
+                    validate_page_content(&file, content)?;
                 } else if let Content::Stream { source, max_bytes } = content {
                     validate_stream(source, *max_bytes)?;
                 }
@@ -800,6 +857,7 @@ impl<'a> Transaction<'a> {
                     old: None,
                     new: None,
                     saved_page: None,
+                    opaque_rev: None,
                 })
             }
             Step::Replace {
@@ -820,6 +878,7 @@ impl<'a> Transaction<'a> {
                     old: Some(old),
                     new: Some(bytes.clone()),
                     saved_page: None,
+                    opaque_rev: None,
                 })
             }
             Step::Rewrite {
@@ -839,6 +898,7 @@ impl<'a> Transaction<'a> {
                     old: Some(old),
                     new: Some(new),
                     saved_page: None,
+                    opaque_rev: None,
                 })
             }
             Step::Move {
@@ -850,32 +910,50 @@ impl<'a> Transaction<'a> {
                 if to.as_str().starts_with("logseq/.tine-") {
                     return Err(Why::Refused(Refusal::InvalidTarget(to.as_str().into())));
                 }
-                let old = self.stage(file, expected)?;
+                let opaque_rev = if renames.is_none() {
+                    self.oversized_page_rev(file, expected)?
+                } else {
+                    None
+                };
+                let old = if opaque_rev.is_some() {
+                    None
+                } else {
+                    Some(self.stage(file, expected)?)
+                };
                 self.absent(to)?;
                 self.twin(to, Some(file))?;
-                let new = match renames {
-                    Some(map) => rewrite(&old, &self.path(to)?, map)?,
-                    None => old.clone(),
+                let new = match (&old, renames) {
+                    (Some(old), Some(map)) => Some(rewrite(old, &self.path(to)?, map)?),
+                    (Some(old), None) => Some(old.clone()),
+                    (None, None) => None,
+                    (None, Some(_)) => unreachable!(),
                 };
                 Ok(Prepared {
                     src: file.clone(),
                     dst: Some(to.clone()),
-                    old: Some(old),
-                    new: Some(new),
+                    old,
+                    new,
                     saved_page: None,
+                    opaque_rev,
                 })
             }
             Step::Trash { file, expected } => {
                 if file.as_str().starts_with("logseq/.tine-trash/") {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
-                let old = self.stage(file, expected)?;
+                let opaque_rev = self.oversized_page_rev(file, expected)?;
+                let old = if opaque_rev.is_some() {
+                    None
+                } else {
+                    Some(self.stage(file, expected)?)
+                };
                 Ok(Prepared {
                     src: file.clone(),
                     dst: None,
-                    old: Some(old),
+                    old,
                     new: None,
                     saved_page: None,
+                    opaque_rev,
                 })
             }
         }
@@ -905,6 +983,10 @@ impl<'a> Transaction<'a> {
             };
             result.map_err(failed)?;
         }
+        if fault(self.store, FaultPoint::Stage2ExternalDelete) {
+            #[cfg(any(test, feature = "test-faults"))]
+            inject_external_delete(&path).map_err(failed)?;
+        }
         match if self.page(file) {
             crate::model::read_parse_bytes(&path)
         } else {
@@ -921,6 +1003,22 @@ impl<'a> Transaction<'a> {
                 disk: None,
             }),
             Err(error) => Err(Why::Failed(error.into())),
+        }
+    }
+
+    fn verify_opaque(&self, file: &FileId, expected: &FileRev) -> Result<(), Why> {
+        let path = self.path(file)?;
+        match FileRev::from_file(&path) {
+            Ok(rev) if rev == *expected => Ok(()),
+            Ok(rev) => Err(Why::Conflict {
+                file: file.clone(),
+                disk: Some(rev),
+            }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(Why::Conflict {
+                file: file.clone(),
+                disk: None,
+            }),
+            Err(error) => Err(failed(error)),
         }
     }
 
@@ -1167,6 +1265,12 @@ impl<'a> Transaction<'a> {
                                     FileRev::from_file(stage).map_err(failed)?
                                 }
                             };
+                            undo.new_rev = Some(rev.clone());
+                            if let Some(Expected::File(stage)) = undo.new.as_ref() {
+                                if fault(self.store, FaultPoint::RemoveStreamStageAfterWrite) {
+                                    fs::remove_file(stage).map_err(failed)?;
+                                }
+                            }
                             return Ok(StepResult::Written { file, rev });
                         }
                         Err(error) if unique && error.kind() == io::ErrorKind::AlreadyExists => {
@@ -1180,6 +1284,33 @@ impl<'a> Transaction<'a> {
             Step::Move { .. } => {
                 let dst_id = plan.dst.as_ref().expect("move destination");
                 let dst = self.path(dst_id)?;
+                if let Some(rev) = &plan.opaque_rev {
+                    self.verify_opaque(&plan.src, rev)?;
+                    self.verify(dst_id, None, index)?;
+                    if let Some(parent) = dst.parent() {
+                        fs::create_dir_all(parent).map_err(failed)?;
+                    }
+                    undo.kind = UndoKind::Rename;
+                    undo.opaque_rev = Some(rev.clone());
+                    self.fault_collision(&dst);
+                    move_file_noreplace(&src, &dst)
+                        .map_err(|error| collision(dst_id, error, &dst))?;
+                    undo.created = true;
+                    sync_move_dirs(&src, &dst);
+                    self.fault_mid_step(index)?;
+                    self.fault_twin(dst_id);
+                    if let Some(twin) = self.disk_twin(dst_id)? {
+                        return Err(Why::Conflict {
+                            file: twin.clone(),
+                            disk: disk_rev(&self.path(&twin)?),
+                        });
+                    }
+                    self.verify_opaque(dst_id, rev)?;
+                    return Ok(StepResult::Moved {
+                        to: dst_id.clone(),
+                        rev: rev.clone(),
+                    });
+                }
                 let old = plan.old.as_deref().expect("move baseline");
                 let new = plan.new.as_ref().expect("move bytes");
                 self.verify(&plan.src, Some(old), index)?;
@@ -1263,6 +1394,28 @@ impl<'a> Transaction<'a> {
                 })
             }
             Step::Trash { .. } => {
+                if let Some(rev) = &plan.opaque_rev {
+                    self.verify_opaque(&plan.src, rev)?;
+                    let trash_id = self.trash_id(&plan.src);
+                    let trash = self.path(&trash_id)?;
+                    if let Some(parent) = trash.parent() {
+                        fs::create_dir_all(parent)
+                            .map_err(|error| failed_trash_dir(error, parent))?;
+                    }
+                    undo.trash = Some(trash_id.clone());
+                    undo.opaque_rev = Some(rev.clone());
+                    self.store.graph.transaction_note_delete(&src);
+                    move_file_noreplace(&src, &trash)
+                        .map_err(|error| collision(&plan.src, error, &src))?;
+                    undo.moved = true;
+                    sync_move_dirs(&src, &trash);
+                    self.fault_mid_step(index)?;
+                    self.verify_opaque(&trash_id, rev)?;
+                    return Ok(StepResult::Trashed {
+                        file: plan.src.clone(),
+                        trashed: trash_id,
+                    });
+                }
                 let old = plan.old.as_deref().expect("trash baseline");
                 self.verify(&plan.src, Some(old), index)?;
                 let trash_id = self.trash_id(&plan.src);
@@ -1311,6 +1464,32 @@ impl<'a> Transaction<'a> {
                 return;
             }
         };
+        if record.created && matches!(record.kind, UndoKind::Rename) {
+            if let (Some(dst_id), Some(expected)) = (&record.dst, &record.opaque_rev) {
+                let result = (|| -> io::Result<()> {
+                    let dst = self.path(dst_id).map_err(|error| {
+                        io::Error::new(io::ErrorKind::InvalidInput, format!("{error:?}"))
+                    })?;
+                    let current = FileRev::from_file(&dst)?;
+                    if current != *expected {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "destination changed during undo",
+                        ));
+                    }
+                    move_file_noreplace(&dst, &live)?;
+                    sync_move_dirs(&dst, &live);
+                    Ok(())
+                })();
+                match result {
+                    Ok(_) => {}
+                    Err(error) => rollback
+                        .undo_failed
+                        .push((record.src.clone(), error.into())),
+                }
+                return;
+            }
+        }
         if record.created {
             let (id, path) = match &record.dst {
                 Some(dst) => match self.path(dst) {
@@ -1570,6 +1749,8 @@ impl<'a> Transaction<'a> {
                 trash: None,
                 old: plan.old.clone(),
                 new: None,
+                new_rev: None,
+                opaque_rev: plan.opaque_rev.clone(),
                 created: false,
                 moved: false,
             };
@@ -1624,6 +1805,44 @@ impl<'a> Transaction<'a> {
                     continue;
                 }
             };
+            if let Some(plan) = plans.iter().find(|plan| {
+                plan.opaque_rev.is_some() && (plan.src == id || plan.dst.as_ref() == Some(&id))
+            }) {
+                let before_rev = (plan.src == id).then(|| plan.opaque_rev.clone()).flatten();
+                let now_rev = match FileRev::from_file(&path) {
+                    Ok(rev) => Some(rev),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                    Err(_) => {
+                        self.store.graph.invalidate_cache();
+                        continue;
+                    }
+                };
+                if before_rev != now_rev {
+                    let kind = match (&before_rev, &now_rev) {
+                        (None, Some(_)) => ChangeKind::Created,
+                        (Some(_), None) => ChangeKind::Removed,
+                        _ => ChangeKind::Modified,
+                    };
+                    let own = done.iter().any(|record| {
+                        record.opaque_rev.is_some()
+                            && ((record.src == id
+                                && now_rev.is_none()
+                                && (record.moved || record.created))
+                                || (record.dst.as_ref() == Some(&id)
+                                    && record.created
+                                    && record.opaque_rev == now_rev))
+                    });
+                    let tuple = (id.clone(), kind, now_rev);
+                    if failure.is_some() && !own {
+                        published_external.push(tuple);
+                    } else {
+                        published_own.push(tuple);
+                    }
+                    changed_any = true;
+                    self.store.graph.invalidate_cache();
+                }
+                continue;
+            }
             let now = match if self.page(&id) {
                 crate::model::read_parse_bytes(&path)
             } else {
@@ -1643,13 +1862,12 @@ impl<'a> Transaction<'a> {
                 match (&record.new, &now) {
                     (Some(Expected::Bytes(written)), Some(bytes)) => written == bytes,
                     (Some(Expected::File(stage)), Some(bytes)) => {
-                        fs::read(stage).is_ok_and(|written| written == *bytes)
+                        let now_rev = FileRev::from_bytes(bytes);
+                        record.new_rev.as_ref().is_some_and(|rev| *rev == now_rev)
+                            || (record.new_rev.is_none()
+                                && FileRev::from_file(stage).is_ok_and(|rev| rev == now_rev))
                     }
-                    (_, None) => {
-                        record.created
-                            || record.moved
-                            || matches!(record.kind, UndoKind::Replace | UndoKind::Trash)
-                    }
+                    (_, None) => record.moved,
                     _ => false,
                 }
             });
@@ -1955,9 +2173,12 @@ fn validate_config_content(store: &Store, content: &Content) -> Result<(), Why> 
     }
 }
 
-fn validate_page_content(content: &Content) -> Result<(), Why> {
+fn validate_page_content(file: &FileId, content: &Content) -> Result<(), Why> {
     match content {
-        Content::Bytes(bytes) => crate::model::validate_parse_bytes(bytes).map_err(content_refusal),
+        Content::Bytes(bytes) => {
+            crate::model::validate_parse_bytes_for_path(bytes, Path::new(file.as_str()))
+                .map_err(content_refusal)
+        }
         Content::Stream { source, max_bytes } => {
             use std::io::Read;
             let mut input = source.try_clone().map_err(failed)?;
@@ -1973,7 +2194,8 @@ fn validate_page_content(content: &Content) -> Result<(), Why> {
                     "page content exceeds {limit} byte limit"
                 ))));
             }
-            crate::model::validate_parse_bytes(&bytes).map_err(content_refusal)
+            crate::model::validate_parse_bytes_for_path(&bytes, Path::new(file.as_str()))
+                .map_err(content_refusal)
         }
     }
 }
