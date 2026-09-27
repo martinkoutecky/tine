@@ -2840,8 +2840,9 @@ impl WholeGraph {
     // The parsed whole-graph cache omits duplicate-day journal strays.
     /// A first call can traverse all
     /// page blocks and reference text to build indexes; later calls cost
-    /// O(P + aliases + R × A + sort), where R is reference-only names and A
-    /// is all aliases: resolving each such name clones the alias list.
+    /// O(P + B + aliases + R + N log N) on the first call, where R is
+    /// reference-only names and N is inventory entries. Alias owners are
+    /// indexed once per snapshot instead of rescanned for every name.
     /// The result is stable in this view.
     pub fn inventory(&self) -> Arc<Inventory> {
         let mut entries = Vec::new();
@@ -2934,10 +2935,8 @@ impl WholeGraph {
                 day: None,
             });
         }
-        entries.sort_by(|a, b| {
-            tine_core::refs::page_key(&a.name)
-                .cmp(&tine_core::refs::page_key(&b.name))
-                .then_with(|| a.name.cmp(&b.name))
+        entries.sort_by_cached_key(|entry| {
+            (tine_core::refs::page_key(&entry.name), entry.name.clone())
         });
         Arc::new(Inventory(entries))
     }
@@ -2993,8 +2992,8 @@ impl WholeGraph {
     /// page can propose a new page rather than the former journal. To classify a clicked journal
     /// title, use the current `JournalFormat::parse`, which tries configured
     /// formats and fallbacks, then pass that result as `is_journal`. Cost
-    /// O(1) index lookup when a real file wins; O(all aliases) otherwise,
-    /// because the alias-owner list is cloned before filtering.
+    /// O(1) indexed lookup after the snapshot's one-time O(all aliases)
+    /// alias-key build when no real file wins.
     pub fn resolve(&self, name: &str, is_journal: bool) -> Resolved {
         let kind = if is_journal {
             PageKind::Journal
@@ -3026,11 +3025,9 @@ impl WholeGraph {
         if !is_journal {
             let owners: Vec<_> = self
                 .graph
-                .page_aliases_with_owners()
-                .into_iter()
-                .filter(|(alias, _, _)| tine_core::refs::same_page(alias, name))
-                .map(|(_, _, path)| PageId::from(path))
-                .collect();
+                .alias_owner_paths(&tine_core::refs::page_key(name))
+                .map(|paths| paths.iter().cloned().map(PageId::from).collect())
+                .unwrap_or_default();
             if !owners.is_empty() {
                 return Resolved::Alias { owners };
             }
@@ -3486,6 +3483,103 @@ mod rev5_tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn alias_index_matches_legacy_scan_for_inventory_and_name_variants() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-alias-index-{unique}"));
+        let pages = root.join("pages");
+        fs::create_dir_all(&pages).unwrap();
+        fs::write(
+            pages.join("Owner A.md"),
+            "alias:: Team/Alpha, Café\n- [[Orphan/Leaf]]\n",
+        )
+        .unwrap();
+        fs::write(
+            pages.join("Owner B.md"),
+            "alias:: team/alpha, Cafe\u{301}\n- [[TEAM/ALPHA]]\n",
+        )
+        .unwrap();
+        fs::write(pages.join("Café.md"), "- file wins over alias\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let view = store.whole_graph().unwrap();
+        let inventory = view.inventory();
+        let ordered_names: Vec<_> = inventory.0.iter().map(|entry| entry.name.clone()).collect();
+        let mut legacy_order = ordered_names.clone();
+        legacy_order.sort_by(|a, b| {
+            tine_core::refs::page_key(a)
+                .cmp(&tine_core::refs::page_key(b))
+                .then_with(|| a.cmp(b))
+        });
+        assert_eq!(ordered_names, legacy_order);
+        let alias_rows = view.graph.page_aliases_with_owners();
+        assert_eq!(
+            alias_rows
+                .iter()
+                .filter(|(alias, _, _)| tine_core::refs::same_page(alias, "TEAM/ALPHA"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            alias_rows
+                .iter()
+                .filter(|(alias, _, _)| tine_core::refs::same_page(alias, "Cafe\u{301}"))
+                .count(),
+            2
+        );
+        let names = inventory.0.iter().map(|entry| entry.name.as_str()).chain([
+            "TEAM/ALPHA",
+            "Team/Alpha",
+            "team/alpha",
+            "Café",
+            "Cafe\u{301}",
+            "café",
+            "Orphan/Leaf",
+            "orphan/leaf",
+        ]);
+        for name in names {
+            let legacy: Vec<PageId> = view
+                .graph
+                .page_aliases_with_owners()
+                .into_iter()
+                .filter(|(alias, _, _)| tine_core::refs::same_page(alias, name))
+                .map(|(_, _, path)| PageId::from(path))
+                .collect();
+            match view.resolve(name, false) {
+                Resolved::Alias { owners } => assert_eq!(owners, legacy, "alias owners for {name}"),
+                Resolved::Absent { .. } => assert!(legacy.is_empty(), "lost alias for {name}"),
+                Resolved::Existing { .. } => assert!(
+                    tine_core::refs::same_page(name, "Café")
+                        || name == "Owner A"
+                        || name == "Owner B",
+                    "unexpected file for {name}"
+                ),
+            }
+        }
+        for entry in &inventory.0 {
+            let actual = view.resolve(&entry.name, entry.is_journal);
+            let target = &entry.target;
+            match (actual, target) {
+                (Resolved::Alias { owners: a }, Resolved::Alias { owners: b }) => assert_eq!(&a, b),
+                (
+                    Resolved::Existing { id: a, others: aa },
+                    Resolved::Existing { id: b, others: bb },
+                ) => {
+                    assert_eq!(&a, b);
+                    assert_eq!(&aa, bb);
+                }
+                (Resolved::Absent { id: a }, Resolved::Absent { id: b }) => assert_eq!(&a, b),
+                _ => panic!("inventory differs from resolve for {}", entry.name),
+            }
+        }
+        store.close();
+        drop(view);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn shared_store_types_are_send_sync() {

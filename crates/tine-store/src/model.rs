@@ -3,6 +3,9 @@
 //! runtime UUIDs are deterministic structural locators; persisted `id::`
 //! values remain separate external reference identities.
 
+mod page_parse;
+use page_parse::{isolate_page_parse, parse_page_content, parse_page_entry_isolated};
+
 use crate::path_identity::canonical_existing_path;
 use std::collections::HashMap;
 use std::fs;
@@ -553,6 +556,8 @@ pub(crate) struct ReadSnapshot {
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     real_page_names: Arc<crate::query::RealPageNames>,
     aliases: std::sync::OnceLock<Vec<(String, String, String)>>,
+    /// Alias owner paths keyed by `page_key(alias)`, in `aliases` order.
+    alias_owner_paths_by_key: std::sync::OnceLock<HashMap<String, Vec<String>>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
     block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
     memos: SnapshotMemos,
@@ -563,6 +568,23 @@ pub(crate) struct ReadSnapshot {
 }
 
 impl ReadSnapshot {
+    /// Owner paths of the aliases whose page key is `key`, in
+    /// `page_aliases_with_owners` order. Built once per snapshot so a
+    /// resolve costs O(1) instead of cloning and re-keying every alias.
+    pub(crate) fn alias_owner_paths(&self, key: &str) -> Option<&Vec<String>> {
+        self.alias_owner_paths_by_key
+            .get_or_init(|| {
+                let mut map: HashMap<String, Vec<String>> = HashMap::new();
+                for (alias, _, path) in self.page_aliases_with_owners() {
+                    map.entry(tine_core::refs::page_key(&alias))
+                        .or_default()
+                        .push(path);
+                }
+                map
+            })
+            .get(key)
+    }
+
     #[cfg(test)]
     pub(crate) fn from_page_snapshot(pages: Vec<(PageEntry, Arc<Document>)>) -> Self {
         let graph = Graph::from_page_snapshot("", pages);
@@ -764,6 +786,7 @@ impl ReadSnapshot {
             referenced_name_index,
             real_page_names,
             aliases: std::sync::OnceLock::new(),
+            alias_owner_paths_by_key: std::sync::OnceLock::new(),
             referenced_names: std::sync::OnceLock::new(),
             block_ref_counts: std::sync::OnceLock::new(),
             memos: SnapshotMemos::default(),
@@ -4678,49 +4701,6 @@ fn preserve_crlf(content: String, existing: Option<&str>) -> String {
         content.replace('\n', "\r\n")
     } else {
         content
-    }
-}
-
-/// Parse one page under a page-sized unwind boundary. lsdoc deliberately panics
-/// when its v2 parser does not own an input shape; isolating here preserves that
-/// loud guard while limiting the search-cache blast radius to this page.
-fn parse_page_entry_isolated(e: PageEntry) -> PageParseResult {
-    let content = read_parse_input(&e.path).map_err(|error| {
-        PageParseFailure::Unreadable(e.rel_path_str().to_owned(), error.to_string())
-    })?;
-    isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
-}
-
-fn parse_page_content(e: &PageEntry, content: &str) -> (Document, String) {
-    let rev = content_rev(&content);
-    let mut d = parse_doc(&e.path, &content);
-    #[cfg(test)]
-    if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL) {
-        panic!("deterministic test sentinel for a page projection panic");
-    }
-    assign_doc_runtime_ids(&mut d.roots, e.rel_path_str());
-    (d, rev)
-}
-
-fn isolate_page_parse(
-    e: PageEntry,
-    parse: impl FnOnce(&PageEntry) -> Option<(Document, String)>,
-) -> PageParseResult {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse(&e))) {
-        Ok(Some((doc, rev))) => Ok(Some((e, doc, rev))),
-        Ok(None) => Ok(None),
-        Err(payload) => {
-            let detail = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("unknown panic payload");
-            eprintln!("Tine search index skipped a page after parse/projection panic");
-            Err(PageParseFailure::Panic(
-                e.rel_path_str().to_owned(),
-                format!("page parse/projection panicked: {detail}"),
-            ))
-        }
     }
 }
 

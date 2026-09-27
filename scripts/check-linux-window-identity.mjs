@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const config = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"));
@@ -20,7 +21,7 @@ function requireMatch(text, pattern, message) {
   if (!pattern.test(text)) throw new Error(message);
 }
 
-if (config.identifier !== "page.tine.Tine") {
+if (config.identifier !== APP_ID) {
   throw new Error(`Linux desktop identity drifted: ${config.identifier}`);
 }
 if (config.app?.enableGTKAppId === true) {
@@ -40,12 +41,12 @@ const cargo = fs.readFileSync(cargoPath, "utf8");
 requireMatch(
   identity,
   /const APP_ID: &str = "page\.tine\.Tine";/,
-  "Linux shell app ID drifted from page.tine.Tine",
+  `Linux shell app ID drifted from ${APP_ID}`,
 );
 requireMatch(
   identity,
   /gdk_wayland_window_set_application_id/,
-  "Wayland windows do not advertise page.tine.Tine",
+  `Wayland windows do not advertise ${APP_ID}`,
 );
 requireMatch(
   identity,
@@ -98,4 +99,4 @@ requireMatch(
   "Xlib thread initialization must precede every GTK, Xlib, and Tauri startup call",
 );
 
-console.log("linux native startup OK: page.tine.Tine identity + Xlib-safe single-instance handoff");
+console.log(`linux native startup OK: ${APP_ID} identity + Xlib-safe single-instance handoff`);

@@ -14,8 +14,7 @@ use tine_core::model::{
 #[cfg(test)]
 use tine_store::SaveBase;
 use tine_store::{
-    Budget, FacetPolicy, PageId, QueryError, Resolved, SaveOutcome, SavePagesOutcome, StoreError,
-    WholeGraph,
+    FacetPolicy, PageId, Resolved, SaveOutcome, SavePagesOutcome, StoreError, WholeGraph,
 };
 mod save_wire;
 use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
@@ -244,58 +243,8 @@ fn refuse_bound_graph_path(
     Ok(resolved)
 }
 
-fn whole_graph(state: &GraphContext<'_>) -> Result<WholeGraph, String> {
-    slot_for_context(state)?
-        .store
-        .whole_graph()
-        .map_err(|e| format!("graph load failed: {e:?}"))
-}
-
-fn query_error(error: QueryError) -> String {
-    match error {
-        QueryError::Cancelled => "cancelled".into(),
-        QueryError::Parse(reason) => reason,
-        QueryError::InvalidTarget(_) => "invalid page path".into(),
-        QueryError::RequestTooLarge { what: Budget::BacklinkFilterRoots, count, limit } =>
-            format!("too many backlink filter roots: {count} (limit: {limit})"),
-        QueryError::RequestTooLarge { what, count, limit } =>
-            format!("request-too-large: {count} {} (limit: {limit})", budget_text(what)),
-        QueryError::ExportRequestTooLarge { macros, bytes, macro_limit, byte_limit, processing_cap } =>
-            format!("query-export-request-too-large: {macros} macros / {bytes} bytes (request limits: {macro_limit} macros / {byte_limit} bytes; processing cap: {processing_cap} macros)"),
-        QueryError::ResultTooLarge { what: Budget::PropertyFacets, .. } =>
-            "result-too-large: property facets exceed the construction budget".into(),
-        QueryError::ResultTooLarge { what: Budget::ResolvedBlockRows, count, .. } =>
-            format!("result-too-large: {count} resolved block-reference rows exceed the construction budget"),
-        QueryError::ResultTooLarge { what: Budget::RequestedBlockRefs, count, limit, .. } =>
-            format!("result-too-large: {count} requested block references (limit: {limit})"),
-        QueryError::ResultTooLarge { what: Budget::ExportBytes, count, limit, .. } =>
-            format!("query-export-result-too-large: ~{count} bytes (limit: {limit} bytes)"),
-        QueryError::ResultTooLarge { what: Budget::BridgeMatchingBlocks, count, limit, bytes: Some(bytes), byte_limit } =>
-            format!("result-too-large: {count} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {limit} blocks / {byte_limit} bytes)"),
-        QueryError::ResultTooLarge { what: Budget::MatchingBlocks, count, limit, byte_limit, .. } =>
-            format!("result-too-large: {count} matching blocks; narrow the query or add (sample N) (construction limits: {limit} blocks / {byte_limit} bytes)"),
-        QueryError::ResultTooLarge { what: Budget::AdvancedQueryMatches, count, .. } =>
-            format!("result-too-large: {count} advanced-query matches; narrow the query"),
-        QueryError::ResultTooLarge { what: Budget::SearchHits, count, limit, bytes: Some(bytes), byte_limit } =>
-            format!("result-too-large: {count} search hits (~{bytes} bytes); narrow the search (limits: {limit} hits / {byte_limit} bytes)"),
-        QueryError::ResultTooLarge { what, count, limit, .. } =>
-            format!("result-too-large: {count} {} (limit: {limit})", budget_text(what)),
-    }
-}
-
-fn budget_text(what: Budget) -> &'static str {
-    match what {
-        Budget::BacklinkFilterRoots => "backlink filter roots",
-        Budget::MatchingBlocks => "matching blocks",
-        Budget::BridgeMatchingBlocks => "bridge matching blocks",
-        Budget::RequestedBlockRefs => "requested block references",
-        Budget::ResolvedBlockRows => "resolved block-reference rows",
-        Budget::ExportBytes => "query export bytes",
-        Budget::PropertyFacets => "property facets",
-        Budget::AdvancedQueryMatches => "advanced-query matches",
-        Budget::SearchHits => "search hits",
-    }
-}
+mod query_error_wire;
+use query_error_wire::query_error;
 
 #[tauri::command]
 pub(crate) fn load_workspaces(
@@ -365,62 +314,8 @@ mod result_bridge_budget_tests {
     }
 }
 
-/// Write a PNG image to the OS clipboard. The lightbox encodes the shown image to
-/// PNG and sends the bytes. On Linux we prefer `wl-copy`/`xclip` (see above) and
-/// fall back to the Tauri clipboard plugin; elsewhere the plugin is reliable.
-/// Decode a base64 asset payload. The frontend sends bytes as one base64 string
-/// rather than a JSON number[] (which inflated the IPC payload ~4-5x and forced a
-/// per-element parse + a giant throwaway array on the webview thread).
-const ASSET_INGRESS_MAX_BYTES: usize = 64 * 1024 * 1024;
-
-fn decoded_base64_len(input: &str) -> Option<usize> {
-    if input.len() % 4 != 0 {
-        return None;
-    }
-    let padding = input
-        .as_bytes()
-        .iter()
-        .rev()
-        .take_while(|byte| **byte == b'=')
-        .count()
-        .min(2);
-    input
-        .len()
-        .checked_div(4)?
-        .checked_mul(3)?
-        .checked_sub(padding)
-}
-
-pub(crate) fn decode_asset_b64(b64: &str) -> Result<Vec<u8>, String> {
-    use base64::Engine;
-    let max_encoded = ASSET_INGRESS_MAX_BYTES.div_ceil(3) * 4;
-    if b64.len() > max_encoded
-        || decoded_base64_len(b64).is_some_and(|len| len > ASSET_INGRESS_MAX_BYTES)
-    {
-        return Err("asset payload exceeds 64 MiB ingress limit".into());
-    }
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(b64)
-        .map_err(|e| format!("bad base64 asset payload: {e}"))?;
-    if decoded.len() > ASSET_INGRESS_MAX_BYTES {
-        return Err("asset payload exceeds 64 MiB ingress limit".into());
-    }
-    Ok(decoded)
-}
-
-#[cfg(test)]
-mod asset_ingress_tests {
-    use super::{decoded_base64_len, ASSET_INGRESS_MAX_BYTES};
-
-    #[test]
-    fn base64_size_gate_accounts_for_padding_before_decode() {
-        let encoded = ASSET_INGRESS_MAX_BYTES.div_ceil(3) * 4;
-        assert!(encoded / 4 * 3 > ASSET_INGRESS_MAX_BYTES);
-        assert_eq!(decoded_base64_len("AAAA"), Some(3));
-        assert_eq!(decoded_base64_len("AA=="), Some(1));
-        assert_eq!(decoded_base64_len("AAA="), Some(2));
-    }
-}
+mod asset_ingress;
+pub(crate) use asset_ingress::decode_asset_b64;
 
 #[derive(Serialize)]
 pub(crate) struct PageInventoryWire {
@@ -926,13 +821,17 @@ pub(crate) fn guide_pages() -> Vec<tine_core::guide::GuidePage> {
 }
 
 #[tauri::command]
-pub(crate) fn copy_guide_into_graph(
+pub(crate) async fn copy_guide_into_graph(
     title: String,
     state: GraphContext<'_>,
 ) -> Result<tine_graph_features::guide::GuideCopyResult, String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::guide::copy_guide_into_graph(&slot.store, &title)
-        .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::guide::copy_guide_into_graph(&slot.store, &title)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1026,21 +925,25 @@ pub(crate) async fn block_referrers(
 }
 
 #[tauri::command]
-pub(crate) fn delete_page(
+pub(crate) async fn delete_page(
     name: String,
     kind: PageKind,
     expected_path: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::pages::delete_page_expected(
-        &slot.store,
-        &name,
-        kind,
-        expected_path.as_deref(),
-        None,
-    )
-    .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::pages::delete_page_expected(
+            &slot.store,
+            &name,
+            kind,
+            expected_path.as_deref(),
+            None,
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1069,7 +972,14 @@ mod graph_wide_command_boundary_tests {
     #[test]
     fn expensive_reference_and_rename_commands_cross_the_blocking_pool() {
         let source = include_str!("commands.rs");
-        for name in ["get_backlinks", "get_unlinked_refs", "rename_page"] {
+        for name in [
+            "get_backlinks",
+            "get_unlinked_refs",
+            "rename_page",
+            "delete_page",
+            "merge_pages",
+            "rename_file_to_page",
+        ] {
             let signature = format!("pub(crate) async fn {name}(");
             let start = source.find(&signature).expect("command stays async");
             let tail = &source[start..];
@@ -1096,15 +1006,19 @@ pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usi
 /// for the print-to-PDF export, with the dialog's options. `Err("no-page")` if the
 /// page doesn't exist.
 #[tauri::command]
-pub(crate) fn page_print_html(
+pub(crate) async fn page_print_html(
     name: String,
     opts: tine_graph_features::print::PrintOpts,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::print::page_print_html(&slot.store, &name, opts)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "no-page".to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::print::page_print_html(&slot.store, &name, opts)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "no-page".to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1401,6 +1315,7 @@ pub(crate) async fn quick_switch(
     .map_err(|error| error.to_string())?
 }
 
+#[cfg(test)]
 fn capture_quick_switch_for(
     state: &AppState,
     caller: &str,
@@ -1420,14 +1335,23 @@ fn capture_quick_switch_for(
 /// not a `GraphContext` command: capture may ask for bounded page/tag candidates
 /// but cannot save, delete, trash, or invoke any other graph command.
 #[tauri::command]
-pub(crate) fn capture_quick_switch(
+pub(crate) async fn capture_quick_switch(
     query: String,
     limit: usize,
     binding_generation: Option<u64>,
     window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<Vec<PageEntry>, String> {
-    capture_quick_switch_for(&state, window.label(), binding_generation, &query, limit)
+    let slot = capture_quick_switch_slot(&state, window.label(), binding_generation)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        Ok(view.complete_page_names(&query, limit.min(8)))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
@@ -1546,54 +1470,76 @@ mod capture_quick_switch_tests {
     }
 }
 
+/// Run a whole-graph read on the blocking pool. `Store::whole_graph` waits for
+/// the initial parse (seconds on a 10k-page graph); a synchronous Tauri command
+/// runs on the main thread and would freeze the webview for that whole wait.
+async fn off_ui_graph_read<T: Send + 'static>(
+    state: &GraphContext<'_>,
+    read: impl FnOnce(WholeGraph) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let slot = slot_for_context(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let view = slot
+            .store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))?;
+        read(view)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
-pub(crate) fn list_templates(
+pub(crate) async fn list_templates(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::TemplateDto>, String> {
-    Ok(whole_graph(&state)?.templates())
+    off_ui_graph_read(&state, |view| Ok(view.templates())).await
 }
 
 #[tauri::command]
-pub(crate) fn journal_content_days(state: GraphContext<'_>) -> Result<Vec<i64>, String> {
-    Ok(whole_graph(&state)?
-        .journal_content_days()
-        .into_iter()
-        .map(|day| day.0)
-        .collect())
+pub(crate) async fn journal_content_days(state: GraphContext<'_>) -> Result<Vec<i64>, String> {
+    off_ui_graph_read(&state, |view| {
+        Ok(view
+            .journal_content_days()
+            .into_iter()
+            .map(|day| day.0)
+            .collect())
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn resolve_block(
+pub(crate) async fn resolve_block(
     uuid: String,
     state: GraphContext<'_>,
 ) -> Result<Option<RefGroup>, String> {
-    Ok(whole_graph(&state)?
-        .blocks(&[uuid])
-        .map_err(query_error)?
-        .pop()
-        .flatten())
+    off_ui_graph_read(&state, move |view| {
+        Ok(view.blocks(&[uuid]).map_err(query_error)?.pop().flatten())
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn resolve_blocks(
+pub(crate) async fn resolve_blocks(
     uuids: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<Option<RefGroup>>, String> {
-    whole_graph(&state)?.blocks(&uuids).map_err(query_error)
+    off_ui_graph_read(&state, move |view| view.blocks(&uuids).map_err(query_error)).await
 }
 
 /// Explicit, bounded subtree resolution for hover previews. Ordinary
 /// `resolve_block(s)` stays shallow so a page containing nested references
 /// cannot multiply the same descendants across the IPC bridge.
 #[tauri::command]
-pub(crate) fn preview_block(
+pub(crate) async fn preview_block(
     uuid: String,
     max_nodes: usize,
     state: GraphContext<'_>,
 ) -> Result<Option<tine_core::BlockPreview>, String> {
-    whole_graph(&state)?
-        .preview_block(&uuid, max_nodes)
-        .map_err(query_error)
+    off_ui_graph_read(&state, move |view| {
+        view.preview_block(&uuid, max_nodes).map_err(query_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1927,7 +1873,7 @@ fn open_asset_with_os(name: &str, target: &std::path::Path, editing: bool) -> Re
 /// and canonicalizes the graph-relative identity; the WebView never supplies an
 /// arbitrary absolute path.
 #[tauri::command]
-pub(crate) fn open_page_file(
+pub(crate) async fn open_page_file(
     name: String,
     kind: PageKind,
     path: Option<String>,
@@ -1935,14 +1881,18 @@ pub(crate) fn open_page_file(
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let target = tine_graph_features::pages::source_path_for_os_handoff(
-        &slot.store,
-        &name,
-        kind,
-        path.as_deref(),
-    )
-    .map_err(feature_page_read_error)?;
-    open_page_source_with_os(&target, reveal)
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = tine_graph_features::pages::source_path_for_os_handoff(
+            &slot.store,
+            &name,
+            kind,
+            path.as_deref(),
+        )
+        .map_err(feature_page_read_error)?;
+        open_page_source_with_os(&target, reveal)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn open_page_source_with_os(target: &std::path::Path, reveal: bool) -> Result<(), String> {
@@ -2467,10 +2417,18 @@ pub(crate) fn get_page_by_path(
 /// `src` (both graph-root-relative paths). The merged `dst` is written through the
 /// normal round-tripping save path (#21).
 #[tauri::command]
-pub(crate) fn merge_pages(src: String, dst: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn merge_pages(
+    src: String,
+    dst: String,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::pages::merge_pages(&slot.store, &src, &dst)
-        .map_err(graph_write_error_to_wire)
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::pages::merge_pages(&slot.store, &src, &dst)
+            .map_err(graph_write_error_to_wire)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn graph_write_error_to_wire(error: std::io::Error) -> String {
@@ -2497,14 +2455,18 @@ fn graph_write_wire_keeps_rollback_incomplete_family() {
 /// Rescue a duplicate-day stray by moving it to a uniquely-named page
 /// (`pages/<new_name>`), so it stops colliding and becomes normally navigable (#21).
 #[tauri::command]
-pub(crate) fn rename_file_to_page(
+pub(crate) async fn rename_file_to_page(
     path: String,
     new_name: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::pages::rename_file_to_page(&slot.store, &path, &new_name)
-        .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::pages::rename_file_to_page(&slot.store, &path, &new_name)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -2529,17 +2491,21 @@ pub(crate) fn read_highlights(
 }
 
 #[tauri::command]
-pub(crate) fn open_pdf(
+pub(crate) async fn open_pdf(
     pdf: String,
     label: String,
     state: GraphContext<'_>,
 ) -> Result<tine_core::pdf::PdfState, String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::pdf::open_pdf(&slot.store, &pdf, &label).map_err(feature_pdf_error)
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::pdf::open_pdf(&slot.store, &pdf, &label).map_err(feature_pdf_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn write_highlights(
+pub(crate) async fn write_highlights(
     pdf: String,
     label: String,
     highlights: Vec<tine_core::pdf::Highlight>,
@@ -2547,8 +2513,18 @@ pub(crate) fn write_highlights(
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::pdf::write_highlights(&slot.store, &pdf, &label, &highlights, &base_ids)
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::pdf::write_highlights(
+            &slot.store,
+            &pdf,
+            &label,
+            &highlights,
+            &base_ids,
+        )
         .map_err(feature_pdf_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

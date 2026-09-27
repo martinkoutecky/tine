@@ -16,6 +16,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release", process.platform === "win32" ? "tine.exe" : "tine");
@@ -33,7 +34,7 @@ const TEST_PAGE = `${GRAPH}/pages/OG Parity References.md`;
 const APP_DATA_ROOT = process.platform === "win32"
   ? path.join(TMP, "appdata")
   : path.join(TMP, "xdg", "data");
-const APP_DATA = path.join(APP_DATA_ROOT, "page.tine.Tine");
+const APP_DATA = path.join(APP_DATA_ROOT, APP_ID);
 const SETTINGS = `${APP_DATA}/tine-settings.json`;
 
 /** WebDriver's `addValue` is a convenience mutation, not the literal key path

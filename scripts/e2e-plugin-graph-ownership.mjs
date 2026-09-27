@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -34,7 +35,7 @@ for (const root of [A, B]) {
   fs.writeFileSync(journalPath(root), sourceBytes);
 }
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(XDG, dir), { recursive: true });
-const appData = path.join(XDG, "data", "page.tine.Tine");
+const appData = path.join(XDG, "data", APP_ID);
 const packageDir = path.join(appData, "plugins", manifest.id, manifest.version);
 fs.mkdirSync(packageDir, { recursive: true });
 fs.writeFileSync(path.join(packageDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);

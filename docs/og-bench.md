@@ -23,8 +23,9 @@ Five interleaved runs per binary and corpus produce `summary.json`,
 launch to first rendered content; quick-switch block search; click to page
 paint; linked and unlinked reference counts; ten editor keypresses to the next
 paint (median and p95); edit event to disk; and rename of the synthetic hub
-with 200 referrers. The 10k trials also report app RSS after open and after
-the save and rename journeys, with their larger post-journey RSS used for the
+with 200 referrers. The 10k trials also report app RSS after the first
+graph-wide search has completed the background load, and after the save and
+rename journeys, with their larger post-journey RSS used for the
 overall after value. JSON holds all samples; the table shows median and min–max
 spread. A failed journey has no made-up latency and is named under
 `journeyFailures`.

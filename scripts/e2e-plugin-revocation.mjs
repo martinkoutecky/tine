@@ -9,6 +9,7 @@ import net from "node:net";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -73,7 +74,7 @@ const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), "- open [[Plugin Revocation]]\n");
 
-const appData = path.join(TMP, "xdg", "data", "page.tine.Tine");
+const appData = path.join(TMP, "xdg", "data", APP_ID);
 const packageDir = path.join(appData, "plugins", manifest.id, manifest.version);
 fs.mkdirSync(packageDir, { recursive: true });
 fs.writeFileSync(path.join(packageDir, "manifest.json"), manifestJson);
