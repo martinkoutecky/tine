@@ -65,6 +65,7 @@ isSelected
 journalTemplatePage
 loadFeed
 loadGuidePages
+loadRoutedPage  # why: route can be first graph load; arm saves without enabling capture scratch persistence; batch06d
 loadedPage
 mainPages
 makeOwnNumberedList

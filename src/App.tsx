@@ -84,6 +84,7 @@ import { endEdit } from "./editorController";
 import { installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
 import { drainPdfWork } from "./pdfOwnership";
+import { installBackgroundFlush } from "./backgroundFlush";
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
@@ -110,6 +111,7 @@ const safeClose = createSafeCloseCoordinator({
     pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
   },
 });
+
 
 async function closeAndroidRootSafely(): Promise<void> {
   await requestAndroidRootClose(
@@ -412,6 +414,13 @@ export async function installMobileExternalLinkHandler(): Promise<() => void> {
 }
 
 export function App(): JSX.Element {
+  // Every graph window mounts App and owns its own save engine. Split panes
+  // share it; the capture mini-window owns only an unsaved scratch page.
+  onMount(() => onCleanup(installBackgroundFlush({
+    endEdit: () => endEdit("graph-switch"),
+    flushAll,
+    closeInFlight: safeClose.inFlight,
+  })));
   let openCalendarJump = () => {};
   const topbarActions = {
     calendar: () => openCalendarJump(),
