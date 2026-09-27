@@ -25,6 +25,11 @@ fn store_error(error: StoreError) -> io::Error {
     match error {
         StoreError::NotFound => io::Error::from(io::ErrorKind::NotFound),
         StoreError::InvalidTarget(message) => io::Error::new(io::ErrorKind::InvalidInput, message),
+        StoreError::PageSource(message) => io::Error::new(io::ErrorKind::InvalidInput, message),
+        StoreError::StreamSymlink(file) => io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("symlink:{}", file.as_str()),
+        ),
         StoreError::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
         StoreError::Unparseable(message) => io::Error::new(io::ErrorKind::InvalidData, message),
         StoreError::TooLarge { .. } => io::Error::new(io::ErrorKind::InvalidData, "file too large"),

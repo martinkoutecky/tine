@@ -80,9 +80,7 @@ pub fn validate_stream_asset(store: &Store, name: &str) -> Result<(), AssetAcces
         .open_read(&id)
         .map(|_| ())
         .map_err(|error| match error {
-            StoreError::InvalidTarget(reason) if reason.starts_with("symlink:") => {
-                AssetAccessError::StreamSymlink
-            }
+            StoreError::StreamSymlink(_) => AssetAccessError::StreamSymlink,
             other => AssetAccessError::Store(other),
         })
 }

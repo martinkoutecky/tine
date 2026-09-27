@@ -80,7 +80,9 @@ pub fn feed_page(
         store.page(id).map_err(|error| match error {
             StoreError::NotFound => io::Error::from(io::ErrorKind::NotFound),
             StoreError::Io(error) => error.into(),
-            StoreError::InvalidTarget(_) => io::Error::other("invalid page path"),
+            StoreError::InvalidTarget(_)
+            | StoreError::PageSource(_)
+            | StoreError::StreamSymlink(_) => io::Error::other("invalid page path"),
             StoreError::Undecodable => io::Error::other("stream did not contain valid UTF-8"),
             StoreError::Unparseable(reason) => io::Error::other(reason),
             StoreError::TooLarge { limit, .. } => {

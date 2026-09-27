@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime};
 
 use notify::Watcher;
 
-use crate::model::Graph;
+use crate::model::{Graph, SyncFileResult};
 use crate::store::{
     journal_ids_from_entries, ChangeFeed, ChangeKind, ConfigState, Day, FileId, FileRev, LoadError,
     LoadState, LoadStatus, Origin, PageId, WatchMode,
@@ -71,6 +71,18 @@ fn stamp(path: &Path) -> Option<Stamp> {
     let mut value = stamp_metadata(path)?;
     value.rev = FileRev::from_file(path).ok();
     Some(value)
+}
+
+fn retry_baseline(now: &mut HashMap<PathBuf, Stamp>, path: &Path, before: Option<&Stamp>) {
+    if let Some(old) = before {
+        let mut retry = old.clone();
+        // Never treat a failed observation as unchanged on the next scan.
+        retry.modified = None;
+        retry.len = u64::MAX;
+        now.insert(path.to_path_buf(), retry);
+    } else {
+        now.remove(path);
+    }
 }
 
 fn directory_identity(path: &Path) -> Option<u128> {
@@ -308,6 +320,8 @@ pub(crate) struct Core {
     pub(crate) note_own_pause: Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) after_collect_pause: Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    force_mismatched_rev_once: AtomicBool,
 }
 
 impl Core {
@@ -412,7 +426,7 @@ impl Core {
         }
         let dirs = self.dirs.read().unwrap().clone();
         let mut snapshot = self.snapshot.lock().unwrap();
-        let (mut now, unreadable) = if let Some(paths) = paths {
+        let (mut now, mut unreadable) = if let Some(paths) = paths {
             (
                 paths
                     .iter()
@@ -425,7 +439,7 @@ impl Core {
                     })
                     .filter_map(|path| stamp(path).map(|value| (path.clone(), value)))
                     .collect(),
-                None,
+                Some(self.unreadable_dirs.lock().unwrap().clone()),
             )
         } else {
             let (files, errors) = collect_with_errors(&dirs);
@@ -435,7 +449,7 @@ impl Core {
         if snapshot.keys().any(|path| !now.contains_key(path)) {
             crate::store::pause_at_hook(&self.after_collect_pause);
         }
-        let unreadable_changed = if let Some(errors) = unreadable {
+        if let Some(errors) = unreadable.as_ref() {
             for (path, value) in &*snapshot {
                 if path
                     .ancestors()
@@ -444,17 +458,7 @@ impl Core {
                     now.entry(path.clone()).or_insert_with(|| value.clone());
                 }
             }
-            let mut previous = self.unreadable_dirs.lock().unwrap();
-            let changed = *previous != errors;
-            if changed {
-                self.graph
-                    .replace_unreadable_walk_errors(&previous, &errors);
-                *previous = errors;
-            }
-            changed
-        } else {
-            false
-        };
+        }
         let names: HashSet<PathBuf> = if let Some(paths) = paths {
             paths.clone()
         } else {
@@ -514,8 +518,45 @@ impl Core {
                 self.graph
                     .observe_page_mtime(&path, after.and_then(|value| value.modified));
             } else {
-                if let Some(entry) = self.graph.sync_file_internal(&path) {
-                    pages.push((id.clone(), entry.kind, entry.name));
+                let observed_rev = after.and_then(|value| value.rev.clone());
+                #[cfg(test)]
+                let observed_rev = if self.force_mismatched_rev_once.swap(false, Ordering::AcqRel) {
+                    Some(FileRev::from_bytes(b"injected mismatched hash"))
+                } else {
+                    observed_rev
+                };
+                let Some(expected_rev) = observed_rev.as_ref() else {
+                    unreadable
+                        .as_mut()
+                        .unwrap()
+                        .insert(path.clone(), "file hash failed".into());
+                    retry_baseline(&mut now, &path, before);
+                    continue;
+                };
+                match self.graph.sync_file_internal(&path, Some(expected_rev)) {
+                    SyncFileResult::Reconciled { entry, rev } => {
+                        debug_assert_eq!(&rev, expected_rev);
+                        unreadable.as_mut().unwrap().remove(&path);
+                        if let Some(entry) = entry {
+                            pages.push((id.clone(), entry.kind, entry.name));
+                        }
+                    }
+                    SyncFileResult::ChangedDuringRead => {
+                        unreadable.as_mut().unwrap().remove(&path);
+                        retry_baseline(&mut now, &path, before);
+                        continue;
+                    }
+                    SyncFileResult::ReadFailed(error) => {
+                        unreadable
+                            .as_mut()
+                            .unwrap()
+                            .insert(path.clone(), error.to_string());
+                        retry_baseline(&mut now, &path, before);
+                        continue;
+                    }
+                    SyncFileResult::Excluded => {
+                        unreadable.as_mut().unwrap().remove(&path);
+                    }
                 }
             }
             files.push((id, kind, after.and_then(|value| value.rev.clone())));
@@ -531,6 +572,18 @@ impl Core {
                 }
             }
         }
+        let unreadable_changed = if let Some(errors) = unreadable {
+            let mut previous = self.unreadable_dirs.lock().unwrap();
+            let changed = *previous != errors;
+            if changed {
+                self.graph
+                    .replace_unreadable_walk_errors(&previous, &errors);
+                *previous = errors;
+            }
+            changed
+        } else {
+            false
+        };
         drop(snapshot);
         if !files.is_empty() || config_changed || unreadable_changed {
             self.changes
@@ -556,6 +609,13 @@ impl Core {
         *self.config.write().unwrap() = ConfigState {
             config: Arc::new(config),
             problem,
+            assets_directory_name: self
+                .graph
+                .assets_path()
+                .file_name()
+                .and_then(|part| part.to_str())
+                .unwrap_or("dir")
+                .to_owned(),
         };
         Ok(())
     }
@@ -657,6 +717,8 @@ impl WatchHandle {
             note_own_pause: Mutex::new(None),
             #[cfg(test)]
             after_collect_pause: Mutex::new(None),
+            #[cfg(test)]
+            force_mismatched_rev_once: AtomicBool::new(false),
         });
         let mode = Arc::new(Mutex::new(watch));
         let (wake, rx) = mpsc::channel();
@@ -879,5 +941,105 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                 let _ = core.reconcile(None, false, false);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{OpenOptions, Store};
+
+    #[test]
+    fn failed_reread_keeps_old_view_and_retries_unchanged_file() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-watch-reread-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let path = root.join("pages/A.md");
+        fs::write(&path, "- old\n").unwrap();
+        let store = Store::open(
+            &root,
+            OpenOptions {
+                approved_external_assets: None,
+                watch: WatchMode::Poll,
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        let writer = store.writer.lock().unwrap();
+        let core = store.watch.core_for_load();
+        fs::write(&path, "- new content\n").unwrap();
+        store
+            .graph
+            .fail_sync_read_once
+            .store(true, Ordering::Release);
+        core.reconcile_locked(None, true, true).unwrap();
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| { page.name == "A" && page.document.roots[0].raw().contains("old") }));
+        assert!(store
+            .graph
+            .unreadable_pages()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/A.md"));
+        core.reconcile_locked(None, true, true).unwrap();
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| {
+                page.name == "A" && page.document.roots[0].raw().contains("new content")
+            }));
+        assert!(!store
+            .graph
+            .unreadable_pages()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/A.md"));
+        let subscription = store.subscribe();
+        fs::write(&path, "- changed again\n").unwrap();
+        core.force_mismatched_rev_once
+            .store(true, Ordering::Release);
+        core.reconcile_locked(None, true, true).unwrap();
+        assert!(subscription.try_recv().unwrap().is_none());
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| {
+                page.name == "A" && page.document.roots[0].raw().contains("new content")
+            }));
+        core.reconcile_locked(None, true, true).unwrap();
+        let change = subscription
+            .try_recv()
+            .unwrap()
+            .expect("retried page publication");
+        assert_eq!(
+            change.page(&FileId::from("pages/A.md".to_owned())),
+            Some((tine_core::model::PageKind::Page, "A"))
+        );
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| {
+                page.name == "A" && page.document.roots[0].raw().contains("changed again")
+            }));
+        drop(writer);
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
     }
 }

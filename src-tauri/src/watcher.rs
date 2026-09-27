@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Weak};
 use tauri::{Emitter, Manager, State};
 use tine_core::model::PageKind;
-use tine_store::{Change, ChangeKind, Origin, WatchMode};
+use tine_store::{Change, ChangeKind, Origin, SubscriptionEnd, WatchMode};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 struct GraphChange {
@@ -107,18 +107,24 @@ fn dispatch(app: &tauri::AppHandle, label: &str, binding_generation: u64, change
 pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc<GraphSlot>) {
     let subscription = slot.store.subscribe();
     let weak: Weak<GraphSlot> = Arc::downgrade(slot);
-    std::thread::spawn(move || {
-        while let Ok(change) = subscription.recv() {
-            let Some(slot) = weak.upgrade() else {
+    std::thread::spawn(move || loop {
+        let change = match subscription.recv() {
+            Ok(change) => change,
+            Err(SubscriptionEnd::StoreClosed) => break,
+            Err(SubscriptionEnd::Displaced) => {
+                crate::debug::diag("watch-subscription-displaced");
                 break;
-            };
-            let current = app.state::<AppState>().graphs.read().unwrap().slot(&label);
-            if current
-                .as_ref()
-                .is_some_and(|current| Arc::ptr_eq(current, &slot))
-            {
-                dispatch(&app, &label, slot.binding_generation, change);
             }
+        };
+        let Some(slot) = weak.upgrade() else {
+            break;
+        };
+        let current = app.state::<AppState>().graphs.read().unwrap().slot(&label);
+        if current
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &slot))
+        {
+            dispatch(&app, &label, slot.binding_generation, change);
         }
     });
 }

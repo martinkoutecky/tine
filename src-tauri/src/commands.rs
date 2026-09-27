@@ -82,7 +82,9 @@ impl From<&Resolved> for ResolvedWire {
 fn store_error(error: StoreError) -> String {
     match error {
         StoreError::NotFound => std::io::ErrorKind::NotFound.to_string(),
-        StoreError::InvalidTarget(_) => "invalid page path".into(),
+        StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
+            "invalid page path".into()
+        }
         StoreError::Undecodable => "stream did not contain valid UTF-8".into(),
         StoreError::Unparseable(reason) => reason,
         StoreError::TooLarge { .. } => "asset-too-large".into(),
@@ -94,9 +96,11 @@ fn store_error(error: StoreError) -> String {
 fn save_store_error(error: StoreError) -> String {
     match error {
         StoreError::NotFound => "deleted".into(),
-        StoreError::InvalidTarget(_) | StoreError::Undecodable | StoreError::Unparseable(_) => {
-            "invalid-target".into()
-        }
+        StoreError::InvalidTarget(_)
+        | StoreError::PageSource(_)
+        | StoreError::StreamSymlink(_)
+        | StoreError::Undecodable
+        | StoreError::Unparseable(_) => "invalid-target".into(),
         StoreError::TooLarge { .. } => "asset-too-large".into(),
         StoreError::Io(error) => format!("io:{:?}", error.kind()),
         StoreError::Closed => "closed".into(),
@@ -106,7 +110,9 @@ fn save_store_error(error: StoreError) -> String {
 fn asset_error(error: StoreError) -> String {
     match error {
         StoreError::NotFound => std::io::Error::from_raw_os_error(2).to_string(),
-        StoreError::InvalidTarget(_) => "invalid asset".into(),
+        StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
+            "invalid asset".into()
+        }
         StoreError::TooLarge { .. } => "asset-too-large".into(),
         other => store_error(other),
     }

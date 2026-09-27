@@ -87,9 +87,7 @@ pub fn source_path_for_os_handoff(
     store
         .path_for_os_handoff(&id.file(), true)
         .map_err(|error| match error {
-            StoreError::InvalidTarget(reason) if reason.starts_with("page source ") => {
-                PageReadError::Source(reason)
-            }
+            StoreError::PageSource(reason) => PageReadError::Source(reason),
             other => PageReadError::Store(other),
         })
 }

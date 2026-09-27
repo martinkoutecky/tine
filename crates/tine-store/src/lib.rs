@@ -8,10 +8,13 @@
 //!
 //! Use [`Store::save`] for one guarded page edit, or [`Transaction`] for a set
 //! of guarded file changes. A [`FileRev`] identifies the bytes an edit was
-//! based on. Guards compare current disk bytes, but an external process can
-//! replace a file between that comparison and the final rename. Keep unsaved
+//! based on. Creates use a no-clobber rename; replacements use an ordinary
+//! rename after the final revision guard. An external process can replace a
+//! file between that comparison and the rename. Keep unsaved
 //! edits on every refusal. [`Store::subscribe`] delivers published changes in
-//! order to one consumer. [`Store::close`] stops observation and releases
+//! order to one consumer without replay; displacement has a typed end reason. A held
+//! [`WholeGraph`] view never waits on later writers, while acquiring the first
+//! view can wait for the initial parse. [`Store::close`] stops observation and releases
 //! callers waiting for load. Writes, restore, publication, and graph acquisition
 //! can block without a timeout; run them off a UI thread.
 //! [`FileId`] and [`PageId`] are re-exports of the same types in
@@ -80,11 +83,11 @@ mod watch;
 pub use publish::{PublishFailed, PublishReceipt, SiteWriter};
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
 pub use store::{
-    Area, Budget, Cancel, Change, ChangeKind, Closed, ConfigState, Day, FacetPolicy, FileEntry,
-    FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, Listing,
+    Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, FacetPolicy, FileEntry, FileId,
+    FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, Listing,
     LoadError, OpenError, OpenOptions, Origin, PageId, PageRead, QueryDialect, QueryError,
     QueryResult, Resolved, SaveBase, SaveOutcome, SearchRequest, Store, StoreError, Subscription,
-    TrashKind, WatchMode, WholeGraph,
+    SubscriptionEnd, TrashKind, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;

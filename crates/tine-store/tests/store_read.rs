@@ -270,7 +270,7 @@ fn streaming_refuses_symlinked_asset() {
     let id = store.file_id(Area::Assets, "link.bin").unwrap();
     assert!(matches!(
         store.open_read(&id),
-        Err(StoreError::InvalidTarget(_))
+        Err(StoreError::StreamSymlink(_))
     ));
     std::os::unix::fs::symlink(f.0.parent().unwrap(), f.0.join("pages/outside")).unwrap();
     let escaping = PageId::from("pages/outside/next.md");

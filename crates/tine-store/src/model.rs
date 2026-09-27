@@ -32,6 +32,16 @@ pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// Maximum structural depth admitted before recursive projections or rendering.
 pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = 512;
 
+pub(crate) enum SyncFileResult {
+    Reconciled {
+        entry: Option<PageEntry>,
+        rev: crate::store::FileRev,
+    },
+    Excluded,
+    ReadFailed(io::Error),
+    ChangedDuringRead,
+}
+
 #[derive(Debug)]
 pub(crate) struct ParseInputTooLarge {
     pub(crate) len: u64,
@@ -402,6 +412,8 @@ pub(crate) struct Graph {
     pub(crate) cold_cache_reconcile_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) warm_passes: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(crate) fail_sync_read_once: std::sync::atomic::AtomicBool,
     /// File times observed while publishing the parsed page cache. Readers
     /// clone the table with their graph view, so later disk edits cannot alter it.
     observed_mtimes: RwLock<Arc<std::collections::HashMap<String, std::time::SystemTime>>>,
@@ -2369,6 +2381,8 @@ impl Graph {
             cold_cache_reconcile_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
             warm_passes: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            fail_sync_read_once: std::sync::atomic::AtomicBool::new(false),
             observed_mtimes: RwLock::new(Arc::new(std::collections::HashMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
             unreadable_pages: RwLock::new(Arc::new(Vec::new())),
@@ -4079,20 +4093,44 @@ impl Graph {
         }
     }
 
-    pub(crate) fn sync_file_internal(&self, path: &Path) -> Option<PageEntry> {
+    pub(crate) fn sync_file_internal(
+        &self,
+        path: &Path,
+        expected_rev: Option<&crate::store::FileRev>,
+    ) -> SyncFileResult {
         // Watch events are untrusted path inputs. Never follow a page symlink
         // (which could expose an arbitrary file outside the graph), and recheck
         // canonical containment immediately before the read to close rename /
         // symlink-swap races between directory scanning and reconciliation.
-        let md = fs::symlink_metadata(path).ok()?;
+        let md = match fs::symlink_metadata(path) {
+            Ok(md) => md,
+            Err(error) => return SyncFileResult::ReadFailed(error),
+        };
         if md.file_type().is_symlink() || !md.is_file() || !path_stays_within_root(&self.root, path)
         {
-            return None;
+            return SyncFileResult::Excluded;
         }
-        let content = read_parse_input(path).ok()?;
+        #[cfg(test)]
+        if self
+            .fail_sync_read_once
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return SyncFileResult::ReadFailed(io::Error::other("injected watcher read failure"));
+        }
+        let content = match read_parse_input(path) {
+            Ok(content) => content,
+            Err(error) => return SyncFileResult::ReadFailed(error),
+        };
+        let rev = crate::store::FileRev::from_bytes(content.as_bytes());
+        if expected_rev.is_some_and(|expected| expected != &rev) {
+            return SyncFileResult::ChangedDuringRead;
+        }
         // The watcher consumes the self-write marker (one-shot) so the map stays
         // bounded to in-flight writes.
-        self.sync_file_content(path, &content, true)
+        SyncFileResult::Reconciled {
+            entry: self.sync_file_content(path, &content, true),
+            rev,
+        }
     }
 
     /// Reconcile the cache for `path` given its already-read `content` — so a
@@ -6668,7 +6706,7 @@ mod tests {
         // A brand-new external file appears (as Logseq/Syncthing would create it),
         // reconciled while the doc cache is still cold.
         fs::write(dir.join("pages").join("New.md"), "- new body\n").unwrap();
-        g.sync_file_internal(&dir.join("pages").join("New.md"));
+        g.sync_file_internal(&dir.join("pages").join("New.md"), None);
 
         assert!(
             g.find_entry("New", PageKind::Page).is_some(),
@@ -7815,8 +7853,8 @@ mod tests {
         assert!(dto.read_only);
         let gen0 = g.cache_generation();
         // Two watcher reconciles of the unchanged file must be no-ops.
-        g.sync_file_internal(&path);
-        g.sync_file_internal(&path);
+        g.sync_file_internal(&path, None);
+        g.sync_file_internal(&path, None);
         assert_eq!(
             g.cache_generation(),
             gen0,
@@ -10756,8 +10794,7 @@ mod tests {
         // map incorrectly treats that as already fresh and suppresses its reload.
         fs::write(&logical_winner.path, "- nested saved sentinel\n").unwrap();
         assert!(
-            g.sync_file_internal(&logical_winner.path)
-                .is_some_and(|entry| entry.path == logical_winner.path),
+            matches!(g.sync_file_internal(&logical_winner.path, None), SyncFileResult::Reconciled { entry: Some(entry), .. } if entry.path == logical_winner.path),
             "one duplicate's revision must not mark the other duplicate fresh"
         );
         let _ = fs::remove_dir_all(&dir);

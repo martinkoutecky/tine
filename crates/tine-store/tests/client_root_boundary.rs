@@ -51,10 +51,20 @@ impl RootCalls {
             syn::Expr::Paren(value) => self.graph_value(&value.expr),
             syn::Expr::Group(value) => self.graph_value(&value.expr),
             syn::Expr::Try(value) => self.graph_value(&value.expr),
-            syn::Expr::MethodCall(call)
-                if ["join", "clone", "to_path_buf"].contains(&call.method.to_string().as_str()) =>
-            {
-                self.graph_value(&call.receiver)
+            syn::Expr::MethodCall(call) => {
+                let method = call.method.to_string();
+                ["path_for_os_handoff", "asset_trash_location_for_user"].contains(&method.as_str())
+                    || ([
+                        "join",
+                        "clone",
+                        "to_path_buf",
+                        "unwrap",
+                        "expect",
+                        "as_path",
+                        "parent",
+                    ]
+                    .contains(&method.as_str())
+                        && self.graph_value(&call.receiver))
             }
             syn::Expr::Call(call) => {
                 let name = call.func.to_token_stream().to_string();
@@ -111,6 +121,8 @@ impl<'ast> Visit<'ast> for RootCalls {
             "read",
             "read_to_string",
             "write",
+            "create",
+            "create_new",
             "canonicalize",
             "metadata",
             "symlink_metadata",
@@ -183,4 +195,32 @@ fn planted_graph_root_violation_is_detected() {
         let _ = std::fs::read(graph_file);
     }"#;
     assert!(!scan(planted).is_empty(), "tine-store Rule 1: source scan must catch a direct graph-root read; imitate crates/tine-store/src/store.rs");
+}
+
+#[test]
+fn planted_handoff_path_write_is_detected() {
+    let planted = r#"fn bad(store: &Store, file: &FileId) {
+        let path = store.path_for_os_handoff(file, false).unwrap();
+        std::fs::write(&path, b"bad").unwrap();
+    }"#;
+    assert!(
+        !scan(planted).is_empty(),
+        "OS hand-off paths must never become graph write paths"
+    );
+    let created = r#"fn bad(store: &Store, file: &FileId) {
+        let path = store.path_for_os_handoff(file, false)?;
+        let _ = std::fs::File::create(path);
+    }"#;
+    assert!(
+        !scan(created).is_empty(),
+        "File::create must reject a hand-off path"
+    );
+    let trash = r#"fn bad(store: &Store) {
+        let path = store.asset_trash_location_for_user();
+        std::fs::write(&path, b"bad").unwrap();
+    }"#;
+    assert!(
+        !scan(trash).is_empty(),
+        "display paths must never become graph write paths"
+    );
 }

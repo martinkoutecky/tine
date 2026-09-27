@@ -20,6 +20,7 @@ enum transaction::Why
 field transaction::IoError.kind
 field store::ConfigState.config
 field store::ConfigState.problem
+field store::ConfigState.assets_directory_name
 field store::GraphAccessInspection.external_assets
 field store::GraphAccessInspection.root
 field store::OpenOptions.approved_external_assets
@@ -173,9 +174,9 @@ struct store::SearchRequest
 struct store::Store
 struct store::ConfigState
 struct store::Change
-struct store::Closed
+enum store::SubscriptionEnd
 struct store::Subscription
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,Closed,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,TrashKind,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchMode,WholeGraph,}
 struct store::GraphAccessInspection
 struct store::OpenOptions
 struct store::WholeGraph

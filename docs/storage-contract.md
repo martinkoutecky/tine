@@ -1,10 +1,19 @@
 # og plain-file storage contract
 
 The graph files are the durable record. A save compares the caller's revision with
-the current file, then atomically publishes whole bytes. Another local writer can
+the current file, then publishes whole bytes through a synced temporary file.
+A create uses a no-clobber rename; replacing an existing page uses an ordinary
+rename after the final guard. Another local writer can
 replace that file between the final comparison and rename; mandatory cross-process
 locks are outside this plain-file contract. The editor retains unsaved content
 on every refusal and offers conflict resolution or retry.
+
+A held `WholeGraph` view does not wait for later writers. Acquiring the first
+view with `whole_graph()` can wait for the initial parse. The public operation
+surface is 35 combined operations: 27 `Store` methods and eight `Transaction`
+methods. The graph-command boundary guard lives at
+`crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
+`crates/tine-store/tests/client_root_boundary.rs`.
 
 `Store::is_graph_ready()` reports initial graph loading without waiting.
 `Ok(false)` means graph-wide answers can still block. After `Err(Failed(reason))`,
@@ -68,6 +77,16 @@ by I-9's typed failure paths.
 | `src-tauri::backup` restore selection | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file, or changes during verification; refuse restore before touching live content. A failed pre-restore safety snapshot also refuses publication. |
 | `src-tauri::state` graph binding | Two windows try to own overlapping roots, or a queued command carries an old binding generation; refuse a wrong-graph write. |
 | `src::persistence` frontend save gate | A page is tombstoned, conflicted, held as the source of a cross-page move, or the graph switch still has pending writes; retain the editor buffer and refuse the unsafe completion. |
+
+Watcher reconciliation distinguishes a successful page read, an intentionally
+excluded nonregular or escaped path, and a failed read. A successful read can
+advance the file baseline only when its bytes match the observed revision.
+Intentional exclusions never enter the page cache. A failed re-read after
+hashing leaves the old cached page in place, lists the path as unreadable, and
+keeps it eligible for the next scan even if its metadata does not change.
+Deletion still forgets the cached page; a timestamp-only touch updates its
+observed time without reparsing. Tests cover these neighboring outcomes in
+`watch.rs` and `tests/watch.rs`.
 
 Review rule: a new refusal must identify a reachable scenario involving an honest
 local user, sync or external editor. Source scans cannot prove reachability;

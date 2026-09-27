@@ -129,18 +129,11 @@ impl BackupSource {
     fn from_store(store: &Store, root: &std::path::Path) -> Result<Self, String> {
         let config = store.config();
         let root = Store::canonical_root(root).map_err(|error| error.to_string())?;
-        let probe = store
-            .file_id(Area::Assets, "__tine_backup_probe__")
+        // Verify the live assets target before using the store's backup layout.
+        store
+            .scan_area(Area::Assets, None)
             .map_err(|error| format!("unsafe assets directory: {error:?}"))?;
-        let assets_dir_name = store
-            .path_for_os_handoff(&probe, false)
-            .map_err(|error| format!("unsafe assets directory: {error:?}"))?
-            .parent()
-            .ok_or("unsafe assets directory")?
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("dir")
-            .to_owned();
+        let assets_dir_name = config.assets_directory_name.clone();
         Ok(Self {
             root,
             journals_dir: config.journals_dir.clone(),
@@ -469,7 +462,9 @@ fn store_error_kind(error: &tine_store::StoreError) -> ErrorKind {
         tine_store::StoreError::Undecodable | tine_store::StoreError::Unparseable(_) => {
             ErrorKind::InvalidData
         }
-        tine_store::StoreError::InvalidTarget(_) => ErrorKind::InvalidInput,
+        tine_store::StoreError::InvalidTarget(_)
+        | tine_store::StoreError::PageSource(_)
+        | tine_store::StoreError::StreamSymlink(_) => ErrorKind::InvalidInput,
         tine_store::StoreError::TooLarge { .. } => ErrorKind::FileTooLarge,
         tine_store::StoreError::Closed => ErrorKind::BrokenPipe,
     }

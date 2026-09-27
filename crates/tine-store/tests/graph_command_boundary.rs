@@ -1,5 +1,6 @@
 //! Guard graph Tauri commands as transport adapters.
 use quote::ToTokens;
+use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
 
 // Device ingress and devtools own local OS data, not graph transport.
@@ -186,4 +187,80 @@ fn graph_command_retry_and_for_loop_are_detected() {
     let violations = scan(planted);
     assert!(violations.contains(&"bad: retry".into()));
     assert!(violations.contains(&"bad: for loop".into()));
+}
+
+#[derive(Default)]
+struct ErrorTextScan(Vec<String>);
+
+impl<'ast> Visit<'ast> for ErrorTextScan {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !item.attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg") && attr.meta.to_token_stream().to_string().contains("test")
+        }) {
+            visit::visit_item_mod(self, item);
+        }
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        let method = call.method.to_string();
+        let receiver = call.receiver.to_token_stream().to_string();
+        if ["contains", "starts_with", "ends_with", "find"].contains(&method.as_str())
+            && ["error", "reason", "message", "to_string"]
+                .iter()
+                .any(|word| receiver.contains(word))
+        {
+            self.0.push(format!("{receiver}.{method}"));
+        }
+        visit::visit_expr_method_call(self, call);
+    }
+}
+
+fn feature_error_text_matches(source: &str) -> Vec<String> {
+    let parsed = syn::parse_file(source).unwrap();
+    let mut scan = ErrorTextScan::default();
+    scan.visit_file(&parsed);
+    scan.0
+}
+
+fn feature_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            feature_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs")
+            && !path.file_name().unwrap().to_string_lossy().contains("test")
+        {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn graph_features_do_not_classify_error_text() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tine-graph-features/src");
+    let mut files = Vec::new();
+    feature_files(&root, &mut files);
+    let violations: Vec<_> = files
+        .into_iter()
+        .flat_map(|path| {
+            let source = std::fs::read_to_string(&path).unwrap();
+            feature_error_text_matches(&source)
+                .into_iter()
+                .map(move |issue| format!("{}: {issue}", path.display()))
+        })
+        .collect();
+    assert!(
+        violations.is_empty(),
+        "I-9: feature code must classify typed errors, not message text: {violations:#?}"
+    );
+}
+
+#[test]
+fn planted_feature_error_text_match_is_detected() {
+    let source = r#"fn bad(error: StoreError) {
+        if let StoreError::InvalidTarget(reason) = error {
+            let _ = reason.starts_with("symlink:");
+        }
+    }"#;
+    assert_eq!(feature_error_text_matches(source).len(), 1);
 }

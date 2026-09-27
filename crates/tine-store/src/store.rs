@@ -4,8 +4,9 @@
 //! whose answers remain stable across later changes. `GraphRev` identifies
 //! the publication captured by that view. A new view is needed to see edits.
 //!
-//! One `Store::subscribe` consumer receives later publications in order.
-//! A new subscription ends the previous one; the queue has no size bound.
+//! One `Store::subscribe` consumer receives later publications in order, without
+//! replay. A new subscription ends
+//! the previous one with `SubscriptionEnd::Displaced`; the queue has no size bound.
 //! Subscribe before acquiring a view, then ignore events at or below its
 //! revision to avoid a missed update. Own writes and restore use
 //! `Origin::Own`; file observation and explicit refresh use
@@ -228,9 +229,14 @@ impl Change {
     }
 }
 
-/// A subscription ended because the store closed or another subscriber replaced it.
+/// Why a change subscription ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Closed;
+pub enum SubscriptionEnd {
+    /// The store closed.
+    StoreClosed,
+    /// A second subscriber took ownership of this stream.
+    Displaced,
+}
 
 pub(crate) struct ChangeFeed {
     state: Mutex<FeedState>,
@@ -479,13 +485,16 @@ pub struct Subscription {
 }
 
 impl Subscription {
-    /// Wait without a timeout for the next change; returns [`Closed`] after
-    /// close or replacement. A queued result is O(1) to dequeue.
-    pub fn recv(&self) -> Result<Change, Closed> {
+    /// Wait without a timeout for the next change; returns a typed end reason
+    /// after close or displacement. A queued result is O(1) to dequeue.
+    pub fn recv(&self) -> Result<Change, SubscriptionEnd> {
         let mut state = self.feed.state.lock().unwrap();
         loop {
-            if state.closed || state.subscription != self.number {
-                return Err(Closed);
+            if state.closed {
+                return Err(SubscriptionEnd::StoreClosed);
+            }
+            if state.subscription != self.number {
+                return Err(SubscriptionEnd::Displaced);
             }
             if let Some(change) = state.queue.pop_front() {
                 return Ok(change);
@@ -495,11 +504,14 @@ impl Subscription {
     }
 
     /// Take the next queued change without waiting, or `None` when none is ready.
-    /// Returns [`Closed`] after close or replacement.
-    pub fn try_recv(&self) -> Result<Option<Change>, Closed> {
+    /// Returns a typed end reason after close or displacement.
+    pub fn try_recv(&self) -> Result<Option<Change>, SubscriptionEnd> {
         let mut state = self.feed.state.lock().unwrap();
-        if state.closed || state.subscription != self.number {
-            return Err(Closed);
+        if state.closed {
+            return Err(SubscriptionEnd::StoreClosed);
+        }
+        if state.subscription != self.number {
+            return Err(SubscriptionEnd::Displaced);
         }
         Ok(state.queue.pop_front())
     }
@@ -602,6 +614,8 @@ pub struct ConfigState {
     /// cannot parse its own rendered title can make a new journal unresolvable
     /// by title. Callers setting formats must verify their intended examples.
     pub problem: Option<crate::IoError>,
+    /// Final component of the validated assets directory, for backup layout.
+    pub assets_directory_name: String,
 }
 
 impl std::ops::Deref for ConfigState {
@@ -738,6 +752,12 @@ impl Store {
         let config_state = Arc::new(RwLock::new(ConfigState {
             config: Arc::new(graph.config.clone()),
             problem: None,
+            assets_directory_name: graph
+                .assets_path()
+                .file_name()
+                .and_then(|part| part.to_str())
+                .unwrap_or("dir")
+                .to_owned(),
         }));
         let changes = Arc::new(ChangeFeed::new(
             Arc::clone(&graph),
@@ -950,6 +970,12 @@ impl Store {
         let config = ConfigState {
             config: Arc::new(graph.config.clone()),
             problem,
+            assets_directory_name: graph
+                .assets_path()
+                .file_name()
+                .and_then(|part| part.to_str())
+                .unwrap_or("dir")
+                .to_owned(),
         };
         let meta = tine_core::model::GraphMeta::from_config(
             root.display().to_string(),
@@ -1075,9 +1101,8 @@ impl Store {
         self.changes.close();
     }
 
-    /// Start the sole app-wide change stream. The first subscriber receives
-    /// any publications still queued since this store opened. A second
-    /// call replaces the first subscriber, which then receives `Closed`, and
+    /// Start the sole app-wide change stream without replay. A second
+    /// call replaces the first subscriber, which then receives `Displaced`, and
     /// discards queued changes. The queue is unbounded and also accumulates
     /// publications before any subscription exists; consumers must drain it.
     /// To avoid a subscription gap,
@@ -1220,6 +1245,8 @@ impl Store {
     /// Save one page with a raw-byte [`SaveBase`] guard. Revalidates the
     /// caller-constructible identity, reads current disk bytes, and uses
     /// temporary-file replacement; the temp file is synced before rename and
+    /// a create uses a no-clobber rename. An existing-page replacement uses
+    /// an ordinary rename after its final revision guard. The
     /// directory sync is best effort. A power loss after return can therefore
     /// still lose the new directory entry on a filesystem that did not sync
     /// the directory. A stale
@@ -1314,7 +1341,9 @@ impl Store {
                     SaveOutcome::InvalidTarget(reason)
                 }
                 crate::Why::Refused(crate::Refusal::Closed) => SaveOutcome::Closed,
-                crate::Why::Refused(other) => SaveOutcome::InvalidTarget(format!("{other:?}")),
+                crate::Why::Refused(
+                    crate::Refusal::Undecodable | crate::Refusal::RepeatedFile(_),
+                ) => SaveOutcome::InvalidTarget("invalid single-page transaction".into()),
                 crate::Why::Failed(error) => SaveOutcome::Io(error),
             },
         }
@@ -1547,13 +1576,11 @@ impl Store {
         if existing_regular_file {
             let target = fs::canonicalize(&candidate).map_err(StoreError::from_io)?;
             if !target.is_file() {
-                return Err(StoreError::InvalidTarget(
-                    if file.as_str().starts_with("assets/") {
-                        file.as_str().to_owned()
-                    } else {
-                        "page source is not a file".into()
-                    },
-                ));
+                return Err(if file.as_str().starts_with("assets/") {
+                    StoreError::InvalidTarget(file.as_str().to_owned())
+                } else {
+                    StoreError::PageSource("page source is not a file".into())
+                });
             }
             if file.as_str().starts_with("assets/") {
                 let assets =
@@ -1571,7 +1598,7 @@ impl Store {
                 let journals = fs::canonicalize(self.graph.root.join(&config.journals_dir))
                     .map_err(StoreError::from_io)?;
                 if !target.starts_with(&pages) && !target.starts_with(&journals) {
-                    return Err(StoreError::InvalidTarget(
+                    return Err(StoreError::PageSource(
                         "page source escapes graph directories".into(),
                     ));
                 }
@@ -1679,10 +1706,7 @@ impl Store {
             .file_type()
             .is_symlink()
         {
-            return Err(StoreError::InvalidTarget(format!(
-                "symlink:{}",
-                file.as_str()
-            )));
+            return Err(StoreError::StreamSymlink(file.clone()));
         }
         let input = File::open(path).map_err(StoreError::from_io)?;
         let meta = input.metadata().map_err(StoreError::from_io)?;
@@ -2021,7 +2045,8 @@ impl Store {
 
     /// Wait without a timeout for the initial parse (or close), then acquire
     /// the current stable publication. Acquisition and clone are O(1) after
-    /// the wait; later writes do not alter this view. After a failed parse,
+    /// the wait; a held view never waits for later writes and its answers do
+    /// not change. After a failed parse,
     /// later calls return `LoadError::Failed` without another parse attempt
     /// until `scan_refresh()` retries it. Use `is_graph_ready()` to inspect the
     /// state without waiting, or call this from a worker thread to wait.
@@ -2147,6 +2172,10 @@ pub enum StoreError {
     NotFound,
     /// File id or path is unsafe or outside its area.
     InvalidTarget(String),
+    /// A selected page source is not a regular file or escapes its graph area.
+    PageSource(String),
+    /// A selected streaming asset is a symlink.
+    StreamSymlink(FileId),
     /// Page bytes are invalid UTF-8, or page parse validation rejected source
     /// nesting deeper than 512 levels.
     Undecodable,

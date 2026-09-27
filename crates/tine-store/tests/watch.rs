@@ -4,7 +4,9 @@ use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
 use tine_store::LoadError;
-use tine_store::{Area, Change, ChangeKind, OpenOptions, Origin, Store, Subscription, WatchMode};
+use tine_store::{
+    Area, Change, ChangeKind, OpenOptions, Origin, Store, Subscription, SubscriptionEnd, WatchMode,
+};
 
 struct Fixture {
     root: PathBuf,
@@ -438,7 +440,10 @@ fn close_ends_blocked_recv_with_closed() {
     let subscription = graph.store.subscribe();
     let waiting = std::thread::spawn(move || subscription.recv());
     graph.store.close();
-    assert!(waiting.join().unwrap().is_err());
+    assert!(matches!(
+        waiting.join().unwrap(),
+        Err(SubscriptionEnd::StoreClosed)
+    ));
 }
 
 #[test]
@@ -446,8 +451,46 @@ fn second_subscribe_ends_first() {
     let graph = Fixture::new("replace-subscription", &[]);
     let first = graph.store.subscribe();
     let second = graph.store.subscribe();
-    assert!(first.recv().is_err());
+    assert!(matches!(first.recv(), Err(SubscriptionEnd::Displaced)));
     assert!(second.try_recv().unwrap().is_none());
+}
+
+#[test]
+fn subscribe_then_view_preserves_startup_and_later_changes() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-subscribe-start-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::write(root.join("pages/A.md"), "- old\n").unwrap();
+    let store = Store::open(
+        &root,
+        OpenOptions {
+            approved_external_assets: None,
+            watch: WatchMode::Poll,
+        },
+    )
+    .unwrap()
+    .0;
+    store.whole_graph().unwrap();
+    let subscription = store.subscribe();
+    std::fs::write(root.join("pages/A.md"), "- between subscribe and view\n").unwrap();
+    store.scan_refresh().unwrap();
+    let view = store.whole_graph().unwrap();
+    let startup: Vec<_> = std::iter::from_fn(|| subscription.try_recv().unwrap()).collect();
+    assert!(startup.iter().any(|change| change
+        .files
+        .iter()
+        .any(|(id, _, _)| id.as_str() == "pages/A.md")));
+    assert!(startup.iter().all(|change| change.graph_rev <= view.rev()));
+    std::fs::write(root.join("pages/A.md"), "- new content\n").unwrap();
+    store.scan_refresh().unwrap();
+    let later = subscription.try_recv().unwrap().expect("later publication");
+    assert!(later.graph_rev > view.rev());
+    store.close();
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
