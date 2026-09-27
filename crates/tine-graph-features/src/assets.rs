@@ -1,5 +1,10 @@
-//! Asset imports, orphan discovery, and recoverable trash. Reads touch the
-//! named file or O(entries + B) for orphan discovery; writes use transactions.
+//! Asset imports, reads, orphan discovery, and recoverable trash. Read/open
+//! requests take an `assets/`-relative name, including nested paths, and use
+//! Store containment checks; callers need not resolve symlinks or graph paths.
+//! Bad names, escaped paths, absent files, and I/O failures are errors. Reads
+//! cost O(path components + file bytes); open validation/handoff costs O(path
+//! components). Orphan discovery costs O(entries + referenced blocks); writes
+//! use transactions. Imports and explicit trash still take top-level names.
 
 use std::io;
 use std::time::UNIX_EPOCH;
@@ -43,7 +48,22 @@ fn validate_name(name: &str) -> io::Result<()> {
     }
 }
 
-/// A top-level asset request failed before or during store access.
+fn validate_read_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('/')
+        && !name.contains('\\')
+        && !(name.as_bytes().len() >= 2
+            && name.as_bytes()[0].is_ascii_alphabetic()
+            && name.as_bytes()[1] == b':')
+        && !name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        && std::path::Path::new(name)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+}
+
+/// An asset request failed before or during store access.
 #[derive(Debug)]
 pub enum AssetAccessError {
     BadName,
@@ -52,7 +72,7 @@ pub enum AssetAccessError {
 }
 
 fn named_asset(store: &Store, name: &str) -> Result<tine_store::FileId, AssetAccessError> {
-    if validate_name(name).is_err() {
+    if !validate_read_name(name) {
         return Err(AssetAccessError::BadName);
     }
     store
@@ -60,7 +80,8 @@ fn named_asset(store: &Store, name: &str) -> Result<tine_store::FileId, AssetAcc
         .map_err(AssetAccessError::Store)
 }
 
-/// Read one top-level asset into bytes. Cost O(file bytes).
+/// Read one asset into bytes, optionally bounded by `max_bytes`. An in-area
+/// final symlink may resolve; an escape is refused. Cost O(path components + bytes).
 pub fn read_asset(
     store: &Store,
     name: &str,
@@ -73,7 +94,8 @@ pub fn read_asset(
         .map_err(AssetAccessError::Store)
 }
 
-/// Validate a top-level asset for the range-aware media protocol. Cost O(path components).
+/// Open/validate an asset for range-aware media without reading its bytes.
+/// Refuses a final symlink even inside assets. Cost O(path components).
 pub fn validate_stream_asset(store: &Store, name: &str) -> Result<(), AssetAccessError> {
     let id = named_asset(store, name)?;
     store
@@ -85,7 +107,8 @@ pub fn validate_stream_asset(store: &Store, name: &str) -> Result<(), AssetAcces
         })
 }
 
-/// Return an existing top-level asset path for an OS opener. Cost O(path components).
+/// Return the canonical path of an existing regular asset for an OS opener.
+/// An in-area symlink may resolve. Cost O(path components).
 pub fn path_for_os_handoff(
     store: &Store,
     name: &str,
@@ -209,3 +232,7 @@ pub fn trash_asset(store: &Store, name: &str) -> io::Result<()> {
         crate::trash_current(store, &id, None, "no such asset")
     })
 }
+
+#[cfg(test)]
+#[path = "assets_tests.rs"]
+mod tests;

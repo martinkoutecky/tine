@@ -1,5 +1,8 @@
 //! PDF sidecars, annotation pages, view state, and cropped images. Guarded
 //! overwrites retry a concurrent external revision change at most four times.
+//! Crop rollback takes the exact crop identity after its caller has established
+//! sidecar refusal; it does not inspect sidecar references. Missing or invalid
+//! crops, I/O failures, and repeated conflicts are returned to the caller.
 
 use std::collections::HashSet;
 use std::io;
@@ -253,6 +256,26 @@ pub fn write_pdf_view_state(
     )
 }
 
+fn area_image_target(
+    store: &Store,
+    pdf_name: &str,
+    page: i64,
+    id: &str,
+    stamp: i64,
+) -> io::Result<(FileId, String)> {
+    let name = format!("{page}_{id}_{stamp}.png");
+    if name.contains('/') || name.contains('\\') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bad asset name",
+        ));
+    }
+    let key = pdf::asset_key(pdf_name);
+    let rel = format!("{key}/{name}");
+    let file = asset(store, if key.is_empty() { &name } else { &rel })?;
+    Ok((file, rel))
+}
+
 /// Write a crop under its stable `key/page_id_stamp.png` link. A repeat save
 /// replaces that file in place; concurrent external writes are retried four
 /// times. Cost O(image bytes) per attempt.
@@ -264,21 +287,7 @@ pub fn write_pdf_area_image(
     stamp: i64,
     bytes: &[u8],
 ) -> io::Result<String> {
-    let key = pdf::asset_key(pdf_name);
-    let name = format!("{page}_{id}_{stamp}.png");
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "bad asset name",
-        ));
-    }
-    let rel = format!("{key}/{name}");
-    let file_rel = if key.is_empty() {
-        name.as_str()
-    } else {
-        rel.as_str()
-    };
-    let file = asset(store, file_rel)?;
+    let (file, rel) = area_image_target(store, pdf_name, page, id, stamp)?;
     crate::retry_on_conflict("PDF area image changed repeatedly during save", || {
         let baseline = match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((_, rev)) => Some(rev),
@@ -295,6 +304,23 @@ pub fn write_pdf_area_image(
             }
         }
         Ok(crate::commit_retry(tx.commit())?.then_some(rel.clone()))
+    })
+}
+
+/// Trash the named current crop after the caller verifies sidecar refusal and
+/// that no persisted highlight references it. This does not read the sidecar.
+/// Missing/invalid targets and I/O failures return errors; commit conflicts
+/// retry up to four full image reads. Cost O(image bytes) per attempt.
+pub fn rollback_pdf_area_image(
+    store: &Store,
+    pdf_name: &str,
+    page: i64,
+    id: &str,
+    stamp: i64,
+) -> io::Result<()> {
+    let (file, _) = area_image_target(store, pdf_name, page, id, stamp)?;
+    crate::retry_on_conflict("PDF area image changed repeatedly during rollback", || {
+        crate::trash_current(store, &file, None, "no such PDF area image")
     })
 }
 

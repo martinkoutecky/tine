@@ -19,6 +19,7 @@ mod linux_window_identity;
 mod load_wait_guard_tests;
 mod media_protocol;
 mod native_mouse_history;
+mod pdf_crop_rollback;
 mod platform;
 mod plugins;
 mod settings;
@@ -54,6 +55,7 @@ use graph::{
     default_graph_parent, inspect_graph_access, load_graph, open_graph_window, resolve_root,
     startup_graph_path, warm_done,
 };
+use pdf_crop_rollback::rollback_pdf_area_image;
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
 use plugins::{
     install_plugin, list_installed_plugins, load_plugin_registry_cache, read_plugin_entry,
@@ -837,6 +839,7 @@ pub fn run() {
             write_highlights,
             write_pdf_view_state,
             save_pdf_area_image,
+            rollback_pdf_area_image,
             get_backup_keep,
             set_backup_keep,
             get_capture_enter_files,
