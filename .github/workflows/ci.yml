@@ -392,7 +392,7 @@ jobs:
 
   windows-compile:
     name: Full CI / Windows core compile + integration smoke
-    if: github.event_name == 'workflow_dispatch' && inputs.windows_test_name != 'diagnoseWinBuild' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_test_name != 'diagnoseBuilds' && (inputs.scope == 'windows' || (inputs.scope == 'full' && inputs.windows_test_name == ''))
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -461,10 +461,10 @@ jobs:
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
 
-  # Diagnostic only (branch diagnose/gh594-ellis-debug-build): a portable
-  # Windows test build for one reporter, with a launcher that turns on --debug.
+  # Diagnostic only (diagnose/* branches): a portable Windows test build
+  # for reporters, with a launcher that turns on --debug.
   diagnose-win-build:
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnoseWinBuild'
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnoseBuilds'
     name: Windows test build / portable app
     runs-on: windows-latest
     timeout-minutes: 90
@@ -495,8 +495,50 @@ jobs:
           Get-Content tine-debug-build/BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: tine-gh594-debug-build
+          name: tine-win-debug-build
           path: tine-debug-build
+          retention-days: 14
+
+  # Diagnostic only (diagnose/* branches): an unsigned universal macOS test
+  # build for reporters, with a launcher that turns on --debug.
+  diagnose-mac-build:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnoseBuilds'
+    name: macOS test build / portable app
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run build
+      - name: Build release app at this commit (both architectures)
+        run: |
+          cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+          cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
+      - name: Package
+        run: |
+          mkdir -p tine-debug-build
+          lipo -create -output tine-debug-build/tine target/aarch64-apple-darwin/release/tine target/x86_64-apple-darwin/release/tine
+          codesign --force --sign - tine-debug-build/tine
+          printf '#!/bin/sh\ncd "$(dirname "$0")"\nxattr -d com.apple.quarantine ./tine 2>/dev/null\nexec ./tine --debug\n' > tine-debug-build/Tine-debug.command
+          chmod +x tine-debug-build/tine tine-debug-build/Tine-debug.command
+          printf 'commit %s\ntine sha256 %s\n' "$(git rev-parse HEAD)" "$(shasum -a 256 tine-debug-build/tine | cut -d' ' -f1)" > tine-debug-build/BUILD.txt
+          cat tine-debug-build/BUILD.txt
+          ditto -c -k --keepParent tine-debug-build tine-mac-debug-build.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tine-mac-debug-build
+          path: tine-mac-debug-build.zip
           retention-days: 14
 
   android-core-compile:
