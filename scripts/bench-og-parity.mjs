@@ -92,6 +92,22 @@ async function port() {
   });
 }
 
+// tauri-driver's startup time is unobserved and grows with host load; a fixed
+// sleep lost 2 of 5 10k trials to "Unable to connect". Wait for its port instead.
+async function waitForListening(p, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const open = await new Promise((resolve) => {
+      const socket = net.connect(p, "127.0.0.1");
+      socket.once("connect", () => { socket.destroy(); resolve(true); });
+      socket.once("error", () => resolve(false));
+    });
+    if (open) return;
+    if (Date.now() > deadline) throw new Error(`tauri-driver did not listen on ${p} within ${timeoutMs} ms`);
+    await sleep(50);
+  }
+}
+
 function quantile(values, fraction) {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
@@ -193,7 +209,7 @@ async function trial(kind, corpus, index) {
   const td = spawn(process.env.DBUS_RUN_SESSION || "dbus-run-session", ["--", TD, "--port", String(driverPort), "--native-port", String(nativePort), "--native-driver", WD], { env, stdio: ["ignore", log, log], detached: true });
   let browser;
   const result = { kind, corpus, index, loadAvgBefore: os.loadavg()[0], metrics: {}, longTasks: {}, journeyFailures: {}, failure: null };
-  await sleep(500);
+  await waitForListening(driverPort);
   const started = performance.now();
   const runJourney = async () => {
     browser = await remote({ hostname: "127.0.0.1", port: driverPort, path: "/", logLevel: "silent", connectionRetryCount: 1, connectionRetryTimeout: 120000,
@@ -344,7 +360,7 @@ async function renameTrial(result, corpus, kind, index) {
   let watchdog;
   let timedOut = false;
   const trialTimeoutMs = TRIAL_TIMEOUT_OVERRIDE ? Number(TRIAL_TIMEOUT_OVERRIDE) : corpus === "10k" ? 120000 : 60000;
-  await sleep(500);
+  await waitForListening(driverPort);
   const run = async () => {
     browser = await remote({ hostname: "127.0.0.1", port: driverPort, path: "/", logLevel: "silent", connectionRetryCount: 1, connectionRetryTimeout: 120000,
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: binaries[kind] } } });
