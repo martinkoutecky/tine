@@ -148,13 +148,6 @@ fn dto(id: &PageId, name: &str, doc: &tine_core::doc::Document) -> PageDto {
     }
 }
 
-fn retry_error(operation: &str) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::WouldBlock,
-        format!("highlight sidecar changed repeatedly during {operation}"),
-    )
-}
-
 /// Read highlights from the OG-key sidecar or the legacy-key fallback. Bad or
 /// absent files return an empty set as in v0.6.5. Cost O(sidecar bytes).
 pub fn read_highlights(store: &Store, pdf_name: &str) -> Vec<Highlight> {
@@ -228,33 +221,31 @@ pub fn write_pdf_view_state(
     page: i64,
     scale: f64,
 ) -> io::Result<()> {
-    for _ in 0..4 {
-        let (id, baseline) = sidecar(store, pdf_name, true)?;
-        if let Some((raw, _)) = &baseline {
-            valid_edn(raw)?;
-        }
-        let next =
-            pdf::write_pdf_view_state(baseline.as_ref().map_or("", |(raw, _)| raw), page, scale)
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "invalid PDF view state")
-                })?;
-        let mut tx = store.transaction();
-        match baseline {
-            Some((_, rev)) => {
-                tx.replace(&id, rev, next.into_bytes());
+    crate::retry_on_conflict(
+        "highlight sidecar changed repeatedly during view-state update",
+        || {
+            let (id, baseline) = sidecar(store, pdf_name, true)?;
+            if let Some((raw, _)) = &baseline {
+                valid_edn(raw)?;
             }
-            None => {
-                tx.create(&id, Content::Bytes(next.into_bytes()));
+            let next = pdf::write_pdf_view_state(
+                baseline.as_ref().map_or("", |(raw, _)| raw),
+                page,
+                scale,
+            )
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PDF view state"))?;
+            let mut tx = store.transaction();
+            match baseline {
+                Some((_, rev)) => {
+                    tx.replace(&id, rev, next.into_bytes());
+                }
+                None => {
+                    tx.create(&id, Content::Bytes(next.into_bytes()));
+                }
             }
-        }
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome)?;
-        return Ok(());
-    }
-    Err(retry_error("view-state update"))
+            Ok(crate::commit_retry(tx.commit())?.then_some(()))
+        },
+    )
 }
 
 /// Write a crop under its stable `key/page_id_stamp.png` link. A repeat save
@@ -283,7 +274,7 @@ pub fn write_pdf_area_image(
         rel.as_str()
     };
     let file = asset(store, file_rel)?;
-    for _ in 0..4 {
+    crate::retry_on_conflict("PDF area image changed repeatedly during save", || {
         let baseline = match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((_, rev)) => Some(rev),
             Err(StoreError::NotFound) => None,
@@ -298,17 +289,8 @@ pub fn write_pdf_area_image(
                 tx.create(&file, Content::Bytes(bytes.to_vec()));
             }
         }
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome)?;
-        return Ok(rel);
-    }
-    Err(io::Error::new(
-        io::ErrorKind::WouldBlock,
-        "PDF area image changed repeatedly during save",
-    ))
+        Ok(crate::commit_retry(tx.commit())?.then_some(rel.clone()))
+    })
 }
 
 /// Merge highlights with external additions, then commit the sidecar and hls
@@ -330,7 +312,7 @@ pub fn write_highlights(
     let name = pdf::hls_page_name(&key);
     let old_name = pdf::hls_page_name(&legacy);
     let base: HashSet<&str> = base_ids.iter().map(String::as_str).collect();
-    for _ in 0..4 {
+    crate::retry_on_conflict("highlight sidecar changed repeatedly during update", || {
         let current = optional(store, &primary)?;
         let old = if current.is_none() {
             legacy_id
@@ -405,16 +387,14 @@ pub fn write_highlights(
         }
         if let (Some(id), Some((raw, rev))) = (legacy_page_id.as_ref(), legacy_page.as_ref()) {
             if optional(store, &id.file())?.as_ref() != Some(&(raw.clone(), rev.clone())) {
-                continue;
+                return Ok(None);
             }
         }
         let base = existing.map_or(SaveBase::CreateNew, |(_, rev)| SaveBase::Existing(rev));
         tx.save_page(&page, base, &page_dto);
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
+        if !crate::commit_retry(tx.commit())? {
+            return Ok(None);
         }
-        tx_error(outcome)?;
         let source_key = if old.is_some() { &legacy } else { &key };
         let merged_ids: HashSet<&str> = merged.iter().map(|item| item.id.as_str()).collect();
         let active_stamps: HashSet<i64> = merged.iter().filter_map(|item| item.image).collect();
@@ -488,7 +468,6 @@ pub fn write_highlights(
             cleanup.trash(&id.file(), rev);
             let _ = cleanup.commit();
         }
-        return Ok(());
-    }
-    Err(retry_error("update"))
+        Ok(Some(()))
+    })
 }

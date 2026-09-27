@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use tine_core::model::{AssetInfo, TrashStats};
 use tine_store::{Area, Content, StepResult, Store, StoreError, TrashKind};
 
-use crate::{is_conflict, store_error, tx_error};
+use crate::{store_error, tx_error};
 
 const COMPOUND_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.png"];
 
@@ -207,36 +207,7 @@ pub fn orphan_assets(store: &Store) -> Vec<AssetInfo> {
 pub fn trash_asset(store: &Store, name: &str) -> io::Result<()> {
     validate_name(name)?;
     let id = store.file_id(Area::Assets, name).map_err(store_error)?;
-    for _ in 0..4 {
-        let rev = match store.read(&id, None) {
-            Ok((_, rev)) => rev,
-            Err(StoreError::NotFound) => {
-                return Err(io::Error::new(io::ErrorKind::NotFound, "no such asset"))
-            }
-            Err(error) => return Err(store_error(error)),
-        };
-        let mut tx = store.transaction();
-        tx.trash(&id, rev);
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotADirectory {
-                let message = error.to_string();
-                let cause = message.rsplit(": ").next().unwrap_or(&message);
-                io::Error::new(
-                    error.kind(),
-                    format!("could not create trash directory logseq/.tine-trash/assets: {cause}"),
-                )
-            } else {
-                error
-            }
-        })?;
-        return Ok(());
-    }
-    Err(io::Error::new(
-        io::ErrorKind::WouldBlock,
-        "asset changed repeatedly during trash",
-    ))
+    crate::retry_on_conflict("asset changed repeatedly during trash", || {
+        crate::trash_current(store, &id, None, "no such asset")
+    })
 }

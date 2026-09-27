@@ -14,8 +14,8 @@ use tine_core::model::{
 };
 use tine_core::projection::block_to_shallow_dto;
 use tine_core::query::{
-    is_advanced, query_nesting_within_limit, query_source_within_limit, AdvancedResult,
-    QueryExportBatch, QueryExportResult, QueryExportSpec,
+    admit_source, is_advanced, query_nesting_within_limit, query_source_within_limit,
+    AdvancedResult, QueryExportBatch, QueryExportResult, QueryExportSpec,
 };
 use tine_core::refs;
 use tine_core::search_query::Matcher;
@@ -1224,7 +1224,7 @@ pub(crate) fn run_query_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    if !query_source_within_limit(query_src) || !query_nesting_within_limit(query_src) {
+    if admit_source(query_src).is_err() {
         return BoundedGroups {
             groups: Vec::new(),
             total: 0,
@@ -1618,11 +1618,12 @@ pub(crate) fn run_advanced_query_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> (AdvancedResult, bool, usize) {
-    if !query_source_within_limit(query_src) {
-        return (rejected_advanced_query("query-too-large"), false, 0);
-    }
-    if !query_nesting_within_limit(query_src) {
-        return (rejected_advanced_query("query-nesting-too-deep"), false, 0);
+    if let Err(reason) = admit_source(query_src) {
+        let message = match reason {
+            tine_core::query::SourceRefusal::TooLarge => "query-too-large",
+            tine_core::query::SourceRefusal::TooDeep => "query-nesting-too-deep",
+        };
+        return (rejected_advanced_query(message), false, 0);
     }
     let today = JournalDate::today();
     let (pred, ran, ignored) = advanced_pred(query_src, today);

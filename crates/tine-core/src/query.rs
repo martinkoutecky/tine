@@ -7,6 +7,26 @@ use crate::model::RefGroup;
 pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
 const QUERY_NESTING_MAX: usize = 64;
 
+/// Reason a query source cannot enter an evaluator or cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceRefusal {
+    /// UTF-8 source exceeds the byte limit.
+    TooLarge,
+    /// Boolean parentheses exceed the parser depth limit.
+    TooDeep,
+}
+
+/// Admit a query before parsing or storing its source in a cache key.
+pub fn admit_source(source: &str) -> Result<(), SourceRefusal> {
+    if !query_source_within_limit(source) {
+        Err(SourceRefusal::TooLarge)
+    } else if !query_nesting_within_limit(source) {
+        Err(SourceRefusal::TooDeep)
+    } else {
+        Ok(())
+    }
+}
+
 /// Whether `source` fits the shared byte limit.
 pub fn query_source_within_limit(source: &str) -> bool {
     source.len() <= QUERY_SOURCE_MAX_BYTES

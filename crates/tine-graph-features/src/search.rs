@@ -68,6 +68,7 @@ pub fn run_graph_search(
         lane,
         explain,
         scope,
+        #[cfg(test)]
         || {},
     )
 }
@@ -81,7 +82,7 @@ fn run_graph_search_after_scope(
     lane: Option<&str>,
     explain: bool,
     scope: Option<Scope>,
-    after_scope: impl FnOnce(),
+    #[cfg(test)] after_scope: impl FnOnce(),
 ) -> Result<QueryExecution, SearchError> {
     let view = store.whole_graph().map_err(SearchError::Load)?;
     let flag = lanes.begin(lane);
@@ -99,6 +100,7 @@ fn run_graph_search_after_scope(
         block_limit,
         explain,
     };
+    #[cfg(test)]
     after_scope();
     let execution = match view.search(&request, &Cancel(flag)) {
         Ok(execution) => execution,
@@ -172,19 +174,18 @@ fn enforce_execution_budget(execution: &QueryExecution) -> Result<(), QueryError
 /// Refuse oversized or over-nested query source before parsing or cache lookup.
 /// Cost O(source bytes).
 pub fn validate_source(query: &str) -> Result<(), QueryError> {
-    if !tine_core::query::query_source_within_limit(query) {
-        return Err(QueryError::Parse(format!(
-            "query-too-large: query source is {} bytes (limit: {} bytes)",
-            query.len(),
-            tine_core::query::QUERY_SOURCE_MAX_BYTES
-        )));
-    }
-    if !tine_core::query::query_nesting_within_limit(query) {
-        return Err(QueryError::Parse(
-            "query-nesting-too-deep: simplify nested boolean clauses".into(),
-        ));
-    }
-    Ok(())
+    tine_core::query::admit_source(query).map_err(|reason| {
+        QueryError::Parse(match reason {
+            tine_core::query::SourceRefusal::TooLarge => format!(
+                "query-too-large: query source is {} bytes (limit: {} bytes)",
+                query.len(),
+                tine_core::query::QUERY_SOURCE_MAX_BYTES
+            ),
+            tine_core::query::SourceRefusal::TooDeep => {
+                "query-nesting-too-deep: simplify nested boolean clauses".into()
+            }
+        })
+    })
 }
 
 /// Run a bounded simple query. Cost O(query candidates + output).
@@ -205,16 +206,22 @@ pub fn run_advanced_query(
     store: &Store,
     query: &str,
 ) -> Result<tine_core::query::AdvancedResult, SearchError> {
-    run_advanced_query_after_scope(store, query, || {})
+    run_advanced_query_after_scope(
+        store,
+        query,
+        #[cfg(test)]
+        || {},
+    )
 }
 
 fn run_advanced_query_after_scope(
     store: &Store,
     query: &str,
-    after_scope: impl FnOnce(),
+    #[cfg(test)] after_scope: impl FnOnce(),
 ) -> Result<tine_core::query::AdvancedResult, SearchError> {
     validate_source(query).map_err(SearchError::Query)?;
     let view = store.whole_graph().map_err(SearchError::Load)?;
+    #[cfg(test)]
     after_scope();
     match view
         .query(query, QueryDialect::Advanced)

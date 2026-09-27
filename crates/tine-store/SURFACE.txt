@@ -133,7 +133,6 @@ field publish::PublishFailed.previous_kept
 field publish::PublishReceipt.site
 field publish::PublishReceipt.files
 field publish::PublishReceipt.previous_kept
-fn store::QueryError::bridge_matching_blocks
 fn transaction::IoError::kind
 fn store::QueryError::bridge_search_hits
 fn store::WholeGraph::backlink_filter_context

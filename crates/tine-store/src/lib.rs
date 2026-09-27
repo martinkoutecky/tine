@@ -58,6 +58,7 @@ mod legacy_graph_writer_guard_tests;
 pub mod model;
 pub use file_kind::{is_asset_sidecar, is_graph_text};
 pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
+mod atomic_file;
 #[cfg(feature = "test-faults")]
 pub mod cost_counters;
 mod no_replace;

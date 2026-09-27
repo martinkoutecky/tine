@@ -42,19 +42,7 @@ pub fn page_print_html(store: &Store, name: &str, opts: PrintOpts) -> io::Result
     // the print client, within the shared parse input byte limit.
     let org_document = if page.id.as_str().to_ascii_lowercase().ends_with(".org") {
         let file = tine_store::FileId::from(page.id.as_str().to_owned());
-        let (bytes, _) = store
-            .read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-            .map_err(crate::store_error)?;
-        let source = String::from_utf8(bytes)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if !tine_store::parse_input_depth_within_limit(&source)
-            || !tine_core::org::headline_levels_within_limit(&source, 512)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "I-22: input nesting exceeds 512 levels",
-            ));
-        }
+        let (source, _) = crate::parsed_text::read(store, &file)?;
         Some(doc::parse(&source))
     } else {
         None

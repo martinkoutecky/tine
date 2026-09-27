@@ -19,7 +19,7 @@ pub mod search;
 pub mod sources;
 
 use std::io;
-use tine_store::{Refusal, StoreError, TxOutcome, Why};
+use tine_store::{FileId, Refusal, Store, StoreError, TxOutcome, Why};
 
 fn store_error(error: StoreError) -> io::Error {
     match error {
@@ -38,31 +38,21 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
         TxOutcome::Committed { steps, .. } => Ok(steps),
         TxOutcome::NotCommitted { why, rollback, .. } => {
             if !rollback.undo_failed.is_empty() {
-                let failed = rollback
+                let failed: Vec<String> = rollback
                     .undo_failed
                     .iter()
                     .map(|(file, error)| {
                         format!("{} ({:?}: {})", file.as_str(), error.kind, error.message)
                     })
-                    .fold(String::new(), |mut text, item| {
-                        if !text.is_empty() {
-                            text.push_str(", ");
-                        }
-                        text.push_str(&item);
-                        text
-                    });
-                let recovery = rollback
+                    .collect();
+                let failed = <[String]>::join(&failed, ", ");
+                let recovery: Vec<&str> = rollback
                     .kept_external
                     .iter()
                     .filter_map(|(_, location)| location.as_ref())
                     .map(|file| file.as_str())
-                    .fold(String::new(), |mut text, item| {
-                        if !text.is_empty() {
-                            text.push_str(", ");
-                        }
-                        text.push_str(item);
-                        text
-                    });
+                    .collect();
+                let recovery = <[&str]>::join(&recovery, ", ");
                 return Err(io::Error::other(format!(
                     "rollback-incomplete: undo failed for {failed}; recovery: {recovery}; original: {why:?}"
                 )));
@@ -100,6 +90,42 @@ fn is_conflict(outcome: &TxOutcome) -> bool {
             ..
         }
     )
+}
+
+fn retry_on_conflict<T>(
+    exhausted: &'static str,
+    mut attempt: impl FnMut() -> io::Result<Option<T>>,
+) -> io::Result<T> {
+    for _ in 0..4 {
+        if let Some(value) = attempt()? {
+            return Ok(value);
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::WouldBlock, exhausted))
+}
+
+fn commit_retry(outcome: TxOutcome) -> io::Result<bool> {
+    if is_conflict(&outcome) {
+        Ok(false)
+    } else {
+        tx_error(outcome).map(|_| true)
+    }
+}
+
+fn trash_current(
+    store: &Store,
+    id: &FileId,
+    max_bytes: Option<u64>,
+    missing: &'static str,
+) -> io::Result<Option<()>> {
+    let rev = match store.read(id, max_bytes) {
+        Ok((_, rev)) => rev,
+        Err(StoreError::NotFound) => return Err(io::Error::new(io::ErrorKind::NotFound, missing)),
+        Err(error) => return Err(store_error(error)),
+    };
+    let mut tx = store.transaction();
+    tx.trash(id, rev);
+    Ok(commit_retry(tx.commit())?.then_some(()))
 }
 
 #[cfg(test)]

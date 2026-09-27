@@ -11,9 +11,7 @@ use tine_core::model::{
 };
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::sync_diff::{self, SyncConflictDiff};
-use tine_store::{Area, FileId, FileRev, PageId, SaveBase, Store, StoreError};
-
-use crate::{is_conflict, store_error, tx_error};
+use tine_store::{Area, FileId, FileRev, PageId, SaveBase, Store};
 
 fn invalid_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
@@ -268,7 +266,7 @@ pub fn resolve_sync_conflict(
         ));
     }
     let page = store.as_page(&win).ok_or_else(invalid_path)?;
-    for _ in 0..4 {
+    crate::retry_on_conflict("conflict files changed repeatedly during merge", || {
         let (mine, win_rev) = read_text(store, &win)?;
         let (theirs, conf_rev) = read_text(store, &conf)?;
         if String::from(win_rev.clone()) != base_rev {
@@ -308,17 +306,8 @@ pub fn resolve_sync_conflict(
         let mut tx = store.transaction();
         tx.save_page(&page, SaveBase::Existing(win_rev), &merged);
         tx.trash(&conf, conf_rev);
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome)?;
-        return Ok(());
-    }
-    Err(io::Error::new(
-        io::ErrorKind::WouldBlock,
-        "conflict files changed repeatedly during merge",
-    ))
+        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+    })
 }
 
 /// Recoverably trash only a sync copy, with four revision-guard retries. Cost
@@ -334,28 +323,12 @@ pub fn trash_sync_conflict(store: &Store, conflict: &str) -> io::Result<()> {
     if !stem.is_some_and(|stem| sync_conflict_base(stem).is_some()) {
         return Err(invalid_path());
     }
-    for _ in 0..4 {
-        let rev = match store.read(&conf, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-            Ok((_, rev)) => rev,
-            Err(StoreError::NotFound) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "no such conflict file",
-                ))
-            }
-            Err(error) => return Err(store_error(error)),
-        };
-        let mut tx = store.transaction();
-        tx.trash(&conf, rev);
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome)?;
-        return Ok(());
-    }
-    Err(io::Error::new(
-        io::ErrorKind::WouldBlock,
-        "conflict copy changed repeatedly during trash",
-    ))
+    crate::retry_on_conflict("conflict copy changed repeatedly during trash", || {
+        crate::trash_current(
+            store,
+            &conf,
+            Some(tine_store::PARSE_INPUT_MAX_BYTES),
+            "no such conflict file",
+        )
+    })
 }

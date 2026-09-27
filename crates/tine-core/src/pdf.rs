@@ -487,6 +487,7 @@ pub fn hls_page_name(key: &str) -> String {
 }
 
 /// Build the `hls__<key>` index page document for a set of highlights.
+#[cfg(test)]
 pub fn hls_page_document(pdf_filename: &str, label: &str, highlights: &[Highlight]) -> Document {
     hls_page_document_for_format(pdf_filename, label, highlights, Format::Md)
 }
@@ -504,6 +505,7 @@ pub fn hls_page_document_for_format(
 /// annotation block (and its child notes) by `id`**. New highlights are
 /// appended; highlights deleted from the set drop their block. This is what
 /// makes the review flow safe — re-saving never clobbers notes.
+#[cfg(test)]
 pub fn merge_hls_page(
     existing: Option<&Document>,
     pdf_filename: &str,

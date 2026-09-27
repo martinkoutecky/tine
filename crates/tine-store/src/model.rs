@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -17,8 +17,8 @@ use tine_core::doc::{self, DocBlock, Document};
 #[cfg(test)]
 use tine_core::model::AssetInfo;
 use tine_core::model::{
-    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BlockDto, BlockPreview,
-    BoundedRefGroups, Format, PageDto, PageEntry, PageKind, ReferenceKind, TemplateDto,
+    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BlockDto,
+    BoundedRefGroups, Format, PageDto, PageEntry, PageKind, ReferenceKind,
 };
 #[cfg(test)]
 use tine_core::model::{
@@ -847,9 +847,7 @@ impl ReadSnapshot {
         max_rows: usize,
         max_bytes: usize,
     ) -> BoundedRefGroups {
-        if !tine_core::query::query_source_within_limit(source)
-            || !tine_core::query::query_nesting_within_limit(source)
-        {
+        if tine_core::query::admit_source(source).is_err() {
             return BoundedRefGroups {
                 groups: Arc::new(Vec::new()),
                 total: 0,
@@ -868,19 +866,12 @@ impl ReadSnapshot {
         max_rows: usize,
         max_bytes: usize,
     ) -> (tine_core::query::AdvancedResult, bool, usize) {
-        if !tine_core::query::query_source_within_limit(source) {
-            return (
-                crate::query::rejected_advanced_query("query-too-large"),
-                false,
-                0,
-            );
-        }
-        if !tine_core::query::query_nesting_within_limit(source) {
-            return (
-                crate::query::rejected_advanced_query("query-nesting-too-deep"),
-                false,
-                0,
-            );
+        if let Err(reason) = tine_core::query::admit_source(source) {
+            let message = match reason {
+                tine_core::query::SourceRefusal::TooLarge => "query-too-large",
+                tine_core::query::SourceRefusal::TooDeep => "query-nesting-too-deep",
+            };
+            return (crate::query::rejected_advanced_query(message), false, 0);
         }
         let cached = self.memos.advanced_memo_bounded(
             0,
@@ -941,23 +932,6 @@ impl ReadSnapshot {
                 .get()
                 .expect("block counts built at publication"),
         )
-    }
-
-    pub(crate) fn quick_switch(&self, query: &str, limit: usize) -> Vec<PageEntry> {
-        crate::query::quick_switch(self, query, limit)
-    }
-
-    pub(crate) fn templates(&self) -> Vec<TemplateDto> {
-        crate::query::templates(self)
-    }
-
-    pub(crate) fn preview_block_with_budget(
-        &self,
-        uuid: &str,
-        max_nodes: usize,
-        max_bytes: usize,
-    ) -> Option<BlockPreview> {
-        crate::query::preview_block_with_budget(self, uuid, max_nodes, max_bytes)
     }
 
     pub(crate) fn journal_content_days(&self) -> Vec<i64> {
@@ -1774,10 +1748,7 @@ impl SnapshotExplicitIndex {
     }
 
     fn shard(name: &str) -> usize {
-        name.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
-            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-        }) as usize
-            % Self::SHARDS
+        snapshot_index_shard(name.as_bytes())
     }
 
     fn update(&mut self, path: &Path, old: &[String], new: &[String]) {
@@ -2105,16 +2076,28 @@ fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
 /// fallback keeps disposable direct-`Graph::open` fixtures working as before.
 fn path_stays_within_root(root: &Path, target: &Path) -> bool {
     let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut existing = target;
-    while fs::symlink_metadata(existing).is_err() {
-        let Some(parent) = existing.parent() else {
-            return false;
-        };
-        existing = parent;
-    }
-    fs::canonicalize(existing)
-        .map(|p| p.starts_with(&canonical_root))
+    canonical_existing_ancestor(target)
+        .map(|(_, resolved)| resolved.starts_with(&canonical_root))
         .unwrap_or(false)
+}
+
+/// Resolve the deepest existing ancestor without following a missing suffix.
+pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, PathBuf)> {
+    let mut existing = target;
+    loop {
+        match fs::symlink_metadata(existing) {
+            Ok(_) => return Ok((existing, fs::canonicalize(existing)?)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                existing = existing.parent().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "target has no existing ancestor",
+                    )
+                })?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// Managed graph directories must retain their own identity, not merely land
@@ -2165,6 +2148,7 @@ pub(crate) enum CheckedOpenError {
 }
 
 impl CheckedOpenError {
+    #[cfg(test)]
     fn into_io(self) -> io::Error {
         match self {
             Self::ExternalAssetsUnapproved(current) => io::Error::new(
@@ -2240,7 +2224,7 @@ impl Graph {
     /// journal directory that can escape the selected graph. `Graph::open` stays
     /// available for the many in-crate disposable fixtures, but runtime graph
     /// binding must use this checked entry point.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn open_checked(root: impl AsRef<Path>) -> io::Result<Graph> {
         Self::open_checked_with_assets_inner(root, None).map_err(CheckedOpenError::into_io)
     }
@@ -5262,28 +5246,7 @@ pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
 /// appeared after the caller's collision check. The payload is fsynced in a
 /// same-directory temp, then atomically renamed into the final name only if absent.
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(".{fname}.{}.{}.new.tmp", std::process::id(), seq));
-    let res = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        move_file_noreplace(&tmp, path)?;
-        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
-        Ok(())
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    res
+    crate::atomic_file::atomic_write_new(path, bytes)
 }
 
 /// Atomic write: write to a temp file in the same directory, then rename. The
@@ -5301,38 +5264,23 @@ pub(crate) fn atomic_write_with_check(
     bytes: &[u8],
     check: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(".{fname}.{}.{seq}.tmp", std::process::id()));
-    let res = (|| {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        f.write_all(bytes)?;
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::wrote(bytes.len());
-        f.sync_all()?;
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::fsync();
-        drop(f);
-        check()?;
-        fs::rename(&tmp, path)
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp); // never leave a temp behind on failure
-    } else {
-        // Persist the rename itself: fsync the directory so a crash right after the
-        // write can't lose the new directory entry (the rename) on some
-        // filesystems. Best-effort — not all platforms allow fsync on a dir.
-        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::fsync();
-    }
-    res
+    crate::atomic_file::atomic_write_with_check(
+        path,
+        bytes,
+        check,
+        || {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::wrote(bytes.len());
+        },
+        || {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+        },
+        || {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+        },
+    )
 }
 
 /// Like [`atomic_write`] but the payload is COPIED from `src` (so a large import —
@@ -5921,8 +5869,7 @@ mod tests {
         let snapshot = published_snapshot(&store);
 
         let has = |q: &str, name: &str| {
-            snapshot
-                .quick_switch(q, 8)
+            crate::query::quick_switch(&snapshot, q, 8)
                 .iter()
                 .any(|e| tine_core::refs::same_page(&e.name, name))
         };
@@ -7014,11 +6961,15 @@ mod tests {
         fs::write(dir.join("pages/B.md"), "- empty\n").unwrap();
         let store = model_store(&dir);
         assert_eq!(
-            published_snapshot(&store)
-                .preview_block_with_budget("moved-id", 10, 4096)
-                .unwrap()
-                .group
-                .page,
+            crate::query::preview_block_with_budget(
+                &published_snapshot(&store),
+                "moved-id",
+                10,
+                4096
+            )
+            .unwrap()
+            .group
+            .page,
             "A"
         );
         fs::write(dir.join("pages/A.md"), "- empty again\n").unwrap();
@@ -7026,11 +6977,15 @@ mod tests {
         fs::write(dir.join("pages/B.md"), "- destination\n  id:: moved-id\n").unwrap();
         store.scan_refresh().unwrap();
         assert_eq!(
-            published_snapshot(&store)
-                .preview_block_with_budget("moved-id", 10, 4096)
-                .unwrap()
-                .group
-                .page,
+            crate::query::preview_block_with_budget(
+                &published_snapshot(&store),
+                "moved-id",
+                10,
+                4096
+            )
+            .unwrap()
+            .group
+            .page,
             "B",
             "a stale hint must fall back to the new owning page"
         );
@@ -9106,7 +9061,12 @@ mod tests {
             tine_core::pdf::write_highlights(&[h1.clone()], ""),
         )
         .unwrap();
-        let legacy_page = tine_core::pdf::hls_page_document(pdf, "My Paper", &[h1.clone()]);
+        let legacy_page = tine_core::pdf::hls_page_document_for_format(
+            pdf,
+            "My Paper",
+            &[h1.clone()],
+            Format::Md,
+        );
         fs::write(
             dir.join("pages").join(format!("hls__{legacy_key}.md")),
             doc::serialize(&legacy_page),
@@ -9173,7 +9133,8 @@ mod tests {
             tine_core::pdf::write_highlights(&[h.clone()], ""),
         )
         .unwrap();
-        let mut legacy_page = tine_core::pdf::hls_page_document(pdf, "Paper", &[h.clone()]);
+        let mut legacy_page =
+            tine_core::pdf::hls_page_document_for_format(pdf, "Paper", &[h.clone()], Format::Md);
         legacy_page.roots[0]
             .children
             .push(DocBlock::new("private note"));
@@ -9231,8 +9192,12 @@ mod tests {
         let lower_edn_path = assets.join(format!("{lower_key}.edn"));
         fs::write(&lower_edn_path, &lower_edn).unwrap();
 
-        let mut lower_page =
-            tine_core::pdf::hls_page_document(lower_pdf, "Lower Paper", &[lower_highlight.clone()]);
+        let mut lower_page = tine_core::pdf::hls_page_document_for_format(
+            lower_pdf,
+            "Lower Paper",
+            &[lower_highlight.clone()],
+            Format::Md,
+        );
         lower_page.roots[0]
             .children
             .push(DocBlock::new("lower pdf private note"));

@@ -1,7 +1,7 @@
 //! Durable writes for the device settings file outside graph roots.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
 // Compile the one audited no-replace primitive in both crates without adding
@@ -9,6 +9,9 @@ use std::path::Path;
 #[allow(dead_code)]
 #[path = "../../crates/tine-store/src/no_replace.rs"]
 mod no_replace;
+
+#[path = "../../crates/tine-store/src/atomic_file.rs"]
+mod atomic_file;
 
 /// Device source errors remain distinct so the command can preserve its wire text.
 #[derive(Debug)]
@@ -80,28 +83,7 @@ pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
 /// appeared after the caller's collision check. The payload is fsynced in a
 /// same-directory temp, then atomically renamed into the final name only if absent.
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(".{fname}.{}.{}.new.tmp", std::process::id(), seq));
-    let res = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        move_file_noreplace(&tmp, path)?;
-        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
-        Ok(())
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    res
+    atomic_file::atomic_write_new(path, bytes)
 }
 
 /// Atomic write: write to a temp file in the same directory, then rename. The
@@ -110,31 +92,7 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// each other's temp; the rename is still atomic. The temp is removed if the
 /// write fails, so a unique name never leaks an orphan behind.
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(".{fname}.{}.{seq}.tmp", std::process::id()));
-    let res = (|| {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        drop(f);
-        fs::rename(&tmp, path)
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp); // never leave a temp behind on failure
-    } else {
-        // Persist the rename itself: fsync the directory so a crash right after the
-        // write can't lose the new directory entry (the rename) on some
-        // filesystems. Best-effort — not all platforms allow fsync on a dir.
-        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
-    }
-    res
+    atomic_file::atomic_write_with_check(path, bytes, || Ok(()), || {}, || {}, || {})
 }
 
 /// Read–modify–write a small text file (config.edn, device settings) under a lock,

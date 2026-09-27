@@ -110,6 +110,27 @@ impl JournalDate {
     }
 }
 
+/// UTC backup directory stamp in `YYYY-MM-DD_HH-MM-SS` form.
+pub fn utc_backup_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let date = JournalDate::from_days(days);
+    format!(
+        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
+        date.year,
+        date.month,
+        date.day,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
 fn is_leap(y: i32) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }

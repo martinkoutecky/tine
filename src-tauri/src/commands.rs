@@ -305,16 +305,6 @@ pub(crate) fn save_workspaces(
     crate::settings::save_workspaces(data, app, state)
 }
 
-#[cfg(test)]
-fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
-    let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
-    let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
-    if let Some(error) = QueryError::bridge_matching_blocks(rows, bytes) {
-        return Err(query_error(error));
-    }
-    Ok(())
-}
-
 fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
     match error {
         tine_graph_features::search::SearchError::Load(error) => {
@@ -326,35 +316,8 @@ fn feature_search_error(error: tine_graph_features::search::SearchError) -> Stri
 
 #[cfg(test)]
 mod result_bridge_budget_tests {
-    use super::{enforce_result_bridge_budget, query_error};
-    use tine_core::{BlockDto, PageKind, RefGroup};
+    use super::query_error;
     use tine_store::{Budget, QueryError};
-
-    fn group(blocks: Vec<BlockDto>) -> RefGroup {
-        RefGroup {
-            page: "Budget".into(),
-            kind: PageKind::Page,
-            blocks,
-            evidence: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn rejects_oversized_result_count_before_ipc() {
-        let groups = [group(vec![BlockDto::default(); 20_001])];
-        assert!(enforce_result_bridge_budget(&groups)
-            .unwrap_err()
-            .starts_with("result-too-large:"));
-    }
-
-    #[test]
-    fn rejects_oversized_result_bytes_before_ipc() {
-        let mut block = BlockDto::default();
-        block.raw = "x".repeat(33_554_433);
-        assert!(enforce_result_bridge_budget(&[group(vec![block])])
-            .unwrap_err()
-            .starts_with("result-too-large:"));
-    }
 
     #[test]
     fn moved_read_errors_keep_the_existing_wire_text() {

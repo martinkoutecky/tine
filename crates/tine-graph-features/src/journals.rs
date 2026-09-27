@@ -9,7 +9,7 @@ use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::model::{JournalConflict, JournalFile};
 use tine_store::{Area, Day, FileEntry, PageId, Store, StoreError};
 
-use crate::{is_conflict, store_error, tx_error};
+use crate::{store_error, tx_error};
 
 /// A day-based page of the journal feed. The cursor records the last examined
 /// day, including a journal that disappeared between inventory and read.
@@ -449,8 +449,8 @@ fn journal_name(name: &str) -> io::Result<()> {
     }
 }
 
-/// Read exactly one top-level journal filename without a size cap, matching
-/// v0.6.5. Cost O(file bytes).
+/// Read exactly one top-level journal filename, capped by the shared parse
+/// input byte limit. Cost O(file bytes).
 pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
@@ -470,28 +470,12 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
 pub fn trash_journal_file(store: &Store, name: &str) -> io::Result<()> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
-    for _ in 0..4 {
-        let rev = match store.read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-            Ok((_, rev)) => rev,
-            Err(StoreError::NotFound) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "no such journal file",
-                ))
-            }
-            Err(error) => return Err(store_error(error)),
-        };
-        let mut tx = store.transaction();
-        tx.trash(&id, rev);
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome)?;
-        return Ok(());
-    }
-    Err(io::Error::new(
-        io::ErrorKind::WouldBlock,
-        "journal changed repeatedly during trash",
-    ))
+    crate::retry_on_conflict("journal changed repeatedly during trash", || {
+        crate::trash_current(
+            store,
+            &id,
+            Some(tine_store::PARSE_INPUT_MAX_BYTES),
+            "no such journal file",
+        )
+    })
 }

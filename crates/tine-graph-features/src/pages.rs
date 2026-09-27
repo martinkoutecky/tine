@@ -212,12 +212,12 @@ pub fn delete_page_expected(
     expected_path: Option<&str>,
     expected_rev: Option<&FileRev>,
 ) -> io::Result<()> {
-    for _ in 0..4 {
+    crate::retry_on_conflict("page changed repeatedly during delete", || {
         let graph = refreshed_view(store)?;
         let ids = existing(graph.resolve(name, kind == PageKind::Journal));
         validate_target(&ids, expected_path)?;
         let Some(id) = ids.first() else {
-            return Ok(());
+            return Ok(Some(()));
         };
         let file = id.file();
         let (_, rev) = store
@@ -233,15 +233,11 @@ pub fn delete_page_expected(
             if expected_rev.is_some() {
                 return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
             }
-            continue;
+            return Ok(None);
         }
         tx_error(outcome)?;
-        return Ok(());
-    }
-    Err(error(
-        io::ErrorKind::WouldBlock,
-        "page changed repeatedly during delete",
-    ))
+        Ok(Some(()))
+    })
 }
 
 /// Rename a page and its file-backed namespace descendants in one transaction.
@@ -260,7 +256,14 @@ pub fn rename_page_expected(
     new: &str,
     expected_path: Option<&str>,
 ) -> io::Result<()> {
-    rename_page_after_inventory(store, old, new, expected_path, || {})
+    rename_page_after_inventory(
+        store,
+        old,
+        new,
+        expected_path,
+        #[cfg(test)]
+        || {},
+    )
 }
 
 fn rename_page_after_inventory(
@@ -268,7 +271,7 @@ fn rename_page_after_inventory(
     old: &str,
     new: &str,
     expected_path: Option<&str>,
-    after_inventory: impl Fn(),
+    #[cfg(test)] after_inventory: impl Fn(),
 ) -> io::Result<()> {
     let old = old.trim();
     let new = new.trim();
@@ -278,9 +281,10 @@ fn rename_page_after_inventory(
     if old.is_empty() || refs::same_page(old, new) {
         return Ok(()); // v0.6.5 model.rs 3549: case-only rename is a no-op.
     }
-    for _ in 0..4 {
+    crate::retry_on_conflict("page changed repeatedly during rename", || {
         let graph = refreshed_view(store)?;
         let inventory = graph.inventory();
+        #[cfg(test)]
         after_inventory();
         let source = existing(graph.resolve(old, false));
         validate_target(&source, expected_path)?;
@@ -405,7 +409,7 @@ fn rename_page_after_inventory(
             }
         }
         if edits.is_empty() {
-            return Ok(());
+            return Ok(Some(()));
         }
         let mut tx = store.transaction();
         for (id, rev) in edits {
@@ -415,17 +419,8 @@ fn rename_page_after_inventory(
                 tx.rewrite_refs(&id, rev, &map);
             }
         }
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome)?;
-        return Ok(());
-    }
-    Err(error(
-        io::ErrorKind::WouldBlock,
-        "page changed repeatedly during rename",
-    ))
+        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+    })
 }
 
 /// Rescue a stray page or journal file into a uniquely named normal page.
@@ -448,7 +443,7 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
         ext
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-    for _ in 0..4 {
+    crate::retry_on_conflict("page changed repeatedly during rescue", || {
         if !existing(refreshed_view(store)?.resolve(name, false)).is_empty() {
             return Err(error(
                 io::ErrorKind::AlreadyExists,
@@ -460,17 +455,8 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
             .map_err(store_error)?;
         let mut tx = store.transaction();
         tx.move_file(&src, rev, &to, None);
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome)?;
-        return Ok(());
-    }
-    Err(error(
-        io::ErrorKind::WouldBlock,
-        "page changed repeatedly during rescue",
-    ))
+        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+    })
 }
 
 /// Merge one source into a survivor, carrying source properties absent in the
@@ -500,7 +486,7 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
     let dst_id = store
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
-    for _ in 0..4 {
+    crate::retry_on_conflict("pages changed repeatedly during merge", || {
         let (src_text, src_rev) = read_text(store, &src)?;
         let (dst_text, dst_rev) = read_text(store, &dst)?;
         if src_org
@@ -568,17 +554,8 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
         let mut tx = store.transaction();
         tx.save_page(&dst_id, SaveBase::Existing(dst_rev), &survivor);
         tx.trash(&src, src_rev);
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        tx_error(outcome)?;
-        return Ok(());
-    }
-    Err(error(
-        io::ErrorKind::WouldBlock,
-        "pages changed repeatedly during merge",
-    ))
+        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+    })
 }
 
 #[cfg(test)]

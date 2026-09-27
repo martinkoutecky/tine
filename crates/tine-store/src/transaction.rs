@@ -2045,11 +2045,18 @@ fn directory_read_error(error: io::Error, path: &Path) -> io::Error {
 }
 
 fn failed_trash_dir(error: io::Error, parent: &Path) -> Why {
+    let display = if error.kind() == io::ErrorKind::NotADirectory
+        && parent.ends_with(Path::new("logseq/.tine-trash/assets"))
+    {
+        Path::new("logseq/.tine-trash/assets")
+    } else {
+        parent
+    };
     Why::Failed(IoError {
         kind: error.kind(),
         message: format!(
             "could not create trash directory {}: {error}",
-            parent.display()
+            display.display()
         ),
     })
 }

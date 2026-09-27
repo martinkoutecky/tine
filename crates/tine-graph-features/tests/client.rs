@@ -964,7 +964,12 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
         tine_core::pdf::write_highlights(&[h.clone()], ""),
     )
     .unwrap();
-    let page = tine_core::pdf::hls_page_document(pdf_name, "My Paper", &[h.clone()]);
+    let page = tine_core::pdf::hls_page_document_for_format(
+        pdf_name,
+        "My Paper",
+        &[h.clone()],
+        tine_core::model::Format::Md,
+    );
     fs::write(
         a.join("pages").join(format!("hls__{legacy}.md")),
         tine_core::doc::serialize(&page),
@@ -1047,7 +1052,12 @@ fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
 #[test]
 fn annotation_notes_survive_update_with_legacy_bytes() {
     let h = highlight("one");
-    let mut doc = tine_core::pdf::hls_page_document("paper.pdf", "Paper", &[h.clone()]);
+    let mut doc = tine_core::pdf::hls_page_document_for_format(
+        "paper.pdf",
+        "Paper",
+        &[h.clone()],
+        tine_core::model::Format::Md,
+    );
     doc.roots[0]
         .children
         .push(tine_core::doc::DocBlock::new("private note"));

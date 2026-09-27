@@ -11,14 +11,10 @@ use tine_core::config::{
 
 use tine_store::{Area, Content, FileId, FileRev, Store, StoreError};
 
-use crate::{is_conflict, store_error, tx_error};
+use crate::store_error;
 
 fn config_error(error: StoreError) -> io::Error {
     store_error(error)
-}
-
-fn config_commit(outcome: tine_store::TxOutcome) -> io::Result<()> {
-    tx_error(outcome).map(|_| ())
 }
 
 fn config_id(store: &Store) -> io::Result<FileId> {
@@ -28,30 +24,16 @@ fn config_id(store: &Store) -> io::Result<FileId> {
 }
 
 fn read_config(store: &Store, id: &FileId) -> io::Result<Option<(String, FileRev)>> {
-    match store.read(id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-        Ok((bytes, rev)) => {
-            let text = String::from_utf8(bytes).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "stream did not contain valid UTF-8",
-                )
-            })?;
-            if !tine_store::parse_input_depth_within_limit(&text) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "I-22: input nesting exceeds 512 levels",
-                ));
-            }
-            Ok(Some((text, rev)))
-        }
-        Err(StoreError::NotFound) => Ok(None),
-        Err(error) => Err(config_error(error)),
+    match crate::parsed_text::read(store, id) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
 fn update(store: &Store, edit: impl Fn(&str) -> io::Result<String>) -> io::Result<()> {
     let id = config_id(store)?;
-    for _ in 0..4 {
+    crate::retry_on_conflict("config changed repeatedly during update", || {
         let current = read_config(store, &id)?;
         let next = edit(current.as_ref().map_or("{}\n", |(text, _)| text))?;
         let mut tx = store.transaction();
@@ -60,17 +42,8 @@ fn update(store: &Store, edit: impl Fn(&str) -> io::Result<String>) -> io::Resul
         } else {
             tx.create(&id, Content::Bytes(next.into_bytes()));
         }
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            continue;
-        }
-        config_commit(outcome)?;
-        return Ok(());
-    }
-    Err(io::Error::new(
-        io::ErrorKind::WouldBlock,
-        "config changed repeatedly during update",
-    ))
+        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+    })
 }
 
 /// Return custom.css or an empty string if absent, unreadable or non-UTF-8.

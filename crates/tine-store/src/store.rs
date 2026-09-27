@@ -1592,19 +1592,8 @@ impl Store {
             }
             Err(error) => return Err(StoreError::from_io(error)),
         };
-        let mut existing = candidate.as_path();
-        loop {
-            match fs::symlink_metadata(existing) {
-                Ok(_) => break,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    existing = existing
-                        .parent()
-                        .ok_or_else(|| StoreError::InvalidTarget(file.as_str().to_owned()))?;
-                }
-                Err(error) => return Err(StoreError::from_io(error)),
-            }
-        }
-        let resolved = fs::canonicalize(existing).map_err(StoreError::from_io)?;
+        let (existing, resolved) =
+            crate::model::canonical_existing_ancestor(&candidate).map_err(StoreError::from_io)?;
         if !candidate.starts_with(&area)
             || (!resolved.starts_with(&area_canonical)
                 && !(area_missing && area_canonical.starts_with(&resolved)))
@@ -2525,6 +2514,7 @@ impl QueryError {
     /// API adapters that add transport fields should call this before sending
     /// the response; ordinary `WholeGraph` callers already receive bounded
     /// results from the query methods.
+    #[cfg(test)]
     pub fn bridge_matching_blocks(rows: usize, bytes: usize) -> Option<Self> {
         (rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES).then_some(
             Self::ResultTooLarge {
@@ -2550,6 +2540,63 @@ impl QueryError {
                 byte_limit: RESULT_BRIDGE_MAX_BYTES,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod bridge_matching_blocks_tests {
+    use super::{Budget, QueryError, RESULT_BRIDGE_MAX_BYTES, RESULT_BRIDGE_MAX_ROWS};
+    use tine_core::model::{ref_groups_estimated_bytes, BlockDto, PageKind, RefGroup};
+
+    fn group(blocks: Vec<BlockDto>) -> RefGroup {
+        RefGroup {
+            page: "Budget".into(),
+            kind: PageKind::Page,
+            blocks,
+            evidence: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_result_count_before_ipc() {
+        let groups = [group(vec![BlockDto::default(); RESULT_BRIDGE_MAX_ROWS + 1])];
+        let rows = groups.iter().map(|group| group.blocks.len()).sum();
+        let bytes = ref_groups_estimated_bytes(&groups);
+        assert!(matches!(
+            QueryError::bridge_matching_blocks(rows, bytes),
+            Some(QueryError::ResultTooLarge {
+                what: Budget::BridgeMatchingBlocks,
+                count,
+                limit,
+                bytes: Some(estimated),
+                byte_limit,
+            }) if count == RESULT_BRIDGE_MAX_ROWS + 1
+                && limit == RESULT_BRIDGE_MAX_ROWS
+                && estimated == bytes
+                && byte_limit == RESULT_BRIDGE_MAX_BYTES
+        ));
+    }
+
+    #[test]
+    fn rejects_oversized_result_bytes_before_ipc() {
+        let mut block = BlockDto::default();
+        block.raw = "x".repeat(RESULT_BRIDGE_MAX_BYTES + 1);
+        let groups = [group(vec![block])];
+        let rows = groups.iter().map(|group| group.blocks.len()).sum();
+        let bytes = ref_groups_estimated_bytes(&groups);
+        assert!(matches!(
+            QueryError::bridge_matching_blocks(rows, bytes),
+            Some(QueryError::ResultTooLarge {
+                what: Budget::BridgeMatchingBlocks,
+                count,
+                limit,
+                bytes: Some(estimated),
+                byte_limit,
+            }) if count == rows
+                && limit == RESULT_BRIDGE_MAX_ROWS
+                && estimated == bytes
+                && byte_limit == RESULT_BRIDGE_MAX_BYTES
+        ));
     }
 }
 
@@ -2920,14 +2967,16 @@ impl WholeGraph {
     /// depends on the evaluated clauses; a cold full-graph query can visit
     /// O(P + B) pages and blocks before result materialization.
     pub fn query(&self, source: &str, dialect: QueryDialect) -> Result<QueryResult, QueryError> {
-        if !tine_core::query::query_source_within_limit(source) {
-            return Err(QueryError::Parse(format!(
-                "query exceeds {} bytes",
-                tine_core::query::QUERY_SOURCE_MAX_BYTES
-            )));
-        }
-        if !tine_core::query::query_nesting_within_limit(source) {
-            return Err(QueryError::Parse("query nesting exceeds 64 levels".into()));
+        if let Err(reason) = tine_core::query::admit_source(source) {
+            return Err(QueryError::Parse(match reason {
+                tine_core::query::SourceRefusal::TooLarge => format!(
+                    "query exceeds {} bytes",
+                    tine_core::query::QUERY_SOURCE_MAX_BYTES
+                ),
+                tine_core::query::SourceRefusal::TooDeep => {
+                    "query nesting exceeds 64 levels".into()
+                }
+            }));
         }
         match dialect {
             QueryDialect::Simple => bounded(
@@ -3112,7 +3161,8 @@ impl WholeGraph {
         uuid: &str,
         max_nodes: usize,
     ) -> Result<Option<BlockPreview>, QueryError> {
-        let preview = self.graph.preview_block_with_budget(
+        let preview = crate::query::preview_block_with_budget(
+            &self.graph,
             uuid,
             max_nodes.clamp(1, MAX_PREVIEW_NODES),
             PREVIEW_MAX_BYTES,
@@ -3159,7 +3209,7 @@ impl WholeGraph {
     /// index has been built, a later publication carries it forward by updating
     /// changed pages; the first completion after every save does not rescan B.
     pub fn complete_page_names(&self, text: &str, limit: usize) -> Vec<PageEntry> {
-        self.graph.quick_switch(text, limit)
+        crate::query::quick_switch(&self.graph, text, limit)
     }
 
     /// Literal `((` block search, O(B) per call, at most `limit` blocks.
@@ -3285,7 +3335,7 @@ impl WholeGraph {
 
     /// Template blocks; up to O(B) over this view.
     pub fn templates(&self) -> Vec<TemplateDto> {
-        self.graph.templates()
+        crate::query::templates(&self.graph)
     }
 
     /// Icons for requested names, O(P + names + aliases), including a scan of
