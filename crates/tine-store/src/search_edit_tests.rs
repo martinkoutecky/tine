@@ -1226,3 +1226,63 @@ fn crlf_files_round_trip_without_churn() {
     store.close();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn held_view_recency_uses_its_observed_mtimes_not_a_later_stat() {
+    // A held `WholeGraph` answers `(sort-by modified …)` from the mtimes captured
+    // with its page table; a later mtime-only change on disk must not reorder it.
+    let root = mk("heldmtime");
+    let a = root.join("pages").join("A.md");
+    let b = root.join("pages").join("B.md");
+    std::fs::write(&a, "- TODO a\n").unwrap();
+    std::fs::write(&b, "- TODO b\n").unwrap();
+    let t0 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    let set = |p: &std::path::Path, t: std::time::SystemTime| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    set(&a, t0);
+    set(&b, t0 + std::time::Duration::from_secs(100));
+    let store = store_at(&root);
+    // Each call uses its own query text so a per-view result memo cannot answer
+    // the second evaluation from the first.
+    let order = |view: &tine_store::WholeGraph, dir: &str| -> Vec<String> {
+        match view
+            .query(
+                &format!("(and (task TODO) (sort-by modified {dir}))"),
+                tine_store::QueryDialect::Simple,
+            )
+            .unwrap()
+        {
+            tine_store::QueryResult::Simple(groups) => groups
+                .iter()
+                .map(|g| {
+                    g.blocks[0]
+                        .raw
+                        .split_whitespace()
+                        .last()
+                        .unwrap()
+                        .to_string()
+                })
+                .collect(),
+            _ => unreachable!(),
+        }
+    };
+    let held = store.whole_graph().unwrap();
+    assert_eq!(
+        order(&held, "desc"),
+        vec!["b", "a"],
+        "precondition: B is newer"
+    );
+    set(&a, t0 + std::time::Duration::from_secs(200));
+    assert_eq!(
+        order(&held, "asc"),
+        vec!["a", "b"],
+        "a held view must keep the mtimes it observed, not re-stat the file"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
