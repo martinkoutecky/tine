@@ -54,6 +54,7 @@ import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { switchGraph, loadGraphPath } from "../graph";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
+import { captureBinding, stillBound } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
 import { formatJournal } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
@@ -116,7 +117,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "shortcuts", label: "Keyboard shortcuts" },
   { id: "about", label: "About" },
 ];
-
 type SettingSearchEntry = { tab: Tab; label: string; description: string; aliases?: string[]; level?: "advanced" };
 const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Theme", description: "light dark gallery colors" },
@@ -2657,21 +2657,12 @@ function AssetsTab(): JSX.Element {
   const [list, setList] = createSignal<AssetInfo[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [scanned, setScanned] = createSignal(false);
-  const [trashInfo, setTrashInfo] = createSignal<TrashStats>({
-    count: 0,
-    bytes: 0,
-    pages: 0,
-    journals: 0,
-    conflicts: 0,
-    other: 0,
-  });
+  const [trashInfo, setTrashInfo] = createSignal<TrashStats>({ count: 0, bytes: 0, pages: 0, journals: 0, conflicts: 0, other: 0 });
 
   const fmtSize = (n: number) =>
     n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
-  const fmtDate = (secs: number | null) =>
-    secs == null
-      ? ""
-      : new Date(secs * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const fmtDate = (secs: number | null) => secs == null ? "" :
+    new Date(secs * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   const total = () => list().reduce((s, a) => s + a.size, 0);
   const protectedTrashCount = () =>
     trashInfo().pages + trashInfo().journals + trashInfo().conflicts + trashInfo().other;
@@ -2686,54 +2677,62 @@ function AssetsTab(): JSX.Element {
       .join(", ");
 
   const refreshTrash = async () => {
+    const binding = captureBinding();
     try {
-      setTrashInfo(await backend().assetTrashStats());
+      const info = await backend().assetTrashStats();
+      if (stillBound(binding)) setTrashInfo(info);
     } catch {
       /* trash stats are best-effort */
     }
   };
 
   const refresh = async () => {
+    const binding = captureBinding();
     setBusy(true);
     try {
       // Persist edits first so a just-deleted block's media counts as orphaned
       // (and a just-inserted one counts as referenced).
       if (!(await flushAll())) {
+        if (!stillBound(binding)) return;
         pushToast("Some pages couldn't be saved — resolve conflicts before scanning assets.", "error");
         return;
       }
-      setList(await backend().listOrphanAssets());
+      const assets = await backend().listOrphanAssets();
+      if (!stillBound(binding)) return;
+      setList(assets);
       setScanned(true);
       await refreshTrash();
     } catch (e) {
-      pushToast(`Scan failed: ${String(e)}`, "error");
+      if (stillBound(binding)) pushToast(`Scan failed: ${String(e)}`, "error");
     } finally {
-      setBusy(false);
+      if (stillBound(binding)) setBusy(false);
     }
   };
 
   const open = async (a: AssetInfo) => {
+    const binding = captureBinding();
     try {
-      await backend().openAsset(a.name);
+      await backend().openAsset(a.name, binding.backendGeneration);
     } catch (e) {
-      pushToast(`Couldn’t open ${a.name}: ${String(e)}`, "error");
+      if (stillBound(binding)) pushToast(`Couldn’t open ${a.name}: ${String(e)}`, "error");
     }
   };
-
   const trash = async (a: AssetInfo) => {
+    const binding = captureBinding();
     // No confirm: the file only moves to the recoverable logseq/.tine-trash, so
     // trashing a batch stays fast. (Empty-trash, which is permanent, still asks.)
     try {
-      await backend().trashAsset(a.name);
+      await backend().trashAsset(a.name, binding.backendGeneration);
+      if (!stillBound(binding)) return;
       setList((l) => l.filter((x) => x.name !== a.name));
       pushToast(`Moved ${a.name} to trash`, "success");
       await refreshTrash();
     } catch (e) {
-      pushToast(`Couldn’t trash: ${String(e)}`, "error");
+      if (stillBound(binding)) pushToast(`Couldn’t trash: ${String(e)}`, "error");
     }
   };
-
   const emptyTrash = async () => {
+    const binding = captureBinding();
     const info = trashInfo();
     if (!info.count) return;
     if (
@@ -2744,14 +2743,14 @@ function AssetsTab(): JSX.Element {
     )
       return;
     try {
-      const n = await backend().emptyAssetTrash();
+      const n = await backend().emptyAssetTrash(binding.backendGeneration);
+      if (!stillBound(binding)) return;
       setTrashInfo((t) => ({ ...t, count: 0, bytes: 0 }));
       pushToast(`Emptied asset trash (${n} file${n === 1 ? "" : "s"})`, "success");
     } catch (e) {
-      pushToast(`Couldn’t empty trash: ${String(e)}`, "error");
+      if (stillBound(binding)) pushToast(`Couldn’t empty trash: ${String(e)}`, "error");
     }
   };
-
   return (
     <>
       <div class="settings-section">

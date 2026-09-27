@@ -361,6 +361,28 @@ describe("save groups", () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it("Keep mine on an alias draft refuses an owner revision newer than the banner", async () => {
+    loadFeed([{ ...page("Draft", ["draft"]), id: undefined, rev: undefined }, page("Other", ["other"])]);
+    const draft = pageByName("Draft")!.roots[0];
+    setRaw(draft, "my draft");
+    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] });
+    let ownerRev = "seen";
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => ({
+      ...page("Owner", ["owner"]), rev: ownerRev,
+    }));
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
+      const baseline = entries.find((entry) => entry.page.name === "Owner")?.baseRev;
+      if (save.mock.calls.length > 1 && baseline === ownerRev) return { ok: entries.map(() => "clobbered") };
+      return { failed: { index: 0, family: "conflict", diskRev: ownerRev, undoFailed: [] } };
+    });
+    void persistTogether(["Draft", "Other"], "move-blocks");
+    expect(await flushPage("Draft")).toBe(false);
+    ownerRev = "newer";
+    expect(await resolveConflict("Draft", "mine")).toBe(false);
+    expect(save.mock.calls[1][0].find((entry) => entry.page.name === "Owner")?.baseRev).toBe("seen");
+    expect(isConflicted("Draft")).toBe(true);
+  });
+
   it("P3: cycle and delete selection across pages each use one group", async () => {
     const a = block("TODO A"), b = block("TODO B");
     loadFeed([{ ...page("A", []), blocks: [a] }, { ...page("B", []), blocks: [b] }]);

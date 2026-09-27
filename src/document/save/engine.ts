@@ -459,7 +459,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     if (!dto) return abortGroup(g);
     const decision = decidedConflict(g, name) ? conflictReason(name) : undefined;
     entries.push({ id: target.id, page: target.owner ? appendAliasDraft(target.owner, dto) : dto,
-      baseRev: target.owner ? target.owner.rev ?? null : decision?.observedRev !== undefined ? decision.observedRev : baseRev.get(name) ?? null,
+      baseRev: decision?.observedRev !== undefined ? decision.observedRev : target.owner ? target.owner.rev ?? null : baseRev.get(name) ?? null,
       force: false,
       kinds: target.owner ? ["insert-blocks", "delete-page"] : pendingKinds(name, (baseRev.get(name) ?? null) === null) });
   }

@@ -2,6 +2,7 @@ import { For, Show, createEffect, createSignal, createUniqueId, on, onCleanup, o
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
+import { captureBinding } from "../binding";
 import { errorFamily } from "../errorFamily";
 import { writeClipboardText } from "../clipboard";
 import { closePdf, activePane, requestBlockReferences, type PdfTarget } from "../ui";
@@ -22,7 +23,6 @@ import {
   trackPdfMutation,
   type PdfOwnership,
 } from "../pdfOwnership";
-
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 const COLORS = ["yellow", "green", "blue", "red", "purple"];
@@ -206,7 +206,7 @@ export function PdfViewer(props: {
   page?: number;
   navigation?: () => PdfTarget | null;
 }): JSX.Element {
-  const owner = props.owner;
+  const owner = props.owner, binding = captureBinding();
   const instanceStem = `pdf-viewer-${createUniqueId()}`;
   const findLayerId = `${instanceStem}-find`;
   const highlightMenuLayerId = `${instanceStem}-highlight-menu`;
@@ -413,7 +413,7 @@ export function PdfViewer(props: {
       const persisted = await highlightsForWrite(highlights());
       const ids = persisted.map((h) => h.id);
       await trackAssetWrite(
-        backend().writeHighlights(props.filename, props.label, persisted, baseIds, "replace-page")
+        backend().writeHighlights(props.filename, props.label, persisted, baseIds, "replace-page", binding.backendGeneration)
       );
       setHighlights(persisted);
       baseIds = ids; // what's now on disk becomes the next write's baseline
@@ -493,7 +493,7 @@ export function PdfViewer(props: {
     }
     try {
       await trackPdfMutation(owner, () =>
-        trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale))
+        trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale, binding.backendGeneration))
       );
       viewStateBaseline = next;
       if (pendingViewState === next) pendingViewState = null;
@@ -998,7 +998,7 @@ export function PdfViewer(props: {
     let restoredPage: number | null = null;
     let restoredScale: number | null = null;
     try {
-      const state = await backend().openPdf(props.filename, props.label, "create-page");
+      const state = await backend().openPdf(props.filename, props.label, "create-page", binding.backendGeneration);
       if (disposed) return;
       setHighlights(state.highlights);
       restoredPage = state.page;
@@ -1397,7 +1397,7 @@ export function PdfViewer(props: {
     // Save the cropped PNG FIRST so the file exists before the .edn references it.
     try {
       await trackAssetWrite(
-        backend().savePdfAreaImage(props.filename, page, id, stamp, bytes)
+        backend().savePdfAreaImage(props.filename, page, id, stamp, bytes, binding.backendGeneration)
       );
     } catch (e) {
       pushToast(`Couldn't save the area image — try again. (${String(e)})`, "error");

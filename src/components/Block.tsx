@@ -88,6 +88,7 @@ import { graphMeta, dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
 import { assetEditorIsCurrent, captureAssetEditor, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
+import { stillBound } from "../binding";
 import { openInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
@@ -95,7 +96,6 @@ import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keyb
 import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
 import { setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
-
 import { taskCheckboxState } from "../markers";
 import { applyTemplateVars, prepareTemplateVars } from "../editor/templateVars";
 import {
@@ -1469,9 +1469,9 @@ export function Editor(props: { id: string }): JSX.Element {
     try {
       // Data before reference: a crash may leave an orphan asset, but can never
       // persist a note that points at bytes which existed only in WebView memory.
-      stored = await trackAssetWrite(backend().saveAsset(candidate, bytes));
+      stored = await trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration));
     } catch {
-      pushToast(`Couldn’t save to assets/`, "error");
+      if (stillBound(token.binding)) pushToast(`Couldn’t save to assets/`, "error");
       return;
     }
     if (!assetEditorCurrent(token)) {
@@ -1586,7 +1586,7 @@ export function Editor(props: { id: string }): JSX.Element {
         for (const file of native.files) {
           try {
             stored.push({
-              stored: await trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name))),
+              stored: await trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)),
               label: file.name,
             });
           } catch {
@@ -1630,7 +1630,7 @@ export function Editor(props: { id: string }): JSX.Element {
               continue;
             }
             const candidate = assetFileName(file.name || undefined);
-            const saved = await trackAssetWrite(backend().saveAsset(candidate, bytes));
+            const saved = await trackAssetWrite(backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration));
             stored.push({ stored: saved, label: file.name || undefined });
             try {
               seedAssetBlob(saved, bytes);
@@ -1645,6 +1645,7 @@ export function Editor(props: { id: string }): JSX.Element {
       inserted = insertStoredAssets(editorToken, stored);
     } finally {
       dismissToast(toastId);
+      if (!stillBound(editorToken.binding)) return;
       if (inserted) {
         pushToast(`Inserted ${stored.length} file${stored.length === 1 ? "" : "s"}`, "success");
       }
@@ -1658,7 +1659,6 @@ export function Editor(props: { id: string }): JSX.Element {
       }
     }
   };
-
   // Mobile: take/pick a photo (Android camera plugin) → insert at the caret.
   const capturePhotoCmd = async () => {
     const editorToken = captureAssetEditorToken();
@@ -1666,16 +1666,16 @@ export function Editor(props: { id: string }): JSX.Element {
     try {
       res = await backend().capturePhoto();
     } catch (err) {
-      pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
+      if (stillBound(editorToken.binding)) pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
       return;
     }
     if (res.status === "ok" && res.path) {
       const candidate = captureAssetFileName(res.ext || "jpg");
       try {
-        const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate));
+        const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate, editorToken.binding.backendGeneration));
         insertStoredAssets(editorToken, [{ stored }]);
       } catch (err) {
-        pushToast(`Couldn’t import the photo (${String(err)})`, "error");
+        if (stillBound(editorToken.binding)) pushToast(`Couldn’t import the photo (${String(err)})`, "error");
       }
     }
   };
@@ -1692,17 +1692,17 @@ export function Editor(props: { id: string }): JSX.Element {
       try {
         res = await backend().stopRecording();
       } catch (err) {
-        pushToast(`Couldn’t save the recording (${String(err)})`, "error");
+        if (editorToken && stillBound(editorToken.binding)) pushToast(`Couldn’t save the recording (${String(err)})`, "error");
         return;
       }
       if (res.status === "ok" && res.path) {
         const candidate = captureAssetFileName(res.ext || "m4a");
         try {
-          const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate));
-          if (editorToken) insertStoredAssets(editorToken, [{ stored }]);
-          else reportStaleAsset();
+          if (!editorToken) return;
+          const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate, editorToken.binding.backendGeneration));
+          insertStoredAssets(editorToken, [{ stored }]);
         } catch (err) {
-          pushToast(`Couldn’t import the recording (${String(err)})`, "error");
+          if (editorToken && stillBound(editorToken.binding)) pushToast(`Couldn’t import the recording (${String(err)})`, "error");
         }
       }
       return;
@@ -1712,9 +1712,10 @@ export function Editor(props: { id: string }): JSX.Element {
     try {
       res = await backend().startRecording();
     } catch (err) {
-      pushToast(`Couldn’t start recording (${String(err)})`, "error");
+      if (stillBound(editorToken.binding)) pushToast(`Couldn’t start recording (${String(err)})`, "error");
       return;
     }
+    if (!stillBound(editorToken.binding)) { if (res.status === "recording") void backend().cancelRecording(); return; }
     if (res.status === "recording") {
       mobileRecordingEditorToken = editorToken;
       setRecordingAudio(true);
@@ -1758,17 +1759,15 @@ export function Editor(props: { id: string }): JSX.Element {
     try {
       // Store with a timestamped name (keeps the original + a sortable insert time).
       const orig = path.split(/[\\/]/).pop() || undefined;
-      const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
+      const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration));
       insertStoredAssets(editorToken, [{ stored: saved, label: orig }]);
     } catch {
       // ignore failed imports
     }
   };
 
-  // `/drawio` (GH #38): create a new blank *editable* .drawio.svg in assets/, insert
-  // it as an image reference, and open it in the external drawio editor. On return
-  // to Tine the rendered image refreshes (assetRefresh). Mirrors uploadAsset, but
-  // the file is created from the registry's blank template rather than picked.
+  // `/drawio` creates an editable asset, inserts its reference, then opens the
+  // editor. assetRefresh updates the image when Tine regains focus.
   const createDrawioDiagram = async () => {
     const editorToken = captureAssetEditorToken();
     const ed = MEDIA_EDITORS.find((e) => e.id === "drawio");
@@ -1781,16 +1780,17 @@ export function Editor(props: { id: string }): JSX.Element {
       // no longer ends in `.drawio.svg`, dropping the "Edit in draw.io" affordance
       // (GH #38). A unique stem never collides, so the double extension survives.
       const saved = await trackAssetWrite(
-        backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes)
+        backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes, editorToken.binding.backendGeneration)
       );
       insertStoredAssets(editorToken, [{ stored: saved }]);
       const cmd = await resolveMediaEditorCommand(ed);
+      if (!assetEditorCurrent(editorToken)) return;
       void backend()
-        .editAssetExternal(saved, cmd)
+        .editAssetExternal(saved, cmd, editorToken.binding.backendGeneration)
         .catch(() => pushToast("Couldn’t open draw.io", "error"));
       refreshAssetOnReturn(saved);
     } catch {
-      pushToast("Couldn’t create the diagram", "error");
+      if (stillBound(editorToken.binding)) pushToast("Couldn’t create the diagram", "error");
     }
   };
 

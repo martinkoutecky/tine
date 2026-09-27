@@ -12,7 +12,8 @@ import { parseDelimitedText, type DelimitedKind } from "./sheet/tsv";
 import { formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibleOrder, withUndoUnit, node as docNode } from "./document";
 import { pushToast } from "./toasts";
 import { reportStaleAsset } from "./assetLanding";
-import { graphEpoch, graphMeta } from "./graphSession";
+import { captureBinding, stillBound } from "./binding";
+import { graphMeta } from "./graphSession";
 import type { OutlineNode } from "./editor/outline";
 
 const MAX_DROPPED_CELLS = 5000;
@@ -65,7 +66,7 @@ export async function installFileDrop(): Promise<() => void> {
       pushToast("Drop a file onto a block to insert it.", "error");
       return;
     }
-    const dropEpoch = graphEpoch();
+    const binding = captureBinding();
     const dropRoot = graphMeta()?.root;
     const dropPage = docNode(afterId).page;
     const pagePath = pageByName(dropPage)?.id;
@@ -78,6 +79,7 @@ export async function installFileDrop(): Promise<() => void> {
         const kind = delimitedKind(path);
         if (kind) {
           const text = await backend().readTextFile(path);
+          if (!stillBound(binding)) return;
           const matrix = parseDelimitedText(text, kind);
           const cells = delimitedCellCount(matrix);
           if (cells > MAX_DROPPED_CELLS) {
@@ -88,7 +90,7 @@ export async function installFileDrop(): Promise<() => void> {
           continue;
         }
         const orig = basename(path) || undefined;
-        const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
+        const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig), binding.backendGeneration));
         storedAssets++;
         nodes.push({
           raw: assetMarkdown(saved, {
@@ -100,14 +102,14 @@ export async function installFileDrop(): Promise<() => void> {
         });
       }
       if (!nodes.length) return;
-      if (graphEpoch() !== dropEpoch || graphMeta()?.root !== dropRoot || docNode(afterId)?.page !== dropPage) {
+      if (!stillBound(binding) || graphMeta()?.root !== dropRoot || docNode(afterId)?.page !== dropPage) {
         if (storedAssets) reportStaleAsset();
         return;
       }
       withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
       pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
     } catch (e) {
-      pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
+      if (stillBound(binding)) pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
     }
   });
 
