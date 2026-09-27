@@ -69,3 +69,12 @@ it.each(["A", "B"])("P1: a conflicted member refuses deletion of grouped %s befo
   expect(pageByName(name)).toBeTruthy();
   expect(toasts().some((toast) => toast.message === "Resolve the conflict on “A” first.")).toBe(true);
 });
+
+it("an io failure refuses deletion with a save error", async () => {
+  const { save, remove } = setup();
+  save.mockResolvedValue({ failed: { index: 0, family: "io:Other", undoFailed: [] } });
+  await moveBlock(moved.id, null, 0, "B");
+  expect(await deletePage("A", "page")).toBe(false);
+  expect(remove).not.toHaveBeenCalled();
+  expect(toasts().some((toast) => toast.message === "Couldn't save “A”; the page was not deleted.")).toBe(true);
+});

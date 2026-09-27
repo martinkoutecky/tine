@@ -156,7 +156,7 @@ export type TransferEdge = readonly [source: string, destination: string];
 export interface SaveGroup {
   members: Set<string>;
   edges: Set<string>;
-  forced: Set<string>;
+  forced: Map<string, ConflictReason>;
   state: "open" | "sealed";
   pending?: Promise<boolean>;
   request?: Promise<boolean>;
@@ -166,6 +166,14 @@ export interface SaveGroup {
 }
 const groupOf = new Map<string, SaveGroup>();
 const sealedGroups = new Set<SaveGroup>();
+const saveAttempts = new Map<string, number>();
+function noteSaveAttempt(name: string): void {
+  saveAttempts.set(name, (saveAttempts.get(name) ?? 0) + 1);
+}
+function decidedConflict(g: SaveGroup, name: string): boolean {
+  const reason = conflictReason(name);
+  return !!reason && g.forced.get(name) === reason;
+}
 const deletingGroupMembers = new Set<string>();
 const [groupRevision, setGroupRevision] = createSignal(0);
 function changedGroups() { setGroupRevision((n) => n + 1); }
@@ -189,7 +197,7 @@ export function waitingOn(name: string): string[] {
 export function waitingFor(name: string): string[] {
   const g = group(name);
   if (!g) return [];
-  return [...g.members].filter((member) => member !== name && isConflicted(member) && !g.forced.has(member));
+  return [...g.members].filter((member) => member !== name && isConflicted(member) && !decidedConflict(g, member));
 }
 export function moveConflict(pages: Iterable<string>): string | undefined {
   for (const name of pages) {
@@ -212,7 +220,9 @@ function mergeInto(target: SaveGroup, other: SaveGroup): void {
     groupOf.set(member, target);
   }
   for (const edge of other.edges) target.edges.add(edge);
-  for (const member of other.forced) target.forced.add(member);
+  for (const [member, reason] of other.forced) {
+    if (!decidedConflict(target, member)) target.forced.set(member, reason);
+  }
   target.waiters.push(...other.waiters);
   other.waiters.length = 0;
   other.redirect = target;
@@ -222,7 +232,7 @@ function mergeInto(target: SaveGroup, other: SaveGroup): void {
 function registerGroup(pages: Iterable<string>, edges: Iterable<TransferEdge>): SaveGroup {
   const names = new Set(pages);
   const existing = [...names].map((name) => group(name)).filter((g): g is SaveGroup => !!g && g.state === "open");
-  const target = existing[0] ?? { members: new Set<string>(), edges: new Set<string>(), forced: new Set<string>(), state: "open" as const, waiters: [] };
+  const target = existing[0] ?? { members: new Set<string>(), edges: new Set<string>(), forced: new Map<string, ConflictReason>(), state: "open" as const, waiters: [] };
   for (const other of existing) mergeInto(target, other);
   for (const name of names) {
     target.members.add(name);
@@ -272,10 +282,13 @@ export function releaseGroup(name: string): void {
 function orderedMembers(g: SaveGroup): string[] {
   const names = [...g.members];
   const adjacency = new Map(names.map((name) => [name, new Set<string>()]));
+  const linked = new Set<string>();
   for (const raw of g.edges) {
     const [source, destination] = JSON.parse(raw) as [string, string];
-    if (adjacency.has(source) && adjacency.has(destination) && source !== destination)
+    if (adjacency.has(source) && adjacency.has(destination) && source !== destination) {
       adjacency.get(source)!.add(destination);
+      linked.add(source); linked.add(destination);
+    }
   }
   let clock = 0;
   const number = new Map<string, number>(), low = new Map<string, number>();
@@ -301,13 +314,13 @@ function orderedMembers(g: SaveGroup): string[] {
     const from = componentOf.get(source)!, to = componentOf.get(destination)!;
     if (from !== to) successors[from].add(to);
   }
-  const pending = new Set(components.map((_, i) => i));
+  const pending = new Set(components.map((_, i) => i).filter((i) => components[i].some((name) => linked.has(name))));
   const result: string[] = [];
   while (pending.size) {
     const ready = [...pending].filter((i) => [...successors[i]].every((to) => !pending.has(to)));
     for (const i of ready) { result.push(...components[i]); pending.delete(i); }
   }
-  return result;
+  return result.concat(components.filter((members) => members.every((name) => !linked.has(name))).flat());
 }
 
 function validGroupMembers(g: SaveGroup, binding: Binding, token: number, generations: Map<string, number | null>): boolean {
@@ -336,7 +349,7 @@ function failGroup(g: SaveGroup, failure: { index: number; family: string; undoF
   const successor = [...g.members].map((name) => groupOf.get(name)).find((other) => other && other !== g && other.state === "open");
   if (successor) mergeInto(successor, g);
   const family = failure.family;
-  if (family === "repeated") {
+  if (family === "repeated" || (family === "twin" && !pageByName(order[failure.index])?.id)) {
     for (const name of g.members) markConflict(name, { kind: "repeated" });
     pushToast("Couldn't save these pages together: two entries target the same file.", "error");
     return false;
@@ -369,7 +382,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     if (!stillBound(binding) || token !== graphToken) return false;
   }
   if (g.cancelled || [...g.members].some((name) => deletedPages.has(name) || deletingGroupMembers.has(name))) return false;
-  if ([...g.members].some((name) => isConflicted(name) && !g.forced.has(name))) return false;
+  if ([...g.members].some((name) => isConflicted(name) && !decidedConflict(g, name))) return false;
   // Seal atomically: no await between capturing the remaining single-page tails
   // and registering this request as every member's current chain entry.
   g.state = "sealed";
@@ -377,7 +390,10 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
   sealedGroups.add(g);
   const tails = [...g.members].map((name) => saveChain.get(name)).filter((tail): tail is Promise<SaveResult> => !!tail);
   const generations = new Map([...g.members].map((name) => [name, pageInstanceGeneration(name)]));
-  for (const name of g.members) saveChain.set(name, request);
+  for (const name of g.members) {
+    noteSaveAttempt(name);
+    saveChain.set(name, request);
+  }
   changedGroups();
   await Promise.all(tails);
   if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
@@ -387,20 +403,25 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     const page = pageByName(name);
     if (!page) return abortGroup(g);
     if (page.id) { ids.set(name, { id: page.id }); continue; }
-    const resolved = await resolveSaveMember(name, page.kind);
-    if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
-    if (resolved.kind === "alias") {
-      const owner = resolved.owners[0] && await backend().getPageByPath(resolved.owners[0]);
-      if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) return abortGroup(g);
-      if (!owner || owner.read_only || owner.guide) return failGroup(g, { index: order.indexOf(name), family: "alias-owner-busy", undoFailed: [] }, order);
-      if (order.some((member) => member !== name && pageByName(member)?.id === owner.id))
-        return failGroup(g, { index: order.indexOf(name), family: "repeated", undoFailed: [] }, order);
-      if (isDirty(owner.name) || isSaving(owner.name) || isConflicted(owner.name)) {
-        markConflict(name, { kind: "alias-owner-busy" });
-        return abortGroup(g);
-      }
-      ids.set(name, { id: owner.id!, owner, ownerGeneration: pageInstanceGeneration(owner.name) });
-    } else ids.set(name, { id: resolved.id });
+    try {
+      const resolved = await resolveSaveMember(name, page.kind);
+      if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+      if (resolved.kind === "alias") {
+        const owner = resolved.owners[0] && await backend().getPageByPath(resolved.owners[0]);
+        if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+        if (!owner || owner.read_only || owner.guide) return failGroup(g, { index: order.indexOf(name), family: "alias-owner-busy", undoFailed: [] }, order);
+        if (order.some((member) => member !== name && pageByName(member)?.id === owner.id))
+          return failGroup(g, { index: order.indexOf(name), family: "repeated", undoFailed: [] }, order);
+        if (isDirty(owner.name) || isSaving(owner.name) || isConflicted(owner.name)) {
+          markConflict(name, { kind: "alias-owner-busy" });
+          return abortGroup(g);
+        }
+        ids.set(name, { id: owner.id!, owner, ownerGeneration: pageInstanceGeneration(owner.name) });
+      } else ids.set(name, { id: resolved.id });
+    } catch (error) {
+      if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+      return failGroup(g, { index: order.indexOf(name), family: errorFamily(error), undoFailed: [] }, order);
+    }
   }
   if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
   const entries: SavePageEntry[] = [];
@@ -408,11 +429,11 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     const dto = pageToDto(name), target = ids.get(name)!;
     if (!dto) return abortGroup(g);
     entries.push({ id: target.id, page: target.owner ? appendAliasDraft(target.owner, dto) : dto,
-      baseRev: target.owner ? target.owner.rev ?? null : baseRev.get(name) ?? null, force: g.forced.has(name) && !target.owner });
+      baseRev: target.owner ? target.owner.rev ?? null : baseRev.get(name) ?? null, force: decidedConflict(g, name) && !target.owner });
   }
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length)
     return failGroup(g, { index: 0, family: "repeated", undoFailed: [] }, order);
-  const forcedConflicts = new Map([...g.forced].map((name) => [name, conflictReason(name)]));
+  const forcedConflicts = new Map(g.forced);
   for (const name of order) dirty.delete(name);
   try {
     const outcome = await backend().savePages(entries, binding.backendGeneration);
@@ -424,7 +445,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
       setPageId(name, target.id);
       baseRev.set(name, outcome.ok[i]);
       if (entries[i].baseRev === null) bumpPageInventoryRev();
-      if (g.forced.has(name) && conflictReason(name) === forcedConflicts.get(name)) clearConflict(name);
+      if (forcedConflicts.has(name) && conflictReason(name) === forcedConflicts.get(name)) clearConflict(name);
       lastSaveFailure.delete(name);
     }
     dissolveGroup(g);
@@ -562,6 +583,7 @@ export function resetSaveState() {
   }
   groupOf.clear();
   sealedGroups.clear();
+  saveAttempts.clear();
   lastSaveFailure.clear();
   setConflictReasons({});
 }
@@ -617,7 +639,11 @@ function enqueueSave(
   void next.finally(() => {
     if (saveChain.get(name) === next) saveChain.delete(name);
   });
-  return next.then((result) => result === "deferred" ? enqueueGroup(group(name)!) : result);
+  return next.then((result) => {
+    if (result !== "deferred") return result;
+    const deferredGroup = group(name);
+    return deferredGroup ? enqueueGroup(deferredGroup) : false;
+  });
 }
 
 /** Write the page's CURRENT state once. No-op success if it isn't dirty and not
@@ -655,6 +681,7 @@ async function doSave(
     dirty.delete(name);
     return false;
   }
+  noteSaveAttempt(name);
   dirty.delete(name);
   try {
     const baseline = baseRev.get(name) ?? null;
@@ -824,7 +851,8 @@ export async function flushAll(): Promise<boolean> {
 export async function forceSave(name: string): Promise<boolean> {
   const g = group(name);
   if (g) {
-    g.forced.add(name);
+    const reason = conflictReason(name);
+    if (reason) g.forced.set(name, reason);
     return enqueueGroup(g);
   }
   dirty.add(name); // ensure doSave writes even though it's parked as conflicted
@@ -847,9 +875,9 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
       return isConflicted(name) ? resolveConflict(name, "mine") : true;
     }
     if (g) {
-      g.forced.add(name);
+      g.forced.set(name, conflictReason(name)!);
       changedGroups();
-      if ([...g.members].some((member) => isConflicted(member) && !g.forced.has(member))) return true;
+      if ([...g.members].some((member) => isConflicted(member) && !decidedConflict(g, member))) return true;
     }
     return forceSave(name);
   }
@@ -857,6 +885,11 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
   const kind = pageByName(name)?.kind ?? "page";
   await Promise.all([...sealedGroups].filter((g) => g.members.has(name)).map((g) => g.request));
   if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+  const currentGroup = group(name);
+  if (currentGroup?.state === "sealed") return false;
+  if (currentGroup?.forced.delete(name)) changedGroups();
+  const reason = conflictReason(name);
+  const attempt = saveAttempts.get(name) ?? 0;
   let dto: Awaited<ReturnType<ReturnType<typeof backend>["getPage"]>>;
   try { dto = await backend().getPage(name, kind); }
   catch (error) {
@@ -865,9 +898,13 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
     return false;
   }
   if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+  if (group(name) !== currentGroup || group(name)?.state === "sealed"
+      || conflictReason(name) !== reason
+      || currentGroup?.forced.has(name) || (saveAttempts.get(name) ?? 0) !== attempt) return false;
   releaseGroup(name);
   if (dto) reloadPage(dto);
   else forgetPage(name);
+  dirty.delete(name);
   clearConflict(name);
   return true;
 }

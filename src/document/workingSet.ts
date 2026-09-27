@@ -1,5 +1,5 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
-import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
+import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, conflictReason, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
 import { doc, setDoc, FeedPage, pageByName } from "./model";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
@@ -140,6 +140,10 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   const loaded = pageByName(name);
   if (expectedPath && loaded?.id !== expectedPath) return false;
   if (loaded?.readOnly || loaded?.guide) return false;
+  if (conflictReason(name)?.kind === "released") {
+    pushToast(`Resolve the conflict on “${name}” first.`, "error");
+    return false;
+  }
   // A group member must land with all its partners before the page can be
   // deleted. Otherwise deleting a source can remove the only live disk copy of
   // moved content. A failed or conflicted group leaves the delete untouched.
@@ -153,7 +157,12 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
     if ([...(group(name)?.members ?? [])].some(isConflicted)) return refuseGroupDelete();
   }
   const needsFlush = wasGrouped || ((isDirty(name) || isSaving(name)) && !isConflicted(name));
-  if (needsFlush && !(await flushPage(name))) return wasGrouped ? refuseGroupDelete() : false;
+  if (needsFlush && !(await flushPage(name))) {
+    if (!wasGrouped) return false;
+    if ([...(group(name)?.members ?? [])].some(isConflicted)) return refuseGroupDelete();
+    pushToast(`Couldn't save “${name}”; the page was not deleted.`, "error");
+    return false;
+  }
   // Hold off any new successor request during the disk delete. If another
   // intent joined while the preceding request settled, leave it intact.
   const releaseReservation = wasGrouped ? await reserveGroupMemberDeletion(name) : undefined;
@@ -164,6 +173,11 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   }
   if (!stillBound(binding) || pageInstanceGeneration(name) !== generation || graphRewriteFrozen()) {
     releaseReservation?.();
+    return false;
+  }
+  if (conflictReason(name)?.kind === "released") {
+    releaseReservation?.();
+    pushToast(`Resolve the conflict on “${name}” first.`, "error");
     return false;
   }
   // Tombstone first so any queued/in-flight save no-ops during the delete, but
