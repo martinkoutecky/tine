@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 if (process.platform !== "linux") throw new Error("PDF ownership native proof is Linux-only");
 
@@ -41,7 +42,7 @@ for (const [graph, owner] of [[GRAPH_A, "A"], [GRAPH_B, "B"]]) {
   );
 }
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
-const appData = path.join(TMP, "xdg", "data", "page.tine.Tine");
+const appData = path.join(TMP, "xdg", "data", APP_ID);
 fs.mkdirSync(appData, { recursive: true });
 fs.writeFileSync(path.join(appData, "tine-settings.json"), JSON.stringify({
   known_graphs: [

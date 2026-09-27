@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const app = path.resolve(process.env.TINE_APP || path.join(root, "target/release/tine"));
@@ -128,20 +129,20 @@ try {
 
   await waitFor(
     () =>
-      (fs.existsSync(clientLog) && fs.readFileSync(clientLog, "utf8").includes('set_app_id("page.tine.Tine")')) ||
+      (fs.existsSync(clientLog) && fs.readFileSync(clientLog, "utf8").includes(`set_app_id("${APP_ID}")`)) ||
       client.exitCode !== null,
     20_000,
-    "Tine never advertised page.tine.Tine on the Wayland wire",
+    `Tine never advertised ${APP_ID} on the Wayland wire`,
   );
   fs.closeSync(stdout);
   fs.closeSync(stderr);
   const wire = fs.readFileSync(clientLog, "utf8");
-  if (client.exitCode !== null && !wire.includes('set_app_id("page.tine.Tine")')) {
+  if (client.exitCode !== null && !wire.includes(`set_app_id("${APP_ID}")`)) {
     throw new Error(`Tine exited ${client.exitCode} before advertising its app ID:\n${wire.slice(-4_000)}`);
   }
 
   const fallbackAt = wire.indexOf('set_app_id("tine")');
-  const tineAt = wire.indexOf('set_app_id("page.tine.Tine")');
+  const tineAt = wire.indexOf(`set_app_id("${APP_ID}")`);
   const firstBufferAt = wire.indexOf(".attach(", fallbackAt);
   if (fallbackAt < 0 || tineAt < fallbackAt) {
     throw new Error("Wayland trace does not show Tine overriding GTK's executable-name fallback");
@@ -150,16 +151,16 @@ try {
     throw new Error("Tine advertised its application ID only after the first visible buffer");
   }
 
-  const desktop = path.join(dataHome, "applications/page.tine.Tine.desktop");
-  if (!fs.existsSync(desktop) || !fs.readFileSync(desktop, "utf8").includes("Icon=page.tine.Tine")) {
+  const desktop = path.join(dataHome, `applications/${APP_ID}.desktop`);
+  if (!fs.existsSync(desktop) || !fs.readFileSync(desktop, "utf8").includes(`Icon=${APP_ID}`)) {
     throw new Error("standalone release binary did not install the matching desktop entry");
   }
 
   fs.writeFileSync(
     path.join(out, "result.json"),
-    `${JSON.stringify({ app, appId: "page.tine.Tine", fallbackOverridden: true, beforeFirstBuffer: true }, null, 2)}\n`,
+    `${JSON.stringify({ app, appId: APP_ID, fallbackOverridden: true, beforeFirstBuffer: true }, null, 2)}\n`,
   );
-  console.log("Wayland app ID OK: page.tine.Tine before the first visible buffer");
+  console.log(`Wayland app ID OK: ${APP_ID} before the first visible buffer`);
 } finally {
   await stopGroup(client);
   await stopGroup(compositor);
