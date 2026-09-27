@@ -4,36 +4,36 @@ Five runs per metric. Cells are median [min, max] in ms (RSS in MiB).
 
 | Corpus | Metric | og | master | og vs master |
 |---|---|---:|---:|---:|
-| 2k | openMs | 1134.1 [1124.4, 1237.5] | 795.9 [789.5, 853.0] | 42.5% |
-| 2k | openPageMs | 176.0 [94.4, 201.1] | 119.8 [84.5, 137.0] | 47.0% |
-| 2k | typingP50Ms | 7.0 [4.0, 8.0] | 6.0 [5.0, 8.0] | 16.7% |
-| 2k | typingP95Ms | 9.0 [8.0, 11.0] | 10.0 [8.0, 11.0] | -10.0% |
-| 2k | saveMs | failed (0/5 samples) | 474.0 [464.0, 511.0] | — |
-| 2k | searchMs | 364.4 [317.2, 437.0] | 1191.2 [1060.5, 1355.0] | -69.4% |
-| 2k | linkedReferencesMs | 60.3 [24.7, 73.6] | 1041.0 [1026.8, 1088.3] | -94.2% |
-| 2k | unlinkedReferencesMs | 29.9 [27.3, 67.1] | 30.0 [12.1, 61.4] | -0.4% |
-| 2k | rename200Ms | failed (0/5 samples) | 725.2 [722.6, 905.9] | — |
-| 10k | openMs | 4240.8 [4219.6, 4341.9] | 969.0 [916.2, 1040.3] | 337.6% |
-| 10k | openPageMs | 206.0 [120.8, 233.5] | 86.6 [71.4, 150.7] | 137.9% |
-| 10k | typingP50Ms | 6.0 [5.0, 7.0] | 8.0 [6.0, 8.0] | -25.0% |
-| 10k | typingP95Ms | 8.0 [8.0, 9.0] | 9.0 [8.0, 10.0] | -11.1% |
-| 10k | saveMs | failed (0/5 samples) | 495.0 [457.0, 504.0] | — |
-| 10k | searchMs | 591.4 [548.5, 641.1] | 5689.2 [5442.0, 6080.0] | -89.6% |
-| 10k | linkedReferencesMs | 60.5 [29.6, 103.8] | 1183.0 [1033.3, 1283.2] | -94.9% |
-| 10k | unlinkedReferencesMs | 63.9 [12.9, 105.0] | 145.0 [132.9, 328.2] | -55.9% |
-| 10k | rename200Ms | failed (0/5 samples) | 3028.3 [2992.4, 3122.5] | — |
-| 10k | rssAfterOpenBytes | 941.1 [940.5, 942.3] | 206.7 [203.2, 210.7] | 355.4% |
-| 10k | rssAfterJourneysBytes | 948.4 [948.1, 948.4] | 1131.3 [1120.1, 1138.0] | -16.2% |
-| 10k | rssAfterRenameBytes | 948.2 [947.7, 948.4] | 868.0 [842.5, 877.6] | 9.2% |
-| anonymized | openMs | 685.3 [674.5, 707.6] | 750.2 [718.7, 781.9] | -8.7% |
-| anonymized | openPageMs | 130.5 [118.7, 165.3] | 118.3 [99.9, 144.5] | 10.3% |
-| anonymized | typingP50Ms | 7.0 [6.0, 8.0] | 8.0 [6.0, 9.0] | -12.5% |
-| anonymized | typingP95Ms | 10.0 [7.0, 12.0] | 11.0 [8.0, 11.0] | -9.1% |
-| anonymized | saveMs | failed (0/5 samples) | 503.0 [430.0, 516.0] | — |
-| anonymized | searchMs | 384.0 [334.7, 446.8] | 529.1 [525.2, 679.3] | -27.4% |
-| anonymized | linkedReferencesMs | 65.1 [29.5, 116.1] | 173.5 [61.5, 263.3] | -62.5% |
-| anonymized | unlinkedReferencesMs | 61.5 [14.6, 104.4] | 13.5 [12.4, 68.8] | 355.4% |
-| anonymized | rename200Ms | failed (0/5 samples) | 609.6 [353.4, 682.2] | — |
+| 2k | openMs | 1104.6 [1096.0, 1175.3] | 806.2 [791.6, 914.0] | 37.0% |
+| 2k | openPageMs | 104.8 [64.8, 112.8] | 104.6 [56.8, 113.9] | 0.2% |
+| 2k | typingP50Ms | 7.0 [6.0, 8.0] | 7.0 [6.0, 8.0] | 0.0% |
+| 2k | typingP95Ms | 9.0 [8.0, 9.0] | 9.0 [8.0, 10.0] | 0.0% |
+| 2k | saveMs | 523.0 [441.0, 539.0] | 468.0 [460.0, 513.0] | 11.8% |
+| 2k | searchMs | 386.7 [345.3, 403.0] | 1347.0 [1194.5, 1383.4] | -71.3% |
+| 2k | linkedReferencesMs | 63.7 [20.1, 69.1] | 1036.7 [984.0, 1190.0] | -93.9% |
+| 2k | unlinkedReferencesMs | 65.5 [14.3, 68.8] | 65.6 [12.8, 96.5] | -0.3% |
+| 2k | rename200Ms | 355.4 [350.1, 396.3] | 461.9 [394.8, 507.4] | -23.1% |
+| 10k | openMs | 4298.2 [4248.2, 4370.6] | 958.8 [903.1, 987.3] | 348.3% |
+| 10k | openPageMs | 95.3 [86.1, 133.6] | 109.7 [61.9, 112.9] | -13.1% |
+| 10k | typingP50Ms | 6.0 [5.0, 6.0] | 7.0 [5.0, 8.0] | -14.3% |
+| 10k | typingP95Ms | 8.0 [7.0, 9.0] | 9.0 [8.0, 9.0] | -11.1% |
+| 10k | saveMs | 490.0 [426.0, 497.0] | 461.0 [459.0, 512.0] | 6.3% |
+| 10k | searchMs | 566.7 [473.9, 575.1] | 5685.2 [5599.2, 5838.8] | -90.0% |
+| 10k | linkedReferencesMs | 60.6 [14.4, 67.1] | 1189.0 [1073.4, 1227.3] | -94.9% |
+| 10k | unlinkedReferencesMs | 55.8 [12.6, 63.3] | 230.1 [132.6, 240.4] | -75.7% |
+| 10k | rename200Ms | 5603.2 [5544.2, 5690.0] | 843.5 [794.9, 910.7] | 564.3% |
+| 10k | rssAfterOpenBytes | 948.3 [947.7, 949.8] | 221.3 [217.6, 223.6] | 328.4% |
+| 10k | rssAfterJourneysBytes | 970.4 [967.8, 972.7] | 1146.9 [1142.6, 1152.5] | -15.4% |
+| 10k | rssAfterRenameBytes | 970.4 [967.8, 972.7] | 1103.5 [1101.1, 1105.6] | -12.1% |
+| anonymized | openMs | 708.0 [674.6, 820.9] | 747.8 [704.0, 780.1] | -5.3% |
+| anonymized | openPageMs | 102.1 [56.2, 116.7] | 102.3 [67.7, 122.7] | -0.2% |
+| anonymized | typingP50Ms | 8.0 [7.0, 8.0] | 7.0 [6.0, 9.0] | 14.3% |
+| anonymized | typingP95Ms | 10.0 [9.0, 11.0] | 10.0 [10.0, 13.0] | 0.0% |
+| anonymized | saveMs | 467.0 [463.0, 516.0] | 459.0 [443.0, 470.0] | 1.7% |
+| anonymized | searchMs | 397.0 [350.1, 486.0] | 551.5 [495.5, 682.3] | -28.0% |
+| anonymized | linkedReferencesMs | 20.2 [13.0, 75.9] | 81.6 [28.1, 238.2] | -75.3% |
+| anonymized | unlinkedReferencesMs | 54.0 [13.1, 64.9] | 27.0 [12.1, 34.8] | 100.3% |
+| anonymized | rename200Ms | 168.3 [132.4, 207.7] | 320.8 [245.0, 389.8] | -47.5% |
 
 ## Main-thread tasks or animation-frame gaps over 100 ms
 
@@ -41,7 +41,7 @@ WebKitGTK uses the animation-frame gap fallback on this runner. Values list ever
 
 | Corpus | Journey | og maximum and gaps (ms) | master maximum and gaps (ms) |
 |---|---|---|---|
-| 2k | open | 265.0; 123.0, 166.0, 265.0, 122.0, 128.0, 110.0 | 163.0; 101.0, 101.0, 163.0 |
+| 2k | open | 159.0; 123.0, 127.0, 129.0, 121.0, 159.0 | 170.0; 105.0, 170.0, 101.0 |
 | 2k | search | 0; none | 0; none |
 | 2k | openPage | 0; none | 0; none |
 | 2k | linkedReferences | 0; none | 0; none |
@@ -49,7 +49,7 @@ WebKitGTK uses the animation-frame gap fallback on this runner. Values list ever
 | 2k | typing | 0; none | 0; none |
 | 2k | save | 0; none | 0; none |
 | 2k | rename | 0; none | 0; none |
-| 10k | open | 3310.0; 123.0, 3310.0, 261.0, 128.0, 3236.0, 255.0, 125.0, 3244.0, 257.0, 140.0, 3161.0, 240.0, 179.0, 3185.0, 288.0 | 112.0; 105.0, 102.0, 112.0, 107.0 |
+| 10k | open | 3310.0; 169.0, 3257.0, 271.0, 175.0, 3291.0, 217.0, 117.0, 3266.0, 224.0, 121.0, 3310.0, 220.0, 166.0, 3251.0, 214.0 | 104.0; 104.0, 102.0, 102.0 |
 | 10k | search | 0; none | 0; none |
 | 10k | openPage | 0; none | 0; none |
 | 10k | linkedReferences | 0; none | 0; none |
@@ -57,7 +57,7 @@ WebKitGTK uses the animation-frame gap fallback on this runner. Values list ever
 | 10k | typing | 0; none | 0; none |
 | 10k | save | 0; none | 0; none |
 | 10k | rename | 0; none | 0; none |
-| anonymized | open | 190.0; 176.0, 131.0, 164.0, 190.0, 176.0 | 165.0; 103.0, 165.0 |
+| anonymized | open | 254.0; 121.0, 116.0, 122.0, 182.0, 254.0 | 165.0; 165.0, 108.0 |
 | anonymized | search | 0; none | 0; none |
 | anonymized | openPage | 0; none | 0; none |
 | anonymized | linkedReferences | 0; none | 0; none |
