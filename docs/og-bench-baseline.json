@@ -1,0 +1,2230 @@
+{
+  "schemaVersion": 1,
+  "sourceRevisions": {
+    "og": "aaebfb94f",
+    "master": "ddf408c558cb904e338ff8b19ea2199d3ae91159"
+  },
+  "binarySha256": {
+    "og": "3fdd47943c207df27cc530fa10d44f021042b628ab83944bf08da8248c68857e",
+    "master": "4e71f49445061f4a154993e81a29ea540c4d3354b36ce1401e906f310a6ba75d"
+  },
+  "seed": 543,
+  "runs": 5,
+  "probe": "PerformanceObserver longtask when supported; otherwise rAF gap",
+  "summary": {
+    "2k": {
+      "openMs": {
+        "og": {
+          "median": 1134.1249440000006,
+          "min": 1124.3808519999948,
+          "max": 1237.5174929999994,
+          "spread": 113.1366410000046,
+          "samples": [
+            1134.1249440000006,
+            1149.5881470000022,
+            1237.5174929999994,
+            1124.3808519999948,
+            1132.2943119999982
+          ]
+        },
+        "master": {
+          "median": 795.8605719999978,
+          "min": 789.5077510000119,
+          "max": 852.9531659999993,
+          "spread": 63.445414999987406,
+          "samples": [
+            792.2470240000002,
+            795.8605719999978,
+            806.5029809999978,
+            852.9531659999993,
+            789.5077510000119
+          ]
+        }
+      },
+      "openPageMs": {
+        "og": {
+          "median": 176.01306300000033,
+          "min": 94.44706700000097,
+          "max": 201.11228399999527,
+          "spread": 106.6652169999943,
+          "samples": [
+            176.01306300000033,
+            185.50402100000065,
+            94.44706700000097,
+            201.11228399999527,
+            140.39258799998788
+          ]
+        },
+        "master": {
+          "median": 119.75036899999395,
+          "min": 84.52319599999828,
+          "max": 137.00352500000008,
+          "spread": 52.4803290000018,
+          "samples": [
+            120.0269900000003,
+            84.52319599999828,
+            137.00352500000008,
+            119.75036899999395,
+            106.34412199999497
+          ]
+        }
+      },
+      "typingP50Ms": {
+        "og": {
+          "median": 7.000000000000455,
+          "min": 4,
+          "max": 8,
+          "spread": 4,
+          "samples": [
+            4,
+            8,
+            8,
+            7.000000000000455,
+            6
+          ]
+        },
+        "master": {
+          "median": 6,
+          "min": 5,
+          "max": 8,
+          "spread": 3,
+          "samples": [
+            8,
+            5,
+            8,
+            6,
+            5
+          ]
+        }
+      },
+      "typingP95Ms": {
+        "og": {
+          "median": 9,
+          "min": 8,
+          "max": 11,
+          "spread": 3,
+          "samples": [
+            11,
+            9,
+            11,
+            9,
+            8
+          ]
+        },
+        "master": {
+          "median": 10,
+          "min": 8,
+          "max": 11,
+          "spread": 3,
+          "samples": [
+            10,
+            8,
+            8.999999999999545,
+            10,
+            11
+          ]
+        }
+      },
+      "saveMs": {
+        "og": null,
+        "master": {
+          "median": 474,
+          "min": 464,
+          "max": 511,
+          "spread": 47,
+          "samples": [
+            474,
+            511,
+            511,
+            468,
+            464
+          ]
+        }
+      },
+      "searchMs": {
+        "og": {
+          "median": 364.39101700000174,
+          "min": 317.2052229999972,
+          "max": 437.04967099999976,
+          "spread": 119.84444800000256,
+          "samples": [
+            437.04967099999976,
+            349.36259300000165,
+            317.2052229999972,
+            406.4433710000012,
+            364.39101700000174
+          ]
+        },
+        "master": {
+          "median": 1191.199407,
+          "min": 1060.4800289999985,
+          "max": 1354.978019000002,
+          "spread": 294.4979900000035,
+          "samples": [
+            1191.199407,
+            1185.170005,
+            1354.978019000002,
+            1060.4800289999985,
+            1247.8664940000017
+          ]
+        }
+      },
+      "linkedReferencesMs": {
+        "og": {
+          "median": 60.2639250000002,
+          "min": 24.670275999997102,
+          "max": 73.61374300000898,
+          "spread": 48.94346700001188,
+          "samples": [
+            60.2639250000002,
+            64.69631200000003,
+            24.670275999997102,
+            59.910414999998466,
+            73.61374300000898
+          ]
+        },
+        "master": {
+          "median": 1041.0204489999996,
+          "min": 1026.847354999998,
+          "max": 1088.263433,
+          "spread": 61.41607800000202,
+          "samples": [
+            1088.263433,
+            1041.0204489999996,
+            1075.710082000005,
+            1026.847354999998,
+            1035.5881609999924
+          ]
+        }
+      },
+      "unlinkedReferencesMs": {
+        "og": {
+          "median": 29.856942000000345,
+          "min": 27.31023500000083,
+          "max": 67.08542399999715,
+          "spread": 39.77518899999632,
+          "samples": [
+            29.856942000000345,
+            27.31023500000083,
+            67.08542399999715,
+            61.66950999999972,
+            28.68652099999599
+          ]
+        },
+        "master": {
+          "median": 29.965165000001434,
+          "min": 12.072932000002766,
+          "max": 61.41013199999907,
+          "spread": 49.3371999999963,
+          "samples": [
+            61.41013199999907,
+            28.725972000000183,
+            29.965165000001434,
+            12.072932000002766,
+            52.13296600000467
+          ]
+        }
+      },
+      "rename200Ms": {
+        "og": null,
+        "master": {
+          "median": 725.2061499999982,
+          "min": 722.564280000006,
+          "max": 905.860010999997,
+          "spread": 183.29573099999106,
+          "samples": [
+            735.5328490000029,
+            725.2061499999982,
+            905.860010999997,
+            723.0117420000024,
+            722.564280000006
+          ]
+        }
+      },
+      "rssAfterOpenBytes": {
+        "og": null,
+        "master": null
+      },
+      "rssAfterJourneysBytes": {
+        "og": null,
+        "master": null
+      },
+      "rssAfterRenameBytes": {
+        "og": null,
+        "master": null
+      }
+    },
+    "10k": {
+      "openMs": {
+        "og": {
+          "median": 4240.7994349999935,
+          "min": 4219.579034000009,
+          "max": 4341.856503999996,
+          "spread": 122.27746999998635,
+          "samples": [
+            4341.856503999996,
+            4219.579034000009,
+            4319.4736390000035,
+            4240.7994349999935,
+            4233.069424000016
+          ]
+        },
+        "master": {
+          "median": 968.9992600000114,
+          "min": 916.1640180000104,
+          "max": 1040.2837740000105,
+          "spread": 124.11975600000005,
+          "samples": [
+            966.6090919999988,
+            988.5782219999965,
+            916.1640180000104,
+            1040.2837740000105,
+            968.9992600000114
+          ]
+        }
+      },
+      "openPageMs": {
+        "og": {
+          "median": 206.00713299997733,
+          "min": 120.78035099999397,
+          "max": 233.5169290000049,
+          "spread": 112.73657800001092,
+          "samples": [
+            120.78035099999397,
+            233.5169290000049,
+            216.40991799999028,
+            206.00713299997733,
+            200.0800079999899
+          ]
+        },
+        "master": {
+          "median": 86.58707799999684,
+          "min": 71.35387399999308,
+          "max": 150.7032429999963,
+          "spread": 79.34936900000321,
+          "samples": [
+            86.58707799999684,
+            75.0005969999911,
+            112.22182400000747,
+            71.35387399999308,
+            150.7032429999963
+          ]
+        }
+      },
+      "typingP50Ms": {
+        "og": {
+          "median": 6,
+          "min": 5,
+          "max": 7,
+          "spread": 2,
+          "samples": [
+            6,
+            6,
+            6,
+            7,
+            5
+          ]
+        },
+        "master": {
+          "median": 7.9999999999990905,
+          "min": 6,
+          "max": 8,
+          "spread": 2,
+          "samples": [
+            8,
+            7.9999999999990905,
+            7.999999999998181,
+            6,
+            8
+          ]
+        }
+      },
+      "typingP95Ms": {
+        "og": {
+          "median": 8,
+          "min": 8,
+          "max": 8.99999999999909,
+          "spread": 0.9999999999990905,
+          "samples": [
+            8,
+            8,
+            8,
+            8.99999999999909,
+            8
+          ]
+        },
+        "master": {
+          "median": 9,
+          "min": 8,
+          "max": 10.000000000001819,
+          "spread": 2.000000000001819,
+          "samples": [
+            10.000000000001819,
+            9,
+            8,
+            9,
+            9
+          ]
+        }
+      },
+      "saveMs": {
+        "og": null,
+        "master": {
+          "median": 495,
+          "min": 457,
+          "max": 504,
+          "spread": 47,
+          "samples": [
+            457,
+            460,
+            501,
+            495,
+            504
+          ]
+        }
+      },
+      "searchMs": {
+        "og": {
+          "median": 591.4307909999916,
+          "min": 548.490135,
+          "max": 641.066949,
+          "spread": 92.57681400000001,
+          "samples": [
+            591.4307909999916,
+            641.066949,
+            605.7596769999946,
+            548.490135,
+            563.4058359999908
+          ]
+        },
+        "master": {
+          "median": 5689.159191999992,
+          "min": 5441.990072999994,
+          "max": 6080.011257999984,
+          "spread": 638.0211849999905,
+          "samples": [
+            5746.141258999996,
+            5441.990072999994,
+            6080.011257999984,
+            5689.159191999992,
+            5629.217436000006
+          ]
+        }
+      },
+      "linkedReferencesMs": {
+        "og": {
+          "median": 60.52261699998053,
+          "min": 29.613100999995368,
+          "max": 103.75034400000004,
+          "spread": 74.13724300000467,
+          "samples": [
+            29.613100999995368,
+            103.75034400000004,
+            71.75646400000551,
+            57.1845200000098,
+            60.52261699998053
+          ]
+        },
+        "master": {
+          "median": 1182.962537000014,
+          "min": 1033.258891000005,
+          "max": 1283.2394730000087,
+          "spread": 249.98058200000378,
+          "samples": [
+            1283.2394730000087,
+            1219.6907879999926,
+            1139.7483970000176,
+            1182.962537000014,
+            1033.258891000005
+          ]
+        }
+      },
+      "unlinkedReferencesMs": {
+        "og": {
+          "median": 63.90620900000795,
+          "min": 12.930346000008285,
+          "max": 104.95429199998034,
+          "spread": 92.02394599997206,
+          "samples": [
+            28.28205200000957,
+            65.79629800000112,
+            12.930346000008285,
+            63.90620900000795,
+            104.95429199998034
+          ]
+        },
+        "master": {
+          "median": 144.9666530000104,
+          "min": 132.87639900000067,
+          "max": 328.2357449999836,
+          "spread": 195.3593459999829,
+          "samples": [
+            141.51084999999148,
+            161.1102580000006,
+            132.87639900000067,
+            144.9666530000104,
+            328.2357449999836
+          ]
+        }
+      },
+      "rename200Ms": {
+        "og": null,
+        "master": {
+          "median": 3028.332767,
+          "min": 2992.4081300000107,
+          "max": 3122.5231109999877,
+          "spread": 130.11498099997698,
+          "samples": [
+            3028.332767,
+            2992.4081300000107,
+            3122.5231109999877,
+            3050.4580959999876,
+            3020.926996000024
+          ]
+        }
+      },
+      "rssAfterOpenBytes": {
+        "og": {
+          "median": 986779648,
+          "min": 986165248,
+          "max": 988057600,
+          "spread": 1892352,
+          "samples": [
+            988057600,
+            986779648,
+            986697728,
+            986918912,
+            986165248
+          ]
+        },
+        "master": {
+          "median": 216698880,
+          "min": 213118976,
+          "max": 220979200,
+          "spread": 7860224,
+          "samples": [
+            215224320,
+            216698880,
+            217735168,
+            220979200,
+            213118976
+          ]
+        }
+      },
+      "rssAfterJourneysBytes": {
+        "og": {
+          "median": 994455552,
+          "min": 994193408,
+          "max": 994512896,
+          "spread": 319488,
+          "samples": [
+            994484224,
+            994455552,
+            994193408,
+            994512896,
+            994308096
+          ]
+        },
+        "master": {
+          "median": 1186304000,
+          "min": 1174560768,
+          "max": 1193246720,
+          "spread": 18685952,
+          "samples": [
+            1178214400,
+            1174560768,
+            1193246720,
+            1186304000,
+            1192689664
+          ]
+        }
+      },
+      "rssAfterRenameBytes": {
+        "og": {
+          "median": 994308096,
+          "min": 993718272,
+          "max": 994484224,
+          "spread": 765952,
+          "samples": [
+            994484224,
+            994455552,
+            993718272,
+            994275328,
+            994308096
+          ]
+        },
+        "master": {
+          "median": 910200832,
+          "min": 883376128,
+          "max": 920231936,
+          "spread": 36855808,
+          "samples": [
+            883376128,
+            910200832,
+            913805312,
+            920231936,
+            886738944
+          ]
+        }
+      }
+    },
+    "anonymized": {
+      "openMs": {
+        "og": {
+          "median": 685.2921649999917,
+          "min": 674.4865149999969,
+          "max": 707.6350929999899,
+          "spread": 33.148577999992995,
+          "samples": [
+            685.2921649999917,
+            707.6350929999899,
+            674.4865149999969,
+            674.9539119999972,
+            700.3185810000286
+          ]
+        },
+        "master": {
+          "median": 750.2455000000191,
+          "min": 718.7219760000007,
+          "max": 781.8731259999913,
+          "spread": 63.151149999990594,
+          "samples": [
+            781.8731259999913,
+            764.117132000014,
+            736.130455000035,
+            750.2455000000191,
+            718.7219760000007
+          ]
+        }
+      },
+      "openPageMs": {
+        "og": {
+          "median": 130.52294399999664,
+          "min": 118.70244999998249,
+          "max": 165.2790479999967,
+          "spread": 46.5765980000142,
+          "samples": [
+            118.70244999998249,
+            143.8310599999968,
+            130.52294399999664,
+            165.2790479999967,
+            120.92570699995849
+          ]
+        },
+        "master": {
+          "median": 118.34990500001004,
+          "min": 99.89763800002402,
+          "max": 144.53975600001286,
+          "spread": 44.64211799998884,
+          "samples": [
+            124.22231700000702,
+            144.53975600001286,
+            118.34990500001004,
+            99.89763800002402,
+            118.06377399998019
+          ]
+        }
+      },
+      "typingP50Ms": {
+        "og": {
+          "median": 7,
+          "min": 6,
+          "max": 8,
+          "spread": 2,
+          "samples": [
+            7,
+            6,
+            8,
+            7,
+            8
+          ]
+        },
+        "master": {
+          "median": 8,
+          "min": 6,
+          "max": 9,
+          "spread": 3,
+          "samples": [
+            6,
+            7,
+            8,
+            9,
+            9
+          ]
+        }
+      },
+      "typingP95Ms": {
+        "og": {
+          "median": 10,
+          "min": 7.000000000000227,
+          "max": 12,
+          "spread": 4.999999999999773,
+          "samples": [
+            10,
+            8.999999999999773,
+            10,
+            7.000000000000227,
+            12
+          ]
+        },
+        "master": {
+          "median": 11,
+          "min": 8,
+          "max": 11,
+          "spread": 3,
+          "samples": [
+            8,
+            10,
+            11,
+            11,
+            11
+          ]
+        }
+      },
+      "saveMs": {
+        "og": null,
+        "master": {
+          "median": 503,
+          "min": 430,
+          "max": 516,
+          "spread": 86,
+          "samples": [
+            503,
+            505,
+            430,
+            516,
+            444
+          ]
+        }
+      },
+      "searchMs": {
+        "og": {
+          "median": 383.99978899999405,
+          "min": 334.70556599998963,
+          "max": 446.78783499999554,
+          "spread": 112.08226900000591,
+          "samples": [
+            334.70556599998963,
+            446.78783499999554,
+            383.99978899999405,
+            343.2317049999838,
+            445.53512900002534
+          ]
+        },
+        "master": {
+          "median": 529.1199230000202,
+          "min": 525.1834849999868,
+          "max": 679.2541360000032,
+          "spread": 154.07065100001637,
+          "samples": [
+            529.1199230000202,
+            679.2541360000032,
+            639.4552499999991,
+            525.1834849999868,
+            527.4704410000122
+          ]
+        }
+      },
+      "linkedReferencesMs": {
+        "og": {
+          "median": 65.1325680000009,
+          "min": 29.473075999994762,
+          "max": 116.0550139999832,
+          "spread": 86.58193799998844,
+          "samples": [
+            106.66849800001364,
+            29.473075999994762,
+            116.0550139999832,
+            65.1325680000009,
+            60.368934000027366
+          ]
+        },
+        "master": {
+          "median": 173.45615899999393,
+          "min": 61.53444800002035,
+          "max": 263.3172749999794,
+          "spread": 201.78282699995907,
+          "samples": [
+            263.3172749999794,
+            61.53444800002035,
+            215.1246960000135,
+            132.03613299998688,
+            173.45615899999393
+          ]
+        }
+      },
+      "unlinkedReferencesMs": {
+        "og": {
+          "median": 61.526784000045154,
+          "min": 14.614941999985604,
+          "max": 104.43134500001906,
+          "spread": 89.81640300003346,
+          "samples": [
+            14.614941999985604,
+            104.43134500001906,
+            69.7051860000065,
+            59.88202000001911,
+            61.526784000045154
+          ]
+        },
+        "master": {
+          "median": 13.50922000000719,
+          "min": 12.360816999978852,
+          "max": 68.7759720000322,
+          "spread": 56.415155000053346,
+          "samples": [
+            18.760788999992656,
+            13.50922000000719,
+            68.7759720000322,
+            13.186589999997523,
+            12.360816999978852
+          ]
+        }
+      },
+      "rename200Ms": {
+        "og": null,
+        "master": {
+          "median": 609.6318730000057,
+          "min": 353.35021599999163,
+          "max": 682.167512999964,
+          "spread": 328.8172969999723,
+          "samples": [
+            613.4117499999993,
+            392.8837230000063,
+            682.167512999964,
+            609.6318730000057,
+            353.35021599999163
+          ]
+        }
+      },
+      "rssAfterOpenBytes": {
+        "og": null,
+        "master": null
+      },
+      "rssAfterJourneysBytes": {
+        "og": null,
+        "master": null
+      },
+      "rssAfterRenameBytes": {
+        "og": null,
+        "master": null
+      }
+    }
+  },
+  "results": [
+    {
+      "kind": "og",
+      "corpus": "2k",
+      "index": 1,
+      "loadAvgBefore": 1.04,
+      "loadAvgAfter": 1.04,
+      "metrics": {
+        "openMs": 1134.1249440000006,
+        "rssAfterOpenBytes": null,
+        "searchMs": 437.04967099999976,
+        "openPageMs": 176.01306300000033,
+        "linkedReferencesMs": 60.2639250000002,
+        "unlinkedReferencesMs": 29.856942000000345,
+        "typingP50Ms": 4,
+        "typingP95Ms": 11,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          123
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 123,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "2k",
+      "index": 1,
+      "loadAvgBefore": 1.04,
+      "loadAvgAfter": 1.41,
+      "metrics": {
+        "openMs": 792.2470240000002,
+        "rssAfterOpenBytes": null,
+        "searchMs": 1191.199407,
+        "openPageMs": 120.0269900000003,
+        "linkedReferencesMs": 1088.263433,
+        "unlinkedReferencesMs": 61.41013199999907,
+        "typingP50Ms": 8,
+        "typingP95Ms": 10,
+        "saveMs": 474,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 735.5328490000029
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          101
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 101,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "2k",
+      "index": 2,
+      "loadAvgBefore": 1.54,
+      "loadAvgAfter": 1.7,
+      "metrics": {
+        "openMs": 1149.5881470000022,
+        "rssAfterOpenBytes": null,
+        "searchMs": 349.36259300000165,
+        "openPageMs": 185.50402100000065,
+        "linkedReferencesMs": 64.69631200000003,
+        "unlinkedReferencesMs": 27.31023500000083,
+        "typingP50Ms": 8,
+        "typingP95Ms": 9,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          166
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 166,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "2k",
+      "index": 2,
+      "loadAvgBefore": 1.41,
+      "loadAvgAfter": 1.54,
+      "metrics": {
+        "openMs": 795.8605719999978,
+        "rssAfterOpenBytes": null,
+        "searchMs": 1185.170005,
+        "openPageMs": 84.52319599999828,
+        "linkedReferencesMs": 1041.0204489999996,
+        "unlinkedReferencesMs": 28.725972000000183,
+        "typingP50Ms": 5,
+        "typingP95Ms": 8,
+        "saveMs": 511,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 725.2061499999982
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 0,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "2k",
+      "index": 3,
+      "loadAvgBefore": 1.7,
+      "loadAvgAfter": 1.64,
+      "metrics": {
+        "openMs": 1237.5174929999994,
+        "rssAfterOpenBytes": null,
+        "searchMs": 317.2052229999972,
+        "openPageMs": 94.44706700000097,
+        "linkedReferencesMs": 24.670275999997102,
+        "unlinkedReferencesMs": 67.08542399999715,
+        "typingP50Ms": 8,
+        "typingP95Ms": 11,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          265
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 265,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "2k",
+      "index": 3,
+      "loadAvgBefore": 1.64,
+      "loadAvgAfter": 1.85,
+      "metrics": {
+        "openMs": 806.5029809999978,
+        "rssAfterOpenBytes": null,
+        "searchMs": 1354.978019000002,
+        "openPageMs": 137.00352500000008,
+        "linkedReferencesMs": 1075.710082000005,
+        "unlinkedReferencesMs": 29.965165000001434,
+        "typingP50Ms": 8,
+        "typingP95Ms": 8.999999999999545,
+        "saveMs": 511,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 905.860010999997
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          101
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 101,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "2k",
+      "index": 4,
+      "loadAvgBefore": 1.94,
+      "loadAvgAfter": 1.95,
+      "metrics": {
+        "openMs": 1124.3808519999948,
+        "rssAfterOpenBytes": null,
+        "searchMs": 406.4433710000012,
+        "openPageMs": 201.11228399999527,
+        "linkedReferencesMs": 59.910414999998466,
+        "unlinkedReferencesMs": 61.66950999999972,
+        "typingP50Ms": 7.000000000000455,
+        "typingP95Ms": 9,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          122
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 122,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "2k",
+      "index": 4,
+      "loadAvgBefore": 1.85,
+      "loadAvgAfter": 1.94,
+      "metrics": {
+        "openMs": 852.9531659999993,
+        "rssAfterOpenBytes": null,
+        "searchMs": 1060.4800289999985,
+        "openPageMs": 119.75036899999395,
+        "linkedReferencesMs": 1026.847354999998,
+        "unlinkedReferencesMs": 12.072932000002766,
+        "typingP50Ms": 6,
+        "typingP95Ms": 10,
+        "saveMs": 468,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 723.0117420000024
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          163
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 163,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "2k",
+      "index": 5,
+      "loadAvgBefore": 1.95,
+      "loadAvgAfter": 2.04,
+      "metrics": {
+        "openMs": 1132.2943119999982,
+        "rssAfterOpenBytes": null,
+        "searchMs": 364.39101700000174,
+        "openPageMs": 140.39258799998788,
+        "linkedReferencesMs": 73.61374300000898,
+        "unlinkedReferencesMs": 28.68652099999599,
+        "typingP50Ms": 6,
+        "typingP95Ms": 8,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          128,
+          110
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 128,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "2k",
+      "index": 5,
+      "loadAvgBefore": 2.04,
+      "loadAvgAfter": 2.26,
+      "metrics": {
+        "openMs": 789.5077510000119,
+        "rssAfterOpenBytes": null,
+        "searchMs": 1247.8664940000017,
+        "openPageMs": 106.34412199999497,
+        "linkedReferencesMs": 1035.5881609999924,
+        "unlinkedReferencesMs": 52.13296600000467,
+        "typingP50Ms": 5,
+        "typingP95Ms": 11,
+        "saveMs": 464,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 722.564280000006
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 0,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "10k",
+      "index": 1,
+      "loadAvgBefore": 2.26,
+      "loadAvgAfter": 2.92,
+      "metrics": {
+        "openMs": 4341.856503999996,
+        "rssAfterOpenBytes": 988057600,
+        "searchMs": 591.4307909999916,
+        "openPageMs": 120.78035099999397,
+        "linkedReferencesMs": 29.613100999995368,
+        "unlinkedReferencesMs": 28.28205200000957,
+        "typingP50Ms": 6,
+        "typingP95Ms": 8,
+        "rssAfterJourneysBytes": 994484224,
+        "rssAfterRenameBytes": 994484224
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          123,
+          3310,
+          261
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 3310,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [
+        "UI frame gap over 500 ms"
+      ],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "10k",
+      "index": 1,
+      "loadAvgBefore": 2.92,
+      "loadAvgAfter": 2.77,
+      "metrics": {
+        "openMs": 966.6090919999988,
+        "rssAfterOpenBytes": 215224320,
+        "searchMs": 5746.141258999996,
+        "openPageMs": 86.58707799999684,
+        "linkedReferencesMs": 1283.2394730000087,
+        "unlinkedReferencesMs": 141.51084999999148,
+        "typingP50Ms": 8,
+        "typingP95Ms": 10.000000000001819,
+        "saveMs": 457,
+        "rssAfterJourneysBytes": 1178214400,
+        "rename200Ms": 3028.332767,
+        "rssAfterRenameBytes": 883376128
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 0,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "10k",
+      "index": 2,
+      "loadAvgBefore": 2.83,
+      "loadAvgAfter": 3.03,
+      "metrics": {
+        "openMs": 4219.579034000009,
+        "rssAfterOpenBytes": 986779648,
+        "searchMs": 641.066949,
+        "openPageMs": 233.5169290000049,
+        "linkedReferencesMs": 103.75034400000004,
+        "unlinkedReferencesMs": 65.79629800000112,
+        "typingP50Ms": 6,
+        "typingP95Ms": 8,
+        "rssAfterJourneysBytes": 994455552,
+        "rssAfterRenameBytes": 994455552
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          127.99999999999999,
+          3236,
+          255
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 3236,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [
+        "UI frame gap over 500 ms"
+      ],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "10k",
+      "index": 2,
+      "loadAvgBefore": 2.77,
+      "loadAvgAfter": 2.83,
+      "metrics": {
+        "openMs": 988.5782219999965,
+        "rssAfterOpenBytes": 216698880,
+        "searchMs": 5441.990072999994,
+        "openPageMs": 75.0005969999911,
+        "linkedReferencesMs": 1219.6907879999926,
+        "unlinkedReferencesMs": 161.1102580000006,
+        "typingP50Ms": 7.9999999999990905,
+        "typingP95Ms": 9,
+        "saveMs": 460,
+        "rssAfterJourneysBytes": 1174560768,
+        "rename200Ms": 2992.4081300000107,
+        "rssAfterRenameBytes": 910200832
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          105
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 105,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "10k",
+      "index": 3,
+      "loadAvgBefore": 3.03,
+      "loadAvgAfter": 3.56,
+      "metrics": {
+        "openMs": 4319.4736390000035,
+        "rssAfterOpenBytes": 986697728,
+        "searchMs": 605.7596769999946,
+        "openPageMs": 216.40991799999028,
+        "linkedReferencesMs": 71.75646400000551,
+        "unlinkedReferencesMs": 12.930346000008285,
+        "typingP50Ms": 6,
+        "typingP95Ms": 8,
+        "rssAfterJourneysBytes": 994193408,
+        "rssAfterRenameBytes": 993718272
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          125,
+          3244,
+          257
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 3244,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [
+        "UI frame gap over 500 ms"
+      ],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "10k",
+      "index": 3,
+      "loadAvgBefore": 3.56,
+      "loadAvgAfter": 3.16,
+      "metrics": {
+        "openMs": 916.1640180000104,
+        "rssAfterOpenBytes": 217735168,
+        "searchMs": 6080.011257999984,
+        "openPageMs": 112.22182400000747,
+        "linkedReferencesMs": 1139.7483970000176,
+        "unlinkedReferencesMs": 132.87639900000067,
+        "typingP50Ms": 7.999999999998181,
+        "typingP95Ms": 8,
+        "saveMs": 501,
+        "rssAfterJourneysBytes": 1193246720,
+        "rename200Ms": 3122.5231109999877,
+        "rssAfterRenameBytes": 913805312
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          102
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 102,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "10k",
+      "index": 4,
+      "loadAvgBefore": 3.11,
+      "loadAvgAfter": 3.58,
+      "metrics": {
+        "openMs": 4240.7994349999935,
+        "rssAfterOpenBytes": 986918912,
+        "searchMs": 548.490135,
+        "openPageMs": 206.00713299997733,
+        "linkedReferencesMs": 57.1845200000098,
+        "unlinkedReferencesMs": 63.90620900000795,
+        "typingP50Ms": 7,
+        "typingP95Ms": 8.99999999999909,
+        "rssAfterJourneysBytes": 994512896,
+        "rssAfterRenameBytes": 994275328
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          140,
+          3161,
+          240
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 3161,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [
+        "UI frame gap over 500 ms"
+      ],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "10k",
+      "index": 4,
+      "loadAvgBefore": 2.98,
+      "loadAvgAfter": 3.11,
+      "metrics": {
+        "openMs": 1040.2837740000105,
+        "rssAfterOpenBytes": 220979200,
+        "searchMs": 5689.159191999992,
+        "openPageMs": 71.35387399999308,
+        "linkedReferencesMs": 1182.962537000014,
+        "unlinkedReferencesMs": 144.9666530000104,
+        "typingP50Ms": 6,
+        "typingP95Ms": 9,
+        "saveMs": 495,
+        "rssAfterJourneysBytes": 1186304000,
+        "rename200Ms": 3050.4580959999876,
+        "rssAfterRenameBytes": 920231936
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          111.99999999999997
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 111.99999999999997,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "10k",
+      "index": 5,
+      "loadAvgBefore": 3.58,
+      "loadAvgAfter": 3.59,
+      "metrics": {
+        "openMs": 4233.069424000016,
+        "rssAfterOpenBytes": 986165248,
+        "searchMs": 563.4058359999908,
+        "openPageMs": 200.0800079999899,
+        "linkedReferencesMs": 60.52261699998053,
+        "unlinkedReferencesMs": 104.95429199998034,
+        "typingP50Ms": 5,
+        "typingP95Ms": 8,
+        "rssAfterJourneysBytes": 994308096,
+        "rssAfterRenameBytes": 994308096
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          179,
+          3185,
+          288
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 3185,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [
+        "UI frame gap over 500 ms"
+      ],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "10k",
+      "index": 5,
+      "loadAvgBefore": 3.59,
+      "loadAvgAfter": 3.89,
+      "metrics": {
+        "openMs": 968.9992600000114,
+        "rssAfterOpenBytes": 213118976,
+        "searchMs": 5629.217436000006,
+        "openPageMs": 150.7032429999963,
+        "linkedReferencesMs": 1033.258891000005,
+        "unlinkedReferencesMs": 328.2357449999836,
+        "typingP50Ms": 8,
+        "typingP95Ms": 9,
+        "saveMs": 504,
+        "rssAfterJourneysBytes": 1192689664,
+        "rename200Ms": 3020.926996000024,
+        "rssAfterRenameBytes": 886738944
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          107
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 107,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "anonymized",
+      "index": 1,
+      "loadAvgBefore": 3.89,
+      "loadAvgAfter": 3.9,
+      "metrics": {
+        "openMs": 685.2921649999917,
+        "rssAfterOpenBytes": null,
+        "searchMs": 334.70556599998963,
+        "openPageMs": 118.70244999998249,
+        "linkedReferencesMs": 106.66849800001364,
+        "unlinkedReferencesMs": 14.614941999985604,
+        "typingP50Ms": 7,
+        "typingP95Ms": 10,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          176
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 176,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "anonymized",
+      "index": 1,
+      "loadAvgBefore": 3.9,
+      "loadAvgAfter": 4.47,
+      "metrics": {
+        "openMs": 781.8731259999913,
+        "rssAfterOpenBytes": null,
+        "searchMs": 529.1199230000202,
+        "openPageMs": 124.22231700000702,
+        "linkedReferencesMs": 263.3172749999794,
+        "unlinkedReferencesMs": 18.760788999992656,
+        "typingP50Ms": 6,
+        "typingP95Ms": 8,
+        "saveMs": 503,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 613.4117499999993
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 0,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "anonymized",
+      "index": 2,
+      "loadAvgBefore": 4.6,
+      "loadAvgAfter": 4.39,
+      "metrics": {
+        "openMs": 707.6350929999899,
+        "rssAfterOpenBytes": null,
+        "searchMs": 446.78783499999554,
+        "openPageMs": 143.8310599999968,
+        "linkedReferencesMs": 29.473075999994762,
+        "unlinkedReferencesMs": 104.43134500001906,
+        "typingP50Ms": 6,
+        "typingP95Ms": 8.999999999999773,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          131
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 131,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "anonymized",
+      "index": 2,
+      "loadAvgBefore": 4.47,
+      "loadAvgAfter": 4.6,
+      "metrics": {
+        "openMs": 764.117132000014,
+        "rssAfterOpenBytes": null,
+        "searchMs": 679.2541360000032,
+        "openPageMs": 144.53975600001286,
+        "linkedReferencesMs": 61.53444800002035,
+        "unlinkedReferencesMs": 13.50922000000719,
+        "typingP50Ms": 7,
+        "typingP95Ms": 10,
+        "saveMs": 505,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 392.8837230000063
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          103
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 103,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "anonymized",
+      "index": 3,
+      "loadAvgBefore": 4.39,
+      "loadAvgAfter": 4.12,
+      "metrics": {
+        "openMs": 674.4865149999969,
+        "rssAfterOpenBytes": null,
+        "searchMs": 383.99978899999405,
+        "openPageMs": 130.52294399999664,
+        "linkedReferencesMs": 116.0550139999832,
+        "unlinkedReferencesMs": 69.7051860000065,
+        "typingP50Ms": 8,
+        "typingP95Ms": 10,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          164
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 164,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "anonymized",
+      "index": 3,
+      "loadAvgBefore": 4.12,
+      "loadAvgAfter": 3.95,
+      "metrics": {
+        "openMs": 736.130455000035,
+        "rssAfterOpenBytes": null,
+        "searchMs": 639.4552499999991,
+        "openPageMs": 118.34990500001004,
+        "linkedReferencesMs": 215.1246960000135,
+        "unlinkedReferencesMs": 68.7759720000322,
+        "typingP50Ms": 8,
+        "typingP95Ms": 11,
+        "saveMs": 430,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 682.167512999964
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          165
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 165,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "anonymized",
+      "index": 4,
+      "loadAvgBefore": 3.56,
+      "loadAvgAfter": 3.44,
+      "metrics": {
+        "openMs": 674.9539119999972,
+        "rssAfterOpenBytes": null,
+        "searchMs": 343.2317049999838,
+        "openPageMs": 165.2790479999967,
+        "linkedReferencesMs": 65.1325680000009,
+        "unlinkedReferencesMs": 59.88202000001911,
+        "typingP50Ms": 7,
+        "typingP95Ms": 7.000000000000227,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          190
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 190,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "anonymized",
+      "index": 4,
+      "loadAvgBefore": 3.95,
+      "loadAvgAfter": 3.56,
+      "metrics": {
+        "openMs": 750.2455000000191,
+        "rssAfterOpenBytes": null,
+        "searchMs": 525.1834849999868,
+        "openPageMs": 99.89763800002402,
+        "linkedReferencesMs": 132.03613299998688,
+        "unlinkedReferencesMs": 13.186589999997523,
+        "typingP50Ms": 9,
+        "typingP95Ms": 11,
+        "saveMs": 516,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 609.6318730000057
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 0,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    },
+    {
+      "kind": "og",
+      "corpus": "anonymized",
+      "index": 5,
+      "loadAvgBefore": 3.44,
+      "loadAvgAfter": 3.4,
+      "metrics": {
+        "openMs": 700.3185810000286,
+        "rssAfterOpenBytes": null,
+        "searchMs": 445.53512900002534,
+        "openPageMs": 120.92570699995849,
+        "linkedReferencesMs": 60.368934000027366,
+        "unlinkedReferencesMs": 61.526784000045154,
+        "typingP50Ms": 8,
+        "typingP95Ms": 12,
+        "rssAfterJourneysBytes": null
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [
+          176
+        ],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 176,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [
+        "save",
+        "rename"
+      ],
+      "failure": null
+    },
+    {
+      "kind": "master",
+      "corpus": "anonymized",
+      "index": 5,
+      "loadAvgBefore": 3.4,
+      "loadAvgAfter": 3.13,
+      "metrics": {
+        "openMs": 718.7219760000007,
+        "rssAfterOpenBytes": null,
+        "searchMs": 527.4704410000122,
+        "openPageMs": 118.06377399998019,
+        "linkedReferencesMs": 173.45615899999393,
+        "unlinkedReferencesMs": 12.360816999978852,
+        "typingP50Ms": 9,
+        "typingP95Ms": 11,
+        "saveMs": 444,
+        "rssAfterJourneysBytes": null,
+        "rename200Ms": 353.35021599999163
+      },
+      "probeMode": "raf-gap",
+      "longTasks": {
+        "open": [],
+        "search": [],
+        "openPage": [],
+        "linkedReferences": [],
+        "unlinkedReferences": [],
+        "rename": [],
+        "typing": [],
+        "save": []
+      },
+      "longTaskMaxMs": {
+        "open": 0,
+        "search": 0,
+        "openPage": 0,
+        "linkedReferences": 0,
+        "unlinkedReferences": 0,
+        "rename": 0,
+        "typing": 0,
+        "save": 0
+      },
+      "budgetViolations": [],
+      "failedJourneys": [],
+      "failure": null
+    }
+  ]
+}
