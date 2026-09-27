@@ -4019,13 +4019,227 @@ mod rev5_tests {
             .files
             .iter()
             .any(|(id, _, _)| id == &stream_id));
+        store.scan_refresh().unwrap();
+        assert!(
+            changes.try_recv().unwrap().is_none(),
+            "present streamed asset was removed by a full watcher scan"
+        );
+        store.set_watch_mode(WatchMode::Poll);
         let mut tx = store.transaction();
         tx.create(&bytes_id, crate::Content::Bytes(b"byte content".to_vec()));
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
+        store.scan_refresh().unwrap();
+        assert!(
+            changes.try_recv().unwrap().is_none(),
+            "present byte asset was removed by a full watcher scan"
+        );
+        let mut tx = store.transaction();
+        tx.replace(
+            &bytes_id,
+            FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
+            b"replaced content".to_vec(),
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
+        store.scan_refresh().unwrap();
+        assert!(
+            changes.try_recv().unwrap().is_none(),
+            "present replaced asset was removed by a full watcher scan"
+        );
+        let moved_id = store.file_id(Area::Assets, "moved.bin").unwrap();
+        let mut tx = store.transaction();
+        tx.move_file(
+            &bytes_id,
+            FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
+            &moved_id,
+            None,
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
+        store.scan_refresh().unwrap();
+        assert!(
+            changes.try_recv().unwrap().is_none(),
+            "present moved asset was removed by a full watcher scan"
+        );
+        let mut tx = store.transaction();
+        tx.trash(
+            &moved_id,
+            FileRev::from_file(&root.join("assets/moved.bin")).unwrap(),
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
+        store.scan_refresh().unwrap();
+        assert!(
+            changes.try_recv().unwrap().is_none(),
+            "trashed asset was reported twice"
+        );
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn page_reappearing_after_full_scan_remains_resolvable() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-page-scan-race-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let path = root.join("pages/Present.md");
+        fs::write(&path, "- present\n").unwrap();
+        let store = Arc::new(
+            Store::open(
+                &root,
+                OpenOptions {
+                    watch: WatchMode::Poll,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0,
+        );
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store
+            .watch
+            .core_for_load()
+            .after_collect_pause
+            .lock()
+            .unwrap() = Some(Arc::clone(&pause));
+        fs::remove_file(&path).unwrap();
+        let scanning = Arc::clone(&store);
+        let scan = std::thread::spawn(move || scanning.scan_refresh());
+        wait_hook(&pause);
+        fs::write(&path, "- present\n").unwrap();
+        release_hook(&pause);
+        scan.join().unwrap().unwrap();
+        *store
+            .watch
+            .core_for_load()
+            .after_collect_pause
+            .lock()
+            .unwrap() = None;
+        let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
+        assert!(
+            observed.iter().all(|change| change
+                .files
+                .iter()
+                .all(|(id, kind, _)| id.as_str() != "pages/Present.md"
+                    || *kind != ChangeKind::Removed)),
+            "present page was published as removed: {observed:?}"
+        );
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .inventory()
+            .0
+            .iter()
+            .any(|entry| entry.name == "Present"));
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("Present", false),
+            Resolved::Existing { .. }
+        ));
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn own_config_replace_is_not_removed_by_page_inventory_scan() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-config-own-scan-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("logseq")).unwrap();
+        let path = root.join("logseq/config.edn");
+        fs::write(&path, "{:foo 1}\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        let id = store.file_id(Area::Meta, "config.edn").unwrap();
+        let mut tx = store.transaction();
+        tx.replace(
+            &id,
+            FileRev::from_file(&path).unwrap(),
+            b"{:foo 2}\n".to_vec(),
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+        assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
+        store.scan_refresh().unwrap();
+        assert!(
+            changes.try_recv().unwrap().is_none(),
+            "present config was removed by page inventory scan"
+        );
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn raced_approved_external_asset_is_modified_not_removed() {
+        use std::os::unix::fs::symlink;
+
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-approved-asset-race-{unique}"));
+        let outside = root.with_extension("assets");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("assets")).unwrap();
+        let store = Arc::new(
+            Store::open(
+                &root,
+                OpenOptions {
+                    approved_external_assets: Some(outside.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0,
+        );
+        store.whole_graph().unwrap();
+        let changes = store.subscribe();
+        let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.watch.core_for_load().note_own_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        let id = store.file_id(Area::Assets, "raced.bin").unwrap();
+        let writing = Arc::clone(&store);
+        let tx = std::thread::spawn(move || {
+            let mut tx = writing.transaction();
+            tx.create(&id, crate::Content::Bytes(b"own".to_vec()));
+            tx.commit()
+        });
+        wait_hook(&pause);
+        fs::write(outside.join("raced.bin"), b"external").unwrap();
+        release_hook(&pause);
+        assert!(matches!(
+            tx.join().unwrap(),
+            crate::TxOutcome::Committed { .. }
+        ));
+        let own = changes.try_recv().unwrap().unwrap();
+        let external = changes.try_recv().unwrap().unwrap();
+        assert_eq!(own.origin, Origin::Own);
+        assert_eq!(external.origin, Origin::External);
+        assert!(
+            external
+                .files
+                .iter()
+                .any(|(id, kind, _)| id.as_str() == "assets/raced.bin"
+                    && *kind == ChangeKind::Modified),
+            "race change: {external:?}"
+        );
+        assert_eq!(fs::read(outside.join("raced.bin")).unwrap(), b"external");
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]

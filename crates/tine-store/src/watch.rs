@@ -306,9 +306,29 @@ pub(crate) struct Core {
     pub(crate) recovery_warm_pause: Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     pub(crate) note_own_pause: Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) after_collect_pause: Mutex<Option<crate::store::TestPause>>,
 }
 
 impl Core {
+    fn path_for_id(&self, id: &FileId) -> PathBuf {
+        if let Some(rel) = id.as_str().strip_prefix("assets/") {
+            self.graph.assets_path().join(rel)
+        } else {
+            self.graph.root.join(id.as_str())
+        }
+    }
+
+    fn tracks_in_snapshot(&self, path: &Path) -> bool {
+        crate::file_kind::is_graph_text_path(path)
+            && self
+                .dirs
+                .read()
+                .unwrap()
+                .iter()
+                .any(|dir| path.starts_with(dir))
+    }
+
     pub(crate) fn fill_revs(&self) {
         for (path, value) in self.snapshot.lock().unwrap().iter_mut() {
             if let Some(now) = stamp_metadata(path) {
@@ -367,8 +387,11 @@ impl Core {
         let mut config_file = None;
         if include_config {
             let path = self.graph.root.join("logseq/config.edn");
-            let current = stamp(&path);
+            let mut current = stamp(&path);
             let mut previous = self.config_stamp.lock().unwrap();
+            if current.is_none() && previous.is_some() {
+                current = stamp(&path);
+            }
             if previous.as_ref().and_then(|value| value.rev.as_ref())
                 != current.as_ref().and_then(|value| value.rev.as_ref())
             {
@@ -393,7 +416,13 @@ impl Core {
             (
                 paths
                     .iter()
-                    .filter(|path| self.graph.ensure_write_target(path).is_ok())
+                    .filter(|path| {
+                        if path.starts_with(self.graph.assets_path()) {
+                            self.graph.ensure_asset_write_target(path).is_ok()
+                        } else {
+                            self.graph.ensure_write_target(path).is_ok()
+                        }
+                    })
                     .filter_map(|path| stamp(path).map(|value| (path.clone(), value)))
                     .collect(),
                 None,
@@ -402,6 +431,10 @@ impl Core {
             let (files, errors) = collect_with_errors(&dirs);
             (files, Some(errors))
         };
+        #[cfg(test)]
+        if snapshot.keys().any(|path| !now.contains_key(path)) {
+            crate::store::pause_at_hook(&self.after_collect_pause);
+        }
         let unreadable_changed = if let Some(errors) = unreadable {
             for (path, value) in &*snapshot {
                 if path
@@ -436,6 +469,11 @@ impl Core {
         let mut pages = Vec::new();
         for path in names {
             let before = snapshot.get(&path);
+            if before.is_some() && !now.contains_key(&path) {
+                if let Some(value) = stamp(&path) {
+                    now.insert(path.clone(), value);
+                }
+            }
             if paths.is_none() {
                 if let (Some(old), Some(new)) = (before, now.get_mut(&path)) {
                     let same = old.modified == new.modified
@@ -528,8 +566,9 @@ impl Core {
         let mut snapshot = self.snapshot.lock().unwrap();
         let mut raced = HashSet::new();
         for (id, expected) in files {
-            let path = self.graph.root.join(id.as_str());
+            let path = self.path_for_id(id);
             let current = stamp(&path);
+            let tracked = self.tracks_in_snapshot(&path);
             if current.as_ref().and_then(|value| value.rev.as_ref()) != expected.as_ref() {
                 // Reconciliation must compare disk with the revision just
                 // published, not with the pre-operation watcher stamp.
@@ -552,8 +591,12 @@ impl Core {
                 raced.insert(path);
                 continue;
             }
-            if let Some(value) = current.clone() {
-                snapshot.insert(path.clone(), value);
+            if tracked {
+                if let Some(value) = current.clone() {
+                    snapshot.insert(path.clone(), value);
+                } else {
+                    snapshot.remove(&path);
+                }
             } else {
                 snapshot.remove(&path);
             }
@@ -612,6 +655,8 @@ impl WatchHandle {
             recovery_warm_pause: Mutex::new(None),
             #[cfg(test)]
             note_own_pause: Mutex::new(None),
+            #[cfg(test)]
+            after_collect_pause: Mutex::new(None),
         });
         let mode = Arc::new(Mutex::new(watch));
         let (wake, rx) = mpsc::channel();
@@ -695,6 +740,12 @@ impl WatchHandle {
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
         if !paths.is_empty() {
             let _ = self.core.reconcile_locked(Some(paths), true, false);
+            let mut snapshot = self.core.snapshot.lock().unwrap();
+            for path in paths {
+                if !self.core.tracks_in_snapshot(path) {
+                    snapshot.remove(path);
+                }
+            }
         }
     }
 
