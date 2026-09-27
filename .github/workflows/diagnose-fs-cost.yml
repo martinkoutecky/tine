@@ -64,8 +64,15 @@ jobs:
         run: |
           $drive = ($env:RUNNER_TEMP).Substring(0,1)
           Get-Volume -DriveLetter $drive | Format-List
-          $volPath = $drive + ':\'
-          fsutil fsinfo volumeinfo $volPath
+          # fsutil is informational only here; some GH-hosted temp volumes
+          # reject it (ERROR_PATH_NOT_FOUND) and pwsh 7's
+          # $PSNativeCommandUseErrorActionPreference turns that into a
+          # terminating error, so don't let it fail the job.
+          try {
+            fsutil fsinfo volumeinfo "${drive}:\"
+          } catch {
+            Write-Host "fsutil fsinfo volumeinfo failed (non-fatal): $_"
+          }
 
       - name: 'Windows: download EmptyStandbyList (best-effort cache eviction)'
         if: runner.os == 'Windows'
@@ -457,8 +464,15 @@ jobs:
             entry.rg.dir_walk_only = medianOf(() => rgFilesOnly(gen.root), iterCheap);
             entry.rg.single_concat_file = medianOf(() => rgRun(concatPath, "-j1"), iterCheap);
 
+            // 2. Rust program (a/b/c/d). Run this BEFORE any cache eviction below, so
+            // its timings reflect the same warm state as the rg warm_* measurements
+            // above (not partially-cooled caches from the destructive eviction step).
+            entry.fscost = fscostMedian(gen.root, concatPath, iterFull);
+
             // Cold-ish: evict, then measure, once per attempt. Linux drop_caches is
-            // cheap to repeat; other platforms get one attempt.
+            // cheap to repeat; other platforms get one attempt. This runs LAST for
+            // this graph since eviction is destructive and would otherwise contaminate
+            // every warm measurement that follows it.
             const coldAttempts = PLATFORM === "linux" ? 3 : 1;
             const coldSecs = [];
             let evictNote = null;
@@ -475,9 +489,6 @@ jobs:
             entry.rg.cold_ish_default_threads = coldSecs.length
               ? { ok: true, medianSecs: median(coldSecs), samples: coldSecs }
               : { ok: false, note: evictNote || "cache eviction unavailable; cold-ish not measured" };
-
-            // 2. Rust program (a/b/c/d).
-            entry.fscost = fscostMedian(gen.root, concatPath, iterFull);
 
             // 3. Windows Defender re-run (handled once, after both graphs, below).
             results.graphs[g.name] = entry;
