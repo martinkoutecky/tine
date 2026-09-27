@@ -3,7 +3,8 @@ import { Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, setBlockMoving, undo } from "../document";
+import { pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo } from "../document";
+import { setBlockMoving } from "../document/edits/moves";
 import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
@@ -727,7 +728,10 @@ describe("page actions entry point", () => {
     vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
-    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue();
+    let finishFirstRename!: () => void;
+    const rename = vi.spyOn(backend(), "renamePage")
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstRename = resolve; }))
+      .mockResolvedValue();
     mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -750,6 +754,10 @@ describe("page actions entry point", () => {
       await flushMicrotasks();
       expect(rename).toHaveBeenCalledTimes(1);
       expect(rename).toHaveBeenLastCalledWith("Rename me", "Blurred name", dto.id);
+      setRaw("rename-root", "typed during rename", { timetracking: false });
+      expect(doc.byId["rename-root"].raw).toBe("Body");
+      finishFirstRename();
+      await flushMicrotasks();
 
       rename.mockClear();
       const entered = await begin("Entered name");

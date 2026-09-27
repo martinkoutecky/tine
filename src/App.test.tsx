@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { installMobileExternalLinkHandler } from "./App";
 import { paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { markDirty, resetStore, setBlockMoving } from "./document";
+import { markDirty, resetStore, setRaw } from "./document";
+import { setBlockMoving } from "./document/edits/moves";
 import { pageToDto } from "./document/convert";
 import { type FeedPage, type Node as StoreNode } from "./document/model";
 import { setDoc } from "./document/model";
@@ -93,6 +94,25 @@ describe("mobile external link delegation", () => {
 });
 
 describe("journal watcher feed reconciliation", () => {
+  for (const branch of ["open page", "feed day", "loaded satellite"] as const) {
+    it(`keeps an edit typed during the ${branch} watcher fetch`, async () => {
+      const name = branch === "feed day" ? "15th July, 2030" : `Watcher ${branch}`;
+      const kind = branch === "feed day" ? "journal" : "page";
+      resetPaneLayoutToSingle({ tabs: [{ history: [branch === "open page"
+        ? { kind: "page", name, pageKind: kind } as const
+        : { kind: "journals" } as const], pos: 0, pinned: false }], activeIndex: 0 });
+      setDoc({ byId: { local: { ...node("local", name), raw: "before" } }, pages: [page(name, kind, ["local"])], feed: branch === "feed day" ? [name] : [], loaded: true });
+      let finish!: (dto: PageRead | null) => void;
+      const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+      const changed = handleGraphChange({ name, kind, created: false, removed: false });
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      setRaw("local", "typed during fetch", { timetracking: false });
+      finish({ name, kind, title: name, id: `${kind}s/${name}.md`, pre_block: null,
+        blocks: [{ id: "disk", raw: "from disk", collapsed: false, children: [] }] });
+      await changed;
+      expect(pageToDto(name)!.blocks[0].raw).toBe("typed during fetch");
+    });
+  }
   it("keeps a clean page loaded when its own saved bytes echo through the watcher", async () => {
     const name = "Own save";
     resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });

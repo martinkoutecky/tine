@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, ensurePageLoaded, setFeedExtender, renamePageOnDisk, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
@@ -7,7 +7,7 @@ import { graphEpoch, dataRev } from "../graphSession";
 import { isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
-import { switchGraph, refreshAfterRename } from "../graph";
+import { switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -216,6 +216,8 @@ export function PageView(): JSX.Element {
           // read throws and is caught below, so we never overwrite a page whose
           // load errored with empty content.
           ensurePageLoaded(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
+          if (r.path && pageByName(r.name)?.id !== r.path)
+            throw new Error("The selected file cannot replace a page with an active edit or unsaved changes.");
         }
         if (!sameRoute(currentRoute(), r)) return;
         setLoadedRoute(r);
@@ -590,25 +592,17 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const commitRename = async () => {
     if (renameSubmitted || renameCancelled || renameInFlight) return;
     const next = newName().trim();
+    const from = props.page.name;
+    const target = pageTarget();
     renameSubmitted = true;
     setRenaming(false);
-    if (!next || next === props.page.name) return;
+    if (!next || next === from) return;
     renameInFlight = true;
     try {
-      // Flush ALL unsaved edits before the file is moved on disk — the rename
-      // transaction reads every referencing page from disk to rewrite its
-      // `[[refs]]`, so a dirty edit on ANY page (not just the renamed one) would
-      // be read stale and its link left dangling. Abort if anything can't save.
-      if (!(await flushAll())) {
+      if (!(await renamePageOnDisk(from, next, target))) {
         alert("Couldn't save pending edits — resolve the conflict before renaming.");
         return;
       }
-      if (props.page.id) await backend().renamePage(props.page.name, next, props.page.id);
-      else await backend().renamePage(props.page.name, next);
-      // The backend rewrote refs across many pages via the self-write guard (no
-      // watcher reload), so every in-memory page is now potentially stale; reset
-      // + reload so a stale copy can't be saved back and revert the rename.
-      refreshAfterRename(props.page.name, next, pageTarget());
       router.openPage(next, "page");
     } catch (e) {
       alert(`Rename failed: ${String(e)}`);

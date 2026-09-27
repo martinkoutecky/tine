@@ -6,6 +6,7 @@ import { markDirty } from "../save/engine";
 import { readPropertyValue, isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
+import { graphRewriteFrozen } from "../graphRewriteState";
 
 const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
@@ -61,7 +62,7 @@ export function blockProperty(id: string, key: string): string | null {
  *  write paths outside the block editor must consult this before mutating. */
 export function blockPageReadOnly(id: string): boolean {
   const n = doc.byId[id];
-  return n ? (pageByName(n.page)?.readOnly ?? false) : false;
+  return graphRewriteFrozen() || (n ? (pageByName(n.page)?.readOnly ?? false) : false);
 }
 
 /** Store mutation boundary. UI affordances also hide on read-only pages, but
@@ -70,7 +71,7 @@ export function blockPageReadOnly(id: string): boolean {
  * equally non-writable. */
 export function pageWritable(name: string): boolean {
   const page = pageByName(name);
-  return !!page && !page.readOnly && !page.guide;
+  return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide;
 }
 
 export function blockWritable(id: string): boolean {
@@ -180,7 +181,7 @@ export function beginPageHeaderEdit(pageName: string): string | null {
  * reaching native persistence. */
 export function finishPageHeaderEdit(id: string): void {
   const node = doc.byId[id];
-  if (!node?.originatedFromPageHeader || node.raw !== "" || node.children.length > 0) return;
+  if (!node?.originatedFromPageHeader || node.raw !== "" || node.children.length > 0 || graphRewriteFrozen()) return;
   setDoc(
     produce((s) => {
       const page = s.pages.find((p) => p.name === node.page);
@@ -562,4 +563,3 @@ export function setCollapsedDescendants(id: string, collapsed: boolean) {
   );
   markDirty(root.page);
 }
-

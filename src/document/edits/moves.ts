@@ -86,6 +86,7 @@ export async function moveBlock(
   }
   if (!stillBound(binding)) return;
   if (!doc.byId[id]) return; // block vanished during the async flush
+  if (!pageWritable(oldPage) || !pageWritable(newPage)) return;
   const sourceFormat = formatForBlock(id);
   const destinationFormat = formatForPage(newPage);
   const inheritanceTarget = dropTargetId ?? newParent;
@@ -151,6 +152,17 @@ export function isBlockMoving(page?: string): boolean {
 export function setBlockMoving(v: boolean, page?: string): void {
   blockMovingPage = v ? (page ?? blockMovingPage ?? "") : null;
   setBlockMoveRev((n) => n + 1);
+}
+
+/** Keep watcher/feed reloads away from a transiently blurred move, including
+ * when the move or its caret-restoration callback rejects. */
+export async function withBlockMoving<T>(page: string, move: () => T | Promise<T>): Promise<T> {
+  setBlockMoving(true, page);
+  try {
+    return await move();
+  } finally {
+    setBlockMoving(false);
+  }
 }
 
 export function moveItem(id: string, dir: 1 | -1) {
@@ -307,6 +319,7 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
   if (!(await prepareCrossPageSources([node.page]))) return "none"; // source has unsaved edits → abort
   if (!stillBound(binding)) return "none";
   if (!doc.byId[id]) return "none"; // vanished during the flush
+  if (!pageWritable(node.page) || !pageWritable(target)) return "none";
   pushUndo("move-cross", [node.page, target]);
   crossMoveBlocks([id], node.page, target, dir);
   return "crossed";
@@ -357,7 +370,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
   if (!target || !pageWritable(target)) return;
   if (!(await prepareCrossPageSources([page]))) return; // source has unsaved edits → abort
   if (!stillBound(binding)) return;
+  if (!pageWritable(page) || !pageWritable(target)) return;
   pushUndo("move-sel-cross", [page, target]);
   crossMoveBlocks(ids, page, target, dir);
 }
-

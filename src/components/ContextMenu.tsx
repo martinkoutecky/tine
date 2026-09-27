@@ -5,12 +5,12 @@ import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
 import { removePageTargetAcrossPanes } from "../panes";
-import { refreshAfterRename } from "../graph";
+import "../graph"; // installs the document rename's navigation refresh handler
 import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { ensureBlockId, persistentBlockRef, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushAll, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, node as docNode } from "../document";
+import { ensureBlockId, persistentBlockRef, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, renamePageOnDisk, node as docNode } from "../document";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
@@ -918,23 +918,15 @@ function RenamePage(props: {
     // props.* afterward warns "stale read from <Show>".
     const from = props.name;
     const kind = props.pageKind;
+    const path = props.path;
     const next = value().trim();
     props.close(false);
     if (!next || next === from) return;
     try {
-      // Persist ALL unsaved edits first — the rename reads every referencing page
-      // from disk to rewrite its `[[refs]]`, so a dirty edit on ANY page would be
-      // read stale and lost.
-      if (!(await flushAll())) {
+      if (!(await renamePageOnDisk(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) }))) {
         pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
         return;
       }
-      if (props.path) await backend().renamePage(from, next, props.path);
-      else await backend().renamePage(from, next);
-      // Backend rewrote refs across pages via the self-write guard (no watcher
-      // reload) → in-memory pages are stale; reset + reload so a stale save can't
-      // revert the rename.
-      refreshAfterRename(from, next, { name: from, pageKind: kind, ...(props.path ? { path: props.path } : {}) });
       openPage(next, kind);
       pushToast(`Renamed to “${next}”`, "success");
     } catch (e) {

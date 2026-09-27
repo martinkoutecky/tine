@@ -9,6 +9,7 @@ import { backend } from "../../backend";
 import { forgetPage, reloadPage, loadSingle } from "../workingSet";
 import { pushToast } from "../../toasts";
 import { errorFamily } from "../../errorFamily";
+import { graphRewriteFrozen } from "../graphRewriteState";
 
 let aliasDraftRouteHandler: ((name: string, kind: PageDto["kind"]) => void) | null = null;
 export function installAliasDraftRouteHandler(handler: (name: string, kind: PageDto["kind"]) => void): void {
@@ -22,7 +23,7 @@ export async function deletePageOnDisk(name: string, kind: PageKind, expectedPat
 
 export type CreatePageRefusalReason =
   | "name-mismatch" | "page-conflicted" | "page-dirty" | "page-saving"
-  | "stale-binding" | "alias" | "page-rebound" | "graph-changed";
+  | "stale-binding" | "alias" | "page-rebound" | "graph-changed" | "graph-rewrite";
 
 /** Local precondition refusal. The backend's fixed `conflict` token is reserved
  * for a file that changed on disk. */
@@ -42,6 +43,7 @@ export async function createPage(
   const binding = captureBinding();
   const token = graphToken;
   const generation = pageInstanceGeneration(name);
+  if (graphRewriteFrozen()) throw new CreatePageRefusal("graph-rewrite");
   if (dto.name !== name) throw new CreatePageRefusal("name-mismatch");
   if (isConflicted(name)) throw new CreatePageRefusal("page-conflicted");
   if (isDirty(name)) throw new CreatePageRefusal("page-dirty");
@@ -50,6 +52,7 @@ export async function createPage(
     throw new CreatePageRefusal("stale-binding");
   const resolved = options.id ? null : await backend().resolvePage(name, dto.kind);
   if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
+  if (graphRewriteFrozen()) throw new CreatePageRefusal("graph-rewrite");
   if (resolved?.kind === "alias") throw new CreatePageRefusal("alias");
   const id = options.id ?? resolved!.id;
   if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
@@ -58,6 +61,7 @@ export async function createPage(
   try {
     const rev = await backend().savePage(id, dto, options.baseRev ?? null, false, binding.backendGeneration);
     if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
+    if (graphRewriteFrozen()) throw new CreatePageRefusal("graph-rewrite");
     if (pageInstanceGeneration(name) === generation) {
       setPageId(name, id);
       setBaseRev(name, rev);
@@ -280,6 +284,7 @@ export function resetSaveState() {
   heldSources.clear();
   heldByDest.clear();
   lastSaveFailure.clear();
+  setConflicts([]);
 }
 
 // ---------------------------------------------------------------------------

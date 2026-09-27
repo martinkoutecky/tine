@@ -15,6 +15,7 @@ import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
 import { isBlockMoving } from "./edits/moves";
 import { journalTitle } from "../journal";
+import { graphRewriteFrozen } from "./graphRewriteState";
 
 function upsertPage(dto: PageDto & { id?: string }) {
   // A real page with this name exists again → lift any delete tombstone so edits
@@ -77,11 +78,12 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
 export function ensurePageLoaded(dto: PageDto & { id?: string }) {
   const existing = doc.pages.find((p) => p.name === dto.name);
   if (existing && (existing.id ?? "") === (dto.id ?? "")) return;
+  if (existing && reloadDisposition(dto.name) !== "reload") return;
   // A path-pinned route may intentionally load a duplicate-day stray with the
-  // same logical title as the canonical journal. Replace the name slot with the
-  // exact requested file instead of silently keeping (and then editing/saving)
-  // the canonical file. Full simultaneous duplicate identity is tracked by the
-  // file-identity ADR; this closes the wrong-target write immediately.
+  // same logical title as the canonical journal. Replace a safe name slot with
+  // the exact requested file, but never discard unsaved edits or an active editor
+  // while its backend read was in flight. Full simultaneous duplicate identity
+  // is tracked by the file-identity ADR.
   upsertPage(dto);
   evictIfNeeded();
 }
@@ -130,6 +132,7 @@ export function forgetPage(name: string) {
  *  calling the backend directly — is what prevents a queued baseRev=null save from
  *  resurrecting a just-typed, never-saved page. Returns backend success. */
 export async function deletePage(name: string, kind: PageKind, expectedPath?: string): Promise<boolean> {
+  if (graphRewriteFrozen()) return false;
   const binding = captureBinding();
   const generation = pageInstanceGeneration(name);
   const loaded = pageByName(name);
@@ -144,7 +147,7 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   // must not veto the delete. For a merely-dirty page we still flush first (to trash
   // the latest bytes) and abort only if that genuinely fails.
   if ((isDirty(name) || isSaving(name)) && !isConflicted(name) && !(await flushPage(name))) return false;
-  if (!stillBound(binding) || pageInstanceGeneration(name) !== generation) return false;
+  if (!stillBound(binding) || pageInstanceGeneration(name) !== generation || graphRewriteFrozen()) return false;
   // Tombstone first so any queued/in-flight save no-ops during the delete, but
   // DON'T drop the in-memory page until the backend actually deletes it — if the
   // delete fails, the page (and its unsaved edits) must survive.
@@ -200,6 +203,14 @@ export function reloadPage(dto: PageDto & { id?: string }) {
   upsertPage(dto);
 }
 
+/** A watcher result may arrive after the user starts editing. Keep the explicit
+ * conflict-bar reload above as the only unconditional replacement. */
+export function reloadPageIfStillSafe(name: string, dto: PageDto & { id?: string }): boolean {
+  if (reloadDisposition(name) !== "reload") return false;
+  upsertPage(dto);
+  return true;
+}
+
 /** After a PDF highlight write changed an `hls__` page on disk, refresh its
  *  loaded copy (main view or sidebar) so its content AND save baseline (baseRev)
  *  track disk — otherwise a later editor save would conflict against the highlight
@@ -211,7 +222,8 @@ export async function reloadHlsIfLoaded(name: string): Promise<void> {
   const binding = captureBinding();
   const generation = pageInstanceGeneration(name);
   const dto = await backend().getPage(name, "page");
-  if (dto && stillBound(binding) && pageInstanceGeneration(name) === generation) reloadPage(dto);
+  if (dto && stillBound(binding) && pageInstanceGeneration(name) === generation)
+    reloadPageIfStillSafe(name, dto);
 }
 function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;

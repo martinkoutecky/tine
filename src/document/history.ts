@@ -7,6 +7,7 @@ import { unwrap, produce } from "solid-js/store";
 import { purgePageNodes } from "./convert";
 import { invalidateAllMatrixDimensions } from "../sheet/matrix";
 import { pageWritable } from "./edits/properties";
+import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToast } from "../toasts";
 
 // ---------------------------------------------------------------------------
@@ -332,6 +333,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
 }
 
 export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
+  if (graphRewriteFrozen()) return undefined as T;
   if (pages.some((page) => pageByName(page) && !pageWritable(page))) return undefined as T;
   if (undoSuppressionDepth > 0) return fn();
 
@@ -379,6 +381,7 @@ function holdHistoryRemovalsUntilAdditionsLand(entry: UndoEntry, inverse: UndoEn
 }
 
 export function undo() {
+  if (graphRewriteFrozen()) return;
   const entry = popHistoryEntry(undoStack);
   if (!entry) return;
   const inverse = applyEntry(entry);
@@ -391,6 +394,7 @@ export function undo() {
 }
 
 export function redo() {
+  if (graphRewriteFrozen()) return;
   const entry = popHistoryEntry(redoStack);
   if (!entry) return;
   if (entry.preservedIds?.some(docHasBlockIdentity)) {

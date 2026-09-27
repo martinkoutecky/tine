@@ -28,7 +28,7 @@ import { typoTypeReplace } from "../render/typography";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistentBlockRef, persistBlockRefTarget, isBlockMoving, setBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
+import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistentBlockRef, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
 import {
   clearFocusSurface,
   editingId,
@@ -362,7 +362,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const orderMarker = () => orderedListMarker(props.id);
   // An org page Tine can't round-trip is shown but NOT editable (Tine must never
   // rewrite it). Clicking a block doesn't enter the editor on such a page.
-  const readOnly = () => pageByName(node().page)?.readOnly ?? false;
+  const readOnly = () => blockPageReadOnly(props.id);
   // A whole-block `{{embed ((uuid))}}` is a transparent host for the referenced
   // outline. Showing both this storage block's controls and the referenced root's
   // controls produces two consecutive bullets. Keep the referenced root controls
@@ -654,7 +654,7 @@ function Rendered(props: {
     const info = logbookInfo(node().raw);
     return info.seconds > 0 ? info : null;
   });
-  const readOnly = () => pageByName(node().page)?.readOnly ?? false;
+  const readOnly = () => blockPageReadOnly(props.id);
 
   const macro = createMemo(() => detectMacro(node().raw));
 
@@ -2359,21 +2359,17 @@ export function Editor(props: { id: string }): JSX.Element {
     e.preventDefault();
     const start = ref.selectionStart;
     commit(ref.value);
-    setBlockMoving(true, docNode(props.id)?.page);
-    startEditing(props.id, start);
-    const move = outlineScope
-      ? (moveItem(props.id, dir), Promise.resolve())
-      : moveBlockFeed(props.id, dir).then(() => undefined);
-    void move.then(() => {
-      requestAnimationFrame(() => {
-        if (ref.isConnected) {
-          ref.focus();
-          const o = Math.min(start, ref.value.length);
-          ref.setSelectionRange(o, o);
-        }
-        setBlockMoving(false);
-      });
-    });
+    void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
+      startEditing(props.id, start);
+      if (outlineScope) moveItem(props.id, dir);
+      else await moveBlockFeed(props.id, dir);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (ref.isConnected) {
+        ref.focus();
+        const o = Math.min(start, ref.value.length);
+        ref.setSelectionRange(o, o);
+      }
+    }).catch(() => console.error("Block move failed"));
     return true;
   };
   // Shift+Up/Down: start a block selection only when the caret is on the block's

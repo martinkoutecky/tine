@@ -4,7 +4,7 @@ import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
 import { feedNames, pageByName } from "./model";
 import { markConflict } from "./save/engine";
-import { reloadDisposition, reloadPage, restoreTodayJournalInFeed } from "./workingSet";
+import { reloadDisposition, reloadPageIfStillSafe, restoreTodayJournalInFeed } from "./workingSet";
 
 /** Route and feed actions belong to the app; the document module owns the
  * decision to call them. The snapshot keeps one watcher event on one UI view. */
@@ -54,7 +54,7 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
   if (ui?.pageOpen(c.name)) {
     const dto = await backend().getPage(c.name, c.kind);
     if (!stillBound(binding)) return;
-    if (dto) reloadPage(toLoadablePage(dto, c.name));
+    if (dto) reloadPageIfStillSafe(c.name, toLoadablePage(dto, c.name));
     restartJournalFeed();
     return;
   }
@@ -62,7 +62,7 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
     if (pageByName(c.name)) {
       const dto = await backend().getPage(c.name, c.kind);
       if (!stillBound(binding)) return;
-      if (dto) reloadPage(dto);
+      if (dto) reloadPageIfStillSafe(c.name, dto);
     }
     // The feed owner gates dirty/save/conflict/move state and records a pending
     // restart when unsafe, so this watcher event is not lost.
@@ -72,6 +72,6 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
   if (pageByName(c.name) && !feedNames().includes(c.name)) {
     const dto = await backend().getPage(c.name, c.kind);
     if (!stillBound(binding)) return;
-    if (dto) reloadPage(dto);
+    if (dto) reloadPageIfStillSafe(c.name, dto);
   }
 }

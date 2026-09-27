@@ -6,7 +6,7 @@ import { captureBinding, stillBound } from "./binding";
 import { setGraphMeta, bumpGraphEpoch, graphMeta } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf } from "./ui";
 import { pushToast } from "./toasts";
-import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage } from "./document";
+import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler } from "./document";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
@@ -185,16 +185,9 @@ export async function loadGraphPath(
 }
 
 /** Refresh frontend state after a successful page rename. The backend rename
- *  rewrites `[[refs]]` across many files through the self-write guard, which
- *  SUPPRESSES the watcher reload — so every in-memory page (the renamed page, the
- *  journals feed, satellite/sidebar pages) is potentially stale, and a stale save
- *  of one would silently revert the rename's rewrite on disk. Reset the store
- *  (cancels pending/in-flight saves + clears the shared `byId`) and bump the graph
- *  epoch (drops the block-resolve cache and forces the open view + Linked
- *  References to refetch from the now-correct backend). Names and aliases moved with
- *  the renamed file, so the page index is reset and refetched. Caller must have
- *  run flushAll() first (so resetStore discards nothing unsaved) and then
- *  navigate to the new name. */
+ *  rewrites `[[refs]]` across many files through the self-write guard. The
+ *  document intent has already flushed and reset its working set. Refresh the
+ *  app's navigation and graph-derived views, then navigate to the new name. */
 export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget): void {
   if (exactTarget) {
     removePageTargetAcrossPanes(exactTarget);
@@ -202,11 +195,12 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
   } else {
     renamePageInNavigation(from, to);
   }
-  resetStore();
   // The epoch bump refreshes the page index (`pageIndex.ts`).
   resetPageIndex();
   bumpGraphEpoch();
 }
+
+installRenameRefreshHandler(refreshAfterRename);
 
 // If config.edn sets :default-templates {:journals "X"}, create today's journal
 // from that template when it doesn't exist yet (or is empty). No-op when unset,

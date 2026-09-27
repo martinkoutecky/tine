@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, forceSave, isDirty, deletePage, setBlockMoving, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, reloadPage, forgetPage, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, forceSave, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, reloadPage, forgetPage, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
+import { setBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition } from "./document/workingSet";
 import { trailingVisibleEmptyLeaf } from "./document/tree";
 import { pageToDto } from "./document/convert";
@@ -1750,6 +1751,29 @@ describe("save engine (persistence)", () => {
     await reload;
     expect(pageToDto("hls__paper")!.blocks[0].raw).toBe("new graph notes");
     read.mockRestore();
+  });
+
+  it("keeps a highlight note edit typed during its disk fetch", async () => {
+    let finish!: (dto: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("old notes")] });
+    const reload = reloadHlsIfLoaded("hls__paper");
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    const id = pageByName("hls__paper")!.roots[0];
+    setRaw(id, "typed during fetch", { timetracking: false });
+    finish({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("disk note")], rev: "disk-rev" });
+    await reload;
+    expect(pageToDto("hls__paper")!.blocks[0].raw).toBe("typed during fetch");
+    read.mockRestore();
+  });
+
+  it("does not replace a dirty loaded name with a different physical file", () => {
+    loadSingle({ name: "Duplicate", kind: "page", title: "Duplicate", id: "pages/original.md", pre_block: null, blocks: [blk("original")] });
+    const id = pageByName("Duplicate")!.roots[0];
+    setRaw(id, "local edit", { timetracking: false });
+    ensurePageLoaded({ name: "Duplicate", kind: "page", title: "Duplicate", id: "pages/stray.md", pre_block: null, blocks: [blk("stray")] });
+    expect(pageByName("Duplicate")!.id).toBe("pages/original.md");
+    expect(pageToDto("Duplicate")!.blocks[0].raw).toBe("local edit");
   });
 
   it("drops a direct save after its resolve lands in another graph (I-20)", async () => {

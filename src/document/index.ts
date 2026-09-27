@@ -1,6 +1,7 @@
 /** The document module: the frontend's loaded pages, every edit to them, undo,
  * and their persistence. This file is the only door; production code outside
  * src/document imports from here (guard: boundary.guard.test.ts).
+ * SURFACE.txt lists every export; new exports after batch 02b need a `# why:` justification.
  *
  * Reading. `node(id)`, `childIds`, `pageRoots`, `loadedPage`, `feedNames`,
  * `isLoaded` read the live Solid store on each call. Call them inside a tracking
@@ -46,6 +47,7 @@ export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model
 export { clearConflict, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, forceSave, installAliasDraftRouteHandler, isConflicted, isDirty, isSaving, markDirty, trackAssetWrite } from "./save/engine";
 export { applyGraphChange, installExternalChangeUiHandler } from "./external";
 export { appendFeed, deletePage, ensurePageLoaded, forgetPage, loadFeed, loadGuidePages, registerPaneRouteProvider, reloadHlsIfLoaded, reloadPage, resetStore, restoreTodayJournalInFeed } from "./workingSet";
+export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { emptyPage, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
 export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } from "./tree";
 export type { OutlineScope } from "./tree";
@@ -58,5 +60,5 @@ export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, c
 export { blockExternalId, blockRef, ensureBlockId, persistBlockRefTarget, persistentBlockRef, resolveBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
 export { clearSelection, cycleSelectionTasks, deleteSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectedIds, selectionMarkdown } from "./edits/selection";
-export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, prepareCrossPageSources, setBlockMoving, setFeedExtender } from "./edits/moves";
+export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, prepareCrossPageSources, setFeedExtender, withBlockMoving } from "./edits/moves";
 export { carryUnfinished } from "./edits/carry";

@@ -1,4 +1,4 @@
-import { blockWritable, rawWithInheritedOrderListType, isOrdered, rawWithOrderListType, rawWithCollapsed, writeCollapsed } from "./properties";
+import { blockWritable, pageWritable, rawWithInheritedOrderListType, isOrdered, rawWithOrderListType, rawWithCollapsed, writeCollapsed } from "./properties";
 import { doc, formatForBlock, setDoc, freshId, formatForPage, pageByName } from "../model";
 
 /** Reveal a search result without creating an edit, undo entry, or save. */
@@ -445,7 +445,7 @@ export function deleteBlock(id: string) {
  *  null if the page is missing, read-only, or already non-empty. */
 export function ensureEmptyBlock(pageName: string, opts: { afterProperties?: boolean } = {}): string | null {
   const page = pageByName(pageName);
-  if (!page || page.readOnly) return null;
+  if (!page || !pageWritable(pageName)) return null;
   const onlyPropertyRoot =
     opts.afterProperties === true &&
     page.format === "md" &&

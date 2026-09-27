@@ -103,6 +103,7 @@ async function loadHarness(
   }));
   vi.doMock("./document", () => ({
     resetStore: vi.fn(), flushAll: vi.fn(async () => true),
+    installRenameRefreshHandler: vi.fn(),
     createPage: (_name: string, dto: PageDto, options: { id: string; baseRev: string | null; bindingGeneration: number }) =>
       api.savePage(options.id, dto, options.baseRev, false, options.bindingGeneration),
     journalTemplatePage: (title: string, blocks: unknown[], page?: PageRead | null) => ({

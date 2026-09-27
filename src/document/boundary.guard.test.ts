@@ -53,7 +53,7 @@ function directImportViolations(all: Sources): string[] {
     for (const entry of imports(file, source)) {
       const target = resolved(file, entry.spec, all);
       if (target?.startsWith(`${DOC}/`) && target !== `${DOC}/index.ts`)
-        bad.push(`I-11: import the document folder index only; ${file} imports ${target}; exemplar src/components/Block.tsx`);
+        bad.push(`I-11: import the document folder index only; ${file} imports ${target}; exemplar src/components/PageProps.tsx`);
     }
   }
   return bad;
@@ -67,7 +67,7 @@ function containerImportViolations(all: Sources): string[] {
       const target = resolved(file, entry.spec, all);
       if (!target?.startsWith(`${DOC}/`)) continue;
       for (const name of entry.names.filter((name) => name === "doc" || name === "setDoc"))
-        bad.push(`I-11: no doc/setDoc import outside document; ${file} imports ${name}; exemplar src/inpageFind.ts`);
+        bad.push(`I-11: no doc/setDoc import outside document; ${file} imports ${name}; exemplar src/components/PageProps.tsx`);
     }
   }
   return bad;
@@ -134,7 +134,7 @@ function documentCycle(all: Sources): string[] | null {
 
 function assertNoDocumentCycle(all: Sources): void {
   const cycle = documentCycle(all);
-  if (cycle) throw new Error(`I-11: document must not join an import cycle; exemplar src/document/index.ts; ${cycle.join(" -> ")}`);
+  if (cycle) throw new Error(`I-11: document must not join an import cycle; exemplar src/components/PageProps.tsx; ${cycle.join(" -> ")}`);
 }
 
 it("I-11 document imports use the folder index", () => {
@@ -170,5 +170,5 @@ it("I-11 the document module has no import cycle", () => {
   assertNoDocumentCycle(all);
   all.set("src/document/__plant.ts", 'import "../__plant";');
   all.set("src/__plant.ts", 'import "./document";');
-  expect(() => assertNoDocumentCycle(all)).toThrow("I-11: document must not join an import cycle; exemplar src/document/index.ts; src/document -> src/__plant.ts -> src/document");
+  expect(() => assertNoDocumentCycle(all)).toThrow("I-11: document must not join an import cycle; exemplar src/components/PageProps.tsx; src/document -> src/__plant.ts -> src/document");
 });
