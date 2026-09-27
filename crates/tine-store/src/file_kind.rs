@@ -9,6 +9,7 @@ pub fn is_graph_text(file: &FileId) -> bool {
     is_graph_text_path(Path::new(file.as_str()))
 }
 
+/// Whether a path has a supported graph-text extension; does not inspect its area.
 pub(crate) fn is_graph_text_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|part| part.to_str()),
@@ -21,6 +22,19 @@ pub fn is_asset_sidecar(file: &FileId) -> bool {
     is_asset_sidecar_path(Path::new(file.as_str()))
 }
 
+/// Whether a path has the EDN sidecar extension; does not inspect its area.
 pub(crate) fn is_asset_sidecar_path(path: &Path) -> bool {
     path.extension().and_then(|part| part.to_str()) == Some("edn")
+}
+
+#[cfg(test)]
+#[test]
+fn graph_text_and_sidecar_classes_remain_distinct_and_case_sensitive() {
+    assert!(is_graph_text_path(Path::new("pages/Note.md")));
+    assert!(is_graph_text_path(Path::new("journals/Note.org")));
+    assert!(!is_graph_text_path(Path::new("pages/Note.MD")));
+    assert!(!is_graph_text_path(Path::new("assets/Note.edn")));
+    assert!(is_asset_sidecar_path(Path::new("assets/Note.edn")));
+    assert!(!is_asset_sidecar_path(Path::new("assets/Note.EDN")));
+    assert!(!is_asset_sidecar_path(Path::new("pages/Note.md")));
 }

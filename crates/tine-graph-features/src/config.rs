@@ -328,10 +328,12 @@ pub fn set_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<()>
 
 /// Update the display format, then migrate eligible legacy journal filenames.
 /// Cost O(config bytes + J + migrated file bytes).
-pub fn set_journal_page_title_format_and_migrate(store: &Store, fmt: &str) -> io::Result<()> {
+pub fn set_journal_page_title_format_and_migrate(
+    store: &Store,
+    fmt: &str,
+) -> io::Result<crate::journals::MigrationResult> {
     set_journal_page_title_format(store, fmt)?;
-    crate::journals::migrate_journal_filenames(store);
-    Ok(())
+    Ok(crate::journals::migrate_journal_filenames(store))
 }
 
 /// Persist the new-journal default template as `:default-templates {:journals

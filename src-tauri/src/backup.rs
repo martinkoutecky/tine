@@ -11,8 +11,8 @@ use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
 
 // Snapshot the graph's markdown into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
-// net against a bad write or accidental edit. Best-effort and fully detached so
-// it never blocks startup or holds the graph lock during file copies.
+// net against a bad write or accidental edit. Source validation runs at launch;
+// the file copy runs in a detached best-effort worker.
 const BACKUP_KEEP_DEFAULT: usize = 12;
 static BACKUP_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
@@ -74,10 +74,8 @@ pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
     std::thread::spawn(move || {
         // Defer the launch snapshot ~1s so its whole-graph file copy doesn't
         // contend for disk I/O with first-journal paint and the warm-cache parse
-        // at open (felt on slow/NFS disks or a throttled laptop). Safe: the
-        // snapshot guards this session's edits, and the user hasn't edited yet in
-        // the first second — the on-disk files are still intact — so a crash in
-        // that window loses nothing the snapshot would have protected.
+        // at open (felt on slow/NFS disks or a throttled laptop). Edits may
+        // occur during this delay; this is a later snapshot, not a pre-edit one.
         std::thread::sleep(std::time::Duration::from_millis(1000));
         if slot.background_cancelled.load(Ordering::Acquire) {
             return;

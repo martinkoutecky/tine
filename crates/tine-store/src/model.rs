@@ -344,10 +344,7 @@ mod depth_contract_tests {
 
 /// Whether `path` is a page file Tine reads (markdown or org).
 fn is_page_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("md") | Some("org")
-    )
+    crate::file_kind::is_graph_text_path(path)
 }
 
 fn slash_path(path: &Path) -> String {
@@ -2593,10 +2590,7 @@ impl Graph {
         if !path_stays_within_root(&self.root, &abs) || path_uses_managed_alias(&self.root, &abs) {
             return None;
         }
-        match abs.extension().and_then(|e| e.to_str()) {
-            Some("md") | Some("org") => Some(abs),
-            _ => None,
-        }
+        crate::file_kind::is_graph_text_path(&abs).then_some(abs)
     }
 
     /// Whether a journal file is a "shadow": a non-date-stem file (e.g. a leftover
@@ -4995,12 +4989,7 @@ fn pre_block_icon(pre: &str) -> Option<String> {
 /// per-load baseline so a save can detect that the file changed underneath the
 /// editor. Deterministic so a rev returned from one save matches the next read.
 pub(crate) fn content_rev(s: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in s.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{h:016x}")
+    crate::store::FileRev::from_bytes(s.as_bytes()).into()
 }
 
 /// Encode a page name to its on-disk filename stem, honoring the graph's
@@ -7160,7 +7149,7 @@ mod tests {
 
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         assert_eq!(
-            tine_graph_features::journals::migrate_journal_filenames(&store),
+            tine_graph_features::journals::migrate_journal_filenames(&store).migrated,
             1,
             "exactly the title-named file renamed"
         );

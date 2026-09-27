@@ -30,10 +30,13 @@ pub fn graph_source_files(store: &Store, include_journals: bool) -> Vec<GraphSou
             continue;
         };
         for entry in listing.files {
+            if !tine_store::is_graph_text(&entry.id) {
+                continue;
+            }
             let format = match entry.rel.rsplit_once('.').map(|(_, ext)| ext) {
                 Some("md") => "md",
                 Some("org") => "org",
-                _ => continue,
+                _ => unreachable!("file_kind accepted only md and org"),
             };
             let Some(meta) = entry.meta else { continue };
             if meta.len > MAX_FILE_BYTES {

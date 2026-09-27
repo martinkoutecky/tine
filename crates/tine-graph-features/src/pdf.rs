@@ -14,26 +14,16 @@ fn asset(store: &Store, rel: &str) -> io::Result<FileId> {
 }
 
 fn optional(store: &Store, id: &FileId) -> io::Result<Option<(String, FileRev)>> {
-    match store.read(id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-        Ok((bytes, rev)) => {
-            let text = String::from_utf8(bytes).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "stream did not contain valid UTF-8",
-                )
-            })?;
-            if !tine_store::parse_input_depth_within_limit(&text) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "I-22: input nesting exceeds 512 levels",
-                ));
-            }
-            Ok(Some((text, rev)))
-        }
-        Err(StoreError::NotFound) => Ok(None),
-        Err(error) => Err(store_error(error)),
+    match crate::parsed_text::read(store, id) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
+
+#[cfg(test)]
+#[path = "pdf_tests.rs"]
+mod tests;
 
 fn valid_edn(raw: &str) -> io::Result<()> {
     if raw.trim().is_empty()

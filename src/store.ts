@@ -542,13 +542,12 @@ function evictIfNeeded() {
 
 /** Clear the entire working set. Used for test isolation and when switching
  *  graphs; normal navigation is additive (keeps satellite pages alive). Also
- *  cancels pending saves and clears dirty flags so nothing from the old graph
- *  can be written after a switch. */
+ *  cancels queued saves and clears dirty flags after the caller flushes the old
+ *  graph. An IPC save already issued cannot be cancelled here. */
 export function resetStore() {
   invalidateBinding();
-  // Cancel pending/in-flight saves and clear all save guard state (timers, graph
-  // token, dirty/baseline/tombstone) so nothing from the old graph can be written
-  // after the switch.
+  // Cancel queued saves and clear save guard state (timers, graph token,
+  // dirty/baseline/tombstone); callers flush issued saves before switching.
   resetSaveState();
   // Drop undo/redo history: it holds page snapshots from the OLD graph; an undo
   // after a graph switch would otherwise restore (and save) those into the new

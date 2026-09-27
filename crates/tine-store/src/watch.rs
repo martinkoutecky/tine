@@ -130,10 +130,7 @@ fn collect_dir(
                     continue;
                 }
             };
-            if matches!(
-                path.extension().and_then(|part| part.to_str()),
-                Some("md" | "org")
-            ) {
+            if crate::file_kind::is_graph_text_path(&path) {
                 if kind.is_file() {
                     if let Some(value) = stamp_metadata(&path) {
                         files.insert(path, value);
@@ -190,8 +187,7 @@ fn collect_restore(core: &Core) -> RestoreBaseline {
                     continue;
                 }
                 stack.push(path);
-            } else if kind.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("edn")
-            {
+            } else if kind.is_file() && crate::file_kind::is_asset_sidecar_path(&path) {
                 if let Some(value) = stamp(&path) {
                     files.insert(path, value);
                 }
@@ -220,10 +216,7 @@ fn atomic_temp(path: &Path) -> bool {
         return false;
     };
     page.starts_with('.')
-        && matches!(
-            Path::new(page).extension().and_then(|ext| ext.to_str()),
-            Some("md" | "org")
-        )
+        && crate::file_kind::is_graph_text_path(Path::new(page))
         && pid.bytes().all(|byte| byte.is_ascii_digit())
         && seq.bytes().all(|byte| byte.is_ascii_digit())
 }
@@ -244,11 +237,7 @@ fn incremental_paths(event: &notify::Event) -> Option<Vec<PathBuf>> {
         return None;
     }
     if event.paths.iter().any(|path| {
-        (!matches!(
-            path.extension().and_then(|ext| ext.to_str()),
-            Some("md" | "org")
-        ) || path.is_dir())
-            && !atomic_temp(path)
+        (!crate::file_kind::is_graph_text_path(path) || path.is_dir()) && !atomic_temp(path)
     }) {
         return None;
     }
@@ -256,12 +245,7 @@ fn incremental_paths(event: &notify::Event) -> Option<Vec<PathBuf>> {
         event
             .paths
             .iter()
-            .filter(|path| {
-                matches!(
-                    path.extension().and_then(|ext| ext.to_str()),
-                    Some("md" | "org")
-                ) && !path.is_dir()
-            })
+            .filter(|path| crate::file_kind::is_graph_text_path(path) && !path.is_dir())
             .cloned()
             .collect(),
     )

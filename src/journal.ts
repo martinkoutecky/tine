@@ -37,6 +37,11 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
+function daysInMonth(y: number, m: number): number {
+  if (m === 2) return y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28;
+  return m === 4 || m === 6 || m === 9 || m === 11 ? 30 : 31;
+}
+
 /// Format a date with an explicit cljs-time/Joda-style pattern (the subset Logseq
 /// uses). Unknown characters are emitted literally.
 export function formatJournal(d: Date, fmt: string): string {
@@ -140,7 +145,7 @@ export function parseJournalWith(s: string, fmt: string): JournalDateParts | nul
     mo < 1 ||
     mo > 12 ||
     d < 1 ||
-    d > 31
+    d > daysInMonth(y, mo)
   ) {
     return null;
   }
@@ -151,6 +156,7 @@ export function parseJournalWith(s: string, fmt: string): JournalDateParts | nul
 /// default) — so a `[[name]]` link / quick-switch pick opens the journal, not an
 /// empty page. Mirrors the backend's `safe-journal-title-formatters` leniency.
 export function isJournalTitle(name: string): boolean {
-  if (!name.trim()) return false;
-  return [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd"].some((f) => parseJournalWith(name, f) !== null);
+  const title = name.trim();
+  if (!title) return false;
+  return [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd", "yyyy_MM_dd"].some((f) => parseJournalWith(title, f) !== null);
 }

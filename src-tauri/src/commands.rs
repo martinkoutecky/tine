@@ -1277,12 +1277,13 @@ pub(crate) fn set_preferred_format(format: String, state: GraphContext<'_>) -> R
 }
 
 /// Set the graph's `:journal/page-title-format` (journal display-title format,
-/// e.g. "MMM do, yyyy"). Display-only — does not rename journal files.
+/// e.g. "MMM do, yyyy"). Also migrates eligible legacy title-named files;
+/// the result names any file left in place and explains why.
 #[tauri::command]
 pub(crate) fn set_journal_title_format(
     format: String,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<tine_graph_features::journals::MigrationResult, String> {
     let slot = slot_for_context(&state)?;
     tine_graph_features::config::set_journal_page_title_format_and_migrate(&slot.store, &format)
         .map_err(|error| error.to_string())
@@ -1782,10 +1783,8 @@ pub(crate) fn import_native_capture(
 }
 
 /// Read a dropped delimited-text file for the CSV/TSV → grid drop path.
-/// Deliberately NARROW: this is the only webview-reachable read of a
-/// caller-chosen path (everything else is gated to the graph/assets dirs),
-/// so it refuses anything that isn't the drop feature's file types — it must
-/// not grow into a general file-read primitive.
+/// Deliberately narrow: this caller-chosen path is restricted to the drop
+/// feature's delimited text types. `read_local_image` has a separate image gate.
 #[tauri::command]
 pub(crate) fn read_text_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
     read_text_file_from_path(std::path::Path::new(&path), &state)

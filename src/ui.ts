@@ -215,8 +215,8 @@ export function changePreferredFormat(fmt: "md" | "org") {
 
 /** Change the journal display-title format (`:journal/page-title-format`).
  *  Optimistically updates the in-memory formatter + meta and bumps the graph
- *  epoch so open journal titles re-render; persists to config.edn. Display-only
- *  — journal file names (`:journal/file-name-format`) are unaffected. */
+ *  epoch so open journal titles re-render; persists to config.edn. The configured
+ *  file-name format is unchanged; eligible legacy title-named files are migrated. */
 export function changeJournalTitleFormat(fmt: string) {
   const next = fmt.trim() || "MMM do, yyyy";
   const m = graphMeta();
@@ -230,11 +230,19 @@ export function changeJournalTitleFormat(fmt: string) {
   // the reopen could re-query the old format.
   void backend()
     .setJournalTitleFormat(next)
-    .then(() => {
+    .then((migration) => {
       bumpGraphEpoch();
+      const message = journalMigrationSkipMessage(migration);
+      if (message) pushToast(message, "info");
       void refreshJournalConflicts(true); // surface any days the migration couldn't merge
     })
     .catch(() => {});
+}
+
+export function journalMigrationSkipMessage(result: import("./types").JournalMigrationResult): string | null {
+  const count = result.skipped.length;
+  if (!count) return null;
+  return `${count} journal file${count === 1 ? "" : "s"} skipped during migration: ${result.skipped.map(({ file, reason }) => `${file} (${reason})`).join("; ")}`;
 }
 
 // --- duplicate journal days (a date with >1 file, e.g. a date-stem file + a

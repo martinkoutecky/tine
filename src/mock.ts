@@ -1141,8 +1141,8 @@ export function mockBackend(): Backend {
     async setPreferredFormat(): Promise<void> {
       // no-op in the browser mock
     },
-    async setJournalTitleFormat(): Promise<void> {
-      // no-op in the browser mock
+    async setJournalTitleFormat(): Promise<import("./types").JournalMigrationResult> {
+      return { migrated: 0, skipped: [] };
     },
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock

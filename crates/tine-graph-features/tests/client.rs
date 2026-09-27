@@ -482,10 +482,17 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
     // `2026_06_18.org` beside `2026_06_18.md`, creating an md/org twin. The
     // twin rule refuses that move, so the title-named duplicate stays as it was
     // (still listed by `journal_conflicts`). Every other file matches.
-    assert_eq!(
-        format!("{:?}", journals::migrate_journal_filenames(&store) + 1),
-        "2"
-    );
+    let migration = journals::migrate_journal_filenames(&store);
+    assert_eq!(migration.migrated, 1);
+    assert_eq!(migration.skipped.len(), 2);
+    assert!(migration
+        .skipped
+        .iter()
+        .any(|skip| skip.file == "Jun 18th, 2026.org" && skip.reason.contains("same-day")));
+    assert!(migration
+        .skipped
+        .iter()
+        .any(|skip| skip.file == "Jun 20th, 2026.md" && skip.reason.contains("already exists")));
     assert!(new_root.join("journals/Jun 20th, 2026.md").exists());
     assert!(new_root.join("journals/Jun 18th, 2026.org").exists());
     assert!(!new_root.join("journals/2026_06_18.org").exists());
@@ -567,7 +574,7 @@ fn failed_journal_repair_restores_legacy_filename() {
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("journals/Jun 18th, 2026.md"), "- preserve\n").unwrap();
     store.inject_fault(FaultPoint::MidStepIoAt(0));
-    assert_eq!(journals::migrate_journal_filenames(&store), 0);
+    assert_eq!(journals::migrate_journal_filenames(&store).migrated, 0);
     assert_eq!(
         fs::read(root.join("journals/Jun 18th, 2026.md")).unwrap(),
         b"- preserve\n"

@@ -1,6 +1,7 @@
 //! Journal feed, duplicate-day reconciliation, and filename migration. All
 //! reads use the store's area inventory; writes are guarded transactions.
 
+use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::io;
 
@@ -83,7 +84,7 @@ pub fn feed_page(
             StoreError::Undecodable => io::Error::other("stream did not contain valid UTF-8"),
             StoreError::Unparseable(reason) => io::Error::other(reason),
             StoreError::TooLarge { limit, .. } => {
-                io::Error::other(format!("asset exceeds {limit} byte limit"))
+                io::Error::other(format!("journal page exceeds {limit} byte limit"))
             }
             StoreError::Closed => io::Error::other("store closed"),
         })
@@ -236,11 +237,16 @@ fn files(store: &Store) -> Vec<FileEntry> {
         .unwrap_or_default() // v0.6.5 skips unlistable journals.
 }
 
-fn stem(name: &str) -> Option<&str> {
-    name.rsplit('/')
+fn stem(entry: &FileEntry) -> Option<&str> {
+    if !tine_store::is_graph_text(&entry.id) {
+        return None;
+    }
+    entry
+        .rel
+        .rsplit('/')
         .next()?
         .rsplit_once('.')
-        .and_then(|(stem, ext)| matches!(ext, "md" | "org").then_some(stem))
+        .map(|(stem, _)| stem)
 }
 
 fn preview(store: &Store, entry: &FileEntry) -> String {
@@ -280,12 +286,8 @@ pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> Vec<(Day, PageI
         .collect()
 }
 
-fn migration_target(
-    entry: &FileEntry,
-    existing: &HashSet<String>,
-    fmt: &JournalFormat,
-) -> Option<String> {
-    let source_stem = stem(&entry.rel)?;
+fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {
+    let source_stem = stem(entry)?;
     if JournalDate::from_file_stem(source_stem).is_some() {
         return None;
     }
@@ -296,7 +298,25 @@ fn migration_target(
     }
     let ext = entry.rel.rsplit_once('.')?.1;
     let target = format!("{wanted}.{ext}");
-    (!existing.contains(&target)).then_some(target)
+    Some(target)
+}
+
+/// One title-named journal that could not be renamed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MigrationSkip {
+    /// Existing journal filename.
+    pub file: String,
+    /// Human-readable refusal or read failure.
+    pub reason: String,
+}
+
+/// Result of a best-effort journal filename migration.
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+pub struct MigrationResult {
+    /// Number of files renamed.
+    pub migrated: usize,
+    /// Every eligible title-named file left in place, with its reason.
+    pub skipped: Vec<MigrationSkip>,
 }
 
 /// Whether a top-level title-named journal has an available canonical name.
@@ -308,34 +328,66 @@ pub fn has_journal_filename_migrations(store: &Store) -> bool {
     entries
         .iter()
         .filter(|entry| !entry.rel.contains('/'))
-        .any(|entry| migration_target(entry, &existing, &fmt).is_some())
+        .any(|entry| {
+            migration_target(entry, &fmt).is_some_and(|target| !existing.contains(&target))
+        })
 }
 
-/// Best-effort one-file transactions, skipping occupied targets as v0.6.5.
+/// Best-effort one-file transactions. Occupied targets and same-day twins stay
+/// in place; each eligible file left behind is reported with its reason.
 /// Caller takes the pre-migration backup. Cost O(J + migrated file bytes).
-pub fn migrate_journal_filenames(store: &Store) -> usize {
+pub fn migrate_journal_filenames(store: &Store) -> MigrationResult {
     let entries = files(store);
     let mut existing: HashSet<_> = entries.iter().map(|entry| entry.rel.clone()).collect();
     let fmt = format(store);
-    let mut count = 0;
+    let mut result = MigrationResult::default();
     for entry in entries.into_iter().filter(|entry| !entry.rel.contains('/')) {
-        let Some(target) = migration_target(&entry, &existing, &fmt) else {
+        let Some(target) = migration_target(&entry, &fmt) else {
             continue;
         };
-        let Ok((_, rev)) = store.read(&entry.id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) else {
+        let skip = |reason: String| MigrationSkip {
+            file: entry.rel.clone(),
+            reason,
+        };
+        if existing.contains(&target) {
+            result
+                .skipped
+                .push(skip(format!("target {target} already exists")));
             continue;
+        }
+        let rev = match store.read(&entry.id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+            Ok((_, rev)) => rev,
+            Err(error) => {
+                result
+                    .skipped
+                    .push(skip(format!("source could not be read: {error:?}")));
+                continue;
+            }
         };
         let Ok(to) = store.file_id(Area::Journals, &target) else {
+            result
+                .skipped
+                .push(skip("target filename is invalid".to_owned()));
             continue;
         };
         let mut tx = store.transaction();
         tx.move_file(&entry.id, rev, &to, None);
-        if tx_error(tx.commit()).is_ok() {
-            existing.insert(target);
-            count += 1;
+        match tx_error(tx.commit()) {
+            Ok(_) => {
+                existing.insert(target);
+                result.migrated += 1;
+            }
+            Err(error) => {
+                let reason = if error.kind() == io::ErrorKind::AlreadyExists {
+                    "same-day .md/.org twin would be created".to_owned()
+                } else {
+                    format!("move refused: {error}")
+                };
+                result.skipped.push(skip(reason));
+            }
         }
     }
-    count
+    result
 }
 
 /// Duplicate-day files with first-line previews, canonical first. Unreadable
@@ -344,7 +396,7 @@ pub fn migrate_journal_filenames(store: &Store) -> usize {
 pub fn journal_conflicts(store: &Store) -> Vec<JournalConflict> {
     let mut groups: BTreeMap<Day, Vec<FileEntry>> = BTreeMap::new();
     for entry in files(store) {
-        if let Some(day) = entry.day.filter(|_| stem(&entry.rel).is_some()) {
+        if let Some(day) = entry.day.filter(|_| stem(&entry).is_some()) {
             groups.entry(day).or_default().push(entry);
         }
     }
@@ -368,7 +420,7 @@ pub fn journal_conflicts(store: &Store) -> Vec<JournalConflict> {
                         name,
                         path: entry.id.as_str().to_owned(),
                         preview: preview(store, entry),
-                        canonical: stem(&entry.rel)
+                        canonical: stem(&entry)
                             .is_some_and(|stem| JournalDate::from_file_stem(stem).is_some()),
                     }
                 })

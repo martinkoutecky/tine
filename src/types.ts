@@ -412,3 +412,7 @@ export interface PrintOpts {
   /** Page margin, mm (all four sides). */
   margin_mm: number;
 }
+export type JournalMigrationResult = {
+  migrated: number;
+  skipped: { file: string; reason: string }[];
+};

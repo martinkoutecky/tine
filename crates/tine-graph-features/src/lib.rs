@@ -1,7 +1,8 @@
 //! PDF, asset, journal, page, and conflict graph features. Each operation uses the public `tine-store`
 //! boundary; callers supply device source streams, while the asset client
-//! validates a selected import name without opening its path. A transaction owns every graph write. Cost is stated on each public
-//! function. Callers need no graph path, lock, cache state, or write protocol.
+//! validates a selected import name without opening its path. Store-backed
+//! writes use guarded transactions or the Store's graph creation/publish paths.
+//! Callers need no graph path, lock, cache state, or write protocol.
 
 pub mod assets;
 pub mod config;
@@ -9,6 +10,7 @@ pub mod conflicts;
 pub mod guide;
 pub mod journals;
 pub mod pages;
+mod parsed_text;
 pub mod pdf;
 pub mod print;
 pub mod publish;

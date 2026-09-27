@@ -248,7 +248,7 @@ async function ensureJournalTemplate(): Promise<void> {
       binding.backendGeneration
     );
   } catch {
-    // ignore — never block graph open on template insertion
+    // Template insertion is best-effort; graph open awaited this attempt.
   }
 }
 
@@ -371,6 +371,6 @@ async function seedTodayJournal(): Promise<void> {
       binding.backendGeneration
     );
   } catch {
-    // best-effort — never block opening the new graph on the seed
+    // Best-effort seed; the caller awaited this attempt.
   }
 }

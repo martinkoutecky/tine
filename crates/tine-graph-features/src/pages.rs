@@ -181,25 +181,7 @@ fn validate_target(ids: &[PageId], expected_path: Option<&str>) -> io::Result<()
 }
 
 fn read_text(store: &Store, file: &FileId) -> io::Result<(String, FileRev)> {
-    let (bytes, rev) = store
-        .read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-        .map_err(store_error)?;
-    let text = String::from_utf8(bytes).map_err(|_| {
-        error(
-            io::ErrorKind::InvalidData,
-            "stream did not contain valid UTF-8",
-        )
-    })?;
-    if !tine_store::parse_input_depth_within_limit(&text)
-        || (file.as_str().to_ascii_lowercase().ends_with(".org")
-            && !tine_core::org::headline_levels_within_limit(&text, 512))
-    {
-        return Err(error(
-            io::ErrorKind::InvalidData,
-            "I-22: input nesting exceeds 512 levels",
-        ));
-    }
-    Ok((text, rev))
+    crate::parsed_text::read(store, file)
 }
 
 fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
@@ -209,11 +191,10 @@ fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
         (Area::Journals, &config.journals_dir),
     ] {
         if let Some(tail) = rel.strip_prefix(&format!("{dir}/")) {
-            if matches!(
-                tail.rsplit_once('.').map(|(_, ext)| ext),
-                Some("md" | "org")
-            ) {
-                return store.file_id(area, tail).map_err(store_error);
+            if let Ok(file) = store.file_id(area, tail) {
+                if tine_store::is_graph_text(&file) {
+                    return Ok(file);
+                }
             }
         }
     }

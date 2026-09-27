@@ -39,7 +39,7 @@ pub fn page_print_html(store: &Store, name: &str, opts: PrintOpts) -> io::Result
     };
     store.page(&page.id).map_err(crate::store_error)?;
     // The old print path parses Org source as Markdown. Keep that behavior in
-    // the print client, with its original unbounded file read.
+    // the print client, within the shared parse input byte limit.
     let org_document = if page.id.as_str().to_ascii_lowercase().ends_with(".org") {
         let file = tine_store::FileId::from(page.id.as_str().to_owned());
         let (bytes, _) = store

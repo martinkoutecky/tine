@@ -1,0 +1,13 @@
+{
+  "cases": [
+    { "name": "Jun 18th, 2026", "expected": true },
+    { "name": "  Jun 18th, 2026  ", "expected": true },
+    { "name": "2026-06-18", "expected": true },
+    { "name": "2026_06_18", "expected": true },
+    { "name": "Feb 29th, 2024", "expected": true },
+    { "name": "Feb 29th, 2026", "expected": false },
+    { "name": "Feb 31st, 2026", "expected": false },
+    { "name": "2026_04_31", "expected": false },
+    { "name": "not a journal", "expected": false }
+  ]
+}

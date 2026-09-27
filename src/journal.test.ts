@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import dateGoldenRaw from "./fixtures/date-golden.json?raw";
+import journalTitleGoldenRaw from "../tests/fixtures/i12-journal-title-golden.json?raw";
 import {
   formatJournal,
   isJournalTitle,
@@ -27,12 +28,19 @@ type DateGoldenFixture = {
 };
 
 const dateGolden = JSON.parse(dateGoldenRaw) as DateGoldenFixture;
+const journalTitleGolden = JSON.parse(journalTitleGoldenRaw) as { cases: { name: string; expected: boolean }[] };
 
 function localDate({ y, m, d }: JournalDateParts): Date {
   return new Date(y, m - 1, d);
 }
 
 describe("isJournalTitle (route [[date]] links to journals)", () => {
+  it("matches the Rust journal title fixture", () => {
+    setJournalTitleFormat(null);
+    for (const { name, expected } of journalTitleGolden.cases) {
+      expect(isJournalTitle(name), name).toBe(expected);
+    }
+  });
   it("recognizes the default MMM do, yyyy format", () => {
     setJournalTitleFormat("MMM do, yyyy");
     expect(isJournalTitle("Jun 26th, 2026")).toBe(true);
@@ -62,6 +70,8 @@ describe("isJournalTitle (route [[date]] links to journals)", () => {
     expect(isJournalTitle("2026-13-26")).toBe(false); // month 13
     expect(isJournalTitle("2026-06-40")).toBe(false); // day 40
     expect(isJournalTitle("2026-06-26 extra")).toBe(false);
+    expect(isJournalTitle("Feb 31st, 2026")).toBe(false);
+    expect(isJournalTitle("2026_06_26")).toBe(true);
   });
 });
 

@@ -1153,7 +1153,8 @@ fn migrate_renames_title_named_journal_files() {
     .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     let n = journals::migrate_journal_filenames(&store);
-    assert_eq!(n, 1);
+    assert_eq!(n.migrated, 1);
+    assert!(n.skipped.is_empty());
     assert!(
         root.join("journals").join("2026_06_18.md").exists(),
         "renamed to stem"

@@ -2,12 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { resetStore } from "./store";
 import {
-  journalConflicts, refreshJournalConflicts, refreshSyncConflicts,
+  journalConflicts, journalMigrationSkipMessage, refreshJournalConflicts, refreshSyncConflicts,
   setJournalConflicts, setSyncConflicts, syncConflicts, toasts, setToasts,
 } from "./ui";
 import type { JournalConflict, SyncConflict } from "./types";
 
 describe("late conflict lists (I-20)", () => {
+  it("explains each migration refusal and the skipped count", () => {
+    expect(journalMigrationSkipMessage({ migrated: 1, skipped: [] })).toBeNull();
+    expect(journalMigrationSkipMessage({ migrated: 1, skipped: [
+      { file: "Jun 18th, 2026.org", reason: "same-day .md/.org twin would be created" },
+      { file: "Jun 20th, 2026.md", reason: "target 2026_06_20.md already exists" },
+    ] })).toContain("2 journal files skipped during migration: Jun 18th, 2026.org (same-day .md/.org twin would be created); Jun 20th, 2026.md (target 2026_06_20.md already exists)");
+  });
   it("discards a duplicate-journal list and notification from the old graph", async () => {
     setJournalConflicts([]);
     setToasts([]);

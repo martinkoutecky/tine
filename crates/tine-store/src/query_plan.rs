@@ -1265,21 +1265,6 @@ fn execute_pages(
     ))
 }
 
-fn crumb_line(block: &DocBlock) -> String {
-    let line = block
-        .visible_text()
-        .lines()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if line.chars().count() > 60 {
-        format!("{}…", line.chars().take(60).collect::<String>())
-    } else {
-        line
-    }
-}
-
 fn walk_blocks<'a>(
     blocks: &'a [DocBlock],
     ancestors: &mut Vec<&'a DocBlock>,
@@ -1358,7 +1343,7 @@ fn execute_blocks(
                                 block,
                                 breadcrumb: path
                                     .iter()
-                                    .map(|ancestor| crumb_line(ancestor))
+                                    .map(|ancestor| crate::query::crumb_line(ancestor))
                                     .collect(),
                             },
                         );

@@ -9,6 +9,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn published_alias_links_and_authored_anchors_resolve() {
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-alias-anchor-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Actual.md"),
+            "alias:: Other\n\n- authored\n  id:: b0\n- generated\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages/Source.md"), "- [[Other]] and [[Actual]]\n").unwrap();
+        let store = Store::open(&dir, Default::default()).unwrap().0;
+        let whole = store.whole_graph().unwrap();
+        let corpus = whole.corpus();
+        let graph = RenderGraph {
+            corpus: &corpus,
+            whole: &whole,
+            store: &store,
+        };
+        let mut files = HashMap::<String, String>::new();
+        publish_graph(&graph, true, &[], &mut |name, bytes| {
+            files.insert(name.to_owned(), String::from_utf8(bytes.to_vec()).unwrap());
+            Ok(())
+        })
+        .unwrap();
+        assert!(files["source.html"].contains("href=\"actual.html\""));
+        assert!(!files["source.html"].contains("href=\"other.html\""));
+        assert_eq!(files["actual.html"].matches("id=\"b0\"").count(), 1);
+        assert!(files["actual.html"].contains("id=\"b1\""));
+        assert!(files["source.html"].contains("id=\"b0\""));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn repeated_query_sources_use_one_render_cache_entry() {
         let dir = std::env::temp_dir().join(format!(
             "tine-publish-query-memo-cache-{}",

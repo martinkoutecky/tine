@@ -1465,10 +1465,7 @@ impl Store {
             return None;
         }
         let stem = std::path::Path::new(path).file_stem()?.to_str()?;
-        if !matches!(
-            std::path::Path::new(path).extension()?.to_str(),
-            Some("md" | "org")
-        ) {
+        if !crate::file_kind::is_graph_text_path(std::path::Path::new(path)) {
             return None;
         }
         if tine_core::model::is_sync_conflict(stem) {
@@ -2218,12 +2215,7 @@ pub struct FileRev(String);
 
 impl FileRev {
     pub(crate) fn from_bytes(bytes: &[u8]) -> Self {
-        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-        for byte in bytes {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        Self(format!("{hash:016x}"))
+        Self(format!("{:016x}", fnv_update(0xcbf2_9ce4_8422_2325, bytes)))
     }
 
     pub(crate) fn from_file(path: &std::path::Path) -> std::io::Result<Self> {
@@ -2235,13 +2227,32 @@ impl FileRev {
             if count == 0 {
                 break;
             }
-            for byte in &buf[..count] {
-                hash ^= u64::from(*byte);
-                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-            }
+            hash = fnv_update(hash, &buf[..count]);
         }
         Ok(Self(format!("{hash:016x}")))
     }
+}
+
+fn fnv_update(mut hash: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+#[cfg(test)]
+#[test]
+fn graph_content_and_raw_file_revisions_share_fnv_bytes() {
+    let text = "a Unicode page 🐈\n";
+    assert_eq!(
+        crate::model::content_rev(text),
+        String::from(FileRev::from_bytes(text.as_bytes()))
+    );
+    assert_ne!(
+        FileRev::from_bytes(b"\xff"),
+        FileRev::from_bytes("ÿ".as_bytes())
+    );
 }
 
 impl From<FileRev> for String {
@@ -2889,10 +2900,7 @@ impl WholeGraph {
             && !path
                 .split('/')
                 .any(|part| part.is_empty() || part == "." || part == "..")
-            && matches!(
-                Path::new(path).extension().and_then(|ext| ext.to_str()),
-                Some("md" | "org")
-            )
+            && crate::file_kind::is_graph_text_path(Path::new(path))
             && Path::new(path)
                 .file_stem()
                 .and_then(|stem| stem.to_str())

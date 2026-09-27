@@ -450,9 +450,8 @@ pub(crate) fn warm_cache_async(
         {
             return; // the graph was switched while we slept — a newer warm owns it
         }
-        // At most one process-wide graph warm parses files at a time. Rapid
-        // switches may leave short-lived sleepers, but cannot amplify disk/CPU
-        // work; revoked slots stop between page parses.
+        // Serialize these post-open readiness waits process-wide. Store::open
+        // may already have started a parse worker for each open slot.
         static WARM_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         let _worker = WARM_WORK
             .get_or_init(|| std::sync::Mutex::new(()))

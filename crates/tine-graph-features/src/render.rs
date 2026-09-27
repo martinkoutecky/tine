@@ -181,11 +181,9 @@ pub(crate) fn slug(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-/// Per-export map from a page's display name (lowercased for case-insensitive
-/// lookup, matching Logseq's case-insensitive page identity) to its UNIQUE,
-/// GUARANTEED-NONEMPTY output slug. Built once per export (`build_slug_map`) and
-/// used as the single source of truth for every filename, cross-page link, and
-/// search-index entry — so a link can never diverge from the file it points at.
+/// Per-export map from physical names and owned aliases to output slugs.
+/// Alias entries are added from WholeGraph's answer after physical filenames
+/// are assigned, so a published alias link reaches its owner's file.
 type SlugMap = std::collections::HashMap<String, String>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -293,9 +291,8 @@ fn build_slug_map(names: &[&str]) -> (SlugMap, Vec<(String, String, String)>) {
     (map, collisions)
 }
 
-/// Resolve a page name to its export slug via the per-export map (the single
-/// source of truth). Falls back to a raw `slug()` for a name not in the map — a
-/// reference to a page that isn't being exported (its link is dead either way),
+/// Resolve an exported page name or alias to its output slug. A name that does
+/// not identify an exported page retains the legacy raw-slug fallback, as does
 /// or the single-page print export (`ctx.slugs == None`, no cross-page files).
 fn page_slug(ctx: &Ctx, name: &str) -> String {
     ctx.slugs
@@ -1739,6 +1736,7 @@ fn render_block(
     slug: &str,
     title: &str,
     counter: &mut u32,
+    authored_ids: &HashSet<String>,
     index: &mut Vec<serde_json::Value>,
     opts: PrintOpts,
     tree_depth: usize,
@@ -1760,16 +1758,18 @@ fn render_block(
         .and_then(|_| inspect_begin_query(b.raw(), &blocks));
 
     // Every block gets a stable anchor so a search hit can deep-link straight to it: its
-    // `id::` uuid when present, else a generated per-page `b{n}` (never collides with a
-    // 36-char uuid). Emitting the `<li id>` and the search-index entry in the SAME place
+    // `id::` value when present, else a generated per-page `b{n}` that skips all
+    // authored IDs. Emitting the `<li id>` and the search-index entry in the SAME place
     // keeps the HTML anchor and the index in lock-step.
     let anchor = match block_id(b.raw()) {
         Some(id) => id,
-        None => {
+        None => loop {
             let a = format!("b{}", *counter);
             *counter += 1;
-            a
-        }
+            if !authored_ids.contains(&a) {
+                break a;
+            }
+        },
     };
     out.push_str(&format!("<li id=\"{}\">", esc_attr(&anchor)));
     // The container payload is executable/configuration source, not visible
@@ -1853,6 +1853,7 @@ fn render_block(
                 slug,
                 title,
                 counter,
+                authored_ids,
                 index,
                 opts,
                 tree_depth + 1,
@@ -1861,6 +1862,20 @@ fn render_block(
         out.push_str("</ul>");
     }
     out.push_str("</li>");
+}
+
+fn authored_block_ids(roots: &[DocBlock]) -> HashSet<String> {
+    fn collect(blocks: &[DocBlock], ids: &mut HashSet<String>) {
+        for block in blocks {
+            if let Some(id) = block_id(block.raw()) {
+                ids.insert(id);
+            }
+            collect(&block.children, ids);
+        }
+    }
+    let mut ids = HashSet::new();
+    collect(roots, &mut ids);
+    ids
 }
 
 fn page_html(
@@ -1875,6 +1890,7 @@ fn page_html(
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
     let mut counter = 0u32;
+    let authored_ids = authored_block_ids(&doc.roots);
     for b in &doc.roots {
         // The whole-graph site export always expands (no fold state on paper).
         render_block(
@@ -1884,6 +1900,7 @@ fn page_html(
             slug,
             title,
             &mut counter,
+            &authored_ids,
             blocks,
             PrintOpts::default(),
             0,
@@ -2086,6 +2103,7 @@ pub fn page_print_html(
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
     let mut counter = 0u32;
+    let authored_ids = authored_block_ids(&parsed.roots);
     for b in &parsed.roots {
         render_block(
             b,
@@ -2094,6 +2112,7 @@ pub fn page_print_html(
             &slug,
             &entry.name,
             &mut counter,
+            &authored_ids,
             &mut blocks,
             opts,
             0,
@@ -2471,14 +2490,33 @@ pub fn publish_graph(
         public.push((e.name.as_str(), e.kind, Arc::clone(&parsed)));
     }
 
-    // ONE source of truth: a unique, nonempty name→slug map for the exported set.
-    // Every filename, cross-page link, block-ref target, and search-index entry is
-    // driven from this map, so a link can never point at a file that a later page
-    // overwrote (DS#4). `slug(name)` is never recomputed independently downstream.
+    // Assign unique filenames to physical exported pages, then project aliases
+    // through WholeGraph's resolution answer. A published alias reaches the
+    // same physical file as navigation; unresolved names retain the legacy
+    // raw-slug fallback in page_slug.
     let names: Vec<&str> = public.iter().map(|(n, _, _)| *n).collect();
-    let (slugs, collisions) = build_slug_map(&names);
+    let (mut slugs, collisions) = build_slug_map(&names);
     for _ in &collisions {
         eprintln!("tine export: page slug collision resolved");
+    }
+    let mut exported_ids = HashMap::with_capacity(public.len());
+    for (name, kind, _) in &public {
+        if let tine_store::Resolved::Existing { id, .. } =
+            graph.whole.resolve(name, *kind == PageKind::Journal)
+        {
+            if let Some(slug) = slugs.get(&name.to_lowercase()) {
+                exported_ids.insert(id, slug.clone());
+            }
+        }
+    }
+    for entry in &graph.whole.inventory().0 {
+        if let tine_store::Resolved::Alias { owners } = &entry.target {
+            if let Some(slug) = owners.first().and_then(|owner| exported_ids.get(owner)) {
+                slugs
+                    .entry(entry.name.to_lowercase())
+                    .or_insert_with(|| slug.clone());
+            }
+        }
     }
     let slug_of = |name: &str| -> String {
         slugs

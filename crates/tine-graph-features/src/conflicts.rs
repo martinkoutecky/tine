@@ -26,38 +26,17 @@ fn id(store: &Store, rel: &str) -> io::Result<FileId> {
         (Area::Journals, &config.journals_dir),
     ] {
         if let Some(tail) = rel.strip_prefix(&format!("{dir}/")) {
-            if !matches!(
-                tail.rsplit_once('.').map(|(_, ext)| ext),
-                Some("md" | "org")
-            ) {
-                return Err(invalid_path());
-            }
-            return store.file_id(area, tail).map_err(|_| invalid_path());
+            let file = store.file_id(area, tail).map_err(|_| invalid_path())?;
+            return tine_store::is_graph_text(&file)
+                .then_some(file)
+                .ok_or_else(invalid_path);
         }
     }
     Err(invalid_path())
 }
 
 fn read_text(store: &Store, id: &FileId) -> io::Result<(String, FileRev)> {
-    let (bytes, rev) = store
-        .read(id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-        .map_err(store_error)?;
-    let content = String::from_utf8(bytes).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "stream did not contain valid UTF-8",
-        )
-    })?;
-    if !tine_store::parse_input_depth_within_limit(&content)
-        || (id.as_str().to_ascii_lowercase().ends_with(".org")
-            && !tine_core::org::headline_levels_within_limit(&content, 512))
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "I-22: input nesting exceeds 512 levels",
-        ));
-    }
-    Ok((content, rev))
+    crate::parsed_text::read(store, id)
 }
 
 fn format(id: &FileId) -> Format {
@@ -119,7 +98,7 @@ pub fn list_sync_conflicts(store: &Store) -> Vec<SyncConflict> {
             let Some((name_stem, ext)) = entry.rel.rsplit_once('.') else {
                 continue;
             };
-            if !matches!(ext, "md" | "org") {
+            if !tine_store::is_graph_text(&entry.id) {
                 continue;
             }
             let Some(base_stem) = sync_conflict_base(name_stem) else {

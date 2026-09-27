@@ -208,7 +208,8 @@ export interface Backend {
   createGraph(dir: string): Promise<string>;
   /** The whole name inventory (physical pages/journals, aliases, reference-only
    *  names), each with the backend's resolved target. Cached only by
-   *  `pageIndex.ts`; the frontend keeps no other name map. */
+   *  `pageIndex.ts` holds the full inventory; `store.ts` separately indexes
+   *  loaded pages in its working set. */
   pageInventory(): Promise<import("./types").PageInventory>;
   journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
@@ -276,7 +277,7 @@ export interface Backend {
   /** Persist the journal display-title format to config.edn
    *  `:journal/page-title-format` (e.g. "MMM do, yyyy"). Display-only — does not
    *  rename journal files (`:journal/file-name-format` is separate). */
-  setJournalTitleFormat(format: string): Promise<void>;
+  setJournalTitleFormat(format: string): Promise<import("./types").JournalMigrationResult>;
   /** Set (or clear, with null) the new-journal default template in config.edn
    *  `:default-templates {:journals "Name"}`. */
   setDefaultJournalTemplate(name: string | null): Promise<void>;
@@ -737,7 +738,7 @@ class TauriBackend implements Backend {
     return this.call<void>("set_preferred_format", { format });
   }
   setJournalTitleFormat(format: string) {
-    return this.call<void>("set_journal_title_format", { format });
+    return this.call<import("./types").JournalMigrationResult>("set_journal_title_format", { format });
   }
   setDefaultJournalTemplate(name: string | null) {
     return this.call<void>("set_default_journal_template", { name });

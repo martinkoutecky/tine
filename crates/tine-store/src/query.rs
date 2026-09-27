@@ -298,7 +298,7 @@ pub(crate) fn result_dto_constructions() -> usize {
 /// Cancellable variant used by interactive search. Returning false from `f`
 /// stops the entire depth-first walk, including the current deep page.
 /// A short, single-line label for a block in a breadcrumb trail.
-fn crumb_line(b: &DocBlock) -> String {
+pub(crate) fn crumb_line(b: &DocBlock) -> String {
     let line = b
         .visible_text()
         .lines()

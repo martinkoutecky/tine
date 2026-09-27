@@ -651,4 +651,21 @@ mod fmt_tests {
             assert_eq!(got, want, "parse {:?}", vector);
         }
     }
+
+    #[test]
+    fn i12_journal_title_fixture_matches_rust() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/i12-journal-title-golden.json"
+        ))
+        .unwrap();
+        let fmt = JournalFormat::default();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            assert_eq!(
+                fmt.parse(name).is_some(),
+                case["expected"].as_bool().unwrap(),
+                "{name}"
+            );
+        }
+    }
 }
