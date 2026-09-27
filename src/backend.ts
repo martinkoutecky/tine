@@ -42,12 +42,12 @@ export interface SavePageEntry {
 
 export type SavePagesResult =
   | { ok: string[] }
-  | { failed: { index: number; family: string; undoFailed: number[] } };
+  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: number[] } };
 
 /** Adapt a one-page intent to the shared request while preserving its refusal. */
 export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number): Promise<string> {
   const result = await api.savePages([entry], bindingGeneration);
-  if ("failed" in result) throw new Error(result.failed.family);
+  if ("failed" in result) throw Object.assign(new Error(result.failed.family), { diskRev: result.failed.diskRev });
   return result.ok[0];
 }
 

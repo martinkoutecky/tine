@@ -11,6 +11,7 @@ import { pushToast } from "../../toasts";
 import { errorFamily } from "../../errorFamily";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import type { EditKind, EditKinds } from "../../editKind";
+import { adoptFoldedPageHeader } from "../edits/properties";
 
 type IntentKinds = EditKind | EditKinds;
 const kindLedger = new Map<string, EditKind[]>();
@@ -99,7 +100,8 @@ export async function createPage(
   } catch (error) {
     if (wasTombstoned && stillBound(binding) && token === graphToken) deletedPages.add(name);
     if (stillBound(binding) && token === graphToken && pageInstanceGeneration(name) === generation
-        && errorFamily(error) === "conflict") markConflict(name);
+        && errorFamily(error) === "conflict")
+      markConflict(name, { kind: "disk-changed" }, (error as { diskRev?: string | null }).diskRev);
     throw error;
   }
 }
@@ -107,15 +109,15 @@ export async function createPage(
 // Pages that failed to save because the file changed on disk (external edit /
 // Syncthing). Surfaced as a banner; the user resolves with reload or overwrite.
 export type ConflictReason =
-  | { kind: "disk-changed" | "repeated" | "alias-owner-busy" }
-  | { kind: "released"; partner: string };
+  | { kind: "disk-changed" | "repeated" | "alias-owner-busy"; observedRev?: string | null }
+  | { kind: "released"; partner: string; observedRev?: string | null };
 export const [conflictReasons, setConflictReasons] = createSignal<Record<string, ConflictReason>>({});
 export const conflicts = () => Object.keys(conflictReasons());
 export function conflictReason(name: string): ConflictReason | undefined {
   return conflictReasons()[name];
 }
-export function markConflict(name: string, reason: ConflictReason = { kind: "disk-changed" }) {
-  setConflictReasons({ ...conflictReasons(), [name]: reason });
+export function markConflict(name: string, reason: ConflictReason = { kind: "disk-changed" }, observedRev?: string | null) {
+  setConflictReasons({ ...conflictReasons(), [name]: observedRev === undefined ? reason : { ...reason, observedRev } });
 }
 export function clearConflict(name: string) {
   const next = { ...conflictReasons() };
@@ -175,6 +177,7 @@ type SaveResult = boolean | "deferred";
 const saveChain = new Map<string, Promise<SaveResult>>();
 const lastSaveFailure = new Map<string, string>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saveBurstStart: number | null = null;
 let dataRevTimer: ReturnType<typeof setTimeout> | null = null;
 const assetWriteChain = new Set<Promise<boolean>>();
 export type TransferEdge = readonly [source: string, destination: string];
@@ -367,7 +370,7 @@ function resolveSaveMember(name: string, kind: PageKind) {
   return backend().resolvePage(name, kind);
 }
 
-function failGroup(g: SaveGroup, failure: { index: number; family: string; undoFailed: number[] }, order: string[]): boolean {
+function failGroup(g: SaveGroup, failure: { index: number; family: string; diskRev?: string | null; undoFailed: number[] }, order: string[]): boolean {
   g.state = "open";
   sealedGroups.delete(g);
   for (const name of g.members) dirty.add(name);
@@ -382,7 +385,8 @@ function failGroup(g: SaveGroup, failure: { index: number; family: string; undoF
   const culprit = order[failure.index];
   if (culprit) {
     if (family === "alias-owner-busy") markConflict(culprit, { kind: "alias-owner-busy" });
-    else if (["conflict", "deleted", "twin", "read-only", "invalid-target"].includes(family)) markConflict(culprit);
+    else if (["conflict", "deleted", "twin", "read-only", "invalid-target"].includes(family))
+      markConflict(culprit, { kind: "disk-changed" }, family === "deleted" ? null : failure.diskRev);
     else if (lastSaveFailure.get(culprit) !== family) {
       pushToast(`Couldn't save “${culprit}” — ${family}.`, "error");
       lastSaveFailure.set(culprit, family);
@@ -453,8 +457,10 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
   for (const name of order) {
     const dto = pageToDto(name), target = ids.get(name)!;
     if (!dto) return abortGroup(g);
+    const decision = decidedConflict(g, name) ? conflictReason(name) : undefined;
     entries.push({ id: target.id, page: target.owner ? appendAliasDraft(target.owner, dto) : dto,
-      baseRev: target.owner ? target.owner.rev ?? null : baseRev.get(name) ?? null, force: decidedConflict(g, name) && !target.owner,
+      baseRev: target.owner ? target.owner.rev ?? null : decision?.observedRev !== undefined ? decision.observedRev : baseRev.get(name) ?? null,
+      force: false,
       kinds: target.owner ? ["insert-blocks", "delete-page"] : pendingKinds(name, (baseRev.get(name) ?? null) === null) });
   }
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length)
@@ -476,6 +482,8 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
       if (target.owner) continue;
       setPageId(name, target.id);
       baseRev.set(name, outcome.ok[i]);
+      const writtenHeader = entries[i].page.pre_block;
+      if (writtenHeader) adoptFoldedPageHeader(name, writtenHeader);
       if (entries[i].baseRev === null) bumpPageInventoryRev();
       if (forcedConflicts.has(name) && conflictReason(name) === forcedConflicts.get(name)) clearConflict(name);
       lastSaveFailure.delete(name);
@@ -603,6 +611,7 @@ export function resetSaveState() {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+  saveBurstStart = null;
   if (dataRevTimer) {
     clearTimeout(dataRevTimer);
     dataRevTimer = null;
@@ -661,6 +670,7 @@ function enqueueSave(
   name: string,
   force = false,
   expectedCutSource?: ClipboardSourcePage,
+  decision?: ConflictReason,
 ): Promise<boolean> {
   const currentGroup = group(name);
   if (currentGroup?.state === "open") return enqueueGroup(currentGroup);
@@ -669,8 +679,8 @@ function enqueueSave(
   const generation = pageInstanceGeneration(name);
   const prev = saveChain.get(name) ?? Promise.resolve(true);
   const next: Promise<SaveResult> = prev.then(
-    () => doSave(name, force, binding, token, generation, currentGroup, expectedCutSource),
-    () => doSave(name, force, binding, token, generation, currentGroup, expectedCutSource),
+    () => doSave(name, force, binding, token, generation, currentGroup, expectedCutSource, decision),
+    () => doSave(name, force, binding, token, generation, currentGroup, expectedCutSource, decision),
   );
   saveChain.set(name, next);
   void next.finally(() => {
@@ -695,6 +705,7 @@ async function doSave(
   generation: number | null,
   groupAtEnqueue: SaveGroup | undefined,
   expectedCutSource?: ClipboardSourcePage,
+  decision?: ConflictReason,
 ): Promise<SaveResult> {
   if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
   // A cut-retirement save is authority-bound to the exact loaded page instance.
@@ -706,6 +717,7 @@ async function doSave(
   if (deletedPages.has(name)) return true; // tombstoned — never recreate a deleted page
   if (!force && !dirty.has(name)) return true; // already saved by a prior link
   if (isConflicted(name) && !force) return false;
+  if (force && (!decision || conflictReason(name) !== decision)) return false;
   const dto = pageToDto(name);
   if (!dto) return false;
   if (dto.guide) {
@@ -719,7 +731,7 @@ async function doSave(
     return false;
   }
   noteSaveAttempt(name);
-  const baseline = baseRev.get(name) ?? null;
+  const baseline = decision?.observedRev !== undefined ? decision.observedRev : baseRev.get(name) ?? null;
   const kinds = pendingKinds(name, baseline === null);
   dirty.delete(name);
   kindLedger.delete(name);
@@ -764,7 +776,7 @@ async function doSave(
       }
       id = resolved.id;
     }
-    const rev = await saveOnePage(backend(), { id, page: dto, baseRev: baseline, force,
+    const rev = await saveOnePage(backend(), { id, page: dto, baseRev: baseline, force: false,
       kinds }, binding.backendGeneration);
     // A reload/rename/delete/rebind while savePages was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
@@ -775,6 +787,7 @@ async function doSave(
       // a reload/rebind meanwhile carries its own id.
       setPageId(name, id);
       baseRev.set(name, rev);
+      if (dto.pre_block) adoptFoldedPageHeader(name, dto.pre_block);
       if (baseline === null) bumpPageInventoryRev();
       lastSaveFailure.delete(name);
       return true;
@@ -786,7 +799,8 @@ async function doSave(
       const family = errorFamily(e);
       if (family === "conflict" || family === "deleted" || family === "twin"
           || family === "read-only" || family === "invalid-target") {
-        markConflict(name);
+        const observedRev = (e as { diskRev?: string | null }).diskRev;
+        markConflict(name, { kind: "disk-changed" }, family === "deleted" ? null : observedRev);
       } else {
         dirty.add(name); // keep pending — retried on next edit / flush
       }
@@ -801,9 +815,12 @@ async function doSave(
 
 export function scheduleSave() {
   if (!doc.loaded) return;
+  const now = Date.now();
+  saveBurstStart ??= now;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
+    saveBurstStart = null;
     const names = [...dirty];
     void (async () => {
       const results = await Promise.all(names.map((n) => enqueueSave(n)));
@@ -812,7 +829,7 @@ export function scheduleSave() {
       // for a lull instead of firing on every 400ms save batch.
       if (results.some(Boolean)) scheduleDataRev();
     })();
-  }, 400);
+  }, Math.min(400, Math.max(0, 3000 - (now - saveBurstStart))));
 }
 
 /** Save one page immediately, bypassing the debounce — for actions that must
@@ -821,6 +838,11 @@ export function scheduleSave() {
 export async function flushPage(name: string): Promise<boolean> {
   if (!doc.loaded) return false;
   const ok = await enqueueSave(name);
+  if (ok && dirty.size === 0 && saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveBurstStart = null;
+  }
   if (ok) scheduleDataRev();
   return ok;
 }
@@ -865,6 +887,7 @@ export async function flushAll(): Promise<boolean> {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+  saveBurstStart = null;
   let landed = false;
   // Drain repeatedly: an edit made WHILE a save is in flight re-dirties the page,
   // and a queued save may still be running, so one pass can miss work. Keep
@@ -898,10 +921,12 @@ export async function forceSave(name: string): Promise<boolean> {
     noteKinds(name, "replace-page");
     return enqueueGroup(g);
   }
+  const decision = conflictReason(name);
+  if (!decision) return false;
   dirty.add(name); // ensure doSave writes even though it's parked as conflicted
   noteKinds(name, "replace-page");
-  const ok = await enqueueSave(name, true);
-  if (ok) clearConflict(name);
+  const ok = await enqueueSave(name, true, undefined, decision);
+  if (ok && conflictReason(name) === decision) clearConflict(name);
   if (!ok) pushToast(`Couldn't overwrite “${name}”.`, "error");
   return ok;
 }
@@ -927,7 +952,9 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
     return forceSave(name);
   }
   const binding = captureBinding(), token = graphToken, generation = pageInstanceGeneration(name);
-  const kind = pageByName(name)?.kind ?? "page";
+  const page = pageByName(name);
+  const kind = page?.kind ?? "page";
+  const id = page?.id;
   await Promise.all([...sealedGroups].filter((g) => g.members.has(name)).map((g) => g.request));
   if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
   const currentGroup = group(name);
@@ -936,7 +963,7 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
   const reason = conflictReason(name);
   const attempt = saveAttempts.get(name) ?? 0;
   let dto: Awaited<ReturnType<ReturnType<typeof backend>["getPage"]>>;
-  try { dto = await backend().getPage(name, kind); }
+  try { dto = id ? await backend().getPageByPath(id) : await backend().getPage(name, kind); }
   catch (error) {
     if (stillBound(binding) && token === graphToken && pageInstanceGeneration(name) === generation)
       pushToast(`Couldn't read “${name}” from disk — ${String(error)}`, "error");

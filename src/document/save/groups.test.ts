@@ -76,7 +76,8 @@ describe("save groups", () => {
     expect(isConflicted("A")).toBe(true);
     expect(await resolveConflict("A", "mine")).toBe(true);
     expect(save.mock.calls.at(-1)![0].map((entry) => entry.page.name)).toEqual(["B", "A"]);
-    expect(save.mock.calls.at(-1)![0][1].force).toBe(true);
+    expect(save.mock.calls.at(-1)![0][1].force).toBe(false);
+    expect(save.mock.calls.at(-1)![0][1].baseRev).toBe("initial-A");
     expect(save.mock.calls.at(-1)![0][1].kinds).toContain("replace-page");
     expect(disk.get("B")).toContain("X");
     expect(disk.get("A")).not.toContain("X");
@@ -167,7 +168,7 @@ describe("save groups", () => {
     expect(save).not.toHaveBeenCalled();
     expect(await resolveConflict("B", "mine")).toBe(true);
     expect(save).toHaveBeenCalledTimes(1);
-    expect(save.mock.calls[0][0].map((entry) => entry.force)).toEqual([true, true]);
+    expect(save.mock.calls[0][0].map((entry) => entry.force)).toEqual([false, false]);
   });
 
   it("P4: a conflicted member lists the pages waiting on it", () => {

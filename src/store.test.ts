@@ -1691,7 +1691,8 @@ describe("save engine (persistence)", () => {
         return Promise.resolve({ ok: [`rev-${call}`] });
       }
       if (call === 4) {
-        nested = forceSave("Test");
+        markDirty("Test", "save-block");
+        nested = flushPage("Test");
         return Promise.resolve({ ok: ["rev-4"] });
       }
       return new Promise((resolve) => { finishFifth = resolve; });
@@ -2151,7 +2152,7 @@ describe("save engine (persistence)", () => {
     expect(doc.byId[pageByName(today)!.roots[0]].raw).toBe("today content");
   });
 
-  it("forceSave overwrites even a conflicted page (force=true)", async () => {
+  it("forceSave resolves a conflicted page through a revision-guarded write", async () => {
     load([blk("x")]);
     markDirty("Test", "save-block");
     saveSpy.mockRejectedValueOnce(new Error("conflict"));
@@ -2159,7 +2160,7 @@ describe("save engine (persistence)", () => {
     expect(isConflicted("Test")).toBe(true);
     saveSpy.mockResolvedValue({ ok: ["rev3"] });
     expect(await forceSave("Test")).toBe(true);
-    expect(saveSpy.mock.calls.at(-1)![0][0].force).toBe(true); // force flag
+    expect(saveSpy.mock.calls.at(-1)![0][0].force).toBe(false);
   });
 
   it("deletes a CONFLICTED page rather than leaving it undeletable", async () => {

@@ -133,7 +133,7 @@ describe("journal watcher feed reconciliation", () => {
     await handleGraphChange({ name, kind: "page", created: false, removed: false });
     expect(isConflicted(name)).toBe(true);
     expect(pageToDto(name)!.blocks[0].raw).toBe("local edit");
-    expect(read).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledTimes(1); // revision observation for Keep mine
   });
 
   it("keeps a removed dirty page open as a conflict", async () => {
