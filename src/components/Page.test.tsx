@@ -240,7 +240,7 @@ describe("Journals feed generation lifecycle", () => {
     let saved: Promise<boolean> | null = null;
     let releaseSave: (() => void) | null = null;
     if (gate === "saving") {
-      vi.spyOn(backend(), "savePage").mockImplementation(() => new Promise((resolve) => { releaseSave = () => resolve("rev"); }));
+      vi.spyOn(backend(), "savePages").mockImplementation(() => new Promise((resolve) => { releaseSave = () => resolve({ ok: ["rev"] }); }));
       saved = flushPage(today);
       await flushMicrotasks();
     }
@@ -254,7 +254,7 @@ describe("Journals feed generation lifecycle", () => {
       if (gate === "dirty") {
         // Saving is the real dirty release and bumps dataRev after the backend
         // accepts it; leave the PageView retry effect to consume that event.
-        vi.spyOn(backend(), "savePage").mockResolvedValue("rev");
+        vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
         await flushPage(today);
         await new Promise<void>((resolve) => setTimeout(resolve, 750));
       }
@@ -409,7 +409,7 @@ describe("tag-page table", () => {
       },
     ];
     vi.spyOn(backend(), "runQuery").mockResolvedValue(groups);
-    vi.spyOn(backend(), "savePage").mockResolvedValue("rev1");
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev1"] });
 
     const tagPage = pageByName("Tag")!;
     const { root, dispose } = mount(() => (
@@ -438,7 +438,7 @@ describe("tag-page table", () => {
     const today = pageByName(todayName)!;
     const newId = today.roots[today.roots.length - 1];
     expect(doc.byId[newId].raw).toMatch(/^#Tag\s*$/);
-    expect(editingId()).toBe(newId);
+    await vi.waitFor(() => expect(editingId()).toBe(newId));
 
     dispose();
   });

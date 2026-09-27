@@ -27,7 +27,7 @@ describe("QuickSwitcher search syntax help", () => {
     const resolve = vi.spyOn(backend(), "resolvePage").mockImplementationOnce(() =>
       new Promise((done) => { finish = done; })
     );
-    const save = vi.spyOn(backend(), "savePage");
+    const save = vi.spyOn(backend(), "savePages");
     vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false,
     });
@@ -272,9 +272,9 @@ describe("QuickSwitcher search syntax help", () => {
       const bytes = disk.get(path);
       return bytes ? JSON.parse(bytes) as PageRead : null;
     });
-    const savePage = vi.spyOn(backend(), "savePage").mockImplementation(async (id, dto) => {
+    const savePages = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: id, page: dto } = entries[0];
       disk.set(id, JSON.stringify({ ...dto, id }));
-      return "saved-exact-rev";
+      return { ok: ["saved-exact-rev"] };
     });
     vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [{
@@ -320,7 +320,7 @@ describe("QuickSwitcher search syntax help", () => {
     const savedExact = JSON.parse(disk.get(exactPath)!) as PageRead;
     expect(savedExact.id).toBe(exactPath);
     expect(savedExact.blocks[0].raw).toBe(`needle block\nid:: ${authoredId}`);
-    expect(savePage).not.toHaveBeenCalled();
+    expect(savePages).not.toHaveBeenCalled();
     expect(disk.get(canonicalPath)).toBe(canonicalBytes);
     expect(canonical.blocks[0].raw).toBe("canonical sibling bytes");
     dispose();
@@ -488,7 +488,7 @@ describe("QuickSwitcher search syntax help", () => {
   });
 
   it("refreshes canonical page inventory after a direct create", async () => {
-    const save = vi.spyOn(backend(), "savePage").mockResolvedValue("created-rev");
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["created-rev"] });
     const before = pageInventoryRev();
     const root = document.createElement("div");
     document.body.append(root);
@@ -507,8 +507,8 @@ describe("QuickSwitcher search syntax help", () => {
       create.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
       // Saved to the id the backend proposed for a new page (B15b).
-      expect(save.mock.calls[0][0]).toBe("pages/Fresh canonical page.md");
-      expect(save.mock.calls[0][2]).toBeNull();
+      expect(save.mock.calls[0][0][0].id).toBe("pages/Fresh canonical page.md");
+      expect(save.mock.calls[0][0][0].baseRev).toBeNull();
       expect(pageInventoryRev()).toBeGreaterThan(before);
     } finally {
       save.mockRestore();
@@ -517,7 +517,7 @@ describe("QuickSwitcher search syntax help", () => {
   });
 
   it("reports a failed page create while keeping the draft route available", async () => {
-    const save = vi.spyOn(backend(), "savePage").mockRejectedValueOnce(new Error("disk full"));
+    const save = vi.spyOn(backend(), "savePages").mockRejectedValueOnce(new Error("disk full"));
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <QuickSwitcher />, root);
@@ -543,7 +543,7 @@ describe("QuickSwitcher search syntax help", () => {
   it("Create on an alias name opens the alias owner and writes no file (B15b, Martin 2026-09-26)", async () => {
     // The Create row shows before the 110 ms search debounce, so an alias name
     // can reach it. v0.6.5 created `Nickname.md`; now it opens owners[0].
-    const save = vi.spyOn(backend(), "savePage").mockResolvedValue("created-rev");
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["created-rev"] });
     const resolve = vi.spyOn(backend(), "resolvePage")
       .mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md", "pages/Z owner.md"] });
     const owner: PageRead = {

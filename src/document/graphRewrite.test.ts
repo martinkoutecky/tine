@@ -50,7 +50,7 @@ it("routes both rename controls through the document intent", () => {
 it("refuses a page creation that started before the rename freeze", async () => {
   let finishResolve!: (value: { kind: "absent"; id: string }) => void;
   const resolve = vi.spyOn(backend(), "resolvePage").mockImplementationOnce(() => new Promise((done) => { finishResolve = done; }));
-  const save = vi.spyOn(backend(), "savePage");
+  const save = vi.spyOn(backend(), "savePages");
   const creating = createPage("New", { name: "New", kind: "page", title: "New", pre_block: null, blocks: [] });
   await vi.waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
   let finishRename!: () => void;

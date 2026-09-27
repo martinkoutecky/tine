@@ -296,7 +296,7 @@ export type ReloadDisposition = "reload" | "conflict" | "skip";
  *  (Navigation/flush-first paths — upsertUnlessDirty, reloadHlsIfLoaded — use a
  *  simpler dirty-only guard on purpose and do not go through this.) */
 export function reloadDisposition(name: string): ReloadDisposition {
-  // `isSaving` too: `doSave` clears `dirty` BEFORE the `await savePage`, so during the
+  // `isSaving` too: `doSave` clears `dirty` BEFORE the `await savePages`, so during the
   // save IPC the page is no longer dirty but its edit isn't durable. Reloading then
   // would clobber the in-memory edit + drop its undo, and the in-flight save would
   // conflict — silent loss (audit H1). The in-flight save's baseRev check surfaces the

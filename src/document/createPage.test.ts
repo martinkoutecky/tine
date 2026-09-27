@@ -23,6 +23,12 @@ async function expectLocalRefusal(create: Promise<string>, reason: CreatePageRef
 }
 
 describe("createPage refusal families", () => {
+  it("preserves the repeated-file wire family", async () => {
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "repeated", undoFailed: [] } });
+    const error = await createPage("New", dto(), { id: "pages/New.md" }).catch((e: unknown) => e);
+    expect(errorFamily(error)).toBe("repeated");
+  });
+
   it("keeps name, conflict, dirty and stale-binding refusals distinct from disk conflict", async () => {
     await expectLocalRefusal(createPage("Different", dto()), "name-mismatch");
     markConflict("New");
@@ -51,28 +57,28 @@ describe("createPage refusal families", () => {
   it("keeps a queued save refusal distinct from disk conflict", async () => {
     loadSingle(dto());
     markDirty("New");
-    let finish!: (rev: string) => void;
-    vi.spyOn(backend(), "savePage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let finish!: (result: { ok: string[] }) => void;
+    vi.spyOn(backend(), "savePages").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const saving = flushPage("New");
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     await expectLocalRefusal(createPage("New", dto()), "page-saving");
-    finish("rev-1");
+    finish({ ok: ["rev-1"] });
     await saving;
   });
 
   it("keeps a graph switch during create distinct from disk conflict", async () => {
-    let finish!: (rev: string) => void;
-    vi.spyOn(backend(), "savePage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let finish!: (result: { ok: string[] }) => void;
+    vi.spyOn(backend(), "savePages").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const pending = createPage("New", dto(), { id: "pages/New.md" });
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     resetStore();
-    finish("rev-1");
+    finish({ ok: ["rev-1"] });
     await expectLocalRefusal(pending, "graph-changed");
   });
 
   it("preserves the backend disk-conflict token and marks the current page conflicted", async () => {
     loadSingle(dto());
-    vi.spyOn(backend(), "savePage").mockRejectedValueOnce(new Error("conflict"));
+    vi.spyOn(backend(), "savePages").mockRejectedValueOnce(new Error("conflict"));
     const error = await createPage("New", dto(), { id: "pages/New.md" }).catch((e: unknown) => e);
     expect(error).not.toBeInstanceOf(CreatePageRefusal);
     expect(errorFamily(error)).toBe("conflict");

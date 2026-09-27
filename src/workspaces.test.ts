@@ -106,7 +106,7 @@ describe("named workspace switching", () => {
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
     vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
-    const savePage = vi.spyOn(backend(), "savePage");
+    const savePages = vi.spyOn(backend(), "savePages");
 
     await initializeWorkspaces();
     await saveActiveWorkspace();
@@ -116,7 +116,7 @@ describe("named workspace switching", () => {
     await switchWorkspace(secondId);
     await deleteWorkspace(secondId);
 
-    expect(savePage).not.toHaveBeenCalled();
+    expect(savePages).not.toHaveBeenCalled();
     expect(workspaces()).toHaveLength(1);
     expect(activeWorkspaceId()).toBe("default");
 
@@ -148,12 +148,12 @@ describe("named workspace switching", () => {
     }));
     vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
-    const savePage = vi.spyOn(backend(), "savePage");
+    const savePages = vi.spyOn(backend(), "savePages");
 
     await initializeWorkspaces();
     await switchWorkspace("parked");
 
     expect(rightSidebar()).toEqual(parked.rightSidebarItems);
-    expect(savePage).not.toHaveBeenCalled();
+    expect(savePages).not.toHaveBeenCalled();
   });
 });

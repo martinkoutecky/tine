@@ -11,7 +11,7 @@ import {
   onCleanup,
   type JSX,
 } from "solid-js";
-import { backend } from "../backend";
+import { backend, type SavePageEntry, type SavePagesResult } from "../backend";
 import { captureBinding, stillBound } from "../binding";
 import { errorFamily } from "../errorFamily";
 import {
@@ -54,7 +54,7 @@ export interface MaterializeQueryInput {
 export interface MaterializeQueryDependencies {
   /** The one name answerer: an existing file, an alias, or where a new page goes. */
   resolvePage(name: string, kind: "page"): Promise<ResolvedPage>;
-  savePage(id: string, page: PageDto, baseRev: null, force: false, bindingGeneration?: number): Promise<string>;
+  savePages(entries: SavePageEntry[], bindingGeneration?: number): Promise<SavePagesResult>;
   /** Rust-authoritative friendly-search validation; required before every nonblank friendly save. */
   runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane: string, explain: boolean): Promise<QueryExecution>;
 }
@@ -140,7 +140,9 @@ export async function materializeQueryWorkspace(
     }
 
     const page = queryWorkspacePage(name, savedQueryRaw(input));
-    const rev = await deps.savePage(resolved.id, page, null, false, binding.backendGeneration);
+    const result = await deps.savePages([{ id: resolved.id, page, baseRev: null, force: false }], binding.backendGeneration);
+    if ("failed" in result) throw new Error(result.failed.family);
+    const rev = result.ok[0];
     if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     bumpPageInventoryRev();
     return { ok: true, name, page, rev };
@@ -173,8 +175,10 @@ function defaultDependencies(): QueryWorkspaceDependencies {
   const api = backend();
   return {
     resolvePage: (name, kind) => api.resolvePage(name, kind),
-    savePage: (id, page, baseRev, _force, bindingGeneration) =>
-      createPage(page.name, page, { id, baseRev, bindingGeneration }),
+    savePages: async (entries, bindingGeneration) => {
+      const entry = entries[0];
+      return { ok: [await createPage(entry.page.name, entry.page, { id: entry.id, baseRev: entry.baseRev, bindingGeneration })] };
+    },
     runGraphSearch: (source, pageLimit, blockLimit, lane, explain) =>
       api.runGraphSearch(source, pageLimit, blockLimit, lane, explain),
     runQuery: (source) => api.runQuery(source),

@@ -33,10 +33,10 @@ describe("graph creators that bypass the save engine", () => {
       vi.spyOn(api, "readCustomCss").mockResolvedValue("");
       vi.spyOn(api, "pickFolder").mockResolvedValue("/tmp");
       vi.spyOn(api, "createGraph").mockResolvedValue(ROOT);
-      const save = vi.spyOn(api, "savePage").mockImplementation(async (id, dto) => {
+      const save = vi.spyOn(api, "savePages").mockImplementation(async (entries) => { const { id: id, page: dto } = entries[0];
         const rev = files.has(id) ? "edited-rev" : "created-rev";
         files.set(id, { dto: structuredClone(dto), rev });
-        return rev;
+        return { ok: [rev] };
       });
       const result = template ? await loadGraphPath(ROOT) : await createNewGraph();
       expect(result.kind).toBe("loaded");
@@ -45,12 +45,12 @@ describe("graph creators that bypass the save engine", () => {
       expect(created.dto.kind).toBe("journal");
       expect(created.dto.blocks).toHaveLength(1);
       expect(created.dto.blocks[0].raw).toContain(template ? "Template body" : "today's journal");
-      expect(save.mock.calls[0][2]).toBeNull();
+      expect(save.mock.calls[0][0][0].baseRev).toBeNull();
       const loaded: PageRead = { ...created.dto, id, rev: created.rev };
       loadSingle(loaded);
       setRaw(pageByName(loaded.name)!.roots[0], "following edit");
       expect(await flushPage(loaded.name)).toBe(true);
-      expect(save.mock.calls.at(-1)?.[2]).toBe("created-rev");
+      expect(save.mock.calls.at(-1)?.[0][0].baseRev).toBe("created-rev");
       expect(files.get(id)!.dto.blocks.map((b) => b.raw)).toEqual(["following edit"]);
     });
   }

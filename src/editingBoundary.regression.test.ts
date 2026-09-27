@@ -49,7 +49,7 @@ describe("editing/collapse boundary regressions", () => {
       byId: { p: node("p", "Parent", "Org") },
       pages: [page("Org", ["p"], "org", true)], feed: ["Org"], loaded: true,
     });
-    const save = vi.spyOn(backend(), "savePage");
+    const save = vi.spyOn(backend(), "savePages");
     markDirty("Org");
     expect([...dirtyPages()]).not.toContain("Org");
     expect(await flushPage("Org")).toBe(true);

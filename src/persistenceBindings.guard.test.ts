@@ -29,7 +29,7 @@ describe("I-20 held-source release", () => {
   });
 
   it("fails a planted stale release", () => {
-    expect(() => assertBoundRelease("async function save() {\n await backend().savePage();\n releaseSourcesFor(name);\n}"))
+    expect(() => assertBoundRelease("async function save() {\n await backend().savePages();\n releaseSourcesFor(name);\n}"))
       .toThrow(/I-20:.*exemplar src\/document\/save\/engine\.ts/s);
   });
 });

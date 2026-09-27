@@ -59,7 +59,7 @@ describe("right sidebar collection disclosures", () => {
   it("stores a fresh block's durable UUID instead of its transient sidebar key", () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
-    vi.spyOn(backend(), "savePage").mockResolvedValue("rev-sidebar");
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
     loadSingle({
       ...page,
       blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],

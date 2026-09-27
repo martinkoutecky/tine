@@ -5,7 +5,7 @@ import { type ClipboardSourcePage } from "../../clipboard";
 import { captureBinding, type Binding, stillBound } from "../../binding";
 import { pageToDto, appendAliasDraft } from "../convert";
 import type { PageDto, PageKind } from "../../types";
-import { backend } from "../../backend";
+import { backend, saveOnePage } from "../../backend";
 import { forgetPage, reloadPage, loadSingle } from "../workingSet";
 import { pushToast } from "../../toasts";
 import { errorFamily } from "../../errorFamily";
@@ -59,7 +59,7 @@ export async function createPage(
   if (pageInstanceGeneration(name) !== generation) throw new CreatePageRefusal("page-rebound");
   const wasTombstoned = deletedPages.delete(name); // an explicit create supersedes a completed delete
   try {
-    const rev = await backend().savePage(id, dto, options.baseRev ?? null, false, binding.backendGeneration);
+    const rev = await saveOnePage(backend(), { id, page: dto, baseRev: options.baseRev ?? null, force: false }, binding.backendGeneration);
     if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
     if (graphRewriteFrozen()) throw new CreatePageRefusal("graph-rewrite");
     if (pageInstanceGeneration(name) === generation) {
@@ -396,7 +396,7 @@ async function doSave(
         // pageToDto. Keep those bytes too: on the owner they are ordinary
         // appended content, never a replacement for the owner's preamble.
         const appended = appendAliasDraft(owner, dto);
-        const ownerRev = await backend().savePage(owner.id, appended, owner.rev ?? null, false, binding.backendGeneration);
+        const ownerRev = await saveOnePage(backend(), { id: owner.id, page: appended, baseRev: owner.rev ?? null, force: false }, binding.backendGeneration);
         if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
         if (dirty.has(name) || isDirty(owner.name) || isSaving(owner.name)
             || isConflicted(owner.name) || pageInstanceGeneration(owner.name) !== ownerGeneration) {
@@ -417,8 +417,8 @@ async function doSave(
       }
       id = resolved.id;
     }
-    const rev = await backend().savePage(id, dto, baseline, force, binding.backendGeneration);
-    // A reload/rename/delete/rebind while savePage was in flight invalidates the
+    const rev = await saveOnePage(backend(), { id, page: dto, baseRev: baseline, force }, binding.backendGeneration);
+    // A reload/rename/delete/rebind while savePages was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
     // authorize identity reuse or update the replacement instance's baseline.
     if (expectedCutSource && !cutSourceUsable(expectedCutSource)) return false;

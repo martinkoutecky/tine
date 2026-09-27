@@ -86,7 +86,7 @@ pub use store::{
     Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, FacetPolicy, FileEntry, FileId,
     FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, Listing,
     LoadError, OpenError, OpenOptions, Origin, PageId, PageRead, QueryDialect, QueryError,
-    QueryResult, Resolved, SaveBase, SaveOutcome, SearchRequest, Store, StoreError, Subscription,
+    QueryResult, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest, Store, StoreError, Subscription,
     SubscriptionEnd, TrashKind, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]

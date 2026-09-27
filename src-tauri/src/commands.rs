@@ -14,7 +14,7 @@ use tine_core::model::{
 #[cfg(test)]
 use tine_store::SaveBase;
 use tine_store::{
-    Budget, FacetPolicy, PageId, QueryError, Resolved, SaveOutcome, StoreError, WholeGraph,
+    Budget, FacetPolicy, PageId, QueryError, Resolved, SaveOutcome, SavePagesOutcome, StoreError, WholeGraph,
 };
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
@@ -716,28 +716,65 @@ pub(crate) async fn graph_source_files(
     .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-pub(crate) fn save_page(
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavePageEntry {
     id: String,
     page: PageDto,
     base_rev: Option<String>,
-    force: Option<bool>,
-    state: GraphContext<'_>,
-) -> Result<String, String> {
-    let slot = slot_for_context(&state)?;
-    let id = PageId::from(id);
-    let outcome = tine_graph_features::pages::save_page(
-        &slot.store,
-        &id,
-        &page,
-        base_rev,
-        force.unwrap_or(false),
-    )
-    .map_err(save_store_error)?;
-    save_outcome_to_wire(outcome, &page)
+    #[serde(default)]
+    force: bool,
 }
 
-fn save_outcome_to_wire(outcome: SaveOutcome, _page: &PageDto) -> Result<String, String> {
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavePagesFailure {
+    index: usize,
+    family: String,
+    undo_failed: Vec<usize>,
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub(crate) enum SavePagesWire {
+    Ok { ok: Vec<String> },
+    Failed { failed: SavePagesFailure },
+}
+
+#[tauri::command]
+pub(crate) fn save_pages(
+    entries: Vec<SavePageEntry>,
+    state: GraphContext<'_>,
+) -> Result<SavePagesWire, String> {
+    let slot = slot_for_context(&state)?;
+    let entries: Vec<_> = entries.into_iter().map(|entry|
+        (PageId::from(entry.id), entry.page, entry.base_rev, entry.force)
+    ).collect();
+    let outcome = match tine_graph_features::pages::save_pages(&slot.store, &entries) {
+        Ok(outcome) => outcome,
+        Err((index, error)) => return Ok(SavePagesWire::Failed { failed: SavePagesFailure {
+            index, family: save_store_error(error), undo_failed: Vec::new(),
+        } }),
+    };
+    Ok(save_pages_outcome_to_wire(outcome))
+}
+
+fn save_pages_outcome_to_wire(outcome: SavePagesOutcome) -> SavePagesWire {
+    match outcome {
+        SavePagesOutcome::Ok(outcomes) => SavePagesWire::Ok {
+            ok: outcomes.into_iter().map(|outcome| save_outcome_to_wire(outcome).expect("committed page rev")).collect(),
+        },
+        SavePagesOutcome::Failed { index, outcome, undo_failed } => SavePagesWire::Failed {
+            failed: SavePagesFailure {
+                index,
+                family: save_outcome_to_wire(outcome).expect_err("failed page outcome"),
+                undo_failed,
+            },
+        },
+    }
+}
+
+fn save_outcome_to_wire(outcome: SaveOutcome) -> Result<String, String> {
     match outcome {
         SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => Ok(rev.into()),
         SaveOutcome::Conflict { .. } => Err("conflict".into()),
@@ -745,9 +782,10 @@ fn save_outcome_to_wire(outcome: SaveOutcome, _page: &PageDto) -> Result<String,
         SaveOutcome::ReadOnly(_) => Err("read-only".into()),
         SaveOutcome::InvalidTarget(_) => Err("invalid-target".into()),
         SaveOutcome::Twin { .. } => Err("twin".into()),
+        SaveOutcome::Repeated => Err("repeated".into()),
         SaveOutcome::Io(error) => Err(format!("io:{:?}", error.kind())),
         SaveOutcome::Closed => Err("closed".into()),
-        SaveOutcome::GuideEphemeral => Ok("guide-ephemeral".into()),
+        SaveOutcome::GuideEphemeral => Err("invalid-target".into()),
     }
 }
 
@@ -758,23 +796,17 @@ mod save_wire_tests {
     #[test]
     fn save_wire_families_are_distinct() {
         const RULE: &str = "I-9: wire failures use fixed families and omit page names/paths; exemplar commands::save_outcome_to_wire";
-        let page: PageDto = serde_json::from_value(serde_json::json!({
-            "name": "a conflict in my title", "kind": "page", "title": "a conflict in my title",
-            "pre_block": null, "blocks": []
-        }))
-        .unwrap();
         assert_eq!(
             save_outcome_to_wire(
                 SaveOutcome::Conflict {
                     disk: String::from("rev").into()
-                },
-                &page
+                }
             ),
             Err("conflict".into()),
             "{RULE}"
         );
         assert_eq!(
-            save_outcome_to_wire(SaveOutcome::Deleted, &page),
+            save_outcome_to_wire(SaveOutcome::Deleted),
             Err("deleted".into()),
             "{RULE}"
         );
@@ -782,8 +814,7 @@ mod save_wire_tests {
             save_outcome_to_wire(
                 SaveOutcome::Twin {
                     existing: PageId::from("pages/secret.md".to_string())
-                },
-                &page
+                }
             ),
             Err("twin".into()),
             "{RULE}"
@@ -793,12 +824,34 @@ mod save_wire_tests {
                 SaveOutcome::Io(
                     std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/secret/path")
                         .into()
-                ),
-                &page
+                )
             ),
             Err("io:PermissionDenied".into()),
             "{RULE}"
         );
+        let wire = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+            index: 2, outcome: SaveOutcome::Repeated, undo_failed: vec![0],
+        });
+        let encoded = serde_json::to_string(&wire).unwrap();
+        assert_eq!(encoded, r#"{"failed":{"index":2,"family":"repeated","undoFailed":[0]}}"#, "{RULE}");
+        let families = [
+            (SaveOutcome::Conflict { disk: "private-rev".to_string().into() }, "conflict"),
+            (SaveOutcome::Deleted, "deleted"),
+            (SaveOutcome::Twin { existing: PageId::from("pages/private-title.md") }, "twin"),
+            (SaveOutcome::Repeated, "repeated"),
+            (SaveOutcome::ReadOnly("private title".into()), "read-only"),
+            (SaveOutcome::InvalidTarget("/private/path".into()), "invalid-target"),
+            (SaveOutcome::Closed, "closed"),
+            (SaveOutcome::Io(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/private/path").into()), "io:PermissionDenied"),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for (outcome, family) in families {
+            let encoded = serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+                index: 1, outcome, undo_failed: vec![0],
+            })).unwrap();
+            assert_eq!(encoded, format!(r#"{{"failed":{{"index":1,"family":"{family}","undoFailed":[0]}}}}"#), "{RULE}");
+            assert!(seen.insert(family), "{RULE}");
+        }
         assert_eq!(
             asset_error(StoreError::TooLarge { limit: 12, len: 13 }),
             "asset-too-large",
@@ -1437,7 +1490,7 @@ mod capture_quick_switch_tests {
     fn capture_binding_never_grants_generic_graphcontext_mutation_access() {
         let (state, base) = state_with_selected_graph();
         let generation = state.capture_graph_binding().unwrap().binding_generation;
-        // `save_page` and other mutations resolve through GraphContext, which
+        // `save_pages` and other mutations resolve through GraphContext, which
         // uses this normal window-slot path and therefore has no capture fallback.
         assert_eq!(
             slot_for_bound_window(&state, "capture", Some(generation))

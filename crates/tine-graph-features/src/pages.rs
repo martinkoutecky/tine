@@ -10,7 +10,7 @@ use tine_core::model::{PageDto, PageKind};
 use tine_core::refs;
 use tine_store::{
     Area, FileId, FileRev, LoadError, PageId, PageRead, RenameMap, Resolved, SaveBase, SaveOutcome,
-    Store, StoreError,
+    SavePagesOutcome, Store, StoreError,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -104,7 +104,12 @@ pub fn save_page(
     if page.guide {
         return Ok(SaveOutcome::GuideEphemeral);
     }
-    let base = if force {
+    let base = save_base(store, id, base_rev, force)?;
+    Ok(store.save(id, base, page))
+}
+
+fn save_base(store: &Store, id: &PageId, base_rev: Option<String>, force: bool) -> Result<SaveBase, StoreError> {
+    Ok(if force {
         match store.read(&id.file(), Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((bytes, rev)) => {
                 std::str::from_utf8(&bytes).map_err(|_| StoreError::Undecodable)?;
@@ -117,8 +122,23 @@ pub fn save_page(
         base_rev
             .map(|rev| SaveBase::Existing(rev.into()))
             .unwrap_or(SaveBase::CreateNew)
-    };
-    Ok(store.save(id, base, page))
+    })
+}
+
+/// Compute each requested base, then save every page in one store transaction.
+pub fn save_pages(
+    store: &Store,
+    entries: &[(PageId, PageDto, Option<String>, bool)],
+) -> Result<SavePagesOutcome, (usize, StoreError)> {
+    let mut prepared = Vec::with_capacity(entries.len());
+    for (index, (id, page, base_rev, force)) in entries.iter().enumerate() {
+        if page.guide {
+            prepared.push((id.clone(), SaveBase::CreateNew, page.clone()));
+            continue;
+        }
+        prepared.push((id.clone(), save_base(store, id, base_rev.clone(), *force).map_err(|error| (index, error))?, page.clone()));
+    }
+    Ok(store.save_pages(&prepared))
 }
 
 use crate::{is_conflict, store_error, tx_error};

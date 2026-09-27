@@ -10,7 +10,7 @@ on every refusal and offers conflict resolution or retry.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
-surface is 35 combined operations: 27 `Store` methods and eight `Transaction`
+surface is 36 combined operations: 28 `Store` methods and eight `Transaction`
 methods. The graph-command boundary guard lives at
 `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
 `crates/tine-store/tests/client_root_boundary.rs`.
@@ -48,13 +48,16 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. |
 | `transaction.rs::validate_page_content::InvalidTarget` | 1 | A raw page stream exceeds its cap; refuse before creating an unreadable page. |
 | `transaction.rs::validate_config_bytes::InvalidTarget` | 1 | A config edit or create names a directory outside the graph; refuse before changing disk. |
-| `store.rs::save::Closed` | 2 | A queued editor save arrives after graph close; return the closed family without writing. |
-| `store.rs::save::Conflict` | 1 | An external edit makes the caller's target revision stale; return that target's current disk revision for resolution. |
-| `store.rs::save::Deleted` | 1 | Sync deletes a page while its editor buffer is open; retain the buffer and report deletion. |
-| `store.rs::save::ReadOnly` | 1 | A parser or format check rejects a round-trip edit; retain the buffer. |
-| `store.rs::save::Twin` | 2 | A second same-name physical file appears before or after the guarded create; identify that claimant instead of presenting its revision as the target's. |
-| `store.rs::save::InvalidTarget` | 2 | A saved target becomes invalid or a transaction reports a target refusal; retain the buffer. |
-| `store.rs::save::GuideEphemeral` | 1 | The user edits a bundled Guide page that has no graph file; refuse persistence of the virtual copy and prompt an explicit graph copy. |
+| `store.rs::save_pages::Closed` | 1 | A queued page-save request arrives after graph close; return the closed family without writing. |
+| `store.rs::save_pages::InvalidTarget` | 1 | An empty page-save request is refused before opening a transaction. |
+| `store.rs::save_pages::GuideEphemeral` | 1 | A bundled Guide page has no graph file; refuse the request before disk access. |
+| `store.rs::from_failed_step::Closed` | 1 | A transaction closes before commit; retain all unsaved page snapshots. |
+| `store.rs::from_failed_step::Conflict` | 1 | An external edit makes an entry's target revision stale; return its current disk revision for resolution. |
+| `store.rs::from_failed_step::Deleted` | 1 | Sync deletes an entry's page while its editor buffer is open; retain the buffer and report deletion. |
+| `store.rs::from_failed_step::ReadOnly` | 1 | A parser or format check rejects a round-trip edit; retain the buffer. |
+| `store.rs::from_failed_step::Twin` | 2 | A second same-name physical file appears before or after the guarded create; identify that claimant instead of presenting its revision as the target's. |
+| `store.rs::from_failed_step::InvalidTarget` | 2 | A saved target becomes invalid or undecodable; retain the buffer. |
+| `store.rs::from_failed_step::Repeated` | 1 | Two entries name the same file; refuse the request before writing either entry. |
 
 The following rows cover refusals outside the two constructor families counted
 above. Their individual call sites are inventoried in `og/batches/E-survey-errors.md`

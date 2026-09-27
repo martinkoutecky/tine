@@ -14,7 +14,7 @@ describe("carry binding", () => {
     const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() =>
       new Promise((resolve) => { finish = resolve; })
     );
-    const save = vi.spyOn(backend(), "savePage");
+    const save = vi.spyOn(backend(), "savePages");
     const carrying = carryDay("2026-09-25");
     await vi.waitFor(() => expect(read).toHaveBeenCalledWith(journalTitle(new Date()), "journal"));
     resetStore();

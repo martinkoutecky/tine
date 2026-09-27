@@ -11,7 +11,7 @@ function documentSources(dir: string): string[] {
 const SCOPED = ["src/App.tsx", "src/carry.ts", "src/graph.ts", "src/ui.ts", "src/graphSession.ts",
   "src/toasts.ts", "src/components/QuickSwitcher.tsx", "src/components/QueryWorkspace.tsx",
   ...documentSources("src/document")];
-const BACKEND_AWAIT = /\bawait\s+(?:backend\(\)|deps)\.(?:getPage|getPageByPath|resolvePage|savePage|deletePage|listJournalConflicts|listSyncConflicts|journalContentDays)\s*\(/;
+const BACKEND_AWAIT = /\bawait\s+(?:backend\(\)|deps)\.(?:getPage|getPageByPath|resolvePage|savePages|deletePage|listJournalConflicts|listSyncConflicts|journalContentDays)\s*\(/;
 const LANDING = /\b(?:ensurePageLoaded|reloadPage|markDirty|markConflict|forgetPage|loadSingle|openPage|openPageTarget|pushToast|bumpDataRev|bumpPageInventoryRev|set[A-Z]\w*)\s*\(/;
 
 export function lateLandingViolations(file: string, source: string): string[] {

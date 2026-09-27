@@ -882,8 +882,8 @@ export function mockBackend(): Backend {
       return files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length }));
     },
     graphBindingGeneration: () => 1,
-    async savePage(_id: string, _page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
-      return "mock-rev"; // no-op in mock
+    async savePages(entries) {
+      return { ok: entries.map(() => "mock-rev") }; // no-op in mock
     },
     async guidePages(): Promise<GuidePage[]> {
       return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));

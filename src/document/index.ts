@@ -31,7 +31,7 @@
  * one request per multi-page intent is a later batch). Creating a page file
  * goes through `createPage`, which refuses locally with a typed
  * `CreatePageRefusal`, distinct from a disk conflict. Only save/engine.ts calls
- * the backend's savePage/deletePage (I-1).
+ * the backend's savePages/deletePage (I-1).
  *
  * Outside changes. `applyGraphChange` handles one watcher event using
  * `reloadDisposition`: an own-save echo keeps content and undo; a clean page

@@ -5,7 +5,115 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::{FaultPoint, PageId, SaveBase, SaveOutcome, Store, StoreError};
+use tine_store::{FaultPoint, PageId, SaveBase, SaveOutcome, SavePagesOutcome, Store, StoreError};
+
+#[test]
+fn save_pages_keeps_order_and_reports_preflight_conflict_without_writes() {
+    let fixture = Fixture::new();
+    fixture.write("pages/A.md", "- old A\n");
+    fixture.write("pages/B.md", "- old B\n");
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let a = PageId::from("pages/A.md");
+    let b = PageId::from("pages/B.md");
+    let read_a = store.page(&a).unwrap();
+    let read_b = store.page(&b).unwrap();
+    let mut doc_a = read_a.doc;
+    let mut doc_b = read_b.doc;
+    doc_a.blocks[0].raw = "new A".into();
+    doc_b.blocks[0].raw = "new B".into();
+    let entries = vec![
+        (a.clone(), SaveBase::Existing(read_a.rev), doc_a),
+        (b.clone(), SaveBase::Existing(read_b.rev), doc_b),
+    ];
+    fixture.write("pages/B.md", "- external B\n");
+    assert!(matches!(store.save_pages(&entries), SavePagesOutcome::Failed { index: 1, outcome: SaveOutcome::Conflict { .. }, .. }));
+    assert_eq!(fs::read(fixture.0.join("pages/A.md")).unwrap(), b"- old A\n");
+    assert_eq!(fs::read(fixture.0.join("pages/B.md")).unwrap(), b"- external B\n");
+    let (_, new_b_rev) = store.read(&b.file(), None).unwrap();
+    let mut entries = entries;
+    entries[1].1 = SaveBase::Existing(new_b_rev);
+    let SavePagesOutcome::Ok(outcomes) = store.save_pages(&entries) else { panic!("save must commit") };
+    assert_eq!(outcomes.len(), 2);
+    assert!(matches!(&outcomes[0], SaveOutcome::Saved(rev) if *rev == store.read(&a.file(), None).unwrap().1));
+    assert!(matches!(&outcomes[1], SaveOutcome::Saved(rev) if *rev == store.read(&b.file(), None).unwrap().1));
+    assert!(String::from_utf8(fixture.files()["pages/A.md"].clone()).unwrap().contains("new A"));
+    assert!(String::from_utf8(fixture.files()["pages/B.md"].clone()).unwrap().contains("new B"));
+}
+
+#[test]
+fn save_pages_mid_step_failure_restores_prior_files() {
+    let fixture = Fixture::new();
+    for name in ["A", "B", "C"] { fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n")); }
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let entries: Vec<_> = ["A", "B", "C"].into_iter().map(|name| {
+        let id = PageId::from(format!("pages/{name}.md"));
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = format!("new {name}");
+        (id, SaveBase::Existing(read.rev), doc)
+    }).collect();
+    store.inject_fault(FaultPoint::MidStepIoAt(1));
+    assert!(matches!(store.save_pages(&entries), SavePagesOutcome::Failed { index: 1, outcome: SaveOutcome::Io(_), .. }));
+    for name in ["A", "B", "C"] {
+        assert_eq!(fs::read(fixture.0.join(format!("pages/{name}.md"))).unwrap(), format!("- old {name}\n").as_bytes());
+    }
+}
+
+#[test]
+fn save_pages_repeated_file_has_own_family() {
+    let fixture = Fixture::new();
+    fixture.write("pages/A.md", "- old\n");
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = PageId::from("pages/A.md");
+    let read = store.page(&id).unwrap();
+    let entry = (id, SaveBase::Existing(read.rev), read.doc);
+    assert!(matches!(store.save_pages(&[entry.clone(), entry]), SavePagesOutcome::Failed { outcome: SaveOutcome::Repeated, .. }));
+}
+
+#[test]
+fn save_pages_rollback_failure_names_entry_index() {
+    let fixture = Fixture::new();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let entries = vec![
+        (PageId::from("pages/A.md"), SaveBase::CreateNew, fresh("A", PageKind::Page)),
+        (PageId::from("pages/B.md"), SaveBase::CreateNew, fresh("B", PageKind::Page)),
+    ];
+    store.inject_fault(FaultPoint::MidStepIoAt(1));
+    store.inject_fault(FaultPoint::UndoWithdrawalIo);
+    let outcome = store.save_pages(&entries);
+    assert!(matches!(&outcome, SavePagesOutcome::Failed {
+        index: 1, outcome: SaveOutcome::Io(_), undo_failed,
+    } if undo_failed == &vec![1]), "{outcome:?}");
+}
+
+#[test]
+fn save_pages_crash_worker() {
+    let Ok(root) = std::env::var("TINE_SAVE_PAGES_CRASH_ROOT") else { return };
+    let store = Store::open(Path::new(&root), Default::default()).unwrap().0;
+    let entries: Vec<_> = ["A", "B", "C"].into_iter().map(|name| {
+        let id = PageId::from(format!("pages/{name}.md"));
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = format!("new {name}");
+        (id, SaveBase::Existing(read.rev), doc)
+    }).collect();
+    store.inject_fault(FaultPoint::AbortAfterStep(0));
+    let _ = store.save_pages(&entries);
+    panic!("save_pages crash fault did not abort");
+}
+
+#[test]
+fn save_pages_crash_between_steps_keeps_earlier_disk_write() {
+    let fixture = Fixture::new();
+    for name in ["A", "B", "C"] { fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n")); }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact").arg("save_pages_crash_worker")
+        .env("TINE_SAVE_PAGES_CRASH_ROOT", &fixture.0).output().unwrap();
+    assert!(!output.status.success(), "fault must abort between steps");
+    assert!(String::from_utf8(fixture.files()["pages/A.md"].clone()).unwrap().contains("new A"));
+    assert_eq!(fixture.files()["pages/B.md"], b"- old B\n");
+    assert_eq!(fixture.files()["pages/C.md"], b"- old C\n");
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Case {
@@ -137,6 +245,7 @@ fn store_wire(outcome: SaveOutcome, doc: &PageDto) -> Result<String, String> {
             "\"{}\" exists as both a .md and a .org file — remove one (e.g. in Logseq) to edit it in Tine",
             doc.name
         )),
+        SaveOutcome::Repeated => Err("repeated".into()),
         SaveOutcome::Io(error) => Err(error.to_string()),
         SaveOutcome::Closed => Err("store closed".into()),
         SaveOutcome::GuideEphemeral => Ok("guide-ephemeral".into()),

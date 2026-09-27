@@ -77,7 +77,7 @@ function backendWriteViolations(all: Sources): string[] {
   const bad: string[] = [];
   for (const [file, source] of all) {
     if (file.endsWith("/mock.ts") || file === `${DOC}/save/engine.ts`) continue;
-    if (/backend\(\)\.(?:savePage|deletePage)\s*\(/.test(source))
+    if (/backend\(\)\.(?:savePages|deletePage)\s*\(/.test(source))
       bad.push(`I-1: backend page writes belong in document/save/engine.ts; ${file}; exemplar src/document/save/engine.ts`);
   }
   return bad;
@@ -154,7 +154,7 @@ it("I-11 document containers stay private", () => {
 it("I-1 backend page writes use the engine", () => {
   const all = sources();
   expect(backendWriteViolations(all)).toEqual([]);
-  all.set("src/__plant.ts", "backend().savePage('id', page, null, false)");
+  all.set("src/__plant.ts", "backend().savePages('id', page, null, false)");
   expect(backendWriteViolations(all)[0]).toContain("I-1: backend page writes belong");
 });
 

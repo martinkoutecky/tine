@@ -69,7 +69,7 @@ async function paste(target = HOST): Promise<string | null> {
 
 beforeEach(() => {
   vi.spyOn(backend(), "writeRich").mockResolvedValue();
-  vi.spyOn(backend(), "savePage").mockResolvedValue("saved-rev");
+  vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
 });
 
@@ -96,8 +96,8 @@ describe("clipboard payload insertion and identity validation", () => {
 
     await paste();
 
-    expect(backend().savePage).toHaveBeenCalledTimes(1);
-    const retired = vi.mocked(backend().savePage).mock.calls[0][1];
+    expect(backend().savePages).toHaveBeenCalledTimes(1);
+    const retired = vi.mocked(backend().savePages).mock.calls[0][0][0].page;
     expect(retired.blocks.some((candidate) => candidate.id === ID1)).toBe(false);
     expect(doc.byId[ID1]?.raw).toBe(`source\nid:: ${ID1}`);
     expect(roots("Paste")).toEqual([ID1]);
@@ -116,7 +116,7 @@ describe("clipboard payload insertion and identity validation", () => {
 
     await paste();
 
-    expect(vi.mocked(backend().savePage).mock.calls.map(([, dto]) => dto.name).sort()).toEqual(["One", "Two"]);
+    expect(vi.mocked(backend().savePages).mock.calls.map(([entries]) => entries[0].page.name).sort()).toEqual(["One", "Two"]);
     expect(roots("Target")).toEqual([ID1, ID2]);
   });
 
@@ -142,9 +142,9 @@ describe("clipboard payload insertion and identity validation", () => {
 
     const ownsIdentity = (raw: string) => new RegExp(`^id::\\s*${ID1}$`, "im").test(raw);
     expect(Object.values(doc.byId).filter((node) => ownsIdentity(node.raw))).toHaveLength(1);
-    const persistedOwners = vi.mocked(backend().savePage).mock.calls.flatMap(([, dto]) => {
+    const persistedOwners = vi.mocked(backend().savePages).mock.calls.flatMap(([entries]) => {
       const visit = (candidate: BlockDto): BlockDto[] => [candidate, ...candidate.children.flatMap(visit)];
-      return dto.blocks.flatMap(visit).filter((candidate) => ownsIdentity(candidate.raw));
+      return entries[0].page.blocks.flatMap(visit).filter((candidate) => ownsIdentity(candidate.raw));
     });
     expect(persistedOwners).toHaveLength(1);
   });
@@ -209,7 +209,7 @@ describe("clipboard payload insertion and identity validation", () => {
       expect(doc.byId[ID1]).toBeUndefined();
     };
 
-    vi.mocked(backend().savePage).mockRejectedValueOnce(new Error("disk full"));
+    vi.mocked(backend().savePages).mockRejectedValueOnce(new Error("disk full"));
     await run(() => {});
     await run(() => forgetPage("Source"));
     await run(() => {
@@ -255,9 +255,9 @@ describe("clipboard payload insertion and identity validation", () => {
     await record("cut", "- one\n- two", payload);
     deleteBlock(ID1);
     deleteBlock(ID2);
-    vi.mocked(backend().savePage).mockImplementation(async (_id, dto) => {
+    vi.mocked(backend().savePages).mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
       if (dto.name === "Two") throw new Error("disk full");
-      return "saved-rev";
+      return { ok: ["saved-rev"] };
     });
 
     await paste();
@@ -275,13 +275,13 @@ describe("clipboard payload insertion and identity validation", () => {
     const payload = buildClipboardPayload([ID1])!;
     await record("cut", "- source", payload);
     deleteBlock(ID1);
-    let finishSave!: (revision: string) => void;
-    vi.mocked(backend().savePage).mockReturnValue(new Promise((resolve) => { finishSave = resolve; }));
+    let finishSave!: (result: { ok: string[] }) => void;
+    vi.mocked(backend().savePages).mockReturnValue(new Promise((resolve) => { finishSave = resolve; }));
 
     const pending = paste();
-    await vi.waitFor(() => expect(backend().savePage).toHaveBeenCalled());
+    await vi.waitFor(() => expect(backend().savePages).toHaveBeenCalled());
     reloadPage(page("Source", [block("replacement", "replacement")], { id: "pages/rebound.md" }));
-    finishSave("stale-rev");
+    finishSave({ ok: ["stale-rev"] });
 
     await pending;
     expect(doc.byId[ID1]).toBeUndefined();

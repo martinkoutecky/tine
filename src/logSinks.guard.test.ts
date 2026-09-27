@@ -44,7 +44,7 @@ function privateFlowNetworkViolations(file: string, source: string): string[] {
 
 function assertNoPrivateNetwork(file: string, source: string): void {
   const found = privateFlowNetworkViolations(file, source);
-  if (found.length) throw new Error(`I-5: graph content, titles and paths stay off network payloads; exemplar src/backend.ts native savePage IPC.\n${found.join("\n")}`);
+  if (found.length) throw new Error(`I-5: graph content, titles and paths stay off network payloads; exemplar src/backend.ts native savePages IPC.\n${found.join("\n")}`);
 }
 
 function assertClean(file: string, source: string): void {

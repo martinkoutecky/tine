@@ -246,7 +246,7 @@ describe("GH #161 R1 right-sidebar close safety", () => {
     const root = mountRightSidebar(false);
     await beginEdit(root, "Original right-sidebar text");
     const before = pageToDto(PAGE_NAME);
-    const save = vi.spyOn(backend(), "savePage");
+    const save = vi.spyOn(backend(), "savePages");
 
     root.querySelector<HTMLButtonElement>(".rs-close")!.click();
     expect(closeRightSidebarSafely()).toBe(false);
@@ -261,9 +261,9 @@ describe("GH #161 R1 right-sidebar close safety", () => {
     const dir = mkdtempSync(join(tmpdir(), "tine-r1-close-"));
     tempDirs.push(dir);
     const diskPage = join(dir, "page.json");
-    vi.spyOn(backend(), "savePage").mockImplementation(async (_id, dto) => {
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
       writeFileSync(diskPage, JSON.stringify(dto));
-      return "r1-disk-rev";
+      return { ok: ["r1-disk-rev"] };
     });
     const text = "Pending edit persisted across right close";
     await beginEdit(root, text);

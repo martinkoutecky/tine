@@ -31,6 +31,24 @@ import type {
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
 
+export interface SavePageEntry {
+  id: string;
+  page: PageDto;
+  baseRev: string | null;
+  force: boolean;
+}
+
+export type SavePagesResult =
+  | { ok: string[] }
+  | { failed: { index: number; family: string; undoFailed: number[] } };
+
+/** Adapt a one-page intent to the shared request while preserving its refusal. */
+export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number): Promise<string> {
+  const result = await api.savePages([entry], bindingGeneration);
+  if ("failed" in result) throw new Error(result.failed.family);
+  return result.ok[0];
+}
+
 // Encode asset bytes as one base64 string for the save_*/copy_image IPC. The old
 // `Array.from(bytes)` produced a JSON number[] — ~4-5x the payload + a multi-MB
 // per-element parse and a giant throwaway array on the webview thread for every
@@ -219,10 +237,8 @@ export interface Backend {
   /** Raw source text of every md/org file in the open graph (+journals when
    *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
   graphSourceFiles(includeJournals: boolean): Promise<GraphSourceFile[]>;
-  /** Save a page. `baseRev` is the file hash the editor loaded; the backend
-   *  rejects with "conflict" if the file changed on disk since then (unless
-   *  `force`). Returns the new on-disk rev to use as the next baseline. */
-  savePage(id: string, page: PageDto, baseRev: string | null, force?: boolean, bindingGeneration?: number): Promise<string>;
+  /** Save ordered page snapshots as one guarded request. */
+  savePages(entries: SavePageEntry[], bindingGeneration?: number): Promise<SavePagesResult>;
   /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
   guidePages(): Promise<GuidePage[]>;
   /** Copy the bundled Guide into the real graph under `tine-guide/`. */
@@ -656,8 +672,8 @@ class TauriBackend implements Backend {
   graphSourceFiles(includeJournals: boolean) {
     return this.call<GraphSourceFile[]>("graph_source_files", { includeJournals });
   }
-  savePage(id: string, page: PageDto, baseRev: string | null, force = false, bindingGeneration = this.bindingGeneration) {
-    return this.call<string>("save_page", { id, page, baseRev, force }, bindingGeneration);
+  savePages(entries: SavePageEntry[], bindingGeneration = this.bindingGeneration) {
+    return this.call<SavePagesResult>("save_pages", { entries }, bindingGeneration);
   }
   guidePages() {
     return this.call<GuidePage[]>("guide_pages");

@@ -40,6 +40,7 @@ fn constructions(file: &str, source: &str) -> BTreeMap<String, usize> {
                             | "Deleted"
                             | "ReadOnly"
                             | "Twin"
+                            | "Repeated"
                             | "InvalidTarget"
                             | "GuideEphemeral"
                     )
@@ -94,6 +95,10 @@ fn all_production_refusals_have_scenarios() {
     let store = format!("    pub fn save({store}");
     let mut actual = constructions("transaction.rs", &transaction);
     actual.extend(constructions("store.rs", &store));
+    let mapping = fs::read_to_string(root.join("crates/tine-store/src/store.rs")).unwrap();
+    let mapping = mapping.split("impl SaveOutcome {").nth(1).unwrap()
+        .split("/// Result of one ordered page-save request.").next().unwrap();
+    actual.extend(constructions("store.rs", mapping));
     let contract = fs::read_to_string(root.join("docs/storage-contract.md")).unwrap();
     assert_table(&actual, &contract_rows(&contract));
 }

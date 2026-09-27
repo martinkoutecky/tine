@@ -1,5 +1,5 @@
 # tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
-# Counts against 01-arrival.md budget A: <=35 Store+Transaction ops,
+# Counts against 01-arrival.md budget A, extended for batch save: <=36 Store+Transaction ops,
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
@@ -56,6 +56,7 @@ enum store::QueryResult
 enum store::Resolved
 enum store::SaveBase
 enum store::SaveOutcome
+enum store::SavePagesOutcome
 enum store::StoreError
 enum store::TrashKind
 field store::PageRead.doc
@@ -106,6 +107,7 @@ fn store::Store::asset_trash_location_for_user
 fn store::Store::read
 fn store::Store::scan_area
 fn store::Store::save
+fn store::Store::save_pages
 fn store::Store::trash_stats
 fn store::Store::purge_asset_trash
 fn store::Store::whole_graph
@@ -176,7 +178,7 @@ struct store::ConfigState
 struct store::Change
 enum store::SubscriptionEnd
 struct store::Subscription
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchMode,WholeGraph,}
 struct store::GraphAccessInspection
 struct store::OpenOptions
 struct store::WholeGraph

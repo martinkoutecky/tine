@@ -1306,46 +1306,39 @@ impl Store {
     /// republished as an external watcher echo. Keep unsaved edits on every
     /// refusal.
     pub fn save(&self, id: &PageId, base: SaveBase, doc: &PageDto) -> SaveOutcome {
-        if self.is_closed() {
-            return SaveOutcome::Closed;
+        match self.save_pages(&[(id.clone(), base, doc.clone())]) {
+            SavePagesOutcome::Ok(mut outcomes) => outcomes.remove(0),
+            SavePagesOutcome::Failed { outcome, .. } => outcome,
         }
-        if doc.guide {
-            return SaveOutcome::GuideEphemeral;
+    }
+
+    /// Save page snapshots in input order through one guarded transaction.
+    pub fn save_pages(&self, entries: &[(PageId, SaveBase, PageDto)]) -> SavePagesOutcome {
+        if entries.is_empty() {
+            return SavePagesOutcome::Failed { index: 0, outcome: SaveOutcome::InvalidTarget("empty page save".into()), undo_failed: Vec::new() };
+        }
+        if self.is_closed() {
+            return SavePagesOutcome::Failed { index: 0, outcome: SaveOutcome::Closed, undo_failed: Vec::new() };
+        }
+        if let Some(index) = entries.iter().position(|(_, _, doc)| doc.guide) {
+            return SavePagesOutcome::Failed { index, outcome: SaveOutcome::GuideEphemeral, undo_failed: Vec::new() };
         }
         let mut tx = self.transaction();
-        tx.save_page(id, base, doc);
+        for (id, base, doc) in entries {
+            tx.save_page(id, base.clone(), doc);
+        }
         match tx.commit() {
-            crate::TxOutcome::Committed { mut steps, .. } => match steps.remove(0) {
+            crate::TxOutcome::Committed { steps, .. } => SavePagesOutcome::Ok(steps.into_iter().map(|step| match step {
                 crate::StepResult::Written { rev, .. } => SaveOutcome::Saved(rev),
                 crate::StepResult::Unchanged { rev, .. } => SaveOutcome::Unchanged(rev),
                 _ => unreachable!("save_page result"),
-            },
-            crate::TxOutcome::NotCommitted { why, .. } => match why {
-                crate::Why::Conflict {
-                    file,
-                    disk: Some(_),
-                } if file != id.file() => SaveOutcome::Twin {
-                    existing: PageId::from(file.as_str()),
-                },
-                crate::Why::Conflict {
-                    disk: Some(disk), ..
-                } => SaveOutcome::Conflict { disk },
-                crate::Why::Conflict { disk: None, .. } => SaveOutcome::Deleted,
-                crate::Why::Refused(crate::Refusal::ReadOnly(reason)) => {
-                    SaveOutcome::ReadOnly(reason)
-                }
-                crate::Why::Refused(crate::Refusal::Twin { existing }) => {
-                    SaveOutcome::Twin { existing }
-                }
-                crate::Why::Refused(crate::Refusal::InvalidTarget(reason)) => {
-                    SaveOutcome::InvalidTarget(reason)
-                }
-                crate::Why::Refused(crate::Refusal::Closed) => SaveOutcome::Closed,
-                crate::Why::Refused(
-                    crate::Refusal::Undecodable | crate::Refusal::RepeatedFile(_),
-                ) => SaveOutcome::InvalidTarget("invalid single-page transaction".into()),
-                crate::Why::Failed(error) => SaveOutcome::Io(error),
-            },
+            }).collect()),
+            crate::TxOutcome::NotCommitted { step, why, rollback, .. } => {
+                let undo_failed = rollback.undo_failed.iter().filter_map(|(file, _)|
+                    entries.iter().position(|(id, _, _)| id.file() == *file)
+                ).collect();
+                SavePagesOutcome::Failed { index: step, outcome: SaveOutcome::from_failed_step(why, &entries[step].0), undo_failed }
+            }
         }
     }
 
@@ -2326,6 +2319,8 @@ pub enum SaveOutcome {
         /// Existing claimant.
         existing: PageId,
     },
+    /// The same file was named twice in one page-save request.
+    Repeated,
     /// Invalid or unsafe target or page content; reason is for display.
     InvalidTarget(String),
     /// Filesystem operation failed.
@@ -2335,6 +2330,40 @@ pub enum SaveOutcome {
     /// A `PageDto` with `guide: true` is refused before disk access, regardless
     /// of the supplied page id.
     GuideEphemeral,
+}
+
+impl SaveOutcome {
+    fn from_failed_step(why: crate::Why, id: &PageId) -> Self {
+        match why {
+            crate::Why::Conflict { file, disk: Some(_) } if file != id.file() =>
+                SaveOutcome::Twin { existing: PageId::from(file.as_str()) },
+            crate::Why::Conflict { disk: Some(disk), .. } => SaveOutcome::Conflict { disk },
+            crate::Why::Conflict { disk: None, .. } => SaveOutcome::Deleted,
+            crate::Why::Refused(crate::Refusal::ReadOnly(reason)) => SaveOutcome::ReadOnly(reason),
+            crate::Why::Refused(crate::Refusal::Twin { existing }) => SaveOutcome::Twin { existing },
+            crate::Why::Refused(crate::Refusal::InvalidTarget(reason)) => SaveOutcome::InvalidTarget(reason),
+            crate::Why::Refused(crate::Refusal::Closed) => SaveOutcome::Closed,
+            crate::Why::Refused(crate::Refusal::RepeatedFile(_)) => SaveOutcome::Repeated,
+            crate::Why::Refused(crate::Refusal::Undecodable) => SaveOutcome::InvalidTarget("undecodable page".into()),
+            crate::Why::Failed(error) => SaveOutcome::Io(error),
+        }
+    }
+}
+
+/// Result of one ordered page-save request.
+#[derive(Debug)]
+pub enum SavePagesOutcome {
+    /// One result per input entry, in the same order.
+    Ok(Vec<SaveOutcome>),
+    /// The failed entry and any entries whose rollback could not restore disk.
+    Failed {
+        /// Zero-based failed input entry.
+        index: usize,
+        /// Refusal or I/O failure for that entry.
+        outcome: SaveOutcome,
+        /// Input entry indices whose earlier bytes could not be restored.
+        undo_failed: Vec<usize>,
+    },
 }
 
 /// Parsed page and the raw-byte revision used for a guarded save.

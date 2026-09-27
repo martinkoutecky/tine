@@ -49,9 +49,9 @@ async function loadHarness(
         blocks: [{ id: "template", raw: "Template body", collapsed: false, children: [] }],
       },
     ]),
-    savePage: vi.fn(async (_id: string, _dto: PageDto, _baseRev: string | null, _force: boolean, _bindingGeneration?: number) => {
+    savePages: vi.fn(async (_entries: import("./backend").SavePageEntry[], _bindingGeneration?: number) => {
       events.push("save-template");
-      return "new-rev";
+      return { ok: ["new-rev"] };
     }),
     readCustomCss: vi.fn(async () => ""),
   };
@@ -105,7 +105,7 @@ async function loadHarness(
     resetStore: vi.fn(), flushAll: vi.fn(async () => true),
     installRenameRefreshHandler: vi.fn(),
     createPage: (_name: string, dto: PageDto, options: { id: string; baseRev: string | null; bindingGeneration: number }) =>
-      api.savePage(options.id, dto, options.baseRev, false, options.bindingGeneration),
+      api.savePages([{ id: options.id, page: dto, baseRev: options.baseRev, force: false }], options.bindingGeneration).then((result) => result.ok[0]),
     journalTemplatePage: (title: string, blocks: unknown[], page?: PageRead | null) => ({
       name: title, kind: "journal", title, pre_block: page?.pre_block ?? null, blocks, format: page?.format,
     }),
@@ -162,7 +162,7 @@ describe("default journal template graph bind", () => {
     invalidateBinding();
     finish(null);
     await opening;
-    expect(api.savePage).not.toHaveBeenCalled();
+    expect(api.savePages).not.toHaveBeenCalled();
   });
 
   it("drops demo seed and Welcome navigation when its page read lands after a graph switch (I-20)", async () => {
@@ -171,12 +171,12 @@ describe("default journal template graph bind", () => {
     api.getPage.mockResolvedValueOnce(null).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const creating = createNewGraph();
     await vi.waitFor(() => expect(api.getPage).toHaveBeenCalledTimes(2));
-    const before = api.savePage.mock.calls.length;
+    const before = api.savePages.mock.calls.length;
     const { invalidateBinding } = await import("./binding");
     invalidateBinding();
     finish(null);
     await creating;
-    expect(api.savePage).toHaveBeenCalledTimes(before);
+    expect(api.savePages).toHaveBeenCalledTimes(before);
     expect(openPage).not.toHaveBeenCalled();
   });
 
@@ -227,13 +227,13 @@ describe("default journal template graph bind", () => {
     expect(applyTemplateVars).toHaveBeenCalledWith("Template body", "Jul 10th, 2026");
     // No journal file yet: the save goes to the backend's Absent id (B15b).
     expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
-    expect(api.savePage).toHaveBeenCalledWith(
-      "journals/2026_07_10.md",
-      expect.objectContaining({
-        blocks: [expect.objectContaining({ raw: "Template body" })],
-      }),
-      null,
-      false,
+    expect(api.savePages).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        id: "journals/2026_07_10.md",
+        page: expect.objectContaining({ blocks: [expect.objectContaining({ raw: "Template body" })] }),
+        baseRev: null,
+        force: false,
+      })],
       0
     );
   });
@@ -254,7 +254,7 @@ describe("default journal template graph bind", () => {
 
     // The empty journal's own file (its id), with its rev as the baseline; no
     // name lookup.
-    expect(api.savePage).toHaveBeenCalledWith("journals/Jul 10th, 2026.org", expect.any(Object), "empty-journal-rev", false, 0);
+    expect(api.savePages).toHaveBeenCalledWith([{ id: "journals/Jul 10th, 2026.org", page: expect.any(Object), baseRev: "empty-journal-rev", force: false }], 0);
     expect(api.resolvePage).not.toHaveBeenCalled();
   });
 
@@ -265,7 +265,7 @@ describe("default journal template graph bind", () => {
     await loadGraphPath(META.root);
 
     expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
-    expect(api.savePage).not.toHaveBeenCalled();
+    expect(api.savePages).not.toHaveBeenCalled();
   });
 });
 

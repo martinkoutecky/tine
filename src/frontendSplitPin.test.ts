@@ -55,17 +55,17 @@ describe("cross-page moves retain a durable copy until destination lands", () =>
         : [page("Newer", [keeper, moved]), page("Older", [block("destination keeper")])]);
       const disk = new Map([[source, ["portable task", "source keeper"]], [dest, ["destination keeper"]]]);
       const pending = deferred<string>();
-      const save = vi.spyOn(backend(), "savePage").mockImplementation(async (_id, dto) => {
+      const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
         if (dto.name === dest) {
           const rev = await pending.promise;
           disk.set(dest, dto.blocks.map((b) => b.raw));
-          return rev;
+          return { ok: [rev] };
         }
         disk.set(dto.name, dto.blocks.map((b) => b.raw));
-        return "source-rev";
+        return { ok: ["source-rev"] };
       });
       await act(moved.id);
-      await vi.waitFor(() => expect(save.mock.calls.some(([, dto]) => dto.name === dest)).toBe(true));
+      await vi.waitFor(() => expect(save.mock.calls.some(([entries]) => entries[0].page.name === dest)).toBe(true));
       expect(raws(dest)).toContain("portable task");
       expect(raws(source)).not.toContain("portable task");
       setRaw(keeper.id, "source keeper edited");
@@ -85,10 +85,10 @@ describe("cross-page moves retain a durable copy until destination lands", () =>
     loadFeed([page("Newer", [block("destination keeper")]), page("Older", [moved, block("source keeper")])]);
     const disk = new Map([["Newer", ["destination keeper"]], ["Older", ["portable task", "source keeper"]]]);
     const pending = deferred<string>();
-    vi.spyOn(backend(), "savePage").mockImplementation(async (_id, dto) => {
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
       if (dto.name === "Newer") await pending.promise;
       disk.set(dto.name, dto.blocks.map((b) => b.raw));
-      return `saved-${dto.name}`;
+      return { ok: [`saved-${dto.name}`] };
     });
     await moveBlock(moved.id, null, 0, "Newer");
     expect(savedRaws(disk, "Older")).toContain("portable task");
@@ -124,10 +124,10 @@ describe("carry chooses source days and persists the addition first", () => {
     vi.spyOn(backend(), "getPage").mockImplementation(async (name) => sources.get(name) ?? null);
     const disk = new Map([[today, ["today note"]], [yesterday, ["TODO yesterday"]], [third, ["TODO third"]]]);
     const pending = deferred<string>();
-    vi.spyOn(backend(), "savePage").mockImplementation(async (_id, dto) => {
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
       if (dto.name === today) await pending.promise;
       disk.set(dto.name, dto.blocks.map((b) => b.raw));
-      return `saved-${dto.name}`;
+      return { ok: [`saved-${dto.name}`] };
     });
     const carrying = carryDaysBack(3);
     await vi.waitFor(() => expect(raws(today)).toContain("TODO yesterday"));
@@ -147,7 +147,7 @@ describe("carry chooses source days and persists the addition first", () => {
     vi.spyOn(backend(), "journalContentDays").mockResolvedValue([key(date(5)), key(date(2)), key(date(0))]);
     vi.spyOn(backend(), "getPage").mockImplementation(async (name) =>
       name === recent ? page(recent, [block("TODO recent")]) : name === old ? page(old, [block("TODO old")]) : null);
-    vi.spyOn(backend(), "savePage").mockResolvedValue("rev");
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
     await carryPrevDay();
     expect(raws(today)).toContain("TODO recent");
     expect(raws(today)).not.toContain("TODO old");
@@ -159,10 +159,10 @@ describe("carry chooses source days and persists the addition first", () => {
     const today = title(0), source = title(1);
     loadFeed([page(today, []), page(source, [block("TODO safe")])]);
     const disk = new Map([[today, [] as string[]], [source, ["TODO safe"]]]);
-    vi.spyOn(backend(), "savePage").mockImplementation(async (_id, dto) => {
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
       if (dto.name === today) throw new Error("conflict");
       disk.set(dto.name, dto.blocks.map((b) => b.raw));
-      return "rev";
+      return { ok: ["rev"] };
     });
     await carryDay(source);
     expect(raws(today)).toContain("TODO safe");
@@ -178,7 +178,7 @@ describe("small document intents retain visible and saved outcomes", () => {
     const a = block("first"), b = block("second");
     loadSingle(page("Notes", [a, b], "page"));
     const saved: string[][] = [];
-    vi.spyOn(backend(), "savePage").mockImplementation(async (_id, dto) => { saved.push(dto.blocks.map((x) => x.raw)); return "rev"; });
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const dto = entries[0].page; saved.push(dto.blocks.map((x) => x.raw)); return { ok: ["rev"] }; });
     moveItem(b.id, -1);
     expect(raws("Notes")).toEqual(["second", "first"]);
     expect(isDirty("Notes")).toBe(true);
@@ -212,7 +212,7 @@ describe("small document intents retain visible and saved outcomes", () => {
     loadSingle(page("Referer", [block(`see ((${uuid}))`)], "page"));
     vi.spyOn(backend(), "getPage").mockResolvedValue(page("Target", [{ ...block("target"), id: uuid }], "page"));
     const writes: PageDto[] = [];
-    vi.spyOn(backend(), "savePage").mockImplementation(async (_id, dto) => { writes.push(structuredClone(dto)); return "rev"; });
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const dto = entries[0].page; writes.push(structuredClone(dto)); return { ok: ["rev"] }; });
     await persistBlockRefTarget(uuid, "Target", "page");
     expect(await flushPage("Target")).toBe(true);
     expect(writes.at(-1)?.blocks[0].raw.match(/id::/g)).toHaveLength(1);
@@ -238,7 +238,7 @@ describe("history invalidation through page lifecycle", () => {
     const a = block("original");
     loadSingle(page("Notes", [a], "page"));
     setRaw(a.id, "edited");
-    vi.spyOn(backend(), "savePage").mockResolvedValue("rev");
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
     const removed = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined);
     expect(await deletePage("Notes", "page")).toBe(true);
     undo();
@@ -261,7 +261,7 @@ describe("save conflict set as observed through flushAll", () => {
   it("marks a conflict after a refused save and clears it after a successful retry", async () => {
     const a = block("original");
     loadSingle(page("Notes", [a], "page"));
-    const save = vi.spyOn(backend(), "savePage").mockRejectedValueOnce(new Error("conflict")).mockResolvedValue("rev");
+    const save = vi.spyOn(backend(), "savePages").mockRejectedValueOnce(new Error("conflict")).mockResolvedValue({ ok: ["rev"] });
     setRaw(a.id, "edited");
     expect(await flushAll()).toBe(false);
     expect(isConflicted("Notes")).toBe(true);
@@ -270,6 +270,6 @@ describe("save conflict set as observed through flushAll", () => {
     markDirty("Notes");
     expect(await flushAll()).toBe(true);
     expect(isConflicted("Notes")).toBe(false);
-    expect(save.mock.calls.at(-1)?.[1].blocks[0].raw).toBe("edited");
+    expect(save.mock.calls.at(-1)?.[0][0].page.blocks[0].raw).toBe("edited");
   });
 });
