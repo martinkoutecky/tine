@@ -2088,10 +2088,11 @@ fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
 
 /// Containment check for both existing and not-yet-created targets. Canonicalize
 /// the deepest existing ancestor so a symlink in the path cannot smuggle a later
-/// filename outside the graph. The runtime root is already canonical, while the
-/// fallback keeps disposable direct-`Graph::open` fixtures working as before.
+/// filename outside the graph. The runtime root is canonical when the volume
+/// supports it; the absolute-existing fallback handles volumes that do not.
 fn path_stays_within_root(root: &Path, target: &Path) -> bool {
-    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical_root =
+        crate::path_identity::canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
     canonical_existing_ancestor(target)
         .map(|(_, resolved)| resolved.starts_with(&canonical_root))
         .unwrap_or(false)
@@ -2102,7 +2103,12 @@ pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, P
     let mut existing = target;
     loop {
         match fs::symlink_metadata(existing) {
-            Ok(_) => return Ok((existing, fs::canonicalize(existing)?)),
+            Ok(_) => {
+                return Ok((
+                    existing,
+                    crate::path_identity::canonical_existing_path(existing)?,
+                ))
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 existing = existing.parent().ok_or_else(|| {
                     io::Error::new(
@@ -2122,7 +2128,8 @@ pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, P
 /// output onto user assets. Compare the deepest existing ancestor with its
 /// expected canonical lexical location to reject any such alias.
 fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
-    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical_root =
+        crate::path_identity::canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
     let mut existing = target;
     while fs::symlink_metadata(existing).is_err() {
         let Some(parent) = existing.parent() else {
@@ -2133,7 +2140,7 @@ fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
     let Ok(relative) = existing.strip_prefix(root) else {
         return true;
     };
-    fs::canonicalize(existing)
+    crate::path_identity::canonical_existing_path(existing)
         .map(|actual| actual != canonical_root.join(relative))
         .unwrap_or(true)
 }
@@ -2250,11 +2257,11 @@ impl Graph {
     /// and binding a device-local approval. An in-graph directory (or a missing
     /// directory that Tine may create normally) returns `None`.
     pub(crate) fn external_assets_target(root: impl AsRef<Path>) -> io::Result<Option<PathBuf>> {
-        let root = fs::canonicalize(root.as_ref())?;
+        let root = crate::path_identity::canonical_existing_path(root.as_ref())?;
         let assets = root.join("assets");
         match fs::symlink_metadata(&assets) {
             Ok(_) => {
-                let resolved = fs::canonicalize(&assets)?;
+                let resolved = crate::path_identity::canonical_existing_path(&assets)?;
                 if !resolved.is_dir() {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -2284,12 +2291,13 @@ impl Graph {
         if let Some(resolved) = Self::external_assets_target(&graph.root)? {
             let approved = approved_assets
                 .ok_or_else(|| CheckedOpenError::ExternalAssetsUnapproved(resolved.clone()))?;
-            let approved = fs::canonicalize(approved).map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!("approved assets directory is unavailable: {error}"),
-                )
-            })?;
+            let approved =
+                crate::path_identity::canonical_existing_path(approved).map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        format!("approved assets directory is unavailable: {error}"),
+                    )
+                })?;
             if approved != resolved {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,

@@ -7,6 +7,7 @@ import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { startEditing } from "../editorController";
+import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
 import { setToasts, toasts } from "../toasts";
 import type { BlockDto, Format, PageDto } from "../types";
 import { Block } from "./Block";
@@ -131,6 +132,74 @@ describe("asset paste durability", () => {
       finish("durable.png");
       await settle();
       expect(doc.byId[id].raw).toBe("![](../assets/durable.png)");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps a saved asset out of an editor that lost ownership while saving", async () => {
+    loadSingle(page("Assets", [blk("asset-stale-a", ""), blk("asset-stale-b", "")]));
+    const [first, second] = pageByName("Assets")!.roots;
+    startEditing(first, 0);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:asset"),
+      revokeObjectURL: vi.fn(),
+    });
+    let finish!: (name: string) => void;
+    vi.spyOn(backend(), "saveAsset").mockImplementation(
+      () => new Promise<string>((resolve) => { finish = resolve; })
+    );
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(
+        new File([new Uint8Array([1])], "paste.png", { type: "image/png" })
+      ));
+      await settle();
+      expect(backend().saveAsset).toHaveBeenCalledOnce();
+      startEditing(second, 0);
+      await settle();
+      finish("durable.png");
+      await settle();
+      expect(doc.byId[first].raw).toBe("");
+      expect(doc.byId[second].raw).toBe("");
+      expect(toasts().some((toast) => toast.message ===
+        "The asset was saved, but it was not inserted because the graph or block changed."
+      )).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps a picked upload stored when its original editor loses ownership", async () => {
+    loadSingle(page("Assets", [blk("upload-stale-a", ""), blk("upload-stale-b", "")]));
+    const [first, second] = pageByName("Assets")!.roots;
+    startEditing(first, 0);
+    vi.spyOn(backend(), "pickFile").mockResolvedValue("/tmp/upload.png");
+    let finish!: (name: string) => void;
+    vi.spyOn(backend(), "importAsset").mockImplementation(
+      () => new Promise<string>((resolve) => { finish = resolve; })
+    );
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.focus();
+      expect(dispatchFocusedEditorCommand("editor/upload-asset")).toBe(true);
+      await settle();
+      expect(backend().importAsset).toHaveBeenCalledOnce();
+      startEditing(second, 0);
+      await settle();
+      finish("stored-upload.png");
+      await settle();
+      expect(doc.byId[first].raw).toBe("");
+      expect(doc.byId[second].raw).toBe("");
+      expect(toasts().some((toast) => toast.message ===
+        "The asset was saved, but it was not inserted because the graph or block changed."
+      )).toBe(true);
     } finally {
       dispose();
     }

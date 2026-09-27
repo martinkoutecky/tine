@@ -241,7 +241,7 @@ impl Store {
                 return Err(fail(&format!("unsafe live {label} path"), error, done));
             }
         }
-        if std::fs::canonicalize(root_path.join("assets"))
+        if crate::path_identity::canonical_existing_path(&root_path.join("assets"))
             .ok()
             .as_ref()
             != Some(&assets_path)
@@ -462,7 +462,7 @@ mod config_directory_tests {
 }
 
 fn ensure_target_within_root(root: &Path, target: &Path) -> io::Result<()> {
-    let canonical_root = std::fs::canonicalize(root)?;
+    let canonical_root = crate::path_identity::canonical_existing_path(root)?;
     let (existing, canonical_existing) = crate::model::canonical_existing_ancestor(target)?;
     let expected = existing
         .strip_prefix(root)
