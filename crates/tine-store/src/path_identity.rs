@@ -49,3 +49,67 @@ fn has_link_component(path: &Path) -> bool {
         false
     })
 }
+
+#[cfg(test)]
+mod canonical_root_fallback_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn test_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "tine-root-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn existing_root_uses_absolute_spelling_when_canonicalization_fails() {
+        let root = test_root("fallback");
+        let spelling = root.join(".");
+        let fallback = canonical_existing_path_with(&spelling, |_| {
+            Err(std::io::Error::from_raw_os_error(1005))
+        })
+        .unwrap();
+        assert!(fallback.is_absolute());
+        assert!(fallback.is_dir());
+        assert!(!fallback.components().any(|part| part.as_os_str() == "."));
+        assert_eq!(fallback, std::path::absolute(&spelling).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_root_keeps_the_original_canonicalization_error() {
+        let root = test_root("missing");
+        let missing = root.join("missing");
+        let error = canonical_existing_path_with(&missing, |_| {
+            Err(std::io::Error::from_raw_os_error(1005))
+        })
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(1005));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fallback_applies_to_other_canonicalization_errors_but_not_links() {
+        let root = test_root("other-errors");
+        let fallback = canonical_existing_path_with(&root, |_| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        })
+        .unwrap();
+        assert_eq!(fallback, std::path::absolute(&root).unwrap());
+        #[cfg(unix)]
+        {
+            let link = root.with_extension("link");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+            assert!(canonical_existing_path_with(&link, |_| {
+                Err(std::io::Error::from_raw_os_error(1005))
+            })
+            .is_err());
+            fs::remove_file(link).unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
