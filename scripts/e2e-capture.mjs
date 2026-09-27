@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -28,7 +29,7 @@ const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || TMP;
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
-const appData = `${TMP}/xdg/data/page.tine.Tine`;
+const appData = `${TMP}/xdg/data/${APP_ID}`;
 fs.mkdirSync(appData, { recursive: true });
 const settingsPath = `${appData}/tine-settings.json`;
 // Capture is an independent WebView: begin with a persisted non-default mode

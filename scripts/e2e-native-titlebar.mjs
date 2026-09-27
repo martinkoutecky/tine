@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 if (process.platform !== "linux") throw new Error("native titlebar regression is Linux-only");
 
@@ -27,7 +28,7 @@ fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.mkdirSync(ARTIFACTS, { recursive: true });
-const appData = `${TMP}/xdg/data/page.tine.Tine`;
+const appData = `${TMP}/xdg/data/${APP_ID}`;
 fs.mkdirSync(appData, { recursive: true });
 fs.writeFileSync(`${appData}/tine-settings.json`, '{"native_window_frame":true}\n');
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
@@ -137,15 +138,15 @@ try {
     },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
-  const desktopEntry = `${TMP}/xdg/data/applications/page.tine.Tine.desktop`;
+  const desktopEntry = `${TMP}/xdg/data/applications/${APP_ID}.desktop`;
   await waitFor(() => fs.existsSync(desktopEntry), 5_000,
     "standalone Linux binary did not install its Wayland desktop identity");
   const desktopText = fs.readFileSync(desktopEntry, "utf8");
-  if (!desktopText.includes("Icon=page.tine.Tine") || !desktopText.includes("X-Tine-Managed=true")) {
+  if (!desktopText.includes(`Icon=${APP_ID}`) || !desktopText.includes("X-Tine-Managed=true")) {
     throw new Error(`standalone desktop identity is malformed: ${desktopText}`);
   }
   for (const size of ["32x32", "64x64", "128x128", "256x256", "512x512"]) {
-    const icon = `${TMP}/xdg/data/icons/hicolor/${size}/apps/page.tine.Tine.png`;
+    const icon = `${TMP}/xdg/data/icons/hicolor/${size}/apps/${APP_ID}.png`;
     if (!fs.existsSync(icon) || fs.statSync(icon).size === 0) {
       throw new Error(`standalone Linux identity is missing its ${size} Tine icon`);
     }

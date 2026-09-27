@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -32,7 +33,7 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`,
 // Launching B merely to register it would leave Tine's single-instance graph
 // registry free to focus that peer window instead of exercising an in-place
 // switch in the A window under test.
-const appData = `${TMP}/xdg/data/page.tine.Tine`;
+const appData = `${TMP}/xdg/data/${APP_ID}`;
 fs.mkdirSync(appData, { recursive: true });
 fs.writeFileSync(`${appData}/tine-settings.json`, JSON.stringify({
   known_graphs: [

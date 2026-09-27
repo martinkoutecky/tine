@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -31,7 +32,7 @@ const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- open [[External assets]]\n");
 
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
-const appData = `${TMP}/xdg/data/page.tine.Tine`;
+const appData = `${TMP}/xdg/data/${APP_ID}`;
 fs.mkdirSync(appData, { recursive: true });
 const canonicalGraph = fs.realpathSync(GRAPH);
 const canonicalAssets = fs.realpathSync(EXTERNAL);
