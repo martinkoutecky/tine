@@ -52,6 +52,71 @@ use tine_core::query_plan::QueryExecution;
 use crate::model::{CheckedOpenError, Graph, GraphRead, ReadSnapshot};
 
 #[cfg(test)]
+mod canonical_root_fallback_tests {
+    use super::*;
+
+    fn test_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "tine-root-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn existing_root_uses_absolute_spelling_when_canonicalization_fails() {
+        let root = test_root("fallback");
+        let spelling = root.join(".");
+        let fallback = crate::path_identity::canonical_existing_path_with(&spelling, |_| {
+            Err(std::io::Error::from_raw_os_error(1005))
+        })
+        .unwrap();
+        assert!(fallback.is_absolute());
+        assert!(fallback.is_dir());
+        assert!(!fallback.components().any(|part| part.as_os_str() == "."));
+        assert_eq!(fallback, std::path::absolute(&spelling).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_root_keeps_the_original_canonicalization_error() {
+        let root = test_root("missing");
+        let missing = root.join("missing");
+        let error = crate::path_identity::canonical_existing_path_with(&missing, |_| {
+            Err(std::io::Error::from_raw_os_error(1005))
+        })
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(1005));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fallback_applies_to_other_canonicalization_errors_but_not_links() {
+        let root = test_root("other-errors");
+        let fallback = crate::path_identity::canonical_existing_path_with(&root, |_| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        })
+        .unwrap();
+        assert_eq!(fallback, std::path::absolute(&root).unwrap());
+        #[cfg(unix)]
+        {
+            let link = root.with_extension("link");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+            assert!(
+                crate::path_identity::canonical_existing_path_with(&link, |_| {
+                    Err(std::io::Error::from_raw_os_error(1005))
+                })
+                .is_err()
+            );
+            fs::remove_file(link).unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
 pub(crate) type TestPause = Arc<(Mutex<(bool, bool)>, Condvar)>;
 
 #[cfg(test)]
@@ -531,7 +596,10 @@ impl GraphAccessInspection {
     /// not reread a link changed since inspection; `Store::open` revalidates it.
     pub fn approves_external_assets(&self, path: &Path) -> Result<bool, crate::IoError> {
         Ok(self.external_assets.as_ref()
-            == Some(&fs::canonicalize(path).map_err(crate::IoError::from)?))
+            == Some(
+                &crate::path_identity::canonical_existing_path(path)
+                    .map_err(crate::IoError::from)?,
+            ))
     }
 }
 
@@ -881,11 +949,16 @@ impl Store {
     }
 
     /// Resolve a user-chosen graph root and require a folder, without writing.
-    /// Cost is a filesystem canonicalization and directory metadata check.
+    /// Uses an existing absolute path if canonicalization is unavailable.
+    /// Cost O(path components) on fallback; otherwise one canonicalization and
+    /// directory metadata check. Missing, linked fallback, or non-directory
+    /// paths return `OpenError`.
     pub fn canonical_root(root: &Path) -> Result<PathBuf, OpenError> {
-        let canonical = fs::canonicalize(root).map_err(|error| OpenError::Unresolvable {
-            path: root.to_path_buf(),
-            reason: error.to_string(),
+        let canonical = crate::path_identity::canonical_existing_path(root).map_err(|error| {
+            OpenError::Unresolvable {
+                path: root.to_path_buf(),
+                reason: error.to_string(),
+            }
         })?;
         if !canonical.is_dir() {
             return Err(OpenError::NotAFolder(canonical));
@@ -936,13 +1009,7 @@ impl Store {
         root: &Path,
         opts: OpenOptions,
     ) -> Result<(Self, tine_core::model::GraphMeta, ConfigState), OpenError> {
-        let root = fs::canonicalize(root).map_err(|error| OpenError::Unresolvable {
-            path: root.to_path_buf(),
-            reason: error.to_string(),
-        })?;
-        if !root.is_dir() {
-            return Err(OpenError::NotAFolder(root));
-        }
+        let root = Self::canonical_root(root)?;
         let graph =
             Graph::open_checked_with_assets_inner(&root, opts.approved_external_assets.as_deref())
                 .map_err(|error| match error {
@@ -1598,7 +1665,7 @@ impl Store {
         let (area, candidate) = if let Some(rel) = file.as_str().strip_prefix("assets/") {
             let approved = self.graph.assets_path();
             let lexical = self.graph.root.join("assets");
-            let live = match fs::canonicalize(&lexical) {
+            let live = match crate::path_identity::canonical_existing_path(&lexical) {
                 Ok(path) => path,
                 Err(error)
                     if error.kind() == std::io::ErrorKind::NotFound && approved == lexical =>
@@ -1615,7 +1682,8 @@ impl Store {
             (area, self.graph.root.join(file.as_str()))
         };
         if existing_regular_file {
-            let target = fs::canonicalize(&candidate).map_err(StoreError::from_io)?;
+            let target = crate::path_identity::canonical_existing_path(&candidate)
+                .map_err(StoreError::from_io)?;
             if !target.is_file() {
                 return Err(if file.as_str().starts_with("assets/") {
                     StoreError::InvalidTarget(file.as_str().to_owned())
@@ -1625,7 +1693,8 @@ impl Store {
             }
             if file.as_str().starts_with("assets/") {
                 let assets =
-                    fs::canonicalize(self.graph.assets_path()).map_err(StoreError::from_io)?;
+                    crate::path_identity::canonical_existing_path(&self.graph.assets_path())
+                        .map_err(StoreError::from_io)?;
                 if !target.starts_with(&assets) {
                     return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
                 }
@@ -1634,10 +1703,14 @@ impl Store {
                     return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
                 }
                 let config = self.graph.current_config();
-                let pages = fs::canonicalize(self.graph.root.join(&config.pages_dir))
-                    .map_err(StoreError::from_io)?;
-                let journals = fs::canonicalize(self.graph.root.join(&config.journals_dir))
-                    .map_err(StoreError::from_io)?;
+                let pages = crate::path_identity::canonical_existing_path(
+                    &self.graph.root.join(&config.pages_dir),
+                )
+                .map_err(StoreError::from_io)?;
+                let journals = crate::path_identity::canonical_existing_path(
+                    &self.graph.root.join(&config.journals_dir),
+                )
+                .map_err(StoreError::from_io)?;
                 if !target.starts_with(&pages) && !target.starts_with(&journals) {
                     return Err(StoreError::PageSource(
                         "page source escapes graph directories".into(),
@@ -1646,20 +1719,22 @@ impl Store {
             }
             return Ok(target);
         }
-        let (area_canonical, area_missing) = match fs::canonicalize(&area) {
-            Ok(path) => (path, false),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let root = fs::canonicalize(&self.graph.root).map_err(StoreError::from_io)?;
-                (
-                    root.join(
-                        area.strip_prefix(&self.graph.root)
-                            .map_err(|_| StoreError::InvalidTarget(file.as_str().to_owned()))?,
-                    ),
-                    true,
-                )
-            }
-            Err(error) => return Err(StoreError::from_io(error)),
-        };
+        let (area_canonical, area_missing) =
+            match crate::path_identity::canonical_existing_path(&area) {
+                Ok(path) => (path, false),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let root = crate::path_identity::canonical_existing_path(&self.graph.root)
+                        .map_err(StoreError::from_io)?;
+                    (
+                        root.join(
+                            area.strip_prefix(&self.graph.root)
+                                .map_err(|_| StoreError::InvalidTarget(file.as_str().to_owned()))?,
+                        ),
+                        true,
+                    )
+                }
+                Err(error) => return Err(StoreError::from_io(error)),
+            };
         let (existing, resolved) =
             crate::model::canonical_existing_ancestor(&candidate).map_err(StoreError::from_io)?;
         if !candidate.starts_with(&area)
@@ -1782,7 +1857,9 @@ impl Store {
                 .root
                 .join(&self.graph.current_config().journals_dir),
             Area::Assets => {
-                let live = match fs::canonicalize(self.graph.root.join("assets")) {
+                let live = match crate::path_identity::canonical_existing_path(
+                    &self.graph.root.join("assets"),
+                ) {
                     Ok(path) => path,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         return Ok(Listing::default())

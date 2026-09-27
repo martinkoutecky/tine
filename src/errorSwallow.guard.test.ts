@@ -18,7 +18,7 @@ const FROZEN_SWALLOW_COUNT = 65;
 const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/assetCache.ts:130 src/assetCache.ts:212 src/assetCache.ts:264 src/assetCache.ts:69 src/assetSettings.ts:34
   src/capture.tsx:259 src/capture.tsx:555 src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:112 src/components/AudioOverlay.tsx:149
-  src/components/Block.tsx:3157 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:42 src/components/Macro.tsx:313 src/components/PdfViewer.tsx:1032
+  src/components/Block.tsx:3155 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:42 src/components/Macro.tsx:313 src/components/PdfViewer.tsx:1032
   src/components/PdfViewer.tsx:1097 src/components/PdfViewer.tsx:535 src/components/Settings.tsx:1638 src/components/Settings.tsx:1642 src/components/Settings.tsx:2501
   src/components/Settings.tsx:2505 src/components/Settings.tsx:933 src/components/Settings.tsx:938 src/components/UnlinkedReferences.tsx:38 src/components/WindowChrome.tsx:24
   src/copySettings.ts:36 src/copySettings.ts:41 src/copySettings.ts:45 src/debug.ts:14 src/editor/linkDefault.ts:33
@@ -41,7 +41,7 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/components/AboutTab.tsx:17": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:112": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:149": "legacy best-effort operation needs an error-family audit",
-  "src/components/Block.tsx:3157": "association failure is intentionally a quiet feature miss",
+  "src/components/Block.tsx:3155": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
   "src/components/HelpShortcuts.tsx:51": "legacy best-effort operation needs an error-family audit",
   "src/components/LinkedReferences.tsx:42": "legacy error-prose branch; replace with fixed error family",
   "src/components/Macro.tsx:313": "legacy error-prose branch; replace with fixed error family",

@@ -11,6 +11,8 @@ import { matrixGridNode, delimitedCellCount } from "./sheet/conversions";
 import { parseDelimitedText, type DelimitedKind } from "./sheet/tsv";
 import { formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibleOrder, withUndoUnit, node as docNode } from "./document";
 import { pushToast } from "./toasts";
+import { reportStaleAsset } from "./assetLanding";
+import { graphEpoch, graphMeta } from "./graphSession";
 import type { OutlineNode } from "./editor/outline";
 
 const MAX_DROPPED_CELLS = 5000;
@@ -63,9 +65,15 @@ export async function installFileDrop(): Promise<() => void> {
       pushToast("Drop a file onto a block to insert it.", "error");
       return;
     }
+    const dropEpoch = graphEpoch();
+    const dropRoot = graphMeta()?.root;
+    const dropPage = docNode(afterId).page;
+    const pagePath = pageByName(dropPage)?.id;
+    const format = formatForBlock(afterId);
 
     try {
       const nodes: OutlineNode[] = [];
+      let storedAssets = 0;
       for (const path of paths) {
         const kind = delimitedKind(path);
         if (kind) {
@@ -81,18 +89,22 @@ export async function installFileDrop(): Promise<() => void> {
         }
         const orig = basename(path) || undefined;
         const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
-        const page = pageByName(docNode(afterId).page);
+        storedAssets++;
         nodes.push({
           raw: assetMarkdown(saved, {
             label: orig,
-            pagePath: page?.id,
-            format: formatForBlock(afterId),
+            pagePath,
+            format,
           }),
           children: [],
         });
       }
       if (!nodes.length) return;
-      withUndoUnit("file-drop", [docNode(afterId).page], () => insertOutlineAfter(afterId, nodes));
+      if (graphEpoch() !== dropEpoch || graphMeta()?.root !== dropRoot || docNode(afterId)?.page !== dropPage) {
+        if (storedAssets) reportStaleAsset();
+        return;
+      }
+      withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
       pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
     } catch (e) {
       pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");

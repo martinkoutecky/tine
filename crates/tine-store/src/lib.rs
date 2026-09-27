@@ -49,6 +49,10 @@
 //! [`WholeGraph::unreadable_files`]. A too-deep page is also listed unreadable,
 //! and direct `page()` returns [`StoreError::Undecodable`] for its parse-validation refusal.
 //! A normal outline within the bounds round-trips without byte changes.
+//! Graph-root identity prefers canonical paths. On volumes that cannot
+//! canonicalize, an existing no-link path uses its absolute spelling; distinct
+//! spellings can then identify one directory separately. Missing paths and
+//! unsafe layouts still fail. The fallback costs O(path components).
 #![deny(missing_docs)]
 
 #[cfg(test)]
@@ -71,6 +75,7 @@ mod atomic_file;
 #[cfg(feature = "test-faults")]
 pub mod cost_counters;
 mod no_replace;
+mod path_identity;
 #[cfg(test)]
 mod production_index_guard_tests;
 pub mod publish;
