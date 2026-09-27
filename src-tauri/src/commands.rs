@@ -1824,6 +1824,10 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
 pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     let target = asset_handoff_target(&slot, &name)?;
+    open_asset_with_os(&name, &target, false)
+}
+
+fn open_asset_with_os(name: &str, target: &std::path::Path, editing: bool) -> Result<(), String> {
     #[cfg(desktop)]
     {
         #[cfg(target_os = "linux")]
@@ -1832,10 +1836,13 @@ pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), St
         let prog = "open";
         #[cfg(target_os = "windows")]
         let prog = "explorer";
-        diag_private(
-            "open-asset",
-            format!("open_asset: {name} -> {} ({prog})", target.display()),
-        );
+        let (tag, action, q) = if editing {
+            ("edit-asset", "edit_asset_external", "opener ")
+        } else {
+            ("open-asset", "open_asset", "")
+        };
+        let shown = target.display();
+        diag_private(tag, format!("{action}: {name} -> {shown} ({q}{prog})"));
         opener_command(prog)
             .arg(&target)
             .spawn()
@@ -1845,7 +1852,7 @@ pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), St
     // Mobile: opening an asset in an external app uses a platform intent; stub for now (M1).
     #[cfg(not(desktop))]
     {
-        let _ = (&name, &target);
+        let _ = (name, target, editing);
         Err("open asset externally is not supported on this platform".into())
     }
 }
@@ -1869,6 +1876,10 @@ pub(crate) fn open_page_file(
         path.as_deref(),
     )
     .map_err(feature_page_read_error)?;
+    open_page_source_with_os(&target, reveal)
+}
+
+fn open_page_source_with_os(target: &std::path::Path, reveal: bool) -> Result<(), String> {
     #[cfg(desktop)]
     {
         if reveal {
@@ -1904,29 +1915,17 @@ pub(crate) fn edit_asset_external(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     let target = asset_handoff_target(&slot, &name)?;
+    edit_asset_with_os(&name, &command, &target)
+}
+
+fn edit_asset_with_os(name: &str, command: &str, target: &std::path::Path) -> Result<(), String> {
     #[cfg(desktop)]
     {
         let target_str = target.to_string_lossy().to_string();
-        let trimmed = command.trim();
-        if trimmed.is_empty() {
-            // No editor configured → same OS opener as open_asset.
-            #[cfg(target_os = "linux")]
-            let prog = "xdg-open";
-            #[cfg(target_os = "macos")]
-            let prog = "open";
-            #[cfg(target_os = "windows")]
-            let prog = "explorer";
-            diag_private(
-                "edit-asset",
-                format!("edit_asset_external: {name} -> {target_str} (opener {prog})"),
-            );
-            opener_command(prog)
-                .arg(&target)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            return Ok(());
+        if command.trim().is_empty() {
+            return open_asset_with_os(name, target, true);
         }
-        let (prog, args) = build_editor_argv(trimmed, &target_str)?;
+        let (prog, args) = build_editor_argv(command.trim(), &target_str)?;
         diag_private(
             "edit-asset",
             format!("edit_asset_external: {name} -> {prog} {args:?}"),
