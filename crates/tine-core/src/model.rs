@@ -151,7 +151,9 @@ impl FileId {
 
 /// Graph-root-relative, slash-separated page file identity, such as
 /// `pages/Example.md`. String constructors do not validate it; store calls
-/// revalidate before accessing disk. Compare identities, not display names.
+/// revalidate before accessing disk. Equality compares the literal path
+/// string; it does not canonicalize case or Unicode filesystem aliases.
+/// Compare identities, not display names.
 #[deny(missing_docs)]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -226,7 +228,8 @@ impl PageId {
     }
 }
 
-/// Lightweight physical page-list entry. Duplicate names have separate entries.
+/// Page-list entry. A referenced name with no file can be virtual; then
+/// `rel_path` is `None` and `path` is empty. Physical twins have separate entries.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageEntry {
@@ -236,7 +239,8 @@ pub struct PageEntry {
     pub kind: PageKind,
     /// Sort key `yyyymmdd` for journals; `None` for ordinary pages.
     pub date_key: Option<i64>,
-    /// Graph-root-relative slash-separated identity for opening this claimant.
+    /// Graph-root-relative slash-separated identity for opening a physical
+    /// claimant; `None` for a virtual reference-only name.
     #[serde(rename = "path", default, with = "optional_page_path")]
     pub rel_path: Option<PageId>,
     #[serde(skip)]
@@ -500,7 +504,8 @@ pub struct ReferenceDiagnostics {
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateDto {
-    /// Template name.
+    /// Template name as written by `template::`. Callers match a configured
+    /// default journal template by exact, case-sensitive string equality.
     pub name: String,
     /// Blocks to insert.
     pub blocks: Vec<BlockDto>,
@@ -633,7 +638,8 @@ pub struct GraphMeta {
     /// Extra property keys to hide from the rendered properties area.
     pub block_hidden_properties: Vec<String>,
     /// Template name for the caller to apply to a new, empty journal page (if
-    /// configured); the store does not insert its body on save.
+    /// configured); match it exactly against `TemplateDto.name`. The store
+    /// does not insert its body on save.
     pub default_journal_template: Option<String>,
     /// Favorited page names (read from config.edn `:favorites`).
     pub favorites: Vec<String>,

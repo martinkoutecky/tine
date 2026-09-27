@@ -73,16 +73,36 @@ fn stamp(path: &Path) -> Option<Stamp> {
     Some(value)
 }
 
-fn collect_dir(dir: &Path, files: &mut HashMap<PathBuf, Stamp>) {
+fn collect_dir(
+    dir: &Path,
+    files: &mut HashMap<PathBuf, Stamp>,
+    unreadable: &mut HashMap<PathBuf, String>,
+) {
     let mut stack = vec![dir.to_path_buf()];
     while let Some(directory) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(kind) = entry.file_type() else {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                unreadable.insert(directory, error.to_string());
                 continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    unreadable.insert(directory.clone(), error.to_string());
+                    continue;
+                }
+            };
+            let path = entry.path();
+            let kind = match entry.file_type() {
+                Ok(kind) => kind,
+                Err(error) => {
+                    unreadable.insert(path, error.to_string());
+                    continue;
+                }
             };
             if matches!(
                 path.extension().and_then(|part| part.to_str()),
@@ -105,12 +125,17 @@ fn collect_dir(dir: &Path, files: &mut HashMap<PathBuf, Stamp>) {
     }
 }
 
-fn collect(dirs: &[PathBuf; 2]) -> HashMap<PathBuf, Stamp> {
+fn collect_with_errors(dirs: &[PathBuf; 2]) -> (HashMap<PathBuf, Stamp>, HashMap<PathBuf, String>) {
     let mut files = HashMap::new();
+    let mut unreadable = HashMap::new();
     for dir in dirs {
-        collect_dir(dir, &mut files);
+        collect_dir(dir, &mut files, &mut unreadable);
     }
-    files
+    (files, unreadable)
+}
+
+fn collect(dirs: &[PathBuf; 2]) -> HashMap<PathBuf, Stamp> {
+    collect_with_errors(dirs).0
 }
 
 fn collect_with_revs(dirs: &[PathBuf; 2]) -> HashMap<PathBuf, Stamp> {
@@ -134,6 +159,10 @@ fn collect_restore(core: &Core) -> RestoreBaseline {
                 continue;
             };
             if kind.is_dir() {
+                if path.file_name().and_then(|name| name.to_str()) == Some(".tine-restore-recovery")
+                {
+                    continue;
+                }
                 stack.push(path);
             } else if kind.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("edn")
             {
@@ -259,9 +288,14 @@ pub(crate) struct Core {
     dirs: RwLock<[PathBuf; 2]>,
     snapshot: Mutex<HashMap<PathBuf, Stamp>>,
     config_stamp: Mutex<Option<Stamp>>,
+    unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
     closed: AtomicBool,
     #[cfg(test)]
     pub(crate) recovery_reconcile_pause: Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) recovery_warm_pause: Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) note_own_pause: Mutex<Option<crate::store::TestPause>>,
 }
 
 impl Core {
@@ -345,16 +379,39 @@ impl Core {
         }
         let dirs = self.dirs.read().unwrap().clone();
         let mut snapshot = self.snapshot.lock().unwrap();
-        let mut now = paths.map_or_else(
-            || collect(&dirs),
-            |paths| {
+        let (mut now, unreadable) = if let Some(paths) = paths {
+            (
                 paths
                     .iter()
                     .filter(|path| self.graph.ensure_write_target(path).is_ok())
                     .filter_map(|path| stamp(path).map(|value| (path.clone(), value)))
-                    .collect()
-            },
-        );
+                    .collect(),
+                None,
+            )
+        } else {
+            let (files, errors) = collect_with_errors(&dirs);
+            (files, Some(errors))
+        };
+        let unreadable_changed = if let Some(errors) = unreadable {
+            for (path, value) in &*snapshot {
+                if path
+                    .ancestors()
+                    .any(|ancestor| errors.contains_key(ancestor))
+                {
+                    now.entry(path.clone()).or_insert_with(|| value.clone());
+                }
+            }
+            let mut previous = self.unreadable_dirs.lock().unwrap();
+            let changed = *previous != errors;
+            if changed {
+                self.graph
+                    .replace_unreadable_walk_errors(&previous, &errors);
+                *previous = errors;
+            }
+            changed
+        } else {
+            false
+        };
         let names: HashSet<PathBuf> = if let Some(paths) = paths {
             paths.clone()
         } else {
@@ -427,9 +484,7 @@ impl Core {
             }
         }
         drop(snapshot);
-        if !files.is_empty() || config_changed {
-            *self.journal_ids.lock().unwrap() =
-                journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
+        if !files.is_empty() || config_changed || unreadable_changed {
             self.changes
                 .publish(Origin::External, files, config_changed, pages);
         }
@@ -457,20 +512,29 @@ impl Core {
         Ok(())
     }
 
-    fn note_own(&self, ids: &[FileId]) {
+    fn note_own(&self, files: &[(FileId, Option<FileRev>)]) -> HashSet<PathBuf> {
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.note_own_pause);
         let mut snapshot = self.snapshot.lock().unwrap();
-        for id in ids {
+        let mut raced = HashSet::new();
+        for (id, expected) in files {
             let path = self.graph.root.join(id.as_str());
-            if let Some(value) = stamp(&path) {
+            let current = stamp(&path);
+            if current.as_ref().and_then(|value| value.rev.as_ref()) != expected.as_ref() {
+                raced.insert(path);
+                continue;
+            }
+            if let Some(value) = current.clone() {
                 snapshot.insert(path.clone(), value);
             } else {
                 snapshot.remove(&path);
             }
             if id.as_str() == "logseq/config.edn" {
                 let _ = self.read_config(&path);
-                *self.config_stamp.lock().unwrap() = stamp(&path);
+                *self.config_stamp.lock().unwrap() = current;
             }
         }
+        raced
     }
 }
 
@@ -512,9 +576,14 @@ impl WatchHandle {
             dirs: RwLock::new(dirs),
             snapshot: Mutex::new(snapshot),
             config_stamp: Mutex::new(config_stamp),
+            unreadable_dirs: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
             #[cfg(test)]
             recovery_reconcile_pause: Mutex::new(None),
+            #[cfg(test)]
+            recovery_warm_pause: Mutex::new(None),
+            #[cfg(test)]
+            note_own_pause: Mutex::new(None),
         });
         let mode = Arc::new(Mutex::new(watch));
         let (wake, rx) = mpsc::channel();
@@ -544,11 +613,16 @@ impl WatchHandle {
             LoadStatus::Closed => return Err(LoadError::Closed),
             LoadStatus::Failed(_) => {
                 drop(status);
+                #[cfg(test)]
+                crate::store::pause_at_hook(&self.core.recovery_warm_pause);
                 if !self
                     .core
                     .graph
                     .warm_cache_cancellable(|| self.core.closed.load(Ordering::Acquire))
                 {
+                    if self.core.closed.load(Ordering::Acquire) {
+                        return Err(LoadError::Closed);
+                    }
                     return Err(LoadError::Failed {
                         reason: "graph load failed".into(),
                     });
@@ -558,14 +632,22 @@ impl WatchHandle {
                 #[cfg(test)]
                 crate::store::pause_at_hook(&self.core.recovery_reconcile_pause);
                 if let Err(error) = result {
-                    *self.core.load.status.lock().unwrap() =
-                        LoadStatus::Failed(format!("{error:?}"));
+                    let mut status = self.core.load.status.lock().unwrap();
+                    if matches!(*status, LoadStatus::Closed) {
+                        return Err(LoadError::Closed);
+                    }
+                    *status = LoadStatus::Failed(format!("{error:?}"));
                     return Err(error);
                 }
-                *self.core.load.status.lock().unwrap() = LoadStatus::Ready;
                 self.core
                     .changes
                     .publish(Origin::External, Vec::new(), false, Vec::new());
+                let mut status = self.core.load.status.lock().unwrap();
+                if matches!(*status, LoadStatus::Closed) {
+                    return Err(LoadError::Closed);
+                }
+                *status = LoadStatus::Ready;
+                self.core.load.ready.notify_all();
                 let _ = self.wake.send(());
                 return Ok(());
             }
@@ -577,9 +659,16 @@ impl WatchHandle {
         result
     }
 
-    pub(crate) fn note_own(&self, ids: &[FileId]) {
-        self.core.note_own(ids);
+    pub(crate) fn note_own(&self, files: &[(FileId, Option<FileRev>)]) -> HashSet<PathBuf> {
+        let raced = self.core.note_own(files);
         let _ = self.wake.send(());
+        raced
+    }
+
+    pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
+        if !paths.is_empty() {
+            let _ = self.core.reconcile_locked(Some(paths), true, false);
+        }
     }
 
     pub(crate) fn restore_baseline(&self) -> RestoreBaseline {
@@ -615,16 +704,16 @@ impl WatchHandle {
             }
         }
         *self.core.snapshot.lock().unwrap() = collect_with_revs(&self.core.dirs.read().unwrap());
-        *self.core.journal_ids.lock().unwrap() = journal_ids_from_entries(
-            &self.core.graph,
-            self.core.graph.list_pages_shared().as_ref(),
-        );
         if files.is_empty() && !config_changed {
             self.core.changes.rev()
         } else if matches!(
             *self.core.load.status.lock().unwrap(),
             LoadStatus::Failed(_)
         ) {
+            *self.core.journal_ids.lock().unwrap() = journal_ids_from_entries(
+                &self.core.graph,
+                self.core.graph.list_pages_shared().as_ref(),
+            );
             self.core.changes.rev()
         } else {
             self.core
@@ -663,9 +752,9 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                     pending.lock().unwrap().add(event, &callback_dirs);
                     let _ = wake.send(());
                 }) {
-                    let mut watched = false;
+                    let mut watched = true;
                     for dir in &dirs {
-                        watched |= created.watch(dir, notify::RecursiveMode::Recursive).is_ok();
+                        watched &= created.watch(dir, notify::RecursiveMode::Recursive).is_ok();
                     }
                     if watched {
                         watcher = Some(created);

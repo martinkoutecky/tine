@@ -20,15 +20,21 @@
 //! Storage unit cost (I-25, measured 2026-09-26): a one-block edit writes one
 //! page file through one temporary file, 8 bytes in the 1-block fixture; a
 //! 60-block edit writes 539 bytes in the same one-file protocol. Transport is
-//! one page DTO. The persisted record is the page file; there is no private
+//! one full page DTO per edit, proportional to that page's blocks and text.
+//! The persisted record is the page file; there is no private
 //! per-edit record. Written bytes scale with the whole serialized page, not
 //! only the changed block. The I-13 counter fixture measures identical write
-//! primitive counts in 20-page and 2000-page graphs; publication can still
-//! scan metadata for O(P) page and journal files.
+//! primitive counts in 20-page and 2000-page graphs. An existing-page edit
+//! does not enumerate directories; creating a page can walk O(P) file-list
+//! metadata for twin checks and update O(P) name-index entries. A held view
+//! can also make an edit copy O(P) in-memory page pointers.
 //!
-//! Hostile-input contract (I-22): text entering a page, config, EDN parser or
-//! renderer is capped at 64 MiB and 512 source nesting levels. Export rendering
-//! flattens descendants past 128 outline levels while retaining their text. An oversize
+//! Hostile-input contract (I-22): page and config inputs are capped at 64 MiB.
+//! Pages admit at most 512 outline levels and 512 matched inline delimiter
+//! levels within one source line; exactly 512 is allowed. Unmatched punctuation
+//! across lines does not accumulate depth. The EDN parser has its own 128-level
+//! value bound. The `tine-graph-features` export renderer flattens descendants
+//! past 128 outline levels while retaining their text. An oversize
 //! page returns [`StoreError::TooLarge`] on direct page read and appears in
 //! [`WholeGraph::unreadable_files`]. A too-deep page is also listed unreadable,
 //! and direct `page()` returns [`StoreError::Undecodable`] for its parse-validation refusal.

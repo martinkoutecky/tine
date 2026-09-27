@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::{PageId, SaveBase, SaveOutcome, Store, StoreError};
+use tine_store::{FaultPoint, PageId, SaveBase, SaveOutcome, Store, StoreError};
 
 #[derive(Clone, Copy, Debug)]
 enum Case {
@@ -453,6 +453,80 @@ fn create_new_onto_a_name_that_now_exists_conflicts_and_writes_nothing() {
             b"- external creation\n".to_vec()
         )])
     );
+}
+
+#[test]
+fn late_alternate_extension_twin_never_uses_its_revision_as_target_conflict() {
+    let fixture = Fixture::new();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    let id = PageId::from("pages/Late.md");
+    store.inject_fault(FaultPoint::TwinAfterPublish);
+    assert!(matches!(
+        store.save(&id, SaveBase::CreateNew, &fresh("Late", PageKind::Page)),
+        SaveOutcome::Twin { existing } if existing.as_str() == "pages/Late.org"
+    ));
+}
+
+#[test]
+fn hostile_page_content_is_a_refusal_not_an_io_failure() {
+    let fixture = Fixture::new();
+    let source = format!("- {}x{}\n", "[".repeat(513), "]".repeat(513));
+    fixture.write("pages/Deep.md", &source);
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = PageId::from("pages/Deep.md");
+    let (_, rev) = store.read(&id.file(), None).unwrap();
+    assert!(matches!(
+        store.save(&id, SaveBase::Existing(rev), &fresh("Deep", PageKind::Page)),
+        SaveOutcome::InvalidTarget(_)
+    ));
+
+    let mut doc = fresh("New", PageKind::Page);
+    let mut nested = tine_core::model::BlockDto {
+        raw: "leaf".into(),
+        ..Default::default()
+    };
+    for _ in 0..513 {
+        nested = tine_core::model::BlockDto {
+            raw: "parent".into(),
+            children: vec![nested],
+            ..Default::default()
+        };
+    }
+    doc.blocks = vec![nested];
+    assert!(matches!(
+        store.save(&PageId::from("pages/New.md"), SaveBase::CreateNew, &doc),
+        SaveOutcome::InvalidTarget(_)
+    ));
+}
+
+#[test]
+fn own_journal_creation_updates_day_and_published_answers() {
+    let fixture = Fixture::new();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    let id = PageId::from("journals/2026_09_25.org");
+    let mut doc = fresh("Sep 25th, 2026", PageKind::Journal);
+    doc.format = Format::Org;
+    assert!(matches!(
+        store.save(&id, SaveBase::CreateNew, &doc),
+        SaveOutcome::Saved(_)
+    ));
+    assert_eq!(store.journal_id(tine_store::Day(20260925)), id);
+    let view = store.whole_graph().unwrap();
+    assert!(matches!(
+        view.resolve("Sep 25th, 2026", true),
+        tine_store::Resolved::Existing { id: found, .. } if found == id
+    ));
+    assert!(view
+        .inventory()
+        .0
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
+    assert!(view
+        .complete_page_names("Sep 25", 10)
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
 }
 
 /// B15b: a loaded duplicate-day stray saves to the id it was loaded from (the

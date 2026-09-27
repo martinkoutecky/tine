@@ -240,6 +240,20 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
         b"{:preferred-format :org}\n"
     );
     let mut tx = f.store.transaction();
+    tx.replace(
+        &config,
+        f.rev(&config),
+        b"{:pages-directory \"../outside\"}\n".to_vec(),
+    );
+    assert!(matches!(
+        refused(tx.commit()).0,
+        Why::Refused(Refusal::InvalidTarget(_))
+    ));
+    assert_eq!(
+        f.bytes("logseq/config.edn").unwrap(),
+        b"{:preferred-format :org}\n"
+    );
+    let mut tx = f.store.transaction();
     tx.trash(&config, f.rev(&config));
     assert!(matches!(
         refused(tx.commit()).0,
@@ -274,6 +288,77 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
     assert!(rb.kept_external.is_empty() && rb.undo_failed.is_empty());
     assert!(f.bytes("assets/y.bin").is_none());
     assert_eq!(f.bytes("assets/x.bin").unwrap(), b"x");
+}
+
+#[test]
+fn transaction_journal_create_updates_day_and_view() {
+    let f = Fixture::new();
+    let id = f.id(Area::Journals, "2026_09_25.org");
+    let mut tx = f.store.transaction();
+    tx.create(&id, Content::Bytes(b"* arrived\n".to_vec()));
+    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+    assert_eq!(
+        f.store.journal_id(tine_store::Day(20260925)).as_str(),
+        id.as_str()
+    );
+    let view = f.store.whole_graph().unwrap();
+    assert!(
+        matches!(view.resolve("Sep 25th, 2026", true), tine_store::Resolved::Existing { id: found, .. } if found.as_str() == id.as_str())
+    );
+    assert!(view
+        .inventory()
+        .0
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
+    assert!(view
+        .complete_page_names("Sep 25", 10)
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
+}
+
+#[test]
+fn raw_page_create_refuses_hostile_input_but_move_preserves_rescue_bytes() {
+    let f = Fixture::new();
+    let hostile = format!("- {}x{}\n", "[".repeat(513), "]".repeat(513));
+    let page = f.id(Area::Pages, "Deep.md");
+    let mut tx = f.store.transaction();
+    tx.create(&page, Content::Bytes(hostile.as_bytes().to_vec()));
+    assert!(matches!(
+        refused(tx.commit()).0,
+        Why::Refused(Refusal::InvalidTarget(_))
+    ));
+    assert!(f.bytes("pages/Deep.md").is_none());
+
+    let stream_source = f.root.join("hostile-stream");
+    fs::write(&stream_source, hostile.as_bytes()).unwrap();
+    let mut tx = f.store.transaction();
+    tx.create(
+        &page,
+        Content::Stream {
+            source: File::open(&stream_source).unwrap(),
+            max_bytes: hostile.len() as u64,
+        },
+    );
+    assert!(matches!(
+        refused(tx.commit()).0,
+        Why::Refused(Refusal::InvalidTarget(_))
+    ));
+    assert!(f.bytes("pages/Deep.md").is_none());
+
+    f.put("assets/deep.txt", hostile.as_bytes());
+    let source = f.id(Area::Assets, "deep.txt");
+    let mut tx = f.store.transaction();
+    tx.move_file(&source, f.rev(&source), &page, None);
+    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+    assert!(f.bytes("assets/deep.txt").is_none());
+    assert_eq!(f.bytes("pages/Deep.md"), Some(hostile.into_bytes()));
+    assert!(f
+        .store
+        .whole_graph()
+        .unwrap()
+        .unreadable_files()
+        .iter()
+        .any(|(id, _)| { id.as_str() == "pages/Deep.md" }));
 }
 
 #[test]
@@ -437,6 +522,30 @@ fn transaction_revision_advances_only_for_disk_change() {
 mod faults {
     use super::*;
     use tine_store::FaultPoint;
+
+    #[test]
+    fn failed_undo_of_own_bytes_stays_own_in_report_and_feed() {
+        let f = Fixture::new();
+        let changes = f.store.subscribe();
+        let a = f.id(Area::Pages, "A.md");
+        let b = f.id(Area::Pages, "B.md");
+        f.store.inject_fault(FaultPoint::MidStepIoAt(1));
+        f.store.inject_fault(FaultPoint::UndoWithdrawalIo);
+        let mut tx = f.store.transaction();
+        tx.create(&a, Content::Bytes(b"- first\n".to_vec()));
+        tx.create(&b, Content::Bytes(b"- second\n".to_vec()));
+        let TxOutcome::NotCommitted { rollback, .. } = tx.commit() else {
+            panic!("second step must fail");
+        };
+        assert!(!rollback.undo_failed.is_empty());
+        assert!(
+            rollback.kept_external.is_empty(),
+            "own bytes are not external: {rollback:?}"
+        );
+        let change = changes.try_recv().unwrap().expect("leftover publication");
+        assert_eq!(change.origin, tine_store::Origin::Own);
+        assert_eq!(f.bytes("pages/B.md"), Some(b"- second\n".to_vec()));
+    }
 
     fn triple(point: FaultPoint, undo_writer: bool) {
         let f = Fixture::new();

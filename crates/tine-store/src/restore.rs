@@ -98,6 +98,11 @@ impl Store {
     /// `logseq/.tine-trash/<restore-id>`; asset sidecars under
     /// `assets/.tine-restore-recovery/<restore-id>`. The returned `recovery`
     /// paths locate them; the store has no restore-import or cleanup call.
+    /// Passing only one page retires every other live page and journal; use a
+    /// transaction to replace one file. The app passes every file from a
+    /// verified whole-graph backup snapshot. Hidden asset recovery folders
+    /// are omitted by `scan_area`, but their reported paths can be inspected
+    /// with ordinary filesystem access or raw `Store::read` file ids.
     /// Replaced files are retired too. An unlisted `config.edn` and
     /// `custom.css` stay live. Only `config.edn` is accepted in the Meta area;
     /// Trash targets and non-`.edn` assets are refused. Any `.edn` file under
@@ -107,7 +112,8 @@ impl Store {
     /// without replacing a concurrent winner. It blocks saves and transactions
     /// for the full operation. Cost includes all input bytes, all live page,
     /// journal, and sidecar bytes hashed for baseline and publication, and an
-    /// asset-tree walk, and a whole-graph reparse under the writer lock, even
+    /// asset-tree walk excluding earlier `.tine-restore-recovery` sidecars,
+    /// and a whole-graph reparse under the writer lock, even
     /// for a small input. The file lists and baseline stamps retain O(live +
     /// input file count) memory; payloads are copied through files. A changed
     /// restore publishes one
@@ -176,6 +182,29 @@ impl Store {
                     ))
                 }
                 Err(error) => return Err(fail("restore", error, done)),
+            }
+            if file.area == Area::Meta {
+                use std::io::Read;
+                let checked = (|| -> io::Result<()> {
+                    if file.len > crate::model::PARSE_INPUT_MAX_BYTES {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "config input too large",
+                        ));
+                    }
+                    let mut source = file.source.try_clone()?;
+                    source.seek(SeekFrom::Start(0))?;
+                    let mut bytes = Vec::new();
+                    source.take(file.len + 1).read_to_end(&mut bytes)?;
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        let config = tine_core::config::Config::parse(text);
+                        self.graph.validate_config_layout(&config)?;
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = checked {
+                    return Err(fail("restore", error, done));
+                }
             }
         }
         let baseline = self.watch.restore_baseline();

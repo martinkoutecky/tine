@@ -453,12 +453,105 @@ fn second_subscribe_ends_first() {
 #[test]
 fn scan_refresh_keeps_journal_day_index_current() {
     let graph = Fixture::new("day-index", &[]);
-    graph.write("journals/2026_09_25.md", "- day\n");
+    graph.write("journals/2026_09_25.org", "* day\n");
     graph.changes();
     assert_eq!(
         graph.store.journal_id(tine_store::Day(20260925)).as_str(),
-        "journals/2026_09_25.md"
+        "journals/2026_09_25.org"
     );
+    let view = graph.store.whole_graph().unwrap();
+    assert!(
+        matches!(view.resolve("Sep 25th, 2026", true), tine_store::Resolved::Existing { id, .. } if id.as_str() == "journals/2026_09_25.org")
+    );
+    assert!(view
+        .inventory()
+        .0
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
+    assert!(view
+        .complete_page_names("Sep 25", 10)
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
+}
+
+#[test]
+fn notify_with_one_missing_directory_falls_back_to_polling() {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "tine-watch-partial-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let store = Store::open(
+        &root,
+        OpenOptions {
+            approved_external_assets: None,
+            watch: WatchMode::Notify,
+        },
+    )
+    .unwrap()
+    .0;
+    store.whole_graph().unwrap();
+    let changes = store.subscribe();
+    std::thread::sleep(Duration::from_millis(150));
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("journals/2026_09_25.org"), "* arrived\n").unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let observed = loop {
+        if let Some(change) = changes.try_recv().unwrap() {
+            if change.files.iter().any(|(id, kind, _)| {
+                id.as_str() == "journals/2026_09_25.org" && *kind == ChangeKind::Created
+            }) {
+                break true;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        observed,
+        "missing notify directory must be recovered by polling"
+    );
+    assert_eq!(
+        store.journal_id(tine_store::Day(20260925)).as_str(),
+        "journals/2026_09_25.org"
+    );
+    store.close();
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_subdirectory_keeps_its_pages_until_access_returns() {
+    use std::os::unix::fs::PermissionsExt;
+    let graph = Fixture::new("unreadable-subdir", &[("pages/nested/Kept.md", "- live\n")]);
+    let nested = graph.path("pages/nested");
+    std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0)).unwrap();
+    graph.store.scan_refresh().unwrap();
+    let mut changes = Vec::new();
+    while let Some(change) = graph.subscription.try_recv().unwrap() {
+        changes.push(change);
+    }
+    assert!(!changes
+        .iter()
+        .flat_map(|change| &change.files)
+        .any(|(id, kind, _)| {
+            id.as_str() == "pages/nested/Kept.md" && *kind == ChangeKind::Removed
+        }));
+    let view = graph.store.whole_graph().unwrap();
+    assert!(matches!(
+        view.resolve("Kept", false),
+        tine_store::Resolved::Existing { .. }
+    ));
+    assert!(view
+        .unreadable_files()
+        .iter()
+        .any(|(id, _)| id.as_str() == "pages/nested"));
+    std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
 #[test]

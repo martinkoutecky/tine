@@ -326,6 +326,32 @@ fn simple_query_rejects_source_and_nesting_limits() {
     ));
 }
 
+#[test]
+fn advanced_query_rejects_source_and_nesting_limits() {
+    let fixture = Fixture::new();
+    let graph = fixture.view();
+    let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
+    assert!(matches!(
+        graph.query(&oversized, QueryDialect::Advanced),
+        Err(QueryError::Parse(_))
+    ));
+    let nested = format!("{}x{}", "(".repeat(65), ")".repeat(65));
+    assert!(matches!(
+        graph.query(&nested, QueryDialect::Advanced),
+        Err(QueryError::Parse(_))
+    ));
+}
+
+#[test]
+fn journal_fallback_title_resolves_existing_day() {
+    let fixture = Fixture::new();
+    let graph = fixture.view();
+    assert!(matches!(
+        graph.resolve("2026-09-25", true),
+        Resolved::Existing { id, .. } if id.as_str() == "journals/2026_09_25.md"
+    ));
+}
+
 // Case twins need a case-sensitive filesystem; Windows folds case, so the
 // second write replaces the first file's content under its original name. The
 // Windows sibling below asserts that one-file outcome instead.

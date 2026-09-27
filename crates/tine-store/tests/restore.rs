@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tine_store::{Area, OpenOptions, RestoreFile, Store};
+use tine_store::{Area, OpenOptions, RestoreFile, Store, TrashKind};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -86,6 +86,86 @@ fn restore_recovery_roots_live_on_the_filesystems_they_detach_from() {
         fs::read(report.recovery[1].join("doc.edn")).unwrap(),
         b"live"
     );
+    let stats = store.trash_stats().unwrap();
+    assert!(stats
+        .iter()
+        .any(|(kind, count, bytes)| { *kind == TrashKind::Legacy && *count >= 1 && *bytes >= 4 }));
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn restore_does_not_publish_recovery_sidecars_as_live_assets() {
+    let root = scratch("recovery-feed");
+    let graph_root = root.join("graph");
+    let store = graph(&graph_root, None);
+    fs::write(graph_root.join("assets/doc.edn"), b"live").unwrap();
+    store.whole_graph().unwrap();
+    let subscription = store.subscribe();
+    store.restore(Vec::new()).unwrap();
+    let change = subscription
+        .try_recv()
+        .unwrap()
+        .expect("restore publication");
+    assert!(!change
+        .files
+        .iter()
+        .any(|(id, _, _)| { id.as_str().starts_with("assets/.tine-restore-recovery/") }));
+    store.close();
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn restore_refuses_config_with_unsafe_directories_before_retiring_pages() {
+    let root = scratch("unsafe-config");
+    let graph_root = root.join("graph");
+    let store = graph(&graph_root, None);
+    fs::write(graph_root.join("pages/live.md"), b"- keep me\n").unwrap();
+    let source = root.join("bad-config.edn");
+    fs::write(&source, b"{:pages-directory \"../outside\"}\n").unwrap();
+    assert!(store
+        .restore(vec![input(&source, Area::Meta, "config.edn")])
+        .is_err());
+    assert_eq!(
+        fs::read(graph_root.join("pages/live.md")).unwrap(),
+        b"- keep me\n"
+    );
+    assert!(!graph_root.join("logseq/config.edn").exists());
+    store.close();
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn restore_journal_updates_day_and_view() {
+    let root = scratch("journal-index");
+    let graph_root = root.join("graph");
+    let store = graph(&graph_root, None);
+    store.whole_graph().unwrap();
+    let source = root.join("journal.org");
+    fs::write(&source, b"* restored\n").unwrap();
+    store
+        .restore(vec![input(&source, Area::Journals, "2026_09_25.org")])
+        .unwrap();
+    assert_eq!(
+        store.journal_id(tine_store::Day(20260925)).as_str(),
+        "journals/2026_09_25.org"
+    );
+    let view = store.whole_graph().unwrap();
+    assert!(
+        matches!(view.resolve("Sep 25th, 2026", true), tine_store::Resolved::Existing { id, .. } if id.as_str() == "journals/2026_09_25.org")
+    );
+    assert!(view
+        .inventory()
+        .0
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
+    assert!(view
+        .complete_page_names("Sep 25", 10)
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
+    store.close();
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

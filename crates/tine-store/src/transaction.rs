@@ -2,7 +2,8 @@
 //! I/O; commit checks them, applies them in order, and attempts undo on a
 //! failed apply. Changed final bytes publish before return, with external
 //! bytes from undo in a separate `Origin::External` change. A config-file
-//! write reloads effective settings before publication of the final state;
+//! write validates managed directories before disk mutation and reloads
+//! effective settings before publication of the final state;
 //! undo or a failed apply reconciles them
 //! against the final disk file.
 //! Transactions are not crash atomic and cannot exclude external processes.
@@ -30,7 +31,8 @@ pub enum Content {
     /// Bytes held by the caller.
     Bytes(Vec<u8>),
     /// Read from an open file during commit. Exceeding `max_bytes` returns
-    /// `Why::Failed` with an invalid-data I/O cause; bytes are not truncated.
+    /// `Why::Failed` for non-page files or a content refusal for page files;
+    /// bytes are not truncated.
     Stream {
         /// Open source file.
         source: File,
@@ -131,7 +133,7 @@ pub enum StepResult {
 pub enum Refusal {
     /// Source page cannot be round-tripped safely; reason is for display.
     ReadOnly(String),
-    /// Invalid or unsafe destination; reason is for display.
+    /// Invalid or unsafe destination or page content; reason is for display.
     InvalidTarget(String),
     /// Another page file claims the same name or journal day.
     Twin {
@@ -243,6 +245,8 @@ pub enum FaultPoint {
     MidStepIoAt(usize),
     /// Simulate an external write while undoing a live file.
     UndoLiveWrite,
+    /// Simulate failure to withdraw bytes written by this transaction during undo.
+    UndoWithdrawalIo,
     /// Simulate a twin appearing after publication.
     TwinAfterPublish,
     /// Abort the process immediately after the indexed step has reached disk.
@@ -261,6 +265,7 @@ pub(crate) enum FaultPoint {
     MidStepIo,
     MidStepIoAt(usize),
     UndoLiveWrite,
+    UndoWithdrawalIo,
     TwinAfterPublish,
     AbortAfterStep(usize),
 }
@@ -362,7 +367,9 @@ pub struct Transaction<'a> {
 
 impl Store {
     /// Begin a transaction. Commit serializes writes through this Store; it
-    /// does not lock other Store instances or external processes.
+    /// does not lock other Store instances or external processes. Two stores
+    /// on one graph have separate `GraphRev` sequences and can observe one
+    /// another's writes as external changes; both still use revision guards.
     pub fn transaction(&self) -> Transaction<'_> {
         Transaction {
             store: self,
@@ -394,8 +401,9 @@ impl<'a> Transaction<'a> {
     /// raw content, unlike `save_page`'s structured `PageDto` serialization.
     /// Queueing bytes copies O(input bytes); commit writes and syncs them and
     /// can spend O(P) on publication metadata.
-    /// It checks target safety and UTF-8 for page files, but does not run the
-    /// Org round-trip editability check because no prior page is rewritten.
+    /// It checks target safety, UTF-8, the 64 MiB input cap, and the 512-level
+    /// source depth cap for page files, but does not run the Org round-trip
+    /// editability check because no prior page is rewritten.
     pub fn create(&mut self, file: &FileId, content: Content) -> &mut Self {
         self.steps.push(Step::Create {
             file: file.clone(),
@@ -407,8 +415,11 @@ impl<'a> Transaction<'a> {
     /// Queue a no-replace creation of `stem` + `ext`, trying `stem_1`,
     /// `stem_2`, and so on on collision. `stem` is one path component; `ext`
     /// includes its leading dot, or is empty. An invalid name is refused.
-    /// `Area::Trash` is refused. The chosen id appears in the step result.
-    /// Cost O(bytes + collisions). A page target uses the same raw UTF-8 and
+    /// `Area::Trash` and `Area::Meta` with `config` + `.edn` are refused.
+    /// The chosen id appears in the step result.
+    /// Cost O(new bytes + total bytes of occupied candidates + collisions),
+    /// because each occupied candidate is read to report its revision.
+    /// A page target uses the same raw UTF-8 and
     /// target-safety and indexed twin checks as `create`, not `PageDto`
     /// serialization. An exact occupied candidate tries the next suffix;
     /// an alternate name or journal-day claimant refuses creation.
@@ -429,7 +440,9 @@ impl<'a> Transaction<'a> {
     }
 
     /// Queue replacement of a non-page file guarded by `expected`. Use
-    /// `Store::file_id(Area::Meta, "config.edn")` to replace graph config.
+    /// `Store::file_id(Area::Meta, "config.edn")` to replace graph config;
+    /// unsafe configured pages or journals directories are refused before
+    /// any transaction file changes.
     /// If its final bytes change, commit reloads effective config before the
     /// publication; a clean rollback leaves effective config at the baseline.
     /// A config replacement can reparse O(P + B) page and block data in
@@ -481,6 +494,9 @@ impl<'a> Transaction<'a> {
     /// queued rewrites; query referrers again after commit if that matters.
     /// Twin claims are refused. A read-only Org source may move without a
     /// rewrite; asking to rewrite its bytes invokes the round-trip check.
+    /// A case-only rename can succeed on a case-sensitive filesystem; on a
+    /// case-folding filesystem the destination can be seen as the guarded
+    /// source itself and return a conflict.
     /// Moves between pages and journals change the file's area identity and
     /// still require a guarded source and free destination. Moving into graph
     /// trash is refused; use [`Self::trash`] for that operation. Commit hashes
@@ -503,7 +519,8 @@ impl<'a> Transaction<'a> {
     }
 
     /// Queue a guarded move into graph trash. The new id is returned in the
-    /// step result, and changed source bytes are preserved on guard failure.
+    /// step result. A guard failure performs no move and leaves current source
+    /// bytes at their original path.
     /// This acts on one `FileId`; for a twinned name the caller decides which
     /// claimant or claimants to remove. A duplicate-day journal is typed as
     /// `TrashKind::Journal`; a sync-conflict-named page or journal copy is
@@ -585,6 +602,9 @@ impl<'a> Transaction<'a> {
         match fs::symlink_metadata(&alt) {
             Ok(_) => Ok(Some(FileId::from(self.store.graph.rel_path(&alt)))),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
+                Err(content_refusal(error))
+            }
             Err(error) => Err(Why::Failed(error.into())),
         }
     }
@@ -626,7 +646,7 @@ impl<'a> Transaction<'a> {
             Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
             Step::Unique {
                 area, stem, ext, ..
-            } => *area == Area::Meta && stem == "config" && ext == "edn",
+            } => *area == Area::Meta && stem == "config" && ext == ".edn",
             Step::Move { file, to, .. } => {
                 file.as_str() == "logseq/config.edn" || to.as_str() == "logseq/config.edn"
             }
@@ -649,9 +669,8 @@ impl<'a> Transaction<'a> {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
                 if !crate::model::dto_depth_within_limit(doc) {
-                    return Err(failed(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "input nesting exceeds 512 levels",
+                    return Err(Why::Refused(Refusal::InvalidTarget(
+                        "page content nesting exceeds 512 levels".into(),
                     )));
                 }
                 if matches!(base, SaveBase::CreateNew) {
@@ -668,12 +687,12 @@ impl<'a> Transaction<'a> {
                     SaveBase::CreateNew => None,
                 };
                 if let Some(old) = old.as_ref() {
-                    crate::model::validate_parse_bytes(old).map_err(failed)?;
+                    crate::model::validate_parse_bytes(old).map_err(content_refusal)?;
                 }
                 let path = self.path(&file)?;
                 let text = match old.as_deref() {
                     Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
-                        failed(io::Error::new(io::ErrorKind::InvalidData, error))
+                        content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))
                     })?),
                     None => None,
                 };
@@ -688,7 +707,7 @@ impl<'a> Transaction<'a> {
                             Why::Failed(error.into())
                         }
                     })?;
-                crate::model::validate_parse_bytes(&new).map_err(failed)?;
+                crate::model::validate_parse_bytes(&new).map_err(content_refusal)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -706,13 +725,13 @@ impl<'a> Transaction<'a> {
                 self.path(file)?;
                 self.absent(file)?;
                 self.twin(file, None)?;
-                if self.page(file)
-                    && matches!(content, Content::Bytes(bytes) if std::str::from_utf8(bytes).is_err())
-                {
-                    return Err(Why::Refused(Refusal::Undecodable));
+                if file.as_str() == "logseq/config.edn" {
+                    validate_config_content(self.store, content)?;
                 }
-                if let Content::Stream { source, max_bytes } = content {
-                    validate_stream(source, *max_bytes, self.page(file))?;
+                if self.page(file) {
+                    validate_page_content(content)?;
+                } else if let Content::Stream { source, max_bytes } = content {
+                    validate_stream(source, *max_bytes)?;
                 }
                 Ok(Prepared {
                     src: file.clone(),
@@ -748,13 +767,10 @@ impl<'a> Transaction<'a> {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
                 self.path(&file)?;
-                if let Content::Stream { source, max_bytes } = content {
-                    validate_stream(source, *max_bytes, self.page(&file))?;
-                }
-                if self.page(&file)
-                    && matches!(content, Content::Bytes(bytes) if std::str::from_utf8(bytes).is_err())
-                {
-                    return Err(Why::Refused(Refusal::Undecodable));
+                if self.page(&file) {
+                    validate_page_content(content)?;
+                } else if let Content::Stream { source, max_bytes } = content {
+                    validate_stream(source, *max_bytes)?;
                 }
                 for index in 0usize.. {
                     let rel = if index == 0 {
@@ -795,6 +811,9 @@ impl<'a> Transaction<'a> {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
                 let old = self.stage(file, expected)?;
+                if file.as_str() == "logseq/config.edn" {
+                    validate_config_bytes(self.store, bytes)?;
+                }
                 Ok(Prepared {
                     src: file.clone(),
                     dst: None,
@@ -1314,6 +1333,13 @@ impl<'a> Transaction<'a> {
                     rollback.undo_failed.push((id.clone(), error.into()));
                 }
             }
+            if fault(self.store, FaultPoint::UndoWithdrawalIo) {
+                rollback.undo_failed.push((
+                    id.clone(),
+                    io::Error::new(io::ErrorKind::Other, "injected undo withdrawal error").into(),
+                ));
+                return;
+            }
             let result = match record.new.as_ref().expect("undo expected") {
                 Expected::Bytes(bytes) => self
                     .store
@@ -1437,6 +1463,8 @@ impl<'a> Transaction<'a> {
     /// final disk state and `rollback` rather than assuming a winner.
     /// Prior page bytes are kept in memory until commit finishes, so undo can
     /// require O(changed bytes) memory and additional file reads and writes.
+    /// A clean undo that restores every starting byte publishes no change and
+    /// leaves the graph revision unchanged.
     pub fn commit(mut self) -> TxOutcome {
         let _writer = self.store.writer.lock().unwrap();
         let rev = || self.store.changes.rev();
@@ -1608,7 +1636,24 @@ impl<'a> Transaction<'a> {
                     continue;
                 }
             };
-            if failure.is_some() && baseline.is_none() && now.is_some() {
+            let own_final = done.iter().any(|record| {
+                if record.src != id && record.dst.as_ref() != Some(&id) {
+                    return false;
+                }
+                match (&record.new, &now) {
+                    (Some(Expected::Bytes(written)), Some(bytes)) => written == bytes,
+                    (Some(Expected::File(stage)), Some(bytes)) => {
+                        fs::read(stage).is_ok_and(|written| written == *bytes)
+                    }
+                    (_, None) => {
+                        record.created
+                            || record.moved
+                            || matches!(record.kind, UndoKind::Replace | UndoKind::Trash)
+                    }
+                    _ => false,
+                }
+            });
+            if failure.is_some() && baseline.is_none() && now.is_some() && !own_final {
                 if !rollback.kept_external.iter().any(|(kept, _)| *kept == id) {
                     rollback.kept_external.push((id.clone(), None));
                 }
@@ -1618,7 +1663,10 @@ impl<'a> Transaction<'a> {
                     .as_ref()
                     .is_some_and(|old| now.as_ref() != Some(old))
             {
-                if now.is_some() && !rollback.kept_external.iter().any(|(kept, _)| *kept == id) {
+                if now.is_some()
+                    && !own_final
+                    && !rollback.kept_external.iter().any(|(kept, _)| *kept == id)
+                {
                     rollback.kept_external.push((id.clone(), None));
                 }
                 self.preserve_old(&id, baseline.as_ref().unwrap(), &mut rollback);
@@ -1639,21 +1687,7 @@ impl<'a> Transaction<'a> {
                         .kept_external
                         .iter()
                         .any(|(kept, recovery)| kept == &id && recovery.is_none())
-                        || !done.iter().any(|record| {
-                            if record.src == id && record.moved && now.is_none() {
-                                return true;
-                            }
-                            if record.src != id && record.dst.as_ref() != Some(&id) {
-                                return false;
-                            }
-                            match (&record.new, &now) {
-                                (Some(Expected::Bytes(written)), Some(bytes)) => written == bytes,
-                                (Some(Expected::File(stage)), Some(bytes)) => {
-                                    fs::read(stage).is_ok_and(|written| written == *bytes)
-                                }
-                                _ => false,
-                            }
-                        }));
+                        || !own_final);
                 if external_after_undo {
                     published_external.push(tuple);
                 } else {
@@ -1762,6 +1796,19 @@ fn failed(error: io::Error) -> Why {
     Why::Failed(error.into())
 }
 
+fn content_refusal(error: io::Error) -> Why {
+    if error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<std::str::Utf8Error>())
+        .is_some()
+    {
+        return Why::Refused(Refusal::Undecodable);
+    }
+    Why::Refused(Refusal::InvalidTarget(format!(
+        "page content cannot be parsed safely: {error}"
+    )))
+}
+
 /// Reading a directory fails with EISDIR on Unix but ERROR_ACCESS_DENIED on
 /// Windows. Report both as `IsADirectory` so a caller that treats an occupying
 /// directory as "name taken" (the Guide copy) behaves the same on every
@@ -1856,12 +1903,11 @@ fn valid_utf8_file(path: &Path) -> io::Result<bool> {
     }
 }
 
-fn validate_stream(source: &File, max_bytes: u64, utf8: bool) -> Result<(), Why> {
+fn validate_stream(source: &File, max_bytes: u64) -> Result<(), Why> {
     use std::io::Read;
     let mut input = source.try_clone().map_err(failed)?;
     input.seek(SeekFrom::Start(0)).map_err(failed)?;
     let mut total = 0u64;
-    let mut carry = Vec::new();
     let mut buf = [0u8; 64 * 1024];
     loop {
         let n = input.read(&mut buf).map_err(failed)?;
@@ -1875,20 +1921,59 @@ fn validate_stream(source: &File, max_bytes: u64, utf8: bool) -> Result<(), Why>
                 format!("stream exceeds {max_bytes} byte limit"),
             )));
         }
-        if utf8 {
-            carry.extend_from_slice(&buf[..n]);
-            match std::str::from_utf8(&carry) {
-                Ok(_) => carry.clear(),
-                Err(error) if error.error_len().is_none() => {
-                    let valid = error.valid_up_to();
-                    carry.drain(..valid);
-                }
-                Err(_) => return Err(Why::Refused(Refusal::Undecodable)),
-            }
-        }
-    }
-    if utf8 && !carry.is_empty() {
-        return Err(Why::Refused(Refusal::Undecodable));
     }
     Ok(())
+}
+
+fn validate_config_bytes(store: &Store, bytes: &[u8]) -> Result<(), Why> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        // An undecodable config is recorded as ConfigState::problem. Keep the
+        // existing repair path for callers replacing those raw bytes.
+        return Ok(());
+    };
+    let config = tine_core::config::Config::parse(text);
+    store
+        .graph
+        .validate_config_layout(&config)
+        .map_err(|error| Why::Refused(Refusal::InvalidTarget(error.to_string())))
+}
+
+fn validate_config_content(store: &Store, content: &Content) -> Result<(), Why> {
+    match content {
+        Content::Bytes(bytes) => validate_config_bytes(store, bytes),
+        Content::Stream { source, max_bytes } => {
+            use std::io::Read;
+            let mut input = source.try_clone().map_err(failed)?;
+            input.seek(SeekFrom::Start(0)).map_err(failed)?;
+            let mut bytes = Vec::new();
+            input
+                .take((*max_bytes).min(crate::model::PARSE_INPUT_MAX_BYTES) + 1)
+                .read_to_end(&mut bytes)
+                .map_err(failed)?;
+            validate_config_bytes(store, &bytes)
+        }
+    }
+}
+
+fn validate_page_content(content: &Content) -> Result<(), Why> {
+    match content {
+        Content::Bytes(bytes) => crate::model::validate_parse_bytes(bytes).map_err(content_refusal),
+        Content::Stream { source, max_bytes } => {
+            use std::io::Read;
+            let mut input = source.try_clone().map_err(failed)?;
+            input.seek(SeekFrom::Start(0)).map_err(failed)?;
+            let limit = (*max_bytes).min(crate::model::PARSE_INPUT_MAX_BYTES);
+            let mut bytes = Vec::new();
+            input
+                .take(limit + 1)
+                .read_to_end(&mut bytes)
+                .map_err(failed)?;
+            if bytes.len() as u64 > limit {
+                return Err(Why::Refused(Refusal::InvalidTarget(format!(
+                    "page content exceeds {limit} byte limit"
+                ))));
+            }
+            crate::model::validate_parse_bytes(&bytes).map_err(content_refusal)
+        }
+    }
 }

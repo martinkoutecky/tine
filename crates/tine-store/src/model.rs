@@ -113,7 +113,6 @@ pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
 
 /// Whether source text stays below the parser and renderer nesting ceiling.
 pub fn parse_input_depth_within_limit(input: &str) -> bool {
-    let mut inline_depth = 0usize;
     for line in input.lines() {
         let indent = line
             .bytes()
@@ -127,14 +126,43 @@ pub fn parse_input_depth_within_limit(input: &str) -> bool {
         if stars > PARSE_INPUT_MAX_DEPTH && line.as_bytes().get(stars) == Some(&b' ') {
             return false;
         }
-        for byte in line.bytes() {
+        // Inline parsing starts afresh for each source line. Only paired
+        // delimiters can form a recursive inline value; unmatched punctuation
+        // is ordinary text, even if it occurs thousands of times in a page.
+        let mut opens = Vec::new();
+        let mut paired = vec![false; line.len()];
+        for (index, byte) in line.bytes().enumerate() {
             match byte {
-                b'[' | b'{' | b'(' => inline_depth += 1,
-                b']' | b'}' | b')' => inline_depth = inline_depth.saturating_sub(1),
+                b'[' | b'{' | b'(' => opens.push((byte, index)),
+                b']' | b'}' | b')' => {
+                    let expected = match byte {
+                        b']' => b'[',
+                        b'}' => b'{',
+                        _ => b'(',
+                    };
+                    if opens.last().is_some_and(|(open, _)| *open == expected) {
+                        let (_, start) = opens.pop().unwrap();
+                        paired[start] = true;
+                        paired[index] = true;
+                    } else {
+                        opens.clear();
+                    }
+                }
                 _ => {}
             }
-            if inline_depth > PARSE_INPUT_MAX_DEPTH {
-                return false;
+        }
+        let mut depth = 0usize;
+        for (index, byte) in line.bytes().enumerate() {
+            if !paired[index] {
+                continue;
+            }
+            if matches!(byte, b'[' | b'{' | b'(') {
+                depth += 1;
+                if depth > PARSE_INPUT_MAX_DEPTH {
+                    return false;
+                }
+            } else {
+                depth -= 1;
             }
         }
     }
@@ -1984,6 +2012,11 @@ impl From<io::Error> for CheckedOpenError {
 }
 
 impl Graph {
+    pub(crate) fn validate_config_layout(&self, config: &Config) -> io::Result<()> {
+        validate_managed_dir(&self.root, &config.journals_dir, "journals")?;
+        validate_managed_dir(&self.root, &config.pages_dir, "pages")
+    }
+
     #[cfg(test)]
     fn test_read_snapshot(&self) -> ReadSnapshot {
         self.with_pages(|_| ());
@@ -2013,8 +2046,7 @@ impl Graph {
     }
 
     pub(crate) fn reload_config(&self, config: Config) -> io::Result<()> {
-        validate_managed_dir(&self.root, &config.journals_dir, "journals")?;
-        validate_managed_dir(&self.root, &config.pages_dir, "pages")?;
+        self.validate_config_layout(&config)?;
         let format = JournalFormat::new(
             config.journal_file_name_format.as_deref(),
             config.journal_page_title_format.as_deref(),
@@ -2272,6 +2304,28 @@ impl Graph {
 
     pub(crate) fn unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
         Arc::clone(&self.unreadable_pages.read().unwrap())
+    }
+
+    pub(crate) fn replace_unreadable_walk_errors(
+        &self,
+        previous: &std::collections::HashMap<PathBuf, String>,
+        current: &std::collections::HashMap<PathBuf, String>,
+    ) {
+        let affected: std::collections::HashSet<_> = previous
+            .keys()
+            .chain(current.keys())
+            .map(|path| crate::store::FileId::from(self.rel_path(path)))
+            .collect();
+        let mut guard = self.unreadable_pages.write().unwrap();
+        let rows = Arc::make_mut(&mut *guard);
+        rows.retain(|(id, _)| !affected.contains(id));
+        rows.extend(current.iter().map(|(path, reason)| {
+            (
+                crate::store::FileId::from(self.rel_path(path)),
+                reason.clone(),
+            )
+        }));
+        rows.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
     }
 
     pub(crate) fn observe_page_mtime(&self, path: &Path, mtime: Option<std::time::SystemTime>) {
@@ -4043,6 +4097,10 @@ impl Graph {
         let before_gen = self.cache_generation();
         match bytes {
             Some(bytes) => {
+                if validate_parse_bytes(bytes).is_err() {
+                    self.invalidate_cache();
+                    return;
+                }
                 let Ok(content) = std::str::from_utf8(bytes) else {
                     self.invalidate_cache();
                     return;

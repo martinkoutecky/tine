@@ -125,7 +125,7 @@ pub struct QueryExplanation {
 pub enum QueryHit {
     /// One page-name result.
     Page {
-        /// Physical page entry.
+        /// Page entry; reference-only names can have no physical path.
         page: PageEntry,
         /// Text displayed for this hit.
         display_text: String,

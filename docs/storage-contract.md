@@ -24,10 +24,9 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 |---|---:|---|
 | `transaction.rs::path::InvalidTarget` | 3 | A sync update changes a path into a symlink or invalid area while an operation resolves it; refuse access outside the approved graph root. |
 | `transaction.rs::twin::Twin` | 1 | Sync introduces a second physical file for the same page name or journal day; refuse a write that could choose the wrong one. |
-| `transaction.rs::preflight::InvalidTarget` | 12 | A legitimate caller supplies a malformed path or unsupported operation (including moving config), an external rename changes target shape, or a caller attempts to save a virtual Guide DTO in a transaction; refuse before any step changes disk. Config moves require live config publication; Guide content needs an explicit graph copy. |
+| `transaction.rs::preflight::InvalidTarget` | 13 | A legitimate caller supplies a malformed path, unsafe page nesting, or unsupported operation (including moving config), an external rename changes target shape, or a caller attempts to save a virtual Guide DTO in a transaction; refuse before any step changes disk. Config moves require live config publication; Guide content needs an explicit graph copy. |
 | `transaction.rs::preflight::Twin` | 1 | A sync-created same-name page appears between page creation and commit; refuse the ambiguous create. |
 | `transaction.rs::preflight::ReadOnly` | 1 | An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. |
-| `transaction.rs::preflight::Undecodable` | 2 | A pasted or imported page stream is invalid UTF-8; refuse before making an unreadable page. |
 | `transaction.rs::preflight::RepeatedFile` | 1 | Two steps of one user operation choose the same unique filename; refuse the ambiguous plan. |
 | `transaction.rs::apply::InvalidTarget` | 1 | A generated unique candidate is no longer a valid target after a concurrent change; refuse that candidate. |
 | `transaction.rs::apply::RepeatedFile` | 1 | A unique candidate collides with another step after planning; refuse rather than overwrite. |
@@ -36,12 +35,15 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::commit::RepeatedFile` | 1 | A multi-step action names one file twice; refuse before any write. |
 | `transaction.rs::rewrite::Undecodable` | 1 | Sync makes a referrer invalid UTF-8 before rename rewrite; keep that file and refuse the rename. |
 | `transaction.rs::rewrite::ReadOnly` | 1 | An Org referrer is not round-trip editable; keep its bytes instead of rewriting it. |
-| `transaction.rs::validate_stream::Undecodable` | 2 | A streamed page import contains invalid UTF-8; refuse before publication. |
+| `transaction.rs::content_refusal::Undecodable` | 1 | An existing or imported page has invalid UTF-8; refuse the write without reporting a transient I/O failure. |
+| `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. |
+| `transaction.rs::validate_page_content::InvalidTarget` | 1 | A raw page stream exceeds its cap; refuse before creating an unreadable page. |
+| `transaction.rs::validate_config_bytes::InvalidTarget` | 1 | A config edit or create names a directory outside the graph; refuse before changing disk. |
 | `store.rs::save::Closed` | 2 | A queued editor save arrives after graph close; return the closed family without writing. |
-| `store.rs::save::Conflict` | 2 | An external edit or alias change makes the caller's revision or file identity stale; return current disk data for resolution. |
+| `store.rs::save::Conflict` | 1 | An external edit makes the caller's target revision stale; return that target's current disk revision for resolution. |
 | `store.rs::save::Deleted` | 1 | Sync deletes a page while its editor buffer is open; retain the buffer and report deletion. |
 | `store.rs::save::ReadOnly` | 1 | A parser or format check rejects a round-trip edit; retain the buffer. |
-| `store.rs::save::Twin` | 1 | A second same-name physical file appears; refuse ambiguous publication. |
+| `store.rs::save::Twin` | 2 | A second same-name physical file appears before or after the guarded create; identify that claimant instead of presenting its revision as the target's. |
 | `store.rs::save::InvalidTarget` | 2 | A saved target becomes invalid or a transaction reports a target refusal; retain the buffer. |
 | `store.rs::save::GuideEphemeral` | 1 | The user edits a bundled Guide page that has no graph file; refuse persistence of the virtual copy and prompt an explicit graph copy. |
 

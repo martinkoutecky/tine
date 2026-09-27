@@ -90,6 +90,34 @@ fn page_reads_and_publishes_external_edit() {
 }
 
 #[test]
+fn many_unmatched_openers_on_separate_lines_round_trip() {
+    let f = Fixture::new();
+    let source = format!(
+        "{}- {} unpaired openers\n",
+        "- ordinary ( note\n".repeat(2_000),
+        "(".repeat(2_000)
+    );
+    std::fs::write(f.0.join("pages/Note.md"), &source).unwrap();
+    let store = f.store();
+    assert!(!store
+        .whole_graph()
+        .unwrap()
+        .unreadable_files()
+        .iter()
+        .any(|(id, _)| id.as_str() == "pages/Note.md"));
+    let id = PageId::from("pages/Note.md");
+    let read = store.page(&id).unwrap();
+    assert!(matches!(
+        store.save(&id, tine_store::SaveBase::Existing(read.rev), &read.doc),
+        tine_store::SaveOutcome::Unchanged(_)
+    ));
+    assert_eq!(
+        std::fs::read_to_string(f.0.join("pages/Note.md")).unwrap(),
+        source
+    );
+}
+
+#[test]
 fn direct_first_read_publishes_creation_and_updates_name_claimants() {
     let f = Fixture::new();
     let store = f.store();
@@ -129,6 +157,35 @@ fn direct_first_read_publishes_creation_and_updates_name_claimants() {
             ..
         }
     ));
+}
+
+#[test]
+fn direct_first_read_updates_journal_day_and_derived_answers() {
+    let f = Fixture::new();
+    let store = f.store();
+    store.whole_graph().unwrap();
+    f.put("journals/2026_09_25.org", b"* arrived day\n");
+    let id = PageId::from("journals/2026_09_25.org");
+    store.page(&id).unwrap();
+    let day = tine_store::Day(
+        tine_core::date::JournalDate::from_file_stem("2026_09_25")
+            .unwrap()
+            .ordinal_key(),
+    );
+    assert_eq!(store.journal_id(day), id);
+    let view = store.whole_graph().unwrap();
+    assert!(
+        matches!(view.resolve("Sep 25th, 2026", true), Resolved::Existing { id: found, .. } if found == id)
+    );
+    assert!(view
+        .inventory()
+        .0
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
+    assert!(view
+        .complete_page_names("Sep 25", 10)
+        .iter()
+        .any(|entry| entry.name == "Sep 25th, 2026"));
 }
 
 #[test]
@@ -328,6 +385,22 @@ fn resolve_then_page_covers_titles_aliases_namespaces_and_journals() {
         assert_eq!(id.as_str(), expected);
         assert_eq!(store.page(&id).unwrap().id, id);
     }
+}
+
+#[test]
+fn page_named_accepts_journal_file_stem() {
+    let f = Fixture::new();
+    std::fs::write(f.0.join("journals/2026_09_25.md"), "- journal\n").unwrap();
+    let store = f.store();
+    assert_eq!(
+        store
+            .page_named("2026_09_25", PageKind::Journal)
+            .unwrap()
+            .unwrap()
+            .id
+            .as_str(),
+        "journals/2026_09_25.md"
+    );
 }
 
 #[test]
