@@ -3,13 +3,11 @@ import { facetsOf } from "../../render/facets";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty } from "../save/engine";
-import { readPropertyValue, isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden } from "../../editor/properties";
+import { PROP_LINE, readPropertyValue, readOrgPageProperty, orgPreBlockWithProperty, isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pushToast } from "../../toasts";
-
-const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
  * the canonical head (title, planning, contiguous properties) plus the legacy
@@ -103,20 +101,27 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
   markDirty(node.page, "save-block");
 }
 
-/** Read a page-level property from the page's pre-block (the leading
- *  `key:: value` lines), or null. */
+/** Read the first matching page property from the full pre-block: `#+key: `
+ *  for Org, `key::` for Markdown. Markdown falls back to a properties-only
+ *  first root when no pre-block match exists. Missing pages/keys return null.
+ *  Cost O(loaded pages + pre-block bytes + first-root bytes). */
 export function readPageProperty(pageName: string, key: string): string | null {
   const p = doc.pages.find((x) => x.name === pageName);
   if (!p) return null;
-  const fromPreBlock = readPropertyValue(p.preBlock, key);
+  const fromPreBlock = p.format === "org" ? readOrgPageProperty(p.preBlock, key) : readPropertyValue(p.preBlock, key);
   if (fromPreBlock !== null) return fromPreBlock;
   const first = p.format === "md" ? doc.byId[p.roots[0]] : null;
   return first && isPropertiesOnly(first.raw) ? readPropertyValue(first.raw, key) : null;
 }
 
-/** Set or clear a page-level property in the page's canonical property source:
- *  pre-block normally, or OG's properties-only first bullet. Persists through
- *  the normal dirty/save path and is undo-safe. */
+/** Set/clear a page property in an active Markdown header editor first;
+ *  otherwise use a properties-only first root only when pre-block is empty,
+ *  and use the format's pre-block in every other case. Missing/read-only pages
+ *  are ignored. Records
+ *  undo and schedules a guarded page save; the caller need not handle disk
+ *  format or save ordering. Cost O(loaded pages + property text) now, then one
+ *  page save for a valid DTO. A childed transient header remains intact if its
+ *  last key clears; that invalid draft cannot save until its children move out. */
 export function setPageProperty(pageName: string, key: string, value: string | null) {
   const idx = doc.pages.findIndex((x) => x.name === pageName);
   if (idx < 0 || !pageWritable(pageName)) return;
@@ -128,7 +133,7 @@ export function setPageProperty(pageName: string, key: string, value: string | n
   // the native new-header boundary canonicalizes its persisted form.
   if (first && (first.originatedFromPageHeader || (!page.preBlock && isPropertiesOnly(first.raw)))) {
     const next = upsertPropertyLine(first.raw, key, value) ?? "";
-    if (first.originatedFromPageHeader && next === "") {
+    if (first.originatedFromPageHeader && next === "" && first.children.length === 0) {
       setDoc(produce((s) => {
         const target = s.pages.find((p) => p.name === pageName);
         if (target?.roots[0] === first.id) target.roots.shift();
@@ -140,7 +145,9 @@ export function setPageProperty(pageName: string, key: string, value: string | n
     markDirty(pageName, "save-block");
     return;
   }
-  setDoc("pages", idx, "preBlock", upsertPropertyLine(doc.pages[idx].preBlock, key, value));
+  setDoc("pages", idx, "preBlock", page.format === "org"
+    ? orgPreBlockWithProperty(page.preBlock, key, value)
+    : upsertPropertyLine(page.preBlock, key, value));
   markDirty(pageName, "save-block");
 }
 

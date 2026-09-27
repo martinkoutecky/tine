@@ -403,6 +403,21 @@ describe("PdfViewer OG area-highlight selection", () => {
     }
   });
 
+  it("retires a saved crop when its highlight sidecar is refused", async () => {
+    const id = "44444444-4444-4444-8444-444444444444"; vi.spyOn(crypto, "randomUUID").mockReturnValue(id);
+    vi.spyOn(Date, "now").mockReturnValue(5678); vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("paper/1_crop.png");
+    vi.spyOn(backend(), "writeHighlights").mockRejectedValue(new Error("sidecar refused"));
+    const rollback = vi.spyOn(backend(), "rollbackPdfAreaImage").mockResolvedValue(undefined);
+    const { host, wrap, dispose } = await mountAreaViewer(); try {
+      (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
+      dragArea(wrap, { x: 45, y: 55 });
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await flush(); await drainPdfWork();
+      expect(rollback).toHaveBeenCalledWith("paper.pdf", 1, id, 5678); expect(host.querySelector(`[data-highlight-id="${id}"]`)).toBeNull();
+    } finally { dispose(); }
+  });
+
   it("does not start direct area selection from Control alone off macOS", async () => {
     const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
     const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);

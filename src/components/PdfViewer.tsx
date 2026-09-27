@@ -1353,19 +1353,16 @@ export function PdfViewer(props: {
     setAreaMode(false);
   };
 
-  // Crop the page canvas to `rect` (unscaled coords) → PNG bytes.
   async function cropArea(page: number, wrap: HTMLElement, rect: Rect): Promise<Uint8Array | null> {
     const s = scale();
     let canvas = wrap.querySelector("canvas") as HTMLCanvasElement | null;
-    // The page may have been LRU-evicted (or never rendered at this scale) — render
-    // it so we crop a crisp, current bitmap.
+    // Restore an evicted page before cropping.
     if (!canvas || renderedScale[page] !== s) {
       await renderPage(page);
       canvas = wrap.querySelector("canvas") as HTMLCanvasElement | null;
     }
     if (!canvas) return null;
-    // The canvas backing store is `unscaledWidth * s * dpr` px wide (see renderPage),
-    // so one unscaled unit = `s * dpr` backing pixels.
+    // Map unscaled coordinates to backing pixels.
     const dpr = renderedPixelRatio[page] ?? 1;
     const f = s * dpr;
     const sx = Math.max(0, Math.round(rect.left * f));
@@ -1411,10 +1408,13 @@ export function PdfViewer(props: {
       text: null,
       image: stamp,
     };
-    const prev = highlights();
+    const prev = highlights(), wasUnsaved = unsavedHighlights();
     setHighlights([...prev, h]);
     setUnsavedHighlights(true);
     if (!(await persistOwned())) {
+      setHighlights(prev); setUnsavedHighlights(wasUnsaved);
+      try { await trackAssetWrite(backend().rollbackPdfAreaImage(props.filename, page, id, stamp)); }
+      catch (e) { pushToast(`Couldn't move the unused area image to trash. (${String(e)})`, "error"); }
       return false;
     }
     await copyCreatedHighlightRef(h.id);

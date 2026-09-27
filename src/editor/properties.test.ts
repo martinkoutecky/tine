@@ -12,6 +12,8 @@ import {
   isPageHeaderPropertiesOnly,
   parsePageHeaderPropertyLine,
   splitPagePreamble,
+  orgPreBlockWithProperty,
+  readOrgPageProperty,
 } from "./properties";
 
 describe("canonical Markdown page-header grammar (GH #163)", () => {
@@ -64,6 +66,22 @@ describe("sheet-cell property splitting", () => {
 });
 
 describe("property line helpers", () => {
+  it("updates and removes Unicode keys admitted by the page header", () => {
+    expect(upsertPropertyLine("klíč:: old\ntags:: x", "klíč", "new")).toBe("klíč:: new\ntags:: x");
+    expect(upsertPropertyLine("e\u0301/key:: old", "e\u0301/key", null)).toBeNull();
+    expect(readPropertyValue("klíč:: new", "klíč")).toBe("new");
+  });
+
+  it("round-trips Org page directives without changing unrelated preamble text", () => {
+    const old = "#+TITLE: Book\n#+KLÍČ: old\nIntro";
+    const updated = orgPreBlockWithProperty(old, "klíč", "new");
+    expect(updated).toBe("#+TITLE: Book\n#+klíč: new\nIntro");
+    expect(readOrgPageProperty(updated, "klíč")).toBe("new");
+    expect(readOrgPageProperty("#+İ: abc", "İ")).toBe("abc");
+    expect(readOrgPageProperty(orgPreBlockWithProperty("#+İ: old", "İ", "new"), "İ")).toBe("new");
+    expect(orgPreBlockWithProperty(updated, "klíč", null)).toBe("#+TITLE: Book\nIntro");
+    expect(orgPreBlockWithProperty(null, "tags", "x")).toBe("#+tags: x");
+  });
   it("reads a value case-insensitively", () => {
     expect(readPropertyValue("alias:: Foo, Bar\npublic:: true", "alias")).toBe("Foo, Bar");
     expect(readPropertyValue("Alias:: Foo", "alias")).toBe("Foo");
