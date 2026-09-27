@@ -72,22 +72,6 @@ jobs:
           Get-Volume -DriveLetter $drive | Format-List
           exit 0
 
-      - name: 'Windows: download EmptyStandbyList (best-effort cache eviction)'
-        if: runner.os == 'Windows'
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Invoke-WebRequest -Uri "https://download.sysinternals.com/files/RAMMap.zip" -OutFile "$env:RUNNER_TEMP\RAMMap.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\RAMMap.zip" -DestinationPath "$env:RUNNER_TEMP\RAMMap"
-          $eel = Get-ChildItem -Path "$env:RUNNER_TEMP\RAMMap" -Filter "EmptyStandbyList.exe" -Recurse | Select-Object -First 1
-          if ($eel) {
-            "TINE_EEL_EXE=$($eel.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            Write-Host "EmptyStandbyList.exe at $($eel.FullName)"
-          } else {
-            Write-Host "EmptyStandbyList.exe not found in the downloaded archive"
-          }
-
       - name: Write fscost (Rust timing tool) sources
         shell: bash
         run: |
@@ -208,7 +192,6 @@ jobs:
           //   TINE_WORKDIR      scratch dir for corpora + concat files (required)
           //   TINE_REPO_ROOT    repo root, to find scripts/generate-realistic-graph.mjs (required)
           //   TINE_FSCOST_BIN   path to the built fscost binary (required)
-          //   TINE_EEL_EXE      (Windows) path to EmptyStandbyList.exe, if downloaded
 
           import { spawnSync } from "node:child_process";
           import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync, readdirSync, openSync, writeSync, closeSync } from "node:fs";
@@ -300,13 +283,59 @@ jobs:
               return { ok: false, method: "purge", note: `status=${r.status} err=${r.error} stderr=${(r.stderr || "").slice(0, 300)}` };
             }
             if (PLATFORM === "win32") {
-              const eel = process.env.TINE_EEL_EXE;
-              if (eel && existsSync(eel)) {
-                const r = sh(eel, []);
-                if (r.status === 0) return { ok: true, method: "EmptyStandbyList.exe (Sysinternals RAMMap)" };
-                return { ok: false, method: "EmptyStandbyList.exe", note: `status=${r.status} stderr=${(r.stderr || "").slice(0, 300)}` };
+              // Same technique EmptyStandbyList.exe / RAMMap use internally: enable
+              // SeProfileSingleProcessPrivilege, then call
+              // NtSetSystemInformation(SystemMemoryListInformation=0x50,
+              // MemoryPurgeStandbyList=4). Done as inline P/Invoke so there is no
+              // external download to fail.
+              const script = `
+          Add-Type -Language CSharp -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public class TineStandbyPurge {
+            [DllImport("ntdll.dll")] public static extern uint NtSetSystemInformation(int InfoClass, IntPtr Info, int Length);
+            [DllImport("advapi32.dll", SetLastError = true)] public static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+            [DllImport("advapi32.dll", SetLastError = true)] public static extern bool LookupPrivilegeValue(string lpSystemName, string lpName, out long lpLuid);
+            [DllImport("advapi32.dll", SetLastError = true)] public static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, int BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
+            [StructLayout(LayoutKind.Sequential)] public struct TOKEN_PRIVILEGES { public int PrivilegeCount; public long Luid; public int Attributes; }
+            public static void Purge() {
+              IntPtr hToken;
+              if (!OpenProcessToken(System.Diagnostics.Process.GetCurrentProcess().Handle, 0x28, out hToken)) {
+                throw new Exception("OpenProcessToken failed: " + Marshal.GetLastWin32Error());
               }
-              return { ok: false, method: "none", note: "EmptyStandbyList.exe unavailable (TINE_EEL_EXE unset or download failed)" };
+              long luid;
+              if (!LookupPrivilegeValue(null, "SeProfileSingleProcessPrivilege", out luid)) {
+                throw new Exception("LookupPrivilegeValue failed: " + Marshal.GetLastWin32Error());
+              }
+              TOKEN_PRIVILEGES tp = new TOKEN_PRIVILEGES();
+              tp.PrivilegeCount = 1; tp.Luid = luid; tp.Attributes = 2;
+              if (!AdjustTokenPrivileges(hToken, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)) {
+                throw new Exception("AdjustTokenPrivileges failed: " + Marshal.GetLastWin32Error());
+              }
+              int cmd = 4; // MemoryPurgeStandbyList
+              IntPtr p = Marshal.AllocHGlobal(4);
+              try {
+                Marshal.WriteInt32(p, cmd);
+                uint status = NtSetSystemInformation(80, p, 4); // SystemMemoryListInformation
+                if (status != 0) { throw new Exception("NtSetSystemInformation failed: 0x" + status.ToString("X")); }
+              } finally {
+                Marshal.FreeHGlobal(p);
+              }
+            }
+          }
+          '@
+          [TineStandbyPurge]::Purge()
+          Write-Output "TINE_PURGE_OK"
+          `;
+              const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+              if (r.status === 0 && (r.stdout || "").includes("TINE_PURGE_OK")) {
+                return { ok: true, method: "NtSetSystemInformation(MemoryPurgeStandbyList) via inline P/Invoke" };
+              }
+              return {
+                ok: false,
+                method: "NtSetSystemInformation P/Invoke",
+                note: `status=${r.status} err=${r.error} stdout=${(r.stdout || "").slice(0, 400)} stderr=${(r.stderr || "").slice(0, 400)}`,
+              };
             }
             return { ok: false, method: "none", note: `unhandled platform ${PLATFORM}` };
           }
