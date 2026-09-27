@@ -499,13 +499,13 @@ jobs:
           path: tine-debug-build
           retention-days: 14
 
-  # Diagnostic only (diagnose/* branches): an unsigned universal macOS test
-  # build for reporters, with a launcher that turns on --debug.
+  # Diagnostic only (diagnose/* branches): a signed, notarized universal macOS
+  # test DMG for reporters, built exactly like the release lane.
   diagnose-mac-build:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows' && inputs.windows_test_name == 'diagnoseBuilds'
-    name: macOS test build / portable app
+    name: macOS test build / notarized DMG
     runs-on: macos-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -520,25 +520,101 @@ jobs:
           workspaces: ". -> target"
           cache-on-failure: true
       - run: npm ci
-      - run: npm run build
-      - name: Build release app at this commit (both architectures)
+      - name: Prepare macOS signing and notarization credentials
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
-          cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
-          cargo build --locked --release --features custom-protocol --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
-      - name: Package
+          set -euo pipefail
+          missing=0
+          for name in \
+            APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::required macOS signing secret $name is missing"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+          # macOS 26 no longer reliably infers PKCS#12 input when Tauri asks
+          # `security import` to install APPLE_CERTIFICATE itself. Import the
+          # Developer ID identity explicitly into a temporary keychain, just as
+          # the iOS lane does for its distribution identity, and do not expose
+          # APPLE_CERTIFICATE to the later Tauri process.
+          keychain="$RUNNER_TEMP/tine-macos-signing.keychain-db"
+          p12="$RUNNER_TEMP/tine-macos-developer-id.p12"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          # App notarization is an external queue and has legitimately taken
+          # longer than an hour.  Keep the ephemeral keychain unlocked for the
+          # whole maximum job lifetime so the later DMG signature cannot block
+          # on an invisible password prompt after the app was accepted.
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$p12" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 \
+            -k "$keychain"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s \
+            -k "$keychain_password" "$keychain"
+
+          keychains=("$keychain")
+          while IFS= read -r listed; do
+            listed="${listed//\"/}"
+            listed="${listed#"${listed%%[![:space:]]*}"}"
+            [ -n "$listed" ] && keychains+=("$listed")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychains[@]}"
+          security find-identity -v -p codesigning "$keychain" |
+            grep -Fq "$APPLE_SIGNING_IDENTITY"
+          rm -f "$p12"
+          echo "MACOS_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+          key_dir="$RUNNER_TEMP/app-store-connect-private-keys"
+          key_path="$key_dir/AuthKey_${APPLE_API_KEY}.p8"
+          install -d -m 700 "$key_dir"
+          umask 077
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Build signed and notarized DMG
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: npm run tauri build -- --target universal-apple-darwin --features custom-protocol --bundles dmg
+      - name: Verify and package
+        shell: bash
         run: |
-          mkdir -p tine-debug-build
-          lipo -create -output tine-debug-build/tine target/aarch64-apple-darwin/release/tine target/x86_64-apple-darwin/release/tine
-          codesign --force --sign - tine-debug-build/tine
-          printf '#!/bin/sh\ncd "$(dirname "$0")"\nxattr -d com.apple.quarantine ./tine 2>/dev/null\nexec ./tine --debug\n' > tine-debug-build/Tine-debug.command
-          chmod +x tine-debug-build/tine tine-debug-build/Tine-debug.command
-          printf 'commit %s\ntine sha256 %s\n' "$(git rev-parse HEAD)" "$(shasum -a 256 tine-debug-build/tine | cut -d' ' -f1)" > tine-debug-build/BUILD.txt
-          cat tine-debug-build/BUILD.txt
-          ditto -c -k --keepParent tine-debug-build tine-mac-debug-build.zip
+          set -euo pipefail
+          dmg=$(find target -type f -path '*/bundle/dmg/*.dmg' -print -quit)
+          mount="$RUNNER_TEMP/tine-dmg"; mkdir -p "$mount"
+          hdiutil attach "$dmg" -mountpoint "$mount" -nobrowse -readonly
+          app=$(find "$mount" -maxdepth 2 -type d -name '*.app' -print -quit)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl -a -vvv -t exec "$app"
+          xcrun stapler validate "$dmg"
+          ls "$app/Contents/MacOS"
+          hdiutil detach "$mount"
+          mkdir -p out
+          cp "$dmg" out/Tine-test.dmg
+          printf 'commit %s\nTine-test.dmg sha256 %s\n' "$(git rev-parse HEAD)" "$(shasum -a 256 out/Tine-test.dmg | cut -d' ' -f1)" > out/BUILD.txt
+          cat out/BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: tine-mac-debug-build
-          path: tine-mac-debug-build.zip
+          name: tine-mac-test-build
+          path: out
           retention-days: 14
 
   android-core-compile:
