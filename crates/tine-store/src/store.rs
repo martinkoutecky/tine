@@ -3671,6 +3671,188 @@ mod rev5_tests {
     }
 
     #[test]
+    fn create_during_cold_load_is_in_first_complete_view() {
+        use tine_core::model::{BlockDto, PageDto};
+
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("tine-cold-create-{unique}"));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- existing\n").unwrap();
+        let hold_load = root.join(".tine-test-pause-load");
+        fs::write(&hold_load, "").unwrap();
+        let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let warm_pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&warm_pause));
+        let installed_pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.graph.warm_after_install_pause.lock().unwrap() = Some(Arc::clone(&installed_pause));
+        let save_pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.graph.cold_cache_reconcile_pause.lock().unwrap() = Some(Arc::clone(&save_pause));
+        fs::remove_file(hold_load).unwrap();
+        wait_hook(&warm_pause);
+
+        let saving = Arc::clone(&store);
+        let save = std::thread::spawn(move || {
+            saving.save(
+                &PageId::from("pages/Meta.md"),
+                SaveBase::CreateNew,
+                &PageDto {
+                    name: "Meta".into(),
+                    kind: PageKind::Page,
+                    title: "Meta".into(),
+                    pre_block: None,
+                    blocks: vec![BlockDto {
+                        raw: "a perfectly ordinary block".into(),
+                        ..Default::default()
+                    }],
+                    rev: None,
+                    format: Default::default(),
+                    read_only: false,
+                    guide: false,
+                },
+            )
+        });
+        wait_hook(&save_pause);
+        release_hook(&warm_pause);
+        wait_hook(&installed_pause);
+        release_hook(&save_pause);
+        release_hook(&installed_pause);
+        assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
+        let view = store.whole_graph().unwrap();
+        assert!(view.corpus().pages.iter().any(|page| page.name == "Meta"));
+        assert!(matches!(
+            view.resolve("Meta", false),
+            Resolved::Existing { .. }
+        ));
+        assert!(view.inventory().0.iter().any(|entry| entry.name == "Meta"));
+        assert_eq!(
+            view.search(
+                &SearchRequest {
+                    text: "ordinary".into(),
+                    within: None,
+                    page_limit: 10,
+                    block_limit: 10,
+                    explain: false,
+                },
+                &Cancel(Arc::new(AtomicBool::new(false))),
+            )
+            .unwrap()
+            .hits
+            .len(),
+            1
+        );
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn own_page_writes_stay_in_view_with_notify_and_poll() {
+        for mode in [WatchMode::Notify, WatchMode::Poll] {
+            let unique = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("tine-own-view-{mode:?}-{unique}"));
+            fs::create_dir_all(root.join("pages")).unwrap();
+            fs::create_dir_all(root.join("journals")).unwrap();
+            fs::create_dir_all(root.join("assets")).unwrap();
+            let store = Store::open(
+                &root,
+                OpenOptions {
+                    watch: mode,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0;
+            store.whole_graph().unwrap();
+
+            let a = PageId::from("pages/A.md");
+            let mut create = store.transaction();
+            create.create(
+                &a.file(),
+                crate::Content::Bytes(b"- initial word\n".to_vec()),
+            );
+            assert!(matches!(
+                create.commit(),
+                crate::TxOutcome::Committed { .. }
+            ));
+            assert!(matches!(
+                store.whole_graph().unwrap().resolve("A", false),
+                Resolved::Existing { .. }
+            ));
+
+            let read = store.page(&a).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = "saved word".into();
+            assert!(matches!(
+                store.save(&a, SaveBase::Existing(read.rev), &doc),
+                SaveOutcome::Saved(_)
+            ));
+            assert!(store
+                .whole_graph()
+                .unwrap()
+                .corpus()
+                .pages
+                .iter()
+                .any(|page| {
+                    page.name == "A" && page.document.roots[0].raw().contains("saved word")
+                }));
+
+            let b = PageId::from("pages/B.md");
+            let mut moving = store.transaction();
+            moving.move_file(
+                &a.file(),
+                FileRev::from_file(&root.join("pages/A.md")).unwrap(),
+                &b.file(),
+                None,
+            );
+            assert!(matches!(
+                moving.commit(),
+                crate::TxOutcome::Committed { .. }
+            ));
+            let moved = store.whole_graph().unwrap();
+            assert!(matches!(
+                moved.resolve("B", false),
+                Resolved::Existing { .. }
+            ));
+            assert!(!matches!(
+                moved.resolve("A", false),
+                Resolved::Existing { .. }
+            ));
+
+            let source = root.join("restore-source.md");
+            fs::write(&source, "- restored word\n").unwrap();
+            store
+                .restore(vec![crate::RestoreFile {
+                    area: Area::Pages,
+                    rel: "C.md".into(),
+                    source: File::open(&source).unwrap(),
+                    len: fs::metadata(&source).unwrap().len(),
+                }])
+                .unwrap();
+            let restored = store.whole_graph().unwrap();
+            assert!(matches!(
+                restored.resolve("C", false),
+                Resolved::Existing { .. }
+            ));
+            assert!(!matches!(
+                restored.resolve("B", false),
+                Resolved::Existing { .. }
+            ));
+            assert!(restored.corpus().pages.iter().any(|page| {
+                page.name == "C" && page.document.roots[0].raw().contains("restored word")
+            }));
+            store.close();
+            drop(store);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn close_during_recovery_returns_closed_without_reviving_status() {
         let unique = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -3935,6 +4117,23 @@ mod rev5_tests {
             .pages
             .iter()
             .any(|page| page.name == "B"));
+        let b = PageId::from("pages/B.md");
+        let read = store.page(&b).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw = "saved after rewatch".into();
+        assert!(matches!(
+            store.save(&b, SaveBase::Existing(read.rev), &doc),
+            SaveOutcome::Saved(_)
+        ));
+        assert!(store
+            .whole_graph()
+            .unwrap()
+            .corpus()
+            .pages
+            .iter()
+            .any(|page| {
+                page.name == "B" && page.document.roots[0].raw().contains("saved after rewatch")
+            }));
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();

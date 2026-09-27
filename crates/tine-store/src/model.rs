@@ -397,6 +397,10 @@ pub(crate) struct Graph {
     #[cfg(test)]
     pub(crate) warm_after_first_page_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
+    pub(crate) warm_after_install_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
+    pub(crate) cold_cache_reconcile_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
+    #[cfg(test)]
     pub(crate) warm_passes: std::sync::atomic::AtomicUsize,
     /// File times observed while publishing the parsed page cache. Readers
     /// clone the table with their graph view, so later disk edits cannot alter it.
@@ -2360,6 +2364,10 @@ impl Graph {
             #[cfg(test)]
             warm_after_first_page_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
+            warm_after_install_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            cold_cache_reconcile_pause: std::sync::Mutex::new(None),
+            #[cfg(test)]
             warm_passes: std::sync::atomic::AtomicUsize::new(0),
             observed_mtimes: RwLock::new(Arc::new(std::collections::HashMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
@@ -3174,7 +3182,7 @@ impl Graph {
     /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
     /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
     /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
-    fn install_built(&self, built: PageCacheBuild) {
+    fn install_built(&self, built: PageCacheBuild, expected_gen: u64) -> bool {
         let PageCacheBuild {
             pages: built,
             failures,
@@ -3204,6 +3212,11 @@ impl Graph {
         // Publish cache + revs atomically under the cache lock (cache → disk_revs
         // order), so no reader observes a fresh rev paired with a stale cache.
         let mut guard = self.cache.write().unwrap();
+        if guard.is_some()
+            || self.cache_gen.load(std::sync::atomic::Ordering::Acquire) != expected_gen
+        {
+            return false;
+        }
         *guard = Some(Arc::new(pages));
         *self.observed_mtimes.write().unwrap() = Arc::new(mtimes);
         *self.page_index_failures.write().unwrap() = failures;
@@ -3216,6 +3229,7 @@ impl Graph {
         *self.cache_index.write().unwrap() = Some(index);
         *self.disk_revs.write().unwrap() = revs;
         drop(guard);
+        true
     }
 
     /// Run `f` over every parsed page, building the cache on first use.
@@ -3247,8 +3261,7 @@ impl Graph {
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.cache_gen.load(Ordering::Acquire) == gen0 {
-                    self.install_built(built);
+                if self.install_built(built, gen0) {
                     break;
                 }
             }
@@ -3345,9 +3358,9 @@ impl Graph {
         // its disk write must be folded in by a rebuild — defer to the next
         // on-demand build rather than install a stale snapshot).
         let _bl = self.build_lock.lock().unwrap();
-        if self.cache.read().unwrap().is_none() && self.cache_gen.load(Ordering::Acquire) == gen0 {
-            self.install_built(built);
-        }
+        self.install_built(built, gen0);
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.warm_after_install_pause);
         !cancelled()
     }
 
@@ -4177,21 +4190,26 @@ impl Graph {
         let mut newdoc = parse_doc(path, content);
         {
             let guard = self.cache.read().unwrap();
-            let Some(cache) = guard.as_ref() else {
-                // Cache not built yet: nothing to reconcile in the parse cache, but
-                // the page SET may have changed (this could be a newly-created
-                // file). Drop the page-list memo so list_pages — and the eventual
-                // warm build that reads it — re-scan the dir and include it.
-                // This path does NOT bump cache_gen, so the gen-keyed find_entry
-                // index would otherwise stay stale here (miss the new/removed file)
-                // until some other op bumps the gen — drop it alongside the list memo.
+            if guard.is_none() {
                 drop(guard);
-                *self.page_list_cache.write().unwrap() = None;
-                *self.find_entry_cache.write().unwrap() = None;
-                *self.cache_index.write().unwrap() = None;
-                return None;
-            };
-            if let Some(i) = self.cached_page_index_for_path(cache, path) {
+                #[cfg(test)]
+                crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
+                // A builder can install between the read above and this lock.
+                // If it did, continue to cache_upsert below; otherwise bump the
+                // generation under the same lock used by install_built so its
+                // pre-write candidate cannot be installed afterward.
+                let cache = self.cache.write().unwrap();
+                if cache.is_none() {
+                    *self.page_list_cache.write().unwrap() = None;
+                    *self.find_entry_cache.write().unwrap() = None;
+                    *self.cache_index.write().unwrap() = None;
+                    self.cache_gen
+                        .fetch_add(1, std::sync::atomic::Ordering::Release);
+                    return None;
+                }
+                drop(cache);
+            } else if let Some(i) = self.cached_page_index_for_path(guard.as_ref().unwrap(), path) {
+                let cache = guard.as_ref().unwrap();
                 let cached = &cache[i].1;
                 // Compare CONTENT, not the in-memory uuids: cached blocks carry
                 // generated uuids (assigned at cache build / upsert), while a
