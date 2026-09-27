@@ -7,6 +7,8 @@ import { sheetConfigFromRaw } from "../sheet/config";
 export interface Node {
   id: string;
   raw: string;
+  /** Raw bytes from the loaded DTO; unchanged blocks keep their trailing space on save. */
+  loadedRaw?: string;
   collapsed: boolean;
   parent: string | null; // null = a root of its page
   page: string; // owning page name

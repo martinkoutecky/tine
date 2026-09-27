@@ -3,6 +3,7 @@
 //! runtime UUIDs are deterministic structural locators; persisted `id::`
 //! values remain separate external reference identities.
 
+mod one_block_layout;
 mod page_parse;
 use page_parse::{isolate_page_parse, parse_page_content, parse_page_entry_isolated};
 
@@ -4487,21 +4488,13 @@ impl Graph {
         let path = path.to_path_buf();
         let content = match Format::from_path(&path) {
             Format::Md => {
-                // Reproduce the existing file's formatting (trailing newline,
-                // post-property blank line, indent) so an unchanged save is
-                // byte-identical and edits produce a minimal diff — critical to
-                // avoid Syncthing churn against Logseq.
+                // Reproduce the existing file's layout to avoid Syncthing churn.
                 let opts = doc::SerializeOpts::detect(existing);
-                let mut content = doc::serialize_with(&doc, &opts);
-                // A5: if the ONLY difference from disk is whitespace trivia the
-                // serializer doesn't round-trip byte-exactly (post-property
-                // blank-line count, empty-bullet spelling `- ` vs `-`, indented
-                // blank continuation lines), keep the existing bytes verbatim.
-                // `doc::parse` collapses exactly this trivia (and ignores uuids),
-                // so equal parses ⟹ the user changed nothing of substance → don't
-                // rewrite (avoids needless Syncthing churn). Adopting the disk
-                // bytes makes `changed` below false and the returned rev the
-                // on-disk rev — so every downstream path stays correct.
+                let mut content = existing
+                    .and_then(|source| one_block_layout::serialize(&doc, source, &opts))
+                    .unwrap_or_else(|| doc::serialize_with(&doc, &opts));
+                // A5: when only unroundtrippable whitespace trivia differs,
+                // equal parses mean the disk bytes and revision stay authoritative.
                 if let Some(e) = existing {
                     if e != content && doc::parse(e) == doc::parse(&content) {
                         content = e.to_string();

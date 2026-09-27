@@ -8,6 +8,84 @@ use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_store::{FaultPoint, PageId, SaveBase, SaveOutcome, SavePagesOutcome, Store, StoreError};
 
 #[test]
+fn g6b_one_block_edit_preserves_fixture_layout() {
+    for (name, source) in [
+        (
+            "Cont1",
+            include_bytes!("../../../scripts/fixtures/g6b/graph/pages/Cont1.md").as_slice(),
+        ),
+        (
+            "Trailing",
+            include_bytes!("../../../scripts/fixtures/g6b/graph/pages/Trailing.md").as_slice(),
+        ),
+        (
+            "TrailingBlanks",
+            include_bytes!("../../../scripts/fixtures/g6b/graph/pages/TrailingBlanks.md")
+                .as_slice(),
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let rel = format!("pages/{name}.md");
+        fixture.write(&rel, source);
+        let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+        let id = PageId::from(rel.as_str());
+        let read = store.page(&id).unwrap();
+        let mut doc = read.doc;
+        doc.blocks[0].raw.push_str(" edited");
+        assert!(matches!(
+            store.save(
+                tine_store::EditKind::SaveBlock,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc
+            ),
+            SaveOutcome::Saved(_)
+        ));
+        let expected =
+            String::from_utf8(source.to_vec())
+                .unwrap()
+                .replacen("- target", "- target edited", 1);
+        assert_eq!(
+            fs::read(&fixture.0.join(rel)).unwrap(),
+            expected.as_bytes(),
+            "{name}"
+        );
+        store.close();
+    }
+}
+
+#[test]
+fn g6b_explicit_eof_edit_is_not_lost() {
+    let source = include_bytes!("../../../scripts/fixtures/g6b/graph/pages/TrailingBlanks.md");
+    let fixture = Fixture::new();
+    fixture.write("pages/TrailingBlanks.md", source);
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = PageId::from("pages/TrailingBlanks.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    doc.blocks[1].raw.push('\n');
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::SaveBlock,
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc
+        ),
+        SaveOutcome::Saved(_)
+    ));
+    let after = fs::read(fixture.0.join("pages/TrailingBlanks.md")).unwrap();
+    let count = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .rev()
+            .take_while(|&&byte| byte == b'\n')
+            .count()
+    };
+    assert!(count(&after) > count(source));
+    store.close();
+}
+
+#[test]
 fn save_pages_keeps_order_and_reports_preflight_conflict_without_writes() {
     let fixture = Fixture::new();
     fixture.write("pages/A.md", "- old A\n");
@@ -817,4 +895,38 @@ fn a_loaded_stray_journal_saves_to_its_own_file() {
     let files = fixture.files();
     assert_eq!(files["journals/2026_06_26.md"], b"- canonical\n");
     assert_eq!(files["journals/Friday, 26-06-2026.md"], b"- stray edit\n");
+}
+
+#[test]
+/// A file whose roots all sit under one tab keeps that base offset on the
+/// edited line; splicing the serializer's column-0 line re-nested the child.
+fn g6b_base_indented_file_keeps_its_outline_and_bytes() {
+    let source = "\t- root\n\t\t- child\n\t- sibling\n";
+    let fixture = Fixture::new();
+    fixture.write("pages/BaseTab.md", source.as_bytes());
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = PageId::from("pages/BaseTab.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    assert_eq!(doc.blocks.len(), 2, "{:?}", doc.blocks);
+    doc.blocks[0].children[0].raw.push_str(" edited");
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::SaveBlock,
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc
+        ),
+        SaveOutcome::Saved(_)
+    ));
+    let after = fs::read_to_string(fixture.0.join("pages/BaseTab.md")).unwrap();
+    assert_eq!(after, "\t- root\n\t\t- child edited\n\t- sibling\n");
+    let reread = store.page(&id).unwrap().doc;
+    assert_eq!(reread.blocks.len(), 2, "outline changed: {after:?}");
+    assert_eq!(
+        reread.blocks[0].children.len(),
+        1,
+        "outline changed: {after:?}"
+    );
+    store.close();
 }

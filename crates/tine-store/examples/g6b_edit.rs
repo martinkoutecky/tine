@@ -56,7 +56,7 @@ fn main() {
         let mut counts = std::collections::BTreeMap::<String, usize>::new();
         let mut report = BufWriter::new(
             fs::File::create(
-                std::env::var("G6B_REPORT").unwrap_or_else(|_| "G6B-06d-results.tsv".into()),
+                std::env::var("G6B_REPORT").unwrap_or_else(|_| "G6B-06f-results.tsv".into()),
             )
             .expect("report"),
         );
@@ -88,7 +88,25 @@ fn main() {
                                         .iter()
                                         .filter(|&&byte| byte == b'\n')
                                         .count();
-                                    classify_change(&before, &after, marker_line, entry.span_lines)
+                                    let cause = classify_change(
+                                        &before,
+                                        &after,
+                                        marker_line,
+                                        entry.span_lines,
+                                    );
+                                    // Untouched bytes can survive while the edited
+                                    // line re-nests the outline; compare structure too.
+                                    match store.page(&id) {
+                                        Ok(saved) if cause == "pass" => {
+                                            if shape(&saved.doc.blocks) == shape(&doc.blocks) {
+                                                cause
+                                            } else {
+                                                "outline-change".to_string()
+                                            }
+                                        }
+                                        Ok(_) => cause,
+                                        Err(_) => "reread-failed".to_string(),
+                                    }
                                 } else {
                                     "edit-not-written".to_string()
                                 }
@@ -111,10 +129,26 @@ fn main() {
         }
         report.flush().expect("flush report");
         eprintln!("G6b counts: {counts:?}");
+        let failures: usize = counts
+            .iter()
+            .filter(|(cause, _)| cause.as_str() != "pass" && cause.as_str() != "no-leaf-block")
+            .map(|(_, count)| count)
+            .sum();
+        eprintln!("G6b editable-page failures: {failures}");
+        if failures != 0 {
+            std::process::exit(1);
+        }
     } else {
         panic!("unknown mode");
     }
     store.close();
+}
+
+fn shape(blocks: &[tine_core::model::BlockDto]) -> String {
+    blocks
+        .iter()
+        .map(|block| format!("[{}]", shape(&block.children)))
+        .collect()
 }
 
 fn classify_change(before: &[u8], after: &[u8], marker_line: usize, span_lines: usize) -> String {

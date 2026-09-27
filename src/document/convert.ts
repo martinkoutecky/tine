@@ -83,6 +83,7 @@ function flatten(
     byId[key] = {
       id: key,
       raw: d.raw,
+      loadedRaw: d.raw,
       collapsed: d.collapsed,
       parent,
       page: pageName,
@@ -128,13 +129,10 @@ export function purgePageNodes(s: DocState, pageName: string) {
  *  the sidebar survives navigating the main view elsewhere. */
 function toDto(id: string): BlockDto {
   const n = doc.byId[id];
-  // Trim a block's trailing space only here, at the disk-write boundary — OG
-  // keeps the space while you edit and trims on save. (The live editor buffer
-  // keeps it so backspacing to a trailing space doesn't eat the space out from
-  // under the caret.) `trimBlockTrailingSpace` is idempotent and only touches
-  // whitespace at the very end of the block, so a block with nothing to trim
-  // serializes byte-identically — no churn, no property reordering.
-  return { id: n.id, raw: trimBlockTrailingSpace(n.raw), collapsed: n.collapsed, children: n.children.map(toDto) };
+  // Only an edited block gets OG's trailing-space trim. Loaded siblings must
+  // retain their exact raw bytes when another block on the page is saved.
+  const raw = n.loadedRaw === n.raw ? n.raw : trimBlockTrailingSpace(n.raw);
+  return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 
 /** Mirror of Rust `first_root_is_promotable_page_header` (model.rs): a childless
@@ -150,6 +148,13 @@ function isPromotablePageHeaderRoot(node: Node): boolean {
   );
 }
 
+/** Project one loaded page for guarded save. Cost: O(loaded pages + blocks and
+ * text bytes of this page). Ordinary loaded blocks with unchanged raw keep it exactly;
+ * edited ones get OG's trailing-space trim (which retains a bare list marker's
+ * final space). A page-header root is folded into pre_block with terminal
+ * newlines removed, and a lone empty placeholder is omitted. Returns null for
+ * an absent page or invalid page-header draft; the save caller leaves an
+ * invalid draft dirty for retry. Reads only the in-memory document. */
 export function pageToDto(pageName: string): PageDto | null {
   const p = doc.pages.find((x) => x.name === pageName);
   if (!p) return null;
