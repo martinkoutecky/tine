@@ -31,6 +31,14 @@ for (const file of [OG, MASTER]) if (!fs.existsSync(file)) throw new Error(`miss
 if (!fs.existsSync(ANON)) throw new Error(`missing anonymized graph: ${ANON}`);
 const digest = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const masterBuild = JSON.parse(fs.readFileSync(MASTER_BUILD, "utf8"));
+// The og binary's revision comes from its deploy receipt, and only when the receipt
+// matches the exact bytes being measured.
+function ogRevision() {
+  try {
+    const receipt = JSON.parse(fs.readFileSync(`${OG}.build.json`, "utf8"));
+    return receipt.appSha256 === digest(OG) ? receipt.sourceRevision : "unrecorded (receipt does not match binary)";
+  } catch { return "unrecorded (no receipt)"; }
+}
 if (!masterBuild.sourceRevision.startsWith("ddf408c55") || digest(MASTER) !== masterBuild.appSha256) {
   throw new Error("master reference revision or binary SHA-256 does not match tine.build.json");
 }
@@ -159,16 +167,14 @@ async function openSwitcher(browser, query) {
   await input.setValue(query);
   return input;
 }
-// Find and activate an EXISTING page's row in one round trip (never the Create
-// row, which appears before search results; never a handle held across re-renders).
-async function choosePageRow(browser, name) {
+// Open an EXISTING page from the switcher: wait until the highlighted row is exactly
+// that page's row (never the Create row, which can lead before search results land),
+// the caller presses Enter. Checked in one round trip; no element handle held across re-renders.
+async function waitForActivePageRow(browser, name) {
   await browser.waitUntil(async () => browser.execute((wanted) => {
-    const row = [...document.querySelectorAll('.switcher-row[role="option"]')]
-      .find((el) => !el.classList.contains("block-result") && !el.textContent.includes("Create page")
-        && el.textContent.trim().startsWith(wanted));
-    if (!row) return false;
-    row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
-    return true;
+    const row = document.querySelector('.switcher-row[role="option"].active');
+    return !!row && ["page", "journal"].includes(row.querySelector(".switcher-kind")?.textContent.trim())
+      && row.querySelector(".switcher-name")?.textContent.trim() === wanted;
   }, name), { timeout: 30000, interval: 50 });
 }
 async function trial(kind, corpus, index) {
@@ -208,10 +214,9 @@ async function trial(kind, corpus, index) {
 
     await journey(browser, "openPage");
     await openSwitcher(browser, "Bench Hub");
-    await browser.waitUntil(async () => browser.execute(() => [...document.querySelectorAll('.switcher-row[role="option"]')]
-      .some((el) => !el.textContent.includes("Create page") && el.textContent.trim().startsWith("Bench Hub"))), { timeout: 30000, interval: 50 });
+    await waitForActivePageRow(browser, "Bench Hub");
     t = performance.now();
-    await choosePageRow(browser, "Bench Hub");
+    await browser.keys(["Enter"]);
     await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Bench Hub", { timeout: 30000 });
     await paint(browser);
     result.metrics.openPageMs = performance.now() - t;
@@ -235,7 +240,8 @@ async function trial(kind, corpus, index) {
     result.metrics.unlinkedReferencesMs = performance.now() - t;
 
     await openSwitcher(browser, "Bench Save");
-    await choosePageRow(browser, "Bench Save");
+    await waitForActivePageRow(browser, "Bench Save");
+    await browser.keys(["Enter"]);
     await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Bench Save", { timeout: 30000 });
     await paint(browser);
     const pageFile = path.join(graph, "pages/Bench Save.md");
@@ -343,7 +349,8 @@ async function renameTrial(result, corpus, kind, index) {
     const mode = await startProbe(browser);
     result.probeMode ??= mode;
     await openSwitcher(browser, "Bench Hub");
-    await choosePageRow(browser, "Bench Hub");
+    await waitForActivePageRow(browser, "Bench Hub");
+    await browser.keys(["Enter"]);
     await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Bench Hub", { timeout: 30000 });
     await journey(browser, "rename");
     await browser.execute(() => {
@@ -463,7 +470,7 @@ for (const corpus of Object.keys(corpora)) {
     table.push(`| ${corpus} | ${journeyName} | ${cell("og")} | ${cell("master")} |`);
   }
 }
-const report = { schemaVersion: 1, sourceRevisions: { og: "aaebfb94f", master: masterBuild.sourceRevision }, binarySha256, seed: 543, runs: RUNS, probe: "PerformanceObserver longtask when supported; otherwise rAF gap", summary, results };
+const report = { schemaVersion: 1, sourceRevisions: { og: ogRevision(), master: masterBuild.sourceRevision }, binarySha256, seed: 543, runs: RUNS, probe: "PerformanceObserver longtask when supported; otherwise rAF gap", summary, results };
 fs.writeFileSync(path.join(OUT, "summary.json"), JSON.stringify(report, null, 2) + "\n");
 fs.writeFileSync(path.join(OUT, "comparison.md"), table.join("\n") + "\n");
 if (results.some((r) => r.failure || Object.keys(r.journeyFailures).length || r.budgetViolations?.length)) process.exitCode = 1;
