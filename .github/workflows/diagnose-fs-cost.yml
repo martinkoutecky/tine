@@ -62,17 +62,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # fsutil was tried here too, but its own printed failure
+          # ("Error 3: The system cannot find the path specified.") on this
+          # runner's D:\ temp volume sets pwsh's process exit code via
+          # $LASTEXITCODE regardless of try/catch, which GH Actions then
+          # reports as a step failure -- dropped rather than chased further.
+          # Get-Volume already answers filesystem type and Dev-Drive-ness.
           $drive = ($env:RUNNER_TEMP).Substring(0,1)
           Get-Volume -DriveLetter $drive | Format-List
-          # fsutil is informational only here; some GH-hosted temp volumes
-          # reject it (ERROR_PATH_NOT_FOUND) and pwsh 7's
-          # $PSNativeCommandUseErrorActionPreference turns that into a
-          # terminating error, so don't let it fail the job.
-          try {
-            fsutil fsinfo volumeinfo "${drive}:\"
-          } catch {
-            Write-Host "fsutil fsinfo volumeinfo failed (non-fatal): $_"
-          }
+          exit 0
 
       - name: 'Windows: download EmptyStandbyList (best-effort cache eviction)'
         if: runner.os == 'Windows'
