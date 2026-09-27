@@ -12,7 +12,8 @@ import {
 import { initParser } from "./render/parse";
 import { renderedBlockTextCallCountForTests, resetRenderedBlockTextCallCountForTests } from "./render/renderedText";
 import { focusPane, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { resetStore, setDoc } from "./document";
+import { resetStore } from "./document";
+import { setDoc } from "./document/model";
 import type { PaneSnapshot } from "./router";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({

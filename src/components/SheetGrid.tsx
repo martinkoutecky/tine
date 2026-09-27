@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, depthOf, doc, formatForBlock } from "../document";
+import { blockPageReadOnly, childIds, depthOf, formatForBlock, node as docNode } from "../document";
 import { AstBody } from "../render/body";
 import { visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
@@ -51,12 +51,12 @@ export const GRID_RENDER_PAGE = 200;
 export const GRID_RENDER_CELL_LIMIT = 2_000;
 
 function configForBlock(id: string) {
-  const node = doc.byId[id];
+  const node = docNode(id);
   return sheetConfig(node ? facetsOf(node.raw, formatForBlock(id)).properties : []);
 }
 
-function blockChildren(id: string): string[] {
-  return doc.byId[id]?.children ?? [];
+function blockChildren(id: string): readonly string[] {
+  return childIds(id);
 }
 
 function columnTracks(cols: number, widths: ReadonlyMap<number, number>, preview?: { col: number; px: number }, start = 0): string {
@@ -521,7 +521,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     return collectAggregateColumns(
       aggregateRows(),
       configured,
-      (id) => (id ? visibleBody(doc.byId[id]?.raw ?? "").join(" ") : ""),
+      (id) => (id ? visibleBody(docNode(id)?.raw ?? "").join(" ") : ""),
     );
   });
 
@@ -734,7 +734,7 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
   let contentRef: HTMLDivElement | undefined;
   const bgColor = createMemo(() => {
     const id = props.cell.blockId;
-    const node = id ? doc.byId[id] : null;
+    const node = id ? docNode(id) : null;
     return node ? blockBackgroundColor(facetsOf(node.raw, formatForBlock(id!)).properties) : undefined;
   });
   const onDoubleClick = (e: MouseEvent) => {
@@ -745,12 +745,12 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
     props.freezeColumns();
     const blockId = props.cell.blockId;
     if (!blockId) return;
-    const node = doc.byId[blockId];
+    const node = docNode(blockId);
     const offset = node ? clickOffset(e, contentRef, node.raw) : null;
     startCellEditing(sel(), offset ?? undefined);
   };
   const removeCtx = () => ({
-    rowId: doc.byId[props.gridId]?.children[props.cell.row],
+    rowId: docNode(props.gridId)?.children[props.cell.row],
     gridId: props.gridId,
     col: props.cell.col,
   });
@@ -832,7 +832,7 @@ function SheetBlock(props: {
   bodyRef?: (el: HTMLDivElement) => void;
 }): JSX.Element {
   let contentRef: HTMLDivElement | undefined;
-  const node = () => doc.byId[props.id];
+  const node = () => docNode(props.id);
   const fmt = () => formatForBlock(props.id);
   const facets = createMemo(() => (node() ? facetsOf(node().raw, fmt()) : null));
   const headingLevel = createMemo(() => {

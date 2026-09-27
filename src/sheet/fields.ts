@@ -1,4 +1,4 @@
-import { doc, formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit } from "../document";
+import { formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
 import { leadingMarker, nextMarker, setMarker } from "../editor/marker";
@@ -45,7 +45,7 @@ export function isFormulaField(field: FieldId): field is `formula:${string}` {
 }
 
 function facetsForBlock(id: string): Facets | null {
-  const n = doc.byId[id];
+  const n = docNode(id);
   return n ? facetsOf(n.raw, formatForBlock(id)) : null;
 }
 
@@ -57,7 +57,7 @@ interface GroupKeysOptions {
 
 function facetsForInput(input: GroupKeyInput): Facets | null {
   const id = typeof input === "string" ? input : input.id;
-  const n = typeof input === "string" ? doc.byId[id] : liveFormulaRowNode(input);
+  const n = typeof input === "string" ? docNode(id) : liveFormulaRowNode(input);
   if (n) return facetsOf(n.raw, formatForBlock(id));
   return typeof input === "string" || !input.dto ? null : facetsFromDto(input.dto);
 }
@@ -185,7 +185,7 @@ export function fieldIdsForBlocks(ids: readonly string[], opts: { includePage?: 
 export function boardGroupByOptions(ownerId: string): FieldId[] {
   const out: FieldId[] = ["state", "priority", "tags"];
   const seen = new Set<FieldId>(out);
-  for (const field of fieldIdsForBlocks(doc.byId[ownerId]?.children ?? [])) {
+  for (const field of fieldIdsForBlocks(docNode(ownerId)?.children ?? [])) {
     if (!field.startsWith("prop:") || seen.has(field)) continue;
     seen.add(field);
     out.push(field);
@@ -206,7 +206,7 @@ export function fieldLabel(field: FieldId): string {
 
 export function readField(id: string, field: FieldId): FieldValue | null {
   if (isFormulaField(field)) return null;
-  const n = doc.byId[id];
+  const n = docNode(id);
   const f = facetsForBlock(id);
   if (!n || !f) return null;
   switch (field) {
@@ -233,7 +233,7 @@ export function readField(id: string, field: FieldId): FieldValue | null {
 
 export function writeField(id: string, field: FieldId, value: string): boolean {
   if (isFormulaField(field)) return false;
-  const n = doc.byId[id];
+  const n = docNode(id);
   if (!n) return false;
   if (blockPageReadOnly(id)) return false; // org round-trip gate (review finding)
   const trimmed = value.trim();
@@ -284,7 +284,7 @@ export function writeField(id: string, field: FieldId, value: string): boolean {
 }
 
 export function writeTagDelta(id: string, delta: { add?: string; remove?: string }): boolean {
-  const n = doc.byId[id];
+  const n = docNode(id);
   if (!n) return false;
   if (blockPageReadOnly(id)) return false;
   if (formatForBlock(id) !== "md") return false;
@@ -318,7 +318,7 @@ export function writeTagDelta(id: string, delta: { add?: string; remove?: string
 
 export function cycleField(id: string, field: "state" | "priority"): boolean {
   if (blockPageReadOnly(id)) return false; // org round-trip gate
-  const n = doc.byId[id];
+  const n = docNode(id);
   if (!n) return false;
   if (field === "state") {
     const raw = cycleMarkerSmart(n.raw, workflow(), {
@@ -348,7 +348,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
     const formulas = opts.formulas;
     if (!formulas) return [null];
     const id = typeof input === "string" ? input : input.id;
-    const page = typeof input === "string" ? doc.byId[id]?.page ?? "" : input.page;
+    const page = typeof input === "string" ? docNode(id)?.page ?? "" : input.page;
     const value = evaluateFormulaForRow(
       { id, page, kind: typeof input === "string" ? undefined : input.kind, dto: typeof input === "string" ? undefined : input.dto },
       field.slice("formula:".length),
@@ -365,7 +365,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
   }
 
   const id = typeof input === "string" ? input : input.id;
-  if (typeof input === "string" ? doc.byId[id] : liveFormulaRowNode(input)) return [groupKeyForBlock(id, field)];
+  if (typeof input === "string" ? docNode(id) : liveFormulaRowNode(input)) return [groupKeyForBlock(id, field)];
 
   const f = facetsForInput(input);
   if (!f) return [null];

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "../backend";
-import { doc, isDirty, resetStore, setDoc } from "../document";
+import { isDirty, resetStore } from "../document";
+import { doc, setDoc } from "../document/model";
 import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
 import { setGraphTransitioning } from "../ui";
 import type { GraphMeta } from "../types";

@@ -36,6 +36,7 @@ import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
 import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
+import { createPage, queryWorkspacePage } from "../document";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -138,18 +139,7 @@ export async function materializeQueryWorkspace(
       };
     }
 
-    const page: PageDto = {
-      name,
-      kind: "page",
-      title: name,
-      pre_block: null,
-      blocks: [{
-        id: "",
-        raw: savedQueryRaw(input),
-        collapsed: false,
-        children: [],
-      }],
-    };
+    const page = queryWorkspacePage(name, savedQueryRaw(input));
     const rev = await deps.savePage(resolved.id, page, null, false, binding.backendGeneration);
     if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     bumpPageInventoryRev();
@@ -176,7 +166,8 @@ function defaultDependencies(): QueryWorkspaceDependencies {
   const api = backend();
   return {
     resolvePage: (name, kind) => api.resolvePage(name, kind),
-    savePage: (id, page, baseRev, force, bindingGeneration) => api.savePage(id, page, baseRev, force, bindingGeneration),
+    savePage: (id, page, baseRev, _force, bindingGeneration) =>
+      createPage(page.name, page, { id, baseRev, bindingGeneration }),
     runGraphSearch: (source, pageLimit, blockLimit, lane, explain) =>
       api.runGraphSearch(source, pageLimit, blockLimit, lane, explain),
     runQuery: (source) => api.runQuery(source),

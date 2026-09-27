@@ -2,7 +2,7 @@ import { For, Show, createSignal, createResource, createEffect, createMemo, onCl
 import { backend } from "../backend";
 import { captureBinding, stillBound } from "../binding";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar } from "../ui";
-import { graphMeta, bumpPageInventoryRev } from "../graphSession";
+import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
 import { paletteCommands } from "../keybindings";
@@ -14,7 +14,7 @@ import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
 import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
-import { persistBlockRefTarget } from "../document";
+import { persistBlockRefTarget, createPage as saveCreatedPage, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
 
@@ -400,18 +400,11 @@ export function QuickSwitcher(): JSX.Element {
         if (!owner) throw new Error("alias owner disappeared");
         return { name: owner.name, pageKind: owner.kind, path: owner.id };
       }
-      await backend().savePage(
-        resolved.id,
-        { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw: "", collapsed: false, children: [] }] },
-        null, // brand-new page — no baseline
-        false,
-        binding.backendGeneration
-      );
+      await saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration });
       if (!stillBound(binding)) return null;
-      bumpPageInventoryRev();
       return null;
     } catch {
-      // ignore — still navigate; the page will be created on first edit
+      if (stillBound(binding)) pushToast(`Could not create “${name}”. It will be saved on your first edit.`, "error");
       return null;
     }
   };

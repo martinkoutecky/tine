@@ -149,14 +149,14 @@ describe("history parity", () => {
 
     expect(store.historyPageOnlyMode()).toBe(false);
     store.undo();
-    expect(store.doc.byId.b.raw).toBe("beta");
-    expect(store.doc.byId.a.raw).toBe("A edited");
+    expect(store.node("b").raw).toBe("beta");
+    expect(store.node("a").raw).toBe("A edited");
     store.redo();
 
     expect(store.toggleUndoRedoMode()).toBe("Page only");
     store.undo();
-    expect(store.doc.byId.a.raw).toBe("alpha");
-    expect(store.doc.byId.b.raw).toBe("B edited");
+    expect(store.node("a").raw).toBe("alpha");
+    expect(store.node("b").raw).toBe("B edited");
   });
 
   it("registers a palette-only mode command and reports the resulting mode", () => {
@@ -191,7 +191,7 @@ describe("history parity", () => {
 
     store.undo();
 
-    expect(store.doc.byId.a.raw).toBe("abc");
+    expect(store.node("a").raw).toBe("abc");
     expect(focusedPaneId()).toBe(historyPane);
     expect(paneRouter(historyPane!).route()).toEqual({ kind: "page", name: "A", pageKind: "page" });
     expect(rightSidebarOpen()).toBe(true);
@@ -216,7 +216,7 @@ describe("history parity", () => {
     setRightSidebarOpen(false);
 
     store.undo();
-    expect(store.doc.byId.a.raw).toBe("abc");
+    expect(store.node("a").raw).toBe("abc");
     expect(focusedPaneId()).toBe(historyPane);
     expect(rightSidebarOpen()).toBe(true);
     expect(rightSidebar()).toEqual([{ kind: "page", name: "A", pageKind: "page" }]);

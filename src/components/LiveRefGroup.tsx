@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, formatForPage, pageByName } from "../document";
+import { ensurePageLoaded, formatForPage, pageByName, node as docNode } from "../document";
 import { Block, CollapseSurfaceContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
@@ -81,7 +81,7 @@ export function LiveRefGroup(props: {
   const evidenceById = createMemo(() => new Map((props.evidence ?? []).map((item) => [item.block_id, item])));
   const dtoById = (id: string) => byId().get(id);
   const liveBreadcrumb = (id: string): string[] | null => {
-    if (!ready() || !doc.byId[id]) return null;
+    if (!ready() || !docNode(id)) return null;
 
     // The loaded source page is authoritative after hydration. Walk only the
     // nearest four ancestors: three labels are rendered and the fourth proves
@@ -90,10 +90,10 @@ export function LiveRefGroup(props: {
     // from result-row labels.
     const nearest: string[] = [];
     const seen = new Set([id]);
-    let parent = doc.byId[id].parent;
+    let parent = docNode(id).parent;
     while (parent !== null && nearest.length < 4) {
       if (seen.has(parent)) return null;
-      const ancestor = doc.byId[parent];
+      const ancestor = docNode(parent);
       if (!ancestor) return null;
       seen.add(parent);
       const line = (visibleBody(ancestor.raw)[0] ?? "").trim();
@@ -119,13 +119,13 @@ export function LiveRefGroup(props: {
     const roots = resultRootIds();
     if (roots.has(id)) return 0;
     let depth = 0;
-    let current = doc.byId[id];
+    let current = docNode(id);
     const seen = new Set<string>();
     while (current?.parent && !seen.has(current.id)) {
       seen.add(current.id);
       depth += 1;
       if (roots.has(current.parent)) return depth;
-      current = doc.byId[current.parent];
+      current = docNode(current.parent);
     }
     return null;
   };
@@ -133,7 +133,7 @@ export function LiveRefGroup(props: {
     const previous = initialCollapsed.get(id);
     if (previous !== undefined) return previous;
     const depth = relativeDepth(id);
-    const hasChildren = (doc.byId[id]?.children.length ?? 0) > 0;
+    const hasChildren = (docNode(id)?.children.length ?? 0) > 0;
     // Released OG initializes reference/query disclosure from the source state
     // and default-open level 2, then keeps that copy local to the result view.
     // Tine's displayed hit is relative depth 0, so branches immediately below it
@@ -176,7 +176,7 @@ export function LiveRefGroup(props: {
       const visit = (id: string) => {
         if (present.has(id)) return;
         present.add(id);
-        for (const child of doc.byId[id]?.children ?? []) visit(child);
+        for (const child of docNode(id)?.children ?? []) visit(child);
       };
       for (const root of roots) visit(root);
       for (const id of initialCollapsed.keys()) {
@@ -229,7 +229,7 @@ export function LiveRefGroup(props: {
                   </div>
                 </Show>
                 <Show
-                  when={ready() && doc.byId[id]}
+                  when={ready() && docNode(id)}
                   fallback={
                     <Show when={dtoById(id)}>
                       {(d) => <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} />}
@@ -244,7 +244,7 @@ export function LiveRefGroup(props: {
                           onOccurrence={(offset) => startEditing(
                             id,
                             rawOffsetToVisibleOffset(
-                              doc.byId[id]?.raw ?? "",
+                              docNode(id)?.raw ?? "",
                               offset,
                               isBuiltinHidden,
                               formatForPage(props.page),

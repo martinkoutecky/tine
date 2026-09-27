@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GraphMeta, PageRead } from "./types";
+import type { GraphMeta, PageDto, PageRead } from "./types";
 
 const META: GraphMeta = {
   root: "/tmp/template-graph",
@@ -49,7 +49,7 @@ async function loadHarness(
         blocks: [{ id: "template", raw: "Template body", collapsed: false, children: [] }],
       },
     ]),
-    savePage: vi.fn(async () => {
+    savePage: vi.fn(async (_id: string, _dto: PageDto, _baseRev: string | null, _force: boolean, _bindingGeneration?: number) => {
       events.push("save-template");
       return "new-rev";
     }),
@@ -101,7 +101,18 @@ async function loadHarness(
     retirePdfOwnership,
     activatePdfOwnership,
   }));
-  vi.doMock("./document", () => ({ resetStore: vi.fn(), flushAll: vi.fn(async () => true) }));
+  vi.doMock("./document", () => ({
+    resetStore: vi.fn(), flushAll: vi.fn(async () => true),
+    createPage: (_name: string, dto: PageDto, options: { id: string; baseRev: string | null; bindingGeneration: number }) =>
+      api.savePage(options.id, dto, options.baseRev, false, options.bindingGeneration),
+    journalTemplatePage: (title: string, blocks: unknown[], page?: PageRead | null) => ({
+      name: title, kind: "journal", title, pre_block: page?.pre_block ?? null, blocks, format: page?.format,
+    }),
+    demoJournalPage: (title: string) => ({ name: title, kind: "journal", title, pre_block: null, blocks: [{
+      id: "", raw: "👋 This is **today's journal** — your daily notes land here. Try your quick-capture hotkey, or open [[Welcome to Tine]] for the tour.",
+      collapsed: false, children: [],
+    }] }),
+  }));
   vi.doMock("./assetCache", () => ({ clearAssetBlobCache: vi.fn() }));
   vi.doMock("./router", () => ({
     resetTabsToJournals: vi.fn(),

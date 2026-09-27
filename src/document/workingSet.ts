@@ -1,15 +1,15 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
-import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations } from "./save/engine";
+import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk } from "./save/engine";
 import { doc, setDoc, FeedPage, pageByName } from "./model";
 import { produce } from "solid-js/store";
-import { purgePageNodes, toFeedPage } from "./convert";
+import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, stillBound, invalidateBinding } from "../binding";
 import { backend } from "../backend";
 import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
-import { type Route } from "../router";
+import { type Route } from "../routeTypes";
 import { editingId, endEdit } from "../editorController";
 import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
@@ -150,8 +150,7 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   // delete fails, the page (and its unsaved edits) must survive.
   tombstone(name);
   try {
-    if (expectedPath) await backend().deletePage(name, kind, expectedPath);
-    else await backend().deletePage(name, kind);
+    await deletePageOnDisk(name, kind, expectedPath);
   } catch {
     if (!stillBound(binding)) return false;
     untombstone(name); // delete failed — lift the tombstone; page + edits stay intact
@@ -328,15 +327,6 @@ export function appendFeed(dtos: (PageDto & { id?: string })[]) {
  *  doesn't exist on disk yet — the file is written lazily on first save. Shared by
  *  the feed loader (today's placeholder), single-page open, and the post-delete
  *  today restore, so the empty-page shape has ONE definition. */
-export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
-  return {
-    name,
-    kind,
-    title: name,
-    pre_block: null,
-    blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
-  };
-}
 
 /** Re-assert "the journals feed always shows today" on the LIVE feed after today's
  *  journal is deleted from it. The feed loader's `withToday` only runs on (re)load,
@@ -351,4 +341,3 @@ export function restoreTodayJournalInFeed() {
   upsertUnlessDirty(emptyPage(title, "journal"));
   setDoc("feed", [title, ...doc.feed]);
 }
-

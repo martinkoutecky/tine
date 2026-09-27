@@ -1,7 +1,9 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type FeedPage, type Node } from "../document";
+import { resetStore } from "../document";
+import { type FeedPage, type Node } from "../document/model";
+import { setDoc } from "../document/model";
 import {
   createFormulaResultsMemo,
   fieldValueToFormulaValue,

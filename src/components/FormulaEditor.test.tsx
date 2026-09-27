@@ -3,7 +3,9 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { FormulaEditor } from "./FormulaEditor";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../document";
+import { blockProperty, resetStore } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { closeFormulaEditor, openFormulaEditor } from "../ui";
 import { decodeFormulaExpr, encodeFormulaExpr } from "../sheet/formula";
 import {

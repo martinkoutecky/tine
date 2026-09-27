@@ -4,7 +4,8 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../document";
+import { loadSingle, pageByName, resetStore } from "../document";
+import { doc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 

@@ -1,4 +1,4 @@
-import { deleteBlock, doc, formatForBlock, insertEmptyChildBlock, replaceChildOrders, setRaw, withUndoUnit, blockPageReadOnly } from "../document";
+import { deleteBlock, formatForBlock, insertEmptyChildBlock, replaceChildOrders, setRaw, withUndoUnit, blockPageReadOnly, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { MARKERS } from "../markers";
 import { fieldIdsForBlocks, groupKeyForBlock, isFieldId, readField, writeField, type FieldId } from "./fields";
@@ -31,7 +31,7 @@ function writable(field: FieldId): field is WritableGroupField {
 }
 
 function firstVisibleLine(id: string): string {
-  return (visibleBody(doc.byId[id]?.raw ?? "")[0] ?? "").trim();
+  return (visibleBody(docNode(id)?.raw ?? "")[0] ?? "").trim();
 }
 
 function parseLabel(field: WritableGroupField, label: string): string | null | undefined {
@@ -50,7 +50,7 @@ function candidateFields(parentId: string, groups: readonly FlattenGroup[], chil
   const add = (field: FieldId | null | undefined) => {
     if (field && writable(field) && !out.includes(field)) out.push(field);
   };
-  const parent = doc.byId[parentId];
+  const parent = docNode(parentId);
   if (parent) {
     const configured = sheetConfigFromRaw(parent.raw, formatForBlock(parentId)).groupBy;
     if (configured && isFieldId(configured)) add(configured);
@@ -85,8 +85,8 @@ function inferFlattenField(parentId: string, groups: readonly FlattenGroup[], ch
       }
       if (!valid) break;
     }
-    const configured = doc.byId[parentId]
-      ? sheetConfigFromRaw(doc.byId[parentId].raw, formatForBlock(parentId)).groupBy === field
+    const configured = docNode(parentId)
+      ? sheetConfigFromRaw(docNode(parentId).raw, formatForBlock(parentId)).groupBy === field
       : false;
     if (valid && (sawExisting || configured || (field !== "state" && field !== "priority" ? false : sawValueLabel))) return field;
   }
@@ -94,17 +94,17 @@ function inferFlattenField(parentId: string, groups: readonly FlattenGroup[], ch
 }
 
 export function canFlatten(parentId: string): boolean {
-  return (doc.byId[parentId]?.children ?? []).some((id) => (doc.byId[id]?.children.length ?? 0) > 0);
+  return (docNode(parentId)?.children ?? []).some((id) => (docNode(id)?.children.length ?? 0) > 0);
 }
 
 export function hierarchify(parentId: string, field: FieldId): boolean {
   if (blockPageReadOnly(parentId)) return false; // org round-trip gate (review finding)
-  const parent = doc.byId[parentId];
+  const parent = docNode(parentId);
   if (!parent || !parent.children.length) return false;
   const buckets: GroupBucket[] = [];
   const byKey = new Map<string, GroupBucket>();
   for (const row of parent.children) {
-    if (!doc.byId[row] || doc.byId[row].page !== parent.page) return false;
+    if (!docNode(row) || docNode(row).page !== parent.page) return false;
     const key = groupKeyForBlock(row, field);
     const mapKey = key ?? "\0";
     let bucket = byKey.get(mapKey);
@@ -121,7 +121,7 @@ export function hierarchify(parentId: string, field: FieldId): boolean {
     const groupIds: string[] = [];
     const nextOrders: Record<string, readonly string[]> = {};
     for (const bucket of buckets) {
-      const groupId = insertEmptyChildBlock(parentId, doc.byId[parentId]?.children.length ?? 0);
+      const groupId = insertEmptyChildBlock(parentId, docNode(parentId)?.children.length ?? 0);
       if (!groupId) throw new Error("failed to create group block");
       setRaw(groupId, bucket.label, { timetracking: false });
       groupIds.push(groupId);
@@ -135,14 +135,14 @@ export function hierarchify(parentId: string, field: FieldId): boolean {
 
 export function flatten(parentId: string): boolean {
   if (blockPageReadOnly(parentId)) return false; // org round-trip gate (review finding)
-  const parent = doc.byId[parentId];
+  const parent = docNode(parentId);
   if (!parent || !parent.children.length) return false;
 
   const groups: FlattenGroup[] = [];
   const childless: string[] = [];
   const nextParentOrder: string[] = [];
   for (const childId of parent.children) {
-    const child = doc.byId[childId];
+    const child = docNode(childId);
     if (!child || child.page !== parent.page) return false;
     if (!child.children.length) {
       childless.push(childId);

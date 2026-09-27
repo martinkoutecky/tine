@@ -1,6 +1,6 @@
 import { FeedPage, Node, doc, pageByName, setDoc, docHasBlockIdentity } from "./model";
 import { addDirty, cancelSourceHoldForDest, holdSourcesForDest, scheduleSave } from "./save/engine";
-import { type Route } from "../router";
+import { type Route } from "../routeTypes";
 import { type HistorySidebarContext, captureHistorySidebarContext, restoreHistorySidebarContext } from "../ui";
 import { type HistoryEditorContext, captureHistoryEditorContext, editingId, endEdit, restoreHistoryEditorContext } from "../editorController";
 import { unwrap, produce } from "solid-js/store";
@@ -439,4 +439,3 @@ function restoreEntryContext(context: HistoryContext) {
     }
   }
 }
-

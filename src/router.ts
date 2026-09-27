@@ -8,21 +8,17 @@
 import { createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
 import { navigationName } from "./pageIndex";
-import { doc, persistentBlockRef, resolveBlockRef, extendFeedForScroll, type HistoryRouteContext } from "./document";
+import { persistentBlockRef, resolveBlockRef, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { renderedBlocks } from "./lazyObserve";
 import { navReuseTabs } from "./navSettings";
 import { isMobilePlatform } from "./nativeChrome";
 import type { PageKind } from "./types";
+import { installRouterBridge } from "./routerBridge";
+import type { PageTarget, Route, QueryPresentation, QueryRoute } from "./routeTypes";
+export type { PageTarget, Route, QueryPresentation, QueryRoute } from "./routeTypes";
 
 /** One logical page plus its optional concrete graph-relative file owner. */
-export interface PageTarget {
-  name: string;
-  pageKind: PageKind;
-  /** Absent only for deliberately logical navigation. */
-  path?: string;
-}
-
 export interface BlockTarget extends PageTarget {
   block: string;
 }
@@ -55,30 +51,6 @@ export function pageTargetMatchesLoaded(
 ): boolean {
   if (!page || page.name !== target.name || page.kind !== target.pageKind) return false;
   return target.path === undefined || page.id === target.path;
-}
-
-export type Route =
-  | { kind: "journals" }
-  | QueryRoute
-  | (PageTarget & {
-      kind: "page";
-      block?: string;
-      /** Graph-root-relative file to pin this view to - set ONLY to reach a
-       *  duplicate-day stray that shares a (kind,name) with the canonical file
-       *  (#21). Absent for normal pages, which resolve by name. */
-      path?: string;
-    });
-
-export type QueryPresentation = "search" | "list" | "table" | "board";
-
-export interface QueryRoute {
-  kind: "query";
-  /** Stable workspace identity. Editing the expression replaces this history
-   *  entry instead of appending one entry per keystroke. */
-  id: string;
-  sourceKind: "search" | "dsl";
-  source: string;
-  presentation: QueryPresentation;
 }
 
 export interface Tab {
@@ -576,7 +548,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       }
       return;
     }
-    if (!doc.byId[id]) return; // block no longer loaded - nothing to zoom into
+    if (!docNode(id)) return; // block no longer loaded - nothing to zoom into
     const ref = persistentBlockRef(id);
     navigate({ kind: "page", ...pageTargetFromBlockRef(ref), block: ref.uuid });
   }
@@ -1030,11 +1002,9 @@ function restoreHistoryRouteContext(context: HistoryRouteContext): boolean {
   if (!router) return false;
   const route = context.route;
   if (route.kind === "page") {
-    const page = doc.pages.find((candidate) =>
-      candidate.name === route.name
-      && candidate.kind === route.pageKind
-      && (route.path === undefined || candidate.id === route.path)
-    );
+    const candidate = loadedPage(route.name);
+    const page = candidate?.kind === route.pageKind
+      && (route.path === undefined || candidate.id === route.path) ? candidate : undefined;
     if (!page) return false;
   }
   if (!activatePaneProvider(context.paneId)) return false;
@@ -1201,3 +1171,5 @@ export function flushSession(): Promise<void> {
 export function restoreSession(): Promise<void> {
   return mainRouterInstance().restoreSession();
 }
+
+installRouterBridge({ route, focusBlock, scheduleSessionSave });

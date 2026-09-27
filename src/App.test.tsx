@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { handleGraphChange, installMobileExternalLinkHandler } from "./App";
 import { resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { markDirty, pageToDto, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./document";
+import { markDirty, pageToDto, resetStore } from "./document";
+import { type FeedPage, type Node as StoreNode } from "./document/model";
+import { setDoc } from "./document/model";
 import { isConflicted } from "./document";
 import { pageInventoryRev } from "./graphSession";
 

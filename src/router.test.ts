@@ -23,7 +23,7 @@ import {
   replaceActiveRoute,
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
-import { setDoc } from "./document";
+import { setDoc } from "./document/model";
 
 // The router holds singleton tab state, so reset to a single unpinned journals
 // tab before each test. confirm() is stubbed true so closing pinned tabs (which

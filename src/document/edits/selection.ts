@@ -2,7 +2,7 @@ import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibl
 import { doc, setDoc } from "../model";
 import { createSignal, createRoot, createMemo } from "solid-js";
 import { endEdit, editingId } from "../../editorController";
-import { notifyOutlineSelectionStarted } from "../../modeHooks";
+import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
 import { blockWritable, writeCollapsed } from "./properties";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
@@ -12,6 +12,8 @@ import { markDirty } from "../save/engine";
 import { moveBlockInternal } from "./moves";
 import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
+
+installClearOutlineSelection(() => clearSelection());
 
 let activeSelectionScope: OutlineScope | null = null;
 
@@ -250,4 +252,3 @@ export function selectionMarkdown(): string {
     .map((id) => blockSubtreeMarkdown(id, 0, true, stripCollapsed, onlySel))
     .join("\n");
 }
-

@@ -1,5 +1,5 @@
 import { batch, createMemo, createRoot, createSignal } from "solid-js";
-import { doc, mainPages, pageByName, setDoc, type FeedPage } from "./document";
+import { mainPages, pageByName, revealNode, type FeedPage, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";
@@ -142,7 +142,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
   const out: InPageFindMatch[] = [];
   const walk = (ids: readonly string[], format: Format) => {
     for (const id of ids) {
-      const n = doc.byId[id];
+      const n = docNode(id);
       if (!n) continue;
       const text = cachedRenderedBlockText(id, n.raw, format);
       findTextOccurrences(text, q).forEach((m, ordinalInBlock) => {
@@ -189,7 +189,7 @@ function currentFindPaneId(): string {
   return notesPaneId(state.paneId() ?? focusedPaneId());
 }
 
-function pagesForInPageFind(): FeedPage[] {
+function pagesForInPageFind(): readonly FeedPage[] {
   const router = paneRouter(currentFindPaneId());
   const r = router.route();
   if (r.kind === "journals") return mainPages();
@@ -267,11 +267,11 @@ export function activateInPageFindIndex(index: number, matches = inPageFindMatch
 }
 
 function expandAncestorsForFind(blockId: string) {
-  let parent = doc.byId[blockId]?.parent ?? null;
+  let parent = docNode(blockId)?.parent ?? null;
   while (parent !== null) {
-    const n = doc.byId[parent];
+    const n = docNode(parent);
     if (!n) return;
-    if (n.collapsed) setDoc("byId", parent, "collapsed", false);
+    if (n.collapsed) revealNode(parent);
     parent = n.parent;
   }
 }
@@ -345,7 +345,7 @@ export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boo
     }
     return false;
   }
-  const node = doc.byId[match.blockId];
+  const node = docNode(match.blockId);
   if (!node) return false;
   renderedBlocks.add(match.blockId);
   expandAncestorsForFind(match.blockId);

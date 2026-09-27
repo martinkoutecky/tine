@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { openPageAtBlock } from "../router";
-import { doc, formatForPage, resolveBlockRef } from "../document";
+import { formatForPage, resolveBlockRef, node as docNode } from "../document";
 import { startEditing } from "../editorController";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
@@ -19,8 +19,8 @@ function focusMainOccurrence(
   let attempts = 0;
   const focus = () => {
     const runtimeId = resolveBlockRef({ uuid: blockId, page, pageKind: kind, ...(path ? { path } : {}) });
-    if (runtimeId && doc.byId[runtimeId]) {
-      const block = doc.byId[runtimeId];
+    if (runtimeId && docNode(runtimeId)) {
+      const block = docNode(runtimeId);
       startEditing(
         runtimeId,
         rawOffsetToVisibleOffset(block.raw, offset, isBuiltinHidden, formatForPage(page)),

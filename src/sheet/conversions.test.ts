@@ -1,7 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { inlineText, parseBody } from "../render/facets";
-import { pageToDto, resetStore, setDoc, undo, doc, type FeedPage, type Node as StoreNode } from "../document";
+import { pageToDto, resetStore, undo } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { setToasts, toasts } from "../toasts";
 import {
   canConvertPipeTableToGrid,

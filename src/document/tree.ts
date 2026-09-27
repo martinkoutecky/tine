@@ -26,7 +26,7 @@ export const visibleData = createRoot(() =>
   createMemo(() => {
     const order: string[] = [];
     const index = new Map<string, number>();
-    const walk = (ids: string[]) => {
+    const walk = (ids: readonly string[]) => {
       for (const id of ids) {
         index.set(id, order.length);
         order.push(id);
@@ -136,4 +136,3 @@ export function depthOf(id: string): number {
   }
   return d;
 }
-

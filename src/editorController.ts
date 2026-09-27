@@ -1,7 +1,6 @@
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
-import { clearSelection } from "./document";
-import { notifyEditingStarted } from "./modeHooks";
+import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -192,7 +191,7 @@ export function startEditing(
   // this it would briefly show its raw text on blur while the IntersectionObserver
   // catches up. See AstBody / src/lazyObserve.ts (P1 lazy body).
   renderedBlocks.add(id);
-  clearSelection();
+  notifyClearOutlineSelection();
 
   // Set the editing signals atomically. `editing()` (Block.tsx) depends on BOTH
   // editingId AND editingOwner; without batching, an unscoped nav (owner=null) from a

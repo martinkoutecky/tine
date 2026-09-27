@@ -4,6 +4,57 @@ import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine } from "../editor/properties";
 import { pushToast } from "../toasts";
+import { journalTitle } from "../journal";
+
+/** Wire DTO constructors live here; callers choose the intent and supply content. */
+export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
+  return { name, kind, title: name, pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
+}
+
+export function withToday(js: PageDto[]): PageDto[] {
+  const title = journalTitle(new Date());
+  return js.some((p) => p.name === title) ? js : [emptyPage(title, "journal"), ...js];
+}
+
+export function toLoadablePage(dto: PageDto, name: string): PageDto {
+  return dto.blocks.length ? dto : { ...dto, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
+}
+
+export function carryTodayPage(name: string): PageDto {
+  return emptyPage(name, "journal");
+}
+
+export function captureScratchPage(name: string, blockId: string): PageDto {
+  if (!blockId.trim()) throw new Error("Quick Capture scratch block id must not be empty");
+  return { name, kind: "page", title: name, pre_block: null, blocks: [{ id: blockId, raw: "", collapsed: false, children: [] }], rev: null };
+}
+
+export function captureEmptyPage(name: string, kind: "journal" | "page"): PageDto {
+  return { name, kind, title: name, pre_block: null, blocks: [], rev: null };
+}
+
+export function journalTemplatePage(title: string, blocks: BlockDto[], existing?: PageDto | null): PageDto {
+  return { name: title, kind: "journal", title, pre_block: existing?.pre_block ?? null, blocks, format: existing?.format };
+}
+
+export function demoJournalPage(title: string): PageDto {
+  return { name: title, kind: "journal", title, pre_block: null, blocks: [{ id: "", raw: "👋 This is **today's journal** — your daily notes land here. Try your quick-capture hotkey, or open [[Welcome to Tine]] for the tour.", collapsed: false, children: [] }] };
+}
+
+export function switcherPage(name: string): PageDto {
+  return { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw: "", collapsed: false, children: [] }] };
+}
+
+export function queryWorkspacePage(name: string, raw: string): PageDto {
+  return { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw, collapsed: false, children: [] }] };
+}
+
+export function appendAliasDraft(owner: PageDto, draft: PageDto): PageDto {
+  const draftBlocks = draft.pre_block
+    ? [{ id: "", raw: draft.pre_block, collapsed: false, children: [] }, ...draft.blocks]
+    : draft.blocks;
+  return { ...owner, blocks: [...owner.blocks, ...draftBlocks] };
+}
 
 // ---------------------------------------------------------------------------
 // Loading / serializing
@@ -202,4 +253,3 @@ export function resolveGuidePageDto(title: string): PageDto | null {
   const p = doc.pages.find((x) => x.guide && x.title === title);
   return p ? pageToDto(p.name) : null;
 }
-

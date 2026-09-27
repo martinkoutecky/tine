@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { routeTitle, type PaneRouter, type Route } from "../router";
-import { doc, formatForBlock } from "../document";
+import { formatForBlock, node as docNode } from "../document";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane } from "../panes";
@@ -38,7 +38,7 @@ function blockSummary(raw: string, format: PropFormat, truncate = true): string 
 // shows the page name (falling back to it when the block isn't loaded or empty).
 function tabTitle(r: Route): string {
   if (r.kind === "page" && r.block) {
-    const n = doc.byId[r.block];
+    const n = docNode(r.block);
     if (n) {
       const s = blockSummary(n.raw, formatForBlock(r.block));
       if (s) return s;
@@ -49,7 +49,7 @@ function tabTitle(r: Route): string {
 
 function tabFullTitle(r: Route): string {
   if (r.kind === "page" && r.block) {
-    const n = doc.byId[r.block];
+    const n = docNode(r.block);
     if (n) {
       const summary = blockSummary(n.raw, formatForBlock(r.block), false);
       if (summary) return summary;

@@ -4,7 +4,9 @@ import type { JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, resetStore, setDoc, type Node, type FeedPage } from "../document";
+import { blockProperty, resetStore } from "../document";
+import { type Node, type FeedPage } from "../document/model";
+import { setDoc } from "../document/model";
 import { openJournals, route } from "../router";
 import { resetCellSelectionForTests } from "../sheet/selection";
 

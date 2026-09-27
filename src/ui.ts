@@ -7,7 +7,8 @@ import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend, isTauri } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
-import { route, focusBlock, scheduleSessionSave, type PageTarget } from "./router";
+import { route, focusBlock, scheduleSessionSave } from "./routerBridge";
+import type { PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat, isJournalTitle } from "./journal";

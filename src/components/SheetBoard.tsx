@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { blockPageReadOnly, doc, formatForBlock, formatForPage, pageByName, readPageProperty } from "../document";
+import { blockPageReadOnly, formatForBlock, formatForPage, pageByName, readPageProperty, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -125,7 +125,7 @@ export function SheetBoard(props: {
   const [addingTag, setAddingTag] = createSignal(false);
   const [tagInputInvalid, setTagInputInvalid] = createSignal(false);
   const config = createMemo(() => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
   });
   const schemaFields = createMemo<readonly FieldSpec[]>(() => {
@@ -139,16 +139,16 @@ export function SheetBoard(props: {
     return page ? formulasOf(pageProperties(page.preBlock, page.format)) : new Map();
   });
   const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
   });
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
 
   const allRows = createMemo<RowRecord[]>(() => {
     if (props.rowSource === "children") {
-      return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
+      return (docNode(props.ownerId)?.children ?? []).map((id) => ({
         id,
-        page: doc.byId[id]?.page ?? doc.byId[props.ownerId]?.page ?? "",
+        page: docNode(id)?.page ?? docNode(props.ownerId)?.page ?? "",
       }));
     }
     return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, kind: g.kind, dto: b })));
@@ -406,7 +406,7 @@ export function SheetBoard(props: {
   };
 
   const openSheetMenu = (e: MouseEvent) => {
-    if (!doc.byId[props.ownerId]) return;
+    if (!docNode(props.ownerId)) return;
     e.preventDefault();
     e.stopPropagation();
     openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "board", props.rowSource, groupBy(), {

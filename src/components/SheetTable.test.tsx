@@ -6,7 +6,9 @@ import { ContextMenu } from "./ContextMenu";
 import { __sheetTableTestHooks, SheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, pageByName, readPageProperty, redo, resetStore, setDoc, setRaw, undo, type FeedPage, type Node as StoreNode } from "../document";
+import { blockProperty, pageByName, readPageProperty, redo, resetStore, setRaw, undo } from "../document";
+import { type FeedPage, type Node as StoreNode } from "../document/model";
+import { doc, setDoc } from "../document/model";
 import { setWorkflow } from "../ui";
 import {
   cellSel,

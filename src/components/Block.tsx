@@ -28,7 +28,7 @@ import { typoTypeReplace } from "../render/typography";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { doc, pageByName, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistentBlockRef, persistBlockRefTarget, isBlockMoving, setBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope } from "../document";
+import { pageByName, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistentBlockRef, persistBlockRefTarget, isBlockMoving, setBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
 import {
   clearFocusSurface,
   editingId,
@@ -136,11 +136,11 @@ import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 type SheetSlashView = "grid" | "table" | "board";
 
 export function applySheetViewSlashAction(id: string, view: SheetSlashView): string | null {
-  const node = doc.byId[id];
+  const node = docNode(id);
   if (!node) return null;
   let seededCellId: string | null = null;
   withUndoUnit(`sheet:view:${view}`, [node.page], () => {
-    const shouldSeedGrid = view === "grid" && (doc.byId[id]?.children.length ?? 0) === 0;
+    const shouldSeedGrid = view === "grid" && (docNode(id)?.children.length ?? 0) === 0;
     setBlockProperty(id, "tine.view", view);
     if (view === "board") setBlockProperty(id, "tine.group-by", "state");
     if (shouldSeedGrid) {
@@ -179,12 +179,12 @@ const [dropInd, setDropInd] = createSignal<{ id: string; before: boolean } | nul
 let dragMoved = false;
 
 function siblingIndex(id: string): number {
-  const n = doc.byId[id];
+  const n = docNode(id);
   if (!n) return -1;
   const sibs =
     n.parent === null
-      ? doc.pages.find((p) => p.name === n.page)?.roots ?? []
-      : doc.byId[n.parent].children;
+      ? pageRoots(n.page)
+      : docNode(n.parent).children;
   return sibs.indexOf(id);
 }
 
@@ -214,8 +214,8 @@ function beginDrag(id: string, e: MouseEvent) {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
     const ind = dropInd();
-    if (dragMoved && ind && doc.byId[ind.id]) {
-      const tgt = doc.byId[ind.id];
+    if (dragMoved && ind && docNode(ind.id)) {
+      const tgt = docNode(ind.id);
       // can't drop onto own descendant
       let p: string | null = ind.id;
       let ok = true;
@@ -224,7 +224,7 @@ function beginDrag(id: string, e: MouseEvent) {
           ok = false;
           break;
         }
-        p = doc.byId[p].parent;
+        p = docNode(p).parent;
       }
       // Pass the target's page so a root-to-root drop across pages (e.g. between
       // journal days) lands on the page it was dropped onto, not the source page.
@@ -273,7 +273,7 @@ export interface CollapseSurfaceApi {
 export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(null);
 
 export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
-  const node = () => doc.byId[props.id];
+  const node = () => docNode(props.id);
   // Unique per rendered instance, so when one block uuid appears in several
   // surfaces only the instance that was clicked mounts the editor (the rest stay
   // rendered and reflect edits live). null owner = unscoped (keyboard nav).
@@ -305,7 +305,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const collapsibleDescendants = createMemo(() => collapsibleDescendantIds(props.id));
   const hasCollapsedDescendant = createMemo(() =>
     collapsibleDescendants().some((id) => {
-      const descendant = doc.byId[id];
+      const descendant = docNode(id);
       return descendant
         ? collapseSurface?.collapsed(id, descendant.collapsed) ?? descendant.collapsed
         : false;
@@ -467,7 +467,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             // (the row padding has no text to map). Read-only org pages don't edit.
             if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
             if (!editing() && !readOnly() && !forbidsEditEntry(e))
-              beginEditGesture(e, props.id, doc.byId[props.id].raw.length, instanceId, outlineScope);
+              beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >
           <Show
@@ -640,7 +640,7 @@ function Rendered(props: {
   trailing?: JSX.Element;
   outlineScope?: OutlineScope | null;
 }): JSX.Element {
-  const node = () => doc.byId[props.id];
+  const node = () => docNode(props.id);
   const fmt = () => pageByName(node().page)?.format ?? "md";
   // Header facets (marker/priority/heading/scheduled/deadline/properties) off the
   // ONE lsdoc parse — read from the cache the store seeded from the backend DTO (no
@@ -829,7 +829,7 @@ function Rendered(props: {
 
 // Cycle the task marker on a block (OG order), used by the marker chip click.
 function cycleBlockMarker(id: string) {
-  const { raw } = cycleMarkerSmart(doc.byId[id].raw, workflow(), {
+  const { raw } = cycleMarkerSmart(docNode(id).raw, workflow(), {
     format: formatForBlockId(id),
     enabled: timetrackingEnabled(),
     withSeconds: logbookWithSecondSupport(),
@@ -840,7 +840,7 @@ function cycleBlockMarker(id: string) {
 // Toggle the task checkbox (OG check/uncheck): open → DONE (rolling a repeater
 // forward instead), DONE → the workflow's open marker. Used by the block checkbox.
 function toggleBlockCheckbox(id: string) {
-  const raw = toggleTaskDone(doc.byId[id].raw, workflow(), {
+  const raw = toggleTaskDone(docNode(id).raw, workflow(), {
     format: formatForBlockId(id),
     enabled: timetrackingEnabled(),
     withSeconds: logbookWithSecondSupport(),
@@ -849,7 +849,7 @@ function toggleBlockCheckbox(id: string) {
 }
 
 function formatForBlockId(id: string): "md" | "org" {
-  return pageByName(doc.byId[id]?.page)?.format ?? "md";
+  return pageByName(docNode(id)?.page)?.format ?? "md";
 }
 
 function ClockBadge(props: { info: LogbookInfo }): JSX.Element {
@@ -1021,7 +1021,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // Caret/selection stashed when the *window* (not this block) loses focus, so
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
-  const node = () => doc.byId[props.id];
+  const node = () => docNode(props.id);
   const sheetInitialRaw = sheetCell ? node()?.raw ?? "" : null;
   // Page format drives in-block list markers (`-` is an org bullet, not md).
   const pageFmt = (): "md" | "org" => (pageByName(node().page)?.format === "org" ? "org" : "md");
@@ -1466,7 +1466,7 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
-    const page = pageByName(doc.byId[props.id]?.page ?? "");
+    const page = pageByName(docNode(props.id)?.page ?? "");
     const md = assetMarkdown(stored, {
       label: origName,
       pagePath: page?.id,
@@ -1488,7 +1488,7 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const insertStoredAssets = (assets: { stored: string; label?: string }[]) => {
     if (!assets.length) return;
-    const page = pageByName(doc.byId[props.id]?.page ?? "");
+    const page = pageByName(docNode(props.id)?.page ?? "");
     const markdown = assets.map(({ stored, label }) => assetMarkdown(stored, {
       label,
       pagePath: page?.id,
@@ -1728,7 +1728,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // Store with a timestamped name (keeps the original + a sortable insert time).
       const orig = path.split(/[\\/]/).pop() || undefined;
       const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
-      const page = pageByName(doc.byId[props.id]?.page ?? "");
+      const page = pageByName(docNode(props.id)?.page ?? "");
       const md = assetMarkdown(saved, {
         label: orig,
         pagePath: page?.id,
@@ -1766,7 +1766,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const saved = await trackAssetWrite(
         backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes)
       );
-      const page = pageByName(doc.byId[props.id]?.page ?? "");
+      const page = pageByName(docNode(props.id)?.page ?? "");
       const md = assetMarkdown(saved, {
         pagePath: page?.id,
         format: formatForBlock(props.id),
@@ -1835,13 +1835,13 @@ export function Editor(props: { id: string }): JSX.Element {
       const before = textarea.value;
       const selectionStart = textarea.selectionStart;
       const selectionEnd = textarea.selectionEnd;
-      const node = doc.byId[props.id];
+      const node = docNode(props.id);
       if (!node) return;
       let depth = 0;
       let parentId = node.parent;
-      while (parentId && doc.byId[parentId] && depth < 1_000) {
+      while (parentId && docNode(parentId) && depth < 1_000) {
         depth++;
-        parentId = doc.byId[parentId].parent;
+        parentId = docNode(parentId).parent;
       }
       const plugin = item.plugin;
       const ownedBlock = bindPluginBlockSnapshot({
@@ -1860,7 +1860,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const trigger = { ...t };
       const editorIsCurrent = () => {
         const liveTrigger = detectTrigger(textarea.value, textarea.selectionStart, propertyValueKey());
-        const liveNode = doc.byId[props.id];
+        const liveNode = docNode(props.id);
         return editorMounted
           && token === pluginSlashInvocation
           && isPluginGraphOwnerCurrent(ownedBlock.owner)
@@ -1925,12 +1925,12 @@ export function Editor(props: { id: string }): JSX.Element {
       const r = applyCompletion(ref.value, t.start, t.end, "");
       commit(r.raw);
       closeAc();
-      const nodes = item.templateNodes.map((n) => templateToOutline(n, doc.byId[props.id]?.page));
+      const nodes = item.templateNodes.map((n) => templateToOutline(n, docNode(props.id)?.page));
       const wasEmpty =
-        doc.byId[props.id].raw.trim() === "" && doc.byId[props.id].children.length === 0;
+        docNode(props.id).raw.trim() === "" && docNode(props.id).children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
       if (wasEmpty) deleteBlock(props.id);
-      startEditing(lastId, doc.byId[lastId].raw.length);
+      startEditing(lastId, docNode(lastId).raw.length);
       return;
     }
     switch (item.action) {
@@ -2058,7 +2058,7 @@ export function Editor(props: { id: string }): JSX.Element {
         // page this block lives on (anchored under the editor).
         replaceTrigger("");
         const rect = ref.getBoundingClientRect();
-        openPageProps(doc.byId[props.id].page, rect.left, rect.bottom + 4);
+        openPageProps(docNode(props.id).page, rect.left, rect.bottom + 4);
         return;
       }
       case "sheet-grid":
@@ -2359,7 +2359,7 @@ export function Editor(props: { id: string }): JSX.Element {
     e.preventDefault();
     const start = ref.selectionStart;
     commit(ref.value);
-    setBlockMoving(true, doc.byId[props.id]?.page);
+    setBlockMoving(true, docNode(props.id)?.page);
     startEditing(props.id, start);
     const move = outlineScope
       ? (moveItem(props.id, dir), Promise.resolve())
@@ -2483,7 +2483,7 @@ export function Editor(props: { id: string }): JSX.Element {
       e.preventDefault();
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
-      if (outlineScope?.forceExpandedRoot === doc.byId[props.id]?.parent) return true;
+      if (outlineScope?.forceExpandedRoot === docNode(props.id)?.parent) return true;
       commit(ref.value); outdentBlock(props.id, ref.selectionStart); return true;
     },
   };
@@ -2542,29 +2542,29 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const sheetFaceGridId = (id: string): string | null => {
     if (blockIsGridView(id)) return id;
-    return (doc.byId[id]?.children ?? []).find((child) => blockIsGridView(child)) ?? null;
+    return (docNode(id)?.children ?? []).find((child) => blockIsGridView(child)) ?? null;
   };
   const sheetVisibleLength = (id: string): number =>
-    splitProps(doc.byId[id]?.raw ?? "", isSheetCellHidden).visible.length;
+    splitProps(docNode(id)?.raw ?? "", isSheetCellHidden).visible.length;
   const deepestLastSheetOutline = (id: string): string => {
     let cur = id;
     for (;;) {
       if (sheetFaceGridId(cur)) return cur;
-      const children = doc.byId[cur]?.children ?? [];
+      const children = docNode(cur)?.children ?? [];
       if (!children.length) return cur;
       cur = children[children.length - 1];
     }
   };
   const nextSheetOutline = (id: string, hostId: string): string | null => {
     if (!sheetFaceGridId(id)) {
-      const firstChild = doc.byId[id]?.children[0];
+      const firstChild = docNode(id)?.children[0];
       if (firstChild) return firstChild;
     }
     let cur = id;
     while (cur !== hostId) {
-      const parent = doc.byId[cur]?.parent ?? null;
+      const parent = docNode(cur)?.parent ?? null;
       if (!parent) return null;
-      const siblings = doc.byId[parent]?.children ?? [];
+      const siblings = docNode(parent)?.children ?? [];
       const idx = siblings.indexOf(cur);
       if (idx >= 0 && idx + 1 < siblings.length) return siblings[idx + 1];
       cur = parent;
@@ -2572,9 +2572,9 @@ export function Editor(props: { id: string }): JSX.Element {
     return null;
   };
   const prevSheetOutline = (id: string, hostId: string): string | "host" | null => {
-    const parent = doc.byId[id]?.parent ?? null;
+    const parent = docNode(id)?.parent ?? null;
     if (!parent) return null;
-    const siblings = doc.byId[parent]?.children ?? [];
+    const siblings = docNode(parent)?.children ?? [];
     const idx = siblings.indexOf(id);
     if (idx > 0) return deepestLastSheetOutline(siblings[idx - 1]);
     if (parent === hostId) return "host";
@@ -2619,7 +2619,7 @@ export function Editor(props: { id: string }): JSX.Element {
         const hostId = cellBlockId(sheetCell);
         const next = hostId
           ? props.id === hostId
-            ? doc.byId[hostId]?.children[0] ?? null
+            ? docNode(hostId)?.children[0] ?? null
             : nextSheetOutline(props.id, hostId)
           : null;
         if (next) commitAndStartSheetEdit(next, 0);
@@ -2979,9 +2979,9 @@ export function Editor(props: { id: string }): JSX.Element {
           e.preventDefault();
           return;
         }
-        const n = doc.byId[props.id];
+        const n = docNode(props.id);
         const next = nextVisible(props.id, outlineScope);
-        if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next && doc.byId[next]?.page === n.page) {
+        if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next && docNode(next)?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
           startEditing(next, 0, null, editSurface());
@@ -3151,7 +3151,7 @@ export function Editor(props: { id: string }): JSX.Element {
         // normalized text. Identity remains separately one-shot and validated.
         void pasteClipboardPayload(props.id, slot)
           .then((lastId) => {
-            if (lastId && doc.byId[lastId]) startEditing(lastId, doc.byId[lastId].raw.length);
+            if (lastId && docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
           })
           .catch(() => {}); // association failure is a quiet feature miss
         return;
@@ -3179,14 +3179,14 @@ export function Editor(props: { id: string }): JSX.Element {
     const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text, pageFmt());
     if (htmlNodes) {
       e.preventDefault();
-      const wasEmpty = ref.value.trim() === "" && doc.byId[props.id].children.length === 0;
-      const lastId = withUndoUnit("structured-paste", [doc.byId[props.id].page], () => {
+      const wasEmpty = ref.value.trim() === "" && docNode(props.id).children.length === 0;
+      const lastId = withUndoUnit("structured-paste", [docNode(props.id).page], () => {
         commit(ref.value);
         return wasEmpty
           ? replaceEmptyBlockWithOutline(props.id, htmlNodes)
           : insertOutlineAfter(props.id, htmlNodes);
       });
-      startEditing(lastId, doc.byId[lastId].raw.length);
+      startEditing(lastId, docNode(lastId).raw.length);
       return;
     }
     // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:168-177 parses only
@@ -3207,14 +3207,14 @@ export function Editor(props: { id: string }): JSX.Element {
         : segmentedPlainText(text);
       if (!nodes.length) return;
       const wasEmpty =
-        ref.value.trim() === "" && doc.byId[props.id].children.length === 0;
-      const lastId = withUndoUnit("outline-paste", [doc.byId[props.id].page], () => {
+        ref.value.trim() === "" && docNode(props.id).children.length === 0;
+      const lastId = withUndoUnit("outline-paste", [docNode(props.id).page], () => {
         commit(ref.value);
         return wasEmpty
           ? replaceEmptyBlockWithOutline(props.id, nodes)
           : insertOutlineAfter(props.id, nodes);
       });
-      startEditing(lastId, doc.byId[lastId].raw.length);
+      startEditing(lastId, docNode(lastId).raw.length);
       return;
     }
     // A bare URL pasted over a non-empty selection wraps the selection as a

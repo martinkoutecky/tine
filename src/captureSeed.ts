@@ -1,4 +1,5 @@
 import type { PageDto } from "./types";
+import { captureScratchPage } from "./document";
 
 export const CAPTURE_SCRATCH_NAME = "·capture·";
 
@@ -7,13 +8,5 @@ export const CAPTURE_SCRATCH_NAME = "·capture·";
  * real id: editor activation intentionally treats an empty id as "no block".
  */
 export function createCaptureScratchPage(blockId: string = crypto.randomUUID()): PageDto {
-  if (!blockId.trim()) throw new Error("Quick Capture scratch block id must not be empty");
-  return {
-    name: CAPTURE_SCRATCH_NAME,
-    kind: "page",
-    title: CAPTURE_SCRATCH_NAME,
-    pre_block: null,
-    blocks: [{ id: blockId, raw: "", collapsed: false, children: [] }],
-    rev: null,
-  };
+  return captureScratchPage(CAPTURE_SCRATCH_NAME, blockId);
 }

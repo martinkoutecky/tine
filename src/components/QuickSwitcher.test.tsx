@@ -515,6 +515,30 @@ describe("QuickSwitcher search syntax help", () => {
     }
   });
 
+  it("reports a failed page create while keeping the draft route available", async () => {
+    const save = vi.spyOn(backend(), "savePage").mockRejectedValueOnce(new Error("disk full"));
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    try {
+      openSwitcher();
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      input.value = "Failed create";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await vi.waitFor(() => expect([...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]
+        .some((row) => row.textContent?.includes("Create page: Failed create"))).toBe(true));
+      const create = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]
+        .find((row) => row.textContent?.includes("Create page: Failed create"))!;
+      create.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error"
+        && toast.message.includes("Could not create “Failed create”"))).toBe(true));
+      expect(route()).toMatchObject({ kind: "page", name: "Failed create" });
+    } finally {
+      save.mockRestore();
+      dispose();
+    }
+  });
+
   it("Create on an alias name opens the alias owner and writes no file (B15b, Martin 2026-09-26)", async () => {
     // The Create row shows before the 110 ms search debounce, so an alias name
     // can reach it. v0.6.5 created `Nickname.md`; now it opens owners[0].

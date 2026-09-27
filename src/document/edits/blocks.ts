@@ -1,5 +1,10 @@
 import { blockWritable, rawWithInheritedOrderListType, isOrdered, rawWithOrderListType, rawWithCollapsed, writeCollapsed } from "./properties";
 import { doc, formatForBlock, setDoc, freshId, formatForPage, pageByName } from "../model";
+
+/** Reveal a search result without creating an edit, undo entry, or save. */
+export function revealNode(id: string): void {
+  if (doc.byId[id]?.collapsed) setDoc("byId", id, "collapsed", false);
+}
 import { applyMarkerTransition } from "../../logbook";
 import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, removeDeletedBlocksFromSidebar } from "../../ui";
 import { pushRawUndo, pushUndo } from "../history";

@@ -4,7 +4,7 @@ import type { Inline, TableBlock } from "../render/ast";
 import { visibleBody } from "../render/block";
 import { inlineText, parseBody } from "../render/facets";
 import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
-import { blockIsGridView, blockPageReadOnly, deleteBlock, doc, formatForBlock, insertEmptyChildBlock, insertOutlineAfter, replaceChildOrders, setBlockProperty, setRaw, withUndoUnit } from "../document";
+import { blockIsGridView, blockPageReadOnly, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineAfter, replaceChildOrders, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
 import { pushToast } from "../toasts";
 import { sheetConfigFromRaw } from "./config";
 
@@ -19,7 +19,7 @@ const MAX_PIPE_TABLE_COLS = 30;
 let escapedPipeSupport: boolean | null = null;
 
 function tableCandidate(id: string): PipeTableCandidate | null {
-  const node = doc.byId[id];
+  const node = docNode(id);
   if (!node || formatForBlock(id) !== "md" || blockPageReadOnly(id)) return null;
   const blocks = parseBody(node.raw, "md");
   const tables = blocks.filter((b): b is TableBlock => b.kind === "table");
@@ -57,7 +57,7 @@ function cellRaw(raw: string, cell: TableCell): string {
 
 export function convertPipeTableToGrid(id: string): boolean {
   const candidate = tableCandidate(id);
-  const node = doc.byId[id];
+  const node = docNode(id);
   if (!candidate || !node) return false;
   if (node.children.length > 0) {
     pushToast("Can't convert to grid: children would collide with grid rows.", "error");
@@ -69,15 +69,15 @@ export function convertPipeTableToGrid(id: string): boolean {
   const hasHeader = table.header !== null;
   const page = node.page;
   return withUndoUnit("sheet:pipe-table-to-grid", [page], () => {
-    const raw = doc.byId[id]?.raw ?? "";
+    const raw = docNode(id)?.raw ?? "";
     setRaw(id, rawWithoutTable(raw, table), { timetracking: false });
     setBlockProperty(id, "tine.view", "grid");
     setBlockProperty(id, "tine.header", hasHeader ? "true" : null);
     for (const row of rows) {
-      const rowId = insertEmptyChildBlock(id, doc.byId[id]?.children.length ?? 0);
+      const rowId = insertEmptyChildBlock(id, docNode(id)?.children.length ?? 0);
       if (!rowId) throw new Error("failed to create grid row");
       for (const cell of row) {
-        const cellId = insertEmptyChildBlock(rowId, doc.byId[rowId]?.children.length ?? 0);
+        const cellId = insertEmptyChildBlock(rowId, docNode(rowId)?.children.length ?? 0);
         if (!cellId) throw new Error("failed to create grid cell");
         setRaw(cellId, cellRaw(raw, cell), { timetracking: false });
       }
@@ -142,7 +142,7 @@ function stripTineSheetProps(id: string): void {
 }
 
 function appendTableToHead(id: string, table: string): void {
-  const head = trimTrailingBlankLines(doc.byId[id]?.raw ?? "");
+  const head = trimTrailingBlankLines(docNode(id)?.raw ?? "");
   setRaw(id, head ? `${head}\n${table}` : table, { timetracking: false });
 }
 
@@ -154,7 +154,7 @@ interface GridTableData {
 }
 
 function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: false; reason: string } {
-  const node = doc.byId[id];
+  const node = docNode(id);
   if (!node || !blockIsGridView(id) || formatForBlock(id) !== "md") {
     return { ok: false, reason: "Convert to pipe table is only available for markdown grids." };
   }
@@ -166,7 +166,7 @@ function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: fa
   }
 
   const rows = [...node.children];
-  const colCount = Math.max(0, ...rows.map((rowId) => doc.byId[rowId]?.children.length ?? 0));
+  const colCount = Math.max(0, ...rows.map((rowId) => docNode(rowId)?.children.length ?? 0));
   if (rows.length > MAX_PIPE_TABLE_ROWS || colCount > MAX_PIPE_TABLE_COLS) {
     return { ok: false, reason: "Can't convert grids larger than 30 columns by 200 rows to a pipe table." };
   }
@@ -176,7 +176,7 @@ function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: fa
 
   const matrix: string[][] = [];
   for (const rowId of rows) {
-    const row = doc.byId[rowId];
+    const row = docNode(rowId);
     if (!row || row.page !== node.page) return { ok: false, reason: "Can't convert this grid because a row is missing." };
     const rowSplit = splitProps(row.raw, isBuiltinHidden);
     if (rowSplit.hidden) return { ok: false, reason: "Can't convert: row hidden properties would be lost." };
@@ -187,7 +187,7 @@ function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: fa
 
     const out: string[] = [];
     for (const cellId of row.children) {
-      const cell = doc.byId[cellId];
+      const cell = docNode(cellId);
       if (!cell || cell.page !== node.page) return { ok: false, reason: "Can't convert this grid because a cell is missing." };
       const cellSplit = splitProps(cell.raw, isBuiltinHidden);
       if (cellSplit.hidden) return { ok: false, reason: "Can't convert: cell hidden properties would be lost." };
@@ -249,7 +249,7 @@ export function matrixGridNode(title: string, matrix: readonly (readonly string[
 }
 
 export function insertMatrixGridAfter(afterId: string, title: string, matrix: readonly (readonly string[])[]): string | null {
-  const target = doc.byId[afterId];
+  const target = docNode(afterId);
   if (!target || blockPageReadOnly(afterId)) return null;
   return withUndoUnit("sheet:drop-delimited-grid", [target.page], () =>
     insertOutlineAfter(afterId, [matrixGridNode(title, matrix)]),
@@ -257,7 +257,7 @@ export function insertMatrixGridAfter(afterId: string, title: string, matrix: re
 }
 
 export function gridVisibleMatrix(id: string): string[][] {
-  return (doc.byId[id]?.children ?? []).map((rowId) =>
-    (doc.byId[rowId]?.children ?? []).map((cellId) => visibleBody(doc.byId[cellId]?.raw ?? "").join("\n")),
+  return (docNode(id)?.children ?? []).map((rowId) =>
+    (docNode(rowId)?.children ?? []).map((cellId) => visibleBody(docNode(cellId)?.raw ?? "").join("\n")),
   );
 }

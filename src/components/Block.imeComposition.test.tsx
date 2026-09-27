@@ -18,7 +18,8 @@ vi.mock("../document", async (importOriginal) => {
 import { backend } from "../backend";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, isDirty, loadSingle, pageByName, resetStore } from "../document";
+import { isDirty, loadSingle, pageByName, resetStore } from "../document";
+import { doc } from "../document/model";
 import type { BlockDto, PageDto, PageEntry } from "../types";
 import { Block } from "./Block";
 

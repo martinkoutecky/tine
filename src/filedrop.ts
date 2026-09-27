@@ -9,7 +9,7 @@ import { backend } from "./backend";
 import { assetFileName, assetMarkdown } from "./media";
 import { matrixGridNode, delimitedCellCount } from "./sheet/conversions";
 import { parseDelimitedText, type DelimitedKind } from "./sheet/tsv";
-import { doc, formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibleOrder, withUndoUnit } from "./document";
+import { formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibleOrder, withUndoUnit, node as docNode } from "./document";
 import { pushToast } from "./toasts";
 import type { OutlineNode } from "./editor/outline";
 
@@ -59,7 +59,7 @@ export async function installFileDrop(): Promise<() => void> {
     const onBlock = el?.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null;
     const order = visibleOrder();
     const afterId = onBlock ?? order[order.length - 1] ?? null;
-    if (!afterId || !doc.byId[afterId]) {
+    if (!afterId || !docNode(afterId)) {
       pushToast("Drop a file onto a block to insert it.", "error");
       return;
     }
@@ -81,7 +81,7 @@ export async function installFileDrop(): Promise<() => void> {
         }
         const orig = basename(path) || undefined;
         const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
-        const page = pageByName(doc.byId[afterId].page);
+        const page = pageByName(docNode(afterId).page);
         nodes.push({
           raw: assetMarkdown(saved, {
             label: orig,
@@ -92,7 +92,7 @@ export async function installFileDrop(): Promise<() => void> {
         });
       }
       if (!nodes.length) return;
-      withUndoUnit("file-drop", [doc.byId[afterId].page], () => insertOutlineAfter(afterId, nodes));
+      withUndoUnit("file-drop", [docNode(afterId).page], () => insertOutlineAfter(afterId, nodes));
       pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
     } catch (e) {
       pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");

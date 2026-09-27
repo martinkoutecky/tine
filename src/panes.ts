@@ -16,7 +16,7 @@ import {
 } from "./router";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
-import { clearSelection, doc, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter } from "./document";
+import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
 import { nearestPane, takeBlockSelectionForPaneReturn } from "./paneSelect";
@@ -177,11 +177,11 @@ export function closeLayoutPane(
 }
 
 function routeForJournalsDuplicate(anchor: string | null): Route {
-  const selectedDay = anchor ? doc.byId[anchor]?.page : undefined;
+  const selectedDay = anchor ? docNode(anchor)?.page : undefined;
   const today = journalTitle(new Date());
   const name =
-    (selectedDay && doc.feed.includes(selectedDay) ? selectedDay : undefined) ??
-    (doc.feed.includes(today) ? today : doc.feed[0] ?? today);
+    (selectedDay && feedNames().includes(selectedDay) ? selectedDay : undefined) ??
+    (feedNames().includes(today) ? today : feedNames()[0] ?? today);
   return { kind: "page", name, pageKind: pageByName(name)?.kind ?? "journal" };
 }
 

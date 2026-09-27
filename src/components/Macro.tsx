@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, pageIdentityKey } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
-import { blockProperty, doc, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../document";
+import { blockProperty, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
@@ -128,8 +128,8 @@ export function QueryMacro(props: {
   const form = () => parsed().form;
   const friendlySearch = createMemo(() => savedDslToFriendlySearch(form()));
   const sheet = createMemo(() => {
-    if (!props.blockId || !doc.byId[props.blockId]) return null;
-    return sheetConfig(facetsOf(doc.byId[props.blockId].raw, formatForBlock(props.blockId)).properties);
+    if (!props.blockId || !docNode(props.blockId)) return null;
+    return sheetConfig(facetsOf(docNode(props.blockId).raw, formatForBlock(props.blockId)).properties);
   });
   const currentView = (): QueryView => {
     if (!props.blockId) return "list";
@@ -141,7 +141,7 @@ export function QueryMacro(props: {
   const setQueryView = (next: QueryView) => {
     const blockId = props.blockId;
     if (!blockId) return;
-    const node = doc.byId[blockId];
+    const node = docNode(blockId);
     if (!node) return;
     const storedView = blockProperty(blockId, "tine.view");
     if ((next === "list" && storedView === null) || (next !== "list" && storedView === next)) return;
@@ -165,7 +165,7 @@ export function QueryMacro(props: {
   // rewrite the 1st. Falls back to the only/first query for the common case.
   const rewriteMacro = (newMacro: string) => {
     if (!props.blockId) return;
-    const raw = doc.byId[props.blockId]?.raw ?? "";
+    const raw = docNode(props.blockId)?.raw ?? "";
     const extents = queryMacroExtents(raw);
     if (!extents.length) return;
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -238,7 +238,7 @@ export function QueryMacro(props: {
       </button>
     </span>
   );
-  const currentPage = () => props.currentPage ?? (props.blockId ? doc.byId[props.blockId]?.page : undefined);
+  const currentPage = () => props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
   const [advInfo, setAdvInfo] = createSignal<{ ran: string[]; ignored: string[]; supported: boolean } | null>(
     null
   );
@@ -1059,7 +1059,7 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
   const target = () => props.body.replace(/^embed\s*/i, "").trim();
   const pageTarget = () => /^\[\[([^\]]+)\]\]$/.exec(target())?.[1];
   const selfPageEmbed = () => {
-    const sourcePage = props.blockId ? doc.byId[props.blockId]?.page : undefined;
+    const sourcePage = props.blockId ? docNode(props.blockId)?.page : undefined;
     const targetPage = pageTarget();
     return !!sourcePage
       && pageByName(sourcePage)?.kind === "page"

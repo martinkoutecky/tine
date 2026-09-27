@@ -6,7 +6,7 @@ import { captureBinding, stillBound } from "./binding";
 import { setGraphMeta, bumpGraphEpoch, graphMeta } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf } from "./ui";
 import { pushToast } from "./toasts";
-import { resetStore, flushAll } from "./document";
+import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage } from "./document";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
@@ -234,21 +234,11 @@ async function ensureJournalTemplate(): Promise<void> {
     const resolved = existing?.id ? null : await backend().resolvePage(title, "journal");
     if (!stillBound(binding)) return;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
-    await backend().savePage(
-      existing?.id ?? resolved!.id,
-      {
-        name: title,
-        kind: "journal",
-        title,
-        pre_block: existing?.pre_block ?? null,
-        blocks: tmpl.blocks.map(resolve),
-        // An empty journal may already exist on disk. Preserve its format.
-        format: existing?.format,
-      },
-      existing?.rev ?? null,
-      false,
-      binding.backendGeneration
-    );
+    await createPage(title, journalTemplatePage(title, tmpl.blocks.map(resolve), existing), {
+      id: existing?.id ?? resolved!.id,
+      baseRev: existing?.rev ?? null,
+      bindingGeneration: binding.backendGeneration,
+    });
   } catch {
     // Template insertion is best-effort; graph open awaited this attempt.
   }
@@ -352,26 +342,11 @@ async function seedTodayJournal(): Promise<void> {
     const resolved = existing?.id ? null : await backend().resolvePage(title, "journal");
     if (!stillBound(binding)) return;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
-    await backend().savePage(
-      existing?.id ?? resolved!.id,
-      {
-        name: title,
-        kind: "journal",
-        title,
-        pre_block: null,
-        blocks: [
-          {
-            id: "",
-            raw: "👋 This is **today's journal** — your daily notes land here. Try your quick-capture hotkey, or open [[Welcome to Tine]] for the tour.",
-            collapsed: false,
-            children: [],
-          },
-        ],
-      },
-      null,
-      false,
-      binding.backendGeneration
-    );
+    await createPage(title, demoJournalPage(title), {
+      id: existing?.id ?? resolved!.id,
+      baseRev: null,
+      bindingGeneration: binding.backendGeneration,
+    });
   } catch {
     // Best-effort seed; the caller awaited this attempt.
   }

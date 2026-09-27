@@ -10,7 +10,7 @@ import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { doc, ensureBlockId, persistentBlockRef, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushAll, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload } from "../document";
+import { ensureBlockId, persistentBlockRef, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushAll, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, node as docNode } from "../document";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
@@ -288,7 +288,7 @@ function ShowChildrenAsSubmenu(props: { id: string; close: () => void }): JSX.El
 }
 
 function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
-  const hasChildren = () => (doc.byId[props.id]?.children.length ?? 0) > 0;
+  const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
   const readOnly = () => blockPageReadOnly(props.id);
   return (
     <>
@@ -366,12 +366,12 @@ function ColorPalette(props: { id: string; close: () => void }): JSX.Element {
 }
 
 function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: () => void }): JSX.Element {
-  const canDeleteRow = () => !!props.remove?.rowId && !!doc.byId[props.remove.rowId];
+  const canDeleteRow = () => !!props.remove?.rowId && !!docNode(props.remove.rowId);
   const canDeleteColumn = () =>
-    props.remove?.gridId != null && props.remove?.col != null && !!doc.byId[props.remove.gridId];
+    props.remove?.gridId != null && props.remove?.col != null && !!docNode(props.remove.gridId);
   const deleteRow = () => {
     const rowId = props.remove?.rowId;
-    if (rowId && doc.byId[rowId]) deleteBlock(rowId);
+    if (rowId && docNode(rowId)) deleteBlock(rowId);
     props.close();
   };
   const deleteColumnHere = () => {
@@ -433,7 +433,7 @@ function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: 
 }
 
 function sheetFields(ownerId: string): FieldId[] {
-  return fieldIdsForBlocks(doc.byId[ownerId]?.children ?? []).filter(
+  return fieldIdsForBlocks(docNode(ownerId)?.children ?? []).filter(
     (field): field is FieldId => field === "state" || field === "priority" || field.startsWith("prop:")
   );
 }
@@ -649,7 +649,7 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
   // block is inserted together with its children. Off → `template-including-parent::
   // false` (only the children are inserted; the block is just the template's label).
   const [includeParent, setIncludeParent] = createSignal(true);
-  const hasChildren = () => (doc.byId[props.id]?.children.length ?? 0) > 0;
+  const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
 
   const submit = async () => {
     const title = name().trim();

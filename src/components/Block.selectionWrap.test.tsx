@@ -4,7 +4,8 @@ import { render } from "solid-js/web";
 import { editingId, startEditing } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore, undo } from "../document";
+import { loadSingle, pageByName, resetStore, undo } from "../document";
+import { doc } from "../document/model";
 import type { BlockDto } from "../types";
 import {
   clearTransientLayersForTest,

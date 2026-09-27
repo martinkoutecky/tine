@@ -7,7 +7,7 @@ import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell"
 import { openPageTarget, openPageAtBlock } from "../router";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, pageByName, resolveBlockRef } from "../document";
+import { ensurePageLoaded, pageByName, resolveBlockRef, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { Block, SurfaceContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
@@ -302,7 +302,7 @@ function BlockItem(props: {
   // edits stay propagated even while its store key is still transient.
   const node = () => {
     const id = resolveBlockRef(props.item);
-    return id ? doc.byId[id] : undefined;
+    return id ? docNode(id) : undefined;
   };
   const pageLoaded = () => {
     const loaded = pageByName(props.item.page);

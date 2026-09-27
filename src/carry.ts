@@ -5,12 +5,11 @@
 
 import { backend } from "./backend";
 import { captureBinding, stillBound, type Binding } from "./binding";
-import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, isDirty, markDirty, prepareCrossPageSources } from "./document";
+import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, isDirty, markDirty, prepareCrossPageSources, carryTodayPage } from "./document";
 import { journalTitle } from "./journal";
 import { carryKeepsContext, carryHeaderText } from "./ui";
 import { pushToast } from "./toasts";
 import { openJournals } from "./router";
-import type { PageDto } from "./types";
 
 async function ensureLoaded(name: string, kind: "journal" | "page", binding: Binding): Promise<boolean> {
   if (pageByName(name)) return true;
@@ -30,8 +29,7 @@ async function ensureToday(binding: Binding): Promise<string | null> {
   if (!pageByName(t)) {
     const dto = await backend().getPage(t, "journal");
     if (!stillBound(binding)) return null;
-    const page: PageDto =
-      dto ?? { name: t, kind: "journal", title: t, pre_block: null, blocks: [{ id: `new-${t}`, raw: "", collapsed: false, children: [] }] };
+    const page = dto ?? carryTodayPage(t);
     ensurePageLoaded(page);
   }
   return t;

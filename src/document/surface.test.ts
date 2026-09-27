@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { expect, it } from "vitest";
 
-it("pins the document public surface", () => {
-  const source = readFileSync("src/document/index.ts", "utf8");
-  const listed = readFileSync("src/document/SURFACE.txt", "utf8").trim().split("\n");
+const MAX_EXPORTS = 141;
+
+function checkSurface(source: string, listed: string[]): void {
   const file = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
   const declarations = file.statements.filter(ts.isExportDeclaration);
   expect(declarations.every((statement) => statement.exportClause && ts.isNamedExports(statement.exportClause))).toBe(true);
@@ -17,5 +17,17 @@ it("pins the document public surface", () => {
       : []
   );
   expect(listed).toEqual([...new Set(listed)].sort());
-  expect(actual.sort()).toEqual(listed);
+  if (listed.length > MAX_EXPORTS || actual.length > MAX_EXPORTS || actual.sort().join("\n") !== listed.join("\n"))
+    throw new Error("I-11: src/document/index.ts must match SURFACE.txt and may not grow; exemplar src/document/index.ts");
+}
+
+it("pins the document public surface", () => {
+  checkSurface(readFileSync("src/document/index.ts", "utf8"),
+    readFileSync("src/document/SURFACE.txt", "utf8").trim().split("\n"));
+});
+
+it("rejects a planted surface addition", () => {
+  const source = readFileSync("src/document/index.ts", "utf8") + '\nexport { planted } from "./model";\n';
+  const listed = readFileSync("src/document/SURFACE.txt", "utf8").trim().split("\n");
+  expect(() => checkSurface(source, [...listed, "planted"].sort())).toThrow("I-11: src/document/index.ts must match SURFACE.txt and may not grow");
 });

@@ -5,6 +5,10 @@ type ModeResetListener = () => void;
 const outlineSelectionListeners = new Set<OutlineSelectionListener>();
 const editingStartListeners = new Set<EditingStartListener>();
 const modeResetListeners = new Set<ModeResetListener>();
+let clearOutlineSelection: (() => void) | null = null;
+
+export function installClearOutlineSelection(fn: () => void): void { clearOutlineSelection = fn; }
+export function notifyClearOutlineSelection(): void { clearOutlineSelection?.(); }
 
 export function registerOutlineSelectionListener(fn: OutlineSelectionListener): () => void {
   outlineSelectionListeners.add(fn);

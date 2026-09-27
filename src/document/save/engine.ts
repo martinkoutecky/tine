@@ -3,12 +3,61 @@ import { createSignal } from "solid-js";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { type ClipboardSourcePage } from "../../clipboard";
 import { captureBinding, type Binding, stillBound } from "../../binding";
-import { pageToDto } from "../convert";
+import { pageToDto, appendAliasDraft } from "../convert";
+import type { PageDto, PageKind } from "../../types";
 import { backend } from "../../backend";
 import { forgetPage, reloadPage, loadSingle } from "../workingSet";
-import { openPage } from "../../router";
 import { pushToast } from "../../toasts";
 import { errorFamily } from "../../errorFamily";
+
+let aliasDraftRouteHandler: ((name: string, kind: PageDto["kind"]) => void) | null = null;
+export function installAliasDraftRouteHandler(handler: (name: string, kind: PageDto["kind"]) => void): void {
+  aliasDraftRouteHandler = handler;
+}
+
+export async function deletePageOnDisk(name: string, kind: PageKind, expectedPath?: string): Promise<void> {
+  if (expectedPath) await backend().deletePage(name, kind, expectedPath);
+  else await backend().deletePage(name, kind);
+}
+
+/** Save a newly authored DTO through the same binding and save-state owner as edits. */
+export async function createPage(
+  name: string,
+  dto: PageDto,
+  options: { id?: string; baseRev?: string | null; bindingGeneration?: number } = {},
+): Promise<string> {
+  const binding = captureBinding();
+  const token = graphToken;
+  const generation = pageInstanceGeneration(name);
+  if (dto.name !== name || isConflicted(name)
+      || isDirty(name) || isSaving(name)
+      || (options.bindingGeneration !== undefined && options.bindingGeneration !== binding.backendGeneration)) {
+    throw new Error("conflict");
+  }
+  const resolved = options.id ? null : await backend().resolvePage(name, dto.kind);
+  if (resolved?.kind === "alias") throw new Error("conflict");
+  const id = options.id ?? resolved!.id;
+  if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) throw new Error("graph changed");
+  const wasTombstoned = deletedPages.delete(name); // an explicit create supersedes a completed delete
+  try {
+    const rev = await backend().savePage(id, dto, options.baseRev ?? null, false, binding.backendGeneration);
+    if (!stillBound(binding) || token !== graphToken) throw new Error("graph changed");
+    if (pageInstanceGeneration(name) === generation) {
+      setPageId(name, id);
+      setBaseRev(name, rev);
+      clearConflict(name);
+      lastSaveFailure.delete(name);
+    }
+    if (options.baseRev == null) bumpPageInventoryRev();
+    bumpDataRev();
+    return rev;
+  } catch (error) {
+    if (wasTombstoned && stillBound(binding) && token === graphToken) deletedPages.add(name);
+    if (stillBound(binding) && token === graphToken && pageInstanceGeneration(name) === generation
+        && errorFamily(error) === "conflict") markConflict(name);
+    throw error;
+  }
+}
 
 // Pages that failed to save because the file changed on disk (external edit /
 // Syncthing). Surfaced as a banner; the user resolves with reload or overwrite.
@@ -325,10 +374,7 @@ async function doSave(
         // A draft's property-only first root is folded into pre_block by
         // pageToDto. Keep those bytes too: on the owner they are ordinary
         // appended content, never a replacement for the owner's preamble.
-        const draftBlocks = dto.pre_block
-          ? [{ id: "", raw: dto.pre_block, collapsed: false, children: [] }, ...dto.blocks]
-          : dto.blocks;
-        const appended = { ...owner, blocks: [...owner.blocks, ...draftBlocks] };
+        const appended = appendAliasDraft(owner, dto);
         const ownerRev = await backend().savePage(owner.id, appended, owner.rev ?? null, false, binding.backendGeneration);
         if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
         if (dirty.has(name) || isDirty(owner.name) || isSaving(owner.name)
@@ -341,7 +387,7 @@ async function doSave(
         forgetPage(name);
         reloadPage(landed);
         loadSingle(landed);
-        openPage(owner.name, owner.kind);
+        aliasDraftRouteHandler?.(owner.name, owner.kind);
         pushToast(`Moved “${name}” into its alias owner “${owner.name}”.`, "info");
         bumpPageInventoryRev();
         releaseSourcesFor(name);

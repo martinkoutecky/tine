@@ -1,6 +1,6 @@
 import { createMemo, type Accessor } from "solid-js";
 import { dataRev } from "../graphSession";
-import { doc, formatForBlock, pageByName, type Node as StoreNode } from "../document";
+import { formatForBlock, pageByName, type Node as StoreNode, node as docNode } from "../document";
 import { facetsFromDto, facetsOf } from "../render/facets";
 import { evaluate, parseFormula, type Ast, type FormulaValue, type ParseResult } from "./formula";
 import {
@@ -27,7 +27,7 @@ export function formulaRowKey(row: Pick<FormulaEvalRow, "id" | "page" | "kind">)
 }
 
 export function liveFormulaRowNode(row: FormulaEvalRow): StoreNode | null {
-  const node = doc.byId[row.id];
+  const node = docNode(row.id);
   if (!node || node.page !== row.page) return null;
   if (row.kind && pageByName(row.page)?.kind !== row.kind) return null;
   return node;

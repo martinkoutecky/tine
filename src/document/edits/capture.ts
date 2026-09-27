@@ -1,10 +1,11 @@
 import { journalTitle } from "../../journal";
 import { parseOutline, type OutlineNode } from "../../editor/outline";
-import { type PageKind, type PageDto } from "../../types";
+import { type PageKind } from "../../types";
 import { captureBinding, stillBound } from "../../binding";
 import { pageByName, freshId, setDoc } from "../model";
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
+import { captureEmptyPage } from "../convert";
 import { pageWritable } from "./properties";
 import { insertOutlineAfter, deleteBlock } from "./blocks";
 import { withUndoUnit } from "../history";
@@ -42,9 +43,9 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
   if (!nodes.length) return false;
   const binding = captureBinding();
   if (!pageByName(name)) {
-    const dto: PageDto =
+    const dto =
       (await backend().getPage(name, kind)) ??
-      { name, kind, title: name, pre_block: null, blocks: [], rev: null };
+      captureEmptyPage(name, kind);
     if (!stillBound(binding)) return false;
     ensurePageLoaded(dto);
   }
@@ -75,4 +76,3 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
   const saved = await flushPage(name);
   return stillBound(binding) && saved;
 }
-

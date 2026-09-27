@@ -15,7 +15,8 @@ import {
   splitPane,
   type LayoutNode,
 } from "./panes";
-import { hasSelection, selectBlock, setDoc } from "./document";
+import { hasSelection, selectBlock } from "./document";
+import { setDoc } from "./document/model";
 import { cellSel, setCellSel } from "./sheet/selection";
 import type { PaneSnapshot } from "./router";
 import { clearRecent, recentPages } from "./ui";

@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
@@ -19,7 +19,7 @@ import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
-import type { JournalFeedPage, PageDto, RefGroup } from "../types";
+import type { JournalFeedPage, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
@@ -51,8 +51,8 @@ function feedHasActiveEdit(): boolean {
   // An editor in a sidebar, a page tab, or another split pane is unrelated to
   // the working set that loadFeed replaces.  Only a block owned by a visible
   // feed page is unsafe here.
-  if (edited && doc.byId[edited] && doc.feed.includes(doc.byId[edited].page)) return true;
-  return doc.feed.some((name) =>
+  if (edited && docNode(edited) && feedNames().includes(docNode(edited).page)) return true;
+  return feedNames().some((name) =>
     isDirty(name) || isSaving(name) || isConflicted(name) || isBlockMoving(name)
   );
 }
@@ -120,17 +120,7 @@ function paneContextFromContext() {
 // OG always shows today's journal at the top of the feed, even with no file yet
 // (the file is created lazily on first edit — Tine writes on save). So prepend
 // an empty today page unless the newest journal on disk already is today.
-export function withToday(js: PageDto[]): PageDto[] {
-  const title = journalTitle(new Date());
-  if (js.some((p) => p.name === title)) return js;
-  return [emptyPage(title, "journal"), ...js];
-}
-
-export function toLoadablePage(dto: PageDto, name: string): PageDto {
-  return dto.blocks.length
-    ? dto
-    : { ...dto, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
-}
+export { withToday, toLoadablePage } from "../document";
 
 export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Promise<void> {
   await restartJournalFeed(owner);
@@ -330,9 +320,9 @@ export function PageView(): JSX.Element {
   createEffect(() => {
     if (currentRoute().kind !== "journals") return;
     const extender = async () => {
-      const before = doc.feed.length;
+      const before = feedNames().length;
       await loadMore();
-      return doc.feed.length > before;
+      return feedNames().length > before;
     };
     setFeedExtender(extender);
     onCleanup(() => setFeedExtender(null));
@@ -349,7 +339,7 @@ export function PageView(): JSX.Element {
   // route whenever the feed transitions to non-empty.
   createEffect(() => {
     if (currentRoute().kind !== "journals") return;
-    if (!doc.loaded || doc.feed.length === 0) return; // re-runs when the feed populates
+    if (!isLoaded() || feedNames().length === 0) return; // re-runs when the feed populates
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(".main-content");
       if (!el) return;
@@ -381,7 +371,7 @@ export function PageView(): JSX.Element {
   };
   const contentReady = () => {
     const r = loadedRoute();
-    return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || doc.loaded);
+    return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded());
   };
 
   return (
@@ -459,23 +449,23 @@ function ZoomedView(props: { id: string }): JSX.Element {
   const router = pane.router;
   const ancestors = (): string[] => {
     const out: string[] = [];
-    let p = doc.byId[props.id]?.parent ?? null;
+    let p = docNode(props.id)?.parent ?? null;
     while (p !== null) {
       out.unshift(p);
-      p = doc.byId[p].parent;
+      p = docNode(p).parent;
     }
     return out;
   };
-  const pageName = () => doc.byId[props.id]?.page ?? "";
-  const pageKind = () => doc.pages.find((p) => p.name === pageName())?.kind ?? "page";
+  const pageName = () => docNode(props.id)?.page ?? "";
+  const pageKind = () => loadedPage(pageName())?.kind ?? "page";
   const pageTarget = () => {
     const owner = pageByName(pageName());
     return owner ? pageTargetFromFeedPage(owner) : { name: pageName(), pageKind: pageKind() };
   };
-  const crumb = (id: string) => visibleBody(doc.byId[id].raw)[0] || "…";
+  const crumb = (id: string) => visibleBody(docNode(id).raw)[0] || "…";
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
-    const root = doc.byId[props.id];
+    const root = docNode(props.id);
     if (!root || pageByName(root.page)?.readOnly || pageByName(root.page)?.guide) return;
     // GH #158: always append a fresh child (never reuse the trailing empty leaf), so
     // the affordance can always add a new last block even when the current last one
@@ -544,26 +534,26 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     // as a properties-only block before its value is typed; hiding it at the
     // second colon unmounted the textarea and discarded the rest of the user's
     // keystrokes (GH #62's regression after the GH #86 presentation change).
-    return id && editingId() !== id && doc.byId[id] && isPropertiesOnly(doc.byId[id].raw) ? id : null;
+    return id && editingId() !== id && docNode(id) && isPropertiesOnly(docNode(id).raw) ? id : null;
   };
   const propertySource = () => {
     const first = firstPropertiesId();
-    if (first && doc.byId[first].originatedFromPageHeader) {
-      return doc.byId[first].raw + (props.page.preBlock ?? "");
+    if (first && docNode(first).originatedFromPageHeader) {
+      return docNode(first).raw + (props.page.preBlock ?? "");
     }
-    return [props.page.preBlock, first ? doc.byId[first].raw : null].filter(Boolean).join("\n") || null;
+    return [props.page.preBlock, first ? docNode(first).raw : null].filter(Boolean).join("\n") || null;
   };
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const editPreamble = () => {
     const id = promotePagePreamble(props.page.name);
-    if (id) startEditing(id, doc.byId[id].raw.length);
+    if (id) startEditing(id, docNode(id).raw.length);
   };
   const editPageHeader = (event?: MouseEvent) => {
     if (event?.target instanceof Element && event.target.closest("a, button")) return;
     const id = beginPageHeaderEdit(props.page.name);
-    if (id) startEditing(id, doc.byId[id].raw.length, null, editSurface());
+    if (id) startEditing(id, docNode(id).raw.length, null, editSurface());
   };
   const focusTrailing = () => {
     const roots = rootsToRender();
@@ -878,7 +868,7 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
     if (!ok) return;
     const today = pageByName(journalTitle(new Date()));
     const id = today?.roots[today.roots.length - 1];
-    if (id && doc.byId[id]) startEditing(id, doc.byId[id].raw.length);
+    if (id && docNode(id)) startEditing(id, docNode(id).raw.length);
   };
   return (
     <div class="tag-page-table">

@@ -3,7 +3,7 @@
 // the highlight text and clicking the swatch jumps to the PDF. Detection + the
 // bits the renderer needs, kept out of Block.tsx.
 
-import { doc } from "../document";
+import { loadedPage } from "../document";
 import type { BlockDto } from "../types";
 
 /** True for a PDF highlight (annotation) block. */
@@ -52,6 +52,6 @@ export function pdfFileFromPreBlock(preBlock: string | null | undefined): string
 /** Resolve the PDF filename for an annotation block from its owning hls__ page's
  *  `file-path::` property. */
 export function pdfFileForPage(pageName: string): string | null {
-  const p = doc.pages.find((x) => x.name === pageName);
+  const p = loadedPage(pageName);
   return pdfFileFromPreBlock(p?.preBlock);
 }

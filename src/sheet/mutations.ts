@@ -1,4 +1,4 @@
-import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, doc, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit } from "../document";
+import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
 import { copyRich } from "../clipboard";
 import { isSheetCellHidden, joinProps, splitProps } from "../editor/properties";
 import { parseOutline, type OutlineNode } from "../editor/outline";
@@ -39,16 +39,16 @@ const COMPACT_GRID_CONFIG_KEYS = new Set([
   "tine.col-aggregates",
 ]);
 
-function gridRows(gridId: string): string[] | null {
+function gridRows(gridId: string): readonly string[] | null {
   if (!blockIsGridView(gridId)) return null;
-  return doc.byId[gridId]?.children ?? null;
+  return docNode(gridId)?.children ?? null;
 }
 
 function gridPage(gridId: string): string | null {
   // null for read-only pages too (the org round-trip gate): every structural
   // grid mutation resolves its page through here, so this is the single choke
   // that keeps sheet writes off pages the block editor already refuses to edit.
-  const page = doc.byId[gridId]?.page ?? null;
+  const page = docNode(gridId)?.page ?? null;
   if (page && pageByName(page)?.readOnly) return null;
   return page;
 }
@@ -56,7 +56,7 @@ function gridPage(gridId: string): string | null {
 function colCount(rows: readonly string[]): number {
   if (rows.length === 0) return 0;
   let cols = 1;
-  for (const rowId of rows) cols = Math.max(cols, doc.byId[rowId]?.children.length ?? 0);
+  for (const rowId of rows) cols = Math.max(cols, docNode(rowId)?.children.length ?? 0);
   return cols;
 }
 
@@ -104,11 +104,11 @@ function cellIdAt(gridId: string, row: number, col: number): string | null {
   // NOT correspond to owner.children[row].children[col]. Treating them as a
   // grid can silently clear an unrelated nested child on Delete/Cut.
   const rowId = gridRows(gridId)?.[row];
-  return rowId ? (doc.byId[rowId]?.children[col] ?? null) : null;
+  return rowId ? (docNode(rowId)?.children[col] ?? null) : null;
 }
 
 function cellText(blockId: string | null): string {
-  const text = blockId ? visibleBody(doc.byId[blockId]?.raw ?? "").join(" ") : "";
+  const text = blockId ? visibleBody(docNode(blockId)?.raw ?? "").join(" ") : "";
   // The external clipboard flavor is TSV: tabs/newlines are flattened to spaces
   // so a cell body cannot escape into extra external rows or columns.
   return text.replace(/[\t\r\n]+/g, " ");
@@ -119,12 +119,12 @@ function cellText(blockId: string | null): string {
  *  ((ref)) pointing at it (review finding). Fence-aware via splitProps. */
 function writeCellVisible(id: string, visible: string): void {
   const fmt = formatForBlock(id);
-  const hidden = splitProps(doc.byId[id]?.raw ?? "", isSheetCellHidden, fmt).hidden;
+  const hidden = splitProps(docNode(id)?.raw ?? "", isSheetCellHidden, fmt).hidden;
   setRaw(id, hidden ? joinProps(visible, hidden, fmt) : visible, { timetracking: false });
 }
 
 function rawWithoutId(id: string): string {
-  const raw = doc.byId[id]?.raw ?? "";
+  const raw = docNode(id)?.raw ?? "";
   return splitProps(raw, (key) => key.toLowerCase() === "id", formatForBlock(id)).visible;
 }
 
@@ -173,12 +173,12 @@ function withSheetUndo<T>(gridId: string, tag: string, fn: () => T): T | null {
 }
 
 function colWidths(gridId: string): ReadonlyMap<number, number> {
-  const node = doc.byId[gridId];
+  const node = docNode(gridId);
   return node ? sheetConfigFromRaw(node.raw, formatForBlock(gridId)).colWidths : new Map();
 }
 
 function colAggregates(gridId: string): ReadonlyMap<string, AggregateFn> {
-  const node = doc.byId[gridId];
+  const node = docNode(gridId);
   return node ? sheetConfigFromRaw(node.raw, formatForBlock(gridId)).colAggregates : new Map();
 }
 
@@ -265,7 +265,7 @@ export function insertColumn(gridId: string, at: number): void {
   if (at < 0 || at > cols) return;
   withUndoUnit("sheet:insert-column", [page], () => {
     for (const rowId of rows) {
-      const row = doc.byId[rowId];
+      const row = docNode(rowId);
       if (row && row.children.length >= at) insertEmptyChildBlock(rowId, at);
     }
     writeColWidths(gridId, shiftedForInsert(colWidths(gridId), at));
@@ -282,7 +282,7 @@ export function deleteColumn(gridId: string, col: number): void {
   if (col < 0 || col >= cols) return;
   withUndoUnit("sheet:delete-column", [page], () => {
     for (const rowId of rows) {
-      const cellId = doc.byId[rowId]?.children[col];
+      const cellId = docNode(rowId)?.children[col];
       if (cellId) deleteBlock(cellId);
     }
     writeColWidths(gridId, shiftedForDelete(colWidths(gridId), col));
@@ -317,7 +317,7 @@ export function deleteColumns(gridId: string, left: number, right: number): void
   withUndoUnit("sheet:delete-columns", [page], () => {
     for (let c = hi; c >= lo; c--) {
       for (const rowId of rows) {
-        const cellId = doc.byId[rowId]?.children[c];
+        const cellId = docNode(rowId)?.children[c];
         if (cellId) deleteBlock(cellId);
       }
       writeColWidths(gridId, shiftedForDelete(colWidths(gridId), c));
@@ -332,15 +332,15 @@ export function materializeCell(gridId: string, row: number, col: number): strin
   const page = gridPage(gridId);
   if (!rows || !page || row < 0 || row >= rows.length || col < 0) return null;
   const rowId = rows[row];
-  const existing = doc.byId[rowId]?.children[col];
+  const existing = docNode(rowId)?.children[col];
   if (existing) return existing;
   const result = withUndoUnit("sheet:materialize-cell", [page], () => {
     let made: string | null = null;
-    while ((doc.byId[rowId]?.children.length ?? 0) <= col) {
-      made = insertEmptyChildBlock(rowId, doc.byId[rowId]?.children.length ?? 0);
+    while ((docNode(rowId)?.children.length ?? 0) <= col) {
+      made = insertEmptyChildBlock(rowId, docNode(rowId)?.children.length ?? 0);
       if (!made) return null;
     }
-    return doc.byId[rowId]?.children[col] ?? made;
+    return docNode(rowId)?.children[col] ?? made;
   });
   if (result) invalidateMatrixDimensions(gridId);
   return result;
@@ -361,7 +361,7 @@ export function setColumnWidth(gridId: string, col: number, px: number | null): 
 }
 
 export function setColumnAggregate(ownerId: string, key: string, fn: AggregateFn | null): void {
-  const node = doc.byId[ownerId];
+  const node = docNode(ownerId);
   if (!node || !key.trim()) return;
   if (blockPageReadOnly(ownerId)) return; // review finding: footer bypassed the gridPage gate
   withUndoUnit("sheet:column-aggregate", [node.page], () => {
@@ -446,10 +446,10 @@ function isCompactGridCell(id: string): boolean {
 }
 
 export function wrapCompactGridCell(cellId: string): string | null {
-  const node = doc.byId[cellId];
+  const node = docNode(cellId);
   if (!node || !isCompactGridCell(cellId)) return null;
   const rowIds = [...node.children];
-  for (const rowId of rowIds) if (!doc.byId[rowId]) return null;
+  for (const rowId of rowIds) if (!docNode(rowId)) return null;
 
   const fmt = formatForBlock(cellId);
   const { visible, hidden } = compactGridConfigSplit(node.raw, fmt);
@@ -464,11 +464,11 @@ export function wrapCompactGridCell(cellId: string): string | null {
 }
 
 export function appendSheetCellChild(cellId: string): string | null {
-  const node = doc.byId[cellId];
+  const node = docNode(cellId);
   if (!node || blockPageReadOnly(cellId)) return null;
   return withUndoUnit("sheet:add-child-bullet", [node.page], () => {
     if (isCompactGridCell(cellId) && !wrapCompactGridCell(cellId)) return null;
-    return insertEmptyChildBlock(cellId, doc.byId[cellId]?.children.length ?? 0);
+    return insertEmptyChildBlock(cellId, docNode(cellId)?.children.length ?? 0);
   });
 }
 
@@ -555,9 +555,9 @@ function moveRectContent(gridId: string, rect: SheetRect, dir: SheetMoveDirectio
     if (dir === "left" || dir === "right") {
       const nextByParent: Record<string, string[]> = {};
       for (let row = materialize.top; row <= materialize.bottom; row++) {
-        const rowId = doc.byId[gridId]?.children[row];
+        const rowId = docNode(gridId)?.children[row];
         if (!rowId) return false;
-        const next = [...doc.byId[rowId].children];
+        const next = [...docNode(rowId).children];
         rotateRowSegment(next, materialize.left, materialize.right, dir);
         nextByParent[rowId] = next;
       }
@@ -565,11 +565,11 @@ function moveRectContent(gridId: string, rect: SheetRect, dir: SheetMoveDirectio
     }
 
     const nextByParent: Record<string, string[]> = {};
-    const rowIds = doc.byId[gridId]?.children ?? [];
+    const rowIds = docNode(gridId)?.children ?? [];
     for (let row = materialize.top; row <= materialize.bottom; row++) {
       const rowId = rowIds[row];
       if (!rowId) return false;
-      nextByParent[rowId] = [...doc.byId[rowId].children];
+      nextByParent[rowId] = [...docNode(rowId).children];
     }
     for (let col = materialize.left; col <= materialize.right; col++) {
       if (dir === "up") {
@@ -657,7 +657,7 @@ export function structuralSheetPasteNode(text: string): OutlineNode | null {
 }
 
 function cellHasVisibleTextOrChildren(id: string): boolean {
-  return cellText(id).trim() !== "" || (doc.byId[id]?.children.length ?? 0) > 0;
+  return cellText(id).trim() !== "" || (docNode(id)?.children.length ?? 0) > 0;
 }
 
 function pushPasteOverwriteToast(): void {
@@ -688,7 +688,7 @@ export function splatStructuralSheetSelection(
           const target = materializeCell(sel.gridId, anchor.row + r, anchor.col + c);
           if (!target) return false;
           if (cellHasVisibleTextOrChildren(target)) overwroteNonEmpty = true;
-          const existingChildren = [...(doc.byId[target]?.children ?? [])];
+          const existingChildren = [...(docNode(target)?.children ?? [])];
           for (const child of existingChildren) deleteBlock(child);
           writeCellVisible(target, srcCell.raw);
           if (srcCell.children.length && !insertOutlineChildren(target, srcCell.children)) return false;

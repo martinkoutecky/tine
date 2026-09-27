@@ -50,6 +50,17 @@ export interface DocState {
 
 export const [doc, setDoc] = createStore<DocState>({ byId: {}, pages: [], feed: [], loaded: false });
 
+export type ReadonlyNode = Readonly<Omit<Node, "children">> & { readonly children: readonly string[] };
+export type ReadonlyFeedPage = Readonly<Omit<FeedPage, "roots">> & { readonly roots: readonly string[] };
+
+/** Live document queries. Each call reads the Solid store in the caller's tracking scope. */
+export function node(id: string): ReadonlyNode { return doc.byId[id]; }
+export function childIds(id: string): readonly string[] { return doc.byId[id]?.children ?? []; }
+export function pageRoots(name: string): readonly string[] { return pageByName(name)?.roots ?? []; }
+export function loadedPage(name: string): ReadonlyFeedPage | undefined { return pageByName(name); }
+export function feedNames(): readonly string[] { return doc.feed; }
+export function isLoaded(name?: string): boolean { return name === undefined ? doc.loaded : !!pageByName(name); }
+
 export function docHasBlockIdentity(id: string): boolean {
   if (doc.byId[id]) return true;
   const normalized = id.toLowerCase();
@@ -84,7 +95,7 @@ const pageIndexByName = createRoot(() =>
 /** The pages shown in the main content area, in feed order. Memoized: the O(feed)
  *  resolve runs once per structural change, not on each of its ~7 calls per render. */
 export const mainPages = createRoot(() =>
-  createMemo((): FeedPage[] => {
+  createMemo((): readonly ReadonlyFeedPage[] => {
     const idx = pageIndexByName();
     return doc.feed
       .map((n) => {
@@ -96,7 +107,7 @@ export const mainPages = createRoot(() =>
 );
 
 /** A loaded page record by name (anywhere in the working set), or undefined. */
-export function pageByName(name: string): FeedPage | undefined {
+export function pageByName(name: string): ReadonlyFeedPage | undefined {
   const i = pageIndexByName().get(name);
   return i === undefined ? undefined : doc.pages[i];
 }
@@ -141,4 +152,3 @@ let idCounter = 0;
 export function freshId(): string {
   return `b${Date.now().toString(36)}-${idCounter++}`;
 }
-

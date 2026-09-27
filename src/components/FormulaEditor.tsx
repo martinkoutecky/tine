@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { closeFormulaEditor, formulaEditor, type FormulaEditorHome, type FormulaEditorTarget } from "../ui";
-import { blockPageReadOnly, doc, pageByName, setBlockProperty, setPageProperty } from "../document";
+import { blockPageReadOnly, pageByName, setBlockProperty, setPageProperty, node as docNode } from "../document";
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
 import { registerTransientLayer } from "../transientLayers";
 
@@ -218,9 +218,9 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
   };
   const home = (): FormulaEditorHome | null => {
     if (props.target.mode === "edit") return props.target.home ?? null;
-    if (props.target.mode === "filter") return doc.byId[props.target.ownerId] ? { kind: "block", id: props.target.ownerId } : null;
+    if (props.target.mode === "filter") return docNode(props.target.ownerId) ? { kind: "block", id: props.target.ownerId } : null;
     if (props.target.home) return props.target.home;
-    if (doc.byId[props.target.ownerId]) return { kind: "block", id: props.target.ownerId };
+    if (docNode(props.target.ownerId)) return { kind: "block", id: props.target.ownerId };
     return props.target.schemaPage ? { kind: "page", name: props.target.schemaPage } : null;
   };
   const writeAllowed = () => {

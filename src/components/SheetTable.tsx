@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, blockProperty, blockWritable, doc, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, setBlockProperty, setPageProperty, setRaw, withUndoUnit } from "../document";
+import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -128,11 +128,11 @@ export function SheetTable(props: {
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
   });
   const schemaHome = createMemo<SchemaHome | null>(() => {
-    if (doc.byId[props.ownerId]) {
+    if (docNode(props.ownerId)) {
       const value = blockProperty(props.ownerId, "tine.fields");
       if (value !== null) return { kind: "block", id: props.ownerId, value };
     }
@@ -158,7 +158,7 @@ export function SheetTable(props: {
     return page ? formulasOf(pageProperties(page.preBlock, page.format)) : new Map();
   });
   const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
   });
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
@@ -175,9 +175,9 @@ export function SheetTable(props: {
 
   const allRows = createMemo<RowRecord[]>(() => {
     if (props.rowSource === "children") {
-      return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
+      return (docNode(props.ownerId)?.children ?? []).map((id) => ({
         id,
-        page: doc.byId[id]?.page ?? doc.byId[props.ownerId]?.page ?? "",
+        page: docNode(id)?.page ?? docNode(props.ownerId)?.page ?? "",
       }));
     }
     return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, kind: g.kind, dto: b })));
@@ -392,7 +392,7 @@ export function SheetTable(props: {
   };
 
   const createSchemaHome = (): SchemaHome | null => {
-    if (doc.byId[props.ownerId]) return { kind: "block", id: props.ownerId, value: "" };
+    if (docNode(props.ownerId)) return { kind: "block", id: props.ownerId, value: "" };
     return props.schemaPage ? { kind: "page", name: props.schemaPage, value: "" } : null;
   };
   const schemaWriteAllowed = () => {
@@ -559,10 +559,10 @@ export function SheetTable(props: {
     setRenamingField({ field, value: field.slice("prop:".length) });
   };
   const commitFieldRename = (field: FieldId, value: string): boolean => {
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     const home = schemaHome();
     if (!owner || home?.kind !== "block") return false;
-    const rowNodes = owner.children.map((id) => doc.byId[id]).filter((row): row is NonNullable<typeof row> => !!row);
+    const rowNodes = owner.children.map((id) => docNode(id)).filter((row): row is NonNullable<typeof row> => !!row);
     if (rowNodes.length !== owner.children.length) {
       pushToast("Some direct rows are not loaded; no fields were renamed.", "error");
       return false;
@@ -696,7 +696,7 @@ export function SheetTable(props: {
   };
   const addChildRow = () => {
     if (props.rowSource !== "children") return;
-    const owner = doc.byId[props.ownerId];
+    const owner = docNode(props.ownerId);
     if (!owner || blockPageReadOnly(props.ownerId)) return;
     const at = owner.children.length;
     const id = withUndoUnit("sheet:table-add-row", [owner.page], () => insertEmptyChildBlock(props.ownerId, at));
@@ -786,7 +786,7 @@ export function SheetTable(props: {
   };
 
   const openSheetMenu = (e: MouseEvent) => {
-    if (!doc.byId[props.ownerId]) return;
+    if (!docNode(props.ownerId)) return;
     e.preventDefault();
     e.stopPropagation();
     openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "table", props.rowSource, null, {

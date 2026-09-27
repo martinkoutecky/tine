@@ -1,5 +1,5 @@
 import { createRoot, createSignal } from "solid-js";
-import { doc, clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock } from "../document";
+import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
 import { endEdit, startEditing } from "../editorController";
 import { isSheetCellHidden, splitProps } from "../editor/properties";
 import {
@@ -388,9 +388,9 @@ export function lastCellFor(gridId: string, surfaceId?: string): { row: number; 
 }
 
 function rowsForGrid(gridId: string): { id: string; cellIds: readonly string[] }[] {
-  return (doc.byId[gridId]?.children ?? []).map((id) => ({
+  return (docNode(gridId)?.children ?? []).map((id) => ({
     id,
-    cellIds: doc.byId[id]?.children ?? [],
+    cellIds: docNode(id)?.children ?? [],
   }));
 }
 
@@ -406,12 +406,12 @@ function boundsForGrid(gridId: string, surfaceId?: string): { rows: number; cols
 }
 
 export function cellAt(sel: CellSelInput): MatrixCell | null {
-  const rows = doc.byId[sel.gridId]?.children ?? [];
+  const rows = docNode(sel.gridId)?.children ?? [];
   if (sel.row < 0 || sel.row >= rows.length || sel.col < 0) return null;
   let cols = 1;
-  for (const rowId of rows) cols = Math.max(cols, doc.byId[rowId]?.children.length ?? 0);
+  for (const rowId of rows) cols = Math.max(cols, docNode(rowId)?.children.length ?? 0);
   if (sel.col >= cols) return null;
-  const blockId = doc.byId[rows[sel.row]]?.children[sel.col] ?? null;
+  const blockId = docNode(rows[sel.row])?.children[sel.col] ?? null;
   return { blockId, row: sel.row, col: sel.col, rowSpan: 1, colSpan: 1 };
 }
 
@@ -422,11 +422,11 @@ export function cellBlockId(sel: CellSelInput): string | null {
 }
 
 export function cellForBlockId(blockId: string, preferredSurfaceId?: string): CellSel | null {
-  const rowId = doc.byId[blockId]?.parent ?? null;
-  const gridId = rowId ? doc.byId[rowId]?.parent ?? null : null;
+  const rowId = docNode(blockId)?.parent ?? null;
+  const gridId = rowId ? docNode(rowId)?.parent ?? null : null;
   if (gridId && blockIsGridView(gridId)) {
-    const row = doc.byId[gridId]?.children.indexOf(rowId!) ?? -1;
-    const col = doc.byId[rowId!]?.children.indexOf(blockId) ?? -1;
+    const row = docNode(gridId)?.children.indexOf(rowId!) ?? -1;
+    const col = docNode(rowId!)?.children.indexOf(blockId) ?? -1;
     if (row >= 0 && col >= 0) return withCellMeta(
       { kind: "cell", gridId, row, col } as CellSel,
       preferredSurfaceId ?? inferUniqueMountedSurface(gridId)
@@ -441,8 +441,8 @@ export function cellForBlockId(blockId: string, preferredSurfaceId?: string): Ce
 }
 
 function enclosingCellForGrid(gridId: string, nestedSurfaceId?: string): CellSel | null {
-  const rowId = doc.byId[gridId]?.parent ?? null;
-  const outerGridId = rowId ? doc.byId[rowId]?.parent ?? null : null;
+  const rowId = docNode(gridId)?.parent ?? null;
+  const outerGridId = rowId ? docNode(rowId)?.parent ?? null : null;
   let parentSurfaceId = nestedSurfaceId;
   if (outerGridId && nestedSurfaceId?.startsWith("sheet:")) {
     const suffix = `:${outerGridId}`;
@@ -576,7 +576,7 @@ export function startCellEditing(sel: CellSelInput, offset?: number): boolean {
   const blockId = cellBlockId(scoped);
   if (!blockId) return false;
   if (blockPageReadOnly(blockId)) return false; // org round-trip gate (review finding)
-  const node = doc.byId[blockId];
+  const node = docNode(blockId);
   if (!node) return false;
   const visibleLen = splitProps(node.raw, isSheetCellHidden, formatForBlock(blockId)).visible.length;
   setCellSel(scoped);
@@ -853,7 +853,7 @@ function overtypeCellSelection(sel: CellSel | RangeSel, text: string): boolean {
 }
 
 function pageForGrid(gridId: string): string | null {
-  return doc.byId[gridId]?.page ?? null;
+  return docNode(gridId)?.page ?? null;
 }
 
 function seamInsertTarget(sel: RowSeamSel | ColSeamSel): CellSel | null {

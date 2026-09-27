@@ -34,7 +34,7 @@ import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { resolveBlockBatched } from "../resolveBatch";
-import { doc, setRaw, formatForPage, formatForBlock, blockRef } from "../document";
+import { setRaw, formatForPage, formatForBlock, blockRef, node as docNode } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
@@ -277,7 +277,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLAnchorElement | undefined;
-  const sourcePage = () => (props.blockId ? doc.byId[props.blockId]?.page : undefined);
+  const sourcePage = () => (props.blockId ? docNode(props.blockId)?.page : undefined);
   const targetName = () => guideTargetForLink(props.name, sourcePage());
   // The referenced page's `icon::`, shown as a prefix like OG (and Tine's own page
   // title / namespace macro). Emoji route through EmojiText → Twemoji SVG, since
@@ -660,7 +660,7 @@ function blockRefWidth(el: HTMLElement): number {
 // stored as a percentage (Martin's choice — survives column width changes) and
 // as a quoted string so it stays valid EDN OG can also read.
 function writeMediaWidth(blockId: string, alt: string, url: string, pct: number) {
-  const node = doc.byId[blockId];
+  const node = docNode(blockId);
   if (!node) return;
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`(!\\[${esc(alt)}\\]\\(${esc(url)}\\))(\\{[^}]*\\})?`);
@@ -673,7 +673,7 @@ function writeMediaWidth(blockId: string, alt: string, url: string, pct: number)
 // block, then unlinks the file). Eats one adjacent space so we don't leave a
 // double space behind. Matched by exact alt+url, like writeMediaWidth.
 function removeMediaToken(blockId: string, alt: string, url: string) {
-  const node = doc.byId[blockId];
+  const node = docNode(blockId);
   if (!node) return;
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(` ?!\\[${esc(alt)}\\]\\(${esc(url)}\\)(\\{[^}]*\\})?`);
@@ -1165,7 +1165,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // the keystroke without re-resolving every visible uuid after every save. The
   // backend snapshot remains the fallback for targets outside the working set;
   // visible fallback UUIDs are batch-refreshed after landed graph transactions.
-  const liveTarget = () => doc.byId[props.id];
+  const liveTarget = () => docNode(props.id);
   const targetRaw = () => {
     const resolved = grp();
     // `undefined` is the initial/loading state, where a loaded reactive entity
@@ -1209,7 +1209,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
-          const ref = doc.byId[props.id]
+          const ref = docNode(props.id)
             ? blockRef(props.id)
             : { uuid: props.id, page: g.page, pageKind: g.kind };
           if (!shouldOpenTextContextMenu(e.target)) return;
@@ -1221,7 +1221,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           e.stopPropagation();
           const g = grp();
           if (!g) return;
-          const ref = doc.byId[props.id]
+          const ref = docNode(props.id)
             ? blockRef(props.id)
             : { uuid: props.id, page: g.page, pageKind: g.kind };
           const ann = annotation();

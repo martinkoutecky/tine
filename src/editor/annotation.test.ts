@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { setDoc } from "../document";
+import { setDoc } from "../document/model";
 import { annotationInfoForBlock, pdfFileForPage, pdfFileFromPreBlock } from "./annotation";
 
 // pdfFileForPage reduces an hls__ page's `file-path::` to a basename. A graph

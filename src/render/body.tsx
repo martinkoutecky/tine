@@ -9,7 +9,7 @@ import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
 import { hiccupToHtml } from "./hiccup";
 import { coarseSpanAttrs, type SpanDomAttrs } from "./spans";
 import { evalCalc } from "../editor/calc";
-import { toggleListItemAtIndex, doc, formatForBlock } from "../document";
+import { toggleListItemAtIndex, formatForBlock, node as docNode } from "../document";
 import { graphMeta } from "../graphSession";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
 import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
@@ -435,7 +435,7 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
   const blocks = bodyBlocks(parsed, raw);
   const beginQuery = inspectBeginQuery(raw, format, blocks);
   return beginQuery
-    ? <BeginQuery match={beginQuery} currentPage={blockId ? doc.byId[blockId]?.page : undefined} />
+    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
     : renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties));
 }
 
@@ -520,7 +520,7 @@ export function estimateBodyReserve(lines: string[], headingLevel: number | null
 // so duplicate labels and `**markup**` in the item never mis-target.
 function toggleAstCheckbox(blockId: string, cbIndex: number) {
   if (cbIndex < 0) return;
-  const node = doc.byId[blockId];
+  const node = docNode(blockId);
   if (!node) return;
   const lines = node.raw.split("\n");
   const re = /^\s*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s+/;

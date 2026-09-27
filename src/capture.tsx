@@ -14,7 +14,7 @@ import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { DatePicker } from "./components/DatePicker";
 import { datePicker } from "./ui";
-import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, doc } from "./document";
+import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
@@ -86,7 +86,7 @@ function Capture() {
     const rid = page?.roots[0];
     if (!page || !rid) return;
     for (const r of page.roots.slice(1)) deleteBlock(r);
-    const first = doc.byId[rid];
+    const first = docNode(rid);
     if (first) for (const c of [...first.children]) deleteBlock(c);
     setRaw(rid, "");
     startEditing(rid, 0, null);
@@ -112,7 +112,7 @@ function Capture() {
     const root = roots()[0];
     if (!root) return;
     if (!document.querySelector(".capture-shell .page-blocks textarea")) {
-      startEditing(root, doc.byId[root]?.raw.length ?? 0, null);
+      startEditing(root, docNode(root)?.raw.length ?? 0, null);
     }
     // Solid mounts the real Editor synchronously from startEditing; defer the
     // capture-specific fit/focus until that lifecycle has attached its textarea.
@@ -207,7 +207,7 @@ function Capture() {
       // read-only text, and typing has no destination until the user clicks it.
       if (attempt === 0) {
         const root = roots()[0];
-        const block = root ? doc.byId[root] : undefined;
+        const block = root ? docNode(root) : undefined;
         if (root) startEditing(root, block?.raw.length ?? 0, null);
       }
       // The capture shell mounts before its Block editor on a cold WebView.

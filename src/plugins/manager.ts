@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend, type InstalledPluginRecord } from "../backend";
-import { doc, setRaw } from "../document";
+import { setRaw, node as docNode } from "../document";
 import { pushToast } from "../toasts";
 import { platformKind } from "../platform";
 import {
@@ -716,7 +716,7 @@ export class PluginManager {
           return false;
         }
         if (!this.invocationAuthorityCurrent(authority)) return false;
-        const block = doc.byId[effect.blockId];
+        const block = docNode(effect.blockId);
         if (!block || block.raw !== effect.expectedRaw) return false;
         if (!this.invocationAuthorityCurrent(authority)) return false;
         setRaw(effect.blockId, effect.raw, { timetracking: false });

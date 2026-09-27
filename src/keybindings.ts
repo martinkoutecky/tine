@@ -22,7 +22,7 @@ import {
   activatePrevTab,
   route,
 } from "./router";
-import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, doc, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload } from "./document";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { openInPageFind } from "./inpageFind";
@@ -61,15 +61,15 @@ function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
   const owner = capturePluginGraphOwner();
   if (!owner) return undefined;
   const id = editingId();
-  const node = id ? doc.byId[id] : undefined;
+  const node = id ? docNode(id) : undefined;
   if (!node) return undefined;
   let depth = 0;
   let parentId = node.parent;
-  while (parentId && doc.byId[parentId] && depth < 1_000) {
+  while (parentId && docNode(parentId) && depth < 1_000) {
     depth++;
-    parentId = doc.byId[parentId].parent;
+    parentId = docNode(parentId).parent;
   }
-  const format = doc.pages.find((page) => page.name === node.page)?.format === "org" ? "org" : "md";
+  const format = loadedPage(node.page)?.format === "org" ? "org" : "md";
   if (!isPluginGraphOwnerCurrent(owner)) return undefined;
   const owned = bindPluginBlockSnapshot({ id: node.id, raw: node.raw, parentId: node.parent, depth, format });
   if (!owned || owned.owner.graphRoot !== owner.graphRoot || owned.owner.generation !== owner.generation) return undefined;
@@ -137,7 +137,7 @@ function firstVisibleBlockInFocusedPane(): string | null {
 
 function restoreBlockSelectionAfterPaneReturn(previous: string | null) {
   if (hasSelection()) return;
-  const target = previous && doc.byId[previous] ? previous : firstVisibleBlockInFocusedPane();
+  const target = previous && docNode(previous) ? previous : firstVisibleBlockInFocusedPane();
   if (target) selectBlock(target);
 }
 
