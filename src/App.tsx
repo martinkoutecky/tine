@@ -1,6 +1,6 @@
 import { Show, Suspense, createEffect, lazy, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
-import { PageView, reloadJournalsFeedFromStart, toLoadablePage, type JournalsFeedOwner } from "./components/Page";
+import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
@@ -41,18 +41,17 @@ import { checkForUpdate } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type QueryRoute } from "./router";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, pdfTarget, pdfPaneWidth, setPdfPaneWidth, persistPdfPaneWidth, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
-import { graphMeta, firstLoadDone, setFirstLoadDone, bumpDataRev, bumpPageInventoryRev, graphEpoch } from "./graphSession";
-import { markConflict, installAliasDraftRouteHandler } from "./document";
+import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch } from "./graphSession";
+import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
 import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage, pageByName, reloadDisposition, reloadPage, restoreTodayJournalInFeed, feedNames } from "./document";
+import { flushAll, appendToTodayJournal, captureToPage } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
-import { backend, isTauri, type GraphChange } from "./backend";
-import { captureBinding, stillBound } from "./binding";
+import { backend, isTauri } from "./backend";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -148,80 +147,22 @@ function requestJournalFeedWatcherRestart(
   if (owner) void reloadJournalsFeedFromStart(owner);
 }
 
-export async function handleGraphChange(c: GraphChange) {
-  const binding = captureBinding();
-  if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
-  // The backend watcher has already landed this transaction in its graph cache.
-  // Invalidate every derived visible-entity view even when the changed page is
-  // outside the bounded frontend working set (#166); loaded pages are refreshed
-  // below, while unloaded block references re-resolve by UUID from dataRev.
-  bumpDataRev();
-  if (c.created || c.removed) bumpPageInventoryRev();
+installExternalChangeUiHandler(() => {
   const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
-  if (c.removed) {
-    const disp = reloadDisposition(c.name);
-    if (disp === "conflict") {
-      markConflict(c.name);
-      if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
-      return;
-    }
-    if (disp === "skip") {
-      if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
-      return;
-    }
-    for (const p of routes) {
-      if (p.route.kind === "page" && p.route.name === c.name) {
-        if (p.router.canGoBack()) p.router.goBack();
-        else if (!closePane(p.paneId)) p.router.openJournals({ inPlace: true });
+  return {
+    pageOpen: (name: string) => routes.some((p) => p.route.kind === "page" && p.route.name === name),
+    journalsOpen: routes.some((p) => p.route.kind === "journals"),
+    leaveRemovedPage: (name: string) => {
+      for (const p of routes) {
+        if (p.route.kind === "page" && p.route.name === name) {
+          if (p.router.canGoBack()) p.router.goBack();
+          else if (!closePane(p.paneId)) p.router.openJournals({ inPlace: true });
+        }
       }
-    }
-    if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
-      restoreTodayJournalInFeed();
-      requestJournalFeedWatcherRestart(routes);
-    }
-    return;
-  }
-
-  const disp = reloadDisposition(c.name);
-  if (disp === "skip") {
-    if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
-    return;
-  }
-  if (disp === "conflict") {
-    markConflict(c.name);
-    if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
-    return;
-  }
-  if (routes.some((p) => p.route.kind === "page" && p.route.name === c.name)) {
-    const dto = await backend().getPage(c.name, c.kind);
-    if (!stillBound(binding)) return;
-    if (dto) reloadPage(toLoadablePage(dto, c.name));
-    // A page surface may have the same journal loaded while another live pane
-    // shows Journals.  Reloading that DTO is not feed reconciliation: always
-    // give the live feed owner its authoritative null-cursor restart too.
-    if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
-    return;
-  }
-  if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
-    if (pageByName(c.name)) {
-      const dto = await backend().getPage(c.name, c.kind);
-      if (!stillBound(binding)) return;
-      if (dto) reloadPage(dto);
-      requestJournalFeedWatcherRestart(routes);
-      return;
-    }
-    // The feed owner performs the page-scoped dirty/save/conflict/move gate.
-    // Calling it even while unsafe records a pending restart instead of losing
-    // this watcher update until another unrelated file changes.
-    requestJournalFeedWatcherRestart(routes);
-    return;
-  }
-  if (pageByName(c.name) && !feedNames().includes(c.name)) {
-    const dto = await backend().getPage(c.name, c.kind);
-    if (!stillBound(binding)) return;
-    if (dto) reloadPage(dto);
-  }
-}
+    },
+    restartJournalFeed: () => requestJournalFeedWatcherRestart(routes),
+  };
+});
 
 export function PaneTree(props: { node: LayoutNode; path: number[] }): JSX.Element {
   const n = () => props.node;
@@ -563,7 +504,7 @@ export function App(): JSX.Element {
   onMount(() => {
     let unsub = () => {};
     void backend()
-      .onGraphChanged((c) => void handleGraphChange(c))
+      .onGraphChanged((c) => void applyGraphChange(c))
       .then((u) => (unsub = u));
     onCleanup(() => unsub());
   });

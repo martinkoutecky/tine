@@ -7,7 +7,8 @@ import { toasts } from "../toasts";
 import { activeId, closeTab, route, tabRoute, tabs } from "../router";
 import { backend } from "../backend";
 import { closePane, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
-import { loadSingle, resetStore } from "../document";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import type { PageRead } from "../types";
 
 afterEach(() => {

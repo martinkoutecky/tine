@@ -7,7 +7,9 @@ import {
   type ClipboardBlock,
   type ClipboardPayloadData,
 } from "./clipboard";
-import { buildClipboardPayload, deleteBlock, ensurePageLoaded, flushPage, forgetPage, historyPageOnlyMode, loadFeed, loadSingle, markDirty, pageByName, pasteClipboardPayload, redo, reloadPage, resetStore, setRaw, toggleUndoRedoMode, undo } from "./document";
+import { buildClipboardPayload, deleteBlock, ensurePageLoaded, flushPage, forgetPage, loadFeed, markDirty, pageByName, pasteClipboardPayload, redo, reloadPage, resetStore, setRaw, toggleUndoRedoMode, undo } from "./document";
+import { historyPageOnlyMode } from "./document/history";
+import { loadSingle } from "./document/workingSet";
 import { doc, setDoc } from "./document/model";
 import { startEditing } from "./editorController";
 import { initParser } from "./render/parse";

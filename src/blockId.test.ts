@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { existingBlockId, rawWithBlockId } from "./document";
+import { existingBlockId, rawWithBlockId } from "./document/edits/identity";
 
 describe("existingBlockId", () => {
   it("reads a markdown id:: trailer, case-insensitively", () => {

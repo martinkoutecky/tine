@@ -1,20 +1,59 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { flushPage, loadSingle, pageByName, resetStore, setRaw } from "../document";
+import { CreatePageRefusal, flushPage, pageByName, resetStore, setRaw } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { closeSwitcher, openSwitcher } from "../ui";
 import type { PageDto, PageRead } from "../types";
 import { QuickSwitcher } from "./QuickSwitcher";
 import { materializeQueryWorkspace } from "./QueryWorkspace";
+import { setToasts, toasts } from "../toasts";
 
 afterEach(() => {
   closeSwitcher();
   resetStore();
+  setToasts([]);
   vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
 
 describe("creators that save outside the document engine", () => {
+  it("does not call a local workspace refusal a disk conflict", async () => {
+    const input = { title: "Saved query", sourceKind: "dsl" as const, source: "(todo TODO)", presentation: "list" as const, routeId: "query-pin" };
+    const deps = {
+      resolvePage: async () => ({ kind: "absent" as const, id: "pages/Saved query.md" }),
+      savePage: async () => { throw new CreatePageRefusal("page-dirty"); },
+      runGraphSearch: async () => ({ hits: [], diagnostics: [], explanation: { branches: [{ description: "ok", children: [] }] }, cancelled: false }),
+    };
+    const result = await materializeQueryWorkspace(input, deps);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("error");
+  });
+
+  it("does not show a create error when the graph switches during a QuickSwitcher save", async () => {
+    setToasts([]);
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false });
+    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Switching.md" });
+    let finish!: (rev: string) => void;
+    const save = vi.spyOn(backend(), "savePage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "Switching";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(root.textContent).toContain("Create page: Switching"));
+    const create = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]
+      .find((row) => row.textContent?.includes("Create page:"))!;
+    create.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    resetStore();
+    finish("old-graph-rev");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(toasts().filter((toast) => toast.kind === "error")).toEqual([]);
+    dispose();
+  });
+
   it("QuickSwitcher creates an empty page file; the next loaded edit saves against its created revision", async () => {
     resetStore();
     const path = "pages/Created through switcher.md";

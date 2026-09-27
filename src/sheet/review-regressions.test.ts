@@ -3,7 +3,8 @@
 // footer, and one-undo atomicity for the empty-journal append path.
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import { appendToTodayJournal, insertOutlineAfter, pageToDto, resetStore, undo } from "../document";
+import { appendToTodayJournal, insertOutlineAfter, resetStore, undo } from "../document";
+import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { journalTitle } from "../journal";

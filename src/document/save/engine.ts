@@ -20,6 +20,19 @@ export async function deletePageOnDisk(name: string, kind: PageKind, expectedPat
   else await backend().deletePage(name, kind);
 }
 
+export type CreatePageRefusalReason =
+  | "name-mismatch" | "page-conflicted" | "page-dirty" | "page-saving"
+  | "stale-binding" | "alias" | "page-rebound" | "graph-changed";
+
+/** Local precondition refusal. The backend's fixed `conflict` token is reserved
+ * for a file that changed on disk. */
+export class CreatePageRefusal extends Error {
+  constructor(readonly reason: CreatePageRefusalReason) {
+    super(`create-page:${reason}`);
+    this.name = "CreatePageRefusal";
+  }
+}
+
 /** Save a newly authored DTO through the same binding and save-state owner as edits. */
 export async function createPage(
   name: string,
@@ -29,19 +42,22 @@ export async function createPage(
   const binding = captureBinding();
   const token = graphToken;
   const generation = pageInstanceGeneration(name);
-  if (dto.name !== name || isConflicted(name)
-      || isDirty(name) || isSaving(name)
-      || (options.bindingGeneration !== undefined && options.bindingGeneration !== binding.backendGeneration)) {
-    throw new Error("conflict");
-  }
+  if (dto.name !== name) throw new CreatePageRefusal("name-mismatch");
+  if (isConflicted(name)) throw new CreatePageRefusal("page-conflicted");
+  if (isDirty(name)) throw new CreatePageRefusal("page-dirty");
+  if (isSaving(name)) throw new CreatePageRefusal("page-saving");
+  if (options.bindingGeneration !== undefined && options.bindingGeneration !== binding.backendGeneration)
+    throw new CreatePageRefusal("stale-binding");
   const resolved = options.id ? null : await backend().resolvePage(name, dto.kind);
-  if (resolved?.kind === "alias") throw new Error("conflict");
+  if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
+  if (resolved?.kind === "alias") throw new CreatePageRefusal("alias");
   const id = options.id ?? resolved!.id;
-  if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) throw new Error("graph changed");
+  if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
+  if (pageInstanceGeneration(name) !== generation) throw new CreatePageRefusal("page-rebound");
   const wasTombstoned = deletedPages.delete(name); // an explicit create supersedes a completed delete
   try {
     const rev = await backend().savePage(id, dto, options.baseRev ?? null, false, binding.backendGeneration);
-    if (!stillBound(binding) || token !== graphToken) throw new Error("graph changed");
+    if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
     if (pageInstanceGeneration(name) === generation) {
       setPageId(name, id);
       setBaseRev(name, rev);

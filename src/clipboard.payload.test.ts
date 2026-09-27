@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildClipboardPayload, ensurePageLoaded, forgetPage, loadSingle, pageInstanceGeneration, reloadPage, resetStore } from "./document";
+import { buildClipboardPayload, ensurePageLoaded, forgetPage, reloadPage, resetStore } from "./document";
+import { loadSingle } from "./document/workingSet";
+import { pageInstanceGeneration } from "./document/save/engine";
 import type { BlockDto, PageDto } from "./types";
 
 const page = (name: string, blocks: BlockDto[], id = `pages/${name}.md`): PageDto & { id: string } => ({

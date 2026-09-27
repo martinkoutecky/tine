@@ -14,7 +14,7 @@ import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
 import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
-import { persistBlockRefTarget, createPage as saveCreatedPage, switcherPage } from "../document";
+import { persistBlockRefTarget, createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
 
@@ -403,7 +403,8 @@ export function QuickSwitcher(): JSX.Element {
       await saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration });
       if (!stillBound(binding)) return null;
       return null;
-    } catch {
+    } catch (error) {
+      if (error instanceof CreatePageRefusal && error.reason === "graph-changed") return null;
       if (stillBound(binding)) pushToast(`Could not create “${name}”. It will be saved on your first edit.`, "error");
       return null;
     }

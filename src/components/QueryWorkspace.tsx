@@ -36,7 +36,7 @@ import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
 import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
-import { createPage, queryWorkspacePage } from "../document";
+import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -147,6 +147,13 @@ export async function materializeQueryWorkspace(
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (error instanceof CreatePageRefusal) {
+      if (error.reason === "graph-changed" || error.reason === "stale-binding")
+        return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+      if (error.reason === "alias")
+        return { ok: false, kind: "exists", message: `“${name}” is an alias of an existing page. Choose another title.` };
+      return { ok: false, kind: "error", message: `Could not save “${name}” because its local page state changed. Try again.` };
+    }
     if (errorFamily(error) === "conflict") {
       return {
         ok: false,

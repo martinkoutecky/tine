@@ -1,7 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { inlineText, parseBody } from "../render/facets";
-import { pageToDto, resetStore, undo } from "../document";
+import { resetStore, undo } from "../document";
+import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { setToasts, toasts } from "../toasts";

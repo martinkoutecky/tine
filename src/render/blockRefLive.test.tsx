@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { loadSingle, resetStore, setRaw } from "../document";
+import { resetStore, setRaw } from "../document";
+import { loadSingle } from "../document/workingSet";
 import { bumpDataRev } from "../graphSession";
 import { AstBody } from "./body";
 import { initParser } from "./parse";

@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { carryDay, carryDaysBack, carryPrevDay } from "./carry";
 import { journalTitle } from "./journal";
-import { resetStore, loadFeed, loadSingle, pageByName, pageToDto, setRaw, moveBlock, moveBlockFeed, moveSelectionItems, moveItem, selectBlock, extendSelectionTo, selectedIds, outdentSelection, promotePagePreamble, persistBlockRefTarget, prepareCrossPageSources, markDirty, flushPage, flushAll, isDirty, forgetPage, deletePage, undo } from "./document";
+import { resetStore, loadFeed, pageByName, setRaw, moveBlock, moveBlockFeed, moveSelectionItems, moveItem, selectBlock, extendSelectionTo, selectedIds, outdentSelection, promotePagePreamble, persistBlockRefTarget, prepareCrossPageSources, markDirty, flushPage, flushAll, isDirty, forgetPage, deletePage, undo } from "./document";
+import { loadSingle } from "./document/workingSet";
+import { pageToDto } from "./document/convert";
 import { doc } from "./document/model";
-import { clearConflict, conflicts, isConflicted, markConflict } from "./document";
+import { clearConflict, conflicts, isConflicted } from "./document";
+import { markConflict } from "./document/save/engine";
 import { toasts, setToasts } from "./toasts";
 import type { BlockDto, PageDto, PageRead } from "./types";
 

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { expect, it } from "vitest";
 
-const MAX_EXPORTS = 141;
+const MAX_EXPORTS = 135;
 
 function checkSurface(source: string, listed: string[]): void {
   const file = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);

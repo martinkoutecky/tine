@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
-import { loadSingle, pageToDto, resetStore } from "./document";
+import { resetStore } from "./document";
+import { loadSingle } from "./document/workingSet";
+import { pageToDto } from "./document/convert";
 import type { PageDto } from "./types";
 
 interface GoldenCase {

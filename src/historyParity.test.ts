@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as historyStoreModule from "./document";
+import { pageToDto } from "./document/convert";
+import { historyPageOnlyMode } from "./document/history";
 import * as editorControllerModule from "./editorController";
 import { paletteCommands } from "./keybindings";
 import {
@@ -16,7 +18,6 @@ import type { BlockDto, PageDto } from "./types";
 import { initParser } from "./render/parse";
 
 type HistoryStoreApi = typeof historyStoreModule & {
-  historyPageOnlyMode(): boolean;
   toggleUndoRedoMode(): "Page only" | "Global";
 };
 type HistoryEditorTarget = {
@@ -54,7 +55,7 @@ function page(name: string, blocks: BlockDto[]): PageDto {
 }
 
 function dtoBytes(name: string): string {
-  return JSON.stringify(store.pageToDto(name));
+  return JSON.stringify(pageToDto(name));
 }
 
 function setRoute(name: string) {
@@ -88,7 +89,7 @@ beforeEach(() => {
   setRightSidebarOpen(false);
   setToasts([]);
   editor.clearPendingHistoryEditorRestore?.();
-  if (store.historyPageOnlyMode?.()) store.toggleUndoRedoMode();
+  if (historyPageOnlyMode()) store.toggleUndoRedoMode();
 });
 
 afterEach(() => {
@@ -126,7 +127,7 @@ describe("history parity", () => {
       store.undo(); // A raw entry; B's structural + raw entries remain in place
       expect(dtoBytes("B")).toBe(bBytes);
       expect(mainRouter().route()).toEqual({ kind: "page", name: "B", pageKind: "page" });
-      expect(store.pageToDto("A")?.blocks.map((item) => item.raw)).toEqual(["alpha"]);
+      expect(pageToDto("A")?.blocks.map((item) => item.raw)).toEqual(["alpha"]);
 
       editor.startEditing("a", 2, "owner-a", "pane:main");
       store.redo();
@@ -147,7 +148,7 @@ describe("history parity", () => {
     store.setRaw("a", "A edited");
     store.setRaw("b", "B edited");
 
-    expect(store.historyPageOnlyMode()).toBe(false);
+    expect(historyPageOnlyMode()).toBe(false);
     store.undo();
     expect(store.node("b").raw).toBe("beta");
     expect(store.node("a").raw).toBe("A edited");
@@ -164,7 +165,7 @@ describe("history parity", () => {
     expect(command).toMatchObject({ label: "Toggle undo/redo mode", binding: "" });
 
     command!.run();
-    expect(store.historyPageOnlyMode()).toBe(true);
+    expect(historyPageOnlyMode()).toBe(true);
     expect(toasts().at(-1)?.message).toBe("Undo/redo mode: Page only");
   });
 

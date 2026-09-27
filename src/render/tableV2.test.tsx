@@ -4,7 +4,8 @@ import { AstBody } from "./body";
 import { clearSeededFacets } from "./facets";
 import { initParser } from "./parse";
 import { Block } from "../components/Block";
-import { loadSingle, resetStore } from "../document";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
 import type { PageDto } from "../types";
 import { setGraphMeta } from "../graphSession";
 

@@ -1,9 +1,11 @@
+CreatePageRefusal
 FeedPage
 HistoryRouteContext
 Node
 OutlineScope
 appendFeed
 appendToTodayJournal
+applyGraphChange
 beginPageHeaderEdit
 blockExternalId
 blockIsGridView
@@ -34,7 +36,6 @@ emptyPage
 ensureBlockId
 ensureEmptyBlock
 ensurePageLoaded
-existingBlockId
 exportNodesFor
 extendFeedForScroll
 extendSelectionTo
@@ -47,13 +48,13 @@ forgetPage
 formatForBlock
 formatForPage
 hasSelection
-historyPageOnlyMode
 indentBlock
 indentSelection
 insertEmptyChildBlock
 insertOutlineAfter
 insertOutlineChildren
 installAliasDraftRouteHandler
+installExternalChangeUiHandler
 installHistoryRouteContextAdapter
 isBlockMoving
 isConflicted
@@ -64,11 +65,9 @@ isSelected
 journalTemplatePage
 loadFeed
 loadGuidePages
-loadSingle
 loadedPage
 mainPages
 makeOwnNumberedList
-markConflict
 markDirty
 mergeWithPrev
 moveBlock
@@ -83,9 +82,7 @@ orderedListMarker
 outdentBlock
 outdentSelection
 pageByName
-pageInstanceGeneration
 pageRoots
-pageToDto
 pageVisibleOrder
 pasteClipboardPayload
 persistBlockRefTarget
@@ -94,12 +91,10 @@ prepareCrossPageSources
 prevVisible
 promotePagePreamble
 queryWorkspacePage
-rawWithBlockId
 readPageProperty
 readSchedule
 redo
 registerPaneRouteProvider
-reloadDisposition
 reloadHlsIfLoaded
 reloadPage
 removeOwnNumberedList
@@ -134,7 +129,6 @@ toggleListItemAtIndex
 toggleOwnNumberedList
 toggleUndoRedoMode
 trackAssetWrite
-trailingVisibleEmptyLeaf
 undo
 visibleOrder
 withToday

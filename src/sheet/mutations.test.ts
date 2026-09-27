@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
-import { blockProperty, blockIsGridView, blockSubtreeMarkdown, loadSingle, pageToDto, resetStore, undo } from "../document";
+import { blockProperty, blockIsGridView, blockSubtreeMarkdown, resetStore, undo } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { pageToDto } from "../document/convert";
 import { doc, setDoc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import {
