@@ -37,7 +37,19 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval' https://www.youtube.com",
+        "style-src": "'self' 'unsafe-inline' https:",
+        "connect-src": "'self' ipc: http://ipc.localhost https:",
+        "img-src": "'self' data: blob: tine-media: http://tine-media.localhost https://tine-media.localhost https: http:",
+        "media-src": "'self' data: blob: tine-media: http://tine-media.localhost https://tine-media.localhost https: http:",
+        "font-src": "'self' data: https:",
+        "worker-src": "'self' blob:",
+        "frame-src": "'self' https:",
+        "object-src": "'none'",
+        "base-uri": "'none'"
+      }
     }
   },
   "bundle": {

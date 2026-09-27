@@ -9,6 +9,7 @@
 
 import { openSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, pdfTarget, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
+import { captureBinding, stillBound } from "./binding";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
@@ -767,10 +768,12 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
     return true;
   }
   if (mod && e.key.toLowerCase() === "x") {
+    const binding = captureBinding();
     const ids = selectedIds();
     const text = selectionMarkdown();
-    void copyBlockOutline("cut", text, buildClipboardPayload(ids));
-    deleteSelection();
+    void copyBlockOutline("cut", text, buildClipboardPayload(ids))
+      .then(() => { if (stillBound(binding)) deleteSelection(); })
+      .catch(() => pushToast("Couldn't cut selection: clipboard write failed.", "error"));
     return true;
   }
   if (e.key === "Enter") {

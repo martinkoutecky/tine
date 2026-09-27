@@ -32,6 +32,16 @@ function evalExpr(src: string, fields: Record<string, FormulaValue> = {}, formul
   });
 }
 
+it("evaluates a benign 5000-term formula without stack overflow", () => {
+  expect(evalExpr(Array(5000).fill("1").join("+"))).toEqual(numberValue(5000));
+});
+
+it("bounds hostile nested formula references", () => {
+  const formulas: Record<string, Ast> = {};
+  for (let i = 0; i < 5000; i++) formulas[`f${i}`] = { kind: "formulaRef", name: `f${i + 1}` };
+  expect(evalExpr("formula.f0", {}, formulas)).toMatchObject({ kind: "error" });
+});
+
 function binaryAst(op: BinaryOp): Ast {
   return { kind: "binary", op, left: { kind: "field", name: "left" }, right: { kind: "field", name: "right" } };
 }

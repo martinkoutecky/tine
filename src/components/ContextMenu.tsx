@@ -1,6 +1,7 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { pushToast } from "../toasts";
+import { captureBinding, stillBound } from "../binding";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -1013,9 +1014,11 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     {
       label: "Cut block",
       run: () => {
+        const binding = captureBinding();
         const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
-        void copyBlockOutline("cut", text, buildClipboardPayload([id]));
-        deleteBlock(id);
+        void copyBlockOutline("cut", text, buildClipboardPayload([id]))
+          .then(() => { if (stillBound(binding)) deleteBlock(id); })
+          .catch(() => pushToast("Couldn't cut block: clipboard write failed.", "error"));
       },
     },
     {

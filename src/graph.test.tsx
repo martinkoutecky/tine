@@ -258,6 +258,18 @@ describe("default journal template graph bind", () => {
     expect(api.resolvePage).not.toHaveBeenCalled();
   });
 
+  it("keeps a journal whose only real content is in a descendant block", async () => {
+    const existing: PageRead = {
+      name: "Jul 10th, 2026", kind: "journal", title: "Jul 10th, 2026", pre_block: null,
+      blocks: [{ id: "parent", raw: "", collapsed: false,
+        children: [{ id: "child", raw: "A real note", collapsed: false, children: [] }] }],
+      rev: "existing-rev", id: "journals/2026_07_10.md",
+    };
+    const { loadGraphPath, api } = await loadHarness(existing);
+    await loadGraphPath(META.root);
+    expect(api.savePages).not.toHaveBeenCalled();
+  });
+
   it("refuses to write a template journal onto an alias name (B15b)", async () => {
     const { loadGraphPath, api } = await loadHarness(null);
     api.resolvePage.mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] } as never);

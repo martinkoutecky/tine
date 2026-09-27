@@ -84,7 +84,7 @@ import { journalTitle } from "../journal";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
-import { graphMeta, dataRev } from "../graphSession";
+import { graphMeta, dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
 import { openInNewTab } from "../router";
@@ -965,14 +965,19 @@ function timeStamp(d = new Date()): string {
 // and DTO→outline conversion for insertion.
 let templateCache: import("../types").TemplateDto[] | null = null;
 let templateCacheRev = -1;
+let templateCacheEpoch = -1;
 async function getTemplates(): Promise<import("../types").TemplateDto[]> {
-  // Re-fetch when the graph has changed since the last fetch (keyed on dataRev),
+  // Re-fetch when the graph has changed since the last fetch,
   // so a template just created (here or externally) shows up without a reload.
   const rev = dataRev();
-  if (templateCache && templateCacheRev === rev) return templateCache;
+  const epoch = graphEpoch();
+  if (templateCache && templateCacheRev === rev && templateCacheEpoch === epoch) return templateCache;
   try {
-    templateCache = await backend().listTemplates();
+    const templates = await backend().listTemplates();
+    if (graphEpoch() !== epoch) return [];
+    templateCache = templates;
     templateCacheRev = rev;
+    templateCacheEpoch = epoch;
     if (templateCache.length) await prepareTemplateVars();
   } catch {
     templateCache = [];

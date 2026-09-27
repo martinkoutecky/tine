@@ -8,7 +8,7 @@ import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { GraphMeta, PageDto } from "../types";
-import { setGraphMeta } from "../graphSession";
+import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
 import { Block } from "./Block";
 
 const META: GraphMeta = {
@@ -61,5 +61,35 @@ it("routes slash-template insertion through applyTemplateVars with the current p
     await vi.waitFor(() => expect(Object.values(doc.byId).map((block) => block.raw)).toContain("on [[Shared]]"));
   } finally {
     dispose();
+  }
+});
+
+it("does not offer the previous graph's cached templates after a graph switch", async () => {
+  const list = vi.spyOn(backend(), "listTemplates")
+    .mockResolvedValueOnce([{ name: "From A", page: "Templates", kind: "page", blocks: [] }])
+    .mockResolvedValueOnce([{ name: "From B", page: "Templates", kind: "page", blocks: [] }]);
+  const open = async (rootPath: string, blockId: string) => {
+    setGraphMeta({ ...META, root: rootPath });
+    bumpGraphEpoch();
+    loadSingle({ name: "Shared", kind: "page", title: "Shared", pre_block: null,
+      blocks: [{ id: blockId, raw: "/", collapsed: false, children: [] }] });
+    startEditing(blockId, 1);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Block id={blockId} />, root);
+    const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    textarea.focus();
+    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "x" }));
+    return { root, dispose };
+  };
+  const a = await open("/tmp/template-A", "host-A");
+  await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+  a.dispose();
+  resetStore();
+  const b = await open("/tmp/template-B", "host-B");
+  try {
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  } finally {
+    b.dispose();
   }
 });

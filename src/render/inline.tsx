@@ -43,6 +43,7 @@ import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 import { annotationInfoForBlock, pdfFileFromPreBlock } from "../editor/annotation";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { hiccupToHtml } from "./hiccup";
+import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 
 
 // ===========================================================================
@@ -1153,6 +1154,10 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target falls back to a short id.
 function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const linkDepth = useContext(LinkDepthContext);
+  if (linkDepth >= MAX_DEPTH_OF_LINKS) {
+    return <span class="link-depth-warning">Reference depth is too deep</span>;
+  }
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLSpanElement | undefined;
@@ -1252,7 +1257,9 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         }}
       >
         <Show when={text() !== undefined} fallback={<>(({props.id.slice(0, 8)}))</>}>
-          <InlineText text={text()!} format={fmt()} />
+          <LinkDepthContext.Provider value={linkDepth + 1}>
+            <InlineText text={text()!} format={fmt()} />
+          </LinkDepthContext.Provider>
         </Show>
       </span>
       <Show when={peek.open() && preview() && capped().blocks.length > 0}>

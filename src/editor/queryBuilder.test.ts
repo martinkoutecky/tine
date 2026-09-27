@@ -16,6 +16,15 @@ import {
 // Round-trip helper: DSL -> tree -> DSL should be stable for supported forms.
 const roundtrip = (dsl: string) => toDsl(parseQuery(dsl));
 
+it("bounds hostile nested query forms while retaining a benign wide query", () => {
+  const nested = "(not ".repeat(5000) + "[[Page]]" + ")".repeat(5000);
+  expect(() => parseQuery(nested)).not.toThrow();
+  const wide = `(and ${Array(1000).fill("[[Page]]").join(" ")})`;
+  const result = parseQuery(wide);
+  expect(result.kind).toBe("op");
+  if (result.kind === "op") expect(result.children).toHaveLength(1000);
+});
+
 describe("parse + serialize round-trip", () => {
   it("page / tag refs", () => {
     expect(roundtrip("[[Foo]]")).toBe("[[Foo]]");

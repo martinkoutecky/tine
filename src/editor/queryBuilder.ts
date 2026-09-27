@@ -147,9 +147,24 @@ interface Cur {
   pos: number;
 }
 
-function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
+const MAX_QUERY_DEPTH = 128;
+
+function parseExpr(toks: Tok[], cur: Cur, src: string, depth = 0): Clause | null {
   const t = toks[cur.pos];
   if (!t) return null;
+  if (depth > MAX_QUERY_DEPTH && t.t === "(") {
+    // Preserve the remainder as an opaque balanced form. The editor must not
+    // crash on hostile nesting or silently broaden the runnable query.
+    let balance = 0;
+    let end = t.e;
+    while (cur.pos < toks.length) {
+      const token = toks[cur.pos++];
+      if (token.t === "(") balance++;
+      else if (token.t === ")" && --balance === 0) { end = token.e; break; }
+      end = token.e;
+    }
+    return { kind: "raw", text: src.slice(t.s, end) };
+  }
   if (t.t === "page" || t.t === "tag") {
     cur.pos++;
     return { kind: "page", name: t.v };
@@ -177,10 +192,10 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
     switch (name) {
       case "and":
       case "or":
-        clause = { kind: "op", op: name, children: parseList(toks, cur, src) };
+        clause = { kind: "op", op: name, children: parseList(toks, cur, src, depth + 1) };
         break;
       case "not": {
-        const child = parseExpr(toks, cur, src);
+        const child = parseExpr(toks, cur, src, depth + 1);
         clause = child ? { kind: "op", op: "not", children: [child] } : null;
         break;
       }
@@ -288,14 +303,14 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
     // A lazy stop at the first ")" would split an unknown NESTED form like
     // `(custom (nested x))` at the inner ")", orphaning later siblings and
     // emitting an unbalanced raw fragment that corrupts the query on re-serialize.
-    let depth = 1;
+    let formDepth = 1;
     let close: Tok | undefined;
     while (cur.pos < toks.length) {
       const tk = toks[cur.pos];
-      if (tk.t === "(") depth++;
+      if (tk.t === "(") formDepth++;
       else if (tk.t === ")") {
-        depth--;
-        if (depth === 0) {
+        formDepth--;
+        if (formDepth === 0) {
           close = tk;
           cur.pos++;
           break;
@@ -314,11 +329,11 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
   return null;
 }
 
-function parseList(toks: Tok[], cur: Cur, src: string): Clause[] {
+function parseList(toks: Tok[], cur: Cur, src: string, depth: number): Clause[] {
   const out: Clause[] = [];
   while (toks[cur.pos] && toks[cur.pos].t !== ")") {
     const before = cur.pos;
-    const c = parseExpr(toks, cur, src);
+    const c = parseExpr(toks, cur, src, depth);
     if (c) out.push(c);
     if (cur.pos === before) cur.pos++; // guard against non-advance
   }
@@ -371,6 +386,9 @@ function parseOptValue(toks: Tok[], cur: Cur): string | null {
 
 /** Parse a query DSL body into a root op node (always `and`/`or`). An empty or
  *  unparseable-at-top body yields an empty `and` root. */
+/** Parse one query from outside content. Cost: O(query tokens); beyond the
+ * bounded nesting depth, preserve the form as opaque raw text so callers can
+ * show it without broadening its meaning. Never throws for deep nesting. */
 export function parseQuery(dsl: string): Clause {
   const src = dsl.trim();
   if (src === "") return { kind: "op", op: "and", children: [] };

@@ -59,7 +59,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   }
   const menuLabels = () => [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
 
-  it("context Copy/Cut block each leave a fresh exact private payload", () => {
+  it("context Copy/Cut block each leave a fresh exact private payload", async () => {
     load();
     setDoc("byId", "parent", "raw", "Parent\nid:: 11111111-1111-1111-1111-111111111111");
     setDoc("byId", "child", "raw", "Child\ncollapsed:: true\nid:: 22222222-2222-2222-2222-222222222222");
@@ -87,12 +87,27 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
     openContextMenu(10, 10, "parent");
     click("Cut block");
+    await vi.waitFor(() => expect(doc.byId.parent).toBeUndefined());
     expect(peekClipboardPayload()).toMatchObject({
       op: "cut",
       sourcePages: [{ name: "P", kind: "page", generation: expect.any(Number) }],
     });
     expect(peekClipboardPayload()?.blocks[0].children[0].raw).toContain("collapsed:: true");
     expect(doc.byId.parent).toBeUndefined();
+    dispose();
+  });
+
+  it("keeps a block when the clipboard rejects Cut", async () => {
+    load();
+    vi.spyOn(backend(), "writeRich").mockRejectedValue(new Error("clipboard denied"));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "parent");
+    const cut = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((el) => el.textContent?.trim() === "Cut block");
+    cut!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(doc.byId.parent).toBeDefined();
+    expect(peekClipboardPayload()).toBeNull();
     dispose();
   });
 

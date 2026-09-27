@@ -351,6 +351,7 @@ function evalField(name: string, ctx: FormulaEvalContext): FormulaValue {
 }
 
 function evalFormulaRef(name: string, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+  if (visited.length >= 128) return errorValue("Formula references are nested too deeply");
   const prior = visited.indexOf(name);
   if (prior >= 0) return errorValue(`Formula cycle: ${[...visited.slice(prior), name].join(" -> ")}`);
 
@@ -371,8 +372,7 @@ function evalUnary(op: "!" | "-", expr: Ast, ctx: FormulaEvalContext, visited: r
   return value.kind === "number" ? numberValue(-value.value) : errorValue("Unary - expects number");
 }
 
-function evalLogical(op: "&&" | "||", leftAst: Ast, rightAst: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
-  const left = evalAst(leftAst, ctx, visited);
+function evalLogical(op: "&&" | "||", left: FormulaValue, rightAst: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
   if (isErrorValue(left)) return left;
   if (left.kind !== "boolean") return errorValue(`${op} expects boolean operands`);
   if (op === "&&" && !left.value) return booleanValue(false);
@@ -382,10 +382,8 @@ function evalLogical(op: "&&" | "||", leftAst: Ast, rightAst: Ast, ctx: FormulaE
   return right.kind === "boolean" ? booleanValue(right.value) : errorValue(`${op} expects boolean operands`);
 }
 
-function evalBinary(op: BinaryOp, leftAst: Ast, rightAst: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
-  if (op === "&&" || op === "||") return evalLogical(op, leftAst, rightAst, ctx, visited);
-
-  const left = evalAst(leftAst, ctx, visited);
+function evalBinary(op: BinaryOp, left: FormulaValue, rightAst: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+  if (op === "&&" || op === "||") return evalLogical(op, left, rightAst, ctx, visited);
   if (isErrorValue(left)) return left;
   const right = evalAst(rightAst, ctx, visited);
   if (isErrorValue(right)) return right;
@@ -462,7 +460,21 @@ function evalAst(ast: Ast, ctx: FormulaEvalContext, visited: readonly string[]):
     case "unary":
       return evalUnary(ast.op, ast.expr, ctx, visited);
     case "binary":
-      return evalBinary(ast.op, ast.left, ast.right, ctx, visited);
+      // Binary operators are left-associative. Walk the left spine iteratively:
+      // a normal 5000-cell sum must not consume 5000 JS stack frames.
+      {
+        const spine: Extract<Ast, { kind: "binary" }>[] = [];
+        let cursor: Ast = ast;
+        while (cursor.kind === "binary") {
+          spine.push(cursor);
+          cursor = cursor.left;
+        }
+        let value = evalAst(cursor, ctx, visited);
+        for (let i = spine.length - 1; i >= 0; i--) {
+          value = evalBinary(spine[i].op, value, spine[i].right, ctx, visited);
+        }
+        return value;
+      }
     case "call":
       return evalCall(ast.name, ast.args, ctx, visited);
     case "member":
@@ -470,6 +482,9 @@ function evalAst(ast: Ast, ctx: FormulaEvalContext, visited: readonly string[]):
   }
 }
 
+/** Evaluate one formula AST. Cost: O(AST nodes plus referenced formulas);
+ * long left-associative chains use an iterative walk, while excessive formula
+ * reference nesting returns a FormulaErrorValue. Callers need no stack budget. */
 export function evaluate(ast: Ast, ctx: FormulaEvalContext): FormulaValue {
   return evalAst(ast, ctx, []);
 }

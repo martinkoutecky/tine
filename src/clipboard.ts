@@ -150,6 +150,8 @@ export function copyOutline(md: string): Promise<void> {
  * Dedicated block copy/cut ordering boundary: clear old private state, start the
  * external write, then publish the fresh generation before returning. The write
  * uses the transport directly so it cannot clear the slot it just created.
+ * A rejected transport write clears that generation's private slot and
+ * rejects to the caller, which must keep the source block and report failure.
  */
 export function copyBlockOutline(
   op: "copy" | "cut",
@@ -168,7 +170,13 @@ export function copyBlockOutline(
       sourcePages: op === "cut" ? payload.sourcePages : [],
     };
   }
-  return write;
+  const pendingGeneration = slot?.generation;
+  return write.catch((error) => {
+    // A rejected external write must not leave a private cut grant behind.
+    // A newer clipboard action owns its own generation and must survive.
+    if (slot?.generation === pendingGeneration) clearClipboardPayload();
+    throw error;
+  });
 }
 
 // Browser-native copy/cut paths (notably selected textarea text) have no JS

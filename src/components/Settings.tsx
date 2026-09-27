@@ -1648,8 +1648,8 @@ function JournalsTab(props: { search: string }): JSX.Element {
         hint={
           <>
             How journal dates are displayed and how new <code>[[date]]</code> titles are written.
-            Display-only — your journal <em>file names</em> are untouched and existing journals keep
-            working. Saved to <code>:journal/page-title-format</code>.
+            Changing this also renames existing journal <em>files</em>. Saved to
+            <code>:journal/page-title-format</code>.
           </>
         }
       >
@@ -1894,7 +1894,11 @@ function BackupsTab(): JSX.Element {
       }
       await backend().restoreBackup(b.stamp);
       const root = graphMeta()?.root ?? "";
-      await loadGraphPath(root, { forceRefresh: true, transitionHeld: true }); // rebuild restored files
+      const outcome = await loadGraphPath(root, { forceRefresh: true, transitionHeld: true }); // rebuild restored files
+      if (outcome.kind !== "loaded" && outcome.kind !== "already_current") {
+        pushToast("Snapshot restored, but the graph couldn't be reloaded. Reopen it to see the restored files.", "error");
+        return;
+      }
       pushToast(`Restored snapshot from ${when}`, "success");
       void refresh();
     } catch (e) {
@@ -2694,7 +2698,10 @@ function AssetsTab(): JSX.Element {
     try {
       // Persist edits first so a just-deleted block's media counts as orphaned
       // (and a just-inserted one counts as referenced).
-      await flushAll();
+      if (!(await flushAll())) {
+        pushToast("Some pages couldn't be saved — resolve conflicts before scanning assets.", "error");
+        return;
+      }
       setList(await backend().listOrphanAssets());
       setScanned(true);
       await refreshTrash();

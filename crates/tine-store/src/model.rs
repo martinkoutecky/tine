@@ -5506,6 +5506,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn journal_content_matches_shared_frontend_fixture() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/journal-content.json"
+        ))
+        .unwrap();
+        fn blocks(values: &serde_json::Value) -> Vec<DocBlock> {
+            values.as_array().unwrap().iter().map(|value| {
+                let mut block = DocBlock::new(value["raw"].as_str().unwrap());
+                block.children = blocks(&value["children"]);
+                block
+            }).collect()
+        }
+        for case in cases.as_array().unwrap() {
+            assert_eq!(doc_has_content(&blocks(&case["blocks"])), case["hasContent"].as_bool().unwrap(), "{}", case["name"]);
+        }
+    }
+
+    #[test]
     fn page_name_encoding_round_trips_both_formats() {
         // Legacy: `/` ↔ `%2F`; a literal `___` is NOT a separator (stays put).
         let leg = FileNameFormat::Legacy;

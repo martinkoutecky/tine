@@ -86,6 +86,16 @@ afterEach(() => {
 });
 
 describe("clipboard payload insertion and identity validation", () => {
+  it("clears a rejected cut slot without clearing a newer clipboard generation", async () => {
+    let rejectFirst!: (error: Error) => void;
+    vi.mocked(backend().writeRich).mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject; }));
+    const payload: ClipboardPayloadData = { blocks: [], sourcePages: [] };
+    const first = copyBlockOutline("cut", "- old", payload);
+    await copyBlockOutline("copy", "- new", payload);
+    rejectFirst(new Error("clipboard denied"));
+    await expect(first).rejects.toThrow("clipboard denied");
+    expect(peekClipboardSlot()?.text).toBe("- new");
+  });
   it("retires an immediate cut before the debounce and preserves identity", async () => {
     seed([page("Paste", [
       block(ID1, `source\nid:: ${ID1}`),

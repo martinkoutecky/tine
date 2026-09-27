@@ -44,6 +44,10 @@ function lcg(seed: number): () => number {
 }
 
 describe("formula parser", () => {
+  it("bounds hostile grouping but keeps 500 benign levels", () => {
+    expect(parseFormula("(".repeat(5000) + "1" + ")".repeat(5000)).ok).toBe(false);
+    expect(parseFormula("(".repeat(500) + "1" + ")".repeat(500)).ok).toBe(true);
+  });
   it("implements the ADR precedence table pairwise", () => {
     const ops: readonly { op: BinaryOp; precedence: number }[] = [
       { op: "*", precedence: 6 },

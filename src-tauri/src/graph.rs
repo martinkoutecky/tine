@@ -41,9 +41,15 @@ pub(crate) fn resolve_root(path: &str) -> Option<String> {
     std::env::args().skip(1).find(|arg| !arg.starts_with('-'))
 }
 
+/// A remembered path is optional startup state: a moved or deleted graph
+/// sends the app to the picker instead of aborting Tauri setup.
+pub(crate) fn usable_last_graph_path(path: Option<String>) -> Option<String> {
+    path.filter(|root| Store::canonical_root(Path::new(root)).is_ok())
+}
+
 #[tauri::command]
 pub(crate) fn startup_graph_path(app: tauri::AppHandle) -> Option<String> {
-    resolve_root("").or_else(|| crate::settings::last_graph_path(&app))
+    resolve_root("").or_else(|| usable_last_graph_path(crate::settings::last_graph_path(&app)))
 }
 
 #[tauri::command]
@@ -495,6 +501,21 @@ pub(crate) fn warm_done(
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn moved_last_graph_reaches_a_canonical_root_error() {
+        let missing = std::env::temp_dir().join(format!(
+            "tine-moved-last-graph-{}",
+            std::process::id()
+        ));
+        assert!(Store::canonical_root(&missing).is_err());
+        assert_eq!(
+            usable_last_graph_path(Some(missing.display().to_string())),
+            None
+        );
+        let present = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string();
+        assert_eq!(usable_last_graph_path(Some(present.clone())), Some(present));
+    }
 
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("tine-graph-{tag}-{}", std::process::id()));

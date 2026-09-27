@@ -539,8 +539,8 @@ pub(crate) fn save_session(
     }
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = p.with_extension(format!("json.tmp{seq}"));
-    // Write to a temp file then atomically rename, so a crash mid-write can never
-    // leave a truncated session that fails to parse.
+    // The rename replaces the session atomically, but without fsync this is not
+    // a guarantee that the newest session survives a power loss.
     std::fs::write(&tmp, data.as_bytes()).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
     Ok(())

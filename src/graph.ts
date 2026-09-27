@@ -19,6 +19,7 @@ import { isMobile, platformKind } from "./platform";
 import type { BlockDto } from "./types";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
+import { journalHasContent } from "./journalContent";
 import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwnership";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -213,7 +214,7 @@ async function ensureJournalTemplate(): Promise<void> {
   try {
     const existing = await backend().getPage(title, "journal");
     if (!stillBound(binding)) return;
-    if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return; // already has content
+    if (existing && journalHasContent(existing.blocks)) return; // already has content
     const tmpl = (await backend().listTemplates()).find((t) => t.name === tname);
     if (!stillBound(binding)) return;
     if (!tmpl) return;

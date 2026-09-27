@@ -461,7 +461,7 @@ describe("block-selection commands", () => {
     dispose();
   });
 
-  it("Mod+X leaves a fresh one-shot cut payload with its exact source page", () => {
+  it("Mod+X leaves a fresh one-shot cut payload with its exact source page", async () => {
     setGraphMeta(pluginGraphMeta);
     loadSingle({
       name: "Tasks", kind: "page", title: "Tasks", pre_block: null, id: "pages/tasks.md",
@@ -480,7 +480,21 @@ describe("block-selection commands", () => {
       name: "Tasks", kind: "page", path: "pages/tasks.md", generation: expect.any(Number),
     })]);
     expect(payload?.blocks[0].raw).toContain("id:: 33333333-3333-3333-3333-333333333333");
-    expect(doc.byId["cut-me"]).toBeUndefined();
+    await vi.waitFor(() => expect(doc.byId["cut-me"]).toBeUndefined());
+    dispose();
+  });
+
+  it("Mod+X keeps the selected block if the clipboard write rejects", async () => {
+    setGraphMeta(pluginGraphMeta);
+    loadSingle({ name: "Tasks", kind: "page", title: "Tasks", pre_block: null,
+      blocks: [{ id: "cut-failure", raw: "Keep me", collapsed: false, children: [] }] });
+    selectBlock("cut-failure");
+    vi.spyOn(backend(), "writeRich").mockRejectedValue(new Error("clipboard denied"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "x", code: "KeyX", ctrlKey: true }).event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(doc.byId["cut-failure"]).toBeDefined();
     dispose();
   });
 
