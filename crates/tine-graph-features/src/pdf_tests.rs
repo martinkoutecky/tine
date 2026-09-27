@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn failed_sidecar_crop_can_be_rolled_back_to_recoverable_trash() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-pdf-crop-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let rel = write_pdf_area_image(&store, "paper.pdf", 1, "crop-id", 42, b"png").unwrap();
+    assert!(root.join("assets").join(&rel).is_file());
+    assert!(rollback_pdf_area_image(&store, "paper.pdf", 1, "../crop-id", 42).is_err());
+    assert!(root.join("assets").join(&rel).is_file());
+    rollback_pdf_area_image(&store, "paper.pdf", 1, "crop-id", 42).unwrap();
+    assert!(!root.join("assets").join(&rel).exists());
+    assert_eq!(
+        std::fs::read_dir(root.join("logseq/.tine-trash/assets"))
+            .unwrap()
+            .count(),
+        1
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn optional_page_checks_org_headline_depth_and_preserves_sidecar_reads() {
     let dir = std::env::temp_dir().join(format!("tine-pdf-org-depth-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("pages")).unwrap();

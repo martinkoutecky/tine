@@ -89,6 +89,14 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }) {
   evictIfNeeded();
 }
 
+/** Admit a page fetched for a routed graph pane. Unlike a satellite/scratch
+ * load, this also arms the save engine when it is the first page loaded after
+ * startup. O(blocks of this page); an unsafe replacement keeps the live copy. */
+export function loadRoutedPage(dto: PageDto & { id?: string }): void {
+  ensurePageLoaded(dto);
+  setDoc("loaded", true);
+}
+
 /** Load/reload bundled Guide pages into the working set without making them the
  *  main feed. Re-open uses this to re-derive the read-only virtual pages from
  *  the backend templates instead of trusting stale in-memory copies. */

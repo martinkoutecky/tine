@@ -640,6 +640,13 @@ try {
   await browser.waitUntil(() => persistedSplitValue() === "[[Fuzzy Existing]] ", {
     timeout: 10_000,
     timeoutMsg: "split acceptance did not commit through the guarded save path",
+  }).catch(async (error) => {
+    const state = await browser.execute(() => ({
+      editor: document.querySelector('[data-pane-id]:not([data-pane-id="main"]) [data-block-ref="33333333-3333-4333-8333-333333333333"] textarea.block-editor')?.value,
+      toasts: [...document.querySelectorAll('.toast')].map((el) => el.textContent),
+      block: document.querySelector('[data-pane-id]:not([data-pane-id="main"]) [data-block-ref="33333333-3333-4333-8333-333333333333"] .block-content')?.textContent,
+    }));
+    throw new Error(`${error.message}; disk=${JSON.stringify(persistedSplitValue())}; state=${JSON.stringify(state)}`);
   });
   receipt.observations.commitBeforeReload = { disk: persistedSplitValue() };
 

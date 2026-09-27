@@ -1661,10 +1661,10 @@ export function mockBackend(): Backend {
       pdf: string,
       page: number,
       id: string,
-      stamp: number,
-      _bytes: Uint8Array,
+      stamp: number, _bytes: Uint8Array,
     ): Promise<string> {
       return `${pdf.replace(/\.pdf$/i, "")}/${page}_${id}_${stamp}.png`;
     },
+    async rollbackPdfAreaImage(): Promise<void> {},
   };
 }

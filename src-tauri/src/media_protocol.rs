@@ -1,5 +1,5 @@
 //! Range-aware, graph-scoped audio/video protocol. The requesting webview label
-//! selects the current graph slot, and the core validates a top-level regular
+//! selects the current graph slot, and the core validates a regular
 //! asset on every request. Responses are capped to 1 MiB, so even a malformed or
 //! range-less request can never make the app read a multi-gigabyte media file.
 
@@ -75,6 +75,12 @@ fn response(status: StatusCode, body: Vec<u8>) -> Response<Vec<u8>> {
     Response::builder().status(status).body(body).unwrap()
 }
 
+fn open_media_asset(store: &tine_store::Store, name: &str) -> Option<(std::fs::File, u64)> {
+    tine_graph_features::assets::validate_stream_asset(store, name).ok()?;
+    let id = store.file_id(tine_store::Area::Assets, name).ok()?;
+    store.open_read(&id).ok()
+}
+
 pub(crate) fn respond<R: Runtime>(
     ctx: UriSchemeContext<'_, R>,
     request: Request<Vec<u8>>,
@@ -95,13 +101,7 @@ pub(crate) fn respond<R: Runtime>(
     if slot.binding_generation != binding {
         return response(StatusCode::FORBIDDEN, Vec::new());
     }
-    if name.is_empty() || name.contains('/') || name.contains('\\') {
-        return response(StatusCode::NOT_FOUND, Vec::new());
-    }
-    let Ok(id) = slot.store.file_id(tine_store::Area::Assets, name) else {
-        return response(StatusCode::NOT_FOUND, Vec::new());
-    };
-    let Ok((mut file, len)) = slot.store.open_read(&id) else {
+    let Some((mut file, len)) = open_media_asset(&slot.store, name) else {
         return response(StatusCode::NOT_FOUND, Vec::new());
     };
     if len == 0 {
@@ -169,6 +169,26 @@ pub(crate) fn respond<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streams_nested_asset_paths_but_refuses_traversal() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-media-nested-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("assets/sub")).unwrap();
+        std::fs::write(root.join("assets/sub/clip.mp3"), b"audio").unwrap();
+        let store = tine_store::Store::open(&root, Default::default())
+            .unwrap()
+            .0;
+        let (_, len) = open_media_asset(&store, "sub/clip.mp3").unwrap();
+        assert_eq!(len, 5);
+        assert!(open_media_asset(&store, "../clip.mp3").is_none());
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn decodes_safe_percent_encoded_names() {

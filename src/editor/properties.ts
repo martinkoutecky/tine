@@ -3,7 +3,8 @@
 
 import { transitionFence, type FenceState } from "./fences";
 
-export const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
+/** Ordinary `key:: value` lines share the page-header key class at column zero. */
+export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
 
 const PAGE_HEADER_KEY = /^[\p{L}\p{M}\p{N}_./-]+$/u;
 
@@ -115,7 +116,7 @@ export const isSheetCellHidden = (key: string): boolean =>
 export const hideAll = (_key: string): boolean => true;
 
 function propLineKey(line: string): string | null {
-  const m = /^\s*([A-Za-z0-9_./-]+)::/.exec(line);
+  const m = /^\s*([\p{L}\p{M}\p{N}_./-]+)::/u.exec(line);
   return m ? m[1].toLowerCase() : null;
 }
 
@@ -391,6 +392,35 @@ export function upsertPropertyLine(
   // page property and replaces an existing one in place.  Keep that ordering
   // contract instead of inventing a Tine-local append rule.
   if (!matched && v) out.unshift(`${key}:: ${v}`);
+  return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
+}
+
+/** First case-insensitive `#+key: ` directive in an Org preamble, trimmed, or
+ * null. The space after `:` is required. Cost O(preamble bytes). */
+export function readOrgPageProperty(preBlock: string | null, key: string): string | null {
+  const prefix = `#+${key.toLowerCase()}: `;
+  for (const line of preBlock?.split("\n") ?? []) {
+    if (line.toLowerCase().startsWith(prefix)) return line.slice(line.indexOf(": ", 2) + 2).trim();
+  }
+  return null;
+}
+
+/** Set/remove an Org page directive while preserving unrelated preamble lines.
+ * The key is lowercased; matches require `#+key: ` case-insensitively, and
+ * duplicate matches collapse to one. New keys prepend. Null/blank removes;
+ * null is returned when no nonblank preamble remains. Cost O(preamble bytes). */
+export function orgPreBlockWithProperty(preBlock: string | null, key: string, value: string | null): string | null {
+  const prefix = `#+${key.toLowerCase()}: `;
+  const v = value?.trim() || null;
+  const out: string[] = [];
+  let matched = false;
+  for (const line of preBlock?.split("\n") ?? []) {
+    if (line.toLowerCase().startsWith(prefix)) {
+      if (!matched && v) out.push(`${prefix}${v}`);
+      matched = true;
+    } else out.push(line);
+  }
+  if (!matched && v) out.unshift(`${prefix}${v}`);
   return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
 }
 

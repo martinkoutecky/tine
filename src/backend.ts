@@ -453,6 +453,7 @@ export interface Backend {
    *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
    *  Returns the assets-relative path. */
   savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
+  rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
   /** How many launch snapshots to keep. */
@@ -1013,6 +1014,9 @@ class TauriBackend implements Backend {
       stamp,
       bytesB64: bytesToBase64(bytes),
     }, bindingGeneration);
+  }
+  rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number) {
+    return this.assetCall<void>("rollback_pdf_area_image", { pdf, page, id, stamp }, bindingGeneration);
   }
   async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");

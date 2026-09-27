@@ -7,6 +7,10 @@
  * `isLoaded` read the live Solid store on each call. Call them inside a tracking
  * scope (JSX, memo, effect) to re-render on change; a value read once in setup
  * is a snapshot, not a subscription. Returned values are readonly.
+ * `loadRoutedPage` admits the first routed graph page and enables saves even
+ * when no journal feed has loaded; O(blocks of that page), and an unsafe
+ * replacement leaves the current edit intact. Satellite/scratch loads use
+ * `ensurePageLoaded` and cannot enable persistence.
  *
  * Editing. Change a page only through an intent exported here (`setRaw`,
  * `splitBlock`, `moveBlock`, `setBlockProperty`, ...). An intent updates the
@@ -61,7 +65,7 @@ export { blockIsGridView, node, childIds, pageRoots, loadedPage, feedNames, isLo
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, isConflicted, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, trackAssetWrite, waitingFor, waitingOn } from "./save/engine";
 export { applyGraphChange, installExternalChangeUiHandler } from "./external";
-export { appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, registerPaneRouteProvider, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed } from "./workingSet";
+export { appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, registerPaneRouteProvider, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { emptyPage, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
 export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } from "./tree";
