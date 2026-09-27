@@ -10,7 +10,7 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("og campaign enforcement", () => {
-  it("ratchets production file size against aaebfb94f", () => {
+  it("ratchets production file size against the post-batch-5 baseline", () => {
     const { current, baseline } = readSizeCounts(root);
     expect(() => checkSizeRatchet(current, baseline)).not.toThrow();
   });

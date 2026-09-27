@@ -34,7 +34,7 @@ state is not a durable draft capsule; that is inventory family 9, status todo.
 Likewise, restore recovery contains the original file bytes, not a new syntax.
 
 The count test pins the vocabulary and compares low-level writer-site counts
-against `aaebfb94f` to catch uncensused new writes. A caller may still route a
+against `2d0349368` to catch uncensused new writes. A caller may still route a
 new name through an existing generic writer, so review of store entry points
 remains necessary. New formats require an ADR and Martin's approval under
 OG-RULES Rule 8.

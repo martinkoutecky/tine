@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-export const BASE = "aaebfb94f";
+// Ratchet baseline: og after batch 5 and its one-time `cargo fmt --all` reflow
+// (the ratchet landed after that batch; see og/batches/05-edit-vocabulary.md).
+export const BASE = "2d0349368";
 export const SIZE_LIMIT = 1500;
 const roots = ["src", "src-tauri/src", "crates"];
 const extensions = new Set([".rs", ".ts", ".tsx", ".css"]);
@@ -35,7 +37,15 @@ export function currentFiles(root) {
   return [...new Set(found)].sort();
 }
 
+// Inline Rust test modules can occur near the start of a very large file.
+// Remove each complete top-level module, preserving production code after it.
+export function productionSource(source) {
+  return source.replace(/#\[cfg\(test\)\]\s*mod\s+\w+\s*\{[\s\S]*?^\}/gm, "");
+}
+
+/** Production lines: inline `#[cfg(test)] mod` blocks do not count. */
 export function lines(source) {
+  source = productionSource(source ?? "");
   if (!source) return 0;
   return source.split("\n").length - Number(source.endsWith("\n"));
 }
@@ -80,10 +90,7 @@ export function checkFormatCount(formats = PERSISTED_FORMATS) {
 // in the census. Counts are per file, so moving a writer needs a census update.
 const writePattern = /(?:\b(?:fs|std::fs|tokio::fs)::(?:write|copy|rename)\s*\(|\b(?:File::create|io::copy|std::io::copy|atomic_write|atomic_write_new|write_payload|write_manifest|write_all)\s*\(|\.create_new\(true\)|\.writeFile\s*\(|\b(?:localStorage|sessionStorage)\.setItem\s*\()/g;
 export function writerSiteCounts(source) {
-  // Inline Rust test modules can occur near the start of a very large file.
-  // Remove each complete top-level module, preserving production code after it.
-  const production = source.replace(/#\[cfg\(test\)\]\s*mod\s+\w+\s*\{[\s\S]*?^\}/gm, "");
-  return [...production.matchAll(writePattern)].length;
+  return [...productionSource(source).matchAll(writePattern)].length;
 }
 
 export function checkWriterSites(current, baseline) {
