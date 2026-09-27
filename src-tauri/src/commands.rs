@@ -14,9 +14,10 @@ use tine_core::model::{
 #[cfg(test)]
 use tine_store::SaveBase;
 use tine_store::{
-    FacetPolicy, PageId, Resolved, SaveOutcome, SavePagesOutcome, StoreError,
-    WholeGraph,
+    FacetPolicy, PageId, Resolved, SaveOutcome, SavePagesOutcome, StoreError, WholeGraph,
 };
+mod save_wire;
+use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -244,7 +245,6 @@ fn refuse_bound_graph_path(
 
 mod query_error_wire;
 use query_error_wire::query_error;
-
 
 #[tauri::command]
 pub(crate) fn load_workspaces(
@@ -635,6 +635,8 @@ pub(crate) struct SavePageEntry {
 pub(crate) struct SavePagesFailure {
     index: usize,
     family: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disk_rev: Option<String>,
     undo_failed: Vec<usize>,
 }
 
@@ -685,49 +687,13 @@ pub(crate) fn save_pages(
                 failed: SavePagesFailure {
                     index,
                     family: save_store_error(error),
+                    disk_rev: None,
                     undo_failed: Vec::new(),
                 },
             })
         }
     };
     Ok(save_pages_outcome_to_wire(outcome))
-}
-
-fn save_pages_outcome_to_wire(outcome: SavePagesOutcome) -> SavePagesWire {
-    match outcome {
-        SavePagesOutcome::Ok(outcomes) => SavePagesWire::Ok {
-            ok: outcomes
-                .into_iter()
-                .map(|outcome| save_outcome_to_wire(outcome).expect("committed page rev"))
-                .collect(),
-        },
-        SavePagesOutcome::Failed {
-            index,
-            outcome,
-            undo_failed,
-        } => SavePagesWire::Failed {
-            failed: SavePagesFailure {
-                index,
-                family: save_outcome_to_wire(outcome).expect_err("failed page outcome"),
-                undo_failed,
-            },
-        },
-    }
-}
-
-fn save_outcome_to_wire(outcome: SaveOutcome) -> Result<String, String> {
-    match outcome {
-        SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => Ok(rev.into()),
-        SaveOutcome::Conflict { .. } => Err("conflict".into()),
-        SaveOutcome::Deleted => Err("deleted".into()),
-        SaveOutcome::ReadOnly(_) => Err("read-only".into()),
-        SaveOutcome::InvalidTarget(_) => Err("invalid-target".into()),
-        SaveOutcome::Twin { .. } => Err("twin".into()),
-        SaveOutcome::Repeated => Err("repeated".into()),
-        SaveOutcome::Io(error) => Err(format!("io:{:?}", error.kind())),
-        SaveOutcome::Closed => Err("closed".into()),
-        SaveOutcome::GuideEphemeral => Err("invalid-target".into()),
-    }
 }
 
 #[cfg(test)]
@@ -811,9 +777,16 @@ mod save_wire_tests {
                     undo_failed: vec![0],
                 }))
                 .unwrap();
+            let rev_field = if family == "conflict" {
+                r#","diskRev":"private-rev""#
+            } else {
+                ""
+            };
             assert_eq!(
                 encoded,
-                format!(r#"{{"failed":{{"index":1,"family":"{family}","undoFailed":[0]}}}}"#),
+                format!(
+                    r#"{{"failed":{{"index":1,"family":"{family}"{rev_field},"undoFailed":[0]}}}}"#
+                ),
                 "{RULE}"
             );
             assert!(seen.insert(family), "{RULE}");
@@ -2541,8 +2514,14 @@ pub(crate) async fn write_highlights(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pdf::write_highlights(&slot.store, &pdf, &label, &highlights, &base_ids)
-            .map_err(feature_pdf_error)
+        tine_graph_features::pdf::write_highlights(
+            &slot.store,
+            &pdf,
+            &label,
+            &highlights,
+            &base_ids,
+        )
+        .map_err(feature_pdf_error)
     })
     .await
     .map_err(|error| error.to_string())?

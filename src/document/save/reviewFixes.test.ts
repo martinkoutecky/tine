@@ -48,7 +48,7 @@ describe("save-group review regressions", () => {
     expect(conflictReason("B")).toBe(newerReason);
     expect(await resolveConflict("B", "mine")).toBe(true);
     expect(requests).toHaveLength(1);
-    expect(requests[0].find((entry) => entry.page.name === "B")?.force).toBe(true);
+    expect(requests[0].find((entry) => entry.page.name === "B")?.force).toBe(false);
   });
 
   it("B-1: a failed force cannot authorize a later external change", async () => {
@@ -109,7 +109,7 @@ describe("save-group review regressions", () => {
     markConflict("A"); markConflict("B");
     expect(await resolveConflict("B", "mine")).toBe(true);
     const read = deferred<PageRead | null>();
-    const getPage = vi.spyOn(backend(), "getPage").mockImplementation(() => read.promise);
+    const getPage = vi.spyOn(backend(), "getPageByPath").mockImplementation(() => read.promise);
     const disking = resolveConflict("B", "disk");
     await vi.waitFor(() => expect(getPage).toHaveBeenCalledTimes(1));
     expect(await resolveConflict("B", "mine")).toBe(true);

@@ -3,7 +3,6 @@ import { Node, FeedPage, DocState, doc } from "./model";
 import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine } from "../editor/properties";
-import { pushToast } from "../toasts";
 import { journalTitle } from "../journal";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
@@ -163,7 +162,6 @@ export function pageToDto(pageName: string): PageDto | null {
     // firewall; keep the strict shared display predicate and live raw intact.
     const canonicalRaw = first.raw.replace(/\n+$/, "");
     if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(canonicalRaw))) {
-      pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
       return null;
     }
     // Exact raw is authoritative here: ordinary toDto trimming must never eat a

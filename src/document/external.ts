@@ -32,8 +32,23 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
     if (c.kind === "journal") ui?.restartJournalFeed();
   };
   const disp = reloadDisposition(c.name);
+  const markObservedConflict = async () => {
+    const id = pageByName(c.name)?.id;
+    let revision: string | null | undefined;
+    try {
+      const disk = c.removed ? null : id
+        ? await backend().getPageByPath(id)
+        : await backend().getPage(c.name, c.kind);
+      revision = disk?.rev ?? null;
+    } catch {
+      // Without a fresh observation, the old load revision remains a
+      // conservative guard: Keep mine cannot clobber changed bytes.
+    }
+    if (stillBound(binding) && pageByName(c.name)?.id === id && reloadDisposition(c.name) === "conflict")
+      markConflict(c.name, { kind: "disk-changed" }, revision);
+  };
   if (c.removed) {
-    if (disp === "conflict") markConflict(c.name);
+    if (disp === "conflict") await markObservedConflict();
     if (disp === "conflict" || disp === "skip") {
       restartJournalFeed();
       return;
@@ -46,7 +61,7 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
     return;
   }
 
-  if (disp === "conflict") markConflict(c.name);
+  if (disp === "conflict") await markObservedConflict();
   if (disp === "conflict" || disp === "skip") {
     restartJournalFeed();
     return;

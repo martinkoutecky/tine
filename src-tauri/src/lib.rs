@@ -12,11 +12,11 @@ mod debug;
 mod device_io;
 #[cfg(test)]
 mod edit_kind_guard_tests;
-#[cfg(test)]
-mod load_wait_guard_tests;
 mod graph;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
+#[cfg(test)]
+mod load_wait_guard_tests;
 mod media_protocol;
 mod native_mouse_history;
 mod platform;

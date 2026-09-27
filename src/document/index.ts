@@ -23,7 +23,8 @@
  * lookup failure. The caller needs no knowledge of which pages are loaded.
  *
  * Saving. Pages save as whole-page snapshots, never as operations. `markDirty`
- * requires an edit kind and schedules a debounced (400 ms) single-page save;
+ * requires an edit kind and schedules a trailing 400 ms save, capped at 3 s
+ * from the first dirty mark of a burst;
  * the request carries distinct kinds in first-seen order. A lazy page also
  * declares `create-page` on its first save. Multi-page intents call
  * `persistTogether` with kinds inside the document module: their pages enter one open
@@ -31,8 +32,11 @@
  * `savePages` request. A sealed request chains before later edits of its pages;
  * a new multi-page edit forms a successor group. Saves use the revision last
  * read, so an external file change surfaces a reasoned conflict rather than
- * an overwrite. `resolveConflict` applies the user's disk or mine decision to
- * the group, and `flushPage` / `flushAll` wait for pending requests. A crash
+ * an overwrite. `resolveConflict` reloads the pinned file for Use disk, or
+ * guards Keep mine with the disk revision observed when the conflict arose;
+ * a later disk edit raises a fresh conflict. `flushPage` / `flushAll` wait for
+ * pending requests. An incomplete page-header draft remains dirty without an
+ * autosave toast; exiting that editor reports invalid syntax once. A crash
  * between file writes can duplicate a moved block, but sinks-first order keeps
  * it on at least one file for acyclic moves (I-3). Creating a page file
  * goes through `createPage`, which refuses locally with a typed

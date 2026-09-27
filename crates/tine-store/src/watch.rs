@@ -238,8 +238,10 @@ fn incremental_paths(event: &notify::Event) -> Option<Vec<PathBuf>> {
     if !matches!(
         event.kind,
         EventKind::Create(CreateKind::File)
+            | EventKind::Create(CreateKind::Any)
             | EventKind::Modify(ModifyKind::Data(_))
             | EventKind::Modify(ModifyKind::Metadata(_))
+            | EventKind::Modify(ModifyKind::Any)
             | EventKind::Modify(ModifyKind::Name(
                 RenameMode::From | RenameMode::To | RenameMode::Both
             ))
@@ -251,6 +253,15 @@ fn incremental_paths(event: &notify::Event) -> Option<Vec<PathBuf>> {
     if event.paths.iter().any(|path| {
         (!crate::file_kind::is_graph_text_path(path) || path.is_dir()) && !atomic_temp(path)
     }) {
+        return None;
+    }
+    // `Any` has no file-kind witness. A live metadata check distinguishes an
+    // exact Windows file event from a directory or removed subtree.
+    if matches!(
+        event.kind,
+        EventKind::Create(CreateKind::Any) | EventKind::Modify(ModifyKind::Any)
+    ) && event.paths.iter().any(|path| !path.is_file())
+    {
         return None;
     }
     Some(
@@ -948,6 +959,54 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
 mod tests {
     use super::*;
     use crate::store::{OpenOptions, Store};
+
+    #[test]
+    fn windows_any_events_on_exact_text_files_stay_incremental() {
+        use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind};
+
+        let root = std::env::temp_dir().join(format!(
+            "tine-win-any-{}-{:?}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+            SystemTime::now()
+        ));
+        let pages = root.join("pages");
+        fs::create_dir_all(&pages).unwrap();
+        let text = pages.join("TINE版本更新提示词.md");
+        let directory = pages.join("folder.md");
+        fs::write(&text, "- text\n").unwrap();
+        fs::create_dir(&directory).unwrap();
+        for kind in [
+            EventKind::Create(CreateKind::Any),
+            EventKind::Modify(ModifyKind::Any),
+        ] {
+            let event = notify::Event {
+                kind,
+                paths: vec![text.clone()],
+                attrs: Default::default(),
+            };
+            assert_eq!(incremental_paths(&event), Some(vec![text.clone()]));
+            let mut pending = Pending::default();
+            pending.add(Ok(event), &[pages.clone(), root.join("journals")]);
+            assert_eq!(pending.paths, HashSet::from([text.clone()]));
+            assert!(!pending.full);
+        }
+        for path in [directory, pages.join("image.png")] {
+            let event = notify::Event {
+                kind: EventKind::Modify(ModifyKind::Any),
+                paths: vec![path],
+                attrs: Default::default(),
+            };
+            assert_eq!(incremental_paths(&event), None);
+        }
+        let removed = notify::Event {
+            kind: EventKind::Remove(RemoveKind::Any),
+            paths: vec![text],
+            attrs: Default::default(),
+        };
+        assert_eq!(incremental_paths(&removed), None);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn failed_reread_keeps_old_view_and_retries_unchanged_file() {

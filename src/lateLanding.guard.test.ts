@@ -17,13 +17,13 @@ const LANDING = /\b(?:ensurePageLoaded|reloadPage|markDirty|markConflict|forgetP
 // the list may only shrink as ownership is moved behind the session door.
 const FROZEN_LATE_LANDING_COUNT = 62;
 const ORIGINAL_LATE_KEYS = new Set(`
-  src/assetSettings.ts:41 src/capture.tsx:330 src/components/AudioOverlay.tsx:86 src/components/Block.tsx:1320 src/components/Block.tsx:1651
-  src/components/Block.tsx:1674 src/components/Block.tsx:1692 src/components/ContextMenu.tsx:660 src/components/ContextMenu.tsx:762 src/components/ContextMenu.tsx:781
+  src/assetSettings.ts:41 src/capture.tsx:330 src/components/AudioOverlay.tsx:86 src/components/Block.tsx:1321 src/components/Block.tsx:1669
+  src/components/Block.tsx:1695 src/components/Block.tsx:1715 src/components/ContextMenu.tsx:660 src/components/ContextMenu.tsx:762 src/components/ContextMenu.tsx:781
   src/components/LinkedReferences.tsx:114 src/components/LiveRefGroup.tsx:72 src/components/PdfViewer.tsx:1003 src/components/Settings.tsx:1044 src/components/Settings.tsx:1641
   src/components/Settings.tsx:1867 src/components/Settings.tsx:1884 src/components/Settings.tsx:192 src/components/Settings.tsx:2188 src/components/Settings.tsx:2384
   src/components/Settings.tsx:2500 src/components/Settings.tsx:2605 src/components/Settings.tsx:2697 src/components/Settings.tsx:2706 src/components/Settings.tsx:2719
   src/components/Settings.tsx:2728 src/components/Settings.tsx:2748 src/components/Settings.tsx:559 src/components/Sidebar.tsx:344 src/components/Sidebar.tsx:413
-  src/components/UnlinkedReferences.tsx:53 src/debug.ts:38 src/editor/linkDefault.ts:58 src/filedrop.ts:76 src/graph.ts:269
+  src/components/UnlinkedReferences.tsx:53 src/debug.ts:38 src/editor/linkDefault.ts:58 src/filedrop.ts:84 src/graph.ts:269
   src/graph.ts:313 src/graph.ts:53 src/graph.ts:71 src/guide.ts:75 src/launcherRanking.ts:43
   src/mediaEditorSettings.ts:42 src/mediaEditorSettings.ts:57 src/nativeChrome.ts:68 src/nativeChrome.ts:81 src/pageIconBatch.ts:42
   src/pageIndex.ts:71 src/plugins/manager.ts:267 src/plugins/manager.ts:273 src/plugins/manager.ts:784 src/plugins/registry.ts:455
@@ -35,10 +35,10 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/assetSettings.ts:41": "legacy settings UI result needs a binding audit",
   "src/capture.tsx:330": "legacy UI continuation needs a binding audit",
   "src/components/AudioOverlay.tsx:86": "legacy UI continuation needs a binding audit",
-  "src/components/Block.tsx:1320": "legacy block UI result needs a binding audit",
-  "src/components/Block.tsx:1651": "census #2: asset write intent awaits its design batch",
-  "src/components/Block.tsx:1674": "census #2: asset write intent awaits its design batch",
-  "src/components/Block.tsx:1692": "census #2: asset write intent awaits its design batch",
+  "src/components/Block.tsx:1321": "legacy block UI result needs a binding audit (line rebased after asset guards)",
+  "src/components/Block.tsx:1669": "census #2: photo capture failure toast (line rebased after asset guards)",
+  "src/components/Block.tsx:1695": "census #2: recording stop failure toast (line rebased after asset guards)",
+  "src/components/Block.tsx:1715": "census #2: recording start failure toast (line rebased after asset guards)",
   "src/components/ContextMenu.tsx:660": "legacy context-menu continuation needs a binding audit",
   "src/components/ContextMenu.tsx:762": "legacy context-menu continuation needs a binding audit",
   "src/components/ContextMenu.tsx:781": "legacy context-menu continuation needs a binding audit",
@@ -65,7 +65,7 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/components/UnlinkedReferences.tsx:53": "legacy UI continuation needs a binding audit",
   "src/debug.ts:38": "debug reporting is best effort",
   "src/editor/linkDefault.ts:58": "legacy UI continuation needs a binding audit",
-  "src/filedrop.ts:76": "census #2: asset write intent awaits its design batch",
+  "src/filedrop.ts:84": "census #2: CSV/TSV size refusal toast (line rebased after drop guard)",
   "src/graph.ts:53": "census #1: graph-session continuation awaits its design batch",
   "src/graph.ts:71": "census #1: graph-session continuation awaits its design batch",
   "src/graph.ts:269": "census #1: graph-session continuation awaits its design batch",

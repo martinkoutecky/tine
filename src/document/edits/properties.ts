@@ -7,6 +7,7 @@ import { readPropertyValue, isPropertiesOnly, upsertPropertyLine, splitPagePream
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
+import { pushToast } from "../../toasts";
 
 const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
@@ -180,6 +181,7 @@ export function beginPageHeaderEdit(pageName: string): string | null {
  * drafts intentionally remain present and editable; pageToDto keeps them from
  * reaching native persistence. */
 export function finishPageHeaderEdit(id: string): void {
+  reportInvalidPageHeaderOnExit(id);
   const node = doc.byId[id];
   if (!node?.originatedFromPageHeader || node.raw !== "" || node.children.length > 0 || graphRewriteFrozen()) return;
   setDoc(
@@ -189,6 +191,26 @@ export function finishPageHeaderEdit(id: string): void {
       delete s.byId[id];
     })
   );
+}
+
+/** Report a still-invalid header when its editor closes, once per edit exit. */
+export function reportInvalidPageHeaderOnExit(id: string): void {
+  const node = doc.byId[id];
+  if (!node?.originatedFromPageHeader) return;
+  const raw = node.raw.replace(/\n+$/, "");
+  if (node.children.length > 0 || (raw !== "" && !isPageHeaderPropertiesOnly(raw)))
+    pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
+}
+
+/** A successful save folded the first root into the file's preamble. Keep the
+ * live editor's origin in sync so the next in-progress edit stays a header. */
+export function adoptFoldedPageHeader(pageName: string, preBlock: string): void {
+  const page = pageByName(pageName);
+  if (!page || page.preBlock) return;
+  const first = doc.byId[page.roots[0]];
+  if (!first || first.children.length > 0 || first.originatedFromPageHeader) return;
+  if (splitPagePreamble(preBlock).properties !== first.raw.replace(/\n+$/, "")) return;
+  setDoc("byId", first.id, "originatedFromPageHeader", true);
 }
 
 /** Turn ordinary text before the first Markdown bullet into a real first block

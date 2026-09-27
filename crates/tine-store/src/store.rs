@@ -28,6 +28,7 @@
 //! subscription. These calls have no general timeout. Run blocking calls off
 //! a UI thread.
 
+use crate::path_identity::canonical_existing_path;
 use std::collections::{BTreeMap, VecDeque};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -531,7 +532,7 @@ impl GraphAccessInspection {
     /// not reread a link changed since inspection; `Store::open` revalidates it.
     pub fn approves_external_assets(&self, path: &Path) -> Result<bool, crate::IoError> {
         Ok(self.external_assets.as_ref()
-            == Some(&fs::canonicalize(path).map_err(crate::IoError::from)?))
+            == Some(&canonical_existing_path(path).map_err(crate::IoError::from)?))
     }
 }
 
@@ -881,9 +882,10 @@ impl Store {
     }
 
     /// Resolve a user-chosen graph root and require a folder, without writing.
-    /// Cost is a filesystem canonicalization and directory metadata check.
+    /// Cost: one canonicalization (O(path components) on its fallback) and a
+    /// metadata check. Missing, linked-fallback or non-directory paths fail.
     pub fn canonical_root(root: &Path) -> Result<PathBuf, OpenError> {
-        let canonical = fs::canonicalize(root).map_err(|error| OpenError::Unresolvable {
+        let canonical = canonical_existing_path(root).map_err(|error| OpenError::Unresolvable {
             path: root.to_path_buf(),
             reason: error.to_string(),
         })?;
@@ -936,13 +938,7 @@ impl Store {
         root: &Path,
         opts: OpenOptions,
     ) -> Result<(Self, tine_core::model::GraphMeta, ConfigState), OpenError> {
-        let root = fs::canonicalize(root).map_err(|error| OpenError::Unresolvable {
-            path: root.to_path_buf(),
-            reason: error.to_string(),
-        })?;
-        if !root.is_dir() {
-            return Err(OpenError::NotAFolder(root));
-        }
+        let root = Self::canonical_root(root)?;
         let graph =
             Graph::open_checked_with_assets_inner(&root, opts.approved_external_assets.as_deref())
                 .map_err(|error| match error {
@@ -1598,7 +1594,7 @@ impl Store {
         let (area, candidate) = if let Some(rel) = file.as_str().strip_prefix("assets/") {
             let approved = self.graph.assets_path();
             let lexical = self.graph.root.join("assets");
-            let live = match fs::canonicalize(&lexical) {
+            let live = match canonical_existing_path(&lexical) {
                 Ok(path) => path,
                 Err(error)
                     if error.kind() == std::io::ErrorKind::NotFound && approved == lexical =>
@@ -1615,7 +1611,7 @@ impl Store {
             (area, self.graph.root.join(file.as_str()))
         };
         if existing_regular_file {
-            let target = fs::canonicalize(&candidate).map_err(StoreError::from_io)?;
+            let target = canonical_existing_path(&candidate).map_err(StoreError::from_io)?;
             if !target.is_file() {
                 return Err(if file.as_str().starts_with("assets/") {
                     StoreError::InvalidTarget(file.as_str().to_owned())
@@ -1624,8 +1620,8 @@ impl Store {
                 });
             }
             if file.as_str().starts_with("assets/") {
-                let assets =
-                    fs::canonicalize(self.graph.assets_path()).map_err(StoreError::from_io)?;
+                let assets = canonical_existing_path(&self.graph.assets_path())
+                    .map_err(StoreError::from_io)?;
                 if !target.starts_with(&assets) {
                     return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
                 }
@@ -1634,9 +1630,9 @@ impl Store {
                     return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
                 }
                 let config = self.graph.current_config();
-                let pages = fs::canonicalize(self.graph.root.join(&config.pages_dir))
+                let pages = canonical_existing_path(&self.graph.root.join(&config.pages_dir))
                     .map_err(StoreError::from_io)?;
-                let journals = fs::canonicalize(self.graph.root.join(&config.journals_dir))
+                let journals = canonical_existing_path(&self.graph.root.join(&config.journals_dir))
                     .map_err(StoreError::from_io)?;
                 if !target.starts_with(&pages) && !target.starts_with(&journals) {
                     return Err(StoreError::PageSource(
@@ -1646,10 +1642,11 @@ impl Store {
             }
             return Ok(target);
         }
-        let (area_canonical, area_missing) = match fs::canonicalize(&area) {
+        let (area_canonical, area_missing) = match canonical_existing_path(&area) {
             Ok(path) => (path, false),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let root = fs::canonicalize(&self.graph.root).map_err(StoreError::from_io)?;
+                let root =
+                    canonical_existing_path(&self.graph.root).map_err(StoreError::from_io)?;
                 (
                     root.join(
                         area.strip_prefix(&self.graph.root)
@@ -1782,7 +1779,7 @@ impl Store {
                 .root
                 .join(&self.graph.current_config().journals_dir),
             Area::Assets => {
-                let live = match fs::canonicalize(self.graph.root.join("assets")) {
+                let live = match canonical_existing_path(&self.graph.root.join("assets")) {
                     Ok(path) => path,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         return Ok(Listing::default())
@@ -3489,40 +3486,77 @@ mod rev5_tests {
 
     #[test]
     fn alias_index_matches_legacy_scan_for_inventory_and_name_variants() {
-        let unique = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let root = std::env::temp_dir().join(format!("tine-alias-index-{unique}"));
         let pages = root.join("pages");
         fs::create_dir_all(&pages).unwrap();
-        fs::write(pages.join("Owner A.md"), "alias:: Team/Alpha, Café\n- [[Orphan/Leaf]]\n").unwrap();
-        fs::write(pages.join("Owner B.md"), "alias:: team/alpha, Cafe\u{301}\n- [[TEAM/ALPHA]]\n").unwrap();
+        fs::write(
+            pages.join("Owner A.md"),
+            "alias:: Team/Alpha, Café\n- [[Orphan/Leaf]]\n",
+        )
+        .unwrap();
+        fs::write(
+            pages.join("Owner B.md"),
+            "alias:: team/alpha, Cafe\u{301}\n- [[TEAM/ALPHA]]\n",
+        )
+        .unwrap();
         fs::write(pages.join("Café.md"), "- file wins over alias\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let view = store.whole_graph().unwrap();
         let inventory = view.inventory();
         let ordered_names: Vec<_> = inventory.0.iter().map(|entry| entry.name.clone()).collect();
         let mut legacy_order = ordered_names.clone();
-        legacy_order.sort_by(|a, b| tine_core::refs::page_key(a)
-            .cmp(&tine_core::refs::page_key(b)).then_with(|| a.cmp(b)));
+        legacy_order.sort_by(|a, b| {
+            tine_core::refs::page_key(a)
+                .cmp(&tine_core::refs::page_key(b))
+                .then_with(|| a.cmp(b))
+        });
         assert_eq!(ordered_names, legacy_order);
         let alias_rows = view.graph.page_aliases_with_owners();
-        assert_eq!(alias_rows.iter().filter(|(alias, _, _)|
-            tine_core::refs::same_page(alias, "TEAM/ALPHA")).count(), 2);
-        assert_eq!(alias_rows.iter().filter(|(alias, _, _)|
-            tine_core::refs::same_page(alias, "Cafe\u{301}")).count(), 2);
+        assert_eq!(
+            alias_rows
+                .iter()
+                .filter(|(alias, _, _)| tine_core::refs::same_page(alias, "TEAM/ALPHA"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            alias_rows
+                .iter()
+                .filter(|(alias, _, _)| tine_core::refs::same_page(alias, "Cafe\u{301}"))
+                .count(),
+            2
+        );
         let names = inventory.0.iter().map(|entry| entry.name.as_str()).chain([
-            "TEAM/ALPHA", "Team/Alpha", "team/alpha", "Café", "Cafe\u{301}",
-            "café", "Orphan/Leaf", "orphan/leaf",
+            "TEAM/ALPHA",
+            "Team/Alpha",
+            "team/alpha",
+            "Café",
+            "Cafe\u{301}",
+            "café",
+            "Orphan/Leaf",
+            "orphan/leaf",
         ]);
         for name in names {
-            let legacy: Vec<PageId> = view.graph.page_aliases_with_owners().into_iter()
+            let legacy: Vec<PageId> = view
+                .graph
+                .page_aliases_with_owners()
+                .into_iter()
                 .filter(|(alias, _, _)| tine_core::refs::same_page(alias, name))
                 .map(|(_, _, path)| PageId::from(path))
                 .collect();
             match view.resolve(name, false) {
                 Resolved::Alias { owners } => assert_eq!(owners, legacy, "alias owners for {name}"),
                 Resolved::Absent { .. } => assert!(legacy.is_empty(), "lost alias for {name}"),
-                Resolved::Existing { .. } => assert!(tine_core::refs::same_page(name, "Café")
-                    || name == "Owner A" || name == "Owner B", "unexpected file for {name}"),
+                Resolved::Existing { .. } => assert!(
+                    tine_core::refs::same_page(name, "Café")
+                        || name == "Owner A"
+                        || name == "Owner B",
+                    "unexpected file for {name}"
+                ),
             }
         }
         for entry in &inventory.0 {
@@ -3530,7 +3564,13 @@ mod rev5_tests {
             let target = &entry.target;
             match (actual, target) {
                 (Resolved::Alias { owners: a }, Resolved::Alias { owners: b }) => assert_eq!(&a, b),
-                (Resolved::Existing { id: a, others: aa }, Resolved::Existing { id: b, others: bb }) => { assert_eq!(&a, b); assert_eq!(&aa, bb); }
+                (
+                    Resolved::Existing { id: a, others: aa },
+                    Resolved::Existing { id: b, others: bb },
+                ) => {
+                    assert_eq!(&a, b);
+                    assert_eq!(&aa, bb);
+                }
                 (Resolved::Absent { id: a }, Resolved::Absent { id: b }) => assert_eq!(&a, b),
                 _ => panic!("inventory differs from resolve for {}", entry.name),
             }
