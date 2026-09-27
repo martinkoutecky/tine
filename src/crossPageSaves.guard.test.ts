@@ -2,19 +2,17 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Inherited v0.6.5 choreography plus E-B2's destination-first Undo/Redo fix.
-// A new owner must use one below-UI operation, then leave this list unchanged.
-const ALLOWED = new Set([
-  "src/document/history.ts::applyEntry", "src/document/history.ts::holdHistoryRemovalsUntilAdditionsLand",
-  "src/document/edits/blocks.ts::replaceChildOrders", "src/document/edits/selection.ts::cycleSelectionTasks",
-  "src/document/edits/selection.ts::deleteSelection", "src/document/edits/moves.ts::moveBlockInternal",
-  "src/document/edits/moves.ts::moveBlock", "src/document/edits/moves.ts::crossMoveBlocks",
-  "src/document/edits/moves.ts::persistCrossPage", "src/document/edits/moves.ts::moveSelectionItems",
-  "src/document/edits/carry.ts::carryUnfinished", "src/carry.ts::persist",
-  // These have several branches but each invocation edits one page.
-  "src/document/edits/blocks.ts::splitBlock", "src/document/edits/capture.ts::captureOutlineInto",
-  "src/document/edits/properties.ts::setBlockProperty", "src/document/edits/properties.ts::setPageProperty",
-  "src/document/edits/identity.ts::ensureBlockId", "src/document/edits/identity.ts::ensureStableBlockId",
+// Each exemption is one-page by construction; multi-page intents must call
+// persistTogether in the same function that marks or flushes their pages.
+const ONE_PAGE = new Map([
+  ["src/document/history.ts::applyEntry", "raw replay changes one page; snapshot replay delegates all multi-page dirties to undo/redo"],
+  ["src/document/edits/blocks.ts::replaceChildOrders", "callers pass orders from one page"],
+  ["src/document/edits/blocks.ts::splitBlock", "both branches change the block's one page"],
+  ["src/document/edits/capture.ts::captureOutlineInto", "capture writes one named destination"],
+  ["src/document/edits/properties.ts::setBlockProperty", "both branches change the block's one page"],
+  ["src/document/edits/properties.ts::setPageProperty", "both branches change one named page"],
+  ["src/document/edits/identity.ts::ensureBlockId", "stamps one block's page"],
+  ["src/document/edits/identity.ts::ensureStableBlockId", "stamps one block's page"],
 ]);
 
 function sourceFiles(dir: string): string[] {
@@ -31,11 +29,11 @@ export function crossPageSaveViolations(file: string, source: string): string[] 
   for (let i = 0; i < functions.length; i++) {
     const name = functions[i][1];
     const body = source.slice(functions[i].index, functions[i + 1]?.index ?? source.length);
-    const calls = [...body.matchAll(/\b(?:markDirty|addDirty|flushPage|persistCrossPage)\s*\(/g)];
+    const calls = [...body.matchAll(/\b(?:markDirty|addDirty|flushPage|persistTogether)\s*\(/g)];
     const looping = /\bfor\s*\([^\n]+\)\s*(?:\{\s*)?(?:markDirty|addDirty|flushPage)\s*\(/.test(body)
       || /\bfor\s*\([^\n]+\)\s*\{\s*\n\s*(?:markDirty|addDirty|flushPage)\s*\(/.test(body);
-    const cross = calls.length > 1 || looping || /\bpersistCrossPage\s*\(/.test(body);
-    if (cross && !ALLOWED.has(`${file}::${name}`)) found.push(`${file}::${name}`);
+    const cross = calls.length > 1 || looping;
+    if (cross && !/\bpersistTogether\s*\(/.test(body) && !ONE_PAGE.has(`${file}::${name}`)) found.push(`${file}::${name}`);
   }
   return found;
 }
@@ -56,5 +54,10 @@ describe("I-3 cross-page save ratchet", () => {
   it("fails a planted new multi-page action", () => {
     expect(() => assertRatchet("src/newAction.ts", "function sweep(pages) { for (const page of pages) markDirty(page); }"))
       .toThrow(/I-3:.*exemplar crates\/tine-graph-features\/src\/pages\.rs/s);
+  });
+
+  it("flags a second dirty page even after an await", () => {
+    expect(crossPageSaveViolations("src/newAction.ts", "async function delayed() { markDirty('A'); await load(); markDirty('B'); }"))
+      .toEqual(["src/newAction.ts::delayed"]);
   });
 });

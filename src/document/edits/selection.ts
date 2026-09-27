@@ -8,7 +8,7 @@ import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { cycleMarkerSmart } from "../../editor/repeat";
 import { workflow } from "../../ui";
-import { markDirty } from "../save/engine";
+import { markDirty, persistTogether } from "../save/engine";
 import { moveBlockInternal } from "./moves";
 import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
@@ -117,7 +117,8 @@ export function cycleSelectionTasks(): boolean {
       }
     })
   );
-  for (const page of pages) markDirty(page);
+  if (pages.length > 1) void persistTogether(pages);
+  else for (const page of pages) markDirty(page);
   return true;
 }
 
@@ -238,7 +239,8 @@ export function deleteSelection() {
   );
   const ed = editingId();
   if (ed && !doc.byId[ed]) endEdit("delete-selection");
-  for (const p of pages) markDirty(p);
+  if (pages.size > 1) void persistTogether(pages);
+  else for (const p of pages) markDirty(p);
   reselectSurvivingBlock(survivor);
 }
 

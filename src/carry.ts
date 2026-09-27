@@ -5,7 +5,7 @@
 
 import { backend } from "./backend";
 import { captureBinding, stillBound, type Binding } from "./binding";
-import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, isDirty, markDirty, prepareCrossPageSources, carryTodayPage } from "./document";
+import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove } from "./document";
 import { journalTitle } from "./journal";
 import { carryKeepsContext, carryHeaderText } from "./ui";
 import { pushToast } from "./toasts";
@@ -35,29 +35,11 @@ async function ensureToday(binding: Binding): Promise<string | null> {
   return t;
 }
 
-// Persist the touched pages to disk NOW, before any feed reload — otherwise
-// navigating to journals reloads the (still-old) files and clobbers the move.
-// Returns whether every dirty touched page actually saved.
-// Persist `today` (the ADDITION side) FIRST and only flush the source days once it
-// lands — so a today-conflict can't leave the carried blocks removed from their
-// source files but never written to today (a removal-only, data-losing state).
-async function persist(today: string, sources: string[], binding: Binding): Promise<boolean> {
-  // Destination (today) must land first. carryUnfinished intentionally left the
-  // source days NOT dirty, so nothing can save a source removal until today is
-  // safely written — only THEN do we mark + flush the sources.
-  if (isDirty(today) && !(await flushPage(today))) return false;
-  if (!stillBound(binding)) return false;
-  const uniq = [...new Set(sources)].filter((n) => n !== today);
-  for (const n of uniq) markDirty(n);
-  const results = await Promise.all(uniq.map((n) => flushPage(n)));
-  return stillBound(binding) && results.every(Boolean);
-}
-
-async function report(n: number, today: string, sources: string[], binding: Binding): Promise<void> {
+async function report(n: number, today: string, binding: Binding): Promise<void> {
   // If a touched page couldn't be saved (conflict / disk error), DON'T reload the
   // journals feed — that would re-read the old files and drop the carried blocks
   // from memory. Leave the move in memory and surface the failure.
-  if (!(await persist(today, sources, binding))) {
+  if (!(await flushPage(today)) || !stillBound(binding)) {
     if (!stillBound(binding)) return;
     pushToast("Carry couldn't be saved — resolve the conflict; your moved tasks are kept in the editor.", "error");
     return;
@@ -99,17 +81,9 @@ export async function carryDay(pageName: string): Promise<void> {
   if (pageName === today) return;
   if (!(await ensureLoaded(pageName, "journal", binding))) return;
   if (!stillBound(binding)) return;
-  // Flush the source day (while it still holds the tasks) before the in-memory
-  // move, so a save already pending for it can't write the removal before today
-  // is saved. Abort if it can't be flushed (unresolved conflict).
-  if (!(await prepareCrossPageSources([pageName]))) {
-    if (!stillBound(binding)) return;
-    pushToast("Couldn't carry — that day has unsaved changes to resolve first.", "error");
-    return;
-  }
-  if (!stillBound(binding)) return;
+  if (refuseConflictedMove([today, pageName])) return;
   const n = carryUnfinished([pageName], carryKeepsContext(), carryHeaderText());
-  await report(n, today, [pageName], binding);
+  await report(n, today, binding);
 }
 
 /** Carry unfinished tasks from the last `days` days (today−1 … today−days) to
@@ -129,13 +103,7 @@ export async function carryDaysBack(days: number): Promise<void> {
   const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal", binding)));
   if (!stillBound(binding)) return;
   const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
-  // Flush source days (with their tasks intact) before the in-memory move — see carryDay.
-  if (!(await prepareCrossPageSources(titles))) {
-    if (!stillBound(binding)) return;
-    pushToast("Couldn't carry — a day has unsaved changes to resolve first.", "error");
-    return;
-  }
-  if (!stillBound(binding)) return;
+  if (refuseConflictedMove([today, ...titles])) return;
   const n = carryUnfinished(titles, carryKeepsContext(), carryHeaderText());
-  await report(n, today, titles, binding);
+  await report(n, today, binding);
 }

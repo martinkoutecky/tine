@@ -20,9 +20,9 @@ captureToPage
 carryTodayPage
 carryUnfinished
 childIds
-clearConflict
 clearSelection
 collapsibleDescendantIds
+conflictReason  # why: conflict bar reason text; batch03
 conflicts
 createPage
 cycleSelectionTasks
@@ -43,10 +43,9 @@ feedNames
 finishPageHeaderEdit
 flushAll
 flushPage
-forceSave
-forgetPage
 formatForBlock
 formatForPage
+groupedPages  # why: show waiting pages in conflict bar; batch03
 hasSelection
 indentBlock
 indentSelection
@@ -88,22 +87,22 @@ pageVisibleOrder
 pasteClipboardPayload
 persistBlockRefTarget
 persistentBlockRef
-prepareCrossPageSources
 prevVisible
 promotePagePreamble
 queryWorkspacePage
 readPageProperty
 readSchedule
 redo
+refuseConflictedMove  # why: carry conflict preflight before mutation; batch03
 registerPaneRouteProvider
 reloadHlsIfLoaded
-reloadPage
 removeOwnNumberedList
 renamePageOnDisk
 replaceChildOrders
 replaceEmptyBlockWithOutline
 resetStore
 resolveBlockRef
+resolveConflict  # why: one conflict resolution intent; batch03
 resolveGuideBlockRef
 resolveGuidePageDto
 restoreTodayJournalInFeed
@@ -132,6 +131,8 @@ toggleUndoRedoMode
 trackAssetWrite
 undo
 visibleOrder
+waitingFor  # why: show unresolved group member; batch03
+waitingOn  # why: show pages blocked by conflict; batch03
 withBlockMoving
 withToday
 withUndoUnit

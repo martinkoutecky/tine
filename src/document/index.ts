@@ -13,22 +13,20 @@
  * model and marks the page dirty; user edits also record undo (`ensureBlockId`
  * stamps an id without undo). `withUndoUnit` groups the synchronous mutations
  * of its callback into one undo step; it does not span awaits. A new intent
- * lives in the matching `edits/*.ts` file. Cross-page moves do not mark the
- * source dirty directly: see Saving. In-memory-only changes (no save, no undo):
+ * lives in the matching `edits/*.ts` file. In-memory-only changes (no save, no undo):
  * `revealNode` (expand for find) and the page-header edit begin/finish pair.
  *
- * Saving. Pages save as whole-page snapshots, never as operations: `markDirty`
- * schedules a debounced (400 ms) save of every dirty page; each page saves
- * serially against the file revision it last read, so a file changed on disk
- * becomes a conflict (`conflicts`), never an overwrite. The conflict bar
- * resolves it with `forceSave` ("keep mine", then `clearConflict`),
- * `reloadPage`, or `forgetPage` when the file is gone. `flushPage` / `flushAll`
- * wait for saves and return false when a page is held, conflicted or failed
- * (`flushAll` drains a bounded number of passes). A move across pages holds the
- * source page's save until the destination's save has landed (`persistCrossPage`
- * / `releaseSourcesFor`; follow it for any new cross-page intent, undo/redo
- * included), so a crash duplicates a block and never loses it (I-3 backlog:
- * one request per multi-page intent is a later batch). Creating a page file
+ * Saving. Pages save as whole-page snapshots, never as operations. `markDirty`
+ * schedules a debounced (400 ms) single-page save. Multi-page intents call
+ * `persistTogether` inside the document module: their pages enter one open
+ * group, overlapping groups merge, and the group sends one sinks-first
+ * `savePages` request. A sealed request chains before later edits of its pages;
+ * a new multi-page edit forms a successor group. Saves use the revision last
+ * read, so an external file change surfaces a reasoned conflict rather than
+ * an overwrite. `resolveConflict` applies the user's disk or mine decision to
+ * the group, and `flushPage` / `flushAll` wait for pending requests. A crash
+ * between file writes can duplicate a moved block, but sinks-first order keeps
+ * it on at least one file for acyclic moves (I-3). Creating a page file
  * goes through `createPage`, which refuses locally with a typed
  * `CreatePageRefusal`, distinct from a disk conflict. Only save/engine.ts calls
  * the backend's savePages/deletePage (I-1).
@@ -44,9 +42,9 @@
  * `installHistoryRouteContextAdapter`). */
 export { blockIsGridView, node, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
-export { clearConflict, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, forceSave, installAliasDraftRouteHandler, isConflicted, isDirty, isSaving, markDirty, trackAssetWrite } from "./save/engine";
+export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, isConflicted, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, trackAssetWrite, waitingFor, waitingOn } from "./save/engine";
 export { applyGraphChange, installExternalChangeUiHandler } from "./external";
-export { appendFeed, deletePage, ensurePageLoaded, forgetPage, loadFeed, loadGuidePages, registerPaneRouteProvider, reloadHlsIfLoaded, reloadPage, resetStore, restoreTodayJournalInFeed } from "./workingSet";
+export { appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, registerPaneRouteProvider, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { emptyPage, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
 export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } from "./tree";
@@ -60,5 +58,5 @@ export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, c
 export { blockExternalId, blockRef, ensureBlockId, persistBlockRefTarget, persistentBlockRef, resolveBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
 export { clearSelection, cycleSelectionTasks, deleteSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectedIds, selectionMarkdown } from "./edits/selection";
-export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, prepareCrossPageSources, setFeedExtender, withBlockMoving } from "./edits/moves";
+export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";
 export { carryUnfinished } from "./edits/carry";

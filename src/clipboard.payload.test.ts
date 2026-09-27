@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildClipboardPayload, ensurePageLoaded, forgetPage, reloadPage, resetStore } from "./document";
+import { buildClipboardPayload, ensurePageLoaded, resetStore } from "./document";
+import { forgetPage, reloadPage } from "./document/workingSet";
 import { loadSingle } from "./document/workingSet";
 import { pageInstanceGeneration } from "./document/save/engine";
 import type { BlockDto, PageDto } from "./types";

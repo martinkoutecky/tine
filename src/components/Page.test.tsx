@@ -14,7 +14,7 @@ import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
-import { clearConflict } from "../document";
+import { clearConflict } from "../document/save/engine";
 import { markConflict } from "../document/save/engine";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRightSidebar } from "../ui";
 import { graphEpoch } from "../graphSession";

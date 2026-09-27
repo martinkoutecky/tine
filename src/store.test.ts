@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, forceSave, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, reloadPage, forgetPage, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
+import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition } from "./document/workingSet";
 import { trailingVisibleEmptyLeaf } from "./document/tree";
@@ -16,7 +17,8 @@ import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
 import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
 import { backend, type Backend } from "./backend";
-import { isConflicted, conflicts, clearConflict } from "./document";
+import { isConflicted, conflicts } from "./document";
+import { clearConflict, forceSave } from "./document/save/engine";
 import { favorites, recentPages, setFavorites, setRecentPages, rightSidebar, setRightSidebar, seedFavorites, renamePageInNavigation, setWorkflow } from "./ui";
 import { dataRev, pageInventoryRev, setGraphMeta } from "./graphSession";
 import { toasts, setToasts } from "./toasts";
@@ -972,75 +974,69 @@ describe("page-scoped structural undo", () => {
     expect(doc.byId[o1].page).toBe("Older"); // page ownership restored too
   });
 
-  it("undo saves the page gaining a moved block before the losing page, even if the second save fails", async () => {
+  it("undo sends the gaining page first and a failed request leaves the block on disk", async () => {
     setToasts([]);
     const today = journal("Today", [blk("today")]);
     const older = journal("Older", [blk("durable moved block")]);
     loadFeed([today, older]);
     const moved = older.blocks[0].id;
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
     await moveBlockFeed(moved, -1);
     await flushPage("Today"); // establish the block on disk in Today
     save.mockClear();
     const disk = new Map([["Today", ["today", "durable moved block"]], ["Older", [] as string[]]]);
-    let finishFirst!: () => void;
-    save.mockImplementation((entries) => { const dto = entries[0].page;
-      if (save.mock.calls.length === 1) {
-        return new Promise((resolve) => { finishFirst = () => { disk.set(dto.name, dto.blocks.map((b) => b.raw)); resolve({ ok: ["rev"] }); }; });
-      }
-      return Promise.reject(new Error("io:Other"));
-    });
+    let finish!: () => void;
+    save.mockImplementationOnce(() => new Promise((resolve) => {
+      finish = () => resolve({ failed: { index: 1, family: "io", undoFailed: [] } });
+    })).mockResolvedValue({ failed: { index: 1, family: "io", undoFailed: [] } });
     undo();
     const draining = flushAll();
     await vi.waitFor(() => expect(save).toHaveBeenCalled());
-    expect(save.mock.calls.map(([entries]) => entries[0].page.name)).toEqual(["Older"]);
-    finishFirst();
+    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual(["Older", "Today"]);
+    finish();
     expect(await draining).toBe(false);
-    expect(disk.get("Older")).toContain("durable moved block");
     expect(disk.get("Today")).toContain("durable moved block");
+    expect(disk.get("Older")).not.toContain("durable moved block");
     expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("Today"))).toBe(true);
     save.mockRestore();
   });
 
-  it("redo saves the page gaining a moved block before the losing page, even if the second save fails", async () => {
+  it("redo sends the gaining page first and a failed request leaves the block on disk", async () => {
     setToasts([]);
     const today = journal("Today", [blk("today")]);
     const older = journal("Older", [blk("durable moved block")]);
     loadFeed([today, older]);
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
     await moveBlockFeed(older.blocks[0].id, -1);
     expect(await flushAll()).toBe(true);
     undo();
     expect(await flushAll()).toBe(true);
     save.mockClear();
     const disk = new Map([["Today", ["today"]], ["Older", ["durable moved block"]]]);
-    let finishFirst!: () => void;
-    save.mockImplementation((entries) => { const dto = entries[0].page;
-      if (save.mock.calls.length === 1) {
-        return new Promise((resolve) => { finishFirst = () => { disk.set(dto.name, dto.blocks.map((b) => b.raw)); resolve({ ok: ["rev"] }); }; });
-      }
-      return Promise.reject(new Error("io:Other"));
-    });
+    let finish!: () => void;
+    save.mockImplementationOnce(() => new Promise((resolve) => {
+      finish = () => resolve({ failed: { index: 1, family: "io", undoFailed: [] } });
+    })).mockResolvedValue({ failed: { index: 1, family: "io", undoFailed: [] } });
     redo();
     const draining = flushAll();
     await vi.waitFor(() => expect(save).toHaveBeenCalled());
-    expect(save.mock.calls.map(([entries]) => entries[0].page.name)).toEqual(["Today"]);
-    finishFirst();
+    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual(["Today", "Older"]);
+    finish();
     expect(await draining).toBe(false);
     expect(disk.get("Older")).toContain("durable moved block");
-    expect(disk.get("Today")).toContain("durable moved block");
+    expect(disk.get("Today")).not.toContain("durable moved block");
     expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("Older"))).toBe(true);
     save.mockRestore();
   });
 
-  it("undo before the original destination save settles does not leave reciprocal page holds", async () => {
+  it("undo before an earlier single save settles lands as one group after that save", async () => {
     const today = journal("Today", [blk("today")]);
     const older = journal("Older", [blk("moved")]);
     loadFeed([today, older]);
     let finishPrior!: () => void;
     const save = vi.spyOn(backend(), "savePages").mockImplementationOnce(() =>
       new Promise((resolve) => { finishPrior = () => resolve({ ok: ["prior-rev"] }); })
-    ).mockResolvedValue({ ok: ["rev"] });
+    ).mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
     markDirty("Today");
     const prior = flushPage("Today");
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
@@ -1049,7 +1045,7 @@ describe("page-scoped structural undo", () => {
     finishPrior();
     await prior;
     expect(await flushAll()).toBe(true);
-    expect(save.mock.calls.some(([entries]) => entries[0].page.name === "Older" && entries[0].page.blocks.some((b) => b.raw === "moved"))).toBe(true);
+    expect(save.mock.calls.slice(1).some(([entries]) => entries.length === 2 && entries.some((entry) => entry.page.name === "Older" && entry.page.blocks.some((b) => b.raw === "moved")))).toBe(true);
     save.mockRestore();
   });
 });

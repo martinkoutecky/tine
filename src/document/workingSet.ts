@@ -1,5 +1,5 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
-import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk } from "./save/engine";
+import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
 import { doc, setDoc, FeedPage, pageByName } from "./model";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
@@ -16,6 +16,7 @@ import { notifyModeReset } from "../modeHooks";
 import { isBlockMoving } from "./edits/moves";
 import { journalTitle } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
+import { pushToast } from "../toasts";
 
 function upsertPage(dto: PageDto & { id?: string }) {
   // A real page with this name exists again → lift any delete tombstone so edits
@@ -108,6 +109,7 @@ export function isGuidePage(name: string): boolean {
  *  disk version"): otherwise the unsaved in-memory copy is left untracked — not
  *  dirty, not conflicted — and is silently lost at close. */
 export function forgetPage(name: string) {
+  releaseGroup(name);
   forgetSaveState(name);
   clearConflict(name);
   // The page is leaving the working set; a stale undo snapshot must not be able to
@@ -138,16 +140,32 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   const loaded = pageByName(name);
   if (expectedPath && loaded?.id !== expectedPath) return false;
   if (loaded?.readOnly || loaded?.guide) return false;
-  // Capture the current (possibly unsaved) content first, so the recoverable trash
-  // copy is the LATEST version — not the stale bytes on disk. A CONFLICTED page can
-  // never flush (its save stays refused until the conflict is resolved); blocking
-  // the delete on that flush made such a page *undeletable* — the user could neither
-  // save nor discard it. Deleting is itself a resolution ("I don't want this page"),
-  // and the on-disk version still lands in .tine-trash (recoverable), so a conflict
-  // must not veto the delete. For a merely-dirty page we still flush first (to trash
-  // the latest bytes) and abort only if that genuinely fails.
-  if ((isDirty(name) || isSaving(name)) && !isConflicted(name) && !(await flushPage(name))) return false;
-  if (!stillBound(binding) || pageInstanceGeneration(name) !== generation || graphRewriteFrozen()) return false;
+  // A group member must land with all its partners before the page can be
+  // deleted. Otherwise deleting a source can remove the only live disk copy of
+  // moved content. A failed or conflicted group leaves the delete untouched.
+  const wasGrouped = !!group(name);
+  const refuseGroupDelete = () => {
+    const blocked = [...(group(name)?.members ?? [name])].find(isConflicted) ?? name;
+    pushToast(`Resolve the conflict on “${blocked}” first.`, "error");
+    return false;
+  };
+  if (wasGrouped) {
+    if ([...(group(name)?.members ?? [])].some(isConflicted)) return refuseGroupDelete();
+  }
+  const needsFlush = wasGrouped || ((isDirty(name) || isSaving(name)) && !isConflicted(name));
+  if (needsFlush && !(await flushPage(name))) return wasGrouped ? refuseGroupDelete() : false;
+  // Hold off any new successor request during the disk delete. If another
+  // intent joined while the preceding request settled, leave it intact.
+  const releaseReservation = wasGrouped ? await reserveGroupMemberDeletion(name) : undefined;
+  if (group(name)) {
+    releaseReservation?.();
+    pushToast(`Resolve the conflict on “${name}” first.`, "error");
+    return false;
+  }
+  if (!stillBound(binding) || pageInstanceGeneration(name) !== generation || graphRewriteFrozen()) {
+    releaseReservation?.();
+    return false;
+  }
   // Tombstone first so any queued/in-flight save no-ops during the delete, but
   // DON'T drop the in-memory page until the backend actually deletes it — if the
   // delete fails, the page (and its unsaved edits) must survive.
@@ -155,10 +173,12 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   try {
     await deletePageOnDisk(name, kind, expectedPath);
   } catch {
+    releaseReservation?.();
     if (!stillBound(binding)) return false;
     untombstone(name); // delete failed — lift the tombstone; page + edits stay intact
     return false;
   }
+  releaseReservation?.();
   if (!stillBound(binding)) return false;
   forgetPage(name); // success — now drop it from the working set + feed
   removeDeletedPageFromNavigation({ name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) });
@@ -188,6 +208,8 @@ function pinnedPages(): Set<string> {
   }
   for (const it of rightSidebar()) pin.add(it.kind === "page" ? it.name : it.page);
   for (const name of dirtyPages()) pin.add(name);
+  for (const name of groupedPages()) pin.add(name);
+  for (const name of savingPages()) pin.add(name);
   // Conflicted pages hold unsaved edits that aren't in `dirty` (the save batch
   // removed them); evicting one would silently drop those edits.
   for (const name of conflicts()) pin.add(name);
@@ -200,6 +222,8 @@ function pinnedPages(): Set<string> {
  *  with the disk version, or a watcher reload). Updates the main view and any
  *  satellite that shows it, since they share `byId`. */
 export function reloadPage(dto: PageDto & { id?: string }) {
+  const existing = doc.pages.find((page) => page.name === dto.name);
+  if (existing && group(dto.name) && !pageContentMatches(dto, existing)) releaseGroup(dto.name);
   upsertPage(dto);
 }
 
@@ -279,7 +303,7 @@ export function resetStore() {
 // explicitly via upsertPage.)
 function upsertUnlessDirty(dto: PageDto) {
   // `isSaving` too — an in-flight save's edit isn't durable yet (audit H1).
-  if (pageByName(dto.name) && (isDirty(dto.name) || isConflicted(dto.name) || isSaving(dto.name)))
+  if (pageByName(dto.name) && (isDirty(dto.name) || isConflicted(dto.name) || isSaving(dto.name) || group(dto.name)))
     return;
   upsertPage(dto);
 }
@@ -301,7 +325,7 @@ export function reloadDisposition(name: string): ReloadDisposition {
   // would clobber the in-memory edit + drop its undo, and the in-flight save would
   // conflict — silent loss (audit H1). The in-flight save's baseRev check surfaces the
   // real conflict.
-  if (isDirty(name) || isConflicted(name) || isSaving(name)) return "conflict";
+  if (isDirty(name) || isConflicted(name) || isSaving(name) || group(name)) return "conflict";
   const ed = editingId();
   if ((ed && doc.byId[ed]?.page === name) || isBlockMoving()) return "skip";
   return "reload";

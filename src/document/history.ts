@@ -1,5 +1,5 @@
 import { FeedPage, Node, doc, pageByName, setDoc, docHasBlockIdentity } from "./model";
-import { addDirty, cancelSourceHoldForDest, holdSourcesForDest, scheduleSave } from "./save/engine";
+import { addDirty, persistTogether, scheduleSave, type TransferEdge } from "./save/engine";
 import { type Route } from "../routeTypes";
 import { type HistorySidebarContext, captureHistorySidebarContext, restoreHistorySidebarContext } from "../ui";
 import { type HistoryEditorContext, captureHistoryEditorContext, editingId, endEdit, restoreHistoryEditorContext } from "../editorController";
@@ -327,7 +327,9 @@ function applyEntry(e: UndoEntry): UndoEntry {
       })
     );
   }
-  for (const p of e.dirty) addDirty(p);
+  // Multi-page replay is registered as one group by undo/redo immediately after
+  // applyEntry returns; a one-page replay needs only its ordinary dirty bit.
+  if (e.dirty.length === 1) addDirty(e.dirty[0]);
   invalidateAllMatrixDimensions();
   return inverse;
 }
@@ -358,26 +360,15 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
   }
 }
 
-function holdHistoryRemovalsUntilAdditionsLand(entry: UndoEntry, inverse: UndoEntry): void {
-  if (entry.kind !== "snap" || inverse.kind !== "snap") return;
-  // A moved block is present in both snapshots under different page owners.
-  // The target snapshot is about to become memory; its gaining page must reach
-  // disk before the old owner is allowed to save its removal.
-  const transfers = new Map<string, Set<string>>();
+function transferOrder(entry: UndoEntry, inverse: UndoEntry): TransferEdge[] {
+  if (entry.kind !== "snap" || inverse.kind !== "snap") return [];
+  const transfers: TransferEdge[] = [];
   for (const [id, next] of Object.entries(entry.nodes)) {
     const previous = inverse.nodes[id];
     if (!previous || previous.page === next.page) continue;
-    let sources = transfers.get(next.page);
-    if (!sources) {
-      sources = new Set();
-      transfers.set(next.page, sources);
-    }
-    sources.add(previous.page);
+    transfers.push([previous.page, next.page]);
   }
-  for (const [dest, sources] of transfers) {
-    for (const source of sources) cancelSourceHoldForDest(dest, source);
-    holdSourcesForDest(dest, [...sources]);
-  }
+  return transfers;
 }
 
 export function undo() {
@@ -385,7 +376,7 @@ export function undo() {
   const entry = popHistoryEntry(undoStack);
   if (!entry) return;
   const inverse = applyEntry(entry);
-  holdHistoryRemovalsUntilAdditionsLand(entry, inverse);
+  if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, transferOrder(entry, inverse));
   redoStack.push(inverse);
   lastUndoTag = null;
   endEdit("undo");
@@ -406,7 +397,7 @@ export function redo() {
     return;
   }
   const inverse = applyEntry(entry);
-  holdHistoryRemovalsUntilAdditionsLand(entry, inverse);
+  if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, transferOrder(entry, inverse));
   undoStack.push(inverse);
   lastUndoTag = null;
   endEdit("redo");

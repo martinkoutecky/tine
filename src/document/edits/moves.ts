@@ -1,9 +1,8 @@
 import { doc, setDoc, formatForBlock, formatForPage, DocState } from "../model";
 import { blockWritable, pageWritable, orderListTypeFromRaw, rawWithInheritedOrderListType } from "./properties";
 import { produce } from "solid-js/store";
-import { markDirty, holdSourcesForDest, flushPage, isDirty, isSaving } from "../save/engine";
+import { markDirty, persistTogether, refuseConflictedMove } from "../save/engine";
 import { captureBinding, stillBound } from "../../binding";
-import { pushToast } from "../../toasts";
 import { pushUndo } from "../history";
 import { createSignal } from "solid-js";
 import { rootsOf, nextVisible } from "../tree";
@@ -22,6 +21,7 @@ export function moveBlockInternal(id: string, newParent: string | null, index: n
   }
   const oldPage = node.page;
   const newPage = newParent ? doc.byId[newParent].page : oldPage;
+  if (newPage !== oldPage && refuseConflictedMove([oldPage, newPage])) return;
   setDoc(
     produce((s) => {
       const oldArr =
@@ -47,8 +47,8 @@ export function moveBlockInternal(id: string, newParent: string | null, index: n
       }
     })
   );
-  markDirty(oldPage);
-  if (newPage !== oldPage) markDirty(newPage);
+  if (newPage !== oldPage) void persistTogether([oldPage, newPage], [[oldPage, newPage]]);
+  else markDirty(oldPage);
 }
 
 /** Move a block under `newParent` (or, when `newParent` is null, to the roots of
@@ -76,14 +76,7 @@ export async function moveBlock(
   // the caller didn't supply one (a same-page reorder).
   const newPage = newParent ? doc.byId[newParent].page : (targetPage ?? oldPage);
   if (!pageWritable(oldPage) || !pageWritable(newPage)) return;
-  // Cross-page drag: flush the source while it still holds the block, so a
-  // pre-existing pending save can't write the removal before the destination
-  // lands. Abort (no move) if the source can't be saved.
-  if (newPage !== oldPage && !(await prepareCrossPageSources([oldPage]))) {
-    if (!stillBound(binding)) return;
-    pushToast(`Couldn't move — “${oldPage}” has unsaved changes that need resolving first.`, "error");
-    return;
-  }
+  if (newPage !== oldPage && refuseConflictedMove([oldPage, newPage])) return;
   if (!stillBound(binding)) return;
   if (!doc.byId[id]) return; // block vanished during the async flush
   if (!pageWritable(oldPage) || !pageWritable(newPage)) return;
@@ -125,8 +118,7 @@ export async function moveBlock(
     })
   );
   if (newPage !== oldPage) {
-    // Cross-page drag: persist the destination before the source removal.
-    persistCrossPage(newPage, [oldPage]);
+    void persistTogether([oldPage, newPage], [[oldPage, newPage]]);
   } else {
     markDirty(oldPage);
   }
@@ -227,39 +219,7 @@ function crossMoveBlocks(ids: string[], fromPage: string, toPage: string, dir: 1
       }
     })
   );
-  persistCrossPage(toPage, [fromPage]);
-}
-
-/** Persist a cross-page move so the ADDITION side (`dest`) lands on disk BEFORE
- *  any REMOVAL side (`sources`). If dest fails to save (e.g. an external
- *  conflict), the sources are NOT written, so disk is never left with the block
- *  removed from its source but never written to its destination (the data-losing
- *  state). dest is marked dirty immediately; each source only once dest succeeds. */
-function persistCrossPage(dest: string, sources: string[]) {
-  // Hold the sources' saves until `dest` is durable (audit C#1), so a concurrent edit to
-  // a source during the dest-write window can't write its post-removal state before the
-  // block exists in the dest. On dest success, doSave → releaseSourcesFor frees +
-  // reschedules the sources; on dest conflict/failure they stay held (the block is kept
-  // on disk in the source) until the dest conflict is resolved and it saves durably.
-  holdSourcesForDest(dest, sources);
-  markDirty(dest);
-  void flushPage(dest);
-}
-
-/** Before a cross-page move mutates memory, durably flush every SOURCE page while
- *  it still contains the blocks. Otherwise a save that was ALREADY pending/in-flight
- *  for a source (from an earlier, unrelated edit) can fire right after the in-memory
- *  removal and write the post-removal state to disk before the destination is saved
- *  — a removal-only, data-losing state that dest-first persistence alone can't
- *  prevent. Returns false if any source can't be flushed (an unresolved conflict);
- *  the caller MUST then abort the move. Clean sources flush as instant no-ops. */
-export async function prepareCrossPageSources(sources: string[]): Promise<boolean> {
-  const binding = captureBinding();
-  for (const s of new Set(sources)) {
-    if (!stillBound(binding)) return false;
-    if ((isDirty(s) || isSaving(s)) && !(await flushPage(s))) return false;
-  }
-  return stillBound(binding);
+  void persistTogether([fromPage, toPage], [[fromPage, toPage]]);
 }
 
 /** Resolve the adjacent feed day for a root block at the page boundary, loading
@@ -316,7 +276,7 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
   const target = await feedNeighbor(node.page, dir);
   if (!stillBound(binding)) return "none";
   if (!target || !pageWritable(target)) return "none";
-  if (!(await prepareCrossPageSources([node.page]))) return "none"; // source has unsaved edits → abort
+  if (refuseConflictedMove([node.page, target])) return "none";
   if (!stillBound(binding)) return "none";
   if (!doc.byId[id]) return "none"; // vanished during the flush
   if (!pageWritable(node.page) || !pageWritable(target)) return "none";
@@ -339,6 +299,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
     // the bottom-most first so they don't collide; up, the top.
     const ordered = dir === 1 ? [...ids].reverse() : ids;
     const pages = [...new Set(ordered.map((id) => doc.byId[id]?.page).filter(Boolean) as string[])];
+    if (pages.length > 1 && refuseConflictedMove(pages)) return;
     pushUndo("move-sel", pages); // scope the undo to the touched pages, not the whole set
     setDoc(
       produce((s) => {
@@ -357,7 +318,8 @@ export async function moveSelectionItems(dir: 1 | -1) {
         }
       })
     );
-    for (const p of pages) markDirty(p);
+    if (pages.length > 1) void persistTogether(pages);
+    else for (const p of pages) markDirty(p);
     return;
   }
   // Boundary: cross the whole group into the adjacent day (only if every
@@ -368,7 +330,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
   const target = await feedNeighbor(page, dir);
   if (!stillBound(binding)) return;
   if (!target || !pageWritable(target)) return;
-  if (!(await prepareCrossPageSources([page]))) return; // source has unsaved edits → abort
+  if (refuseConflictedMove([page, target])) return;
   if (!stillBound(binding)) return;
   if (!pageWritable(page) || !pageWritable(target)) return;
   pushUndo("move-sel-cross", [page, target]);

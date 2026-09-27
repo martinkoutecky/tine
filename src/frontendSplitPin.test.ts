@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { carryDay, carryDaysBack, carryPrevDay } from "./carry";
 import { journalTitle } from "./journal";
-import { resetStore, loadFeed, pageByName, setRaw, moveBlock, moveBlockFeed, moveSelectionItems, moveItem, selectBlock, extendSelectionTo, selectedIds, outdentSelection, promotePagePreamble, persistBlockRefTarget, prepareCrossPageSources, markDirty, flushPage, flushAll, isDirty, forgetPage, deletePage, undo } from "./document";
+import { resetStore, loadFeed, pageByName, setRaw, moveBlock, moveBlockFeed, moveSelectionItems, moveItem, selectBlock, extendSelectionTo, selectedIds, outdentSelection, promotePagePreamble, persistBlockRefTarget, markDirty, flushPage, flushAll, isDirty, deletePage, undo } from "./document";
+import { forgetPage } from "./document/workingSet";
 import { loadSingle } from "./document/workingSet";
 import { pageToDto } from "./document/convert";
 import { doc } from "./document/model";
-import { clearConflict, conflicts, isConflicted } from "./document";
-import { markConflict } from "./document/save/engine";
+import { conflicts, isConflicted } from "./document";
+import { clearConflict, markConflict } from "./document/save/engine";
 import { toasts, setToasts } from "./toasts";
 import type { BlockDto, PageDto, PageRead } from "./types";
 
@@ -36,7 +37,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-describe("cross-page moves retain a durable copy until destination lands", () => {
+describe("cross-page moves save as one ordered request", () => {
   const moves = [
     ["drag", async (id: string) => { await moveBlock(id, null, 0, "Newer"); }],
     ["cross-day root shortcut", async (id: string) => { expect(await moveBlockFeed(id, -1)).toBe("crossed"); }],
@@ -45,7 +46,7 @@ describe("cross-page moves retain a durable copy until destination lands", () =>
   ] as const;
 
   for (const [label, act] of moves) for (const failure of ["conflict", "io:Other"] as const) {
-    it(`${label}: a delayed destination holds the source; ${failure} leaves its saved copy`, async () => {
+    it(`${label}: a failed group leaves its saved source copy (${failure})`, async () => {
       const source = label === "feed boundary downward" ? "Newer" : "Older";
       const dest = source === "Older" ? "Newer" : "Older";
       const moved = block("portable task");
@@ -54,25 +55,20 @@ describe("cross-page moves retain a durable copy until destination lands", () =>
         ? [page("Newer", [block("destination keeper")]), page("Older", [moved, keeper])]
         : [page("Newer", [keeper, moved]), page("Older", [block("destination keeper")])]);
       const disk = new Map([[source, ["portable task", "source keeper"]], [dest, ["destination keeper"]]]);
-      const pending = deferred<string>();
-      const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
-        if (dto.name === dest) {
-          const rev = await pending.promise;
-          disk.set(dest, dto.blocks.map((b) => b.raw));
-          return { ok: [rev] };
-        }
-        disk.set(dto.name, dto.blocks.map((b) => b.raw));
-        return { ok: ["source-rev"] };
+      const pending = deferred<void>();
+      const save = vi.spyOn(backend(), "savePages").mockImplementation(async () => {
+        await pending.promise;
+        return { failed: { index: 0, family: failure, undoFailed: [] } };
       });
       await act(moved.id);
-      await vi.waitFor(() => expect(save.mock.calls.some(([entries]) => entries[0].page.name === dest)).toBe(true));
+      await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+      expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual([dest, source]);
       expect(raws(dest)).toContain("portable task");
       expect(raws(source)).not.toContain("portable task");
       setRaw(keeper.id, "source keeper edited");
-      expect(await flushPage(source)).toBe(false);
       expect(savedRaws(disk, source)).toContain("portable task");
       expect(savedRaws(disk, dest)).not.toContain("portable task");
-      pending.reject(new Error(failure));
+      pending.resolve();
       await vi.waitFor(() => expect(failure === "conflict" ? isConflicted(dest) : isDirty(dest)).toBe(true));
       expect(isConflicted(dest)).toBe(failure === "conflict");
       expect(savedRaws(disk, source)).toContain("portable task");
@@ -80,61 +76,65 @@ describe("cross-page moves retain a durable copy until destination lands", () =>
     });
   }
 
-  it("a successful destination save releases the source removal and leaves one saved copy", async () => {
+  it("a successful group leaves one saved copy", async () => {
     const moved = block("portable task");
     loadFeed([page("Newer", [block("destination keeper")]), page("Older", [moved, block("source keeper")])]);
     const disk = new Map([["Newer", ["destination keeper"]], ["Older", ["portable task", "source keeper"]]]);
-    const pending = deferred<string>();
-    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
-      if (dto.name === "Newer") await pending.promise;
-      disk.set(dto.name, dto.blocks.map((b) => b.raw));
-      return { ok: [`saved-${dto.name}`] };
+    const pending = deferred<void>();
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
+      await pending.promise;
+      for (const entry of entries) disk.set(entry.page.name, entry.page.blocks.map((b) => b.raw));
+      return { ok: entries.map((entry) => `saved-${entry.page.name}`) };
     });
     await moveBlock(moved.id, null, 0, "Newer");
+    const all = flushAll();
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual(["Newer", "Older"]);
     expect(savedRaws(disk, "Older")).toContain("portable task");
-    pending.resolve("saved-Newer");
-    expect(await flushAll()).toBe(true);
+    pending.resolve();
+    expect(await all).toBe(true);
     expect(savedRaws(disk, "Newer").filter((raw) => raw === "portable task")).toHaveLength(1);
     expect(savedRaws(disk, "Older")).not.toContain("portable task");
   });
 
-  it("an unflushable source aborts before any memory move and tells the user", async () => {
+  it("a conflicted source aborts before any memory move and tells the user", async () => {
     const moved = block("portable task");
     loadFeed([page("Newer", []), page("Older", [moved])]);
     markDirty("Older");
     markConflict("Older");
-    expect(await prepareCrossPageSources(["Older"])).toBe(false);
     expect(await moveBlockFeed(moved.id, -1)).toBe("none");
     await moveBlock(moved.id, null, 0, "Newer");
     expect(raws("Older")).toEqual(["portable task"]);
     expect(raws("Newer")).toEqual([]);
-    expect(toasts().some((toast) => toast.message.includes("Couldn't move"))).toBe(true);
+    expect(toasts().some((toast) => toast.message.includes("Resolve the conflict"))).toBe(true);
   });
 });
 
-describe("carry chooses source days and persists the addition first", () => {
+describe("carry chooses source days and persists one group", () => {
   const date = (offset: number) => { const d = new Date(); d.setDate(d.getDate() - offset); return d; };
   const title = (offset: number) => journalTitle(date(offset));
   const key = (d: Date) => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
 
-  it("carryDaysBack skips absent days and leaves source files intact until today saves", async () => {
+  it("carryDaysBack skips absent days and saves all touched days in one request", async () => {
     const today = title(0), yesterday = title(1), third = title(3);
     loadFeed([page(today, [block("today note")])]);
     const sources = new Map([[yesterday, page(yesterday, [block("TODO yesterday")])], [third, page(third, [block("TODO third")])]]);
     vi.spyOn(backend(), "getPage").mockImplementation(async (name) => sources.get(name) ?? null);
     const disk = new Map([[today, ["today note"]], [yesterday, ["TODO yesterday"]], [third, ["TODO third"]]]);
-    const pending = deferred<string>();
-    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
-      if (dto.name === today) await pending.promise;
-      disk.set(dto.name, dto.blocks.map((b) => b.raw));
-      return { ok: [`saved-${dto.name}`] };
+    const pending = deferred<void>();
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
+      await pending.promise;
+      for (const entry of entries) disk.set(entry.page.name, entry.page.blocks.map((b) => b.raw));
+      return { ok: entries.map((entry) => `saved-${entry.page.name}`) };
     });
     const carrying = carryDaysBack(3);
     await vi.waitFor(() => expect(raws(today)).toContain("TODO yesterday"));
     expect(raws(today)).toContain("TODO third");
     expect(savedRaws(disk, yesterday)).toContain("TODO yesterday");
     expect(savedRaws(disk, third)).toContain("TODO third");
-    pending.resolve("saved-today");
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].map((entry) => entry.page.name)).toEqual([today, yesterday, third]);
+    pending.resolve();
     await carrying;
     expect(savedRaws(disk, today).filter((x) => x.startsWith("TODO"))).toEqual(["TODO yesterday", "TODO third"]);
     expect(savedRaws(disk, yesterday)).not.toContain("TODO yesterday");
@@ -147,7 +147,7 @@ describe("carry chooses source days and persists the addition first", () => {
     vi.spyOn(backend(), "journalContentDays").mockResolvedValue([key(date(5)), key(date(2)), key(date(0))]);
     vi.spyOn(backend(), "getPage").mockImplementation(async (name) =>
       name === recent ? page(recent, [block("TODO recent")]) : name === old ? page(old, [block("TODO old")]) : null);
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
     await carryPrevDay();
     expect(raws(today)).toContain("TODO recent");
     expect(raws(today)).not.toContain("TODO old");
@@ -155,15 +155,11 @@ describe("carry chooses source days and persists the addition first", () => {
     expect(pageByName(old)).toBeUndefined();
   });
 
-  it("a failed today save keeps the task in its source's saved file and in today's editor", async () => {
+  it("a failed carry request keeps the task in its source's saved file and in today's editor", async () => {
     const today = title(0), source = title(1);
     loadFeed([page(today, []), page(source, [block("TODO safe")])]);
     const disk = new Map([[today, [] as string[]], [source, ["TODO safe"]]]);
-    vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => { const { id: _id, page: dto } = entries[0];
-      if (dto.name === today) throw new Error("conflict");
-      disk.set(dto.name, dto.blocks.map((b) => b.raw));
-      return { ok: ["rev"] };
-    });
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "conflict", undoFailed: [] } });
     await carryDay(source);
     expect(raws(today)).toContain("TODO safe");
     expect(savedRaws(disk, source)).toContain("TODO safe");

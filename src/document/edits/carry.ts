@@ -5,7 +5,7 @@ import { pageWritable } from "./properties";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { reassignPage } from "./moves";
-import { markDirty } from "../save/engine";
+import { persistTogether, refuseConflictedMove } from "../save/engine";
 
 // ---------------------------------------------------------------------------
 // Carry unfinished tasks forward (B)
@@ -62,6 +62,8 @@ export function carryUnfinished(
     }
   }
   if (!plan.length) return 0;
+  const sources = [...new Set(plan.map((item) => item.from))];
+  if (refuseConflictedMove([today, ...sources])) return 0;
   pushUndo("carry", [today, ...new Set(plan.map((i) => i.from))]);
   setDoc(
     produce((s) => {
@@ -101,9 +103,6 @@ export function carryUnfinished(
       todayPage.roots.push(...carried);
     })
   );
-  // Mark ONLY today (the destination) dirty here. The source days are marked +
-  // flushed by carry.ts AFTER today saves, so the debounced batch can't write a
-  // source removal while today is still unsaved/conflicted (removal-only loss).
-  markDirty(today);
+  void persistTogether([today, ...sources], sources.map((source) => [source, today] as const));
   return plan.length;
 }

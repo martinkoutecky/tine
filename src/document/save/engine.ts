@@ -5,7 +5,7 @@ import { type ClipboardSourcePage } from "../../clipboard";
 import { captureBinding, type Binding, stillBound } from "../../binding";
 import { pageToDto, appendAliasDraft } from "../convert";
 import type { PageDto, PageKind } from "../../types";
-import { backend, saveOnePage } from "../../backend";
+import { backend, saveOnePage, type SavePageEntry } from "../../backend";
 import { forgetPage, reloadPage, loadSingle } from "../workingSet";
 import { pushToast } from "../../toasts";
 import { errorFamily } from "../../errorFamily";
@@ -81,15 +81,24 @@ export async function createPage(
 
 // Pages that failed to save because the file changed on disk (external edit /
 // Syncthing). Surfaced as a banner; the user resolves with reload or overwrite.
-export const [conflicts, setConflicts] = createSignal<string[]>([]);
-export function markConflict(name: string) {
-  if (!conflicts().includes(name)) setConflicts([...conflicts(), name]);
+export type ConflictReason =
+  | { kind: "disk-changed" | "repeated" | "alias-owner-busy" }
+  | { kind: "released"; partner: string };
+export const [conflictReasons, setConflictReasons] = createSignal<Record<string, ConflictReason>>({});
+export const conflicts = () => Object.keys(conflictReasons());
+export function conflictReason(name: string): ConflictReason | undefined {
+  return conflictReasons()[name];
+}
+export function markConflict(name: string, reason: ConflictReason = { kind: "disk-changed" }) {
+  setConflictReasons({ ...conflictReasons(), [name]: reason });
 }
 export function clearConflict(name: string) {
-  setConflicts(conflicts().filter((n) => n !== name));
+  const next = { ...conflictReasons() };
+  delete next[name];
+  setConflictReasons(next);
 }
 export function isConflicted(name: string): boolean {
-  return conflicts().includes(name);
+  return !!conflictReasons()[name];
 }
 
 // A generation identifies one exact loaded page instance. It is deliberately
@@ -137,20 +146,334 @@ const deletedPages = new Set<string>();
 let graphToken = 0;
 // Per-page save queue: writes for one page run strictly one-after-another (never
 // concurrently) and each runs against the LATEST store state.
-const saveChain = new Map<string, Promise<boolean>>();
+type SaveResult = boolean | "deferred";
+const saveChain = new Map<string, Promise<SaveResult>>();
 const lastSaveFailure = new Map<string, string>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dataRevTimer: ReturnType<typeof setTimeout> | null = null;
 const assetWriteChain = new Set<Promise<boolean>>();
-// Cross-page move barrier (audit C#1): while a moved subtree's DESTINATION write is not
-// yet durable, the SOURCE pages must not save their post-removal state — otherwise an
-// UNRELATED edit to a source during the dest-write window marks it dirty and writes the
-// block out of existence (gone from the source on disk, not yet in the dest). `heldSources`
-// = pages whose saves are blocked; `heldByDest` maps each dest to the sources waiting on
-// it, released the moment that dest saves durably (immediately, or after a conflict is
-// resolved). Until then the source keeps the block on disk, so it's never lost.
-const heldSources = new Map<string, Set<string>>();
-const heldByDest = new Map<string, Set<string>>();
+export type TransferEdge = readonly [source: string, destination: string];
+export interface SaveGroup {
+  members: Set<string>;
+  edges: Set<string>;
+  forced: Set<string>;
+  state: "open" | "sealed";
+  pending?: Promise<boolean>;
+  request?: Promise<boolean>;
+  redirect?: SaveGroup;
+  cancelled?: boolean;
+  waiters: Array<(ok: boolean) => void>;
+}
+const groupOf = new Map<string, SaveGroup>();
+const sealedGroups = new Set<SaveGroup>();
+const deletingGroupMembers = new Set<string>();
+const [groupRevision, setGroupRevision] = createSignal(0);
+function changedGroups() { setGroupRevision((n) => n + 1); }
+export function group(name: string): SaveGroup | undefined {
+  groupRevision();
+  const g = groupOf.get(name);
+  return g?.redirect ?? g;
+}
+export function groupedPages(): Iterable<string> { groupRevision(); return groupOf.keys(); }
+export function savingPages(): Iterable<string> { return saveChain.keys(); }
+export async function reserveGroupMemberDeletion(name: string): Promise<() => void> {
+  deletingGroupMembers.add(name);
+  await Promise.all([...sealedGroups].filter((g) => g.members.has(name)).map((g) => g.request));
+  return () => { deletingGroupMembers.delete(name); };
+}
+export function waitingOn(name: string): string[] {
+  const g = group(name);
+  if (!g) return [];
+  return [...g.members].filter((member) => member !== name && !isConflicted(member));
+}
+export function waitingFor(name: string): string[] {
+  const g = group(name);
+  if (!g) return [];
+  return [...g.members].filter((member) => member !== name && isConflicted(member) && !g.forced.has(member));
+}
+export function moveConflict(pages: Iterable<string>): string | undefined {
+  for (const name of pages) {
+    if (isConflicted(name)) return name;
+    const blocked = [...(group(name)?.members ?? [])].find(isConflicted);
+    if (blocked) return blocked;
+  }
+}
+export function refuseConflictedMove(pages: Iterable<string>): boolean {
+  const blocked = moveConflict(pages);
+  if (!blocked) return false;
+  pushToast(`Resolve the conflict on “${blocked}” first.`, "error");
+  return true;
+}
+
+function mergeInto(target: SaveGroup, other: SaveGroup): void {
+  if (target === other || other.redirect) return;
+  for (const member of other.members) {
+    target.members.add(member);
+    groupOf.set(member, target);
+  }
+  for (const edge of other.edges) target.edges.add(edge);
+  for (const member of other.forced) target.forced.add(member);
+  target.waiters.push(...other.waiters);
+  other.waiters.length = 0;
+  other.redirect = target;
+  changedGroups();
+}
+
+function registerGroup(pages: Iterable<string>, edges: Iterable<TransferEdge>): SaveGroup {
+  const names = new Set(pages);
+  const existing = [...names].map((name) => group(name)).filter((g): g is SaveGroup => !!g && g.state === "open");
+  const target = existing[0] ?? { members: new Set<string>(), edges: new Set<string>(), forced: new Set<string>(), state: "open" as const, waiters: [] };
+  for (const other of existing) mergeInto(target, other);
+  for (const name of names) {
+    target.members.add(name);
+    groupOf.set(name, target);
+  }
+  for (const edge of edges) target.edges.add(JSON.stringify(edge));
+  changedGroups();
+  return target;
+}
+
+/** Register one user's edit as one durable request. The returned promise settles
+ * when the debounced group flush completes. */
+export function persistTogether(pages: Iterable<string>, edges: Iterable<TransferEdge> = []): Promise<boolean> {
+  const names = [...new Set(pages)].filter((name) => {
+    const page = pageByName(name);
+    return !!page && !page.guide && !page.readOnly;
+  });
+  if (!names.length) return Promise.resolve(true);
+  const g = registerGroup(names, edges);
+  for (const name of names) dirty.add(name);
+  scheduleSave();
+  return new Promise<boolean>((resolve) => g.waiters.push(resolve));
+}
+
+function dissolveGroup(g: SaveGroup): void {
+  g.cancelled = true;
+  for (const name of g.members) if (groupOf.get(name) === g) groupOf.delete(name);
+  sealedGroups.delete(g);
+  changedGroups();
+}
+
+/** Choosing disk for one member releases every other member for an explicit
+ * decision. This runs only after the disk read is still bound to this instance. */
+export function releaseGroup(name: string): void {
+  const g = group(name);
+  if (!g) return;
+  dissolveGroup(g);
+  for (const member of g.members) {
+    if (member === name) continue;
+    dirty.add(member);
+    markConflict(member, { kind: "released", partner: name });
+  }
+  for (const resolve of g.waiters) resolve(false);
+  g.waiters.length = 0;
+}
+
+function orderedMembers(g: SaveGroup): string[] {
+  const names = [...g.members];
+  const adjacency = new Map(names.map((name) => [name, new Set<string>()]));
+  for (const raw of g.edges) {
+    const [source, destination] = JSON.parse(raw) as [string, string];
+    if (adjacency.has(source) && adjacency.has(destination) && source !== destination)
+      adjacency.get(source)!.add(destination);
+  }
+  let clock = 0;
+  const number = new Map<string, number>(), low = new Map<string, number>();
+  const stack: string[] = [], onStack = new Set<string>(), components: string[][] = [];
+  const visit = (name: string) => {
+    number.set(name, clock); low.set(name, clock++);
+    stack.push(name); onStack.add(name);
+    for (const next of adjacency.get(name)!) {
+      if (!number.has(next)) { visit(next); low.set(name, Math.min(low.get(name)!, low.get(next)!)); }
+      else if (onStack.has(next)) low.set(name, Math.min(low.get(name)!, number.get(next)!));
+    }
+    if (low.get(name) === number.get(name)) {
+      const component: string[] = [];
+      let next: string;
+      do { next = stack.pop()!; onStack.delete(next); component.push(next); } while (next !== name);
+      components.push(component);
+    }
+  };
+  for (const name of names) if (!number.has(name)) visit(name);
+  const componentOf = new Map(components.flatMap((members, i) => members.map((name) => [name, i] as const)));
+  const successors = components.map(() => new Set<number>());
+  for (const [source, destinations] of adjacency) for (const destination of destinations) {
+    const from = componentOf.get(source)!, to = componentOf.get(destination)!;
+    if (from !== to) successors[from].add(to);
+  }
+  const pending = new Set(components.map((_, i) => i));
+  const result: string[] = [];
+  while (pending.size) {
+    const ready = [...pending].filter((i) => [...successors[i]].every((to) => !pending.has(to)));
+    for (const i of ready) { result.push(...components[i]); pending.delete(i); }
+  }
+  return result;
+}
+
+function validGroupMembers(g: SaveGroup, binding: Binding, token: number, generations: Map<string, number | null>): boolean {
+  return !g.cancelled && stillBound(binding) && token === graphToken
+    && [...g.members].every((name) => pageInstanceGeneration(name) === generations.get(name) && !deletedPages.has(name));
+}
+
+function abortGroup(g: SaveGroup): false {
+  if (!g.cancelled) {
+    g.state = "open";
+    sealedGroups.delete(g);
+    for (const name of g.members) dirty.add(name);
+    changedGroups();
+  }
+  return false;
+}
+
+function resolveSaveMember(name: string, kind: PageKind) {
+  return backend().resolvePage(name, kind);
+}
+
+function failGroup(g: SaveGroup, failure: { index: number; family: string; undoFailed: number[] }, order: string[]): boolean {
+  g.state = "open";
+  sealedGroups.delete(g);
+  for (const name of g.members) dirty.add(name);
+  const successor = [...g.members].map((name) => groupOf.get(name)).find((other) => other && other !== g && other.state === "open");
+  if (successor) mergeInto(successor, g);
+  const family = failure.family;
+  if (family === "repeated") {
+    for (const name of g.members) markConflict(name, { kind: "repeated" });
+    pushToast("Couldn't save these pages together: two entries target the same file.", "error");
+    return false;
+  }
+  const culprit = order[failure.index];
+  if (culprit) {
+    if (family === "alias-owner-busy") markConflict(culprit, { kind: "alias-owner-busy" });
+    else if (["conflict", "deleted", "twin", "read-only", "invalid-target"].includes(family)) markConflict(culprit);
+    else if (lastSaveFailure.get(culprit) !== family) {
+      pushToast(`Couldn't save “${culprit}” — ${family}.`, "error");
+      lastSaveFailure.set(culprit, family);
+    }
+  }
+  for (const index of failure.undoFailed) if (order[index]) markConflict(order[index]);
+  changedGroups();
+  return false;
+}
+
+async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolean> {
+  if (g.cancelled) return false;
+  if (g.redirect) return enqueueGroup(g.redirect);
+  const binding = captureBinding(), token = graphToken;
+  // Stay open while a sealed predecessor is in flight; a failed predecessor
+  // merges into this group before this group's seal point.
+  while (true) {
+    const predecessors = [...sealedGroups].filter((older) => older !== g && [...g.members].some((name) => older.members.has(name)));
+    if (!predecessors.length) break;
+    await Promise.all(predecessors.map((older) => older.request));
+    if (g.redirect) return enqueueGroup(g.redirect);
+    if (!stillBound(binding) || token !== graphToken) return false;
+  }
+  if (g.cancelled || [...g.members].some((name) => deletedPages.has(name) || deletingGroupMembers.has(name))) return false;
+  if ([...g.members].some((name) => isConflicted(name) && !g.forced.has(name))) return false;
+  // Seal atomically: no await between capturing the remaining single-page tails
+  // and registering this request as every member's current chain entry.
+  g.state = "sealed";
+  g.pending = undefined;
+  sealedGroups.add(g);
+  const tails = [...g.members].map((name) => saveChain.get(name)).filter((tail): tail is Promise<SaveResult> => !!tail);
+  const generations = new Map([...g.members].map((name) => [name, pageInstanceGeneration(name)]));
+  for (const name of g.members) saveChain.set(name, request);
+  changedGroups();
+  await Promise.all(tails);
+  if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+  const order = orderedMembers(g);
+  const ids = new Map<string, { id: string; owner?: PageDto & { id?: string; rev?: string | null }; ownerGeneration?: number | null }>();
+  for (const name of order) {
+    const page = pageByName(name);
+    if (!page) return abortGroup(g);
+    if (page.id) { ids.set(name, { id: page.id }); continue; }
+    const resolved = await resolveSaveMember(name, page.kind);
+    if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+    if (resolved.kind === "alias") {
+      const owner = resolved.owners[0] && await backend().getPageByPath(resolved.owners[0]);
+      if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+      if (!owner || owner.read_only || owner.guide) return failGroup(g, { index: order.indexOf(name), family: "alias-owner-busy", undoFailed: [] }, order);
+      if (order.some((member) => member !== name && pageByName(member)?.id === owner.id))
+        return failGroup(g, { index: order.indexOf(name), family: "repeated", undoFailed: [] }, order);
+      if (isDirty(owner.name) || isSaving(owner.name) || isConflicted(owner.name)) {
+        markConflict(name, { kind: "alias-owner-busy" });
+        return abortGroup(g);
+      }
+      ids.set(name, { id: owner.id!, owner, ownerGeneration: pageInstanceGeneration(owner.name) });
+    } else ids.set(name, { id: resolved.id });
+  }
+  if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+  const entries: SavePageEntry[] = [];
+  for (const name of order) {
+    const dto = pageToDto(name), target = ids.get(name)!;
+    if (!dto) return abortGroup(g);
+    entries.push({ id: target.id, page: target.owner ? appendAliasDraft(target.owner, dto) : dto,
+      baseRev: target.owner ? target.owner.rev ?? null : baseRev.get(name) ?? null, force: g.forced.has(name) && !target.owner });
+  }
+  if (new Set(entries.map((entry) => entry.id)).size !== entries.length)
+    return failGroup(g, { index: 0, family: "repeated", undoFailed: [] }, order);
+  const forcedConflicts = new Map([...g.forced].map((name) => [name, conflictReason(name)]));
+  for (const name of order) dirty.delete(name);
+  try {
+    const outcome = await backend().savePages(entries, binding.backendGeneration);
+    if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+    if ("failed" in outcome) return failGroup(g, outcome.failed, order);
+    for (let i = 0; i < order.length; i++) {
+      const name = order[i], target = ids.get(name)!;
+      if (target.owner) continue;
+      setPageId(name, target.id);
+      baseRev.set(name, outcome.ok[i]);
+      if (entries[i].baseRev === null) bumpPageInventoryRev();
+      if (g.forced.has(name) && conflictReason(name) === forcedConflicts.get(name)) clearConflict(name);
+      lastSaveFailure.delete(name);
+    }
+    dissolveGroup(g);
+    for (let i = 0; i < order.length; i++) {
+      const name = order[i], target = ids.get(name)!;
+      if (!target.owner) continue;
+      if (dirty.has(name) || isDirty(target.owner.name) || isSaving(target.owner.name)
+          || isConflicted(target.owner.name) || pageInstanceGeneration(target.owner.name) !== target.ownerGeneration) {
+        markConflict(name, { kind: "alias-owner-busy" });
+        continue;
+      }
+      const landed = { ...entries[i].page, rev: outcome.ok[i] };
+      forgetPage(name);
+      reloadPage(landed);
+      loadSingle(landed);
+      aliasDraftRouteHandler?.(target.owner.name, target.owner.kind);
+      pushToast(`Moved “${name}” into its alias owner “${target.owner.name}”.`, "info");
+      bumpPageInventoryRev();
+    }
+    if ([...g.members].some((name) => dirty.has(name))) scheduleSave();
+    return true;
+  } catch (error) {
+    if (!stillBound(binding) || token !== graphToken || g.cancelled) return false;
+    return failGroup(g, { index: 0, family: errorFamily(error), undoFailed: [] }, order);
+  }
+}
+
+function enqueueGroup(input: SaveGroup): Promise<boolean> {
+  const g = input.redirect ?? input;
+  if (g.cancelled) return Promise.resolve(false);
+  if (g.state === "sealed") return g.request ?? Promise.resolve(false);
+  if (g.pending) return g.pending;
+  let request!: Promise<boolean>;
+  request = Promise.resolve().then(() => runGroup(g, request)).catch((error) => {
+    if (g.cancelled || !sealedGroups.has(g) && ![...g.members].some((name) => groupOf.get(name) === g)) return false;
+    return failGroup(g, { index: 0, family: errorFamily(error), undoFailed: [] }, orderedMembers(g));
+  }).finally(() => {
+    if (g.request === request) g.request = undefined;
+    if (g.pending === request) g.pending = undefined;
+    for (const name of g.members) if (saveChain.get(name) === request) saveChain.delete(name);
+  });
+  g.pending = request;
+  g.request = request;
+  void request.then((ok) => {
+    for (const resolve of g.waiters) resolve(ok);
+    g.waiters.length = 0;
+  });
+  return request;
+}
 
 // ---------------------------------------------------------------------------
 // Accessors — store.ts mutations call these instead of touching the guards.
@@ -183,38 +506,6 @@ export function dirtyPages(): Iterable<string> {
 export function isSaving(name: string): boolean {
   return saveChain.has(name);
 }
-/** Hold `sources`' saves until `dest` is durably written (cross-page move barrier,
- *  audit C#1). `releaseSourcesFor(dest)` fires from doSave's success path. */
-export function holdSourcesForDest(dest: string, sources: string[]) {
-  const srcs = sources.filter((s) => s !== dest);
-  if (srcs.length === 0) return;
-  let held = heldByDest.get(dest);
-  if (!held) {
-    held = new Set();
-    heldByDest.set(dest, held);
-  }
-  for (const s of srcs) {
-    held.add(s);
-    let dependencies = heldSources.get(s);
-    if (!dependencies) {
-      dependencies = new Set();
-      heldSources.set(s, dependencies);
-    }
-    dependencies.add(dest);
-  }
-}
-
-/** Undo of an as-yet-unpublished move returns content to its still-durable
- * original page. Retire that old dependency before installing the reverse one,
- * otherwise each page can end up waiting for the other to save. */
-export function cancelSourceHoldForDest(source: string, dest: string): void {
-  const sources = heldByDest.get(dest);
-  if (!sources?.delete(source)) return;
-  if (sources.size === 0) heldByDest.delete(dest);
-  const dependencies = heldSources.get(source);
-  dependencies?.delete(dest);
-  if (dependencies?.size === 0) heldSources.delete(source);
-}
 
 /** Track an optimistic asset write so flushAll/app-close waits for the bytes to
  *  land before letting the process exit. The caller still owns success/failure
@@ -229,24 +520,6 @@ export function trackAssetWrite<T>(write: Promise<T>): Promise<T> {
   });
   assetWriteChain.add(tracked);
   return write;
-}
-/** Dest saved durably → let its held sources persist their post-removal state now
- *  (the block is on disk in the dest, so removing it from the source loses nothing). */
-function releaseSourcesFor(dest: string) {
-  const srcs = heldByDest.get(dest);
-  if (!srcs) return;
-  heldByDest.delete(dest);
-  let any = false;
-  for (const s of srcs) {
-    const dependencies = heldSources.get(s);
-    dependencies?.delete(dest);
-    if (dependencies && dependencies.size === 0) {
-      heldSources.delete(s);
-      dirty.add(s); // its removal (and any held edit) can write now
-      any = true;
-    }
-  }
-  if (any) scheduleSave();
 }
 /** Record a page's load/save baseline rev (set on load and after each save). */
 export function setBaseRev(name: string, rev: string | null) {
@@ -281,10 +554,16 @@ export function resetSaveState() {
   dirty.clear();
   baseRev.clear();
   deletedPages.clear();
-  heldSources.clear();
-  heldByDest.clear();
+  deletingGroupMembers.clear();
+  for (const g of new Set([...groupOf.values(), ...sealedGroups])) {
+    g.cancelled = true;
+    for (const resolve of g.waiters) resolve(false);
+    g.waiters.length = 0;
+  }
+  groupOf.clear();
+  sealedGroups.clear();
   lastSaveFailure.clear();
-  setConflicts([]);
+  setConflictReasons({});
 }
 
 // ---------------------------------------------------------------------------
@@ -324,19 +603,21 @@ function enqueueSave(
   force = false,
   expectedCutSource?: ClipboardSourcePage,
 ): Promise<boolean> {
+  const currentGroup = group(name);
+  if (currentGroup?.state === "open") return enqueueGroup(currentGroup);
   const binding = captureBinding();
   const token = graphToken;
   const generation = pageInstanceGeneration(name);
   const prev = saveChain.get(name) ?? Promise.resolve(true);
-  const next = prev.then(
-    () => doSave(name, force, binding, token, generation, expectedCutSource),
-    () => doSave(name, force, binding, token, generation, expectedCutSource),
+  const next: Promise<SaveResult> = prev.then(
+    () => doSave(name, force, binding, token, generation, currentGroup, expectedCutSource),
+    () => doSave(name, force, binding, token, generation, currentGroup, expectedCutSource),
   );
   saveChain.set(name, next);
   void next.finally(() => {
     if (saveChain.get(name) === next) saveChain.delete(name);
   });
-  return next;
+  return next.then((result) => result === "deferred" ? enqueueGroup(group(name)!) : result);
 }
 
 /** Write the page's CURRENT state once. No-op success if it isn't dirty and not
@@ -349,19 +630,19 @@ async function doSave(
   binding: Binding,
   token: number,
   generation: number | null,
+  groupAtEnqueue: SaveGroup | undefined,
   expectedCutSource?: ClipboardSourcePage,
-): Promise<boolean> {
+): Promise<SaveResult> {
   if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
   // A cut-retirement save is authority-bound to the exact loaded page instance.
   // Check when this queued operation actually reaches its snapshot boundary, not
   // only when the caller enqueues it: another save may have been ahead of it.
   if (expectedCutSource && !cutSourceUsable(expectedCutSource)) return false;
+  const currentGroup = group(name);
+  if (currentGroup && (currentGroup !== groupAtEnqueue || currentGroup.state === "open")) return "deferred";
   if (deletedPages.has(name)) return true; // tombstoned — never recreate a deleted page
   if (!force && !dirty.has(name)) return true; // already saved by a prior link
   if (isConflicted(name) && !force) return false;
-  // A cross-page move source: hold its save until the destination is durable (C#1).
-  // Stays dirty, so it writes the moment `releaseSourcesFor(dest)` frees it.
-  if (heldSources.has(name) && !force) return false;
   const dto = pageToDto(name);
   if (!dto) return false;
   if (dto.guide) {
@@ -411,7 +692,6 @@ async function doSave(
         aliasDraftRouteHandler?.(owner.name, owner.kind);
         pushToast(`Moved “${name}” into its alias owner “${owner.name}”.`, "info");
         bumpPageInventoryRev();
-        releaseSourcesFor(name);
         lastSaveFailure.delete(name);
         return true;
       }
@@ -428,7 +708,6 @@ async function doSave(
       setPageId(name, id);
       baseRev.set(name, rev);
       if (baseline === null) bumpPageInventoryRev();
-      releaseSourcesFor(name); // only this binding may release its held sources
       lastSaveFailure.delete(name);
       return true;
     }
@@ -503,7 +782,7 @@ export function cutSourcePagesRetired(sources: readonly ClipboardSourcePage[]): 
     && !dirty.has(source.name)
     && !saveChain.has(source.name)
     && !deletedPages.has(source.name)
-    && !heldSources.has(source.name)
+    && !group(source.name)
     && !isConflicted(source.name)
   );
 }
@@ -543,8 +822,52 @@ export async function flushAll(): Promise<boolean> {
  *  version ("keep mine"). Returns whether the overwrite succeeded — the caller
  *  must not clear the conflict unless it did. */
 export async function forceSave(name: string): Promise<boolean> {
+  const g = group(name);
+  if (g) {
+    g.forced.add(name);
+    return enqueueGroup(g);
+  }
   dirty.add(name); // ensure doSave writes even though it's parked as conflicted
   const ok = await enqueueSave(name, true);
+  if (ok) clearConflict(name);
   if (!ok) pushToast(`Couldn't overwrite “${name}”.`, "error");
   return ok;
+}
+
+/** Apply one conflict-bar decision with its binding and group consequences. */
+export async function resolveConflict(name: string, choice: "mine" | "disk"): Promise<boolean> {
+  if (!isConflicted(name)) return false;
+  if (choice === "mine") {
+    if (conflictReason(name)?.kind === "repeated") return false;
+    const g = group(name);
+    if (g?.state === "sealed") {
+      const binding = captureBinding(), token = graphToken, generation = pageInstanceGeneration(name);
+      await g.request;
+      if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+      return isConflicted(name) ? resolveConflict(name, "mine") : true;
+    }
+    if (g) {
+      g.forced.add(name);
+      changedGroups();
+      if ([...g.members].some((member) => isConflicted(member) && !g.forced.has(member))) return true;
+    }
+    return forceSave(name);
+  }
+  const binding = captureBinding(), token = graphToken, generation = pageInstanceGeneration(name);
+  const kind = pageByName(name)?.kind ?? "page";
+  await Promise.all([...sealedGroups].filter((g) => g.members.has(name)).map((g) => g.request));
+  if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+  let dto: Awaited<ReturnType<ReturnType<typeof backend>["getPage"]>>;
+  try { dto = await backend().getPage(name, kind); }
+  catch (error) {
+    if (stillBound(binding) && token === graphToken && pageInstanceGeneration(name) === generation)
+      pushToast(`Couldn't read “${name}” from disk — ${String(error)}`, "error");
+    return false;
+  }
+  if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+  releaseGroup(name);
+  if (dto) reloadPage(dto);
+  else forgetPage(name);
+  clearConflict(name);
+  return true;
 }
