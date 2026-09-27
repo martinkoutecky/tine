@@ -47,8 +47,8 @@ export function moveBlockInternal(id: string, newParent: string | null, index: n
       }
     })
   );
-  if (newPage !== oldPage) void persistTogether([oldPage, newPage], [[oldPage, newPage]]);
-  else markDirty(oldPage);
+  if (newPage !== oldPage) void persistTogether([oldPage, newPage], "move-blocks", [[oldPage, newPage]]);
+  else markDirty(oldPage, "move-blocks");
 }
 
 /** Move a block under `newParent` (or, when `newParent` is null, to the roots of
@@ -118,9 +118,9 @@ export async function moveBlock(
     })
   );
   if (newPage !== oldPage) {
-    void persistTogether([oldPage, newPage], [[oldPage, newPage]]);
+    void persistTogether([oldPage, newPage], ["move-blocks", "save-block"], [[oldPage, newPage]]);
   } else {
-    markDirty(oldPage);
+    markDirty(oldPage, ["move-blocks", "save-block"]);
   }
 }
 
@@ -175,7 +175,7 @@ export function moveItem(id: string, dir: 1 | -1) {
       arr.splice(ni, 0, id);
     })
   );
-  markDirty(node.page);
+  markDirty(node.page, "move-blocks");
 }
 
 /** Can a block move one slot in `dir` within its sibling list? */
@@ -219,7 +219,7 @@ function crossMoveBlocks(ids: string[], fromPage: string, toPage: string, dir: 1
       }
     })
   );
-  void persistTogether([fromPage, toPage], [[fromPage, toPage]]);
+  void persistTogether([fromPage, toPage], "move-blocks", [[fromPage, toPage]]);
 }
 
 /** Resolve the adjacent feed day for a root block at the page boundary, loading
@@ -318,8 +318,8 @@ export async function moveSelectionItems(dir: 1 | -1) {
         }
       })
     );
-    if (pages.length > 1) void persistTogether(pages);
-    else for (const p of pages) markDirty(p);
+    if (pages.length > 1) void persistTogether(pages, "move-blocks");
+    else for (const p of pages) markDirty(p, "move-blocks");
     return;
   }
   // Boundary: cross the whole group into the adjacent day (only if every

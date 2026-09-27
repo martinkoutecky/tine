@@ -96,8 +96,13 @@ fn crash_transaction_worker() {
     let a_rev = store.read(&a.file(), None).unwrap().1;
     let b_rev = store.read(&b, None).unwrap().1;
     let c_rev = store.read(&c, None).unwrap().1;
-    let mut tx = store.transaction();
-    tx.save_page(&a, SaveBase::Existing(a_rev), &page("A", "new A"));
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+    tx.save_page(
+        &[tine_store::EditKind::ReplacePage],
+        &a,
+        SaveBase::Existing(a_rev),
+        &page("A", "new A"),
+    );
     tx.move_file(&b, b_rev, &d, None);
     tx.trash(&c, c_rev);
     store.inject_fault(FaultPoint::AbortAfterStep(boundary.parse().unwrap()));
@@ -152,7 +157,7 @@ fn crash_restore_worker() {
             }
         })
         .collect();
-    let _ = store.restore(files);
+    let _ = store.restore(tine_store::EditKind::ReplacePage, files);
     panic!("I-2: restore fault did not abort; exemplar Store::restore");
 }
 

@@ -140,7 +140,7 @@ export async function materializeQueryWorkspace(
     }
 
     const page = queryWorkspacePage(name, savedQueryRaw(input));
-    const result = await deps.savePages([{ id: resolved.id, page, baseRev: null, force: false }], binding.backendGeneration);
+    const result = await deps.savePages([{ id: resolved.id, page, baseRev: null, force: false, kinds: ["create-page"] }], binding.backendGeneration);
     if ("failed" in result) throw new Error(result.failed.family);
     const rev = result.ok[0];
     if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };

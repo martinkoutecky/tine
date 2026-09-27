@@ -131,7 +131,7 @@ describe("save-group review regressions", () => {
   it("R-5: pages with no transfer edges save after ordered members", async () => {
     loadFeed([page("C", ["C"]), page("A", ["A"]), page("B", ["B"])]);
     const { requests } = diskBackend({ A: ["A"], B: ["B"], C: ["C"] });
-    void persistTogether(["C", "A", "B"], [["A", "B"]]);
+    void persistTogether(["C", "A", "B"], "move-blocks", [["A", "B"]]);
     expect(await flushAll()).toBe(true);
     expect(requests[0].map((entry) => entry.page.name)).toEqual(["B", "A", "C"]);
   });
@@ -141,7 +141,7 @@ describe("save-group review regressions", () => {
     vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/B.md" });
     const { save } = diskBackend({ A: ["A"], B: [] });
     save.mockResolvedValueOnce({ failed: { index: 0, family: "twin", undoFailed: [] } });
-    void persistTogether(["A", "B"], [["A", "B"]]);
+    void persistTogether(["A", "B"], "move-blocks", [["A", "B"]]);
     expect(await flushAll()).toBe(false);
     expect(conflictReason("A")?.kind).toBe("repeated");
     expect(conflictReason("B")?.kind).toBe("repeated");
@@ -152,7 +152,7 @@ describe("save-group review regressions", () => {
     loadFeed([page("A", ["A"]), page("B", ["B"]), { ...page("C", ["C"]), id: undefined, rev: undefined }]);
     vi.spyOn(backend(), "resolvePage").mockRejectedValue(new Error("unavailable"));
     const { save } = diskBackend({ A: ["A"], B: ["B"], C: [] });
-    void persistTogether(["A", "B", "C"], [["A", "B"]]);
+    void persistTogether(["A", "B", "C"], "move-blocks", [["A", "B"]]);
     expect(await flushAll()).toBe(false);
     expect(save).not.toHaveBeenCalled();
     expect(toasts().some((toast) => toast.message.startsWith("Couldn't save “C”"))).toBe(true);

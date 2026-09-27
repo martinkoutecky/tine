@@ -36,7 +36,7 @@ describe("createPage refusal families", () => {
     resetStore();
     clearConflict("New");
     loadSingle(dto());
-    markDirty("New");
+    markDirty("New", "save-block");
     await expectLocalRefusal(createPage("New", dto()), "page-dirty");
     resetStore();
     await expectLocalRefusal(createPage("New", dto(), { bindingGeneration: captureBinding().backendGeneration + 1 }), "stale-binding");
@@ -56,7 +56,7 @@ describe("createPage refusal families", () => {
 
   it("keeps a queued save refusal distinct from disk conflict", async () => {
     loadSingle(dto());
-    markDirty("New");
+    markDirty("New", "save-block");
     let finish!: (result: { ok: string[] }) => void;
     vi.spyOn(backend(), "savePages").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const saving = flushPage("New");

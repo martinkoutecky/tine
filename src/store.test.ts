@@ -856,7 +856,7 @@ describe("reloadDisposition (watcher reload guard)", () => {
   });
   it("conflict when the page has unsaved edits (never clobber)", () => {
     loadFeed([j("D", [blk("d1")])]);
-    markDirty("D");
+    markDirty("D", "save-block");
     expect(reloadDisposition("D")).toBe("conflict");
   });
 });
@@ -920,7 +920,7 @@ describe("page-scoped structural undo", () => {
     expect(doc.byId[pageByName("Today")!.roots[0]].raw).toBe("stray");
     // The next save targets the stray's own file (was: pageToDto echoed `path`).
     const saveSpy = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev"] });
-    markDirty("Today");
+    markDirty("Today", "save-block");
     expect(await flushPage("Today")).toBe(true);
     expect(saveSpy.mock.calls[0][0][0].id).toBe("journals/Friday, 26-06-2026.md");
     saveSpy.mockRestore();
@@ -1037,7 +1037,7 @@ describe("page-scoped structural undo", () => {
     const save = vi.spyOn(backend(), "savePages").mockImplementationOnce(() =>
       new Promise((resolve) => { finishPrior = () => resolve({ ok: ["prior-rev"] }); })
     ).mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
-    markDirty("Today");
+    markDirty("Today", "save-block");
     const prior = flushPage("Today");
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     await moveBlockFeed(older.blocks[0].id, -1);
@@ -1585,8 +1585,8 @@ describe("save engine (persistence)", () => {
 
   it("debounces dirty pages into one batched save", async () => {
     load([blk("hello")]);
-    markDirty("Test");
-    markDirty("Test"); // coalesced into the same 400ms batch
+    markDirty("Test", "save-block");
+    markDirty("Test", "save-block"); // coalesced into the same 400ms batch
     expect(saveSpy).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(400);
     expect(saveSpy).toHaveBeenCalledTimes(1);
@@ -1597,11 +1597,11 @@ describe("save engine (persistence)", () => {
   it("flushPage writes immediately and advances the baseline rev", async () => {
     load([blk("x")]);
     saveSpy.mockResolvedValue({ ok: ["rev2"] });
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(saveSpy).toHaveBeenCalledTimes(1);
     // Next save sends the rev returned by the previous one as its baseRev.
-    markDirty("Test");
+    markDirty("Test", "save-block");
     await flushPage("Test");
     expect(saveSpy.mock.calls[1][0][0].baseRev).toBe("rev2");
   });
@@ -1610,13 +1610,13 @@ describe("save engine (persistence)", () => {
     let finish!: (result: { ok: string[] }) => void;
     saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     load([blk("old instance")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     const first = flushPage("Test");
     await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
     reloadPage({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [blk("new instance")], rev: "replacement-rev" });
     finish({ ok: ["old-save-rev"] });
     await first;
-    markDirty("Test");
+    markDirty("Test", "save-block");
     await flushPage("Test");
     expect(saveSpy.mock.calls[1][0][0].baseRev).toBe("replacement-rev");
   });
@@ -1627,7 +1627,7 @@ describe("save engine (persistence)", () => {
     saveSpy.mockImplementationOnce((entries) => new Promise((resolve) => { finish = (result) => { disk.add(entries[0].id); resolve(result); }; }));
     const remove = vi.spyOn(backend(), "deletePage").mockImplementation(async () => { disk.clear(); });
     load([blk("new content")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     const save = flushPage("Test");
     await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
     const deletion = deletePage("Test", "page");
@@ -1646,7 +1646,7 @@ describe("save engine (persistence)", () => {
     saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined);
     load([blk("old graph")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     const first = flushPage("Test");
     await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
     const deletion = deletePage("Test", "page");
@@ -1665,7 +1665,7 @@ describe("save engine (persistence)", () => {
     saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const firstBlock = blk("first");
     load([firstBlock]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     const first = flushPage("Test");
     await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
     let settled = false;
@@ -1687,7 +1687,7 @@ describe("save engine (persistence)", () => {
     saveSpy.mockImplementation(() => {
       const call = saveSpy.mock.calls.length;
       if (call < 4) {
-        markDirty("Test");
+        markDirty("Test", "save-block");
         return Promise.resolve({ ok: [`rev-${call}`] });
       }
       if (call === 4) {
@@ -1696,7 +1696,7 @@ describe("save engine (persistence)", () => {
       }
       return new Promise((resolve) => { finishFifth = resolve; });
     });
-    markDirty("Test");
+    markDirty("Test", "save-block");
     const draining = flushAll();
     await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(5));
     expect(isDirty("Test")).toBe(false);
@@ -1713,7 +1713,7 @@ describe("save engine (persistence)", () => {
     setToasts([]);
     load([blk("unsaved")]);
     saveSpy.mockRejectedValue(new Error("io:Other"));
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
     expect(await flushPage("Test")).toBe(false);
     expect(toasts().filter((toast) => toast.kind === "error" && toast.message.includes("Test")),
@@ -1776,7 +1776,7 @@ describe("save engine (persistence)", () => {
     let finish!: (resolved: { kind: "absent"; id: string }) => void;
     const resolve = vi.spyOn(backend(), "resolvePage").mockImplementationOnce(() => new Promise((done) => { finish = done; }));
     load([blk("old draft")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     const save = flushPage("Test");
     await vi.waitFor(() => expect(resolve).toHaveBeenCalled());
     resetStore();
@@ -1792,7 +1792,7 @@ describe("save engine (persistence)", () => {
     let finish!: (result: { ok: string[] }) => void;
     saveSpy.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     load([blk("old graph")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     const first = flushPage("Test");
     await vi.waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
     const queued = forceSave("Test");
@@ -1847,19 +1847,19 @@ describe("save engine (persistence)", () => {
   it("refreshes page inventory only when a save creates a new file", async () => {
     const before = pageInventoryRev();
     load([blk("new")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(pageInventoryRev()).toBeGreaterThan(before);
 
     const afterCreate = pageInventoryRev();
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(pageInventoryRev()).toBe(afterCreate);
   });
 
   it("a conflict marks the page (no clobber) and flushAll reports failure", async () => {
     load([blk("x")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     saveSpy.mockRejectedValueOnce(new Error("conflict"));
     expect(await flushAll()).toBe(false);
     expect(isConflicted("Test")).toBe(true);
@@ -1867,7 +1867,7 @@ describe("save engine (persistence)", () => {
 
   it("a transient error keeps the page dirty for retry", async () => {
     load([blk("x")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     saveSpy.mockRejectedValueOnce(new Error("disk full"));
     expect(await flushPage("Test")).toBe(false);
     expect(isDirty("Test")).toBe(true);
@@ -1881,14 +1881,14 @@ describe("save engine (persistence)", () => {
       .mockResolvedValue({ kind: "absent", id: "pages/Test.org" });
     load([blk("new")]);
     expect(pageByName("Test")!.id).toBeUndefined();
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(resolveSpy).toHaveBeenCalledWith("Test", "page");
     expect(saveSpy.mock.calls[0][0][0].id).toBe("pages/Test.org");
     expect(saveSpy.mock.calls[0][0][0].baseRev).toBeNull(); // CreateNew
     expect(pageByName("Test")!.id).toBe("pages/Test.org");
 
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(resolveSpy).toHaveBeenCalledTimes(1); // no extra round trip once it has an id
     expect(saveSpy.mock.calls[1][0][0].id).toBe("pages/Test.org");
@@ -1900,7 +1900,7 @@ describe("save engine (persistence)", () => {
     const stray = { name: "Today", kind: "journal" as const, title: "Today", pre_block: null,
       blocks: [blk("stray")], id: "journals/Friday, 26-06-2026.md", rev: "stray-rev" };
     loadFeed([stray]);
-    markDirty("Today");
+    markDirty("Today", "save-block");
     expect(await flushPage("Today")).toBe(true);
     expect(resolveSpy).not.toHaveBeenCalled();
     expect(saveSpy.mock.calls[0][0][0].id).toBe("journals/Friday, 26-06-2026.md");
@@ -1914,7 +1914,7 @@ describe("save engine (persistence)", () => {
     saveSpy.mockRejectedValueOnce(new Error("conflict"));
     const [b] = [blk("mine")];
     load([b]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
     // CreateNew (null base) onto the existing file: the backend refuses it.
     expect(saveSpy.mock.calls[0][0][0].id).toBe("pages/Test.md");
@@ -1933,7 +1933,7 @@ describe("save engine (persistence)", () => {
     const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
     const [b] = [blk("typed under an alias name")];
     load([b]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
     expect(saveSpy).not.toHaveBeenCalled();
     expect(isConflicted("Test")).toBe(true);
@@ -1951,7 +1951,7 @@ describe("save engine (persistence)", () => {
     saveSpy.mockImplementation(async (entries) => { const { id, page: dto } = entries[0]; disk.set(id, dto); return { ok: ["saved-owner-rev"] }; });
     const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
     const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(saveSpy).toHaveBeenCalledTimes(1);
     expect(saveSpy.mock.calls[0][0][0].id).toBe(owner.id);
@@ -1976,7 +1976,7 @@ describe("save engine (persistence)", () => {
     const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
     const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
     saveSpy.mockRejectedValueOnce(new Error("conflict"));
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
     expect(saveSpy.mock.calls[0][0][0].page.blocks.map((b) => b.raw)).toEqual(["owner text", "draft text"]);
     expect(isConflicted("Test")).toBe(true);
@@ -1991,7 +1991,7 @@ describe("save engine (persistence)", () => {
     loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: "tags:: draft", blocks: [blk("body")] });
     const resolve = vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "alias", owners: [owner.id] });
     const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(owner);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(true);
     expect(saveSpy.mock.calls[0][0][0].page.pre_block).toBe("alias:: Test");
     expect(saveSpy.mock.calls[0][0][0].page.blocks.map((b) => b.raw)).toEqual(["existing", "tags:: draft", "body"]);
@@ -2012,7 +2012,7 @@ describe("save engine (persistence)", () => {
         guide: true,
       },
     ]);
-    markDirty("Tine-guide/Features/Sheets");
+    markDirty("Tine-guide/Features/Sheets", "save-block");
 
     expect(await flushPage("Tine-guide/Features/Sheets")).toBe(true);
     expect(saveSpy).not.toHaveBeenCalled();
@@ -2021,10 +2021,10 @@ describe("save engine (persistence)", () => {
 
   it("a tombstoned (deleted) page is never written", async () => {
     load([blk("x")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     await deletePage("Test", "page"); // tombstones the page
     saveSpy.mockClear();
-    markDirty("Test"); // a stray queued save after delete must not recreate it
+    markDirty("Test", "save-block"); // a stray queued save after delete must not recreate it
     expect(await flushPage("Test")).toBe(true);
     expect(saveSpy).not.toHaveBeenCalled();
   });
@@ -2131,7 +2131,7 @@ describe("save engine (persistence)", () => {
     // The placeholder is writable: the delete tombstone was lifted, so the first
     // edit saves a fresh file (not silently swallowed like a still-deleted page).
     saveSpy.mockClear();
-    markDirty(today);
+    markDirty(today, "save-block");
     expect(await flushPage(today)).toBe(true);
     expect(saveSpy).toHaveBeenCalledTimes(1);
     expect((saveSpy.mock.calls[0][0][0].page).name).toBe(today);
@@ -2153,7 +2153,7 @@ describe("save engine (persistence)", () => {
 
   it("forceSave overwrites even a conflicted page (force=true)", async () => {
     load([blk("x")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     saveSpy.mockRejectedValueOnce(new Error("conflict"));
     await flushPage("Test");
     expect(isConflicted("Test")).toBe(true);
@@ -2164,7 +2164,7 @@ describe("save engine (persistence)", () => {
 
   it("deletes a CONFLICTED page rather than leaving it undeletable", async () => {
     load([blk("x")]);
-    markDirty("Test");
+    markDirty("Test", "save-block");
     saveSpy.mockRejectedValueOnce(new Error("conflict"));
     await flushPage("Test"); // the save is now refused until the conflict is resolved
     expect(isConflicted("Test")).toBe(true);

@@ -363,7 +363,12 @@ fn issue232_runtime_ids_never_serialize_as_synthetic_id_properties() {
     assert!(dto.blocks.iter().all(|block| !block.id.is_empty()));
 
     assert!(matches!(
-        graph.store.save(&entry, SaveBase::Existing(read.rev), &dto),
+        graph.store.save(
+            tine_store::EditKind::ReplacePage,
+            &entry,
+            SaveBase::Existing(read.rev),
+            &dto
+        ),
         SaveOutcome::Unchanged(_) | SaveOutcome::Saved(_)
     ));
     let persisted = fs::read_to_string(fixture.root.join("pages/Roundtrip.md")).unwrap();

@@ -159,7 +159,7 @@ export async function ensureBlockId(id: string): Promise<string | null> {
   const uuid = existing ?? crypto.randomUUID();
   if (!existing) {
     setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
-    markDirty(node.page);
+    markDirty(node.page, "save-block");
   }
   // Even a pre-existing id may not be on disk yet (added in-memory, not flushed);
   // flush and only hand back the uuid if the write actually landed.
@@ -193,7 +193,7 @@ export function ensureStableBlockId(id: string): string | null {
   if (existing) return existing;
   const uuid = UUID_RE.test(id) ? id : crypto.randomUUID();
   setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
-  markDirty(node.page);
+  markDirty(node.page, "save-block");
   // Persist now, not on the 400ms debounce: the user may quit right after
   // parking the block, and a pending timer is lost when the webview closes.
   void flushPage(node.page);
@@ -237,4 +237,3 @@ export async function persistBlockRefTarget(
   const id = resolveBlockRef(ref);
   if (id) ensureStableBlockId(id);
 }
-

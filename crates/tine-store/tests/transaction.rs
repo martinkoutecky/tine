@@ -130,31 +130,41 @@ fn step_successes_and_noop() {
     let meta = f.id(Area::Assets, "meta.edn");
     let created = f.id(Area::Assets, "new.bin");
     let delete = f.id(Area::Assets, "delete.bin");
-    let mut tx = f.store.transaction();
-    tx.save_page(&a, SaveBase::Existing(f.rev(&a.file())), &doc("A", "after"));
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
+    tx.save_page(
+        &[tine_store::EditKind::ReplacePage],
+        &a,
+        SaveBase::Existing(f.rev(&a.file())),
+        &doc("A", "after"),
+    );
     assert!(matches!(
         committed(tx.commit())[0],
         StepResult::Written { .. }
     ));
-    let mut tx = f.store.transaction();
-    tx.save_page(&a, SaveBase::Existing(f.rev(&a.file())), &doc("A", "after"));
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
+    tx.save_page(
+        &[tine_store::EditKind::ReplacePage],
+        &a,
+        SaveBase::Existing(f.rev(&a.file())),
+        &doc("A", "after"),
+    );
     assert!(matches!(
         committed(tx.commit())[0],
         StepResult::Unchanged { .. }
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&created, Content::Bytes(b"new".to_vec()));
     assert!(matches!(
         committed(tx.commit())[0],
         StepResult::Written { .. }
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(&meta, f.rev(&meta), b"replacement".to_vec());
     assert!(matches!(
         committed(tx.commit())[0],
         StepResult::Written { .. }
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.rewrite_refs(
         &PageId::from("pages/B.md"),
         f.rev(&b),
@@ -165,7 +175,7 @@ fn step_successes_and_noop() {
         StepResult::Written { .. }
     ));
     assert_eq!(f.bytes("pages/B.md").unwrap(), b"- [[C]]\n");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.move_file(&b, f.rev(&b), &moved, None);
     assert!(matches!(
         committed(tx.commit())[0],
@@ -173,7 +183,7 @@ fn step_successes_and_noop() {
     ));
     assert!(f.bytes("pages/B.md").is_none());
     assert_eq!(f.bytes("pages/C.md").unwrap(), b"- [[C]]\n");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.trash(&delete, f.rev(&delete));
     match &committed(tx.commit())[0] {
         StepResult::Trashed { trashed, .. } => {
@@ -193,30 +203,30 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
     let a = f.id(Area::Pages, "A.md");
     let x = f.id(Area::Assets, "x.bin");
     let y = f.id(Area::Assets, "y.bin");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&a, Content::Bytes(b"- new\n".to_vec()));
     let (why, rb) = refused(tx.commit());
     assert!(matches!(why, Why::Conflict { .. }));
     assert!(rb.kept_external.is_empty() && rb.undo_failed.is_empty());
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&f.id(Area::Pages, "B.md"), Content::Bytes(vec![0xff]));
     assert!(matches!(
         refused(tx.commit()).0,
         Why::Refused(Refusal::Undecodable)
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(&a, f.rev(&a), b"bad".to_vec());
     assert!(matches!(
         refused(tx.commit()).0,
         Why::Refused(Refusal::InvalidTarget(_))
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.move_file(&x, f.rev(&x), &f.id(Area::Trash, "assets/illegal"), None);
     assert!(matches!(
         refused(tx.commit()).0,
         Why::Refused(Refusal::InvalidTarget(_))
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create_unique(Area::Assets, "../bad", ".png", Content::Bytes(vec![1]));
     assert!(matches!(
         refused(tx.commit()).0,
@@ -225,7 +235,7 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
     assert!(f.store.file_id(Area::Meta, ".tine-trash/forged").is_err());
     f.put("logseq/config.edn", b"{}\n");
     let config = f.id(Area::Meta, "config.edn");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(
         &config,
         f.rev(&config),
@@ -239,7 +249,7 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
         f.bytes("logseq/config.edn").unwrap(),
         b"{:preferred-format :org}\n"
     );
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(
         &config,
         f.rev(&config),
@@ -253,20 +263,20 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
         f.bytes("logseq/config.edn").unwrap(),
         b"{:preferred-format :org}\n"
     );
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.trash(&config, f.rev(&config));
     assert!(matches!(
         refused(tx.commit()).0,
         Why::Refused(Refusal::InvalidTarget(_))
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(&x, f.rev(&x), b"new".to_vec())
         .create(&x, Content::Bytes(b"again".to_vec()));
     assert!(matches!(
         refused(tx.commit()).0,
         Why::Refused(Refusal::RepeatedFile(_))
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create_unique(
         Area::Assets,
         "y",
@@ -278,7 +288,7 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
         refused(tx.commit()).0,
         Why::Refused(Refusal::RepeatedFile(_))
     ));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&y, Content::Bytes(b"safe".to_vec()));
     tx.create(
         &f.id(Area::Pages, "A.org"),
@@ -291,10 +301,30 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
 }
 
 #[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "OG-RULES Rule 8")]
+fn raw_page_write_without_an_edit_kind_is_a_caller_bug() {
+    let f = Fixture::new();
+    let id = f.id(Area::Pages, "Kindless.md");
+    let mut tx = f.store.transaction(None);
+    tx.create(&id, Content::Bytes(b"- no intent\n".to_vec()));
+    let _ = tx.commit();
+}
+
+#[test]
+fn raw_non_page_write_needs_no_edit_kind() {
+    let f = Fixture::new();
+    let id = f.id(Area::Assets, "note.txt");
+    let mut tx = f.store.transaction(None);
+    tx.create(&id, Content::Bytes(b"asset".to_vec()));
+    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+}
+
+#[test]
 fn transaction_journal_create_updates_day_and_view() {
     let f = Fixture::new();
     let id = f.id(Area::Journals, "2026_09_25.org");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&id, Content::Bytes(b"* arrived\n".to_vec()));
     assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
     assert_eq!(
@@ -321,7 +351,7 @@ fn raw_page_create_refuses_hostile_input_but_move_preserves_rescue_bytes() {
     let f = Fixture::new();
     let hostile = format!("- {}x{}\n", "[".repeat(513), "]".repeat(513));
     let page = f.id(Area::Pages, "Deep.md");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&page, Content::Bytes(hostile.as_bytes().to_vec()));
     assert!(matches!(
         refused(tx.commit()).0,
@@ -331,7 +361,7 @@ fn raw_page_create_refuses_hostile_input_but_move_preserves_rescue_bytes() {
 
     let stream_source = f.root.join("hostile-stream");
     fs::write(&stream_source, hostile.as_bytes()).unwrap();
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(
         &page,
         Content::Stream {
@@ -347,7 +377,7 @@ fn raw_page_create_refuses_hostile_input_but_move_preserves_rescue_bytes() {
 
     f.put("assets/deep.txt", hostile.as_bytes());
     let source = f.id(Area::Assets, "deep.txt");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.move_file(&source, f.rev(&source), &page, None);
     assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
     assert!(f.bytes("assets/deep.txt").is_none());
@@ -369,23 +399,28 @@ fn stage_one_conflicts_for_guarded_steps() {
     let a = PageId::from("pages/A.md");
     let x = f.id(Area::Assets, "x.bin");
     let stale = FileRev::from("0000000000000000".to_owned());
-    let mut tx = f.store.transaction();
-    tx.save_page(&a, SaveBase::Existing(stale.clone()), &doc("A", "new"));
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
+    tx.save_page(
+        &[tine_store::EditKind::ReplacePage],
+        &a,
+        SaveBase::Existing(stale.clone()),
+        &doc("A", "new"),
+    );
     assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(&x, stale.clone(), b"new".to_vec());
     assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.rewrite_refs(
         &a,
         stale.clone(),
         &RenameMap(vec![("A".into(), "B".into())]),
     );
     assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.move_file(&x, stale.clone(), &f.id(Area::Assets, "y.bin"), None);
     assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.trash(&x, stale);
     assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
     assert_eq!(f.bytes("pages/A.md").unwrap(), b"- a\n");
@@ -397,7 +432,7 @@ fn indexed_twin_is_refused_before_any_write() {
     let f = Fixture::new();
     f.put("pages/Twin.org", b"* existing\n");
     f.put("assets/other.bin", b"old");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(
         &f.id(Area::Assets, "other.bin"),
         f.rev(&f.id(Area::Assets, "other.bin")),
@@ -412,8 +447,9 @@ fn indexed_twin_is_refused_before_any_write() {
     assert!(rollback.kept_external.is_empty() && rollback.undo_failed.is_empty());
     assert_eq!(f.bytes("assets/other.bin").unwrap(), b"old");
     assert!(f.bytes("pages/Twin.md").is_none());
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.save_page(
+        &[tine_store::EditKind::ReplacePage],
         &PageId::from("pages/Twin.md"),
         SaveBase::CreateNew,
         &doc("Twin", "mine"),
@@ -429,8 +465,13 @@ fn transaction_refuses_guide_dto_without_writing() {
     let f = Fixture::new();
     let mut guide = doc("Guide", "should stay ephemeral");
     guide.guide = true;
-    let mut tx = f.store.transaction();
-    tx.save_page(&PageId::from("pages/Guide.md"), SaveBase::CreateNew, &guide);
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
+    tx.save_page(
+        &[tine_store::EditKind::ReplacePage],
+        &PageId::from("pages/Guide.md"),
+        SaveBase::CreateNew,
+        &guide,
+    );
     assert!(matches!(refused(tx.commit()).0, Why::Refused(_)));
     assert!(f.bytes("pages/Guide.md").is_none());
 }
@@ -438,7 +479,7 @@ fn transaction_refuses_guide_dto_without_writing() {
 #[test]
 fn create_unique_refuses_an_indexed_page_twin() {
     let f = Fixture::with_watch(WatchMode::Poll, &[("pages/Twin.md", b"- existing\n")]);
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create_unique(
         Area::Pages,
         "twin",
@@ -457,7 +498,7 @@ fn unique_names_and_stream_limit() {
     let f = Fixture::new();
     f.put("assets/x.png", b"old");
     f.put("assets/x_1.png", b"old1");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create_unique(Area::Assets, "x", ".png", Content::Bytes(b"new".to_vec()));
     match &committed(tx.commit())[0] {
         StepResult::Written { file, .. } => assert_eq!(file.as_str(), "assets/x_2.png"),
@@ -468,7 +509,7 @@ fn unique_names_and_stream_limit() {
     let mut handle = File::create(&source).unwrap();
     handle.write_all(b"12345").unwrap();
     drop(handle);
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create_unique(
         Area::Assets,
         "large",
@@ -496,7 +537,7 @@ fn transaction_revision_advances_only_for_disk_change() {
     );
     let x = f.id(Area::Assets, "x.bin");
     let initial = f.store.whole_graph().unwrap().rev();
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(&x, f.rev(&x), b"new".to_vec());
     let changed = match tx.commit() {
         TxOutcome::Committed { graph_rev, .. } => graph_rev,
@@ -506,8 +547,13 @@ fn transaction_revision_advances_only_for_disk_change() {
     f.store.scan_refresh().unwrap();
     let before_unchanged = f.store.whole_graph().unwrap().rev();
     let a = PageId::from("pages/A.md");
-    let mut tx = f.store.transaction();
-    tx.save_page(&a, SaveBase::Existing(f.rev(&a.file())), &doc("A", "same"));
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
+    tx.save_page(
+        &[tine_store::EditKind::ReplacePage],
+        &a,
+        SaveBase::Existing(f.rev(&a.file())),
+        &doc("A", "same"),
+    );
     let unchanged = match tx.commit() {
         TxOutcome::Committed { steps, graph_rev } => {
             assert!(matches!(steps[0], StepResult::Unchanged { .. }));
@@ -531,7 +577,7 @@ mod faults {
         let b = f.id(Area::Pages, "B.md");
         f.store.inject_fault(FaultPoint::MidStepIoAt(1));
         f.store.inject_fault(FaultPoint::UndoWithdrawalIo);
-        let mut tx = f.store.transaction();
+        let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
         tx.create(&a, Content::Bytes(b"- first\n".to_vec()));
         tx.create(&b, Content::Bytes(b"- second\n".to_vec()));
         let TxOutcome::NotCommitted { rollback, .. } = tx.commit() else {
@@ -556,8 +602,13 @@ mod faults {
         let b = f.id(Area::Pages, "B.md");
         let c = f.id(Area::Assets, "c.bin");
         let d = f.id(Area::Pages, "D.md");
-        let mut tx = f.store.transaction();
-        tx.save_page(&a, SaveBase::Existing(f.rev(&a.file())), &doc("A", "new A"));
+        let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[tine_store::EditKind::ReplacePage],
+            &a,
+            SaveBase::Existing(f.rev(&a.file())),
+            &doc("A", "new A"),
+        );
         tx.move_file(
             &b,
             f.rev(&b),
@@ -635,7 +686,7 @@ mod faults {
         let f = Fixture::new();
         let page = f.id(Area::Pages, "Twin.md");
         f.store.inject_fault(FaultPoint::TwinAfterPublish);
-        let mut tx = f.store.transaction();
+        let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
         tx.create(&page, Content::Bytes(b"- mine\n".to_vec()));
         assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
         assert!(f.bytes("pages/Twin.md").is_none());
@@ -652,10 +703,15 @@ mod faults {
             let a = PageId::from("pages/A.md");
             let b = PageId::from("pages/B.md");
             let x = f.id(Area::Assets, "x.bin");
-            let mut tx = f.store.transaction();
+            let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
             match case {
                 0 => {
-                    tx.save_page(&a, SaveBase::Existing(f.rev(&a.file())), &doc("A", "new"));
+                    tx.save_page(
+                        &[tine_store::EditKind::ReplacePage],
+                        &a,
+                        SaveBase::Existing(f.rev(&a.file())),
+                        &doc("A", "new"),
+                    );
                 }
                 1 => {
                     tx.create(
@@ -727,7 +783,7 @@ fn opposite_name_order_serializes_without_deadlock() {
         let sender = sender.clone();
         let (a, b, ar, br) = (a.clone(), b.clone(), ar.clone(), br.clone());
         std::thread::spawn(move || {
-            let mut tx = store.transaction();
+            let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
             if reverse {
                 tx.replace(&b, br, b"B".to_vec())
                     .replace(&a, ar, b"A".to_vec());
@@ -759,7 +815,7 @@ fn unchanged_move_is_a_rename_without_trash_copy() {
     f.put("pages/A.md", b"- a\n");
     let a = f.id(Area::Pages, "A.md");
     let b = f.id(Area::Pages, "B.md");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.move_file(&a, f.rev(&a), &b, None);
     let steps = committed(tx.commit());
     assert!(matches!(&steps[0], StepResult::Moved { to, .. } if *to == b));
@@ -779,7 +835,7 @@ mod rename_faults {
         let a = f.id(Area::Assets, "a.bin");
         let b = f.id(Area::Assets, "b.bin");
         let c = f.id(Area::Assets, "c.bin");
-        let mut tx = f.store.transaction();
+        let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
         tx.move_file(&a, f.rev(&a), &b, None);
         tx.trash(&c, f.rev(&c));
         tx.commit()
@@ -822,7 +878,7 @@ fn create_over_a_directory_reports_is_a_directory_on_every_platform() {
     let f = Fixture::new();
     fs::create_dir(f.root.join("assets").join("taken.png")).unwrap();
     let id = f.id(Area::Assets, "taken.png");
-    let mut tx = f.store.transaction();
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&id, Content::Bytes(b"new".to_vec()));
     let (why, _) = refused(tx.commit());
     match why {

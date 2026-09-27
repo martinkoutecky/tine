@@ -10,6 +10,8 @@ import { blockWritable } from "./properties";
 import { existingBlockId, UUID_RE } from "./identity";
 import { pushUndo } from "../history";
 import { backend } from "../../backend";
+import { pushToast } from "../../toasts";
+import type { OutlineNode } from "../../editor/outline";
 
 type ClipboardProperty = { key: string; value: string };
 
@@ -30,6 +32,49 @@ function clipboardIdsForBlock(block: ClipboardBlock): string[] {
   return clipboardProperties(block.raw, block.sourceFormat)
     .filter((property) => property.key.toLowerCase() === "id")
     .map((property) => property.value.trim());
+}
+
+/** Check IDs on off-screen pages before inserting ordinary pasted outline text.
+ * The no-ID path stays synchronous; an ID-bearing paste waits for one bounded
+ * backend lookup and is discarded if its target/graph changes meanwhile. */
+export function sanitizeOutlineIdsForPaste(
+  targetId: string,
+  nodes: readonly OutlineNode[],
+): OutlineNode[] | Promise<OutlineNode[] | null> {
+  const target = doc.byId[targetId];
+  if (!target) return [];
+  const format = formatForPage(target.page);
+  const ids = new Set<string>();
+  const visit = (node: OutlineNode): void => {
+    for (const id of clipboardIdsForBlock({ raw: node.raw, sourceFormat: format, children: [] })) ids.add(id.toLowerCase());
+    node.children.forEach(visit);
+  };
+  nodes.forEach(visit);
+  if (!ids.size) return [...nodes];
+  const authority = captureClipboardPasteAuthority(targetId);
+  if (!authority) return Promise.resolve(null);
+  return (async () => {
+    const unique = [...ids];
+    const collisions = new Set<string>();
+    try {
+      const resolved = await backend().resolveBlocks(unique);
+      for (let i = 0; i < unique.length; i++) if (resolved[i] !== null) collisions.add(unique[i]);
+    } catch {
+      // An uncertain ID cannot safely be copied into the graph.
+      unique.forEach((id) => collisions.add(id));
+    }
+    if (!clipboardPasteAuthorityCurrent(authority)) return null;
+    unique.filter(docHasBlockIdentity).forEach((id) => collisions.add(id));
+    const clean = (node: OutlineNode): OutlineNode => {
+      const blockIds = clipboardIdsForBlock({ raw: node.raw, sourceFormat: format, children: [] });
+      return {
+        raw: blockIds.some((id) => collisions.has(id.toLowerCase()))
+          ? splitProps(node.raw, (key) => key.toLowerCase() === "id", format).visible : node.raw,
+        children: node.children.map(clean),
+      };
+    };
+    return nodes.map(clean);
+  })();
 }
 
 function clipboardRawForTarget(
@@ -106,9 +151,11 @@ function insertClipboardBlocksSync(
   blocks: readonly ClipboardBlock[],
   preserveIds: boolean,
   preservedIds: readonly string[],
+  warnCopy: boolean,
 ): string | null {
   const target = doc.byId[targetId];
   if (!blocks.length || !target || !blockWritable(targetId)) return null;
+  if (warnCopy) pushToast("Pasted as a copy; references to these blocks will not follow.", "error");
   const targetFormat = formatForPage(target.page);
   const prepared = blocks.map(function prepare(block): {
     id: string;
@@ -118,7 +165,8 @@ function insertClipboardBlocksSync(
   } {
     const sourceIds = clipboardIdsForBlock(block);
     return {
-      id: preserveIds && sourceIds.length === 1 ? sourceIds[0].toLowerCase() : freshId(),
+      id: preserveIds && sourceIds.length === 1 ? sourceIds[0].toLowerCase()
+        : preserveIds && block.key ? block.key : freshId(),
       raw: clipboardRawForTarget(block, targetFormat, preserveIds),
       collapsed: clipboardCollapsed(block),
       children: block.children.map(prepare),
@@ -160,7 +208,9 @@ function insertClipboardBlocksSync(
     }
     lastId = created[created.length - 1] ?? null;
   }));
-  markDirty(pageName);
+  markDirty(pageName, replaceHost
+    ? [preserveIds ? "move-blocks" : "insert-blocks", "delete-blocks"]
+    : preserveIds ? "move-blocks" : "insert-blocks");
   return lastId;
 }
 
@@ -189,7 +239,6 @@ export function pasteClipboardPayload(
 
   return (async () => {
     let preserveIds = !!grant
-      && ids.length > 0
       && idsValid
       && slot.graph === authority.root;
 
@@ -197,7 +246,7 @@ export function pasteClipboardPayload(
       preserveIds = await flushCutSourcePages(grant!.sourcePages);
       if (preserveIds && !clipboardPasteAuthorityCurrent(authority)) return null;
     }
-    if (preserveIds) {
+    if (preserveIds && normalizedIds.length) {
       try {
         const resolved = await backend().resolveBlocks(normalizedIds);
         preserveIds = resolved.length === normalizedIds.length && resolved.every((block) => block === null);
@@ -211,9 +260,11 @@ export function pasteClipboardPayload(
     if (!clipboardPasteAuthorityCurrent(authority)) return null;
     if (preserveIds) {
       preserveIds = cutSourcePagesRetired(grant!.sourcePages)
-        && normalizedIds.every((id) => !docHasBlockIdentity(id));
+        && normalizedIds.every((id) => !docHasBlockIdentity(id))
+        && slot.blocks.every(function keysRetired(block): boolean {
+          return (!block.key || !doc.byId[block.key]) && block.children.every(keysRetired);
+        });
     }
-    return insertClipboardBlocksSync(targetId, slot.blocks, preserveIds, preserveIds ? normalizedIds : []);
+    return insertClipboardBlocksSync(targetId, slot.blocks, preserveIds, preserveIds ? normalizedIds : [], !!grant && !preserveIds);
   })();
 }
-

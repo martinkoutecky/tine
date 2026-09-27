@@ -413,7 +413,7 @@ export function PdfViewer(props: {
       const persisted = await highlightsForWrite(highlights());
       const ids = persisted.map((h) => h.id);
       await trackAssetWrite(
-        backend().writeHighlights(props.filename, props.label, persisted, baseIds)
+        backend().writeHighlights(props.filename, props.label, persisted, baseIds, "replace-page")
       );
       setHighlights(persisted);
       baseIds = ids; // what's now on disk becomes the next write's baseline
@@ -998,7 +998,7 @@ export function PdfViewer(props: {
     let restoredPage: number | null = null;
     let restoredScale: number | null = null;
     try {
-      const state = await backend().openPdf(props.filename, props.label);
+      const state = await backend().openPdf(props.filename, props.label, "create-page");
       if (disposed) return;
       setHighlights(state.highlights);
       restoredPage = state.page;

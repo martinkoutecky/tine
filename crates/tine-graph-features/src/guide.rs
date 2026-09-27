@@ -54,7 +54,11 @@ pub fn create_demo_graph(parent: &std::path::Path) -> Result<std::path::PathBuf,
 
 fn create_if_absent(store: &Store, area: Area, rel: &str, bytes: &[u8]) -> io::Result<bool> {
     let id = store.file_id(area, rel).map_err(store_error)?;
-    let mut tx = store.transaction();
+    let mut tx = if area == Area::Pages {
+        store.transaction(Some(tine_store::EditKind::ReplacePage))
+    } else {
+        store.transaction(None)
+    };
     tx.create(&id, Content::Bytes(bytes.to_vec()));
     let outcome = tx.commit();
     match &outcome {

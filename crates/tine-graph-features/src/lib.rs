@@ -128,7 +128,11 @@ fn trash_current(
         Err(StoreError::NotFound) => return Err(io::Error::new(io::ErrorKind::NotFound, missing)),
         Err(error) => return Err(store_error(error)),
     };
-    let mut tx = store.transaction();
+    let mut tx = if store.as_page(id).is_some() {
+        store.transaction(Some(tine_store::EditKind::DeletePage))
+    } else {
+        store.transaction(None)
+    };
     tx.trash(id, rev);
     Ok(commit_retry(tx.commit())?.then_some(()))
 }

@@ -1305,39 +1305,87 @@ impl Store {
     /// must preserve the other bytes separately if they are needed. Its own observed write is not
     /// republished as an external watcher echo. Keep unsaved edits on every
     /// refusal.
-    pub fn save(&self, id: &PageId, base: SaveBase, doc: &PageDto) -> SaveOutcome {
-        match self.save_pages(&[(id.clone(), base, doc.clone())]) {
+    pub fn save(
+        &self,
+        kind: crate::EditKind,
+        id: &PageId,
+        base: SaveBase,
+        doc: &PageDto,
+    ) -> SaveOutcome {
+        match self.save_pages(&[(id.clone(), base, doc.clone(), vec![kind])]) {
             SavePagesOutcome::Ok(mut outcomes) => outcomes.remove(0),
             SavePagesOutcome::Failed { outcome, .. } => outcome,
         }
     }
 
     /// Save page snapshots in input order through one guarded transaction.
-    pub fn save_pages(&self, entries: &[(PageId, SaveBase, PageDto)]) -> SavePagesOutcome {
+    pub fn save_pages(
+        &self,
+        entries: &[(PageId, SaveBase, PageDto, Vec<crate::EditKind>)],
+    ) -> SavePagesOutcome {
         if entries.is_empty() {
-            return SavePagesOutcome::Failed { index: 0, outcome: SaveOutcome::InvalidTarget("empty page save".into()), undo_failed: Vec::new() };
+            return SavePagesOutcome::Failed {
+                index: 0,
+                outcome: SaveOutcome::InvalidTarget("empty page save".into()),
+                undo_failed: Vec::new(),
+            };
+        }
+        if let Some(index) = entries.iter().position(|(_, _, _, kinds)| kinds.is_empty()) {
+            return SavePagesOutcome::Failed {
+                index,
+                outcome: SaveOutcome::InvalidTarget(
+                    "OG-RULES Rule 8: page save needs a kind".into(),
+                ),
+                undo_failed: Vec::new(),
+            };
         }
         if self.is_closed() {
-            return SavePagesOutcome::Failed { index: 0, outcome: SaveOutcome::Closed, undo_failed: Vec::new() };
+            return SavePagesOutcome::Failed {
+                index: 0,
+                outcome: SaveOutcome::Closed,
+                undo_failed: Vec::new(),
+            };
         }
-        if let Some(index) = entries.iter().position(|(_, _, doc)| doc.guide) {
-            return SavePagesOutcome::Failed { index, outcome: SaveOutcome::GuideEphemeral, undo_failed: Vec::new() };
+        if let Some(index) = entries.iter().position(|(_, _, doc, _)| doc.guide) {
+            return SavePagesOutcome::Failed {
+                index,
+                outcome: SaveOutcome::GuideEphemeral,
+                undo_failed: Vec::new(),
+            };
         }
-        let mut tx = self.transaction();
-        for (id, base, doc) in entries {
-            tx.save_page(id, base.clone(), doc);
+        let mut tx = self.transaction(Some(entries[0].3[0]));
+        for (id, base, doc, kinds) in entries {
+            tx.save_page(kinds, id, base.clone(), doc);
         }
         match tx.commit() {
-            crate::TxOutcome::Committed { steps, .. } => SavePagesOutcome::Ok(steps.into_iter().map(|step| match step {
-                crate::StepResult::Written { rev, .. } => SaveOutcome::Saved(rev),
-                crate::StepResult::Unchanged { rev, .. } => SaveOutcome::Unchanged(rev),
-                _ => unreachable!("save_page result"),
-            }).collect()),
-            crate::TxOutcome::NotCommitted { step, why, rollback, .. } => {
-                let undo_failed = rollback.undo_failed.iter().filter_map(|(file, _)|
-                    entries.iter().position(|(id, _, _)| id.file() == *file)
-                ).collect();
-                SavePagesOutcome::Failed { index: step, outcome: SaveOutcome::from_failed_step(why, &entries[step].0), undo_failed }
+            crate::TxOutcome::Committed { steps, .. } => SavePagesOutcome::Ok(
+                steps
+                    .into_iter()
+                    .map(|step| match step {
+                        crate::StepResult::Written { rev, .. } => SaveOutcome::Saved(rev),
+                        crate::StepResult::Unchanged { rev, .. } => SaveOutcome::Unchanged(rev),
+                        _ => unreachable!("save_page result"),
+                    })
+                    .collect(),
+            ),
+            crate::TxOutcome::NotCommitted {
+                step,
+                why,
+                rollback,
+                ..
+            } => {
+                let undo_failed = rollback
+                    .undo_failed
+                    .iter()
+                    .filter_map(|(file, _)| {
+                        entries.iter().position(|(id, _, _, _)| id.file() == *file)
+                    })
+                    .collect();
+                SavePagesOutcome::Failed {
+                    index: step,
+                    outcome: SaveOutcome::from_failed_step(why, &entries[step].0),
+                    undo_failed,
+                }
             }
         }
     }
@@ -2335,16 +2383,28 @@ pub enum SaveOutcome {
 impl SaveOutcome {
     fn from_failed_step(why: crate::Why, id: &PageId) -> Self {
         match why {
-            crate::Why::Conflict { file, disk: Some(_) } if file != id.file() =>
-                SaveOutcome::Twin { existing: PageId::from(file.as_str()) },
-            crate::Why::Conflict { disk: Some(disk), .. } => SaveOutcome::Conflict { disk },
+            crate::Why::Conflict {
+                file,
+                disk: Some(_),
+            } if file != id.file() => SaveOutcome::Twin {
+                existing: PageId::from(file.as_str()),
+            },
+            crate::Why::Conflict {
+                disk: Some(disk), ..
+            } => SaveOutcome::Conflict { disk },
             crate::Why::Conflict { disk: None, .. } => SaveOutcome::Deleted,
             crate::Why::Refused(crate::Refusal::ReadOnly(reason)) => SaveOutcome::ReadOnly(reason),
-            crate::Why::Refused(crate::Refusal::Twin { existing }) => SaveOutcome::Twin { existing },
-            crate::Why::Refused(crate::Refusal::InvalidTarget(reason)) => SaveOutcome::InvalidTarget(reason),
+            crate::Why::Refused(crate::Refusal::Twin { existing }) => {
+                SaveOutcome::Twin { existing }
+            }
+            crate::Why::Refused(crate::Refusal::InvalidTarget(reason)) => {
+                SaveOutcome::InvalidTarget(reason)
+            }
             crate::Why::Refused(crate::Refusal::Closed) => SaveOutcome::Closed,
             crate::Why::Refused(crate::Refusal::RepeatedFile(_)) => SaveOutcome::Repeated,
-            crate::Why::Refused(crate::Refusal::Undecodable) => SaveOutcome::InvalidTarget("undecodable page".into()),
+            crate::Why::Refused(crate::Refusal::Undecodable) => {
+                SaveOutcome::InvalidTarget("undecodable page".into())
+            }
             crate::Why::Failed(error) => SaveOutcome::Io(error),
         }
     }
@@ -3457,7 +3517,12 @@ mod rev5_tests {
         doc.blocks[0].raw = "mine".into();
         store.inject_fault(crate::FaultPoint::AfterTempSync);
         assert!(matches!(
-            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc
+            ),
             SaveOutcome::Conflict { .. }
         ));
         assert_eq!(fs::read(&path).unwrap(), b"external after temp sync");
@@ -3481,8 +3546,13 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "committed while failed".into();
         *store.load.status.lock().unwrap() = LoadStatus::Failed("injected".into());
-        let mut tx = store.transaction();
-        tx.save_page(&id, SaveBase::Existing(read.rev), &doc);
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        tx.save_page(
+            &[crate::EditKind::ReplacePage],
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc,
+        );
         assert!(
             matches!(tx.commit(), crate::TxOutcome::Committed { graph_rev, .. } if graph_rev == prior)
         );
@@ -3543,7 +3613,12 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "changed here".into();
         assert!(matches!(
-            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc
+            ),
             SaveOutcome::Saved(_)
         ));
         assert!(changes.try_recv().unwrap().is_none());
@@ -3596,7 +3671,12 @@ mod rev5_tests {
         let (attempting, attempted) = mpsc::channel();
         let save = std::thread::spawn(move || {
             attempting.send(()).unwrap();
-            save_store.save(&id, SaveBase::Existing(read.rev), &doc)
+            save_store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
         });
         attempted.recv_timeout(Duration::from_secs(5)).unwrap();
         // On the old path the save can complete while recovery is paused;
@@ -3707,7 +3787,12 @@ mod rev5_tests {
         doc.blocks[0].raw = "new A".into();
         fs::write(root.join("pages/B.md"), "- external B\n").unwrap();
         assert!(matches!(
-            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc
+            ),
             SaveOutcome::Saved(_)
         ));
         release_hook(&pause);
@@ -3754,6 +3839,7 @@ mod rev5_tests {
         let saving = Arc::clone(&store);
         let save = std::thread::spawn(move || {
             saving.save(
+                crate::EditKind::ReplacePage,
                 &PageId::from("pages/Meta.md"),
                 SaveBase::CreateNew,
                 &PageDto {
@@ -3829,7 +3915,7 @@ mod rev5_tests {
             store.whole_graph().unwrap();
 
             let a = PageId::from("pages/A.md");
-            let mut create = store.transaction();
+            let mut create = store.transaction(Some(crate::EditKind::ReplacePage));
             create.create(
                 &a.file(),
                 crate::Content::Bytes(b"- initial word\n".to_vec()),
@@ -3847,7 +3933,12 @@ mod rev5_tests {
             let mut doc = read.doc;
             doc.blocks[0].raw = "saved word".into();
             assert!(matches!(
-                store.save(&a, SaveBase::Existing(read.rev), &doc),
+                store.save(
+                    crate::EditKind::ReplacePage,
+                    &a,
+                    SaveBase::Existing(read.rev),
+                    &doc
+                ),
                 SaveOutcome::Saved(_)
             ));
             assert!(store
@@ -3861,7 +3952,7 @@ mod rev5_tests {
                 }));
 
             let b = PageId::from("pages/B.md");
-            let mut moving = store.transaction();
+            let mut moving = store.transaction(Some(crate::EditKind::ReplacePage));
             moving.move_file(
                 &a.file(),
                 FileRev::from_file(&root.join("pages/A.md")).unwrap(),
@@ -3885,12 +3976,15 @@ mod rev5_tests {
             let source = root.join("restore-source.md");
             fs::write(&source, "- restored word\n").unwrap();
             store
-                .restore(vec![crate::RestoreFile {
-                    area: Area::Pages,
-                    rel: "C.md".into(),
-                    source: File::open(&source).unwrap(),
-                    len: fs::metadata(&source).unwrap().len(),
-                }])
+                .restore(
+                    crate::EditKind::ReplacePage,
+                    vec![crate::RestoreFile {
+                        area: Area::Pages,
+                        rel: "C.md".into(),
+                        source: File::open(&source).unwrap(),
+                        len: fs::metadata(&source).unwrap().len(),
+                    }],
+                )
                 .unwrap();
             let restored = store.whole_graph().unwrap();
             assert!(matches!(
@@ -4018,8 +4112,14 @@ mod rev5_tests {
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
         *store.watch.core_for_load().note_own_pause.lock().unwrap() = Some(Arc::clone(&pause));
         let save_store = Arc::clone(&store);
-        let save =
-            std::thread::spawn(move || save_store.save(&id, SaveBase::Existing(read.rev), &doc));
+        let save = std::thread::spawn(move || {
+            save_store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
+        });
         wait_hook(&pause);
         fs::write(&path, "- external winner\n").unwrap();
         release_hook(&pause);
@@ -4069,7 +4169,14 @@ mod rev5_tests {
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
         *store.watch.core_for_load().note_own_pause.lock().unwrap() = Some(Arc::clone(&pause));
         let saving = Arc::clone(&store);
-        let save = std::thread::spawn(move || saving.save(&id, SaveBase::Existing(read.rev), &doc));
+        let save = std::thread::spawn(move || {
+            saving.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            )
+        });
         wait_hook(&pause);
         fs::write(&path, "- before\n").unwrap();
         release_hook(&pause);
@@ -4098,6 +4205,7 @@ mod rev5_tests {
         let saving = Arc::clone(&store);
         let save = std::thread::spawn(move || {
             saving.save(
+                crate::EditKind::ReplacePage,
                 &PageId::from("pages/A.md"),
                 SaveBase::Existing(read.rev),
                 &doc,
@@ -4180,7 +4288,12 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "saved after rewatch".into();
         assert!(matches!(
-            store.save(&b, SaveBase::Existing(read.rev), &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &b,
+                SaveBase::Existing(read.rev),
+                &doc
+            ),
             SaveOutcome::Saved(_)
         ));
         assert!(store
@@ -4218,7 +4331,12 @@ mod rev5_tests {
         doc.blocks[0].raw = "new A".into();
         store.inject_fault(crate::FaultPoint::Stage2ExternalDelete);
         assert!(matches!(
-            store.save(&a, SaveBase::Existing(read_a.rev), &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &a,
+                SaveBase::Existing(read_a.rev),
+                &doc
+            ),
             SaveOutcome::Deleted
         ));
         let deleted = changes
@@ -4230,7 +4348,7 @@ mod rev5_tests {
             .files
             .iter()
             .any(|(id, kind, _)| { id == &a.file() && *kind == ChangeKind::Removed }));
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.trash(&b.file(), read_b.rev);
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         let trashed = changes.try_recv().unwrap().expect("own trash change");
@@ -4261,7 +4379,7 @@ mod rev5_tests {
         let stream_id = store.file_id(Area::Assets, "stream.bin").unwrap();
         let bytes_id = store.file_id(Area::Assets, "bytes.bin").unwrap();
         store.inject_fault(crate::FaultPoint::RemoveStreamStageAfterWrite);
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.create(
             &stream_id,
             crate::Content::Stream {
@@ -4282,7 +4400,7 @@ mod rev5_tests {
             "present streamed asset was removed by a full watcher scan"
         );
         store.set_watch_mode(WatchMode::Poll);
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.create(&bytes_id, crate::Content::Bytes(b"byte content".to_vec()));
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
@@ -4291,7 +4409,7 @@ mod rev5_tests {
             changes.try_recv().unwrap().is_none(),
             "present byte asset was removed by a full watcher scan"
         );
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.replace(
             &bytes_id,
             FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
@@ -4305,7 +4423,7 @@ mod rev5_tests {
             "present replaced asset was removed by a full watcher scan"
         );
         let moved_id = store.file_id(Area::Assets, "moved.bin").unwrap();
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.move_file(
             &bytes_id,
             FileRev::from_file(&root.join("assets/bytes.bin")).unwrap(),
@@ -4319,7 +4437,7 @@ mod rev5_tests {
             changes.try_recv().unwrap().is_none(),
             "present moved asset was removed by a full watcher scan"
         );
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.trash(
             &moved_id,
             FileRev::from_file(&root.join("assets/moved.bin")).unwrap(),
@@ -4419,7 +4537,7 @@ mod rev5_tests {
         store.whole_graph().unwrap();
         let changes = store.subscribe();
         let id = store.file_id(Area::Meta, "config.edn").unwrap();
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.replace(
             &id,
             FileRev::from_file(&path).unwrap(),
@@ -4469,7 +4587,7 @@ mod rev5_tests {
         let id = store.file_id(Area::Assets, "raced.bin").unwrap();
         let writing = Arc::clone(&store);
         let tx = std::thread::spawn(move || {
-            let mut tx = writing.transaction();
+            let mut tx = writing.transaction(Some(crate::EditKind::ReplacePage));
             tx.create(&id, crate::Content::Bytes(b"own".to_vec()));
             tx.commit()
         });
@@ -4515,7 +4633,12 @@ mod rev5_tests {
         doc.title = "New".into();
         store.inject_fault(crate::FaultPoint::TwinAfterPublish);
         assert!(matches!(
-            store.save(&PageId::from("pages/New.md"), SaveBase::CreateNew, &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &PageId::from("pages/New.md"),
+                SaveBase::CreateNew,
+                &doc
+            ),
             SaveOutcome::Twin { .. }
         ));
         assert!(!root.join("pages/New.md").exists());
@@ -4552,10 +4675,15 @@ mod rev5_tests {
         let b_rev = FileRev::from_file(&b_path).unwrap();
         let doc = store.page(&PageId::from("pages/Small.md")).unwrap().doc;
         assert!(matches!(
-            store.save(&a, SaveBase::Existing(a_rev.clone()), &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &a,
+                SaveBase::Existing(a_rev.clone()),
+                &doc
+            ),
             SaveOutcome::InvalidTarget(_)
         ));
-        let mut move_tx = store.transaction();
+        let mut move_tx = store.transaction(Some(crate::EditKind::ReplacePage));
         let moved = FileId::from("pages/Moved.md".to_string());
         move_tx.move_file(&a.file(), a_rev, &moved, None);
         assert!(matches!(
@@ -4578,7 +4706,7 @@ mod rev5_tests {
             .unreadable_files()
             .iter()
             .any(|(id, _)| id == &a.file()));
-        let mut trash_tx = store.transaction();
+        let mut trash_tx = store.transaction(Some(crate::EditKind::ReplacePage));
         let b = PageId::from("pages/B.md");
         trash_tx.trash(&b.file(), b_rev);
         assert!(matches!(
@@ -4598,7 +4726,7 @@ mod rev5_tests {
         file.set_len(crate::PARSE_INPUT_MAX_BYTES + 1).unwrap();
         let d_rev = FileRev::from_file(&d_path).unwrap();
         store.inject_fault(crate::FaultPoint::MidStepIo);
-        let mut rollback_tx = store.transaction();
+        let mut rollback_tx = store.transaction(Some(crate::EditKind::ReplacePage));
         rollback_tx.move_file(
             &FileId::from("pages/D.md".to_string()),
             d_rev,
@@ -4637,9 +4765,19 @@ mod rev5_tests {
         let mut doc_b = read_b.doc;
         doc_a.blocks[0].raw = "new A".into();
         doc_b.blocks[0].raw = "new B".into();
-        let mut tx = store.transaction();
-        tx.save_page(&a, SaveBase::Existing(read_a.rev), &doc_a);
-        tx.save_page(&b, SaveBase::Existing(read_b.rev), &doc_b);
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        tx.save_page(
+            &[crate::EditKind::ReplacePage],
+            &a,
+            SaveBase::Existing(read_a.rev),
+            &doc_a,
+        );
+        tx.save_page(
+            &[crate::EditKind::ReplacePage],
+            &b,
+            SaveBase::Existing(read_b.rev),
+            &doc_b,
+        );
         store.inject_fault(crate::FaultPoint::MidStepIoAt(1));
         store.inject_fault(crate::FaultPoint::UndoLiveWrite);
         assert!(matches!(tx.commit(), crate::TxOutcome::NotCommitted { .. }));
@@ -4732,7 +4870,12 @@ mod rev5_tests {
             let writer_store = Arc::clone(&store);
             let writer_id = id.clone();
             let writer = std::thread::spawn(move || {
-                writer_store.save(&writer_id, SaveBase::Existing(read.rev), &doc)
+                writer_store.save(
+                    crate::EditKind::ReplacePage,
+                    &writer_id,
+                    SaveBase::Existing(read.rev),
+                    &doc,
+                )
             });
             wait_hook(&pause);
             let (send, receive) = mpsc::channel();
@@ -4778,7 +4921,12 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "[[Alpha]] edited".into();
         assert!(matches!(
-            store.save(&id, SaveBase::Existing(read.rev), &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc
+            ),
             SaveOutcome::Saved(_)
         ));
         let fresh = store.whole_graph().unwrap();
@@ -4842,7 +4990,12 @@ mod rev5_tests {
                 let mut doc = read.doc;
                 doc.blocks[0].raw = format!("[[Target]] edit {n}");
                 assert!(matches!(
-                    writer_store.save(&id, SaveBase::Existing(read.rev), &doc),
+                    writer_store.save(
+                        crate::EditKind::ReplacePage,
+                        &id,
+                        SaveBase::Existing(read.rev),
+                        &doc
+                    ),
                     SaveOutcome::Saved(_)
                 ));
                 n += 1;
@@ -5029,14 +5182,19 @@ mod rev5_tests {
         let mut doc = read.doc;
         doc.blocks[0].raw = "[[Target]] after save".into();
         assert!(matches!(
-            store.save(&source, SaveBase::Existing(read.rev), &doc),
+            store.save(
+                crate::EditKind::ReplacePage,
+                &source,
+                SaveBase::Existing(read.rev),
+                &doc
+            ),
             SaveOutcome::Saved(_)
         ));
         assert_eq!(view_answers(&old), original_answers);
         let fresh_after_save = store.whole_graph().unwrap();
         assert_ne!(view_answers(&fresh_after_save), original_answers);
 
-        let mut tx = store.transaction();
+        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
         tx.create(
             &FileId::from("logseq/config.edn".to_owned()),
             crate::transaction::Content::Bytes(b"{:file/name-format :triple-lowbar}\n".to_vec()),
@@ -5064,6 +5222,7 @@ mod rev5_tests {
         };
         assert!(matches!(
             store.save(
+                crate::EditKind::ReplacePage,
                 &PageId::from("pages/AliasOwner.md"),
                 SaveBase::CreateNew,
                 &alias_page

@@ -200,7 +200,12 @@ fn run_seed(seed: u64) {
                 dto.pre_block = gen_pre(&mut r, pi);
             }
         }
-        match store.save(&id, SaveBase::Existing(read.rev), &dto) {
+        match store.save(
+            crate::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &dto,
+        ) {
             SaveOutcome::Saved(_) => {}
             SaveOutcome::Unchanged(rev) => {
                 // Keep every random case while making this step a real generation.
@@ -209,7 +214,12 @@ fn run_seed(seed: u64) {
                     dto.pre_block.unwrap_or_default()
                 ));
                 assert!(matches!(
-                    store.save(&id, SaveBase::Existing(rev), &dto),
+                    store.save(
+                        crate::EditKind::ReplacePage,
+                        &id,
+                        SaveBase::Existing(rev),
+                        &dto
+                    ),
                     SaveOutcome::Saved(_)
                 ));
             }

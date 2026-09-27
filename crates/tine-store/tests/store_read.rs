@@ -108,7 +108,12 @@ fn many_unmatched_openers_on_separate_lines_round_trip() {
     let id = PageId::from("pages/Note.md");
     let read = store.page(&id).unwrap();
     assert!(matches!(
-        store.save(&id, tine_store::SaveBase::Existing(read.rev), &read.doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc
+        ),
         tine_store::SaveOutcome::Unchanged(_)
     ));
     assert_eq!(
@@ -145,7 +150,7 @@ fn direct_first_read_publishes_creation_and_updates_name_claimants() {
         .complete_page_names("Arr", 10)
         .iter()
         .any(|entry| entry.name == "Arrived"));
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(
         &store.file_id(Area::Pages, "arrived.org").unwrap(),
         Content::Bytes(b"* duplicate\n".to_vec()),

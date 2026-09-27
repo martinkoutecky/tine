@@ -10,6 +10,30 @@ import { forgetPage, reloadPage, loadSingle } from "../workingSet";
 import { pushToast } from "../../toasts";
 import { errorFamily } from "../../errorFamily";
 import { graphRewriteFrozen } from "../graphRewriteState";
+import type { EditKind, EditKinds } from "../../editKind";
+
+type IntentKinds = EditKind | EditKinds;
+const kindLedger = new Map<string, EditKind[]>();
+function noteKinds(name: string, kinds: IntentKinds): void {
+  const pending = kindLedger.get(name) ?? [];
+  for (const kind of typeof kinds === "string" ? [kinds] : kinds)
+    if (!pending.includes(kind)) pending.push(kind);
+  kindLedger.set(name, pending);
+}
+function pendingKinds(name: string, creating: boolean): EditKinds {
+  const kinds = [...(kindLedger.get(name) ?? [])];
+  if (creating && !kinds.includes("create-page")) kinds.unshift("create-page");
+  // Every caller-facing dirty marker requires a kind, so an empty ledger means the
+  // engine itself re-dirtied the page to retry it (a released group member). That
+  // is a whole-page write with no finer intent: replace-page. Never throw here:
+  // a throw in the save path would strand the user's edit unsaved.
+  if (!kinds.length) kinds.push("replace-page");
+  return [kinds[0], ...kinds.slice(1)];
+}
+function restoreKinds(name: string, previous: EditKinds): void {
+  const newer = kindLedger.get(name) ?? [];
+  kindLedger.set(name, [...previous, ...newer.filter((kind) => !previous.includes(kind))]);
+}
 
 let aliasDraftRouteHandler: ((name: string, kind: PageDto["kind"]) => void) | null = null;
 export function installAliasDraftRouteHandler(handler: (name: string, kind: PageDto["kind"]) => void): void {
@@ -59,7 +83,8 @@ export async function createPage(
   if (pageInstanceGeneration(name) !== generation) throw new CreatePageRefusal("page-rebound");
   const wasTombstoned = deletedPages.delete(name); // an explicit create supersedes a completed delete
   try {
-    const rev = await saveOnePage(backend(), { id, page: dto, baseRev: options.baseRev ?? null, force: false }, binding.backendGeneration);
+    const rev = await saveOnePage(backend(), { id, page: dto, baseRev: options.baseRev ?? null, force: false,
+      kinds: [options.baseRev == null ? "create-page" : "replace-page"] }, binding.backendGeneration);
     if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
     if (graphRewriteFrozen()) throw new CreatePageRefusal("graph-rewrite");
     if (pageInstanceGeneration(name) === generation) {
@@ -245,14 +270,14 @@ function registerGroup(pages: Iterable<string>, edges: Iterable<TransferEdge>): 
 
 /** Register one user's edit as one durable request. The returned promise settles
  * when the debounced group flush completes. */
-export function persistTogether(pages: Iterable<string>, edges: Iterable<TransferEdge> = []): Promise<boolean> {
+export function persistTogether(pages: Iterable<string>, kinds: IntentKinds, edges: Iterable<TransferEdge> = []): Promise<boolean> {
   const names = [...new Set(pages)].filter((name) => {
     const page = pageByName(name);
     return !!page && !page.guide && !page.readOnly;
   });
   if (!names.length) return Promise.resolve(true);
   const g = registerGroup(names, edges);
-  for (const name of names) dirty.add(name);
+  for (const name of names) { dirty.add(name); noteKinds(name, kinds); }
   scheduleSave();
   return new Promise<boolean>((resolve) => g.waiters.push(resolve));
 }
@@ -429,16 +454,23 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     const dto = pageToDto(name), target = ids.get(name)!;
     if (!dto) return abortGroup(g);
     entries.push({ id: target.id, page: target.owner ? appendAliasDraft(target.owner, dto) : dto,
-      baseRev: target.owner ? target.owner.rev ?? null : baseRev.get(name) ?? null, force: decidedConflict(g, name) && !target.owner });
+      baseRev: target.owner ? target.owner.rev ?? null : baseRev.get(name) ?? null, force: decidedConflict(g, name) && !target.owner,
+      kinds: target.owner ? ["insert-blocks", "delete-page"] : pendingKinds(name, (baseRev.get(name) ?? null) === null) });
   }
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length)
     return failGroup(g, { index: 0, family: "repeated", undoFailed: [] }, order);
   const forcedConflicts = new Map(g.forced);
-  for (const name of order) dirty.delete(name);
+  for (const name of order) { dirty.delete(name); kindLedger.delete(name); }
   try {
     const outcome = await backend().savePages(entries, binding.backendGeneration);
-    if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) return abortGroup(g);
-    if ("failed" in outcome) return failGroup(g, outcome.failed, order);
+    if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) {
+      for (let i = 0; i < order.length; i++) restoreKinds(order[i], entries[i].kinds);
+      return abortGroup(g);
+    }
+    if ("failed" in outcome) {
+      for (let i = 0; i < order.length; i++) restoreKinds(order[i], entries[i].kinds);
+      return failGroup(g, outcome.failed, order);
+    }
     for (let i = 0; i < order.length; i++) {
       const name = order[i], target = ids.get(name)!;
       if (target.owner) continue;
@@ -469,6 +501,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     return true;
   } catch (error) {
     if (!stillBound(binding) || token !== graphToken || g.cancelled) return false;
+    for (let i = 0; i < order.length; i++) restoreKinds(order[i], entries[i].kinds);
     return failGroup(g, { index: 0, family: errorFamily(error), undoFailed: [] }, order);
   }
 }
@@ -505,18 +538,20 @@ export function isDirty(name: string): boolean {
   return dirty.has(name);
 }
 /** Mark a page dirty and schedule a debounced save. */
-export function markDirty(name: string) {
+export function markDirty(name: string, kinds: IntentKinds) {
   const page = pageByName(name);
   if (page?.readOnly || page?.guide) return;
   dirty.add(name);
+  noteKinds(name, kinds);
   scheduleSave();
 }
 /** Mark dirty WITHOUT scheduling — undo/redo restore batches several pages then
  *  schedules once. */
-export function addDirty(name: string) {
+export function addDirty(name: string, kinds: IntentKinds) {
   const page = pageByName(name);
   if (page?.readOnly || page?.guide) return;
   dirty.add(name);
+  noteKinds(name, kinds);
 }
 /** Pages with pending edits (so the working-set cap can pin them). */
 export function dirtyPages(): Iterable<string> {
@@ -557,6 +592,7 @@ export function untombstone(name: string) {
 /** Drop a page's dirty + baseline state — its content is leaving the working set. */
 export function forgetSaveState(name: string) {
   dirty.delete(name);
+  kindLedger.delete(name);
   baseRev.delete(name);
   lastSaveFailure.delete(name);
 }
@@ -573,6 +609,7 @@ export function resetSaveState() {
   }
   graphToken++;
   dirty.clear();
+  kindLedger.clear();
   baseRev.clear();
   deletedPages.clear();
   deletingGroupMembers.clear();
@@ -682,9 +719,11 @@ async function doSave(
     return false;
   }
   noteSaveAttempt(name);
+  const baseline = baseRev.get(name) ?? null;
+  const kinds = pendingKinds(name, baseline === null);
   dirty.delete(name);
+  kindLedger.delete(name);
   try {
-    const baseline = baseRev.get(name) ?? null;
     let id = pageByName(name)?.id;
     if (!id) {
       const resolved = await backend().resolvePage(dto.name, dto.kind);
@@ -704,7 +743,8 @@ async function doSave(
         // pageToDto. Keep those bytes too: on the owner they are ordinary
         // appended content, never a replacement for the owner's preamble.
         const appended = appendAliasDraft(owner, dto);
-        const ownerRev = await saveOnePage(backend(), { id: owner.id, page: appended, baseRev: owner.rev ?? null, force: false }, binding.backendGeneration);
+        const ownerRev = await saveOnePage(backend(), { id: owner.id, page: appended, baseRev: owner.rev ?? null, force: false,
+          kinds: ["insert-blocks", "delete-page"] }, binding.backendGeneration);
         if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
         if (dirty.has(name) || isDirty(owner.name) || isSaving(owner.name)
             || isConflicted(owner.name) || pageInstanceGeneration(owner.name) !== ownerGeneration) {
@@ -724,7 +764,8 @@ async function doSave(
       }
       id = resolved.id;
     }
-    const rev = await saveOnePage(backend(), { id, page: dto, baseRev: baseline, force }, binding.backendGeneration);
+    const rev = await saveOnePage(backend(), { id, page: dto, baseRev: baseline, force,
+      kinds }, binding.backendGeneration);
     // A reload/rename/delete/rebind while savePages was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
     // authorize identity reuse or update the replacement instance's baseline.
@@ -741,6 +782,7 @@ async function doSave(
     return false;
   } catch (e) {
     if (token === graphToken && stillBound(binding) && pageInstanceGeneration(name) === generation) {
+      restoreKinds(name, kinds);
       const family = errorFamily(e);
       if (family === "conflict" || family === "deleted" || family === "twin"
           || family === "read-only" || family === "invalid-target") {
@@ -853,9 +895,11 @@ export async function forceSave(name: string): Promise<boolean> {
   if (g) {
     const reason = conflictReason(name);
     if (reason) g.forced.set(name, reason);
+    noteKinds(name, "replace-page");
     return enqueueGroup(g);
   }
   dirty.add(name); // ensure doSave writes even though it's parked as conflicted
+  noteKinds(name, "replace-page");
   const ok = await enqueueSave(name, true);
   if (ok) clearConflict(name);
   if (!ok) pushToast(`Couldn't overwrite “${name}”.`, "error");
@@ -876,6 +920,7 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
     }
     if (g) {
       g.forced.set(name, conflictReason(name)!);
+      noteKinds(name, "replace-page");
       changedGroups();
       if ([...g.members].some((member) => isConflicted(member) && !decidedConflict(g, member))) return true;
     }
@@ -905,6 +950,7 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
   if (dto) reloadPage(dto);
   else forgetPage(name);
   dirty.delete(name);
+  kindLedger.delete(name);
   clearConflict(name);
   return true;
 }

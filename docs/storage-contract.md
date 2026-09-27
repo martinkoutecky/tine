@@ -49,7 +49,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::validate_page_content::InvalidTarget` | 1 | A raw page stream exceeds its cap; refuse before creating an unreadable page. |
 | `transaction.rs::validate_config_bytes::InvalidTarget` | 1 | A config edit or create names a directory outside the graph; refuse before changing disk. |
 | `store.rs::save_pages::Closed` | 1 | A queued page-save request arrives after graph close; return the closed family without writing. |
-| `store.rs::save_pages::InvalidTarget` | 1 | An empty page-save request is refused before opening a transaction. |
+| `store.rs::save_pages::InvalidTarget` | 2 | An empty page-save request or an entry without edit kinds is refused before opening a transaction (`store_save.rs`). |
 | `store.rs::save_pages::GuideEphemeral` | 1 | A bundled Guide page has no graph file; refuse the request before disk access. |
 | `store.rs::from_failed_step::Closed` | 1 | A transaction closes before commit; retain all unsaved page snapshots. |
 | `store.rs::from_failed_step::Conflict` | 1 | An external edit makes an entry's target revision stale; return its current disk revision for resolution. |

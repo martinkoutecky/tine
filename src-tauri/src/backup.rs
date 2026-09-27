@@ -894,7 +894,7 @@ fn restore_from_backup_source(
     require_safety_snapshot(snapshot, live_n)?;
     let files = open_verified_restore_files(&src, &manifest, &source)?;
     store
-        .restore(files)
+        .restore(tine_store::EditKind::ReplacePage, files)
         .map_err(|error| format_restore_failure(&error))?;
     Ok(())
 }

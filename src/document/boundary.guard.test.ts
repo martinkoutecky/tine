@@ -75,10 +75,43 @@ function containerImportViolations(all: Sources): string[] {
 
 function backendWriteViolations(all: Sources): string[] {
   const bad: string[] = [];
+  const directKinds: Record<string, { index: number; kinds: string[] }> = {
+    renamePage: { index: 2, kinds: ["rename-page"] },
+    copyGuideIntoGraph: { index: 1, kinds: ["replace-page"] },
+    openPdf: { index: 2, kinds: ["create-page"] },
+    restoreBackup: { index: 1, kinds: ["replace-page"] },
+    trashJournalFile: { index: 1, kinds: ["delete-page"] },
+    mergePages: { index: 2, kinds: ["insert-blocks", "delete-page"] },
+    renameFileToPage: { index: 2, kinds: ["rename-page"] },
+    trashSyncConflict: { index: 1, kinds: ["delete-page"] },
+    resolveSyncConflict: { index: 5, kinds: ["replace-page", "delete-page"] },
+    writeHighlights: { index: 4, kinds: ["replace-page"] },
+    setJournalTitleFormat: { index: 1, kinds: ["rename-page"] },
+  };
   for (const [file, source] of all) {
-    if (file.endsWith("/mock.ts") || file === `${DOC}/save/engine.ts`) continue;
-    if (/backend\(\)\.(?:savePages|deletePage)\s*\(/.test(source))
-      bad.push(`I-1: backend page writes belong in document/save/engine.ts; ${file}; exemplar src/document/save/engine.ts`);
+    if (file.endsWith("/mock.ts")) continue;
+    const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+          && ts.isCallExpression(node.expression.expression)
+          && node.expression.expression.expression.getText(parsed) === "backend") {
+        const method = node.expression.name.text;
+        if (method === "savePages" || method === "deletePage") {
+          if (file !== `${DOC}/save/engine.ts`)
+            bad.push(`I-1: backend page writes belong in document/save/engine.ts; OG-RULES Rule 8; ${file}; exemplar src/document/save/engine.ts`);
+        } else if (directKinds[method]) {
+          const { index, kinds } = directKinds[method];
+          const argument = node.arguments[index];
+          const declared = argument && ts.isStringLiteral(argument) ? [argument.text]
+            : argument && ts.isArrayLiteralExpression(argument) && argument.elements.every(ts.isStringLiteral)
+              ? argument.elements.map((element) => (element as ts.StringLiteral).text) : [];
+          if (JSON.stringify(declared) !== JSON.stringify(kinds))
+            bad.push(`I-1: backend page writer ${method} must declare ${kinds.join("+")} (OG-RULES Rule 8); ${file}; exemplar src/components/Settings.tsx`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parsed);
   }
   return bad;
 }
@@ -156,6 +189,8 @@ it("I-1 backend page writes use the engine", () => {
   expect(backendWriteViolations(all)).toEqual([]);
   all.set("src/__plant.ts", "backend().savePages('id', page, null, false)");
   expect(backendWriteViolations(all)[0]).toContain("I-1: backend page writes belong");
+  all.set("src/__plant.ts", 'backend().restoreBackup("stamp")');
+  expect(backendWriteViolations(all)[0]).toContain("OG-RULES Rule 8");
 });
 
 it("I-12 PageDto construction stays in convert", () => {

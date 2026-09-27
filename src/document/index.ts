@@ -15,10 +15,18 @@
  * of its callback into one undo step; it does not span awaits. A new intent
  * lives in the matching `edits/*.ts` file. In-memory-only changes (no save, no undo):
  * `revealNode` (expand for find) and the page-header edit begin/finish pair.
+ * `sanitizeOutlineIdsForPaste` prepares an ID-bearing ordinary paste by checking
+ * loaded blocks and one backend ID lookup. The lookup is O(pages in graph) in
+ * memory (plus page reads for IDs it cannot place), paid once per explicit paste
+ * that carries IDs, never per keystroke or save;
+ * it returns null when the target graph changes and strips uncertain IDs on a
+ * lookup failure. The caller needs no knowledge of which pages are loaded.
  *
  * Saving. Pages save as whole-page snapshots, never as operations. `markDirty`
- * schedules a debounced (400 ms) single-page save. Multi-page intents call
- * `persistTogether` inside the document module: their pages enter one open
+ * requires an edit kind and schedules a debounced (400 ms) single-page save;
+ * the request carries distinct kinds in first-seen order. A lazy page also
+ * declares `create-page` on its first save. Multi-page intents call
+ * `persistTogether` with kinds inside the document module: their pages enter one open
  * group, overlapping groups merge, and the group sends one sinks-first
  * `savePages` request. A sealed request chains before later edits of its pages;
  * a new multi-page edit forms a successor group. Saves use the revision last
@@ -29,7 +37,10 @@
  * it on at least one file for acyclic moves (I-3). Creating a page file
  * goes through `createPage`, which refuses locally with a typed
  * `CreatePageRefusal`, distinct from a disk conflict. Only save/engine.ts calls
- * the backend's savePages/deletePage (I-1).
+ * the backend's savePages/deletePage (I-1). Direct native page writers declare
+ * their fixed kinds at their backend call and store entry. This adds O(1) kind
+ * bookkeeping per edit and no disk bytes; missing kinds are refused before a
+ * save request. Callers need no knowledge of the debounce or save group state.
  *
  * Outside changes. `applyGraphChange` handles one watcher event using
  * `reloadDisposition`: an own-save echo keeps content and undo; a clean page
@@ -52,7 +63,7 @@ export type { OutlineScope } from "./tree";
 export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, withUndoUnit } from "./history";
 export type { HistoryRouteContext } from "./history";
 export { deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineChildren, mergeWithPrev, outdentBlock, replaceChildOrders, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
-export { pasteClipboardPayload } from "./edits/paste";
+export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste";
 export { appendToTodayJournal, captureToPage } from "./edits/capture";
 export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, promotePagePreamble, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedDeep, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";
 export { blockExternalId, blockRef, ensureBlockId, persistBlockRefTarget, persistentBlockRef, resolveBlockRef } from "./edits/identity";

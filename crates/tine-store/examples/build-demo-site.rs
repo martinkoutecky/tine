@@ -56,7 +56,7 @@ fn main() {
     let mut text = String::from_utf8(bytes).expect("UTF-8 demo config");
     let end = text.rfind('}').expect("EDN config map");
     text.insert_str(end, "\n :publishing/all-pages-public? true\n");
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.replace(&config, rev, text.into_bytes());
     assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
     let (publish_dir, count) = publish_html(&store).expect("publish demo graph");

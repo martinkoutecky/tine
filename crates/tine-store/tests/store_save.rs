@@ -22,40 +22,93 @@ fn save_pages_keeps_order_and_reports_preflight_conflict_without_writes() {
     doc_a.blocks[0].raw = "new A".into();
     doc_b.blocks[0].raw = "new B".into();
     let entries = vec![
-        (a.clone(), SaveBase::Existing(read_a.rev), doc_a),
-        (b.clone(), SaveBase::Existing(read_b.rev), doc_b),
+        (
+            a.clone(),
+            SaveBase::Existing(read_a.rev),
+            doc_a,
+            vec![tine_store::EditKind::ReplacePage],
+        ),
+        (
+            b.clone(),
+            SaveBase::Existing(read_b.rev),
+            doc_b,
+            vec![tine_store::EditKind::ReplacePage],
+        ),
     ];
     fixture.write("pages/B.md", "- external B\n");
-    assert!(matches!(store.save_pages(&entries), SavePagesOutcome::Failed { index: 1, outcome: SaveOutcome::Conflict { .. }, .. }));
-    assert_eq!(fs::read(fixture.0.join("pages/A.md")).unwrap(), b"- old A\n");
-    assert_eq!(fs::read(fixture.0.join("pages/B.md")).unwrap(), b"- external B\n");
+    assert!(matches!(
+        store.save_pages(&entries),
+        SavePagesOutcome::Failed {
+            index: 1,
+            outcome: SaveOutcome::Conflict { .. },
+            ..
+        }
+    ));
+    assert_eq!(
+        fs::read(fixture.0.join("pages/A.md")).unwrap(),
+        b"- old A\n"
+    );
+    assert_eq!(
+        fs::read(fixture.0.join("pages/B.md")).unwrap(),
+        b"- external B\n"
+    );
     let (_, new_b_rev) = store.read(&b.file(), None).unwrap();
     let mut entries = entries;
     entries[1].1 = SaveBase::Existing(new_b_rev);
-    let SavePagesOutcome::Ok(outcomes) = store.save_pages(&entries) else { panic!("save must commit") };
+    let SavePagesOutcome::Ok(outcomes) = store.save_pages(&entries) else {
+        panic!("save must commit")
+    };
     assert_eq!(outcomes.len(), 2);
-    assert!(matches!(&outcomes[0], SaveOutcome::Saved(rev) if *rev == store.read(&a.file(), None).unwrap().1));
-    assert!(matches!(&outcomes[1], SaveOutcome::Saved(rev) if *rev == store.read(&b.file(), None).unwrap().1));
-    assert!(String::from_utf8(fixture.files()["pages/A.md"].clone()).unwrap().contains("new A"));
-    assert!(String::from_utf8(fixture.files()["pages/B.md"].clone()).unwrap().contains("new B"));
+    assert!(
+        matches!(&outcomes[0], SaveOutcome::Saved(rev) if *rev == store.read(&a.file(), None).unwrap().1)
+    );
+    assert!(
+        matches!(&outcomes[1], SaveOutcome::Saved(rev) if *rev == store.read(&b.file(), None).unwrap().1)
+    );
+    assert!(String::from_utf8(fixture.files()["pages/A.md"].clone())
+        .unwrap()
+        .contains("new A"));
+    assert!(String::from_utf8(fixture.files()["pages/B.md"].clone())
+        .unwrap()
+        .contains("new B"));
 }
 
 #[test]
 fn save_pages_mid_step_failure_restores_prior_files() {
     let fixture = Fixture::new();
-    for name in ["A", "B", "C"] { fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n")); }
-    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
-    let entries: Vec<_> = ["A", "B", "C"].into_iter().map(|name| {
-        let id = PageId::from(format!("pages/{name}.md"));
-        let read = store.page(&id).unwrap();
-        let mut doc = read.doc;
-        doc.blocks[0].raw = format!("new {name}");
-        (id, SaveBase::Existing(read.rev), doc)
-    }).collect();
-    store.inject_fault(FaultPoint::MidStepIoAt(1));
-    assert!(matches!(store.save_pages(&entries), SavePagesOutcome::Failed { index: 1, outcome: SaveOutcome::Io(_), .. }));
     for name in ["A", "B", "C"] {
-        assert_eq!(fs::read(fixture.0.join(format!("pages/{name}.md"))).unwrap(), format!("- old {name}\n").as_bytes());
+        fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
+    }
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let entries: Vec<_> = ["A", "B", "C"]
+        .into_iter()
+        .map(|name| {
+            let id = PageId::from(format!("pages/{name}.md"));
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = format!("new {name}");
+            (
+                id,
+                SaveBase::Existing(read.rev),
+                doc,
+                vec![tine_store::EditKind::ReplacePage],
+            )
+        })
+        .collect();
+    store.inject_fault(FaultPoint::MidStepIoAt(1));
+    assert!(matches!(
+        store.save_pages(&entries),
+        SavePagesOutcome::Failed {
+            index: 1,
+            outcome: SaveOutcome::Io(_),
+            ..
+        }
+    ));
+    for name in ["A", "B", "C"] {
+        assert_eq!(
+            fs::read(fixture.0.join(format!("pages/{name}.md"))).unwrap(),
+            format!("- old {name}\n").as_bytes()
+        );
     }
 }
 
@@ -66,8 +119,40 @@ fn save_pages_repeated_file_has_own_family() {
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let id = PageId::from("pages/A.md");
     let read = store.page(&id).unwrap();
-    let entry = (id, SaveBase::Existing(read.rev), read.doc);
-    assert!(matches!(store.save_pages(&[entry.clone(), entry]), SavePagesOutcome::Failed { outcome: SaveOutcome::Repeated, .. }));
+    let entry = (
+        id,
+        SaveBase::Existing(read.rev),
+        read.doc,
+        vec![tine_store::EditKind::ReplacePage],
+    );
+    assert!(matches!(
+        store.save_pages(&[entry.clone(), entry]),
+        SavePagesOutcome::Failed {
+            outcome: SaveOutcome::Repeated,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn save_pages_refuses_an_empty_kind_list_before_writing() {
+    let fixture = Fixture::new();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let entry = (
+        PageId::from("pages/New.md"),
+        SaveBase::CreateNew,
+        fresh("New", PageKind::Page),
+        Vec::new(),
+    );
+    assert!(matches!(
+        store.save_pages(&[entry]),
+        SavePagesOutcome::Failed {
+            index: 0,
+            outcome: SaveOutcome::InvalidTarget(_),
+            ..
+        }
+    ));
+    assert!(!fixture.0.join("pages/New.md").exists());
 }
 
 #[test]
@@ -75,28 +160,51 @@ fn save_pages_rollback_failure_names_entry_index() {
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let entries = vec![
-        (PageId::from("pages/A.md"), SaveBase::CreateNew, fresh("A", PageKind::Page)),
-        (PageId::from("pages/B.md"), SaveBase::CreateNew, fresh("B", PageKind::Page)),
+        (
+            PageId::from("pages/A.md"),
+            SaveBase::CreateNew,
+            fresh("A", PageKind::Page),
+            vec![tine_store::EditKind::CreatePage],
+        ),
+        (
+            PageId::from("pages/B.md"),
+            SaveBase::CreateNew,
+            fresh("B", PageKind::Page),
+            vec![tine_store::EditKind::CreatePage],
+        ),
     ];
     store.inject_fault(FaultPoint::MidStepIoAt(1));
     store.inject_fault(FaultPoint::UndoWithdrawalIo);
     let outcome = store.save_pages(&entries);
-    assert!(matches!(&outcome, SavePagesOutcome::Failed {
+    assert!(
+        matches!(&outcome, SavePagesOutcome::Failed {
         index: 1, outcome: SaveOutcome::Io(_), undo_failed,
-    } if undo_failed == &vec![1]), "{outcome:?}");
+    } if undo_failed == &vec![1]),
+        "{outcome:?}"
+    );
 }
 
 #[test]
 fn save_pages_crash_worker() {
-    let Ok(root) = std::env::var("TINE_SAVE_PAGES_CRASH_ROOT") else { return };
+    let Ok(root) = std::env::var("TINE_SAVE_PAGES_CRASH_ROOT") else {
+        return;
+    };
     let store = Store::open(Path::new(&root), Default::default()).unwrap().0;
-    let entries: Vec<_> = ["A", "B", "C"].into_iter().map(|name| {
-        let id = PageId::from(format!("pages/{name}.md"));
-        let read = store.page(&id).unwrap();
-        let mut doc = read.doc;
-        doc.blocks[0].raw = format!("new {name}");
-        (id, SaveBase::Existing(read.rev), doc)
-    }).collect();
+    let entries: Vec<_> = ["A", "B", "C"]
+        .into_iter()
+        .map(|name| {
+            let id = PageId::from(format!("pages/{name}.md"));
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = format!("new {name}");
+            (
+                id,
+                SaveBase::Existing(read.rev),
+                doc,
+                vec![tine_store::EditKind::ReplacePage],
+            )
+        })
+        .collect();
     store.inject_fault(FaultPoint::AbortAfterStep(0));
     let _ = store.save_pages(&entries);
     panic!("save_pages crash fault did not abort");
@@ -105,12 +213,19 @@ fn save_pages_crash_worker() {
 #[test]
 fn save_pages_crash_between_steps_keeps_earlier_disk_write() {
     let fixture = Fixture::new();
-    for name in ["A", "B", "C"] { fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n")); }
+    for name in ["A", "B", "C"] {
+        fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
+    }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .arg("--exact").arg("save_pages_crash_worker")
-        .env("TINE_SAVE_PAGES_CRASH_ROOT", &fixture.0).output().unwrap();
+        .arg("--exact")
+        .arg("save_pages_crash_worker")
+        .env("TINE_SAVE_PAGES_CRASH_ROOT", &fixture.0)
+        .output()
+        .unwrap();
     assert!(!output.status.success(), "fault must abort between steps");
-    assert!(String::from_utf8(fixture.files()["pages/A.md"].clone()).unwrap().contains("new A"));
+    assert!(String::from_utf8(fixture.files()["pages/A.md"].clone())
+        .unwrap()
+        .contains("new A"));
     assert_eq!(fixture.files()["pages/B.md"], b"- old B\n");
     assert_eq!(fixture.files()["pages/C.md"], b"- old C\n");
 }
@@ -220,6 +335,7 @@ fn own_write_before_initial_load_is_in_first_snapshot() {
     let id = PageId::from("pages/BeforeReady.md");
     assert!(matches!(
         store.save(
+            tine_store::EditKind::ReplacePage,
             &id,
             SaveBase::CreateNew,
             &fresh("BeforeReady", PageKind::Page)
@@ -362,7 +478,10 @@ fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
                 .map(|rev| SaveBase::Existing(rev.into()))
                 .unwrap_or(SaveBase::CreateNew)
         };
-        store_wire(store.save(&id, base, &doc), &doc)
+        store_wire(
+            store.save(tine_store::EditKind::ReplacePage, &id, base, &doc),
+            &doc,
+        )
     };
     (result, fixture.files())
 }
@@ -503,7 +622,12 @@ fn keep_mine_rechecks_the_version_read_for_the_banner_action() {
     let (_, shown_rev) = store.read(&id.file(), None).unwrap();
     fixture.write("pages/Note.md", "- external two\n");
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(shown_rev), &doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(shown_rev),
+            &doc
+        ),
         SaveOutcome::Conflict { .. }
     ));
     assert_eq!(
@@ -533,7 +657,12 @@ fn absent_resolve_names_the_file_by_name_format_and_preferred_format() {
     let mut doc = fresh("Proj/Child", PageKind::Page);
     doc.format = Format::Org;
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &doc
+        ),
         SaveOutcome::Saved(_)
     ));
     let files = fixture.files();
@@ -552,7 +681,12 @@ fn create_new_onto_a_name_that_now_exists_conflicts_and_writes_nothing() {
     };
     fixture.write("pages/New.md", "- external creation\n");
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &fresh("New", PageKind::Page)),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &fresh("New", PageKind::Page)
+        ),
         SaveOutcome::Conflict { .. }
     ));
     assert_eq!(
@@ -572,7 +706,7 @@ fn late_alternate_extension_twin_never_uses_its_revision_as_target_conflict() {
     let id = PageId::from("pages/Late.md");
     store.inject_fault(FaultPoint::TwinAfterPublish);
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &fresh("Late", PageKind::Page)),
+        store.save(tine_store::EditKind::ReplacePage, &id, SaveBase::CreateNew, &fresh("Late", PageKind::Page)),
         SaveOutcome::Twin { existing } if existing.as_str() == "pages/Late.org"
     ));
 }
@@ -586,7 +720,12 @@ fn hostile_page_content_is_a_refusal_not_an_io_failure() {
     let id = PageId::from("pages/Deep.md");
     let (_, rev) = store.read(&id.file(), None).unwrap();
     assert!(matches!(
-        store.save(&id, SaveBase::Existing(rev), &fresh("Deep", PageKind::Page)),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(rev),
+            &fresh("Deep", PageKind::Page)
+        ),
         SaveOutcome::InvalidTarget(_)
     ));
 
@@ -604,7 +743,12 @@ fn hostile_page_content_is_a_refusal_not_an_io_failure() {
     }
     doc.blocks = vec![nested];
     assert!(matches!(
-        store.save(&PageId::from("pages/New.md"), SaveBase::CreateNew, &doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &PageId::from("pages/New.md"),
+            SaveBase::CreateNew,
+            &doc
+        ),
         SaveOutcome::InvalidTarget(_)
     ));
 }
@@ -618,7 +762,12 @@ fn own_journal_creation_updates_day_and_published_answers() {
     let mut doc = fresh("Sep 25th, 2026", PageKind::Journal);
     doc.format = Format::Org;
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &doc),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &doc
+        ),
         SaveOutcome::Saved(_)
     ));
     assert_eq!(store.journal_id(tine_store::Day(20260925)), id);
@@ -662,7 +811,7 @@ fn a_loaded_stray_journal_saves_to_its_own_file() {
     doc.blocks[0].raw = "stray edit".into();
     let base = SaveBase::Existing(doc.rev.clone().unwrap().into());
     assert!(matches!(
-        store.save(&stray, base, &doc),
+        store.save(tine_store::EditKind::ReplacePage, &stray, base, &doc),
         SaveOutcome::Saved(_)
     ));
     let files = fixture.files();

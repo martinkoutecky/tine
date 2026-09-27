@@ -95,7 +95,7 @@ export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | nul
       if (!built) return null;
       children.push(built);
     }
-    return { raw: node.raw, children, sourceFormat: page.format };
+    return { key: id, raw: node.raw, children, sourceFormat: page.format };
   };
 
   const blocks: ClipboardBlock[] = [];
@@ -149,4 +149,3 @@ export function dtoSubtreeMarkdown(b: BlockDto, level = 0): string {
   for (const c of b.children) out.push(dtoSubtreeMarkdown(c, level + 1));
   return out.join("\n");
 }
-

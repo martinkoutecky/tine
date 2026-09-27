@@ -10,6 +10,8 @@ mod backup;
 mod commands;
 mod debug;
 mod device_io;
+#[cfg(test)]
+mod edit_kind_guard_tests;
 mod graph;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
@@ -635,9 +637,8 @@ pub fn run() {
             #[cfg(desktop)]
             schedule_main_window_reveal_fallback(app.handle());
             // Eagerly open the graph if one was configured at startup.
-            let startup_root = resolve_root("").or_else(|| {
-                graph::usable_last_graph_path(settings::last_graph_path(app.handle()))
-            });
+            let startup_root = resolve_root("")
+                .or_else(|| graph::usable_last_graph_path(settings::last_graph_path(app.handle())));
             if let Some(root) = startup_root {
                 let state = app.state::<AppState>();
                 graph::load_graph_for_label(root, app.handle(), "main", &state)?;

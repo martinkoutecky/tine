@@ -232,7 +232,7 @@ export function changeJournalTitleFormat(fmt: string) {
   // so the feed reloads against the refreshed backend — otherwise a reload racing
   // the reopen could re-query the old format.
   void backend()
-    .setJournalTitleFormat(next)
+    .setJournalTitleFormat(next, ["rename-page"])
     .then((migration) => {
       bumpGraphEpoch();
       const message = journalMigrationSkipMessage(migration);

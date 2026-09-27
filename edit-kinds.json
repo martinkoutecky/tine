@@ -1,0 +1,10 @@
+[
+  "insert-blocks",
+  "save-block",
+  "move-blocks",
+  "delete-blocks",
+  "create-page",
+  "delete-page",
+  "rename-page",
+  "replace-page"
+]

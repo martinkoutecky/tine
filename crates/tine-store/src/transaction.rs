@@ -378,6 +378,11 @@ struct Undo {
 pub struct Transaction<'a> {
     store: &'a Store,
     steps: Vec<Step>,
+    /// Declared intent for page-file steps other than `save_page` (which
+    /// carries its own). Debug builds assert at commit that a page-file step
+    /// has one; release builds do not refuse, because the kind is request
+    /// metadata and refusing would strand the user's write.
+    kinds: Vec<crate::EditKind>,
 }
 
 impl Store {
@@ -385,10 +390,11 @@ impl Store {
     /// does not lock other Store instances or external processes. Two stores
     /// on one graph have separate `GraphRev` sequences and can observe one
     /// another's writes as external changes; both still use revision guards.
-    pub fn transaction(&self) -> Transaction<'_> {
+    pub fn transaction(&self, kind: Option<crate::EditKind>) -> Transaction<'_> {
         Transaction {
             store: self,
             steps: Vec::new(),
+            kinds: kind.into_iter().collect(),
         }
     }
 }
@@ -400,7 +406,14 @@ impl<'a> Transaction<'a> {
     /// and an alternate extension, and refuses an indexed name or day twin.
     /// No disk I/O until commit.
     /// Commit cost includes page bytes and O(P) graph metadata on publication.
-    pub fn save_page(&mut self, id: &PageId, base: SaveBase, doc: &PageDto) -> &mut Self {
+    pub fn save_page(
+        &mut self,
+        kinds: &[crate::EditKind],
+        id: &PageId,
+        base: SaveBase,
+        doc: &PageDto,
+    ) -> &mut Self {
+        assert!(!kinds.is_empty(), "OG-RULES Rule 8: page save needs a kind; exemplar crates/tine-graph-features/src/pages.rs");
         self.steps.push(Step::Save {
             id: id.clone(),
             base,
@@ -1645,6 +1658,29 @@ impl<'a> Transaction<'a> {
     /// A clean undo that restores every starting byte publishes no change and
     /// leaves the graph revision unchanged.
     pub fn commit(mut self) -> TxOutcome {
+        // OG-RULES Rule 8: a raw step that touches a page file runs in a
+        // transaction that declared its edit kind (`save_page` asserts its own).
+        // A missing kind is a caller bug, not an in-scope storage threat, so it
+        // is a debug assertion, never a production refusal.
+        #[cfg(debug_assertions)]
+        if self.kinds.is_empty() {
+            for step in &self.steps {
+                let touches_page = match step {
+                    Step::Save { .. } => false,
+                    Step::Rewrite { .. } => true,
+                    Step::Create { file, .. }
+                    | Step::Replace { file, .. }
+                    | Step::Trash { file, .. } => self.store.as_page(file).is_some(),
+                    Step::Move { file, to, .. } => {
+                        self.store.as_page(file).is_some() || self.store.as_page(to).is_some()
+                    }
+                    Step::Unique { area, .. } => {
+                        matches!(area, crate::Area::Pages | crate::Area::Journals)
+                    }
+                };
+                assert!(!touches_page, "OG-RULES Rule 8: a page-file write needs an edit kind; exemplar crates/tine-graph-features/src/pages.rs");
+            }
+        }
         let _writer = self.store.writer.lock().unwrap();
         let rev = || self.store.changes.rev();
         if self.store.is_closed() {

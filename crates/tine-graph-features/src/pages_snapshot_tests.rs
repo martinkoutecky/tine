@@ -25,7 +25,12 @@ fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
             let mut doc = read.doc;
             doc.blocks[0].raw = "[[Old]] concurrent".into();
             assert!(matches!(
-                writer.save(&id, SaveBase::Existing(read.rev), &doc),
+                writer.save(
+                    tine_store::EditKind::ReplacePage,
+                    &id,
+                    SaveBase::Existing(read.rev),
+                    &doc
+                ),
                 SaveOutcome::Saved(_)
             ));
         })
@@ -83,7 +88,14 @@ fn force_save_writes_only_the_named_twin_on_production_path() {
     let mut page = read.doc;
     page.blocks[0].raw = "edited".into();
 
-    let outcome = save_page(&store, &id, &page, None, true);
+    let outcome = save_page(
+        &store,
+        tine_store::EditKind::ReplacePage,
+        &id,
+        &page,
+        None,
+        true,
+    );
     let md_after = disk::read_to_string(&md).unwrap();
     let org_after = disk::read_to_string(&org).unwrap();
     store.close();
@@ -114,7 +126,15 @@ fn creating_a_named_page_refuses_an_existing_twin() {
     let mut page = store.page(&PageId::from("pages/Foo.org")).unwrap().doc;
     page.format = tine_core::model::Format::Md;
     page.blocks[0].raw = "edited".into();
-    let outcome = save_page(&store, &id, &page, None, false).unwrap();
+    let outcome = save_page(
+        &store,
+        tine_store::EditKind::ReplacePage,
+        &id,
+        &page,
+        None,
+        false,
+    )
+    .unwrap();
     assert!(matches!(outcome, SaveOutcome::Twin { .. }), "{outcome:?}");
     assert!(!md.exists());
     assert_eq!(disk::read_to_string(&org).unwrap(), "* org body\n");
@@ -137,7 +157,14 @@ fn force_save_keeps_guide_ephemeral_and_refuses_unknown_bytes() {
     let mut page = store.page(&id).unwrap().doc;
     page.guide = true;
     assert!(matches!(
-        save_page(&store, &id, &page, None, true),
+        save_page(
+            &store,
+            tine_store::EditKind::ReplacePage,
+            &id,
+            &page,
+            None,
+            true
+        ),
         Ok(SaveOutcome::GuideEphemeral)
     ));
     assert_eq!(disk::read_to_string(&path).unwrap(), "- original\n");
@@ -146,7 +173,14 @@ fn force_save_keeps_guide_ephemeral_and_refuses_unknown_bytes() {
     let unknown = b"\xff\xfeunknown on-disk bytes";
     disk::write(&path, unknown).unwrap();
     assert!(matches!(
-        save_page(&store, &id, &page, None, true),
+        save_page(
+            &store,
+            tine_store::EditKind::ReplacePage,
+            &id,
+            &page,
+            None,
+            true
+        ),
         Err(StoreError::Undecodable)
     ));
     assert_eq!(disk::read(&path).unwrap(), unknown);
@@ -183,7 +217,14 @@ fn force_save_refuses_non_round_trip_org_and_header_reclassification() {
         if label == "org" {
             assert!(page.read_only);
             assert!(matches!(
-                save_page(&store, &id, &page, None, true),
+                save_page(
+                    &store,
+                    tine_store::EditKind::ReplacePage,
+                    &id,
+                    &page,
+                    None,
+                    true
+                ),
                 Ok(SaveOutcome::ReadOnly(_))
             ));
         } else {
@@ -199,7 +240,7 @@ fn force_save_refuses_non_round_trip_org_and_header_reclassification() {
                 ..Default::default()
             }];
             assert!(matches!(
-                save_page(&store, &id, &page, None, true),
+                save_page(&store, tine_store::EditKind::ReplacePage, &id, &page, None, true),
                 Ok(SaveOutcome::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData
             ));
         }
@@ -277,7 +318,7 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
             ..Default::default()
         }];
         assert!(matches!(
-            save_page(&store, &id, &page, None, true),
+            save_page(&store, tine_store::EditKind::ReplacePage, &id, &page, None, true),
             Ok(SaveOutcome::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData
         ));
         assert_eq!(disk::read_to_string(&path).unwrap(), original);
@@ -310,7 +351,15 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
             ..Default::default()
         },
     );
-    let outcome = save_page(&store, &id, &page, None, true).unwrap();
+    let outcome = save_page(
+        &store,
+        tine_store::EditKind::ReplacePage,
+        &id,
+        &page,
+        None,
+        true,
+    )
+    .unwrap();
     assert!(matches!(
         outcome,
         SaveOutcome::Io(error) if error.kind() == std::io::ErrorKind::InvalidData

@@ -75,7 +75,12 @@ fn save_and_restore_emit_parseable_page_trees() {
         guide: false,
     };
     assert!(matches!(
-        store.save(&id, SaveBase::CreateNew, &page),
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::CreateNew,
+            &page
+        ),
         SaveOutcome::Saved(_)
     ));
     let saved = fs::read_to_string(root.join("pages/Saved.md")).unwrap();
@@ -87,12 +92,15 @@ fn save_and_restore_emit_parseable_page_trees() {
     fs::write(&snapshot, b"title:: Restored\n- restored body [[Saved]]\n").unwrap();
     let source = fs::File::open(&snapshot).unwrap();
     store
-        .restore(vec![RestoreFile {
-            area: Area::Pages,
-            rel: "Restored.md".into(),
-            len: source.metadata().unwrap().len(),
-            source,
-        }])
+        .restore(
+            tine_store::EditKind::ReplacePage,
+            vec![RestoreFile {
+                area: Area::Pages,
+                rel: "Restored.md".into(),
+                len: source.metadata().unwrap().len(),
+                source,
+            }],
+        )
         .unwrap();
     let restored = fs::read_to_string(root.join("pages/Restored.md")).unwrap();
     let parsed = lsdoc::parse_format(&restored, "md");

@@ -37,7 +37,12 @@ fn main() {
             let mut doc = read.doc;
             doc.blocks[0].raw.push_str(" e-b3-bench");
             assert!(matches!(
-                store.save(&id, SaveBase::Existing(read.rev), &doc),
+                store.save(
+                    tine_store::EditKind::ReplacePage,
+                    &id,
+                    SaveBase::Existing(read.rev),
+                    &doc
+                ),
                 SaveOutcome::Saved(_)
             ));
         }

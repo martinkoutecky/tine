@@ -47,13 +47,29 @@ fn page_resolution_and_force_save_preserve_the_live_revision_guard() {
         "alias:: Shortcut\n- changed outside\n",
     )
     .unwrap();
-    let outcome = pages::save_page(&store, &alias.id, &doc, None, true).unwrap();
+    let outcome = pages::save_page(
+        &store,
+        tine_store::EditKind::ReplacePage,
+        &alias.id,
+        &doc,
+        None,
+        true,
+    )
+    .unwrap();
     assert!(matches!(outcome, SaveOutcome::Saved(_)));
     assert!(std::fs::read_to_string(fixture.0.join("pages/Note.md"))
         .unwrap()
         .contains("kept by force"));
     std::fs::write(fixture.0.join("pages/Note.md"), [0xff]).unwrap();
-    assert!(pages::save_page(&store, &alias.id, &doc, None, true).is_err());
+    assert!(pages::save_page(
+        &store,
+        tine_store::EditKind::ReplacePage,
+        &alias.id,
+        &doc,
+        None,
+        true
+    )
+    .is_err());
     assert_eq!(
         std::fs::read(fixture.0.join("pages/Note.md")).unwrap(),
         [0xff]

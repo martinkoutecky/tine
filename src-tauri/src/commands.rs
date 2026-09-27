@@ -14,7 +14,8 @@ use tine_core::model::{
 #[cfg(test)]
 use tine_store::SaveBase;
 use tine_store::{
-    Budget, FacetPolicy, PageId, QueryError, Resolved, SaveOutcome, SavePagesOutcome, StoreError, WholeGraph,
+    Budget, FacetPolicy, PageId, QueryError, Resolved, SaveOutcome, SavePagesOutcome, StoreError,
+    WholeGraph,
 };
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
@@ -594,7 +595,12 @@ mod inventory_adapter_tests {
             let read = store.page(&target).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw.push_str(&format!(" probe{i}"));
-            let outcome = store.save(&target, SaveBase::Existing(read.rev), &doc);
+            let outcome = store.save(
+                tine_store::EditKind::ReplacePage,
+                &target,
+                SaveBase::Existing(read.rev),
+                &doc,
+            );
             assert!(matches!(outcome, SaveOutcome::Saved(_)), "probe save");
             after_save.push(time(&store).0);
         }
@@ -724,6 +730,7 @@ pub(crate) struct SavePageEntry {
     base_rev: Option<String>,
     #[serde(default)]
     force: bool,
+    kinds: Vec<tine_store::EditKind>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -741,20 +748,50 @@ pub(crate) enum SavePagesWire {
     Failed { failed: SavePagesFailure },
 }
 
+fn log_save_kinds(entries: &[SavePageEntry]) {
+    if crate::debug::debug_enabled() {
+        for entry in entries {
+            crate::debug::diag_private(
+                "edit-kinds",
+                format!("{}: {:?}", entry.page.name, entry.kinds),
+            );
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) fn save_pages(
     entries: Vec<SavePageEntry>,
     state: GraphContext<'_>,
 ) -> Result<SavePagesWire, String> {
     let slot = slot_for_context(&state)?;
-    let entries: Vec<_> = entries.into_iter().map(|entry|
-        (PageId::from(entry.id), entry.page, entry.base_rev, entry.force)
-    ).collect();
+    if entries.iter().any(|entry| entry.kinds.is_empty()) {
+        return Err("OG-RULES Rule 8: every page write declares a non-empty edit kind list; exemplar src/document/save/engine.ts".into());
+    }
+    log_save_kinds(&entries);
+    let entries: Vec<_> = entries
+        .into_iter()
+        .map(|entry| {
+            (
+                PageId::from(entry.id),
+                entry.page,
+                entry.base_rev,
+                entry.force,
+                entry.kinds,
+            )
+        })
+        .collect();
     let outcome = match tine_graph_features::pages::save_pages(&slot.store, &entries) {
         Ok(outcome) => outcome,
-        Err((index, error)) => return Ok(SavePagesWire::Failed { failed: SavePagesFailure {
-            index, family: save_store_error(error), undo_failed: Vec::new(),
-        } }),
+        Err((index, error)) => {
+            return Ok(SavePagesWire::Failed {
+                failed: SavePagesFailure {
+                    index,
+                    family: save_store_error(error),
+                    undo_failed: Vec::new(),
+                },
+            })
+        }
     };
     Ok(save_pages_outcome_to_wire(outcome))
 }
@@ -762,9 +799,16 @@ pub(crate) fn save_pages(
 fn save_pages_outcome_to_wire(outcome: SavePagesOutcome) -> SavePagesWire {
     match outcome {
         SavePagesOutcome::Ok(outcomes) => SavePagesWire::Ok {
-            ok: outcomes.into_iter().map(|outcome| save_outcome_to_wire(outcome).expect("committed page rev")).collect(),
+            ok: outcomes
+                .into_iter()
+                .map(|outcome| save_outcome_to_wire(outcome).expect("committed page rev"))
+                .collect(),
         },
-        SavePagesOutcome::Failed { index, outcome, undo_failed } => SavePagesWire::Failed {
+        SavePagesOutcome::Failed {
+            index,
+            outcome,
+            undo_failed,
+        } => SavePagesWire::Failed {
             failed: SavePagesFailure {
                 index,
                 family: save_outcome_to_wire(outcome).expect_err("failed page outcome"),
@@ -797,11 +841,9 @@ mod save_wire_tests {
     fn save_wire_families_are_distinct() {
         const RULE: &str = "I-9: wire failures use fixed families and omit page names/paths; exemplar commands::save_outcome_to_wire";
         assert_eq!(
-            save_outcome_to_wire(
-                SaveOutcome::Conflict {
-                    disk: String::from("rev").into()
-                }
-            ),
+            save_outcome_to_wire(SaveOutcome::Conflict {
+                disk: String::from("rev").into()
+            }),
             Err("conflict".into()),
             "{RULE}"
         );
@@ -811,45 +853,72 @@ mod save_wire_tests {
             "{RULE}"
         );
         assert_eq!(
-            save_outcome_to_wire(
-                SaveOutcome::Twin {
-                    existing: PageId::from("pages/secret.md".to_string())
-                }
-            ),
+            save_outcome_to_wire(SaveOutcome::Twin {
+                existing: PageId::from("pages/secret.md".to_string())
+            }),
             Err("twin".into()),
             "{RULE}"
         );
         assert_eq!(
-            save_outcome_to_wire(
-                SaveOutcome::Io(
-                    std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/secret/path")
-                        .into()
-                )
-            ),
+            save_outcome_to_wire(SaveOutcome::Io(
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/secret/path").into()
+            )),
             Err("io:PermissionDenied".into()),
             "{RULE}"
         );
         let wire = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-            index: 2, outcome: SaveOutcome::Repeated, undo_failed: vec![0],
+            index: 2,
+            outcome: SaveOutcome::Repeated,
+            undo_failed: vec![0],
         });
         let encoded = serde_json::to_string(&wire).unwrap();
-        assert_eq!(encoded, r#"{"failed":{"index":2,"family":"repeated","undoFailed":[0]}}"#, "{RULE}");
+        assert_eq!(
+            encoded, r#"{"failed":{"index":2,"family":"repeated","undoFailed":[0]}}"#,
+            "{RULE}"
+        );
         let families = [
-            (SaveOutcome::Conflict { disk: "private-rev".to_string().into() }, "conflict"),
+            (
+                SaveOutcome::Conflict {
+                    disk: "private-rev".to_string().into(),
+                },
+                "conflict",
+            ),
             (SaveOutcome::Deleted, "deleted"),
-            (SaveOutcome::Twin { existing: PageId::from("pages/private-title.md") }, "twin"),
+            (
+                SaveOutcome::Twin {
+                    existing: PageId::from("pages/private-title.md"),
+                },
+                "twin",
+            ),
             (SaveOutcome::Repeated, "repeated"),
             (SaveOutcome::ReadOnly("private title".into()), "read-only"),
-            (SaveOutcome::InvalidTarget("/private/path".into()), "invalid-target"),
+            (
+                SaveOutcome::InvalidTarget("/private/path".into()),
+                "invalid-target",
+            ),
             (SaveOutcome::Closed, "closed"),
-            (SaveOutcome::Io(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/private/path").into()), "io:PermissionDenied"),
+            (
+                SaveOutcome::Io(
+                    std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/private/path")
+                        .into(),
+                ),
+                "io:PermissionDenied",
+            ),
         ];
         let mut seen = std::collections::HashSet::new();
         for (outcome, family) in families {
-            let encoded = serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
-                index: 1, outcome, undo_failed: vec![0],
-            })).unwrap();
-            assert_eq!(encoded, format!(r#"{{"failed":{{"index":1,"family":"{family}","undoFailed":[0]}}}}"#), "{RULE}");
+            let encoded =
+                serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+                    index: 1,
+                    outcome,
+                    undo_failed: vec![0],
+                }))
+                .unwrap();
+            assert_eq!(
+                encoded,
+                format!(r#"{{"failed":{{"index":1,"family":"{family}","undoFailed":[0]}}}}"#),
+                "{RULE}"
+            );
             assert!(seen.insert(family), "{RULE}");
         }
         assert_eq!(

@@ -1892,7 +1892,7 @@ function BackupsTab(): JSX.Element {
         setBusy(false);
         return;
       }
-      await backend().restoreBackup(b.stamp);
+      await backend().restoreBackup(b.stamp, "replace-page");
       const root = graphMeta()?.root ?? "";
       const outcome = await loadGraphPath(root, { forceRefresh: true, transitionHeld: true }); // rebuild restored files
       if (outcome.kind !== "loaded" && outcome.kind !== "already_current") {
@@ -2111,7 +2111,7 @@ function JournalConflictsPanel(): JSX.Element {
       ))
     )
       return;
-    await reconcile(() => backend().trashJournalFile(name), `Moved ${name} to trash`);
+    await reconcile(() => backend().trashJournalFile(name, "delete-page"), `Moved ${name} to trash`);
   };
   const openFileRow = (file: JournalFile, title: string) => {
     openFile(file.path, title, "journal");
@@ -2148,11 +2148,11 @@ function JournalConflictsPanel(): JSX.Element {
                     file={f}
                     onOpen={() => openFileRow(f, c.title)}
                     onMerge={!f.canonical && canonical ? () => void reconcile(
-                      () => backend().mergePages(f.path, canonical.path),
+                      () => backend().mergePages(f.path, canonical.path, ["insert-blocks", "delete-page"]),
                       `Merged ${f.name} into ${canonical.name}`
                     ) : undefined}
                     onRename={(n) => void reconcile(
-                      () => backend().renameFileToPage(f.path, n),
+                      () => backend().renameFileToPage(f.path, n, "rename-page"),
                       `Renamed ${f.name} → ${n}`
                     )}
                     onTrash={() => void trashFile(f.name)}
@@ -2184,7 +2184,7 @@ function SyncConflictsPanel(): JSX.Element {
     )
       return;
     try {
-      await backend().trashSyncConflict(c.path);
+      await backend().trashSyncConflict(c.path, "delete-page");
       pushToast(`Discarded ${name}`, "success");
       await refreshSyncConflicts();
     } catch (e) {
@@ -2379,7 +2379,7 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
         decisions(),
         currentDiff.base_rev,
         currentDiff.conflict_rev,
-        preChoice()
+        ["replace-page", "delete-page"], preChoice()
       );
       pushToast(`Merged into “${props.conflict.base_name}”`, "success");
       await refreshSyncConflicts();

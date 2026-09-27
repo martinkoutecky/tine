@@ -51,7 +51,7 @@ describe("editing/collapse boundary regressions", () => {
       pages: [page("Org", ["p"], "org", true)], feed: ["Org"], loaded: true,
     });
     const save = vi.spyOn(backend(), "savePages");
-    markDirty("Org");
+    markDirty("Org", "save-block");
     expect([...dirtyPages()]).not.toContain("Org");
     expect(await flushPage("Org")).toBe(true);
     expect(save).not.toHaveBeenCalled();

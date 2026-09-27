@@ -105,7 +105,8 @@ async function loadHarness(
     resetStore: vi.fn(), flushAll: vi.fn(async () => true),
     installRenameRefreshHandler: vi.fn(),
     createPage: (_name: string, dto: PageDto, options: { id: string; baseRev: string | null; bindingGeneration: number }) =>
-      api.savePages([{ id: options.id, page: dto, baseRev: options.baseRev, force: false }], options.bindingGeneration).then((result) => result.ok[0]),
+      api.savePages([{ id: options.id, page: dto, baseRev: options.baseRev, force: false,
+        kinds: [options.baseRev === null ? "create-page" : "replace-page"] }], options.bindingGeneration).then((result) => result.ok[0]),
     journalTemplatePage: (title: string, blocks: unknown[], page?: PageRead | null) => ({
       name: title, kind: "journal", title, pre_block: page?.pre_block ?? null, blocks, format: page?.format,
     }),
@@ -254,7 +255,7 @@ describe("default journal template graph bind", () => {
 
     // The empty journal's own file (its id), with its rev as the baseline; no
     // name lookup.
-    expect(api.savePages).toHaveBeenCalledWith([{ id: "journals/Jul 10th, 2026.org", page: expect.any(Object), baseRev: "empty-journal-rev", force: false }], 0);
+    expect(api.savePages).toHaveBeenCalledWith([{ id: "journals/Jul 10th, 2026.org", page: expect.any(Object), baseRev: "empty-journal-rev", force: false, kinds: ["replace-page"] }], 0);
     expect(api.resolvePage).not.toHaveBeenCalled();
   });
 

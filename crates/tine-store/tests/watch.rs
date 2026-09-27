@@ -334,7 +334,9 @@ fn own_commit_publishes_once_without_external_echo() {
     let graph = Fixture::with_mode("own", &[], WatchMode::Notify);
     std::thread::sleep(Duration::from_millis(100));
     let id = graph.store.file_id(Area::Pages, "Own.md").unwrap();
-    let mut tx = graph.store.transaction();
+    let mut tx = graph
+        .store
+        .transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(&id, tine_store::Content::Bytes(b"- own\n".to_vec()));
     assert!(matches!(
         tx.commit(),
@@ -354,7 +356,9 @@ fn own_config_commit_reloads_format_and_sets_config_changed() {
     let graph = Fixture::new("own-config", &[]);
     std::fs::create_dir_all(graph.path("logseq")).unwrap();
     let id = graph.store.file_id(Area::Meta, "config.edn").unwrap();
-    let mut tx = graph.store.transaction();
+    let mut tx = graph
+        .store
+        .transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create(
         &id,
         tine_store::Content::Bytes(b"{:preferred-format :org}\n".to_vec()),

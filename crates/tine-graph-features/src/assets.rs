@@ -133,7 +133,7 @@ pub fn asset_trash_stats(store: &Store) -> Result<TrashStats, StoreError> {
 fn create_unique(store: &Store, name: &str, content: Content) -> io::Result<String> {
     validate_name(name)?;
     let (stem, ext) = split_name(name);
-    let mut tx = store.transaction();
+    let mut tx = store.transaction(None);
     tx.create_unique(Area::Assets, stem, ext, content);
     let steps = tx_error(tx.commit())?;
     match &steps[0] {
