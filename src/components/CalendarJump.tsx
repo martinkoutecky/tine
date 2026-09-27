@@ -1,7 +1,8 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle } from "../journal";
-import { dataRev, firstDayOfWeek } from "../ui";
+import { dataRev } from "../graphSession";
+import { firstDayOfWeek } from "../ui";
 import { backend } from "../backend";
 import { registerTransientLayer } from "../transientLayers";
 

@@ -1,11 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import {
-  closeFormulaEditor,
-  formulaEditor,
-  type FormulaEditorHome,
-  type FormulaEditorTarget,
-} from "../ui";
-import { blockPageReadOnly, doc, pageByName, setBlockProperty, setPageProperty } from "../store";
+import { closeFormulaEditor, formulaEditor, type FormulaEditorHome, type FormulaEditorTarget } from "../ui";
+import { blockPageReadOnly, doc, pageByName, setBlockProperty, setPageProperty } from "../document";
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
 import { registerTransientLayer } from "../transientLayers";
 

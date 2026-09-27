@@ -21,7 +21,7 @@ export function errorDispatchViolations(file: string, source: string): string[] 
 function assertErrorDispatch(file: string, source: string): void {
   const violations = errorDispatchViolations(file, source);
   if (violations.length) throw new Error(
-    `I-9: dispatch on fixed errorFamily(e) tokens, not substrings of wire prose; exemplar src/persistence.ts doSave.\n${violations.join("\n")}`
+    `I-9: dispatch on fixed errorFamily(e) tokens, not substrings of wire prose; exemplar src/document/save/engine.ts doSave.\n${violations.join("\n")}`
   );
 }
 
@@ -35,6 +35,6 @@ describe("I-9 error dispatch scan", () => {
 
   it("fails a planted substring dispatch", () => {
     expect(() => assertErrorDispatch("src/planted.ts", 'if (String(e).includes("conflict")) retry();'))
-      .toThrow(/I-9.*exemplar src\/persistence\.ts/s);
+      .toThrow(/I-9.*exemplar src\/document\/save\/engine\.ts/s);
   });
 });

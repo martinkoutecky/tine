@@ -7,7 +7,7 @@ import { pageProperties, visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto } from "../render/facets";
 import { taskCheckboxState } from "../markers";
 import { InlineText } from "../render/inline";
-import { formatForPage } from "../store";
+import { formatForPage } from "../document";
 import { openBlockInSidebar } from "../ui";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";

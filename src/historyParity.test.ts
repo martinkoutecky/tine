@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import * as historyStoreModule from "./store";
+import * as historyStoreModule from "./document";
 import * as editorControllerModule from "./editorController";
 import { paletteCommands } from "./keybindings";
 import {
@@ -10,14 +10,8 @@ import {
   resetPaneLayoutToSingle,
   splitPane,
 } from "./panes";
-import {
-  rightSidebar,
-  rightSidebarOpen,
-  setRightSidebar,
-  setRightSidebarOpen,
-  setToasts,
-  toasts,
-} from "./ui";
+import { rightSidebar, rightSidebarOpen, setRightSidebar, setRightSidebarOpen } from "./ui";
+import { setToasts, toasts } from "./toasts";
 import type { BlockDto, PageDto } from "./types";
 import { initParser } from "./render/parse";
 

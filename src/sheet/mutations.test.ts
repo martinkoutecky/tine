@@ -1,16 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
-import {
-  blockProperty,
-  blockIsGridView,
-  blockSubtreeMarkdown,
-  doc,
-  loadSingle,
-  pageToDto,
-  resetStore,
-  setDoc,
-  undo,
-} from "../store";
+import { blockProperty, blockIsGridView, blockSubtreeMarkdown, doc, loadSingle, pageToDto, resetStore, setDoc, undo } from "../document";
 import type { BlockDto, PageDto } from "../types";
 import {
   deleteColumn,
@@ -32,7 +22,7 @@ import {
   deleteColumns,
 } from "./mutations";
 import { parseDelimitedText } from "./tsv";
-import { setToasts, toasts } from "../ui";
+import { setToasts, toasts } from "../toasts";
 import { observeMatrixDimensions } from "./matrix";
 
 let counter = 0;

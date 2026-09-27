@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { datePicker, closeDatePicker, firstDayOfWeek, type DatePickerTarget } from "../ui";
-import { readSchedule, setSchedule } from "../store";
+import { readSchedule, setSchedule } from "../document";
 import { fieldLabel, readField, writeField, type FieldId } from "../sheet/fields";
 import { parseIsoDateLike } from "../sheet/typed";
 import { registerTransientLayer } from "../transientLayers";

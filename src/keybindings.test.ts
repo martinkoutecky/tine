@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setGraphMeta, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
-import { clearSelection, doc, hasSelection, loadSingle, moveSelection, resetStore, selectBlock, selectedIds, setDoc } from "./store";
+import { clearSelection, doc, hasSelection, loadSingle, moveSelection, resetStore, selectBlock, selectedIds, setDoc } from "./document";
 import { endEdit, startEditing } from "./editorController";
 import { pluginManager } from "./plugins/manager";
 import * as router from "./router";

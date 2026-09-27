@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { handleGraphChange, installMobileExternalLinkHandler } from "./App";
 import { resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { markDirty, pageToDto, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./store";
-import { isConflicted, pageInventoryRev } from "./ui";
+import { markDirty, pageToDto, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./document";
+import { isConflicted } from "./document";
+import { pageInventoryRev } from "./graphSession";
 
 function addAnchor(href: string): HTMLAnchorElement {
   const a = document.createElement("a");

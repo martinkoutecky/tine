@@ -1,26 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "./render/parse";
-import {
-  blockSubtreeMarkdown,
-  clearSelection,
-  deleteBlock,
-  deleteSelection,
-  doc,
-  moveSelection,
-  flushPage,
-  forceSave,
-  markDirty,
-  resetStore,
-  selectBlock,
-  selectedIds,
-  setBlockProperty,
-  setDoc,
-  splitBlock,
-  toggleCollapse,
-  type FeedPage,
-  type Node,
-} from "./store";
-import { dirtyPages } from "./persistence";
+import { blockSubtreeMarkdown, clearSelection, deleteBlock, deleteSelection, doc, moveSelection, flushPage, forceSave, markDirty, resetStore, selectBlock, selectedIds, setBlockProperty, setDoc, splitBlock, toggleCollapse, type FeedPage, type Node } from "./document";
+import { dirtyPages } from "./document/save/engine";
 import { backend } from "./backend";
 
 beforeAll(() => initParser());

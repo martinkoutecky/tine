@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { applySheetViewSlashAction } from "./Block";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, resetStore, setDoc, undo, type FeedPage, type Node } from "../store";
+import { blockProperty, doc, resetStore, setDoc, undo, type FeedPage, type Node } from "../document";
 import { editingId, startEditing } from "../editorController";
 
 beforeAll(async () => {

@@ -1,28 +1,13 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import {
-  rightSidebar,
-  rightSidebarOpen,
-  toggleRightSidebar,
-  closeRightSidebarItem,
-  closeAllRightSidebarItems,
-  setRightSidebarItemCollapsed,
-  setAllRightSidebarItemsCollapsed,
-  rightSidebarWidth,
-  setRightSidebarWidth,
-  persistRightSidebarWidth,
-  graphEpoch,
-  sidebarItemKey,
-  renamePageInNavigation,
-  registerRightSidebarClosePreparation,
-  type SidebarItem,
-} from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth, sidebarItemKey, renamePageInNavigation, registerRightSidebarClosePreparation, type SidebarItem } from "../ui";
+import { graphEpoch } from "../graphSession";
 import { mobileDrawerMode } from "../mobileDrawers";
 import { registerTransientLayer } from "../transientLayers";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
 import { openPageTarget, openPageAtBlock } from "../router";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, pageByName, resolveBlockRef } from "../store";
+import { doc, ensurePageLoaded, pageByName, resolveBlockRef } from "../document";
 import { visibleBody } from "../render/block";
 import { Block, SurfaceContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";

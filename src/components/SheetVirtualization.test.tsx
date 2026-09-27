@@ -4,7 +4,7 @@ import { Block } from "./Block";
 import { resetSheetRowVirtualizationForTests } from "./SheetTable";
 import { resetBoardCardVirtualizationForTests } from "./SheetBoard";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../document";
 
 // P2 lazy-mount virtualization guard. Two paths:
 //  - EAGER: no IntersectionObserver (jsdom default) → observeNear fires

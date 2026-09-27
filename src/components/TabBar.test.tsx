@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { PaneTree } from "../App";
 import { installKeybindings } from "../keybindings";
 import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
 import { tabRoute, type PaneSnapshot } from "../router";
 import { TabBar, tabDragState } from "./TabBar";

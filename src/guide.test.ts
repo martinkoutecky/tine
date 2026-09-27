@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { copyGuideIntoGraph, maybeShowGuideAnnouncement } from "./guide";
-import { dismissToast, graphMeta, pageInventoryRev, setGraphMeta, setToasts, toasts } from "./ui";
+import { dismissToast, setToasts, toasts } from "./toasts";
+import { graphMeta, pageInventoryRev, setGraphMeta } from "./graphSession";
 
 async function seedMeta(root: string) {
   const meta = await backend().loadGraph("");

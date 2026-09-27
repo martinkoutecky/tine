@@ -3,7 +3,7 @@
 // the highlight text and clicking the swatch jumps to the PDF. Detection + the
 // bits the renderer needs, kept out of Block.tsx.
 
-import { doc } from "../store";
+import { doc } from "../document";
 import type { BlockDto } from "../types";
 
 /** True for a PDF highlight (annotation) block. */

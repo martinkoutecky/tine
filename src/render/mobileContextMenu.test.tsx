@@ -7,7 +7,7 @@ vi.mock("../nativeChrome", async (importOriginal) => ({
 }));
 
 import { backend } from "../backend";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 import { AstBody } from "./body";
 import { PageRef } from "./inline";
 import { initParser } from "./parse";

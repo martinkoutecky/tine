@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { loadSingle, resetStore } from "../store";
+import { loadSingle, resetStore } from "../document";
 import type { BlockDto, PageDto, PageRead, RefGroup } from "../types";
 import { Block } from "./Block";
 import { LinkDepthContext } from "./linkDepth";

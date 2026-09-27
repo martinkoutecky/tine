@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const backendMock = vi.hoisted(() => ({ getPage: vi.fn() }));
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
-import { loadSingle, pageByName, resetStore } from "../store";
+import { loadSingle, pageByName, resetStore } from "../document";
 import type { PageDto, PageKind, RefGroup } from "../types";
-import { bumpGraphEpoch, setGraphMeta } from "../ui";
+import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
 import {
   hydrateVisibleQueryPages,
   queryHydrationCircuitStatus,

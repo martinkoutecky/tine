@@ -6,7 +6,7 @@ import { Welcome } from "./Welcome";
 import { installKeybindings, setKeybindingsSuspended } from "../keybindings";
 import { closeContextMenu, closeDatePicker, contextMenu, datePicker, openContextMenu, openDatePicker } from "../ui";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
-import { loadSingle, resetStore } from "../store";
+import { loadSingle, resetStore } from "../document";
 import { initParser } from "../render/parse";
 
 function escape(init: { composing?: boolean; keyCode?: number } = {}) {

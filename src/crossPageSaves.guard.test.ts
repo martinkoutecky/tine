@@ -5,16 +5,16 @@ import { describe, expect, it } from "vitest";
 // Inherited v0.6.5 choreography plus E-B2's destination-first Undo/Redo fix.
 // A new owner must use one below-UI operation, then leave this list unchanged.
 const ALLOWED = new Set([
-  "src/store.ts::applyEntry", "src/store.ts::holdHistoryRemovalsUntilAdditionsLand",
-  "src/store.ts::replaceChildOrders", "src/store.ts::cycleSelectionTasks",
-  "src/store.ts::deleteSelection", "src/store.ts::moveBlockInternal",
-  "src/store.ts::moveBlock", "src/store.ts::crossMoveBlocks",
-  "src/store.ts::persistCrossPage", "src/store.ts::moveSelectionItems",
-  "src/store.ts::carryUnfinished", "src/carry.ts::persist",
+  "src/document/history.ts::applyEntry", "src/document/history.ts::holdHistoryRemovalsUntilAdditionsLand",
+  "src/document/edits/blocks.ts::replaceChildOrders", "src/document/edits/selection.ts::cycleSelectionTasks",
+  "src/document/edits/selection.ts::deleteSelection", "src/document/edits/moves.ts::moveBlockInternal",
+  "src/document/edits/moves.ts::moveBlock", "src/document/edits/moves.ts::crossMoveBlocks",
+  "src/document/edits/moves.ts::persistCrossPage", "src/document/edits/moves.ts::moveSelectionItems",
+  "src/document/edits/carry.ts::carryUnfinished", "src/carry.ts::persist",
   // These have several branches but each invocation edits one page.
-  "src/store.ts::splitBlock", "src/store.ts::captureOutlineInto",
-  "src/store.ts::setBlockProperty", "src/store.ts::setPageProperty",
-  "src/store.ts::ensureBlockId", "src/store.ts::ensureStableBlockId",
+  "src/document/edits/blocks.ts::splitBlock", "src/document/edits/capture.ts::captureOutlineInto",
+  "src/document/edits/properties.ts::setBlockProperty", "src/document/edits/properties.ts::setPageProperty",
+  "src/document/edits/identity.ts::ensureBlockId", "src/document/edits/identity.ts::ensureStableBlockId",
 ]);
 
 function sourceFiles(dir: string): string[] {

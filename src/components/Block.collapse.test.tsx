@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { doc, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
+import { doc, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../document";
 import { Block } from "./Block";
 
 beforeAll(async () => {

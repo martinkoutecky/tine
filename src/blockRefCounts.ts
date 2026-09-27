@@ -1,8 +1,8 @@
 import { createResource, createRoot } from "solid-js";
 import { backend } from "./backend";
-import { dataRev, graphEpoch } from "./ui";
+import { dataRev, graphEpoch } from "./graphSession";
 import { waitForWarmCache } from "./warmCache";
-import { blockExternalId } from "./store";
+import { blockExternalId } from "./document";
 
 // One graph-wide `block uuid → referrer count` map, fetched once per graph and
 // after each landed save, and shared by every block's count badge (Block.tsx). Reading

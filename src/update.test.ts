@@ -25,7 +25,7 @@ async function loadUpdate(opts: {
     backend: () => ({ openExternal: openExternalMock }),
   }));
   vi.doMock("./platform", () => ({ platformKind: platformKindMock }));
-  vi.doMock("./ui", () => ({
+  vi.doMock("./toasts", () => ({
     pushToast: pushToastMock,
     dismissToast: dismissToastMock,
   }));

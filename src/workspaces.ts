@@ -1,13 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
-import {
-  applyParsedSession,
-  buildPersistedSession,
-  flushSession,
-  parsePersistedSession,
-  scheduleSessionSave,
-  type PersistedSession,
-} from "./session";
+import { applyParsedSession, buildPersistedSession, flushSession, parsePersistedSession, scheduleSessionSave, type PersistedSession } from "./session";
 
 export interface Workspace {
   id: string;

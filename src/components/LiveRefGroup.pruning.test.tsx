@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createSignal, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { loadSingle, resetStore, setDoc } from "../store";
+import { loadSingle, resetStore, setDoc } from "../document";
 import type { BlockDto, PageDto } from "../types";
 import { LiveRefGroup, __livRefGroupInternals } from "./LiveRefGroup";
 

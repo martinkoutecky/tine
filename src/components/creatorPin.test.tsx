@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { flushPage, loadSingle, pageByName, resetStore, setRaw } from "../store";
+import { flushPage, loadSingle, pageByName, resetStore, setRaw } from "../document";
 import { closeSwitcher, openSwitcher } from "../ui";
 import type { PageDto, PageRead } from "../types";
 import { QuickSwitcher } from "./QuickSwitcher";

@@ -1,21 +1,53 @@
-// The debounced persistence engine — extracted from store.ts so the save
-// editor-save invariant lives here: the debounce, the per-page serial write queue,
-// and the graph-token / baseRev / tombstone / conflict guards that keep edits
-// from being lost, clobbered, or written into the wrong graph.
-//
-// store.ts owns the doc tree and calls markDirty(page) on every mutation; this
-// module decides WHEN and HOW that reaches disk. It depends on store only for a
-// page snapshot (pageToDto) and the loaded flag (doc.loaded) — used at call time,
-// so the store↔persistence import cycle resolves cleanly.
+import { pageByName, setPageId, doc } from "../model";
+import { createSignal } from "solid-js";
+import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
+import { type ClipboardSourcePage } from "../../clipboard";
+import { captureBinding, type Binding, stillBound } from "../../binding";
+import { pageToDto } from "../convert";
+import { backend } from "../../backend";
+import { forgetPage, reloadPage, loadSingle } from "../workingSet";
+import { openPage } from "../../router";
+import { pushToast } from "../../toasts";
+import { errorFamily } from "../../errorFamily";
 
-import { doc, forgetPage, loadSingle, pageByName, pageInstanceGeneration, pageToDto, reloadPage, setPageId } from "./store";
-import { openPage } from "./router";
-import { backend } from "./backend";
-import { captureBinding, stillBound, type Binding } from "./binding";
-import { errorFamily } from "./errorFamily";
-import { markConflict, isConflicted, conflicts, bumpDataRev, bumpPageInventoryRev, pushToast } from "./ui";
-import type { ClipboardSourcePage } from "./clipboard";
+// Pages that failed to save because the file changed on disk (external edit /
+// Syncthing). Surfaced as a banner; the user resolves with reload or overwrite.
+export const [conflicts, setConflicts] = createSignal<string[]>([]);
+export function markConflict(name: string) {
+  if (!conflicts().includes(name)) setConflicts([...conflicts(), name]);
+}
+export function clearConflict(name: string) {
+  setConflicts(conflicts().filter((n) => n !== name));
+}
+export function isConflicted(name: string): boolean {
+  return conflicts().includes(name);
+}
 
+// A generation identifies one exact loaded page instance. It is deliberately
+// frontend-only and monotonic across resets: a later page with the same name and
+// path must never satisfy a cut payload captured from an evicted/deleted/rebound
+// instance. Stage B uses this at its durable-retirement boundary.
+let pageInstanceClock = 0;
+export const pageInstanceGenerations = new Map<string, number>();
+
+export function activatePageInstance(name: string): number {
+  const generation = ++pageInstanceClock;
+  pageInstanceGenerations.set(name, generation);
+  return generation;
+}
+
+export function retirePageInstance(name: string): void {
+  ++pageInstanceClock;
+  pageInstanceGenerations.delete(name);
+}
+
+/** Current exact loaded-page generation, or null when that page is absent. */
+export function pageInstanceGeneration(name: string): number | null {
+  if (!pageByName(name)) return null;
+  // Direct setDoc page seeding is supported by model tests and small embedded
+  // surfaces; lazily bind it to the same invariant as loader-created pages.
+  return pageInstanceGenerations.get(name) ?? activatePageInstance(name);
+}
 // ---------------------------------------------------------------------------
 // Guard state (owned here; mutated only through the accessors below)
 // ---------------------------------------------------------------------------

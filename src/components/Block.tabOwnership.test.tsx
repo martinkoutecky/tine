@@ -4,7 +4,7 @@ import { render } from "solid-js/web";
 import { startEditing } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { doc, loadSingle, pageByName, resetStore } from "../document";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 

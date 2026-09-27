@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flushAll, trackAssetWrite } from "./persistence";
+import { flushAll, trackAssetWrite } from "./document";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
   let resolve!: (value: T) => void;

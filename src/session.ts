@@ -7,22 +7,7 @@ import {
   type Route,
   type SerializedTab,
 } from "./router";
-import {
-  applySidebarSession,
-  favoritesSectionExpanded,
-  clearLegacyRecentSource,
-  legacyRecentPages,
-  recentSectionExpanded,
-  recentPages,
-  rightSidebar,
-  rightSidebarOpen,
-  sidebarOpen,
-  type SidebarItem,
-  type RecentItem,
-  type SidebarSessionState,
-  sanitizeRecent,
-  setRecentPages,
-} from "./ui";
+import { applySidebarSession, favoritesSectionExpanded, clearLegacyRecentSource, legacyRecentPages, recentSectionExpanded, recentPages, rightSidebar, rightSidebarOpen, sidebarOpen, type SidebarItem, type RecentItem, type SidebarSessionState, sanitizeRecent, setRecentPages } from "./ui";
 import {
   feedPaneId,
   focusedPaneId,

@@ -1,4 +1,4 @@
-import { doc, formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit } from "../store";
+import { doc, formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit } from "../document";
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
 import { leadingMarker, nextMarker, setMarker } from "../editor/marker";

@@ -1,7 +1,8 @@
 import { backend } from "./backend";
 import { openPage, openPageInNewTab } from "./router";
-import { loadGuidePages, pageByName } from "./store";
-import { bumpPageInventoryRev, graphMeta, pushToast, setGraphMeta } from "./ui";
+import { loadGuidePages, pageByName } from "./document";
+import { bumpPageInventoryRev, graphMeta, setGraphMeta } from "./graphSession";
+import { pushToast } from "./toasts";
 import type { GuidePage } from "./types";
 
 export const GUIDE_DISPLAY_PREFIX = "Tine-guide/";

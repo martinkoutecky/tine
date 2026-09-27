@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { renderInlines, InlineText, expandTemplate, expansionIsBlockLevel } from "./inline";
 import { AstBody, renderBlocks } from "./body";
 import { initParser, parseBlock } from "./parse";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 import type { JSX } from "solid-js";
 import type { Block, Inline } from "./ast";
 import { backend } from "../backend";

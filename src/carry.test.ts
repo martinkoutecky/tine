@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { carryDay } from "./carry";
 import { journalTitle } from "./journal";
-import { doc, loadSingle, pageByName, resetStore } from "./store";
+import { doc, loadSingle, pageByName, resetStore } from "./document";
 import type { PageRead } from "./types";
 
 describe("carry binding", () => {

@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { ExportModal } from "./ExportModal";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type Node as StoreNode } from "../store";
+import { resetStore, setDoc, type Node as StoreNode } from "../document";
 import { closeExportModal, openExportModal } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
 

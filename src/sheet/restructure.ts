@@ -1,13 +1,4 @@
-import {
-  deleteBlock,
-  doc,
-  formatForBlock,
-  insertEmptyChildBlock,
-  replaceChildOrders,
-  setRaw,
-  withUndoUnit,
-  blockPageReadOnly,
-} from "../store";
+import { deleteBlock, doc, formatForBlock, insertEmptyChildBlock, replaceChildOrders, setRaw, withUndoUnit, blockPageReadOnly } from "../document";
 import { visibleBody } from "../render/block";
 import { MARKERS } from "../markers";
 import { fieldIdsForBlocks, groupKeyForBlock, isFieldId, readField, writeField, type FieldId } from "./fields";

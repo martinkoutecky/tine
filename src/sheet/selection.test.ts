@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startEditing, endEdit } from "../editorController";
-import { doc, isSelected, resetStore, selectBlock, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { doc, isSelected, resetStore, selectBlock, setDoc, type FeedPage, type Node as StoreNode } from "../document";
 import { initParser } from "../render/parse";
 import {
   cellSel,

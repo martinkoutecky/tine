@@ -13,7 +13,7 @@ const INVENTORY_OWNER = "src/pageIndex.ts";
 // first save of a working-set page, journal seed/template, QuickSwitcher Create
 // and query materialize. It never feeds a name map.
 const RESOLVE_FOR_SAVE = new Set([
-  "src/persistence.ts",
+  "src/document/save/engine.ts",
   "src/graph.ts",
   "src/components/QuickSwitcher.tsx",
   "src/components/QueryWorkspace.tsx",
@@ -104,7 +104,7 @@ describe("page index guard (Rule 3: one answerer, frontend included)", () => {
     expect(nameAnswererViolations("src/components/Planted.tsx", planted)).toHaveLength(6);
     const loop = 'for (const n of names) await backend().resolvePage(n, "page");\n' +
       'await Promise.all(names.map((n) => backend().resolvePage(n, "page")));';
-    expect(nameAnswererViolations("src/persistence.ts", loop)).toHaveLength(2);
+    expect(nameAnswererViolations("src/document/save/engine.ts", loop)).toHaveLength(2);
     expect(nameAnswererViolations("src/pageIndex.ts", "await backend().pageInventory();")).toEqual([]);
   });
 });

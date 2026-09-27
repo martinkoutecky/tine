@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { blockPageReadOnly, doc, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
+import { blockPageReadOnly, doc, formatForBlock, formatForPage, pageByName, readPageProperty } from "../document";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -40,7 +40,9 @@ import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
 import { MARKERS } from "../markers";
-import { graphEpoch, openDatePicker, openSheetCellContextMenu, openSheetContextMenu, pushToast, workflow } from "../ui";
+import { graphEpoch } from "../graphSession";
+import { openDatePicker, openSheetCellContextMenu, openSheetContextMenu, workflow } from "../ui";
+import { pushToast } from "../toasts";
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";

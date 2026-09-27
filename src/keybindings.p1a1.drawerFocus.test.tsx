@@ -5,11 +5,7 @@ import {
   takeDrawerOpener,
 } from "./mobileDrawers";
 import { installKeybindings } from "./keybindings";
-import {
-  activeDrawer,
-  setLeftSidebarOpen,
-  setRightSidebarOpen,
-} from "./ui";
+import { activeDrawer, setLeftSidebarOpen, setRightSidebarOpen } from "./ui";
 
 type MediaListener = EventListenerOrEventListenerObject;
 

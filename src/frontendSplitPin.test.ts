@@ -2,14 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { carryDay, carryDaysBack, carryPrevDay } from "./carry";
 import { journalTitle } from "./journal";
-import {
-  doc, resetStore, loadFeed, loadSingle, pageByName, pageToDto, setRaw,
-  moveBlock, moveBlockFeed, moveSelectionItems, moveItem, selectBlock,
-  extendSelectionTo, selectedIds, outdentSelection, promotePagePreamble,
-  persistBlockRefTarget, prepareCrossPageSources, markDirty, flushPage,
-  flushAll, isDirty, forgetPage, deletePage, undo,
-} from "./store";
-import { clearConflict, conflicts, isConflicted, markConflict, toasts, setToasts } from "./ui";
+import { doc, resetStore, loadFeed, loadSingle, pageByName, pageToDto, setRaw, moveBlock, moveBlockFeed, moveSelectionItems, moveItem, selectBlock, extendSelectionTo, selectedIds, outdentSelection, promotePagePreamble, persistBlockRefTarget, prepareCrossPageSources, markDirty, flushPage, flushAll, isDirty, forgetPage, deletePage, undo } from "./document";
+import { clearConflict, conflicts, isConflicted, markConflict } from "./document";
+import { toasts, setToasts } from "./toasts";
 import type { BlockDto, PageDto, PageRead } from "./types";
 
 let serial = 0;

@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
-import { closeSwitcher, openSwitcher, pageInventoryRev, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen, toasts } from "../ui";
+import { closeSwitcher, openSwitcher, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen } from "../ui";
+import { pageInventoryRev } from "../graphSession";
+import { toasts } from "../toasts";
 import { activeId, closeTab, route, tabRoute, tabs } from "../router";
 import { backend } from "../backend";
 import { closePane, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
-import { loadSingle, resetStore } from "../store";
+import { loadSingle, resetStore } from "../document";
 import type { PageRead } from "../types";
 
 afterEach(() => {

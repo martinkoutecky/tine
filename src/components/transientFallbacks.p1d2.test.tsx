@@ -8,7 +8,7 @@ import { installKeybindings } from "../keybindings";
 import { closeInPageFind, inPageFindActiveIndex, inPageFindOpen, inPageFindQuery, openInPageFind } from "../inpageFind";
 import { closeHelpPopup, closePageProps, helpPopupOpen, openPageProps, pagePropsPanel, toggleHelpPopup } from "../ui";
 import { clearTransientLayersForTest, registerTransientLayer, topTransientLayer } from "../transientLayers";
-import { loadSingle, readPageProperty, resetStore } from "../store";
+import { loadSingle, readPageProperty, resetStore } from "../document";
 import { focusPane, resetPaneLayoutToSingle } from "../panes";
 import type { PaneSnapshot } from "../router";
 import { PAGE_PROP_SPECS } from "../editor/properties";

@@ -1,11 +1,11 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, formatForPage, pageByName } from "../store";
+import { doc, ensurePageLoaded, formatForPage, pageByName } from "../document";
 import { Block, CollapseSurfaceContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
-import { graphEpoch, graphMeta } from "../ui";
+import { graphEpoch, graphMeta } from "../graphSession";
 import { OccurrenceControls } from "./ReferenceEvidence";
 import { startEditing } from "../editorController";
 import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";

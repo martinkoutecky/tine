@@ -4,15 +4,7 @@ import { QuickSwitcher } from "./QuickSwitcher";
 import { installKeybindings } from "../keybindings";
 import { clearTransientLayersForTest, registerTransientLayer, topTransientLayer } from "../transientLayers";
 import { installMobileDrawerMode, mobileDrawerMode, takeDrawerOpener } from "../mobileDrawers";
-import {
-  activeDrawer,
-  closeSwitcher,
-  openSwitcher,
-  setLeftSidebarOpen,
-  setRightSidebarOpen,
-  switcherEmbryo,
-  switcherOpen,
-} from "../ui";
+import { activeDrawer, closeSwitcher, openSwitcher, setLeftSidebarOpen, setRightSidebarOpen, switcherEmbryo, switcherOpen } from "../ui";
 import { layoutPaneIds, resetPaneLayoutToSingle, splitPane } from "../panes";
 
 type Mounted = { root: HTMLDivElement; dispose: () => void };

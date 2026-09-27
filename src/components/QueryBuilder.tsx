@@ -31,7 +31,8 @@ import {
   type SortPreset,
 } from "../editor/queryBuilder";
 import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
-import { pushToast, queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
+import { pushToast } from "../toasts";
+import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { registerTransientLayer, type TransientLayer } from "../transientLayers";
 
 // Interactive query builder: an OG-style chip-bar over a {{query}} DSL string.

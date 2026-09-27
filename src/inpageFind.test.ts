@@ -10,7 +10,7 @@ import {
 } from "./inpageFind";
 import { renderedBlockTextCallCountForTests, resetRenderedBlockTextCallCountForTests } from "./render/renderedText";
 import { focusPane, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
-import { resetStore, setDoc } from "./store";
+import { resetStore, setDoc } from "./document";
 import type { PaneSnapshot } from "./router";
 
 beforeAll(async () => {

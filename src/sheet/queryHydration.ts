@@ -1,7 +1,7 @@
 import { backend } from "../backend";
-import { ensurePageLoaded, pageByName } from "../store";
+import { ensurePageLoaded, pageByName } from "../document";
 import type { RefGroup } from "../types";
-import { graphEpoch, graphMeta } from "../ui";
+import { graphEpoch, graphMeta } from "../graphSession";
 
 export const SHEET_RENDER_PAGE = 200;
 const HYDRATE_CONCURRENCY = 4;

@@ -1,4 +1,5 @@
-import { graphEpoch, graphMeta, graphTransitioning } from "../ui";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { graphTransitioning } from "../ui";
 import type { PluginBlockSnapshot } from "./protocol";
 
 export interface PluginGraphOwner {

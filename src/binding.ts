@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { graphEpoch } from "./ui";
+import { graphEpoch } from "./graphSession";
 
 // A store reset also invalidates work before graphEpoch is published. The native
 // generation pins calls which wait inside the backend before invoking Tauri.

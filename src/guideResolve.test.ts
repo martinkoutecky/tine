@@ -1,12 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  doc,
-  loadFeed,
-  loadGuidePages,
-  resetStore,
-  resolveGuideBlockRef,
-  resolveGuidePageDto,
-} from "./store";
+import { doc, loadFeed, loadGuidePages, resetStore, resolveGuideBlockRef, resolveGuidePageDto } from "./document";
 import type { BlockDto, PageDto } from "./types";
 
 // F2: the in-app Guide is virtual (never on disk), so the backend `((uuid))` /

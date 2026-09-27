@@ -8,7 +8,7 @@
 // test here fails naming the divergent surface.
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
-import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./store";
+import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "./document";
 import { endEdit } from "./editorController";
 import { cellSel, handleCellSelectionKey, matrixForGrid, resetCellSelectionForTests, setCellSel } from "./sheet/selection";
 import { handlePaneSelectKey } from "./keybindings";

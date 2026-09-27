@@ -7,38 +7,13 @@ import {
   type ClipboardBlock,
   type ClipboardPayloadData,
 } from "./clipboard";
-import {
-  buildClipboardPayload,
-  deleteBlock,
-  doc,
-  ensurePageLoaded,
-  flushPage,
-  forgetPage,
-  historyPageOnlyMode,
-  loadFeed,
-  loadSingle,
-  markDirty,
-  pageByName,
-  pasteClipboardPayload,
-  redo,
-  reloadPage,
-  resetStore,
-  setDoc,
-  setRaw,
-  toggleUndoRedoMode,
-  undo,
-} from "./store";
+import { buildClipboardPayload, deleteBlock, doc, ensurePageLoaded, flushPage, forgetPage, historyPageOnlyMode, loadFeed, loadSingle, markDirty, pageByName, pasteClipboardPayload, redo, reloadPage, resetStore, setDoc, setRaw, toggleUndoRedoMode, undo } from "./document";
 import { startEditing } from "./editorController";
 import { initParser } from "./render/parse";
 import type { BlockDto, Format, PageDto } from "./types";
-import {
-  graphEpoch,
-  setGraphEpoch,
-  setGraphMeta,
-  setGraphTransitioning,
-  setToasts,
-  toasts,
-} from "./ui";
+import { graphEpoch, setGraphEpoch, setGraphMeta } from "./graphSession";
+import { setGraphTransitioning } from "./ui";
+import { setToasts, toasts } from "./toasts";
 
 const HOST = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ID1 = "11111111-1111-4111-8111-111111111111";

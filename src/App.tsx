@@ -40,59 +40,14 @@ import { installPageIndex } from "./pageIndex";
 import { checkForUpdate } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, sameRoute, type PaneRouter, type QueryRoute } from "./router";
-import {
-  theme,
-  toggleTheme,
-  sidebarOpen,
-  toggleSidebar,
-  rightSidebarOpen,
-  toggleRightSidebar,
-  openSwitcher,
-  pdfTarget,
-  pdfPaneWidth,
-  setPdfPaneWidth,
-  persistPdfPaneWidth,
-  sidebarWidth,
-  setSidebarWidth,
-  persistSidebarWidth,
-  graphMeta,
-  firstLoadDone,
-  setFirstLoadDone,
-  openSettings,
-  welcomeOpen,
-  closeWelcome,
-  shortcutOverrides,
-  wideMode,
-  documentMode,
-  focusMode,
-  dimInactiveBlocks,
-  exitFocusMode,
-  bumpDataRev,
-  bumpPageInventoryRev,
-  installPaneTracker,
-  markConflict,
-  pushToast,
-  refreshSyncConflicts,
-  graphEpoch,
-  graphTransitioning,
-  setGraphTransitioning,
-  activeDrawer,
-  completeActiveLeftNavigation,
-  dismissMobileDrawer,
-} from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, pdfTarget, pdfPaneWidth, setPdfPaneWidth, persistPdfPaneWidth, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
+import { graphMeta, firstLoadDone, setFirstLoadDone, bumpDataRev, bumpPageInventoryRev, graphEpoch } from "./graphSession";
+import { markConflict } from "./document";
+import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import {
-  doc,
-  flushAll,
-  appendToTodayJournal,
-  captureToPage,
-  pageByName,
-  reloadDisposition,
-  reloadPage,
-  restoreTodayJournalInFeed,
-} from "./store";
+import { doc, flushAll, appendToTodayJournal, captureToPage, pageByName, reloadDisposition, reloadPage, restoreTodayJournalInFeed } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri, type GraphChange } from "./backend";
 import { captureBinding, stillBound } from "./binding";

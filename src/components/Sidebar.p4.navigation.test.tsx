@@ -6,20 +6,8 @@ import { openPage, resetTabsToJournals, route } from "../router";
 import type { LoadGraphPathOutcome } from "../graph";
 import type { PageEntry, PageInventoryEntry } from "../types";
 import { resetPageIndex } from "../pageIndex";
-import {
-  activeDrawer,
-  bumpGraphEpoch,
-  closeContextMenu,
-  closeSwitcher,
-  completeActiveLeftNavigation,
-  resetLeftSidebarSections,
-  setFavorites,
-  setLeftSidebarOpen,
-  setRecentPages,
-  setRightSidebar,
-  setRightSidebarOpen,
-  sidebarOpen,
-} from "../ui";
+import { activeDrawer, closeContextMenu, closeSwitcher, completeActiveLeftNavigation, resetLeftSidebarSections, setFavorites, setLeftSidebarOpen, setRecentPages, setRightSidebar, setRightSidebarOpen, sidebarOpen } from "../ui";
+import { bumpGraphEpoch } from "../graphSession";
 import { Sidebar, type GraphNavigationActions } from "./Sidebar";
 
 type MutableMedia = MediaQueryList & { matches: boolean; emit(): void };

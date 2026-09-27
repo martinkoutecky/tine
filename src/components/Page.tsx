@@ -1,12 +1,10 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
-import {
-  isFavorite, toggleFavorite,
-  graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
-  agendaQuery, contextMenu, dataRev, isConflicted, renamePageInNavigation,
-} from "../ui";
+import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
+import { graphEpoch, dataRev } from "../graphSession";
+import { isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { switchGraph, refreshAfterRename } from "../graph";

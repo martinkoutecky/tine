@@ -1,8 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { setDoc } from "../store";
-import { bumpDataRev, requestBlockReferences, setBlockReferencesRequest } from "../ui";
+import { setDoc } from "../document";
+import { bumpDataRev } from "../graphSession";
+import { requestBlockReferences, setBlockReferencesRequest } from "../ui";
 import { initParser } from "../render/parse";
 import { Block } from "./Block";
 

@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
-import { toasts, dismissToast, lightbox, setLightbox, pushToast } from "../ui";
+import { toasts, dismissToast, pushToast } from "../toasts";
+import { lightbox, setLightbox } from "../ui";
 import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
 import { registerTransientLayer } from "../transientLayers";
 

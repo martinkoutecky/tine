@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { ensurePageLoaded, pageByName, resetStore, selectBlock, isSelected, moveSelection, selectedIds } from "./store";
+import { ensurePageLoaded, pageByName, resetStore, selectBlock, isSelected, moveSelection, selectedIds } from "./document";
 import type { PageDto } from "./types";
 
 afterEach(() => { resetStore(); });

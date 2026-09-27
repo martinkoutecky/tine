@@ -7,29 +7,8 @@
 // (Block.tsx) resolve keys through the same merged binding table, so every
 // listed command is remappable from config.edn.
 
-import {
-  openSwitcher,
-  openCommandPalette,
-  openDevtools,
-  toggleTheme,
-  toggleSidebar,
-  openSettings,
-  toggleHelpPopup,
-  toggleRightSidebar,
-  toggleWideMode,
-  toggleDocumentMode,
-  toggleFocusMode,
-  toggleDimInactiveBlocks,
-  focusMode,
-  exitFocusMode,
-  carryDays,
-  showBrackets,
-  changeShowBrackets,
-  pushToast,
-  openPdfExport,
-  pdfTarget,
-  dismissMobileDrawer,
-} from "./ui";
+import { openSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, pdfTarget, dismissMobileDrawer } from "./ui";
+import { pushToast } from "./toasts";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
@@ -43,27 +22,7 @@ import {
   activatePrevTab,
   route,
 } from "./router";
-import {
-  undo,
-  redo,
-  hasSelection,
-  moveSelection,
-  cycleSelectionTasks,
-  moveSelectionItems,
-  indentSelection,
-  outdentSelection,
-  deleteSelection,
-  selectionMarkdown,
-  clearSelection,
-  selectedIds,
-  blockIsGridView,
-  doc,
-  pageVisibleOrder,
-  selectBlock,
-  visibleOrder,
-  toggleUndoRedoMode,
-  buildClipboardPayload,
-} from "./store";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, doc, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { openInPageFind } from "./inpageFind";

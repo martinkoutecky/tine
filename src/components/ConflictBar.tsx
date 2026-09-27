@@ -1,7 +1,7 @@
 import { For, Show, type JSX } from "solid-js";
-import { conflicts, clearConflict } from "../ui";
+import { conflicts, clearConflict } from "../document";
 import { backend } from "../backend";
-import { reloadPage, forceSave, pageByName, forgetPage } from "../store";
+import { reloadPage, forceSave, pageByName, forgetPage } from "../document";
 
 // Global save-conflict surface. A save is refused (not clobbered) when the file
 // changed on disk under us (external edit / Syncthing). Such a page is parked in

@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { backend, type InstalledPluginRecord } from "../backend";
-import { doc, setRaw } from "../store";
-import { pushToast } from "../ui";
+import { doc, setRaw } from "../document";
+import { pushToast } from "../toasts";
 import { platformKind } from "../platform";
 import {
   parsePluginManifest,

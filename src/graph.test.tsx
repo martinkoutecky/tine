@@ -90,12 +90,18 @@ async function loadHarness(
     setGraphTransitioning: vi.fn(),
     closePdf,
   }));
+  vi.doMock("./graphSession", () => ({
+    setGraphMeta: (next: GraphMeta | null) => { meta = next; },
+    graphMeta: () => meta,
+    graphEpoch: () => 0,
+    bumpGraphEpoch: () => { events.push("bump-epoch"); },
+  }));
   vi.doMock("./pdfOwnership", () => ({
     drainPdfWork,
     retirePdfOwnership,
     activatePdfOwnership,
   }));
-  vi.doMock("./store", () => ({ resetStore: vi.fn(), flushAll: vi.fn(async () => true) }));
+  vi.doMock("./document", () => ({ resetStore: vi.fn(), flushAll: vi.fn(async () => true) }));
   vi.doMock("./assetCache", () => ({ clearAssetBlobCache: vi.fn() }));
   vi.doMock("./router", () => ({
     resetTabsToJournals: vi.fn(),

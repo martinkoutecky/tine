@@ -4,8 +4,8 @@ import { render } from "solid-js/web";
 
 const { setRawSpy } = vi.hoisted(() => ({ setRawSpy: vi.fn() }));
 
-vi.mock("../store", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../store")>();
+vi.mock("../document", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../document")>();
   return {
     ...actual,
     setRaw: (...args: Parameters<typeof actual.setRaw>) => {
@@ -18,7 +18,7 @@ vi.mock("../store", async (importOriginal) => {
 import { backend } from "../backend";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, isDirty, loadSingle, pageByName, resetStore } from "../store";
+import { doc, isDirty, loadSingle, pageByName, resetStore } from "../document";
 import type { BlockDto, PageDto, PageEntry } from "../types";
 import { Block } from "./Block";
 

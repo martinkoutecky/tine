@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { routeTitle, type PaneRouter, type Route } from "../router";
-import { doc, formatForBlock } from "../store";
+import { doc, formatForBlock } from "../document";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane } from "../panes";

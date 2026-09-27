@@ -34,7 +34,7 @@ import type {
 import { QueryBuilder } from "./QueryBuilder";
 import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
 import { registerTransientLayer } from "../transientLayers";
-import { bumpPageInventoryRev } from "../ui";
+import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 
 const PAGE_LIMIT = 40;

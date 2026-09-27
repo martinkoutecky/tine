@@ -10,7 +10,7 @@
 // proxy for "the GPU path isn't engaging, so compositing is on the CPU too".
 
 import { backend, isTauri } from "./backend";
-import { pushToast } from "./ui";
+import { pushToast } from "./toasts";
 
 // Mesa/ANGLE software-rasterizer signatures. `basic render` catches Windows'
 // "Microsoft Basic Render Driver" (WARP) under RDP/VMs.

@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import { doc, resetStore, setDoc, undo, type FeedPage, type Node } from "../store";
+import { doc, resetStore, setDoc, undo, type FeedPage, type Node } from "../document";
 import { setWorkflow } from "../ui";
 import { cycleField, fieldIdsForBlocks, fieldLabel, groupKeysForBlock, isFieldId, readField, writeField, writeTagDelta } from "./fields";
 

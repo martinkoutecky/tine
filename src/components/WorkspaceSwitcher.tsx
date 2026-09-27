@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX 
 import { backend } from "../backend";
 import { EmojiText } from "../render/emoji";
 import { registerTransientLayer } from "../transientLayers";
-import { pushToast } from "../ui";
+import { pushToast } from "../toasts";
 import {
   activeWorkspaceId,
   createWorkspace,

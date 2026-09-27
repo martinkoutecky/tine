@@ -1,11 +1,16 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const SCOPED = [
-  "src/App.tsx", "src/carry.ts", "src/graph.ts", "src/persistence.ts",
-  "src/store.ts", "src/ui.ts", "src/components/QuickSwitcher.tsx",
-  "src/components/QueryWorkspace.tsx",
-];
+function documentSources(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const file = path.join(dir, entry.name);
+    return entry.isDirectory() ? documentSources(file) : /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file) ? [file] : [];
+  });
+}
+const SCOPED = ["src/App.tsx", "src/carry.ts", "src/graph.ts", "src/ui.ts", "src/graphSession.ts",
+  "src/toasts.ts", "src/components/QuickSwitcher.tsx", "src/components/QueryWorkspace.tsx",
+  ...documentSources("src/document")];
 const BACKEND_AWAIT = /\bawait\s+(?:backend\(\)|deps)\.(?:getPage|getPageByPath|resolvePage|savePage|deletePage|listJournalConflicts|listSyncConflicts|journalContentDays)\s*\(/;
 const LANDING = /\b(?:ensurePageLoaded|reloadPage|markDirty|markConflict|forgetPage|loadSingle|openPage|openPageTarget|pushToast|bumpDataRev|bumpPageInventoryRev|set[A-Z]\w*)\s*\(/;
 
@@ -31,7 +36,7 @@ export function lateLandingViolations(file: string, source: string): string[] {
 function assertLateLandings(file: string, source: string): void {
   const violations = lateLandingViolations(file, source);
   if (violations.length) throw new Error(
-    `I-20: a late backend result must prove its graph binding before a state/write landing; exemplar src/store.ts captureOutlineInto.\n${violations.join("\n")}`
+    `I-20: a late backend result must prove its graph binding before a state/write landing; exemplar src/document/edits/capture.ts captureOutlineInto.\n${violations.join("\n")}`
   );
 }
 
@@ -42,6 +47,6 @@ describe("I-20 late landing scan", () => {
 
   it("fails a planted old-graph completion", () => {
     const planted = "async function stale() {\n const dto = await backend().getPage('P', 'page');\n reloadPage(dto);\n}";
-    expect(() => assertLateLandings("src/planted.ts", planted)).toThrow(/I-20.*exemplar src\/store\.ts/s);
+    expect(() => assertLateLandings("src/planted.ts", planted)).toThrow(/I-20.*exemplar src\/document\/edits\/capture\.ts/s);
   });
 });

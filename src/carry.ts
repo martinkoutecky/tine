@@ -5,17 +5,10 @@
 
 import { backend } from "./backend";
 import { captureBinding, stillBound, type Binding } from "./binding";
-import {
-  pageByName,
-  ensurePageLoaded,
-  carryUnfinished,
-  flushPage,
-  isDirty,
-  markDirty,
-  prepareCrossPageSources,
-} from "./store";
+import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, isDirty, markDirty, prepareCrossPageSources } from "./document";
 import { journalTitle } from "./journal";
-import { carryKeepsContext, carryHeaderText, pushToast } from "./ui";
+import { carryKeepsContext, carryHeaderText } from "./ui";
+import { pushToast } from "./toasts";
 import { openJournals } from "./router";
 import type { PageDto } from "./types";
 

@@ -1,11 +1,11 @@
 import { For, Show, createResource, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { dataRev, graphEpoch } from "../ui";
+import { dataRev, graphEpoch } from "../graphSession";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { blockExternalId } from "../store";
+import { blockExternalId } from "../document";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled

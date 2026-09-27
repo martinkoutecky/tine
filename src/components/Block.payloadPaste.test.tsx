@@ -7,9 +7,9 @@ import { setCopyIncludeSubtree } from "../copySettings";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
 import { AstBody } from "../render/body";
-import { buildClipboardPayload, deleteBlock, doc, ensurePageLoaded, loadSingle, pageByName, resetStore } from "../store";
+import { buildClipboardPayload, deleteBlock, doc, ensurePageLoaded, loadSingle, pageByName, resetStore } from "../document";
 import type { BlockDto } from "../types";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 import { Block } from "./Block";
 
 beforeAll(() => initParser());

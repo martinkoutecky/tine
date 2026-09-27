@@ -3,29 +3,16 @@ import { Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import {
-  doc,
-  pageByName,
-  readPageProperty,
-  resetStore,
-  setRaw,
-  setDoc,
-  extendFeedForScroll,
-  flushPage,
-  isDirty,
-  pageToDto,
-  setBlockMoving,
-  undo,
-  type FeedPage,
-  type Node as StoreNode,
-} from "../store";
+import { doc, pageByName, readPageProperty, resetStore, setRaw, setDoc, extendFeedForScroll, flushPage, isDirty, pageToDto, setBlockMoving, undo, type FeedPage, type Node as StoreNode } from "../document";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { journalTitle } from "../journal";
 import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
-import { clearConflict, clearRecent, closeContextMenu, contextMenu, graphEpoch, markConflict, recentPages, rightSidebar, setRightSidebar } from "../ui";
+import { clearConflict, markConflict } from "../document";
+import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRightSidebar } from "../ui";
+import { graphEpoch } from "../graphSession";
 
 beforeAll(async () => {
   await initParser();

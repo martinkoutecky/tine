@@ -3,14 +3,8 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, resetStore, setDoc, type Node as StoreNode } from "../store";
-import {
-  closeContextMenu,
-  closeExportModal,
-  exportModal,
-  openContextMenu,
-  openPageContextMenu,
-} from "../ui";
+import { blockProperty, doc, resetStore, setDoc, type Node as StoreNode } from "../document";
+import { closeContextMenu, closeExportModal, exportModal, openContextMenu, openPageContextMenu } from "../ui";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";

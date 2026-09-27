@@ -8,19 +8,10 @@ import { editingId, endEdit } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { installMobileDrawerMode } from "../mobileDrawers";
 import { initParser } from "../render/parse";
-import { doc, flushAll, isDirty, loadSingle, pageToDto, resetStore } from "../store";
+import { doc, flushAll, isDirty, loadSingle, pageToDto, resetStore } from "../document";
 import { clearTransientLayersForTest } from "../transientLayers";
 import type { PageDto } from "../types";
-import {
-  applySidebarSession,
-  closeRightSidebarSafely,
-  dismissMobileDrawer,
-  rightSidebarOpen,
-  setLeftSidebarOpen,
-  setRightSidebar,
-  setRightSidebarOpen,
-  toggleRightSidebar,
-} from "../ui";
+import { applySidebarSession, closeRightSidebarSafely, dismissMobileDrawer, rightSidebarOpen, setLeftSidebarOpen, setRightSidebar, setRightSidebarOpen, toggleRightSidebar } from "../ui";
 import { MobileDrawerController } from "./MobileDrawerShell";
 import { RightSidebar } from "./RightSidebar";
 

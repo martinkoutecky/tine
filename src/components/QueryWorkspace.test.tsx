@@ -14,8 +14,8 @@ import {
   type MaterializeQueryDependencies,
   type QueryWorkspaceDependencies,
 } from "./QueryWorkspace";
-import { pageInventoryRev } from "../ui";
-import { resetStore } from "../store";
+import { pageInventoryRev } from "../graphSession";
+import { resetStore } from "../document";
 
 afterEach(() => {
   clearTransientLayersForTest();

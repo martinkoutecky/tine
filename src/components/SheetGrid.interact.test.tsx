@@ -6,19 +6,7 @@ import { Block, SurfaceContext } from "./Block";
 import { SheetGrid } from "./SheetGrid";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import {
-  doc,
-  blockProperty,
-  blockIsGridView,
-  hasSelection,
-  isSelected,
-  resetStore,
-  selectBlock,
-  setDoc,
-  undo,
-  type FeedPage,
-  type Node as StoreNode,
-} from "../store";
+import { doc, blockProperty, blockIsGridView, hasSelection, isSelected, resetStore, selectBlock, setDoc, undo, type FeedPage, type Node as StoreNode } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { setFocusedPaneId } from "../panes";

@@ -4,9 +4,9 @@ import { AstBody } from "./body";
 import { clearSeededFacets } from "./facets";
 import { initParser } from "./parse";
 import { Block } from "../components/Block";
-import { loadSingle, resetStore } from "../store";
+import { loadSingle, resetStore } from "../document";
 import type { PageDto } from "../types";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 
 const TABLE = "| Fruit | Count |\n| --- | ---: |\n| apple | 2 |";
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { render } from "solid-js/web";
 import { renderInlines } from "./inline";
 import { initParser } from "./parse";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 import type { JSX } from "solid-js";
 import type { Inline } from "./ast";
 

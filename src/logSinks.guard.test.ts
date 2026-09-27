@@ -49,7 +49,7 @@ function assertNoPrivateNetwork(file: string, source: string): void {
 
 function assertClean(file: string, source: string): void {
   const found = logSinkViolations(file, source);
-  if (found.length) throw new Error(`I-5: WebView console calls use fixed text without titles, paths or content; exemplar src/persistence.ts read-only refusal.\n${found.join("\n")}`);
+  if (found.length) throw new Error(`I-5: WebView console calls use fixed text without titles, paths or content; exemplar src/document/save/engine.ts read-only refusal.\n${found.join("\n")}`);
 }
 
 describe("I-5 console sink scan", () => {
@@ -61,16 +61,16 @@ describe("I-5 console sink scan", () => {
   });
 
   it("keeps graph save and persistence data out of network payloads", () => {
-    for (const file of ["src/store.ts", "src/persistence.ts", "src/backend.ts", "src/carry.ts", "src/graph.ts"]) {
+    for (const file of [...sources("src/document"), "src/backend.ts", "src/carry.ts", "src/graph.ts"]) {
       assertNoPrivateNetwork(file, readFileSync(file, "utf8"));
     }
   });
 
   it("fails a planted page-name log", () => {
     expect(() => assertClean("src/planted.ts", 'console.warn("failed", pageName);'))
-      .toThrow(/I-5:.*exemplar src\/persistence\.ts/s);
+      .toThrow(/I-5:.*exemplar src\/document\/save\/engine\.ts/s);
     expect(() => assertClean("src/planted.ts", 'console.warn("failed",\n  pageName);'))
-      .toThrow(/I-5:.*exemplar src\/persistence\.ts/s);
+      .toThrow(/I-5:.*exemplar src\/document\/save\/engine\.ts/s);
   });
 
   it("fails a planted network payload", () => {

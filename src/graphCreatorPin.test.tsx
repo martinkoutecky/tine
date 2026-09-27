@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { createNewGraph, loadGraphPath } from "./graph";
 import { journalTitle } from "./journal";
-import { flushPage, loadSingle, pageByName, resetStore, setRaw } from "./store";
-import { setGraphMeta } from "./ui";
+import { flushPage, loadSingle, pageByName, resetStore, setRaw } from "./document";
+import { setGraphMeta } from "./graphSession";
 import type { GraphMeta, PageDto, PageRead } from "./types";
 
 const ROOT = "/tmp/creator-pin-graph";

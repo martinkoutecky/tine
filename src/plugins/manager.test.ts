@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "../backend";
-import { doc, isDirty, resetStore, setDoc } from "../store";
-import { bumpGraphEpoch, setGraphMeta, setGraphTransitioning } from "../ui";
+import { doc, isDirty, resetStore, setDoc } from "../document";
+import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { setGraphTransitioning } from "../ui";
 import type { GraphMeta } from "../types";
 import { installedPlugins, PluginManager } from "./manager";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner } from "./ownership";

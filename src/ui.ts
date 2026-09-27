@@ -1,6 +1,8 @@
+import { graphMeta, setGraphMeta, bumpGraphEpoch } from "./graphSession";
+import { pushToast } from "./toasts";
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal, useContext } from "solid-js";
-import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types";
+import type { JournalConflict, SyncConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend, isTauri } from "./backend";
 import { captureBinding, stillBound } from "./binding";
@@ -516,52 +518,6 @@ export async function exitFocusMode() {
   }
 }
 
-// Loaded graph metadata (root path, dirs, shortcut overrides), for Settings.
-export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
-
-// True once the startup graph-load attempt has finished (success OR failure). The
-// onboarding Welcome screen shows only when this is set AND no graph loaded — so a
-// fresh install with no configured graph gets the wizard, but a normal startup
-// never flashes it while the graph is still loading.
-export const [firstLoadDone, setFirstLoadDone] = createSignal(false);
-
-/** Set (or clear, with null) the template applied to new journal days, persisting
- *  it to config.edn `:default-templates {:journals "Name"}` and updating the live
- *  meta so the UI reflects it immediately. */
-export function setJournalTemplate(name: string | null) {
-  const m = graphMeta();
-  const prev = m?.default_journal_template ?? null;
-  if (m) setGraphMeta({ ...m, default_journal_template: name });
-  // On a config-write failure, revert the optimistic UI + tell the user, rather
-  // than silently showing a template that wasn't actually persisted.
-  void backend()
-    .setDefaultJournalTemplate(name)
-    .catch((e) => {
-      const cur = graphMeta();
-      if (cur) setGraphMeta({ ...cur, default_journal_template: prev });
-      pushToast(`Couldn't save the journal template setting. (${String(e)})`, "error");
-    });
-}
-// Bumped when the open graph changes, so views reload against the new graph.
-export const [graphEpoch, setGraphEpoch] = createSignal(0);
-export function bumpGraphEpoch() {
-  setGraphEpoch((n) => n + 1);
-}
-
-// Bumped after a save batch lands (the Rust cache now reflects the edit), so
-// derived whole-graph views — {{query}} results, backlinks — can recompute.
-// This is Tine's stand-in for OG's reactive-DB query invalidation.
-export const [dataRev, setDataRev] = createSignal(0);
-export function bumpDataRev() {
-  setDataRev((n) => n + 1);
-}
-// Page-name inventory changes are much rarer than ordinary content saves. Keep
-// their invalidation separate so navigation can refresh canonical names after a
-// create/delete without turning every keystroke save into a whole-page-list IPC.
-export const [pageInventoryRev, setPageInventoryRev] = createSignal(0);
-export function bumpPageInventoryRev() {
-  setPageInventoryRev((n) => n + 1);
-}
 export function toggleTheme() {
   const next = theme() === "light" ? "dark" : "light";
   setTheme(next);
@@ -930,19 +886,6 @@ export function resetShortcutOverride(id: string) {
   const next = { ...shortcutOverrides() };
   delete next[id];
   persistShortcuts(next);
-}
-
-// Pages that failed to save because the file changed on disk (external edit /
-// Syncthing). Surfaced as a banner; the user resolves with reload or overwrite.
-export const [conflicts, setConflicts] = createSignal<string[]>([]);
-export function markConflict(name: string) {
-  if (!conflicts().includes(name)) setConflicts([...conflicts(), name]);
-}
-export function clearConflict(name: string) {
-  setConflicts(conflicts().filter((n) => n !== name));
-}
-export function isConflicted(name: string): boolean {
-  return conflicts().includes(name);
 }
 
 // Date picker popup for SCHEDULED / DEADLINE and typed sheet date properties.
@@ -1493,34 +1436,6 @@ export function openWelcome() {
 }
 export function closeWelcome() {
   setWelcomeOpen(false);
-}
-
-// Transient toast notifications (bottom-right), auto-dismissed.
-export interface Toast {
-  id: number;
-  message: string;
-  kind: "info" | "success" | "warn" | "error";
-  sticky?: boolean; // stays until the user closes it (✕); no auto-dismiss
-  // Optional action button (e.g. "Download"). Runs, then dismisses the toast.
-  action?: { label: string; run: () => void };
-  onDismiss?: () => void;
-}
-let toastSeq = 0;
-export const [toasts, setToasts] = createSignal<Toast[]>([]);
-export function pushToast(
-  message: string,
-  kind: Toast["kind"] = "info",
-  opts: { sticky?: boolean; action?: { label: string; run: () => void }; onDismiss?: () => void } = {}
-): number {
-  const id = ++toastSeq;
-  setToasts([...toasts(), { id, message, kind, sticky: opts.sticky, action: opts.action, onDismiss: opts.onDismiss }]);
-  if (!opts.sticky) setTimeout(() => dismissToast(id), 3200);
-  return id;
-}
-export function dismissToast(id: number) {
-  const toast = toasts().find((t) => t.id === id);
-  toast?.onDismiss?.();
-  setToasts(toasts().filter((t) => t.id !== id));
 }
 
 // Full-screen image lightbox (click an inline image to zoom).

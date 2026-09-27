@@ -1,6 +1,6 @@
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
-import { clearSelection } from "./store";
+import { clearSelection } from "./document";
 import { notifyEditingStarted } from "./modeHooks";
 
 // Where to put the caret when a block starts editing. Either a concrete offset

@@ -4,9 +4,9 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { doc, loadSingle, pageByName, resetStore } from "../document";
 import type { GraphMeta, PageDto } from "../types";
-import { setGraphMeta } from "../ui";
+import { setGraphMeta } from "../graphSession";
 import { Block } from "./Block";
 
 const META: GraphMeta = {

@@ -14,14 +14,7 @@ import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { DatePicker } from "./components/DatePicker";
 import { datePicker } from "./ui";
-import {
-  ensurePageLoaded,
-  pageByName,
-  blockSubtreeMarkdown,
-  deleteBlock,
-  setRaw,
-  doc,
-} from "./store";
+import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, doc } from "./document";
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";

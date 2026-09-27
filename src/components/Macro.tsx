@@ -1,8 +1,9 @@
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
-import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch, graphMeta, pageIdentityKey } from "../ui";
-import { blockProperty, doc, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../store";
+import { openPageInSidebar, openPageContextMenu, pageIdentityKey } from "../ui";
+import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { blockProperty, doc, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";

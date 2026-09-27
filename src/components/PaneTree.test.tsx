@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { PaneTree } from "../App";
 import { focusPane, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "../panes";
 import { setPaneSel } from "../paneSelect";
-import { resetStore } from "../store";
+import { resetStore } from "../document";
 import type { PaneSnapshot } from "../router";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({

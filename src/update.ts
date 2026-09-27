@@ -19,7 +19,7 @@
 
 import { isTauri, backend } from "./backend";
 import { platformKind } from "./platform";
-import { pushToast, dismissToast } from "./ui";
+import { pushToast, dismissToast } from "./toasts";
 
 const REPO = "martinkoutecky/tine";
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;

@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { openPageAtBlock } from "../router";
-import { doc, formatForPage, resolveBlockRef } from "../store";
+import { doc, formatForPage, resolveBlockRef } from "../document";
 import { startEditing } from "../editorController";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";

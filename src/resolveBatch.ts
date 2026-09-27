@@ -1,6 +1,6 @@
 import { backend } from "./backend";
-import { resolveGuideBlockRef } from "./store";
-import { dataRev, graphEpoch } from "./ui";
+import { resolveGuideBlockRef } from "./document";
+import { dataRev, graphEpoch } from "./graphSession";
 import type { RefGroup } from "./types";
 
 // Batches inline ((uuid)) reference / embed resolutions: every request made in the

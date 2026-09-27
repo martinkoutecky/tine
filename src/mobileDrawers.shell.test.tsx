@@ -7,13 +7,7 @@ import {
   MobileDrawerPanel,
   dismissDrawerAndRestore,
 } from "./components/MobileDrawerShell";
-import {
-  activeDrawer,
-  rightSidebarOpen,
-  setLeftSidebarOpen,
-  setRightSidebarOpen,
-  sidebarOpen,
-} from "./ui";
+import { activeDrawer, rightSidebarOpen, setLeftSidebarOpen, setRightSidebarOpen, sidebarOpen } from "./ui";
 import { mobileDrawerMode, takeDrawerOpener } from "./mobileDrawers";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 

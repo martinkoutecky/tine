@@ -3,8 +3,10 @@
 
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf } from "./ui";
-import { resetStore, flushAll } from "./store";
+import { setGraphMeta, bumpGraphEpoch, graphMeta } from "./graphSession";
+import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf } from "./ui";
+import { pushToast } from "./toasts";
+import { resetStore, flushAll } from "./document";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";

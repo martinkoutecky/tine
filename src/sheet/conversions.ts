@@ -4,20 +4,8 @@ import type { Inline, TableBlock } from "../render/ast";
 import { visibleBody } from "../render/block";
 import { inlineText, parseBody } from "../render/facets";
 import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
-import {
-  blockIsGridView,
-  blockPageReadOnly,
-  deleteBlock,
-  doc,
-  formatForBlock,
-  insertEmptyChildBlock,
-  insertOutlineAfter,
-  replaceChildOrders,
-  setBlockProperty,
-  setRaw,
-  withUndoUnit,
-} from "../store";
-import { pushToast } from "../ui";
+import { blockIsGridView, blockPageReadOnly, deleteBlock, doc, formatForBlock, insertEmptyChildBlock, insertOutlineAfter, replaceChildOrders, setBlockProperty, setRaw, withUndoUnit } from "../document";
+import { pushToast } from "../toasts";
 import { sheetConfigFromRaw } from "./config";
 
 type TableCell = Inline[];

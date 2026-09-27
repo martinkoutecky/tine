@@ -3,7 +3,7 @@
 
 import { backend } from "./backend";
 import type { Format, PageKind } from "./types";
-import { graphMeta } from "./ui";
+import { graphMeta } from "./graphSession";
 
 export const CLIPBOARD_PAYLOAD_MAX_BLOCKS = 10_000;
 export const CLIPBOARD_PAYLOAD_MAX_RAW_BYTES = 4 * 1024 * 1024;

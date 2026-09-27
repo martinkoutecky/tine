@@ -9,8 +9,8 @@ import { backend } from "./backend";
 import { assetFileName, assetMarkdown } from "./media";
 import { matrixGridNode, delimitedCellCount } from "./sheet/conversions";
 import { parseDelimitedText, type DelimitedKind } from "./sheet/tsv";
-import { doc, formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibleOrder, withUndoUnit } from "./store";
-import { pushToast } from "./ui";
+import { doc, formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibleOrder, withUndoUnit } from "./document";
+import { pushToast } from "./toasts";
 import type { OutlineNode } from "./editor/outline";
 
 const MAX_DROPPED_CELLS = 5000;

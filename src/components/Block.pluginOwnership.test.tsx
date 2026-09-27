@@ -4,9 +4,10 @@ import { startEditing } from "../editorController";
 import { pluginManager } from "../plugins/manager";
 import type { PluginEffect } from "../plugins/protocol";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, resetStore } from "../store";
+import { doc, loadSingle, resetStore } from "../document";
 import type { GraphMeta, PageDto } from "../types";
-import { bumpGraphEpoch, setGraphMeta, setGraphTransitioning } from "../ui";
+import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { setGraphTransitioning } from "../ui";
 import { Block } from "./Block";
 
 beforeAll(() => initParser());

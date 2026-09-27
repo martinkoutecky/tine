@@ -6,17 +6,9 @@
 // focused-pane shims, so existing call sites are unchanged.
 
 import { createSignal, type Accessor } from "solid-js";
-import {
-  pushRecent,
-} from "./ui";
+import { pushRecent } from "./ui";
 import { navigationName } from "./pageIndex";
-import {
-  doc,
-  persistentBlockRef,
-  resolveBlockRef,
-  extendFeedForScroll,
-  type HistoryRouteContext,
-} from "./store";
+import { doc, persistentBlockRef, resolveBlockRef, extendFeedForScroll, type HistoryRouteContext } from "./document";
 import { backend } from "./backend";
 import { renderedBlocks } from "./lazyObserve";
 import { navReuseTabs } from "./navSettings";

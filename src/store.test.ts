@@ -5,99 +5,16 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import {
-  doc,
-  setDoc,
-  resetStore,
-  loadSingle,
-  loadFeed,
-  restoreTodayJournalInFeed,
-  markDirty,
-  flushPage,
-  flushAll,
-  captureToPage,
-  reloadHlsIfLoaded,
-  forceSave,
-  isDirty,
-  deletePage,
-  reloadDisposition,
-  setBlockMoving,
-  splitBlock,
-  insertOutlineAfter,
-  replaceEmptyBlockWithOutline,
-  indentBlock,
-  outdentBlock,
-  mergeWithPrev,
-  deleteBlock,
-  ensureEmptyBlock,
-  toggleCollapse,
-  collapsibleDescendantIds,
-  setCollapsedDescendants,
-  visibleOrder,
-  setRaw,
-  undo,
-  redo,
-  selectBlock,
-  selectedIds,
-  moveSelection,
-  deleteSelection,
-  cycleSelectionTasks,
-  moveSelectionItems,
-  moveBlockFeed,
-  moveBlock,
-  indentSelection,
-  reloadPage,
-  forgetPage,
-  pageByName,
-  carryUnfinished,
-  ensurePageLoaded,
-  loadGuidePages,
-  exportNodesFor,
-  prevVisible,
-  nextVisible,
-  trailingVisibleEmptyLeaf,
-  orderedListMarker,
-  blockProperty,
-  setBlockProperty,
-  setSchedule,
-  pageToDto,
-  blockSubtreeMarkdown,
-  selectionMarkdown,
-  toggleListItemAtIndex,
-  withUndoUnit,
-  readSchedule,
-  readPageProperty,
-  setPageProperty,
-  beginPageHeaderEdit,
-  finishPageHeaderEdit,
-  ensureBlockId,
-  persistentBlockRef,
-  resolveBlockRef,
-} from "./store";
+import { doc, setDoc, resetStore, loadSingle, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, forceSave, isDirty, deletePage, reloadDisposition, setBlockMoving, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, reloadPage, forgetPage, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, trailingVisibleEmptyLeaf, orderedListMarker, blockProperty, setBlockProperty, setSchedule, pageToDto, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
 import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
 import { backend, type Backend } from "./backend";
-import {
-  isConflicted,
-  conflicts,
-  clearConflict,
-  favorites,
-  recentPages,
-  setFavorites,
-  setRecentPages,
-  rightSidebar,
-  setRightSidebar,
-  seedFavorites,
-  renamePageInNavigation,
-  dataRev,
-  pageInventoryRev,
-  setWorkflow,
-  setGraphMeta,
-  toasts,
-  setToasts,
-} from "./ui";
+import { isConflicted, conflicts, clearConflict } from "./document";
+import { favorites, recentPages, setFavorites, setRecentPages, rightSidebar, setRightSidebar, seedFavorites, renamePageInNavigation, setWorkflow } from "./ui";
+import { dataRev, pageInventoryRev, setGraphMeta } from "./graphSession";
+import { toasts, setToasts } from "./toasts";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto, PageRead } from "./types";
 import { resetPaneLayoutToSingle } from "./panes";

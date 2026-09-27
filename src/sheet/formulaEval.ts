@@ -1,6 +1,6 @@
 import { createMemo, type Accessor } from "solid-js";
-import { dataRev } from "../ui";
-import { doc, formatForBlock, pageByName, type Node as StoreNode } from "../store";
+import { dataRev } from "../graphSession";
+import { doc, formatForBlock, pageByName, type Node as StoreNode } from "../document";
 import { facetsFromDto, facetsOf } from "../render/facets";
 import { evaluate, parseFormula, type Ast, type FormulaValue, type ParseResult } from "./formula";
 import {

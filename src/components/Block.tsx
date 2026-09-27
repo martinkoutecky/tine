@@ -28,56 +28,7 @@ import { typoTypeReplace } from "../render/typography";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import {
-  doc,
-  pageByName,
-  setRaw,
-  setBlockProperty,
-  makeOwnNumberedList,
-  removeOwnNumberedList,
-  stopOwnNumberedListOnEmptyEnter,
-  splitBlock,
-  indentBlock,
-  outdentBlock,
-  mergeWithPrev,
-  toggleCollapse,
-  setCollapsed,
-  prevVisible,
-  nextVisible,
-  nextVisibleOrExtend,
-  beginPageHeaderEdit,
-  finishPageHeaderEdit,
-  insertEmptyChildBlock,
-  insertOutlineAfter,
-  replaceEmptyBlockWithOutline,
-  insertOutlineChildren,
-  pasteClipboardPayload,
-  deleteBlock,
-  moveBlock,
-  moveBlockFeed,
-  moveItem,
-  selectBlock,
-  extendSelectionTo,
-  clearSelection,
-  moveSelection,
-  isSelected,
-  ensureBlockId,
-  persistentBlockRef,
-  persistBlockRefTarget,
-  isBlockMoving,
-  setBlockMoving,
-  orderedListMarker,
-  withUndoUnit,
-  blockIsGridView,
-  trackAssetWrite,
-  formatForBlock,
-  depthOf,
-  setHeading,
-  collapsibleDescendantIds,
-  setCollapsedDescendants,
-  blockExternalId,
-  type OutlineScope,
-} from "../store";
+import { doc, pageByName, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistentBlockRef, persistBlockRefTarget, isBlockMoving, setBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope } from "../document";
 import {
   clearFocusSurface,
   editingId,
@@ -132,7 +83,9 @@ import { isMobilePlatform } from "../nativeChrome";
 import { journalTitle } from "../journal";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
+import { graphMeta, dataRev } from "../graphSession";
+import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
 import { openInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";

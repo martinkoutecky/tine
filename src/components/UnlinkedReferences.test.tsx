@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import type { RefGroup } from "../types";
-import { resetStore, setDoc } from "../store";
+import { resetStore, setDoc } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { route } from "../router";
 import { UnlinkedReferences } from "./UnlinkedReferences";

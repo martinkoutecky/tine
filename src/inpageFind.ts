@@ -1,5 +1,5 @@
 import { batch, createMemo, createRoot, createSignal } from "solid-js";
-import { doc, mainPages, pageByName, setDoc, type FeedPage } from "./store";
+import { doc, mainPages, pageByName, setDoc, type FeedPage } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";

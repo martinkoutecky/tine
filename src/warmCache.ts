@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { graphEpoch } from "./ui";
+import { graphEpoch } from "./graphSession";
 
 type Unlisten = () => void;
 

@@ -5,7 +5,7 @@
 // startup + did-the-frontend-boot + any JS error) in one file the user sends back.
 
 import { backend } from "./backend";
-import { pushToast } from "./ui";
+import { pushToast } from "./toasts";
 
 let enabled = false;
 

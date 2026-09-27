@@ -30,7 +30,7 @@ const referenced = (name: string): PageInventoryEntry => ({
 const inventory = (rev: number, ...entries: PageInventoryEntry[]): PageInventory => ({ rev: String(rev), entries });
 
 async function loadInventory() {
-  const ui = await import("./ui");
+  const ui = await import("./graphSession");
   const pages = await import("./pages");
   return { ...ui, ...pages };
 }

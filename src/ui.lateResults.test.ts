@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { resetStore } from "./store";
-import {
-  journalConflicts, journalMigrationSkipMessage, refreshJournalConflicts, refreshSyncConflicts,
-  setJournalConflicts, setSyncConflicts, syncConflicts, toasts, setToasts,
-} from "./ui";
+import { resetStore } from "./document";
+import { journalConflicts, journalMigrationSkipMessage, refreshJournalConflicts, refreshSyncConflicts, setJournalConflicts, setSyncConflicts, syncConflicts } from "./ui";
+import { toasts, setToasts } from "./toasts";
 import type { JournalConflict, SyncConflict } from "./types";
 
 describe("late conflict lists (I-20)", () => {

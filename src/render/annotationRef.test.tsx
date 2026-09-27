@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { openPdf, pdfTarget, setPdfTarget } from "../ui";
-import { setDoc } from "../store";
+import { setDoc } from "../document";
 import { AnnotationBody } from "../components/AnnotationBody";
 import { AstBody } from "./body";
 import { initParser } from "./parse";

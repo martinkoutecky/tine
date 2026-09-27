@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { bumpGraphEpoch, graphEpoch, setGraphMeta, setGraphTransitioning } from "../ui";
+import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
+import { setGraphTransitioning } from "../ui";
 import type { GraphMeta } from "../types";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent } from "./ownership";
 

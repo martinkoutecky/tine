@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, resetStore, undo } from "../store";
+import { doc, loadSingle, resetStore, undo } from "../document";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block } from "./Block";
 import { LiveRefGroup } from "./LiveRefGroup";

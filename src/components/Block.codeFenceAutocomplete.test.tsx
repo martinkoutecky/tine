@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { doc, loadSingle, pageByName, resetStore } from "../document";
 import { startEditing } from "../editorController";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";

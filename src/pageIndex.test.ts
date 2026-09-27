@@ -20,7 +20,7 @@ const page = (name: string): PageEntry => ({
 });
 
 async function load() {
-  const ui = await import("./ui");
+  const ui = await import("./graphSession");
   const index = await import("./pageIndex");
   const pages = await import("./pages");
   return { ...ui, ...index, ...pages };

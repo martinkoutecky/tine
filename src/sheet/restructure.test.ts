@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import { doc, pageToDto, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
+import { doc, pageToDto, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../document";
 import { flatten, hierarchify } from "./restructure";
 
 beforeAll(() => initParser());

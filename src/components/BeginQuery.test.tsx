@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../document";
 import type { BlockDto, RefGroup } from "../types";
 import { Block } from "./Block";
 import { LiveRefGroup } from "./LiveRefGroup";

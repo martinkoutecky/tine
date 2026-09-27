@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, persistentBlockRef, resetStore } from "../store";
+import { doc, loadSingle, pageByName, persistentBlockRef, resetStore } from "../document";
 import type { PageDto, PageRead } from "../types";
 import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar } from "../ui";
 import { RightSidebar } from "./RightSidebar";

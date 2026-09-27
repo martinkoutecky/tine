@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps } from "../ui";
-import { readPageProperty, setPageProperty } from "../store";
+import { readPageProperty, setPageProperty } from "../document";
 import { PAGE_PROP_SPECS, type PagePropSpec } from "../editor/properties";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 

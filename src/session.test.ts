@@ -2,20 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { buildPersistedSession, parsePersistedSession, type PersistedSession } from "./session";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
 import type { PaneSnapshot } from "./router";
-import {
-  applySidebarSession,
-  favoritesSectionExpanded,
-  recentSectionExpanded,
-  rightSidebar,
-  parseStoredSidebarItems,
-  openBlockInSidebar,
-  openPageInSidebar,
-  recentPages,
-  setRecentPages,
-  setRightSidebar,
-  setFavoritesSectionExpanded,
-  setRecentSectionExpanded,
-} from "./ui";
+import { applySidebarSession, favoritesSectionExpanded, recentSectionExpanded, rightSidebar, parseStoredSidebarItems, openBlockInSidebar, openPageInSidebar, recentPages, setRecentPages, setRightSidebar, setFavoritesSectionExpanded, setRecentSectionExpanded } from "./ui";
 
 const journals = (): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],

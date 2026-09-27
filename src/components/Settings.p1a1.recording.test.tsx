@@ -1,15 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { installKeybindings, setKeybindingsSuspended } from "../keybindings";
-import {
-  closeSettings,
-  closeSwitcher,
-  openSettings,
-  setShortcutOverrides,
-  settingsOpen,
-  shortcutOverrides,
-  switcherOpen,
-} from "../ui";
+import { closeSettings, closeSwitcher, openSettings, setShortcutOverrides, settingsOpen, shortcutOverrides, switcherOpen } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
 import { Settings } from "./Settings";
 

@@ -1,7 +1,9 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { captureBinding, stillBound } from "../binding";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, graphMeta, isFavorite, pushToast, bumpPageInventoryRev, openPageInSidebar, openBlockInSidebar } from "../ui";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar } from "../ui";
+import { graphMeta, bumpPageInventoryRev } from "../graphSession";
+import { pushToast } from "../toasts";
 import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
 import { paletteCommands } from "../keybindings";
 import { closePane, focusPane, focusedRouter, layoutPaneIds, openRouteInOtherPane, paneRouter } from "../panes";
@@ -12,7 +14,7 @@ import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
 import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
-import { persistBlockRefTarget } from "../store";
+import { persistBlockRefTarget } from "../document";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
 

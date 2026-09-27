@@ -16,13 +16,7 @@ import {
 } from "./router";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
-import {
-  clearSelection,
-  doc,
-  pageByName,
-  registerPaneRouteProvider,
-  installHistoryRouteContextAdapter,
-} from "./store";
+import { clearSelection, doc, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter } from "./document";
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
 import { nearestPane, takeBlockSelectionForPaneReturn } from "./paneSelect";

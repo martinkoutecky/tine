@@ -5,11 +5,11 @@ import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
-import { blockProperty, doc, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
+import { blockProperty, doc, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../document";
 import { route } from "../router";
 import { clearSimpleForm, getSimpleForm, stashSimpleForm } from "../editor/queryBuilder";
 import type { QueryExecution, RefGroup } from "../types";
-import { bumpDataRev } from "../ui";
+import { bumpDataRev } from "../graphSession";
 
 beforeAll(async () => {
   await initParser();

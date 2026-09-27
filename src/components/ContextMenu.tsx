@@ -1,23 +1,8 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
-import {
-  contextMenu,
-  closeContextMenu,
-  zoomInto,
-  openBlockInSidebar,
-  openPageInSidebar,
-  isFavorite,
-  toggleFavorite,
-  pushToast,
-  isConflicted,
-  graphMeta,
-  setJournalTemplate,
-  openPageProps,
-  openExportModal,
-  openPdfExport,
-  openFormulaEditor,
-  type ContextMenuAction,
-  type SheetCellRemoveCtx,
-} from "../ui";
+import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
+import { pushToast } from "../toasts";
+import { isConflicted } from "../document";
+import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
 import { removePageTargetAcrossPanes } from "../panes";
 import { refreshAfterRename } from "../graph";
@@ -25,28 +10,7 @@ import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import {
-  doc,
-  ensureBlockId,
-  persistentBlockRef,
-  blockSubtreeMarkdown,
-  deleteBlock,
-  setBlockProperty,
-  toggleBlockProperty,
-  toggleOwnNumberedList,
-  blockProperty,
-  setHeading,
-  setCollapsedDeep,
-  dtoSubtreeMarkdown,
-  flushAll,
-  flushPage,
-  deletePage,
-  restoreTodayJournalInFeed,
-  selectedIds,
-  blockPageReadOnly,
-  pageByName,
-  buildClipboardPayload,
-} from "../store";
+import { doc, ensureBlockId, persistentBlockRef, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushAll, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload } from "../document";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";

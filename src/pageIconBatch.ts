@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
-import { graphEpoch } from "./ui";
+import { graphEpoch } from "./graphSession";
 
 // Inline page-icon lookups, made cheap for icon-heavy pages. Every `icon::`
 // requested in the same microtask tick is coalesced into ONE page_icons IPC, each

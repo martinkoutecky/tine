@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { bumpDataRev } from "./ui";
-import { setDoc } from "./store";
+import { bumpDataRev } from "./graphSession";
+import { setDoc } from "./document";
 
 vi.mock("./warmCache", () => ({
   waitForWarmCache: vi.fn(async () => true),

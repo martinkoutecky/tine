@@ -1,5 +1,5 @@
 import { createRoot, createSignal } from "solid-js";
-import { doc, clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock } from "../store";
+import { doc, clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock } from "../document";
 import { endEdit, startEditing } from "../editorController";
 import { isSheetCellHidden, splitProps } from "../editor/properties";
 import {

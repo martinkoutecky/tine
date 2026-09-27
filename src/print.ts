@@ -8,7 +8,7 @@
 // drop most of a long page. The core-rendered document is complete and unstyled by
 // the app chrome, so the PDF is the page, nothing else.
 import { backend } from "./backend";
-import { pushToast } from "./ui";
+import { pushToast } from "./toasts";
 import type { PrintOpts } from "./types";
 
 /** The default export options (match the Rust `PrintOpts::default`). */

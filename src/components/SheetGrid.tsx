@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, depthOf, doc, formatForBlock } from "../store";
+import { blockPageReadOnly, depthOf, doc, formatForBlock } from "../document";
 import { AstBody } from "../render/body";
 import { visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";

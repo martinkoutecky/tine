@@ -3,9 +3,9 @@ import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { doc, loadSingle, pageByName, resetStore } from "../document";
 import { startEditing } from "../editorController";
-import { setToasts, toasts } from "../ui";
+import { setToasts, toasts } from "../toasts";
 import type { BlockDto, Format, PageDto } from "../types";
 import { Block } from "./Block";
 

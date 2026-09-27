@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
-import { dataRev, graphEpoch, pageIdentityKey, pageInventoryRev } from "./ui";
+import { dataRev, graphEpoch, pageInventoryRev } from "./graphSession";
+import { pageIdentityKey } from "./ui";
 import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
 // The frontend's ONE name answerer: the latest `page_inventory` result, keyed by

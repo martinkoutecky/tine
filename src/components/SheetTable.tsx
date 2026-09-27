@@ -1,19 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import {
-  blockPageReadOnly,
-  blockProperty,
-  blockWritable,
-  doc,
-  formatForBlock,
-  formatForPage,
-  insertEmptyChildBlock,
-  pageByName,
-  readPageProperty,
-  setBlockProperty,
-  setPageProperty,
-  setRaw,
-  withUndoUnit,
-} from "../store";
+import { blockPageReadOnly, blockProperty, blockWritable, doc, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, setBlockProperty, setPageProperty, setRaw, withUndoUnit } from "../document";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -67,15 +53,8 @@ import {
 } from "../sheet/formulaEval";
 import type { FormulaValue } from "../sheet/formula";
 import { isPlainDecimalNumber, parseIsoDateLike } from "../sheet/typed";
-import {
-  openActionContextMenu,
-  openDatePicker,
-  openFormulaEditor,
-  openSheetCellContextMenu,
-  openSheetContextMenu,
-  pushToast,
-  type ContextMenuAction,
-} from "../ui";
+import { openActionContextMenu, openDatePicker, openFormulaEditor, openSheetCellContextMenu, openSheetContextMenu, type ContextMenuAction } from "../ui";
+import { pushToast } from "../toasts";
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";

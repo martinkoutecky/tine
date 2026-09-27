@@ -1,13 +1,7 @@
 import { For, Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import {
-  closeHelpPopup,
-  graphMeta,
-  helpPopupOpen,
-  openSettings,
-  openWelcome,
-  toggleHelpPopup,
-} from "../ui";
+import { closeHelpPopup, helpPopupOpen, openSettings, openWelcome, toggleHelpPopup } from "../ui";
+import { graphMeta } from "../graphSession";
 import { BUILTIN_KEYS, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
 import { EmojiText } from "../render/emoji";
 import { openGuide } from "../guide";
