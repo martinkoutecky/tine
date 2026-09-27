@@ -1,0 +1,544 @@
+# Diagnostic-only workflow for the storage-roadmap R6 task: measure per-file
+# filesystem cost on hosted Linux/Windows/macOS runners, to answer Martin's
+# question ("is the ripgrep number comparable on Windows, where file
+# operations are slow?") with measurements, not reasoning.
+#
+# Throwaway: lives only on diagnose/fs-cost-* branches. See
+# /aux/koutecky/logseq/subagent-tasks/storage-roadmap/R6-cross-platform-fs-measure.md
+# for the full task and
+# /aux/koutecky/logseq/subagent-tasks/notes/storage-roadmap-R6-fs-measure.md
+# for the resulting notes.
+
+name: Diagnose FS Cost
+
+on:
+  push:
+    branches: ["diagnose/fs-cost-*"]
+  workflow_dispatch:
+
+jobs:
+  measure:
+    name: fs-cost / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Runner info
+        shell: bash
+        run: |
+          echo "runner.os: ${{ runner.os }}"
+          echo "cpu count (best-effort): ${NUMBER_OF_PROCESSORS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo unknown)}"
+          df -h . || true
+
+      - name: Install ripgrep (apt)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -y && sudo apt-get install -y ripgrep
+
+      - name: Install ripgrep (brew)
+        if: runner.os == 'macOS'
+        run: brew install ripgrep
+
+      - name: Install ripgrep (choco)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ripgrep -y --no-progress
+
+      - name: Record ripgrep version
+        shell: bash
+        run: rg --version
+
+      - name: 'Windows: volume / Dev Drive info'
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $drive = ($env:RUNNER_TEMP).Substring(0,1)
+          Get-Volume -DriveLetter $drive | Format-List
+          $volPath = $drive + ':\'
+          fsutil fsinfo volumeinfo $volPath
+
+      - name: 'Windows: download EmptyStandbyList (best-effort cache eviction)'
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest -Uri "https://download.sysinternals.com/files/RAMMap.zip" -OutFile "$env:RUNNER_TEMP\RAMMap.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\RAMMap.zip" -DestinationPath "$env:RUNNER_TEMP\RAMMap"
+          $eel = Get-ChildItem -Path "$env:RUNNER_TEMP\RAMMap" -Filter "EmptyStandbyList.exe" -Recurse | Select-Object -First 1
+          if ($eel) {
+            "TINE_EEL_EXE=$($eel.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "EmptyStandbyList.exe at $($eel.FullName)"
+          } else {
+            Write-Host "EmptyStandbyList.exe not found in the downloaded archive"
+          }
+
+      - name: Write fscost (Rust timing tool) sources
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fscost/src"
+          cat > "$RUNNER_TEMP/fscost/Cargo.toml" <<'CARGO_TOML_EOF'
+          [package]
+          name = "fscost"
+          version = "0.1.0"
+          edition = "2021"
+
+          [[bin]]
+          name = "fscost"
+          path = "src/main.rs"
+
+          [dependencies]
+          walkdir = "2"
+          rayon = "1"
+
+          [profile.release]
+          opt-level = 3
+          CARGO_TOML_EOF
+          cat > "$RUNNER_TEMP/fscost/src/main.rs" <<'MAIN_RS_EOF'
+          use rayon::prelude::*;
+          use std::env;
+          use std::fs;
+          use std::path::{Path, PathBuf};
+          use std::time::Instant;
+          use walkdir::WalkDir;
+
+          fn collect_files(root: &Path) -> Vec<PathBuf> {
+              WalkDir::new(root)
+                  .into_iter()
+                  .filter_map(|e| e.ok())
+                  .filter(|e| e.file_type().is_file())
+                  .map(|e| e.into_path())
+                  .collect()
+          }
+
+          fn main() {
+              let args: Vec<String> = env::args().collect();
+              if args.len() < 3 {
+                  eprintln!("usage: fscost <graph_root> <concat_file>");
+                  std::process::exit(2);
+              }
+              let root = PathBuf::from(&args[1]);
+              let concat_path = PathBuf::from(&args[2]);
+
+              // (a) enumerate the tree with metadata only.
+              let t0 = Instant::now();
+              let mut a_count: u64 = 0;
+              let mut a_bytes: u64 = 0;
+              for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+                  if entry.file_type().is_file() {
+                      if let Ok(md) = entry.metadata() {
+                          a_bytes += md.len();
+                          a_count += 1;
+                      }
+                  }
+              }
+              let a_secs = t0.elapsed().as_secs_f64();
+
+              // File list (not timed) for (b).
+              let files = collect_files(&root);
+
+              // (b1) open + read every file fully, single-threaded.
+              let t1 = Instant::now();
+              let mut b1_bytes: u64 = 0;
+              for f in &files {
+                  if let Ok(bytes) = fs::read(f) {
+                      b1_bytes += bytes.len() as u64;
+                  }
+              }
+              let b1_secs = t1.elapsed().as_secs_f64();
+
+              // (b2) open + read every file fully, with rayon.
+              let t2 = Instant::now();
+              let b2_bytes: u64 = files
+                  .par_iter()
+                  .map(|f| fs::read(f).map(|b| b.len() as u64).unwrap_or(0))
+                  .sum();
+              let b2_secs = t2.elapsed().as_secs_f64();
+
+              // (c) read ONE file holding the same bytes concatenated (as a String, so
+              // (d) can use the real str::contains, not a naive byte-window scan).
+              let t3 = Instant::now();
+              let concat_text = fs::read_to_string(&concat_path).unwrap_or_default();
+              let c_secs = t3.elapsed().as_secs_f64();
+              let c_bytes = concat_text.len() as u64;
+
+              // (d) str::contains over all the text already in memory (no-hit needle).
+              let needle = "ZZZ_TINE_FSCOST_NO_SUCH_NEEDLE_ZZZ";
+              let t4 = Instant::now();
+              let found = concat_text.contains(needle);
+              let d_secs = t4.elapsed().as_secs_f64();
+
+              println!(
+                  "{{\"a_enumerate_secs\":{a_secs},\"a_files\":{a_count},\"a_bytes\":{a_bytes},\"b1_read_single_secs\":{b1_secs},\"b1_bytes\":{b1_bytes},\"b2_read_rayon_secs\":{b2_secs},\"b2_bytes\":{b2_bytes},\"c_read_concat_secs\":{c_secs},\"c_bytes\":{c_bytes},\"d_contains_secs\":{d_secs},\"d_found\":{found}}}"
+              );
+          }
+          MAIN_RS_EOF
+
+      - name: Build fscost
+        shell: bash
+        run: cargo build --release --manifest-path "$RUNNER_TEMP/fscost/Cargo.toml"
+
+      - name: Write orchestrator script
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/run-fscost.mjs" <<'NODE_SCRIPT_EOF'
+          #!/usr/bin/env node
+          // R6 fs-cost diagnostic orchestrator. Runs on ubuntu-latest / windows-latest /
+          // macos-latest. Generates the two realistic corpora, times ripgrep and a small
+          // Rust program (fscost) over them, attempts a best-effort cache eviction per
+          // OS, and (Windows only) records/toggles Windows Defender real-time protection.
+          // Prints one JSON blob to stdout (the full raw record) and a Markdown summary.
+          //
+          // Env:
+          //   TINE_WORKDIR      scratch dir for corpora + concat files (required)
+          //   TINE_REPO_ROOT    repo root, to find scripts/generate-realistic-graph.mjs (required)
+          //   TINE_FSCOST_BIN   path to the built fscost binary (required)
+          //   TINE_EEL_EXE      (Windows) path to EmptyStandbyList.exe, if downloaded
+
+          import { spawnSync } from "node:child_process";
+          import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync, readdirSync, openSync, writeSync, closeSync } from "node:fs";
+          import { join } from "node:path";
+
+          const WORKDIR = must("TINE_WORKDIR");
+          const REPO_ROOT = must("TINE_REPO_ROOT");
+          const FSCOST_BIN = must("TINE_FSCOST_BIN");
+          const PLATFORM = process.platform; // 'linux' | 'darwin' | 'win32'
+
+          function must(name) {
+            const v = process.env[name];
+            if (!v) {
+              console.error(`missing required env ${name}`);
+              process.exit(2);
+            }
+            return v;
+          }
+
+          function median(nums) {
+            const a = [...nums].sort((x, y) => x - y);
+            const mid = Math.floor(a.length / 2);
+            return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+          }
+
+          function sh(cmd, args, opts = {}) {
+            const t0 = process.hrtime.bigint();
+            const res = spawnSync(cmd, args, { encoding: "utf8", ...opts });
+            const t1 = process.hrtime.bigint();
+            const secs = Number(t1 - t0) / 1e9;
+            return { secs, status: res.status, stdout: res.stdout, stderr: res.stderr, error: res.error };
+          }
+
+          function rgVersion() {
+            const r = sh("rg", ["--version"]);
+            return (r.stdout || "").split("\n")[0] || `<error: ${r.error}>`;
+          }
+
+          // A no-hit literal so every rg invocation must scan every candidate file/byte.
+          const NO_HIT = "ZZZ_TINE_FSCOST_NO_SUCH_NEEDLE_ZZZ";
+
+          function rgRun(root, threadsArg) {
+            const args = ["-l", "-F", NO_HIT, root];
+            if (threadsArg) args.splice(1, 0, threadsArg);
+            const r = sh("rg", args);
+            // rg exits 1 on no-match; that's success for our purposes. Any other
+            // non-zero / spawn error is a real failure.
+            if (r.error || (r.status !== 0 && r.status !== 1)) {
+              return { ok: false, secs: null, note: `rg failed: status=${r.status} err=${r.error} stderr=${(r.stderr || "").slice(0, 500)}` };
+            }
+            return { ok: true, secs: r.secs };
+          }
+
+          function rgFilesOnly(root) {
+            // Output is one line per file (tens of MB at g100k); discard it (stdio:
+            // ignore) rather than buffering through a pipe, which can hit ENOBUFS.
+            const r = sh("rg", ["--files", root], { stdio: ["ignore", "ignore", "pipe"] });
+            if (r.error || (r.status !== 0 && r.status !== 1)) {
+              return { ok: false, secs: null, note: `rg --files failed: status=${r.status} err=${r.error} stderr=${(r.stderr || "").slice(0, 500)}` };
+            }
+            return { ok: true, secs: r.secs };
+          }
+
+          function medianOf(fn, n) {
+            const secs = [];
+            let lastNote = null;
+            for (let i = 0; i < n; i++) {
+              const r = fn();
+              if (!r.ok) {
+                lastNote = r.note;
+                continue;
+              }
+              secs.push(r.secs);
+            }
+            if (secs.length === 0) return { ok: false, note: lastNote || "no successful runs" };
+            return { ok: true, medianSecs: median(secs), samples: secs };
+          }
+
+          // --- Cache eviction, best-effort, one attempt. Returns {ok, method, note}. ---
+          function evictCache() {
+            if (PLATFORM === "linux") {
+              const r = sh("sudo", ["-n", "sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"]);
+              if (r.status === 0) return { ok: true, method: "posix drop_caches=3 (sudo)" };
+              return { ok: false, method: "drop_caches", note: `status=${r.status} err=${r.error} stderr=${(r.stderr || "").slice(0, 300)}` };
+            }
+            if (PLATFORM === "darwin") {
+              const r = sh("sudo", ["-n", "purge"]);
+              if (r.status === 0) return { ok: true, method: "sudo purge" };
+              return { ok: false, method: "purge", note: `status=${r.status} err=${r.error} stderr=${(r.stderr || "").slice(0, 300)}` };
+            }
+            if (PLATFORM === "win32") {
+              const eel = process.env.TINE_EEL_EXE;
+              if (eel && existsSync(eel)) {
+                const r = sh(eel, []);
+                if (r.status === 0) return { ok: true, method: "EmptyStandbyList.exe (Sysinternals RAMMap)" };
+                return { ok: false, method: "EmptyStandbyList.exe", note: `status=${r.status} stderr=${(r.stderr || "").slice(0, 300)}` };
+              }
+              return { ok: false, method: "none", note: "EmptyStandbyList.exe unavailable (TINE_EEL_EXE unset or download failed)" };
+            }
+            return { ok: false, method: "none", note: `unhandled platform ${PLATFORM}` };
+          }
+
+          // --- Windows Defender status / toggle (Windows only). ---
+          function psJson(script) {
+            const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+            if (r.status !== 0 || r.error) return { ok: false, note: `status=${r.status} err=${r.error} stderr=${(r.stderr || "").slice(0, 500)}` };
+            try {
+              return { ok: true, value: JSON.parse(r.stdout) };
+            } catch (e) {
+              return { ok: false, note: `parse failed: ${e}; stdout=${(r.stdout || "").slice(0, 500)}` };
+            }
+          }
+
+          function defenderStatus() {
+            return psJson("Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled,AMServiceEnabled,AntispywareEnabled,AntivirusEnabled | ConvertTo-Json -Compress");
+          }
+
+          function defenderEnableRealtime() {
+            const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Set-MpPreference -DisableRealtimeMonitoring $false"], { encoding: "utf8" });
+            return { ok: r.status === 0, status: r.status, stdout: r.stdout, stderr: r.stderr, error: r.error };
+          }
+
+          function volumeInfo(driveRootPath) {
+            if (PLATFORM !== "win32") return null;
+            const drive = driveRootPath.slice(0, 2); // "C:"
+            return psJson(`Get-Volume -DriveLetter ${drive[0]} | Select-Object FileSystem,FileSystemLabel,DriveType | ConvertTo-Json -Compress`);
+          }
+
+          // --- Corpus generation + a single concatenated file. ---
+          function generateGraph(name, pages, journals) {
+            const root = join(WORKDIR, name);
+            const genScript = join(REPO_ROOT, "scripts", "generate-realistic-graph.mjs");
+            const t0 = process.hrtime.bigint();
+            const r = spawnSync(process.execPath, [genScript, root, String(pages), String(journals), "543"], { encoding: "utf8" });
+            const genSecs = Number(process.hrtime.bigint() - t0) / 1e9;
+            if (r.status !== 0) {
+              console.error(`generation failed for ${name}: ${r.stderr}`);
+              process.exit(1);
+            }
+            let manifest = null;
+            try {
+              manifest = JSON.parse((r.stdout || "").trim().split("\n").pop());
+            } catch {
+              manifest = null;
+            }
+            return { root, genSecs, manifest };
+          }
+
+          function buildConcat(root, outPath) {
+            const files = [];
+            for (const sub of ["pages", "journals"]) {
+              const dir = join(root, sub);
+              if (!existsSync(dir)) continue;
+              for (const f of readdirSync(dir).sort()) {
+                if (f.endsWith(".md")) files.push(join(dir, f));
+              }
+            }
+            const fd = openSync(outPath, "w");
+            let total = 0;
+            for (const f of files) {
+              const buf = readFileSync(f);
+              writeSync(fd, buf);
+              writeSync(fd, "\n");
+              total += buf.length + 1;
+            }
+            closeSync(fd);
+            return { files: files.length, bytes: total };
+          }
+
+          // --- fscost (a/b/c/d) ---
+          function fscostRun(root, concatPath) {
+            const r = spawnSync(FSCOST_BIN, [root, concatPath], { encoding: "utf8" });
+            if (r.status !== 0) {
+              return { ok: false, note: `fscost failed status=${r.status} stderr=${(r.stderr || "").slice(0, 500)}` };
+            }
+            try {
+              return { ok: true, value: JSON.parse((r.stdout || "").trim()) };
+            } catch (e) {
+              return { ok: false, note: `parse failed: ${e}; stdout=${(r.stdout || "").slice(0, 500)}` };
+            }
+          }
+
+          function fscostMedian(root, concatPath, n) {
+            const runs = [];
+            for (let i = 0; i < n; i++) {
+              const r = fscostRun(root, concatPath);
+              if (!r.ok) {
+                runs.push({ error: r.note });
+                continue;
+              }
+              runs.push(r.value);
+            }
+            const ok = runs.filter((r) => !r.error);
+            if (ok.length === 0) return { ok: false, note: "all fscost runs failed", runs };
+            const field = (k) => median(ok.map((r) => r[k]));
+            return {
+              ok: true,
+              samples: ok.length,
+              a_enumerate_secs: field("a_enumerate_secs"),
+              a_files: ok[0].a_files,
+              a_bytes: ok[0].a_bytes,
+              b1_read_single_secs: field("b1_read_single_secs"),
+              b2_read_rayon_secs: field("b2_read_rayon_secs"),
+              c_read_concat_secs: field("c_read_concat_secs"),
+              c_bytes: ok[0].c_bytes,
+              d_contains_secs: field("d_contains_secs"),
+              raw: runs,
+            };
+          }
+
+          // --- Main ---
+          const results = { platform: PLATFORM, rgVersion: rgVersion(), graphs: {} };
+
+          if (PLATFORM === "win32") {
+            results.defenderBefore = defenderStatus();
+          }
+
+          const GRAPHS = process.env.TINE_FSCOST_TEST_SMALL
+            ? [
+                { name: "g10k", pages: 70, journals: 30 },
+                { name: "g100k", pages: 700, journals: 300 },
+              ]
+            : [
+                { name: "g10k", pages: 7000, journals: 3000 },
+                { name: "g100k", pages: 70000, journals: 30000 },
+              ];
+
+          for (const g of GRAPHS) {
+            console.error(`=== generating ${g.name} ===`);
+            const gen = generateGraph(g.name, g.pages, g.journals);
+            console.error(`generated ${g.name} in ${gen.genSecs.toFixed(2)}s, manifest=${JSON.stringify(gen.manifest)}`);
+
+            const concatPath = join(WORKDIR, `${g.name}-concat.md`);
+            const concat = buildConcat(gen.root, concatPath);
+            console.error(`concat ${g.name}: ${concat.files} files, ${concat.bytes} bytes -> ${concatPath}`);
+
+            if (PLATFORM === "win32") {
+              results.volumeInfo = results.volumeInfo || volumeInfo(gen.root);
+            }
+
+            const iterFull = g.name === "g10k" ? 3 : 1; // "median of 3 where cheap"
+            const iterCheap = 3; // rg + concat-file ops are cheap regardless of graph size
+
+            const entry = { manifest: gen.manifest, genSecs: gen.genSecs, concatBytes: concat.bytes, concatFiles: concat.files };
+
+            // 1. ripgrep.
+            entry.rg = {};
+            entry.rg.first_after_generation = rgRun(gen.root, null);
+            entry.rg.warm_default_threads = medianOf(() => rgRun(gen.root, null), iterCheap);
+            entry.rg.warm_j1 = medianOf(() => rgRun(gen.root, "-j1"), iterCheap);
+            entry.rg.dir_walk_only = medianOf(() => rgFilesOnly(gen.root), iterCheap);
+            entry.rg.single_concat_file = medianOf(() => rgRun(concatPath, "-j1"), iterCheap);
+
+            // Cold-ish: evict, then measure, once per attempt. Linux drop_caches is
+            // cheap to repeat; other platforms get one attempt.
+            const coldAttempts = PLATFORM === "linux" ? 3 : 1;
+            const coldSecs = [];
+            let evictNote = null;
+            for (let i = 0; i < coldAttempts; i++) {
+              const ev = evictCache();
+              if (!ev.ok) {
+                evictNote = ev.note || ev.method;
+                break;
+              }
+              if (i === 0) entry.rg.cold_evict_method = ev.method;
+              const r = rgRun(gen.root, null);
+              if (r.ok) coldSecs.push(r.secs);
+            }
+            entry.rg.cold_ish_default_threads = coldSecs.length
+              ? { ok: true, medianSecs: median(coldSecs), samples: coldSecs }
+              : { ok: false, note: evictNote || "cache eviction unavailable; cold-ish not measured" };
+
+            // 2. Rust program (a/b/c/d).
+            entry.fscost = fscostMedian(gen.root, concatPath, iterFull);
+
+            // 3. Windows Defender re-run (handled once, after both graphs, below).
+            results.graphs[g.name] = entry;
+          }
+
+          if (PLATFORM === "win32") {
+            results.defenderAfter = defenderStatus();
+            const beforeOn = results.defenderBefore.ok && results.defenderBefore.value.RealTimeProtectionEnabled === true;
+            if (!beforeOn) {
+              console.error("=== Defender real-time protection is OFF; attempting to enable ===");
+              const en = defenderEnableRealtime();
+              results.defenderEnableAttempt = en;
+              const after = defenderStatus();
+              results.defenderAfterEnable = after;
+              const nowOn = after.ok && after.value.RealTimeProtectionEnabled === true;
+              if (nowOn) {
+                console.error("=== Defender is now ON; re-running rg + fscost(b) on g100k ===");
+                const g = GRAPHS[1];
+                const gen = { root: join(WORKDIR, g.name) };
+                const concatPath = join(WORKDIR, `${g.name}-concat.md`);
+                results.defenderOnRerun = {
+                  rg_warm_default_threads: medianOf(() => rgRun(gen.root, null), 3),
+                  rg_warm_j1: medianOf(() => rgRun(gen.root, "-j1"), 3),
+                  fscost: fscostMedian(gen.root, concatPath, 1),
+                };
+              } else {
+                results.defenderOnRerun = { skipped: true, reason: "could not enable real-time protection", detail: after };
+              }
+            } else {
+              results.defenderAlreadyOn = true;
+            }
+          }
+
+          writeFileSync(join(WORKDIR, "results.json"), JSON.stringify(results, null, 2));
+          console.log(JSON.stringify(results));
+          console.error("=== DONE ===");
+          NODE_SCRIPT_EOF
+
+      - name: Run measurements
+        shell: bash
+        env:
+          TINE_REPO_ROOT: ${{ github.workspace }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/fscost-work"
+          BIN="$RUNNER_TEMP/fscost/target/release/fscost"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$RUNNER_TEMP/fscost/target/release/fscost.exe"; fi
+          TINE_WORKDIR="$RUNNER_TEMP/fscost-work" TINE_FSCOST_BIN="$BIN" node "$RUNNER_TEMP/run-fscost.mjs" \
+            > "$RUNNER_TEMP/fscost-work/stdout.json" 2> "$RUNNER_TEMP/fscost-work/stderr.log"
+          echo "---- stderr (progress) ----"
+          cat "$RUNNER_TEMP/fscost-work/stderr.log"
+          echo "---- stdout (results JSON) ----"
+          cat "$RUNNER_TEMP/fscost-work/stdout.json"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fs-cost-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/fscost-work/results.json
+            ${{ runner.temp }}/fscost-work/stdout.json
+            ${{ runner.temp }}/fscost-work/stderr.log
+          retention-days: 5
+          if-no-files-found: warn
