@@ -242,6 +242,7 @@ export function PdfViewer(props: {
   const [outlineOpen, setOutlineOpen] = createSignal(false);
   const [outlineReady, setOutlineReady] = createSignal(false);
   const [outlineItems, setOutlineItems] = createSignal<PdfOutlineItem[]>([]);
+  const [outlineTruncated, setOutlineTruncated] = createSignal(false);
   const [expandedOutlineIds, setExpandedOutlineIds] = createSignal<Set<string>>(new Set());
   let findMatches: { page: number }[] = [];
   const pageTextCache: Record<number, string> = {};
@@ -277,6 +278,7 @@ export function PdfViewer(props: {
   async function loadOutline(doc: pdfjs.PDFDocumentProxy) {
     setOutlineReady(false);
     setOutlineItems([]);
+    setOutlineTruncated(false);
     setExpandedOutlineIds(new Set<string>());
     let loaded: unknown = [];
     try {
@@ -285,7 +287,9 @@ export function PdfViewer(props: {
       loaded = [];
     }
     if (disposed || pdfDoc !== doc) return;
-    setOutlineItems(sanitizeOutlineItems(loaded));
+    const sanitized = sanitizeOutlineItems(loaded);
+    setOutlineItems(sanitized.items);
+    setOutlineTruncated(sanitized.truncated);
     setOutlineReady(true);
   }
 
@@ -1908,7 +1912,10 @@ export function PdfViewer(props: {
         <div ref={(el) => (outlineRootEl = el)} class="pdf-outline-panel" role="dialog" aria-label="Document outline">
           <div class="pdf-outline-heading">Outline</div>
           <Show when={outlineReady()} fallback={<div class="pdf-outline-loading">Loading outline…</div>}>
-            <Show when={outlineItems().length} fallback={<div class="pdf-outline-empty">No outlines</div>}>
+            <Show when={outlineTruncated()}>
+              <div class="pdf-outline-truncated" role="status">Outline too large; partially shown.</div>
+            </Show>
+            <Show when={outlineItems().length} fallback={<Show when={!outlineTruncated()}><div class="pdf-outline-empty">No outlines</div></Show>}>
               <PdfOutlineTree
                 items={outlineItems()}
                 expanded={(id) => expandedOutlineIds().has(id)}

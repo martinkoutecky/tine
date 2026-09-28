@@ -17,7 +17,7 @@ function counted(items: unknown[]) {
 describe("sanitizeOutlineItems (og 15b, I-22)", () => {
   it("stops scanning a huge outline of invalid entries at the slot cap", () => {
     const { proxy, reads } = counted(new Array(1_000_000).fill(null));
-    expect(sanitizeOutlineItems(proxy)).toEqual([]);
+    expect(sanitizeOutlineItems(proxy)).toMatchObject({ items: [], truncated: true });
     expect(reads.count).toBeLessThanOrEqual(PDF_OUTLINE_MAX_SCANNED_SLOTS);
   });
 
@@ -32,7 +32,16 @@ describe("sanitizeOutlineItems (og 15b, I-22)", () => {
   it("still emits a benign outline of the maximum node count", () => {
     const outline = Array.from({ length: PDF_OUTLINE_MAX_NODES }, (_, i) => ({ title: `Chapter ${i}`, dest: `d${i}` }));
     const result = sanitizeOutlineItems(outline);
-    expect(result).toHaveLength(PDF_OUTLINE_MAX_NODES);
-    expect(result[PDF_OUTLINE_MAX_NODES - 1]).toMatchObject({ label: `Chapter ${PDF_OUTLINE_MAX_NODES - 1}`, destination: `d${PDF_OUTLINE_MAX_NODES - 1}` });
+    expect(result.items).toHaveLength(PDF_OUTLINE_MAX_NODES);
+    expect(result.truncated).toBe(false);
+    expect(result.items[PDF_OUTLINE_MAX_NODES - 1]).toMatchObject({ label: `Chapter ${PDF_OUTLINE_MAX_NODES - 1}`, destination: `d${PDF_OUTLINE_MAX_NODES - 1}` });
+  });
+
+  it("reports truncation when a valid bookmark follows the slot boundary", () => {
+    const outline = new Array(PDF_OUTLINE_MAX_SCANNED_SLOTS).fill(null);
+    outline.push({ title: "Late bookmark", dest: "late" });
+    const result = sanitizeOutlineItems(outline);
+    expect(result.items).toHaveLength(0);
+    expect(result.truncated).toBe(true);
   });
 });

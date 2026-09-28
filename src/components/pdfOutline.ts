@@ -5,6 +5,11 @@ export interface PdfOutlineItem {
   children: PdfOutlineItem[];
 }
 
+export interface SanitizedPdfOutline {
+  items: PdfOutlineItem[];
+  truncated: boolean;
+}
+
 export const PDF_OUTLINE_MAX_NODES = 10_000;
 export const PDF_OUTLINE_MAX_SCANNED_SLOTS = 100_000;
 
@@ -15,16 +20,18 @@ export const PDF_OUTLINE_MAX_SCANNED_SLOTS = 100_000;
  * reference without validating their elements. Cycles terminate at the depth
  * cap; hostile getters or proxies may throw. No I/O; work is proportional to
  * scanned input slots plus emitted nodes, both capped. */
-export function sanitizeOutlineItems(value: unknown): PdfOutlineItem[] {
-  if (!Array.isArray(value)) return [];
+export function sanitizeOutlineItems(value: unknown): SanitizedPdfOutline {
+  if (!Array.isArray(value)) return { items: [], truncated: false };
   const sanitized: PdfOutlineItem[] = [];
   const pending = [{ source: value, target: sanitized, parentId: "outline", depth: 0 }];
   let count = 0;
   let scanned = 0;
+  let truncated = false;
   const open = () => count < PDF_OUTLINE_MAX_NODES && scanned < PDF_OUTLINE_MAX_SCANNED_SLOTS;
   while (pending.length && open()) {
     const { source, target, parentId, depth } = pending.pop()!;
-    for (let index = 0; index < source.length && open(); index++) {
+    let index = 0;
+    for (; index < source.length && open(); index++) {
       scanned++;
       const candidate = source[index];
       if (!candidate || typeof candidate !== "object") continue;
@@ -42,6 +49,8 @@ export function sanitizeOutlineItems(value: unknown): PdfOutlineItem[] {
         pending.push({ source: raw.items, target: item.children, parentId: id, depth: depth + 1 });
       }
     }
+    if (index < source.length) truncated = true;
   }
-  return sanitized;
+  if (pending.length) truncated = true;
+  return { items: sanitized, truncated };
 }
