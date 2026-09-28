@@ -19,6 +19,9 @@ use tine_core::query::{
 };
 use tine_core::refs;
 use tine_core::search_query::Matcher;
+mod page_properties;
+use page_properties::{page_document_is_org, page_facets, page_property_lines};
+
 const QUERY_NESTING_MAX: usize = 64;
 
 #[derive(Debug, Clone)]
@@ -461,19 +464,17 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
         return Vec::new();
     };
     let mut aliases = Vec::new();
-    for line in text.lines() {
-        if let Some((k, v)) = tine_core::doc::parse_property_line(line) {
-            let key = property_key_norm(&k);
-            if key == "alias" || key == "aliases" {
-                let trimmed = v.trim();
-                if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-                    continue;
-                }
-                for alias in v.split([',', '，']) {
-                    let alias = strip_ref(alias.trim());
-                    if !alias.is_empty() {
-                        aliases.push(refs::page_key(&alias));
-                    }
+    for (k, v) in page_property_lines(text, page_document_is_org(doc)) {
+        let key = property_key_norm(&k);
+        if key == "alias" || key == "aliases" {
+            let trimmed = v.trim();
+            if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+                continue;
+            }
+            for alias in v.split([',', '，']) {
+                let alias = strip_ref(alias.trim());
+                if !alias.is_empty() {
+                    aliases.push(refs::page_key(&alias));
                 }
             }
         }
@@ -1192,27 +1193,6 @@ pub(crate) fn unlinked_refs_bounded(
     )
 }
 
-/// Page-level properties and `tags::` values parsed from a page's pre-block.
-fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) {
-    let mut props = Vec::new();
-    let mut tags = Vec::new();
-    if let Some(pre) = pre_block {
-        for line in pre.lines() {
-            if let Some((k, v)) = tine_core::doc::parse_property_line(line) {
-                if property_key_norm(&k) == "tags" {
-                    tags = v
-                        .split(',')
-                        .map(|t| strip_ref(t.trim()))
-                        .filter(|t| !t.is_empty())
-                        .collect();
-                }
-                props.push((k, v));
-            }
-        }
-    }
-    (props, tags)
-}
-
 #[cfg(test)]
 pub(crate) fn run_query(graph: &impl GraphRead, query_src: &str) -> Vec<RefGroup> {
     run_query_bounded(graph, query_src, usize::MAX, usize::MAX).groups
@@ -1266,7 +1246,7 @@ fn run_pred_bounded(
         let mut groups: Vec<RefGroup> = Vec::new();
         let mut recency: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
         for (entry, doc) in pages {
-            let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
+            let (page_props, page_tags) = page_facets(doc);
             let ctx = EvalCtx {
                 journal: entry.date_key,
                 is_journal: entry.kind == PageKind::Journal,
@@ -1428,7 +1408,7 @@ pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -
     let Some(pred) = Pred::parse(src, today) else {
         return false;
     };
-    let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
+    let (page_props, page_tags) = page_facets(doc);
     let ctx = EvalCtx {
         journal: entry.date_key,
         is_journal: entry.kind == PageKind::Journal,
@@ -1569,7 +1549,7 @@ pub(crate) fn page_affects_advanced_query(
     let (Some(pred), _, _) = advanced_pred(query_src, today) else {
         return false;
     };
-    let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
+    let (page_props, page_tags) = page_facets(doc);
     let ctx = EvalCtx {
         journal: entry.date_key,
         is_journal: entry.kind == PageKind::Journal,
@@ -1837,7 +1817,11 @@ fn parse_adv_group(
         ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
         return None;
     }
-    let inner = &c[1..c.len().saturating_sub(1)];
+    if !c.ends_with(')') || c.len() < 2 {
+        ignored.push("pattern".into());
+        return None;
+    }
+    let inner = &c[1..c.len() - 1];
     let head = inner
         .split_whitespace()
         .next()
@@ -2187,14 +2171,18 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
         .lines()
         .filter(|l| {
             let t = l.trim();
-            let drop = t
-                .get(..4)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("id::"))
-                || t.get(..4)
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(":id:"))
-                || (strip_template
-                    && (t.starts_with("template::")
-                        || t.starts_with("template-including-parent::")));
+            let drop =
+                t.get(..4)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("id::"))
+                    || t.get(..4)
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(":id:"))
+                    || (strip_template
+                        && (t
+                            .get(.."template::".len())
+                            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("template::"))
+                            || t.get(.."template-including-parent::".len()).is_some_and(
+                                |prefix| prefix.eq_ignore_ascii_case("template-including-parent::"),
+                            )));
             !drop
         })
         .collect::<Vec<_>>()
@@ -2383,7 +2371,7 @@ pub(crate) fn autocomplete_property_facets_bounded(
         };
 
         for (_entry, doc) in pages {
-            for (key, value) in page_facets(doc.pre_block.as_deref()).0 {
+            for (key, value) in page_facets(doc).0 {
                 offer(key, value);
                 if exceeded.get() {
                     break;
@@ -3669,6 +3657,70 @@ fn parse_opt_value(toks: &[Tok], pos: &mut usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_advanced_query_returns_unsupported() {
+        let dir =
+            std::env::temp_dir().join(format!("tine-malformed-advanced-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        let graph = test_snapshot(&dir);
+        let result = run_advanced_query(&graph, "[:find ?b :where (");
+        assert!(!result.supported);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn org_directives_resolve_alias_and_match_page_facets() {
+        let dir = std::env::temp_dir().join(format!("tine-org-query-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        std::fs::write(
+            dir.join("pages/Book.org"),
+            "#+TITLE: Book\n#+ALIAS: Novel\n#+tags: research, reading\n\n* chapter\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("pages/Empty.org"),
+            "#+TITLE: Empty\n#+ALIAS: Vacant\n",
+        )
+        .unwrap();
+        let (store, _, _) =
+            crate::store::Store::open(&dir, crate::store::OpenOptions::default()).unwrap();
+        let graph = store.whole_graph().unwrap();
+        assert!(matches!(
+            graph.resolve("Novel", false),
+            crate::Resolved::Alias { .. }
+        ));
+        assert!(matches!(
+            graph.resolve("Vacant", false),
+            crate::Resolved::Alias { .. }
+        ));
+        let snapshot = graph.test_read_snapshot();
+        assert_eq!(run_query(&snapshot, "(page-property title Book)").len(), 1);
+        assert_eq!(run_query(&snapshot, "(page-tags research)").len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn uppercase_template_marker_is_removed_from_inserted_copy() {
+        let dir = std::env::temp_dir().join(format!("tine-template-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        std::fs::write(
+            dir.join("pages/Templates.md"),
+            "- boilerplate\n  Template:: sample\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let found = templates(&graph);
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].blocks[0]
+            .raw
+            .to_ascii_lowercase()
+            .contains("template::"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn test_snapshot(dir: &std::path::Path) -> std::sync::Arc<crate::model::ReadSnapshot> {
         let (store, _, _) =

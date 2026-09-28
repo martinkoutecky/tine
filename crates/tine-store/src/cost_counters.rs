@@ -10,6 +10,7 @@ static BYTES_WRITTEN: AtomicU64 = AtomicU64::new(0);
 static FILES_WRITTEN: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_REBUILDS: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_NANOS: AtomicU64 = AtomicU64::new(0);
+static MEMO_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
@@ -32,6 +33,8 @@ pub struct Counts {
     pub snapshot_rebuilds: u64,
     /// Time inside ReadSnapshot capture, for diagnostic measurement only.
     pub snapshot_nanos: u64,
+    /// Page slots inspected while carrying query memos across a save.
+    pub memo_page_probes: u64,
 }
 
 /// Reset all primitive counters immediately before a measured operation.
@@ -46,6 +49,7 @@ pub fn reset() {
         &FILES_WRITTEN,
         &SNAPSHOT_REBUILDS,
         &SNAPSHOT_NANOS,
+        &MEMO_PAGE_PROBES,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -63,6 +67,7 @@ pub fn snapshot() -> Counts {
         files_written: FILES_WRITTEN.load(Ordering::Relaxed),
         snapshot_rebuilds: SNAPSHOT_REBUILDS.load(Ordering::Relaxed),
         snapshot_nanos: SNAPSHOT_NANOS.load(Ordering::Relaxed),
+        memo_page_probes: MEMO_PAGE_PROBES.load(Ordering::Relaxed),
     }
 }
 
@@ -90,4 +95,7 @@ pub(crate) fn snapshot_rebuild() {
 }
 pub(crate) fn snapshot_elapsed(duration: std::time::Duration) {
     SNAPSHOT_NANOS.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+}
+pub(crate) fn memo_page_probes(count: u64) {
+    MEMO_PAGE_PROBES.fetch_add(count, Ordering::Relaxed);
 }
