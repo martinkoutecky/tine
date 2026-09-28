@@ -1,7 +1,7 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, readOwned, writeOwned } from "../owned";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar } from "../ui";
 import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
@@ -408,23 +408,27 @@ export function QuickSwitcher(): JSX.Element {
         if (!target) throw new Error("resolved page disappeared");
         return { name: target.name, pageKind: target.kind, path: target.id };
       }
-      const saved = await readOwned(owner, saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration }));
+      const saved = await writeOwned(owner, saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration }));
       if (saved.kind === "stale") return null;
       return null;
     } catch (error) {
       if (error instanceof CreatePageRefusal && error.reason === "graph-changed") return null;
-      if (owner()) pushToast(`Could not create “${name}”. It will be saved on your first edit.`, "error");
+      pushToast(`Could not create “${name}”: ${String(error)}. It will be saved on your first edit.`, "error");
       return null;
     }
   };
 
   const createPage = async (name: string) => {
     const owner = graphOwner();
-    const result = await readOwned(owner, createPageFile(name));
-    if (result.kind === "stale") return;
-    const target = result.value;
-    if (target) openPageTarget(target);
-    else openPage(name, "page");
+    try {
+      const result = await writeOwned(owner, createPageFile(name));
+      if (result.kind === "stale") return;
+      const target = result.value;
+      if (target) openPageTarget(target);
+      else openPage(name, "page");
+    } catch (error) {
+      pushToast(`Could not create “${name}”: ${String(error)}`, "error");
+    }
   };
 
   const move = (d: number) => {

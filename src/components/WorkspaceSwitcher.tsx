@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, readOwned, writeOwned } from "../owned";
 import { EmojiText } from "../render/emoji";
 import { registerTransientLayer } from "../transientLayers";
 import { pushToast } from "../toasts";
@@ -78,7 +78,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
     const confirmed = await readOwned(owner, backend().confirm(`Delete workspace “${name}”?`, "Delete workspace"));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
-      await readOwned(owner, deleteWorkspace(workspace.id));
+      await writeOwned(owner, deleteWorkspace(workspace.id));
     } catch (error) {
       pushToast(`Couldn't delete workspace: ${String(error)}`, "error");
     }

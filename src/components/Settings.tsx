@@ -80,7 +80,7 @@ import {
 } from "../launcherRanking";
 import { registerTransientLayer } from "../transientLayers";
 import { writePreference, loadPreference } from "../preferenceWrites";
-import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
+import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
 // `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
@@ -192,12 +192,13 @@ export function Settings(): JSX.Element {
     setPublishMsg("Exporting…");
     const owner = graphOwner();
     try {
-      const result = await readOwned(owner, backend().publishHtml());
+      const result = await writeOwned(owner, backend().publishHtml());
       if (result.kind === "stale") return;
       const [dir, n] = result.value;
       setPublishMsg(`Exported ${n} pages to ${dir}`);
     } catch (e) {
       if (owner()) setPublishMsg(`Failed: ${String(e)}`);
+      else pushToast(`Export failed: ${String(e)}`, "error");
     }
   };
 
@@ -1881,17 +1882,16 @@ function BackupsTab(): JSX.Element {
   createEffect(() => {
     void refresh();
   });
-
   const saveKeep = async (n: number) => {
     const v = Math.max(1, Math.min(1000, Math.floor(n) || 12));
     setKeep(v);
     const owner = graphOwner(() => alive);
     try {
-      const result = await readOwned(owner, backend().setBackupKeep(v));
+      const result = await writeOwned(owner, backend().setBackupKeep(v));
       if (result.kind === "stale") return;
       void refresh(); // a lower cap prunes immediately on the Rust side
     } catch (e) {
-      if (owner()) pushToast(`Couldn't save: ${String(e)}`, "error");
+      pushToast(`Couldn't save: ${String(e)}`, "error");
     }
   };
 
@@ -2085,7 +2085,7 @@ function JournalConflictsPanel(): JSX.Element {
   const reconcile = async (op: () => Promise<void>, ok: string) => {
     const owner = graphOwner();
     try {
-      const result = await readOwned(owner, op());
+      const result = await writeOwned(owner, op());
       if (result.kind === "stale") return;
       pushToast(ok, "success");
       await refreshJournalConflicts(true);
@@ -2100,7 +2100,7 @@ function JournalConflictsPanel(): JSX.Element {
           `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
-    await readOwned(owner, reconcile(() => backend().trashJournalFile(name, "delete-page"), `Moved ${name} to trash`));
+    await writeOwned(owner, reconcile(() => backend().trashJournalFile(name, "delete-page"), `Moved ${name} to trash`));
   };
   const openFileRow = (file: JournalFile, title: string) => {
     openFile(file.path, title, "journal");
@@ -2174,7 +2174,7 @@ function SyncConflictsPanel(): JSX.Element {
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
-      const result = await readOwned(owner, backend().trashSyncConflict(c.path, "delete-page"));
+      const result = await writeOwned(owner, backend().trashSyncConflict(c.path, "delete-page"));
       if (result.kind === "stale") return;
       pushToast(`Discarded ${name}`, "success");
       await readOwned(owner, refreshSyncConflicts());
@@ -2367,7 +2367,7 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
     if (!currentDiff || diff.loading) return;
     setBusy(true);
     try {
-      const result = await readOwned(owner, backend().resolveSyncConflict(
+      const result = await writeOwned(owner, backend().resolveSyncConflict(
         winner,
         props.conflict.path,
         decisions(),
@@ -2723,7 +2723,7 @@ function AssetsTab(): JSX.Element {
     // No confirm: the file only moves to the recoverable logseq/.tine-trash, so
     // trashing a batch stays fast. (Empty-trash, which is permanent, still asks.)
     try {
-      const result = await readOwned(owner, backend().trashAsset(a.name, binding.backendGeneration));
+      const result = await writeOwned(owner, backend().trashAsset(a.name, binding.backendGeneration));
       if (result.kind === "stale") return;
       setList((l) => l.filter((x) => x.name !== a.name));
       pushToast(`Moved ${a.name} to trash`, "success");
@@ -2743,7 +2743,7 @@ function AssetsTab(): JSX.Element {
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
-      const result = await readOwned(owner, backend().emptyAssetTrash(binding.backendGeneration));
+      const result = await writeOwned(owner, backend().emptyAssetTrash(binding.backendGeneration));
       if (result.kind === "stale") return;
       const n = result.value;
       setTrashInfo((t) => ({ ...t, count: 0, bytes: 0 }));

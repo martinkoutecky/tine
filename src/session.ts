@@ -1,5 +1,6 @@
 import { backend } from "./backend";
-import { graphOwner, readOwned } from "./owned";
+import { graphOwner, readOwned, writeOwned } from "./owned";
+import { pushToast } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
 import {
   installSessionPersistence,
@@ -276,10 +277,10 @@ export async function flushSession(): Promise<void> {
   const owner = graphOwner();
   clearTimeout(saveTimer);
   try {
-    const result = await readOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())));
+    const result = await writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())));
     if (result.kind === "current") clearLegacyRecentSource();
-  } catch {
-    // best-effort
+  } catch (error) {
+    pushToast(`Could not save session: ${String(error)}`, "error");
   }
 }
 
@@ -288,9 +289,9 @@ export function scheduleSessionSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     if (!owner()) return;
-    void readOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())))
+    void writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())))
       .then((result) => { if (result.kind === "current") clearLegacyRecentSource(); })
-      .catch(() => {});
+      .catch((error) => pushToast(`Could not save session: ${String(error)}`, "error"));
   }, 150);
 }
 

@@ -7,7 +7,7 @@
  * Busy and transition state are managed here. Cost includes dirty pages, live and
  * snapshot file counts and bytes, and graph reload. */
 import { backend, type BackupInfo } from "./backend";
-import { graphOwner, ownedWhen, readOwned } from "./owned";
+import { graphOwner, ownedWhen, readOwned, writeOwned } from "./owned";
 import { flushAll } from "./document";
 import { loadGraphPath } from "./graph";
 import { graphMeta } from "./graphSession";
@@ -36,7 +36,7 @@ export async function restoreBackupFromSettings(
       return;
     }
     if (!owner()) return;
-    const restored = await readOwned(owner, backend().restoreBackup(backup.stamp, "replace-page"));
+    const restored = await writeOwned(owner, backend().restoreBackup(backup.stamp, "replace-page"));
     if (restored.kind === "stale") return;
     const outcome = await loadGraphPath(root, { forceRefresh: true, transitionHeld: true });
     if (!ownsTransition()) return;
@@ -47,7 +47,7 @@ export async function restoreBackupFromSettings(
     pushToast(`Restored snapshot from ${when}`, "success");
     refresh();
   } catch (error) {
-    if (owner()) pushToast(`Restore failed: ${String(error)}`, "error");
+    pushToast(`Restore failed: ${String(error)}`, "error");
   } finally {
     if (ownsTransition()) setGraphTransitioning(false);
     setBusy(false);

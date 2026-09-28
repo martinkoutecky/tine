@@ -52,7 +52,7 @@ import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "
 import { flushAll, appendToTodayJournal, captureToPage } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
-import { graphOwner, latestOwner, readOwned, type Owner } from "./owned";
+import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -397,7 +397,7 @@ export function PaneEdgeHighlights(): JSX.Element {
 
 /** Install mobile external-link delegation after a current platform read. A
  * retired owner installs nothing. O(1) per click; platform failures reject. */
-export async function installMobileExternalLinkHandler(owner: Owner = () => true): Promise<() => void> {
+export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen()): Promise<() => void> {
   const platform = await readOwned(owner, backend().appPlatform());
   if (platform.kind === "stale" || platform.value === "desktop") return () => {};
 
@@ -461,10 +461,15 @@ export function App(): JSX.Element {
   });
 
   onMount(async () => {
+    let alive = true;
+    onCleanup(() => { alive = false; });
+    const owner = graphOwner(() => alive);
     const injected = (window as any).__GRAPH_PATH__ ?? "";
     let startup = "";
     try {
-      startup = (await backend().startupGraphPath()) ?? "";
+      const result = await readOwned(owner, backend().startupGraphPath());
+      if (result.kind === "stale") return;
+      startup = result.value ?? "";
     } catch {
       startup = "";
     }
@@ -479,7 +484,7 @@ export function App(): JSX.Element {
       // on first run (the empty/`""` path legitimately has no graph yet).
       dbg(`graph load failed: ${String(e)}`);
     } finally {
-      setFirstLoadDone(true);
+      if (owner()) setFirstLoadDone(true);
     }
   });
 
@@ -507,19 +512,21 @@ export function App(): JSX.Element {
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.
   onMount(() => {
     let unsub = () => {};
-    void backend()
-      .onConflictsChanged(() => void refreshSyncConflicts())
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
+    let alive = true;
+    const owner = graphOwner(() => alive);
+    void readOwnedResource(owner, backend().onConflictsChanged(() => void refreshSyncConflicts()), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
   });
   // One graph-file watcher for every pane. PageView instances render pane
   // content; they do not each own a backend subscription.
   onMount(() => {
     let unsub = () => {};
-    void backend()
-      .onGraphChanged((c) => void applyGraphChange(c))
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
+    let alive = true;
+    const owner = graphOwner(() => alive);
+    void readOwnedResource(owner, backend().onGraphChanged((c) => void applyGraphChange(c)), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
   });
   // Load the asset-filename format template (Settings → Backups → Asset names).
   onMount(() => void initAssetSettings());
@@ -534,7 +541,7 @@ export function App(): JSX.Element {
   onMount(() => {
     let uninstall = () => {};
     let disposed = false;
-    void installMobileExternalLinkHandler(() => !disposed).then((u) => {
+    void installMobileExternalLinkHandler(ownedWhen(() => !disposed)).then((u) => {
       if (disposed) u();
       else uninstall = u;
     });
@@ -566,7 +573,7 @@ export function App(): JSX.Element {
         // Close only this graph window. The backend exits the process (including
         // Linux WebKit cleanup) only when this is the final graph window.
         try {
-          await backend().closeGraphWindow();
+          await writeOwned(graphOwner(), backend().closeGraphWindow());
           return;
         } catch {
           // fall through to the direct close below
@@ -696,11 +703,13 @@ export function App(): JSX.Element {
   createEffect(() => {
     const t = theme();
     if (!isTauri()) return;
+    const owner = graphOwner();
     void (async () => {
       try {
         const { emitTo } = await import("@tauri-apps/api/event");
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        if ((await backend().captureTarget()) === getCurrentWindow().label) {
+        const target = await readOwned(owner, backend().captureTarget());
+        if (target.kind === "current" && target.value === getCurrentWindow().label) {
           await emitTo("capture", "capture-apply-theme", { theme: t });
         }
       } catch {

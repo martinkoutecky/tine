@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
-import { graphOwner, readOwned, serializeOwned, type Owned, type Owner } from "./owned";
+import { graphOwner, readOwned, serializeDurable, writeOwned, type Owned, type Owner } from "./owned";
 import { pushToast } from "./toasts";
 import { applyParsedSession, buildPersistedSession, flushSession, parsePersistedSession, scheduleSessionSave, type PersistedSession } from "./session";
 
@@ -44,7 +44,7 @@ async function enqueue<T>(operation: (scope: WorkspaceOperation) => Promise<T>):
     },
   };
   const run = () => { assert(); return operation(scope); };
-  const result = await serializeOwned(operationQueue, owner, run);
+  const result = await serializeDurable(operationQueue, owner, run);
   if (result.kind === "stale") throw new Error("The graph changed during the workspace operation");
   return result.value;
 }
@@ -115,8 +115,9 @@ async function persist(next: WorkspaceRegistry, scope: WorkspaceOperation): Prom
   scope.assert();
   let outcome: "durable" | "published-unsynced";
   try {
-    outcome = await scope.after(readOwned(scope.owner, backend().saveWorkspaces(JSON.stringify(next))));
+    outcome = await scope.after(writeOwned(scope.owner, backend().saveWorkspaces(JSON.stringify(next))));
   } catch (error) {
+    if (!scope.owner()) throw error;
     // A transport failure may arrive after publication. Read the serialized
     // registry before another queued operation can build a replacement.
     scope.assert();
@@ -170,7 +171,7 @@ export function initializeWorkspaces(): Promise<void> {
 
 export function saveActiveWorkspace(): Promise<void> {
   return enqueue(async (scope) => {
-    await scope.after(readOwned(scope.owner, flushSession()));
+    await scope.after(writeOwned(scope.owner, flushSession()));
     const current = registry();
     const next: WorkspaceRegistry = {
       ...current,
@@ -187,7 +188,7 @@ export function saveActiveWorkspace(): Promise<void> {
 
 export function switchWorkspace(targetId: string): Promise<void> {
   return enqueue(async (scope) => {
-    await scope.after(readOwned(scope.owner, flushSession()));
+    await scope.after(writeOwned(scope.owner, flushSession()));
     const current = registry();
     const target = current.workspaces.find((workspace) => workspace.id === targetId);
     if (!target) throw new Error("Workspace not found");
@@ -210,7 +211,7 @@ export function switchWorkspace(targetId: string): Promise<void> {
 
 export function createWorkspace(name: string): Promise<string> {
   return enqueue(async (scope) => {
-    await scope.after(readOwned(scope.owner, flushSession()));
+    await scope.after(writeOwned(scope.owner, flushSession()));
     const current = registry();
     const id = workspaceId();
     const fresh: Workspace = { id, name: normalizeName(name), blob: defaultWorkspaceSession() };
@@ -254,7 +255,7 @@ export function deleteWorkspace(id: string): Promise<void> {
     const removed = current.workspaces.find((workspace) => workspace.id === id);
     if (!removed) throw new Error("Workspace not found");
     const deletingActive = id === current.activeId;
-    if (deletingActive) await scope.after(readOwned(scope.owner, flushSession()));
+    if (deletingActive) await scope.after(writeOwned(scope.owner, flushSession()));
     let remaining = current.workspaces.filter((workspace) => workspace.id !== id);
     if (!remaining.length) {
       remaining = [{ id: workspaceId(), name: "", blob: defaultWorkspaceSession() }];

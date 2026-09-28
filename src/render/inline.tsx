@@ -27,7 +27,7 @@ import { visibleBody } from "./block";
 import { AstBody } from "./body";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, readOwned, writeOwned } from "../owned";
 import { writeClipboardText } from "../clipboard";
 import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
@@ -795,7 +795,7 @@ function AssetImage(props: {
     if (confirmed.kind === "stale" || !confirmed.value) return;
     removeMediaToken(props.blockId, props.alt, props.url); // drop the reference first (saves the block)
     try {
-      const result = await readOwned(owner, backend().trashAsset(name, binding.backendGeneration));
+      const result = await writeOwned(owner, backend().trashAsset(name, binding.backendGeneration));
       if (result.kind === "stale") return;
       pushToast("Asset moved to trash", "success");
     } catch (err) {
@@ -818,7 +818,7 @@ function AssetImage(props: {
     if (!name || !ed) return;
     const command = await readOwned(owner, resolveMediaEditorCommand(ed));
     if (command.kind === "stale") return;
-    void readOwned(owner, backend().editAssetExternal(name, command.value, binding.backendGeneration))
+    void writeOwned(owner, backend().editAssetExternal(name, command.value, binding.backendGeneration))
       .catch(() => { pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"); });
     refreshAssetOnReturn(name);
   };

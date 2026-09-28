@@ -3,6 +3,7 @@ import { backend, type InstalledPluginRecord } from "../backend";
 import { setRaw, node as docNode } from "../document";
 import { pushToast } from "../toasts";
 import { platformKind } from "../platform";
+import { latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import {
   parsePluginManifest,
   supportsPlatform,
@@ -129,6 +130,7 @@ export class PluginManager {
   }
 
   async initialize(revoked: RevokedPluginVersions = new Set(), activationHeld = false) {
+    const owner = latestOwner(this, "initialize");
     // Seed before the first await. A live refresh may supersede this set while
     // platform/storage reads are pending, but initialization never writes the
     // older startup snapshot again afterward.
@@ -138,15 +140,20 @@ export class PluginManager {
     this.desiredEnabled.clear();
     this.intentGeneration.clear();
     this.platform = await platformKind();
-    const records = await backend().listInstalledPlugins();
-    const parsed = await Promise.all(records.map(async (record) => {
+    const loaded = await readOwned(owner, backend().listInstalledPlugins());
+    if (loaded.kind === "stale") return;
+    const records = loaded.value;
+    const parsedResults = await Promise.all(records.map(async (record) => {
       const plugin = this.parseRecord(record);
       if (!plugin.error) plugin.settings = await this.loadSettings(plugin.manifest);
+      if (!owner()) return null;
       const key = versionKey(plugin.manifest.id, plugin.manifest.version);
       const desired = record.enabled && !this.revoked.has(key);
       const intent = this.recordIntent(key, desired);
       return { record, plugin, intent };
     }));
+    if (!owner()) return;
+    const parsed = parsedResults.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
     const managed = parsed.map(({ plugin }) => plugin);
     setInstalledPlugins(managed);
     this.initialized = true;
@@ -465,7 +472,8 @@ export class PluginManager {
     const key = versionKey(plugin.manifest.id, plugin.manifest.version);
     return this.enqueuePersistence(key, async () => {
       if (!this.intentIsCurrent(key, intent, true) || this.revoked.has(key)) return false;
-      await backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, true);
+      await writeOwned(ownedWhen(() => this.intentIsCurrent(key, intent, true) && !this.revoked.has(key)),
+        backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, true));
       return this.intentIsCurrent(key, intent, true) && !this.revoked.has(key);
     });
   }
@@ -478,7 +486,8 @@ export class PluginManager {
     const key = versionKey(plugin.manifest.id, plugin.manifest.version);
     return this.enqueuePersistence(key, async () => {
       if (!this.intentIsCurrent(key, intent, false)) return false;
-      await backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false);
+      await writeOwned(ownedWhen(() => this.intentIsCurrent(key, intent, false)),
+        backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false));
       if (!this.intentIsCurrent(key, intent, false)) return false;
       this.patch(plugin.manifest.id, plugin.manifest.version, {
         enabled: false,
@@ -494,7 +503,8 @@ export class PluginManager {
     try {
       await this.enqueuePersistence(key, async () => {
         if (!this.intentIsCurrent(key, intent, false)) return;
-        await backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false);
+        await writeOwned(ownedWhen(() => this.intentIsCurrent(key, intent, false)),
+          backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false));
         if (!this.intentIsCurrent(key, intent, false)) return;
         this.durableDisablePending.delete(key);
         this.patch(plugin.manifest.id, plugin.manifest.version, {
@@ -576,7 +586,10 @@ export class PluginManager {
     let runtime: PluginRuntime | undefined;
     let registeredStarting = false;
     try {
-      const bytes = await backend().readPluginEntry(id, version);
+      const loaded = await readOwned(ownedWhen(() => this.intentIsCurrent(key, intent, true)
+        && !this.revoked.has(key) && !this.activationHeld), backend().readPluginEntry(id, version));
+      if (loaded.kind === "stale") { assertAllowed(); throw new Error("plugin startup was superseded"); }
+      const bytes = loaded.value;
       assertAllowed();
       if (plugin.sha256 !== "mock" && (await digestHex(bytes)) !== plugin.sha256) {
         throw new Error("installed plugin digest does not match its recorded bytes");

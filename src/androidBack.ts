@@ -1,4 +1,5 @@
 import type { SafeCloseCoordinator, SafeClosePrepareResult } from "./safeClose";
+import { ownedWhen, readOwned, readOwnedResource } from "./owned";
 
 export interface AndroidBackPayload {
   canGoBack: boolean;
@@ -49,16 +50,15 @@ export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
 export function installAndroidBackHandler(deps: AndroidBackInstallDeps): () => void {
   let disposed = false;
   let listener: AndroidBackListener | null = null;
+  const owner = ownedWhen(() => !disposed);
 
-  void deps.platform()
+  void readOwned(owner, deps.platform())
     .then(async (platform) => {
-      if (platform !== "android" || disposed) return null;
-      return deps.subscribe((payload) => { dispatchAndroidBack(payload, deps); });
-    })
-    .then((installed) => {
-      if (!installed) return;
-      if (disposed) void installed.unregister();
-      else listener = installed;
+      if (platform.kind === "stale" || platform.value !== "android") return;
+      const installed = await readOwnedResource(owner,
+        deps.subscribe((payload) => { dispatchAndroidBack(payload, deps); }),
+        (handle) => handle.unregister());
+      if (installed.kind === "current") listener = installed.value;
     })
     .catch((error) => deps.setupFailed?.(error));
 

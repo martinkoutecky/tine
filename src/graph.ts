@@ -3,7 +3,7 @@
 
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
-import { graphOwner, readOwned } from "./owned";
+import { graphOwner, readOwned, writeOwned } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer } from "./ui";
 import { pushToast } from "./toasts";
@@ -63,7 +63,7 @@ export async function authorizeGraphAccess(path: string): Promise<boolean> {
     );
     return false;
   }
-  const approved = await readOwned(owner, backend().approveExternalAssets(access.graph_root, external));
+  const approved = await writeOwned(owner, backend().approveExternalAssets(access.graph_root, external));
   return approved.kind === "current";
 }
 
@@ -341,7 +341,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   if (!dir) return { kind: "aborted" };
   let root: string;
   try {
-    const created = await readOwned(owner, backend().createGraph(dir));
+    const created = await writeOwned(owner, backend().createGraph(dir));
     if (created.kind === "stale") return { kind: "aborted" };
     root = created.value;
   } catch (e) {

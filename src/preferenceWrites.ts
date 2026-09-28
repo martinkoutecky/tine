@@ -29,8 +29,8 @@ export function writePreference<T>(
   apply(value);
   state.queue = state.queue.then(async () => {
     try {
-      const result = await readOwned(() => true, persist(value));
-      if (result.kind === "current") state.committed = value;
+      await persist(value);
+      state.committed = value;
     } catch {
       if (revisionOwner(read, revision)()) apply(state.committed);
       pushToast(`Could not save ${label}.`, "error");

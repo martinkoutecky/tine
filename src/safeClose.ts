@@ -57,7 +57,7 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
         // A pending PDF view-state timer is not visible to the page persistence
         // engine until it fires. Enroll and drain it first while this window's
         // current graph binding still owns every PDF mutation.
-        const result = await readOwned(owner, bounded(deps.flushPdfWork(), 4000, false));
+        const result = await writeOwned(owner, bounded(deps.flushPdfWork(), 4000, false));
         if (result.kind === "stale") return "rejected";
         pdfSaved = result.value;
       } catch {
@@ -70,7 +70,7 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
 
       let saved = false;
       try {
-        const result = await readOwned(owner, bounded(deps.flushAll(), 4000, false));
+        const result = await writeOwned(owner, bounded(deps.flushAll(), 4000, false));
         if (result.kind === "stale") return "rejected";
         saved = result.value;
       } catch {
@@ -91,7 +91,7 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
       }
 
       try {
-        const result = await readOwned(owner, bounded(deps.flushSession(), 1000, undefined));
+        const result = await writeOwned(owner, bounded(deps.flushSession(), 1000, undefined));
         if (result.kind === "stale") return "rejected";
       } catch {
         // Session state is best effort after graph content was saved or the user
@@ -106,4 +106,4 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
 
   return { prepare, reset, inFlight: () => closing };
 }
-import { advanceRevision, readOwned, revisionOwner } from "./owned";
+import { advanceRevision, readOwned, revisionOwner, writeOwned } from "./owned";

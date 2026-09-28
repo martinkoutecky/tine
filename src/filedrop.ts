@@ -13,7 +13,7 @@ import { formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibl
 import { pushToast } from "./toasts";
 import { reportStaleAsset } from "./assetLanding";
 import { captureBinding } from "./binding";
-import { graphOwner, readOwned } from "./owned";
+import { graphOwner, readOwned, writeOwned } from "./owned";
 import { graphMeta } from "./graphSession";
 import type { OutlineNode } from "./editor/outline";
 
@@ -92,7 +92,7 @@ export async function installFileDrop(): Promise<() => void> {
           continue;
         }
         const orig = basename(path) || undefined;
-        const result = await readOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), binding.backendGeneration)));
+        const result = await writeOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), binding.backendGeneration)));
         if (result.kind === "stale") { storedAssets++; continue; }
         const saved = result.value;
         storedAssets++;
@@ -113,7 +113,7 @@ export async function installFileDrop(): Promise<() => void> {
       withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
       pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
     } catch (e) {
-      if (owner()) pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
+      pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
     }
   });
 

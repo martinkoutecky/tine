@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceRevision, currentRevision, latestOwner, readOwned, revisionOwner, serializeOwned } from "./owned";
+import { advanceRevision, currentRevision, latestOwner, readOwned, readOwnedResource, revisionOwner, serializeDurable, serializeOwned, writeOwned } from "./owned";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -34,6 +34,13 @@ describe("owned asynchronous completions", () => {
     await expect(result).resolves.toEqual({ kind: "stale" });
   });
 
+  it("does not classify an owner predicate error as a work failure", async () => {
+    const failure = new Error("owner failed");
+    let checks = 0;
+    await expect(readOwned(() => { checks++; throw failure; }, Promise.resolve(1))).rejects.toBe(failure);
+    expect(checks).toBe(1);
+  });
+
   it("tracks device write revisions without touching another preference", () => {
     const first = {}, second = {};
     const before = revisionOwner(first, currentRevision(first));
@@ -55,5 +62,48 @@ describe("owned asynchronous completions", () => {
     expect(await a).toEqual({ kind: "current", value: 7 });
     await expect(b).rejects.toThrow("second write failed");
     expect(started).toEqual([1, 2]);
+  });
+
+  it("reports a durable failure after its UI owner retires", async () => {
+    let live = true;
+    const pending = deferred<number>();
+    const result = writeOwned(() => live, pending.promise);
+    live = false;
+    const failure = Object.assign(new Error("disk failed"), { family: "io" });
+    pending.reject(failure);
+    await expect(result).rejects.toBe(failure);
+  });
+
+  it("releases a resource returned after its owner retires", async () => {
+    let live = true;
+    const pending = deferred<() => void>();
+    let released = 0;
+    const result = readOwnedResource(() => live, pending.promise, (dispose) => dispose());
+    live = false;
+    pending.resolve(() => { released++; });
+    await expect(result).resolves.toEqual({ kind: "stale" });
+    expect(released).toBe(1);
+  });
+
+  it("releases a completed resource when its owner predicate fails", async () => {
+    const failure = new Error("owner failed");
+    let released = 0;
+    await expect(readOwnedResource(() => { throw failure; }, Promise.resolve(1), () => { released++; }))
+      .rejects.toBe(failure);
+    expect(released).toBe(1);
+  });
+
+  it("rejects a same-key nested serialization instead of waiting on itself", async () => {
+    const key = {};
+    await expect(serializeOwned(key, () => true, async () =>
+      await serializeOwned(key, () => true, async () => 1)
+    )).rejects.toThrow(/reentrant|same key/i);
+  });
+
+  it("names the durable queue when rejecting nested durable work", async () => {
+    const key = {};
+    await expect(serializeDurable(key, () => true, async () =>
+      await serializeDurable(key, () => true, async () => 1)
+    )).rejects.toThrow("serializeDurable: reentrant same key");
   });
 });

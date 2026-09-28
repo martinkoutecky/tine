@@ -18,14 +18,14 @@ const FROZEN_SWALLOW_COUNT = 26;
 const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/assetCache.ts:130 src/assetCache.ts:212 src/assetCache.ts:264 src/assetCache.ts:69
   src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
-  src/components/Block.tsx:3153 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 src/components/Macro.tsx:321 src/components/PdfViewer.tsx:1026
+  src/components/Block.tsx:3154 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 src/components/Macro.tsx:321 src/components/PdfViewer.tsx:1026
   src/components/PdfViewer.tsx:1091 src/components/PdfViewer.tsx:522
   src/capture.tsx:264 src/capture.tsx:572 src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
   src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 
   
   src/components/UnlinkedReferences.tsx:39 src/components/WindowChrome.tsx:24
   src/debug.ts:14
-  src/pageIconBatch.ts:44 src/plugins/manager.ts:121
+  src/pageIconBatch.ts:44 src/plugins/manager.ts:122
   src/plugins/startup.ts:29 src/queryResultCache.ts:55 src/session.ts:293 src/sheet/queryHydration.ts:233
   src/update.ts:61
 `.trim().split(/\s+/));
@@ -39,7 +39,7 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/components/AboutTab.tsx:17": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:117": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:154": "legacy best-effort operation needs an error-family audit",
-  "src/components/Block.tsx:3153": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
+  "src/components/Block.tsx:3154": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
   "src/components/HelpShortcuts.tsx:51": "legacy best-effort operation needs an error-family audit",
   "src/components/LinkedReferences.tsx:43": "legacy error-prose branch; replace with fixed error family",
   "src/components/Macro.tsx:321": "legacy error-prose branch; replace with fixed error family",
@@ -49,10 +49,9 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/components/UnlinkedReferences.tsx:39": "legacy error-prose branch; replace with fixed error family",
   "src/components/WindowChrome.tsx:24": "legacy best-effort operation needs an error-family audit",
   "src/debug.ts:14": "legacy best-effort operation needs an error-family audit",
-  "src/plugins/manager.ts:121": "failed queued write still rejects to caller; catch only keeps the next queued write running",
+  "src/plugins/manager.ts:122": "failed queued write still rejects to caller; catch only keeps the next queued write running",
   "src/plugins/startup.ts:29": "rejection remains on returned pluginInitialization promise; main.tsx reports it",
   "src/queryResultCache.ts:55": "legacy best-effort operation needs an error-family audit",
-  "src/session.ts:293": "census #1: session persistence awaits design batch",
   "src/sheet/queryHydration.ts:233": "legacy best-effort operation needs an error-family audit",
   "src/update.ts:61": "legacy best-effort operation needs an error-family audit",
 };

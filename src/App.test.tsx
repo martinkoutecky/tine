@@ -2,6 +2,8 @@ import type { PageDto, PageRead } from "./types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { installMobileExternalLinkHandler } from "./App";
+import { App } from "./App";
+import { render } from "solid-js/web";
 import { paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import { markDirty, resetStore, setRaw } from "./document";
 import { setBlockMoving } from "./document/edits/moves";
@@ -42,6 +44,20 @@ function node(id: string, pageName: string): StoreNode {
 }
 
 describe("mobile external link delegation", () => {
+  it("releases a watcher handle that arrives after App unmounts", async () => {
+    let finish!: (unlisten: () => void) => void;
+    const unlisten = vi.fn();
+    vi.spyOn(backend(), "onConflictsChanged").mockImplementationOnce(() =>
+      new Promise((resolve) => { finish = resolve; }));
+    vi.spyOn(backend(), "onGraphChanged").mockResolvedValue(() => {});
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <App />, host);
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    dispose();
+    finish(unlisten);
+    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledOnce());
+  });
   it("does not install a link listener after its view retires during platform lookup", async () => {
     let finish!: (platform: "android") => void;
     vi.spyOn(backend(), "appPlatform").mockImplementationOnce(() =>

@@ -65,6 +65,22 @@ describe("WorkspaceSwitcher", () => {
     expect(toasts()).toEqual([]);
   });
 
+  it("reports the original delete write failure after a graph switch", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    setToasts([]);
+    dispose = render(() => <WorkspaceSwitcher />, host);
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    let rejectSave!: (reason: Error) => void;
+    vi.mocked(backend().saveWorkspaces).mockImplementationOnce(() => new Promise((_, reject) => { rejectSave = reject; }));
+    host.querySelector<HTMLButtonElement>(".workspace-switcher-btn")!.click();
+    host.querySelector<HTMLButtonElement>('[aria-label="Delete Alpha"]')!.click();
+    await vi.waitFor(() => expect(rejectSave).toBeTypeOf("function"));
+    resetStore();
+    rejectSave(Object.assign(new Error("workspace disk failed"), { family: "io" }));
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.message.includes("workspace disk failed"))).toBe(true));
+  });
+
   it("renders the collapsed-sidebar fallback as the compact W control without a workspace label", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

@@ -13,7 +13,8 @@ import {
 } from "solid-js";
 import { backend, type SavePageEntry, type SavePagesResult } from "../backend";
 import { captureBinding } from "../binding";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, readOwned, writeOwned } from "../owned";
+import { pushToast } from "../toasts";
 import { errorFamily } from "../errorFamily";
 import {
   friendlySearchToDsl,
@@ -144,17 +145,26 @@ export async function materializeQueryWorkspace(
     }
 
     const page = queryWorkspacePage(name, savedQueryRaw(input));
-    const saved = await readOwned(owner, deps.savePages([{ id: resolved.id, page, baseRev: null, force: false, kinds: ["create-page"] }], binding.backendGeneration));
+    const saved = await writeOwned(owner, deps.savePages([{ id: resolved.id, page, baseRev: null, force: false, kinds: ["create-page"] }], binding.backendGeneration)
+      .then((result) => {
+        if ("failed" in result) {
+          const refusal = result.failed as { family: string };
+          throw Object.assign(new Error(refusal.family), { family: refusal.family });
+        }
+        return result as { ok: string[] };
+      }));
     if (saved.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     const result = saved.value;
-    if ("failed" in result) throw new Error(result.failed.family);
     const rev = result.ok[0];
     if (!owner()) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     bumpPageInventoryRev();
     return { ok: true, name, page, rev };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    if (!owner()) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (!owner()) {
+      pushToast(`Could not save “${name}”: ${detail}`, "error");
+      return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    }
     if (error instanceof CreatePageRefusal) {
       if (error.reason === "graph-changed" || error.reason === "stale-binding")
         return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };

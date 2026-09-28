@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { graphOwner, readOwned, type Owner } from "./owned";
+import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { openPage, openPageInNewTab } from "./router";
 import { loadGuidePages, pageByName } from "./document";
 import { bumpPageInventoryRev, graphMeta, setGraphMeta } from "./graphSession";
@@ -83,7 +83,7 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
   const page = pageByName(pageName);
   const title = guideTitleFromName(page?.name ?? pageName);
   try {
-    const copied = await readOwned(owner, backend().copyGuideIntoGraph(title, "replace-page"));
+    const copied = await writeOwned(owner, backend().copyGuideIntoGraph(title, "replace-page"));
     if (copied.kind === "stale") return;
     const result = copied.value;
     if ((result.created_pages?.length ?? 0) > 0) bumpPageInventoryRev();
@@ -95,7 +95,7 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
     );
     openPage(result.name, "page");
   } catch (e) {
-    if (owner()) pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
+    pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
   }
 }
 
@@ -105,7 +105,7 @@ function markGuideAnnounced(owner: Owner) {
   if (meta && !meta.guide_announced) {
     setGraphMeta({ ...meta, guide_announced: true });
   }
-  void readOwned(owner, backend().setGuideAnnounced(true)).catch(() => {
+  void writeOwned(owner, backend().setGuideAnnounced(true)).catch(() => {
     const current = graphMeta();
     if (current && current.root === meta?.root && current.guide_announced) {
       setGraphMeta({ ...current, guide_announced: false });

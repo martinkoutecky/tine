@@ -3,12 +3,28 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardSlot, copyBlockOutline, peekClipboardSlot } from "../clipboard";
 import { ImproveTab } from "./ImproveTab";
+import { resetStore } from "../document";
 
 async function flush() {
   for (let i = 0; i < 12; i += 1) await Promise.resolve();
 }
 
 describe("Help improve Tine privacy boundary", () => {
+  it("does not publish a comparison after its graph retires", async () => {
+    Object.assign(globalThis, { __tineDiffFixture: {
+      tineVersion: "test", lsdocVersion: "test", stats: { files: 1, totalBytes: 1 },
+      lsdocAvailable: false, findings: [],
+    } });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ImproveTab />, host);
+    (host.querySelector(".improve-run button") as HTMLButtonElement).click();
+    resetStore();
+    await flush();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(host.querySelector(".improve-report")).toBeNull();
+    dispose();
+  });
   afterEach(() => {
     Reflect.deleteProperty(globalThis, "__tineDiffFixture");
     clearClipboardSlot();

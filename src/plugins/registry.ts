@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend, type LegacyPluginRegistryCache, type PluginRegistryCacheLoad } from "../backend";
-import { readOwned } from "../owned";
+import { ownedWhen, writeOwned } from "../owned";
 import {
   PLUGIN_API_VERSION,
   PLUGIN_CAPABILITIES,
@@ -511,10 +511,11 @@ async function applyLiveSnapshot(
     try {
       // Atomic publication remains in the accepted-generation queue. A stale
       // response writes nothing; a failed write leaves the previous envelope.
-      const result = await readOwned(() => generation === latestVerifiedGeneration,
+      const result = await writeOwned(ownedWhen(() => generation === latestVerifiedGeneration),
         backend().storePluginRegistryCache(cache.indexJson, cache.signature));
       if (result.kind === "current") setRegistryPersistenceError(null);
     } catch (error) {
+      pushToast(`Could not cache verified plugin registry: ${String(error)}`, "error");
       if (generation === latestVerifiedGeneration)
         setRegistryPersistenceError(`The verified live registry is active but was not saved for restart: ${error instanceof Error ? error.message : String(error)}`);
     }

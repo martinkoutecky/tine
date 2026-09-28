@@ -5,6 +5,7 @@
 // anonymized-and-re-verified snippet. This is the faithful in-app analog of
 // graph-check.mjs's runDiff/runBench; the pure logic lives in the engine modules.
 import { backend } from "../../backend";
+import { readOwned, type Owned, type Owner } from "../../owned";
 import type { GraphSourceFile } from "../../backend";
 import { MldocClient, type Format, type Projection } from "./mldoc-client";
 import { lsdocDocumentAvailable, lsdocVersion, parseLsdocDocument } from "./lsdoc-document";
@@ -74,14 +75,19 @@ interface PairResult {
 export async function runComparison(
   opts: DiffOptions,
   onProgress: (e: ProgressEvent) => void,
-): Promise<DiffReport> {
+  owner: Owner,
+): Promise<Owned<DiffReport>> {
   const tineVersion = await currentTineVersion();
   // Screenshot/dev hook: a preloaded fixture lets the harness render the panel's
   // populated state without a live mldoc+lsdoc run. Never set in a real build.
   const fixture = (globalThis as unknown as { __tineDiffFixture?: DiffReport }).__tineDiffFixture;
-  if (fixture) return { ...fixture, tineVersion: fixture.tineVersion || tineVersion };
+  if (fixture) return owner()
+    ? { kind: "current", value: { ...fixture, tineVersion: fixture.tineVersion || tineVersion } }
+    : { kind: "stale" };
 
-  const files = await backend().graphSourceFiles(opts.includeJournals);
+  const loaded = await readOwned(owner, backend().graphSourceFiles(opts.includeJournals));
+  if (loaded.kind === "stale") return loaded;
+  const files = loaded.value;
   const stats = { files: files.length, totalBytes: files.reduce((n, f) => n + f.bytes, 0) };
   const lsdocAvailable = lsdocDocumentAvailable();
   const parserVersion = lsdocVersion();
@@ -117,7 +123,9 @@ export async function runComparison(
       findings = lsdocAvailable ? await runDiff(client, files, opts, parseBothFresh, onProgress) : [];
     }
 
-    return { tineVersion, lsdocVersion: parserVersion, stats, lsdocAvailable, bench, findings };
+    return owner()
+      ? { kind: "current", value: { tineVersion, lsdocVersion: parserVersion, stats, lsdocAvailable, bench, findings } }
+      : { kind: "stale" };
   } finally {
     client.dispose();
   }

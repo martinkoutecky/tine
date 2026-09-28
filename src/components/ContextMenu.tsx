@@ -1,7 +1,7 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { pushToast } from "../toasts";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -801,7 +801,7 @@ function PageMenu(props: {
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
-    void readOwned(owner, deletePage(name, kind, captured.path))
+    void writeOwned(owner, deletePage(name, kind, captured.path))
       .then((result) => {
         if (result.kind === "stale") return;
         const ok = result.value;
@@ -961,7 +961,7 @@ function RenamePage(props: {
     props.close(false);
     if (!next || next === from) return;
     try {
-      const renamed = await readOwned(current, renamePageOnDisk(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) }));
+      const renamed = await writeOwned(current, renamePageOnDisk(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) }));
       if (renamed.kind === "stale") return;
       if (!renamed.value) {
         if (current()) pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
@@ -971,7 +971,7 @@ function RenamePage(props: {
       openPage(next, kind);
       pushToast(`Renamed to “${next}”`, "success");
     } catch (e) {
-      if (current()) pushToast(`Rename failed: ${String(e)}`, "error");
+      pushToast(`Rename failed: ${String(e)}`, "error");
     }
   };
 

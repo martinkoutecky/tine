@@ -7,7 +7,7 @@ import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
 import { captureBinding } from "./binding";
-import { graphOwner, latestOwner, readOwned } from "./owned";
+import { graphOwner, latestOwner, readOwned, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./routerBridge";
 import type { PageTarget } from "./routeTypes";
@@ -222,7 +222,7 @@ export function changeJournalTitleFormat(fmt: string) {
   // + the title-named-journal migration take effect). Bump again once that's done
   // so the feed reloads against the refreshed backend — otherwise a reload racing
   // the reopen could re-query the old format.
-  void readOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
+  void writeOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
     .then((result) => {
       if (result.kind === "stale") return;
       bumpGraphEpoch();
@@ -230,13 +230,13 @@ export function changeJournalTitleFormat(fmt: string) {
       if (message) pushToast(message, "info");
       void refreshJournalConflicts(true); // surface any days the migration couldn't merge
     })
-    .catch(() => {
+    .catch((error) => {
       if (owner()) {
         setGraphMeta({ ...graphMeta()!, journal_page_title_format: m.journal_page_title_format });
         setJournalTitleFormat(m.journal_page_title_format);
         bumpGraphEpoch();
-        pushToast("Could not save journal title format.", "error");
       }
+      pushToast(`Could not save journal title format: ${String(error)}`, "error");
     });
 }
 

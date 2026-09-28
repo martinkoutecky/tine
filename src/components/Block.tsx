@@ -89,7 +89,7 @@ import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
 import { assetEditorIsCurrent, captureAssetEditor, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
 import { captureBinding, stillBound } from "../binding";
-import { graphOwner, latestOwner, readOwned } from "../owned";
+import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { openInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
@@ -1468,10 +1468,10 @@ export function Editor(props: { id: string }): JSX.Element {
     try {
       // Data before reference: a crash may leave an orphan asset, but can never
       // persist a note that points at bytes which existed only in WebView memory.
-      const result = await readOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
+      const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
       if (result.kind === "stale") { reportStaleAsset(); return; }
       stored = result.value;
-    } catch { pushToast(`Couldn’t save to assets/`, "error"); return; }
+    } catch (error) { pushToast(`Couldn’t save to assets/: ${String(error)}`, "error"); return; }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
     const page = pageByName(docNode(props.id)?.page ?? "");
     const md = assetMarkdown(stored, {
@@ -1572,7 +1572,7 @@ export function Editor(props: { id: string }): JSX.Element {
     const stored: { stored: string; label?: string }[] = [];
     let inserted = false;
     try {
-      const nativeResult = await readOwned(() => true, backend().clipboardFiles().catch(() => {
+      const nativeResult = await readOwned(ownedWhen(() => editorMounted), backend().clipboardFiles().catch(() => {
         nativeUnavailable = true;
         return { files: [], skipped: 0, truncated: false };
       }));
@@ -1581,9 +1581,10 @@ export function Editor(props: { id: string }): JSX.Element {
         skipped += native.skipped;
         for (const file of native.files) {
           try {
-            const result = await readOwned(owner, trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
+            const result = await writeOwned(owner, trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
             if (result.kind === "stale") return; stored.push({ stored: result.value, label: file.name });
-          } catch {
+          } catch (error) {
+            pushToast(`Couldn’t import pasted file: ${String(error)}`, "error");
             skipped += 1;
           }
         }
@@ -1624,7 +1625,7 @@ export function Editor(props: { id: string }): JSX.Element {
               continue;
             }
             const candidate = assetFileName(file.name || undefined);
-            const result = await readOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration)));
+            const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration)));
             if (result.kind === "stale") return; const saved = result.value;
             stored.push({ stored: saved, label: file.name || undefined });
             try {
@@ -1632,7 +1633,8 @@ export function Editor(props: { id: string }): JSX.Element {
             } catch {
               // The durable asset + link are authoritative; cache warming is optional.
             }
-          } catch {
+          } catch (error) {
+            pushToast(`Couldn’t save pasted file: ${String(error)}`, "error");
             skipped += 1;
           }
         }
@@ -1746,19 +1748,18 @@ export function Editor(props: { id: string }): JSX.Element {
       pushToast(`Couldn’t access the microphone (${String(err)})`, "error");
     }
   };
-
   const uploadAsset = async () => {
     const editorToken = captureAssetEditorToken();
     const owner = graphOwner();
-    const picked = await readOwned(() => true, backend().pickFile());
+    const picked = await readOwned(ownedWhen(() => editorMounted), backend().pickFile());
     if (picked.kind === "stale" || !picked.value) return; const path = picked.value;
     try {
       // Store with a timestamped name (keeps the original + a sortable insert time).
       const orig = path.split(/[\\/]/).pop() || undefined;
-      const saved = await readOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
+      const saved = await writeOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
       if (saved.kind === "current") insertStoredAssets(editorToken, [{ stored: saved.value, label: orig }]);
-    } catch {
-      // ignore failed imports
+    } catch (error) {
+      pushToast(`Couldn’t import asset: ${String(error)}`, "error");
     }
   };
 
@@ -1776,18 +1777,18 @@ export function Editor(props: { id: string }): JSX.Element {
       // colliding `diagram.drawio.svg` would become `diagram.drawio_1.svg` — which
       // no longer ends in `.drawio.svg`, dropping the "Edit in draw.io" affordance
       // (GH #38). A unique stem never collides, so the double extension survives.
-      const savedResult = await readOwned(owner, trackAssetWrite(
+      const savedResult = await writeOwned(owner, trackAssetWrite(
         backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes, editorToken.binding.backendGeneration)
       ));
       if (savedResult.kind === "stale") return; const saved = savedResult.value;
       insertStoredAssets(editorToken, [{ stored: saved }]);
       const cmd = await resolveMediaEditorCommand(ed);
       if (!owner()) return;
-      void readOwned(owner, backend().editAssetExternal(saved, cmd, editorToken.binding.backendGeneration))
+      void writeOwned(owner, backend().editAssetExternal(saved, cmd, editorToken.binding.backendGeneration))
         .catch(() => pushToast("Couldn’t open draw.io", "error"));
       refreshAssetOnReturn(saved);
-    } catch {
-      if (owner()) pushToast("Couldn’t create the diagram", "error");
+    } catch (error) {
+      pushToast(`Couldn’t create the diagram: ${String(error)}`, "error");
     }
   };
 
