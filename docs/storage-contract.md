@@ -66,6 +66,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::rewrite::Undecodable` | 1 | Sync makes a referrer invalid UTF-8 before rename rewrite; keep that file and refuse the rename. |
 | `transaction.rs::rewrite_move::Undecodable` | 2 | Sync leaves a title-owned move source or its rewritten bytes invalid UTF-8; refuse the rename before moving the file or publishing a new title. |
 | `transaction.rs::rewrite::ReadOnly` | 1 | An Org referrer is not round-trip editable; keep its bytes instead of rewriting it. |
+| `transaction.rs::rewrite_move::ReadOnly` | 1 | An imported Org page named by `#+TITLE:` or a `:title:` drawer is not round-trip editable; refuse the rename rather than rebind its title in bytes Tine cannot reproduce. |
 | `transaction.rs::content_refusal::Undecodable` | 1 | An existing or imported page has invalid UTF-8; refuse the write without reporting a transient I/O failure. |
 | `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. |
 | `transaction.rs::validate_page_content::InvalidTarget` | 1 | A raw page stream exceeds its cap; refuse before creating an unreadable page. |

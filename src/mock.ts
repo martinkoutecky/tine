@@ -984,7 +984,7 @@ export function mockBackend(): Backend {
       // no-op in mock
     },
     async renamePage(): Promise<import("./types").RenameDone> {
-      return "unchanged"; // no-op in mock
+      return { outcome: "unchanged", touched: [] }; // no-op in mock
     },
     async publishHtml(): Promise<[string, number]> {
       return ["/mock/graph/publish", all.length];

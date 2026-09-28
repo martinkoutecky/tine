@@ -14,7 +14,7 @@ fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
     disk::write(root.join("pages/Referrer.md"), "- [[Old]] before\n").unwrap();
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     let written = AtomicBool::new(false);
-    rename_page_after_inventory(&store, "Old", "New", None, None, || {
+    rename_page_after_inventory(&store, "Old", "New", None, None, &[], || {
         if written.swap(true, Ordering::AcqRel) {
             return;
         }

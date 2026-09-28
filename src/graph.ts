@@ -211,7 +211,7 @@ export async function loadGraphPath(
 
 /** Refresh frontend state after a successful page rename. The backend rename
  *  rewrites `[[refs]]` across many files through the self-write guard. The
- *  document intent has already flushed and reset its working set. Refresh the
+ *  document intent refreshes the loaded pages it touched (GH #535). Refresh the
  *  app's navigation and graph-derived views, then navigate to the new name. */
 export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget): void {
   if (exactTarget) {
@@ -260,10 +260,14 @@ export async function renameOrMergePage(from: string, to: string, target?: PageT
 
 /** The user-facing message for a rename that did not rename, or null. */
 export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | null {
+  if (typeof outcome === "object") {
+    return outcome.mentions
+      ? `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save, and they mention “${from}”, so the rename could not update them. Save or discard those changes, then rename again. Your pending edits are still here.`
+      : `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save. Save or discard them, then rename again. Your pending edits are still here.`;
+  }
   switch (outcome) {
     case "unchanged": return `Nothing renamed: “${to}” is the same page name as “${from}” (page names ignore letter case).`;
     case "busy": return "Another rename is still rewriting the graph. Try again when it finishes.";
-    case "unflushed": return "Couldn't save pending edits — resolve the conflict before renaming.";
     case "uncertain": return `The graph changed while renaming “${from}”. Check whether “${to}” exists before trying again.`;
     default: return null;
   }

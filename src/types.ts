@@ -79,8 +79,22 @@ export interface PageRead extends PageDto {
   id: string;
 }
 
-/** What the backend rename did; `unchanged`: nothing written (a case-only rename). */
-export type RenameDone = "renamed" | "merged" | "unchanged";
+/** What the backend rename did; `unchanged`: nothing written (a case-only
+ *  rename). `touched` lists every page file it moved, trashed or rewrote, so
+ *  the frontend refreshes only those (GH #535). */
+export interface RenameDone {
+  outcome: "renamed" | "merged" | "unchanged";
+  touched: RenameTouchedPage[];
+}
+
+/** One page file a rename or merge wrote. */
+export interface RenameTouchedPage {
+  /** Graph-relative path before the rename: the loaded page's `id`. */
+  path: string;
+  /** The file left this path (moved, or trashed by a merge); otherwise it was
+   *  rewritten in place. */
+  moved: boolean;
+}
 
 export type ResolvedPage =
   | { kind: "existing"; id: string; others: string[] }

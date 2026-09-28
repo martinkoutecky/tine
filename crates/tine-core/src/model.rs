@@ -110,7 +110,54 @@ pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> Strin
 /// Returns `None` when no supported title precedes that boundary. Cost
 /// O(scanned preamble bytes); no I/O or error.
 pub fn page_title_from_preamble(content: &str, format: Format) -> Option<String> {
-    for line in content.lines() {
+    page_title_line(content, format).map(|line| content[line.value].to_owned())
+}
+
+/// Rewrite the preamble title that [`page_title_from_preamble`] reads to
+/// `new_name`, when that title still names `old_name` (`refs::same_page`). A
+/// `title::` line becomes `title:: <new_name>`; an Org `#+title:` directive or
+/// `:title:` drawer line keeps its own spelling and only its value changes.
+/// Line endings and every other byte are kept. `None`: no title, or a title
+/// naming another page (user content a rename must not touch). Cost
+/// O(content bytes); no I/O or error.
+pub fn rebind_page_title(
+    content: &str,
+    format: Format,
+    old_name: &str,
+    new_name: &str,
+) -> Option<String> {
+    let line = page_title_line(content, format)?;
+    if !crate::refs::same_page(&content[line.value.clone()], old_name) {
+        return None;
+    }
+    let (replaced, text) = if line.property {
+        (line.line, format!("title:: {new_name}"))
+    } else {
+        (line.value, new_name.to_owned())
+    };
+    Some(format!(
+        "{}{}{}",
+        &content[..replaced.start],
+        text,
+        &content[replaced.end..]
+    ))
+}
+
+/// Where the preamble title is: the line without its newline, the trimmed
+/// value, and whether it is a `title::` property line (else an Org directive
+/// or drawer line). The one scan both title readers and the rebind share.
+struct TitleLine {
+    line: std::ops::Range<usize>,
+    value: std::ops::Range<usize>,
+    property: bool,
+}
+
+fn page_title_line(content: &str, format: Format) -> Option<TitleLine> {
+    let mut offset = 0;
+    for chunk in content.split_inclusive('\n') {
+        let start = offset;
+        offset += chunk.len();
+        let line = chunk.trim_end_matches(['\r', '\n']);
         let trimmed = line.trim_start();
         if trimmed.starts_with("- ")
             || trimmed == "-"
@@ -118,9 +165,21 @@ pub fn page_title_from_preamble(content: &str, format: Format) -> Option<String>
         {
             break;
         }
+        let at = |value: &str| {
+            // `value` is a subslice of `line`: locate it by address.
+            let from = start + (value.as_ptr() as usize - line.as_ptr() as usize);
+            from..from + value.len()
+        };
+        let range = start..start + line.len();
         if let Some((key, value)) = crate::doc::parse_property_line(line) {
-            if key.eq_ignore_ascii_case("title") && !value.trim().is_empty() {
-                return Some(value.trim().to_owned());
+            if key.eq_ignore_ascii_case("title") && !value.is_empty() {
+                // The same value `parse_property_line` returns, as a subslice.
+                let value = line.split_once("::").map_or("", |(_, rest)| rest.trim());
+                return Some(TitleLine {
+                    line: range,
+                    value: at(value),
+                    property: true,
+                });
             }
         }
         if format == Format::Org {
@@ -136,7 +195,11 @@ pub fn page_title_from_preamble(content: &str, format: Format) -> Option<String>
                 .map(str::trim)
                 .filter(|title| !title.is_empty())
             {
-                return Some(title.to_owned());
+                return Some(TitleLine {
+                    line: range,
+                    value: at(title),
+                    property: false,
+                });
             }
         }
     }
