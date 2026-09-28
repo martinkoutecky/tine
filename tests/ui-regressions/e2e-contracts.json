@@ -32,7 +32,7 @@
       ],
       "acceptableVariations": ["Refresh timing may vary within the completed save lifecycle."],
       "nonRequirements": ["Exact badge typography, panel layout, animation, or generated UUID value."],
-      "stability": "burn-in"
+      "stability": "stable"
     },
     "scripts/e2e-blockselect.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Escape and arrow keys transition between editing and block selection without losing the live selection.", "blocking": true }],
@@ -90,7 +90,7 @@
       ],
       "acceptableVariations": ["Locale rendering and feed layout may vary while configured dates remain discoverable."],
       "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot directory naming beyond the pre-journal-rename tag."],
-      "stability": "burn-in"
+      "stability": "stable"
     },
     "scripts/e2e-journal-future-feed.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Future journals stay out of the feed while remaining directly reachable without changing their file bytes.", "blocking": true }],
@@ -123,7 +123,7 @@
       ],
       "acceptableVariations": ["Window placement and OS activation order may vary while graph routing remains correct.", "The switch may save the pending edit before or after the new graph paints, and the switched window may show any route of the new graph."],
       "nonRequirements": ["Exact native window coordinates or stacking order."],
-      "stability": "burn-in"
+      "stability": "stable"
     },
     "scripts/e2e-native-titlebar.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "A native Linux titlebar close uses Tine's safe persistence path and closes the real window.", "blocking": true }],
@@ -228,7 +228,7 @@
       ],
       "acceptableVariations": ["Navigation timing and rendered reference layout may vary after rename.", "The merged alias order and the trash location of the source copy may vary while both aliases survive and exactly one copy of the source bytes remains under logseq/."],
       "nonRequirements": ["Exact file-list ordering or transition animation.", "The wording or button labels of the native merge confirmation."],
-      "stability": "burn-in"
+      "stability": "stable"
     },
     "scripts/e2e-right-sidebar-collapse.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Right-sidebar disclosures, bulk controls, edit-safe unmounting, and restart restoration retain their state correctly.", "blocking": true }],
@@ -279,7 +279,7 @@
       ],
       "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved.", "With Tine's default copy setting the public clipboard text may hold only the selected block while the subtree travels in Tine's private payload; the pasted outline is the oracle."],
       "nonRequirements": ["Exact clipboard-event implementation, indentation pixels, or paste animation.", "Exact clipboard text or HTML flavour for block Cut/Copy."],
-      "stability": "burn-in"
+      "stability": "stable"
     },
     "scripts/e2e-tab-overflow.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Overflowing pane tabs expose an accessible overview that activates, closes, and restores focus without unintended drag capture.", "blocking": true }],
@@ -315,7 +315,7 @@
       "contracts": [{ "class": "stateful-ux", "userOutcome": "When the local day changes during editing, the new day appears at the top of the Journals feed while the open editor keeps its textarea, unsaved text, selection and focus, and the text saves to the day it was typed in.", "blocking": true }],
       "acceptableVariations": ["The new day may appear a moment after midnight (timer margin), before or after the older day's save."],
       "nonRequirements": ["Whether the new day's journal file is created at rollover.", "Exact scroll position of the feed.", "Startup error toasts other than a journal-feed load failure."],
-      "stability": "burn-in"
+      "stability": "stable"
     }
   }
 }
