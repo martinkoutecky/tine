@@ -77,8 +77,8 @@ pub struct BlockProjection {
     /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
     /// recognized as `Properties` blocks (see `visible_minus_properties`).
     pub visible: String,
-    /// `visible`, lowercased then NFC-normalized — for `search` / `(content …)`
-    /// (hot path, pre-folded without compatibility/accent folding).
+    /// `visible`, folded by the shared search normalizer for `search` /
+    /// `(content …)` (hot path, cached without changing the raw body).
     pub visible_lower: String,
     /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
     pub refs_norm: Vec<String>,
@@ -1524,7 +1524,7 @@ mod projection_tests {
         // mapping (`span - 2 + lead`) must land on char boundaries, not split UTF-8.
         let b = DocBlock::new("Über café résumé\nid:: 123\nkey:: v");
         assert_eq!(b.visible_text(), "Über café résumé");
-        assert_eq!(b.projection().visible_lower, "über café résumé");
+        assert_eq!(b.projection().visible_lower, "uber cafe resume");
         // leading whitespace in raw (lead > 0) still maps correctly.
         let b2 = DocBlock::new("  héllo\nid:: 9");
         assert_eq!(b2.visible_text().trim(), "héllo");

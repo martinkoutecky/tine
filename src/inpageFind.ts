@@ -6,6 +6,8 @@ import type { Format } from "./types";
 import { focusedPaneId, layoutPaneIds, paneRouter } from "./panes";
 import { sameRoute } from "./router";
 import { captureBinding, stillBound } from "./binding";
+import { searchSubstringSpans } from "./editor/searchQuery";
+import { graphMeta } from "./graphSession";
 
 export interface InPageFindMatch {
   blockId: string;
@@ -103,15 +105,9 @@ export function inPageFindPreservesEditorBlur(): boolean {
 
 export function findTextOccurrences(text: string, query: string): { start: number; end: number }[] {
   if (!query) return [];
-  const haystack = text.toLocaleLowerCase();
-  const needle = query.toLocaleLowerCase();
   const out: { start: number; end: number }[] = [];
-  let from = 0;
-  while (from <= haystack.length) {
-    const idx = haystack.indexOf(needle, from);
-    if (idx === -1) break;
-    out.push({ start: idx, end: idx + query.length });
-    from = idx + Math.max(needle.length, 1);
+  for (const span of searchSubstringSpans(text, query, Number.POSITIVE_INFINITY, graphMeta()?.enable_search_remove_accents !== false)) {
+    if (!out.length || span.start >= out[out.length - 1].end) out.push(span);
   }
   return out;
 }

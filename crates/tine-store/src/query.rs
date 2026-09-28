@@ -1314,7 +1314,11 @@ pub(crate) fn search_cancellable_result(
     limit: usize,
     cancelled: impl Fn() -> bool,
 ) -> Option<Vec<RefGroup>> {
-    let plan = crate::query_plan::QueryPlan::block_search_literal(query, limit);
+    let plan = crate::query_plan::QueryPlan::block_search_literal_with_policy(
+        query,
+        limit,
+        graph.config().enable_search_remove_accents,
+    );
     let execution = plan.execute(graph, cancelled);
     if execution.cancelled {
         None
@@ -1658,7 +1662,11 @@ fn finish_quick_switch_top(
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
 pub(crate) fn quick_switch(graph: &impl GraphRead, query: &str, limit: usize) -> Vec<PageEntry> {
-    let plan = crate::query_plan::QueryPlan::legacy_page_search(query, limit);
+    let plan = crate::query_plan::QueryPlan::legacy_page_search_with_policy(
+        query,
+        limit,
+        graph.config().enable_search_remove_accents,
+    );
     let execution = plan.execute(graph, || false);
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
@@ -2395,9 +2403,9 @@ mod tests {
         assert!(selects("\"C:\\tmp\"", "open C:\\tmp now"));
         assert!(selects("\"quick brown\"", "the quick brown fox"));
         assert!(!selects("\"slow\"", "the quick brown fox"));
-        // Canonical composition, no accent folding.
+        // Canonical composition and the shared default search fold.
         assert!(selects("\"Résumé\"", "Re\u{301}sume\u{301}"));
-        assert!(!selects("\"Resume\"", "Re\u{301}sume\u{301}"));
+        assert!(selects("\"Resume\"", "Re\u{301}sume\u{301}"));
     }
 
     /// Macro arguments arrive without their source quotes after the parser has

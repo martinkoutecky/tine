@@ -98,6 +98,8 @@ pub struct Config {
     /// `:feature/enable-timetracking?` — OG default ON; only explicit false
     /// disables marker-driven CLOCK entries.
     pub enable_timetracking: bool,
+    /// OG `:feature/enable-search-remove-accents?`; default true.
+    pub enable_search_remove_accents: bool,
     /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
     /// brackets around page references.
     pub show_brackets: bool,
@@ -186,6 +188,7 @@ impl Default for Config {
             file_name_format: FileNameFormat::Legacy,
             macros: HashMap::new(),
             enable_timetracking: true,
+            enable_search_remove_accents: true,
             show_brackets: true,
             doc_mode_enter_for_new_block: false,
             logical_outdenting: false,
@@ -269,6 +272,17 @@ impl Config {
         };
         cfg.macros = parse_macros(edn);
         cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
+        cfg.enable_search_remove_accents =
+            find_keyword(edn, ":feature/enable-search-remove-accents?")
+                .map(|at| {
+                    let from = skip_blank(edn, at + ":feature/enable-search-remove-accents?".len());
+                    !edn[from..].strip_prefix("false").is_some_and(|rest| {
+                        rest.chars().next().is_none_or(|ch| {
+                            ch.is_whitespace() || matches!(ch, ',' | '}' | ']' | ')' | ';' | '#')
+                        })
+                    })
+                })
+                .unwrap_or(true);
         cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(true);
         cfg.doc_mode_enter_for_new_block =
             bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?").unwrap_or(false);
@@ -909,6 +923,39 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accent_removal_defaults_on_and_only_explicit_false_disables_it() {
+        assert!(Config::parse("{}").enable_search_remove_accents);
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? true}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? false}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? :false}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? falsehood}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? \"false\"}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? ; comment\nfalse}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? false; comment\n}")
+                .enable_search_remove_accents
+        );
+    }
 
     #[test]
     fn hidden_vector_is_decoded_and_bad_value_is_ignored() {

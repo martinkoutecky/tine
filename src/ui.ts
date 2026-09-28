@@ -1466,3 +1466,8 @@ export function openPdf(filename: string, label: string, page?: number, highligh
 export function closePdf() {
   setPdfTarget(null);
 }
+
+/** Effective graph-local OG accent-removal setting for frontend search views. */
+export function searchRemoveAccents(): boolean {
+  return graphMeta()?.enable_search_remove_accents !== false;
+}

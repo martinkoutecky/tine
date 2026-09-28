@@ -1334,7 +1334,7 @@ export function Editor(props: { id: string }): JSX.Element {
     setAcItems(orderAcItems(
       result.value.map((page) => ({ name: page.name, item: pageItem(page.name) })),
       { name: q, item: createItem },
-      { query: q, policy: linkAutocompletePolicy() },
+      { query: q, policy: linkAutocompletePolicy(), removeAccents: graphMeta()?.enable_search_remove_accents !== false },
     ));
   };
 

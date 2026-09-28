@@ -14,9 +14,7 @@ use tine_core::query_plan::{
     QueryExplanation, QueryHasMore, QueryHit, TextField, TextMatchMode,
 };
 use tine_core::refs;
-use tine_core::search_query::{canonical_fold, Matcher, Term};
-use unicode_normalization::UnicodeNormalization;
-use unicode_segmentation::UnicodeSegmentation;
+use tine_core::search_query::{canonical_fold, identity_fold, literal_fold, Matcher, Term};
 
 const MAX_EVIDENCE_SPANS: usize = 32;
 
@@ -82,14 +80,32 @@ pub(crate) struct QueryPlan {
     // the frontend offer a duplicate Create row beside the existing page.
     page_exact: Option<String>,
     regexes: HashMap<u32, Regex>,
+    remove_accents: bool,
 }
 
 impl QueryPlan {
+    fn fold(&self, value: &str) -> String {
+        if self.remove_accents {
+            canonical_fold(value)
+        } else {
+            literal_fold(value)
+        }
+    }
     /// Ctrl-K graph providers: fuzzy page names for a single bare term, but
     /// ordinary contains/phrase/regex semantics for block content.  Multi-term
     /// and operator searches use the same boolean grammar on both entity kinds.
+    #[cfg(test)]
     pub(crate) fn friendly(query: &str, page_limit: usize, block_limit: usize) -> Self {
-        let matcher = Matcher::parse(query);
+        Self::friendly_with_policy(query, page_limit, block_limit, true)
+    }
+
+    pub(crate) fn friendly_with_policy(
+        query: &str,
+        page_limit: usize,
+        block_limit: usize,
+        remove_accents: bool,
+    ) -> Self {
+        let matcher = Matcher::parse_with_policy(query, remove_accents);
         let mut next_id = 1;
         let mut regexes = HashMap::new();
         let mut diagnostics = Vec::new();
@@ -137,13 +153,15 @@ impl QueryPlan {
             branches,
             diagnostics,
             page_scope: None,
-            page_exact: (!query.trim().is_empty()).then(|| canonical_fold(query.trim())),
+            page_exact: (!query.trim().is_empty()).then(|| identity_fold(query.trim())),
             regexes,
+            remove_accents,
         }
     }
 
     /// Current-page search is a block-only execution profile of the same typed
     /// friendly plan—not a frontend filter over whole-graph results.
+    #[cfg(test)]
     pub(crate) fn friendly_for_page(
         query: &str,
         block_limit: usize,
@@ -154,10 +172,30 @@ impl QueryPlan {
         plan
     }
 
+    pub(crate) fn friendly_for_page_with_policy(
+        query: &str,
+        block_limit: usize,
+        scope: QueryPageScope,
+        remove_accents: bool,
+    ) -> Self {
+        let mut plan = Self::block_search_with_policy(query, block_limit, remove_accents);
+        plan.page_scope = Some(scope);
+        plan
+    }
+
     /// Explicit page-name fuzzy plan for normal-query frontends and tests.  This
     /// constructor makes the opt-in visible in the typed IR; it never changes the
     /// default behavior of existing block queries.
+    #[cfg(test)]
     pub(crate) fn page_name_fuzzy(value: impl Into<String>, limit: usize) -> Self {
+        Self::page_name_fuzzy_with_policy(value, limit, true)
+    }
+
+    pub(crate) fn page_name_fuzzy_with_policy(
+        value: impl Into<String>,
+        limit: usize,
+        remove_accents: bool,
+    ) -> Self {
         let value = value.into();
         Self {
             branches: vec![QueryBranch {
@@ -166,20 +204,34 @@ impl QueryPlan {
                     clause_id: 1,
                     field: TextField::PageName,
                     mode: TextMatchMode::Fuzzy,
-                    value: canonical_fold(&value),
+                    value: if remove_accents {
+                        canonical_fold(&value)
+                    } else {
+                        literal_fold(&value)
+                    },
                 }),
                 limit,
             }],
             diagnostics: Vec::new(),
             page_scope: None,
-            page_exact: None,
+            page_exact: Some(identity_fold(&value)),
             regexes: HashMap::new(),
+            remove_accents,
         }
     }
 
     /// Existing block-search API expressed as one typed branch.
+    #[cfg(test)]
     pub(crate) fn block_search(query: &str, limit: usize) -> Self {
-        let matcher = Matcher::parse(query);
+        Self::block_search_with_policy(query, limit, true)
+    }
+
+    pub(crate) fn block_search_with_policy(
+        query: &str,
+        limit: usize,
+        remove_accents: bool,
+    ) -> Self {
+        let matcher = Matcher::parse_with_policy(query, remove_accents);
         let mut next_id = 1;
         let mut regexes = HashMap::new();
         let mut diagnostics = Vec::new();
@@ -213,13 +265,23 @@ impl QueryPlan {
             page_scope: None,
             page_exact: None,
             regexes,
+            remove_accents,
         }
     }
 
     /// Literal block autocomplete for the `((` picker. OG rev 6e7afa8eb's
     /// `search.cljs:block-search`/`fuzzy-search` normalizes the whole query as
     /// one literal term. Blank input has no candidates.
+    #[cfg(test)]
     pub(crate) fn block_search_literal(query: &str, limit: usize) -> Self {
+        Self::block_search_literal_with_policy(query, limit, true)
+    }
+
+    pub(crate) fn block_search_literal_with_policy(
+        query: &str,
+        limit: usize,
+        remove_accents: bool,
+    ) -> Self {
         let branches = if query.is_empty() {
             Vec::new()
         } else {
@@ -229,7 +291,11 @@ impl QueryPlan {
                     clause_id: 1,
                     field: TextField::VisibleContent,
                     mode: TextMatchMode::Fuzzy,
-                    value: canonical_fold(query),
+                    value: if remove_accents {
+                        canonical_fold(query)
+                    } else {
+                        literal_fold(query)
+                    },
                 }),
                 limit,
             }]
@@ -240,6 +306,7 @@ impl QueryPlan {
             page_scope: None,
             page_exact: None,
             regexes: HashMap::new(),
+            remove_accents,
         }
     }
 
@@ -248,8 +315,17 @@ impl QueryPlan {
     /// `search.cljs:page-search`/`exact-matched?`; the whole normalized query is
     /// one ordered-subsequence term, not Ctrl-K's AND/OR/negation/regex DSL.
     /// Blank input therefore keeps the established all-pages candidate listing.
+    #[cfg(test)]
     pub(crate) fn legacy_page_search(query: &str, limit: usize) -> Self {
         Self::page_name_fuzzy(query, limit)
+    }
+
+    pub(crate) fn legacy_page_search_with_policy(
+        query: &str,
+        limit: usize,
+        remove_accents: bool,
+    ) -> Self {
+        Self::page_name_fuzzy_with_policy(query, limit, remove_accents)
     }
 
     pub(crate) fn explanation(&self) -> QueryExplanation {
@@ -389,6 +465,13 @@ fn expr_from_matcher(
 }
 
 fn expr_from_term(term: &Term, field: TextField, next_id: &mut u32) -> QueryExpr {
+    if term.text.is_empty() {
+        return if term.negated {
+            QueryExpr::Not(Box::new(QueryExpr::Never))
+        } else {
+            QueryExpr::Never
+        };
+    }
     let text = QueryExpr::Text(TextPredicate {
         clause_id: take_id(next_id),
         field,
@@ -514,7 +597,7 @@ fn eval_expr_fast(
 fn match_text(plan: &QueryPlan, pred: &TextPredicate, original: &str) -> Option<MatchEvidence> {
     match pred.mode {
         TextMatchMode::Contains | TextMatchMode::Phrase => {
-            let spans = casefold_substring_spans(original, &pred.value);
+            let spans = casefold_substring_spans(original, &pred.value, plan.remove_accents);
             (!spans.is_empty()).then_some(MatchEvidence {
                 clause_id: pred.clause_id,
                 field: pred.field,
@@ -541,149 +624,13 @@ fn match_text(plan: &QueryPlan, pred: &TextPredicate, original: &str) -> Option<
                 score: None,
             })
         }
-        TextMatchMode::Fuzzy => fuzzy_evidence(pred, original),
+        TextMatchMode::Fuzzy => fuzzy_evidence(pred, original, plan.remove_accents),
     }
 }
 
-/// Lowercase-plus-NFC text plus one original UTF-16 span per folded scalar.
-/// Normalization is performed per extended grapheme cluster, which is the
-/// boundary across which canonical composition cannot contribute. Every output
-/// scalar maps to the full union of original scalars that formed that grapheme,
-/// including lowercase expansions, reordered marks, and Hangul Jamo.
-fn folded_with_map(original: &str) -> (Vec<char>, Vec<MatchSpan>) {
-    let lowered = original.to_lowercase();
-    let mut lowered_sources = Vec::new();
-    let mut original_utf16 = 0;
-    for ch in original.chars() {
-        let start = original_utf16;
-        original_utf16 += ch.len_utf16();
-        for _ in ch.to_lowercase() {
-            lowered_sources.push(MatchSpan {
-                start,
-                end: original_utf16,
-            });
-        }
-    }
-    // Rust's whole-string lowercase differs from scalar lowercase only by
-    // contextual substitutions such as final sigma, never by scalar count.
-    debug_assert_eq!(lowered.chars().count(), lowered_sources.len());
-
-    let mut folded = Vec::new();
-    let mut map = Vec::new();
-    let mut source_at = 0;
-    for grapheme in lowered.graphemes(true) {
-        let scalar_count = grapheme.chars().count();
-        let contributors = &lowered_sources[source_at..source_at + scalar_count];
-        source_at += scalar_count;
-        let source = MatchSpan {
-            start: contributors.first().map_or(0, |span| span.start),
-            end: contributors.last().map_or(0, |span| span.end),
-        };
-        for normalized in grapheme.nfc() {
-            folded.push(normalized);
-            map.push(source);
-        }
-    }
-    debug_assert_eq!(folded.iter().collect::<String>(), canonical_fold(original));
-    (folded, map)
-}
-
-fn folded_chars(value: &str) -> Vec<char> {
-    canonical_fold(value).chars().collect()
-}
-
-fn merge_spans(spans: impl IntoIterator<Item = MatchSpan>) -> Vec<MatchSpan> {
-    let mut out: Vec<MatchSpan> = Vec::new();
-    for span in spans {
-        if let Some(last) = out.last_mut() {
-            if last.end == span.start {
-                last.end = span.end;
-                continue;
-            }
-            if *last == span {
-                continue;
-            }
-        }
-        out.push(span);
-        if out.len() == MAX_EVIDENCE_SPANS {
-            break;
-        }
-    }
-    out
-}
-
-fn casefold_substring_spans(original: &str, needle: &str) -> Vec<MatchSpan> {
-    let (hay, map) = folded_with_map(original);
-    let needle = folded_chars(needle);
-    if needle.is_empty() || needle.len() > hay.len() {
-        return Vec::new();
-    }
-    let mut spans = Vec::new();
-    for start in 0..=hay.len() - needle.len() {
-        if hay[start..start + needle.len()] == needle {
-            let first = map[start];
-            let last = map[start + needle.len() - 1];
-            spans.push(MatchSpan {
-                start: first.start,
-                end: last.end,
-            });
-            if spans.len() == MAX_EVIDENCE_SPANS {
-                break;
-            }
-        }
-    }
-    spans
-}
-
-fn fuzzy_evidence(pred: &TextPredicate, original: &str) -> Option<MatchEvidence> {
-    let (hay, map) = folded_with_map(original);
-    let needle = folded_chars(&pred.value);
-    if needle.is_empty() {
-        return Some(MatchEvidence {
-            clause_id: pred.clause_id,
-            field: pred.field,
-            mode: pred.mode,
-            spans: Vec::new(),
-            score: Some(0),
-        });
-    }
-    if needle.len() <= hay.len() {
-        for start in 0..=hay.len() - needle.len() {
-            if hay[start..start + needle.len()] == needle {
-                let first = map[start];
-                let last = map[start + needle.len() - 1];
-                return Some(MatchEvidence {
-                    clause_id: pred.clause_id,
-                    field: pred.field,
-                    mode: pred.mode,
-                    spans: vec![MatchSpan {
-                        start: first.start,
-                        end: last.end,
-                    }],
-                    score: Some(if start == 0 { 1000 } else { 500 }),
-                });
-            }
-        }
-    }
-    let mut at = 0;
-    let mut picked = Vec::new();
-    for (i, ch) in hay.iter().enumerate() {
-        if needle.get(at) == Some(ch) {
-            picked.push(map[i]);
-            at += 1;
-            if at == needle.len() {
-                return Some(MatchEvidence {
-                    clause_id: pred.clause_id,
-                    field: pred.field,
-                    mode: pred.mode,
-                    spans: merge_spans(picked),
-                    score: Some(100),
-                });
-            }
-        }
-    }
-    None
-}
+#[path = "query_plan/fold.rs"]
+mod fold;
+use fold::{casefold_substring_spans, fuzzy_evidence};
 
 #[derive(Debug)]
 enum PageCandidate {
@@ -1056,7 +1003,18 @@ fn page_base_score(
         QueryExpr::Never => None,
         QueryExpr::Text(pred) if pred.field != TextField::PageName => None,
         QueryExpr::Text(pred) => match pred.mode {
-            TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value),
+            TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value).map(|(score, class)| {
+                if class == ObjectiveMatchClass::Exact
+                    && plan
+                        .page_exact
+                        .as_ref()
+                        .is_some_and(|exact| identity_fold(original) != *exact)
+                {
+                    (1000, ObjectiveMatchClass::Prefix)
+                } else {
+                    (score, class)
+                }
+            }),
             TextMatchMode::Regex => plan
                 .regexes
                 .get(&pred.clause_id)
@@ -1064,7 +1022,15 @@ fn page_base_score(
                 .then_some((500, ObjectiveMatchClass::Substring)),
             TextMatchMode::Contains | TextMatchMode::Phrase => {
                 if lower == pred.value {
-                    Some((1500, ObjectiveMatchClass::Exact))
+                    if plan
+                        .page_exact
+                        .as_ref()
+                        .is_some_and(|exact| identity_fold(original) != *exact)
+                    {
+                        Some((1000, ObjectiveMatchClass::Prefix))
+                    } else {
+                        Some((1500, ObjectiveMatchClass::Exact))
+                    }
                 } else if lower.starts_with(&pred.value) {
                     Some((1000, ObjectiveMatchClass::Prefix))
                 } else if lower.contains(&pred.value) {
@@ -1104,11 +1070,10 @@ fn best_page_match(
     page_name: &str,
     aliases: &[String],
 ) -> Option<(i32, ObjectiveMatchClass, String, Option<String>)> {
-    let page_match = page_base_score(plan, expr, page_name, &canonical_fold(page_name));
+    let page_match = page_base_score(plan, expr, page_name, &plan.fold(page_name));
     let mut best = page_match.map(|(score, class)| (score, class, page_name.to_string(), None));
     for alias in aliases {
-        let Some((score, class)) = page_base_score(plan, expr, alias, &canonical_fold(alias))
-        else {
+        let Some((score, class)) = page_base_score(plan, expr, alias, &plan.fold(alias)) else {
             continue;
         };
         let replace = best.as_ref().is_none_or(|(best_score, best_class, _, _)| {
@@ -1122,7 +1087,7 @@ fn best_page_match(
     // This repairs the objective class for ordinary multi-word titles without
     // bypassing NOT/OR/regex membership semantics for syntax-looking names.
     if let Some(exact) = plan.page_exact.as_deref() {
-        if page_match.is_some() && canonical_fold(page_name) == exact {
+        if page_match.is_some() && identity_fold(page_name) == exact {
             return Some((
                 1500,
                 ObjectiveMatchClass::Exact,
@@ -1131,8 +1096,8 @@ fn best_page_match(
             ));
         }
         if let Some(alias) = aliases.iter().find(|alias| {
-            canonical_fold(alias) == exact
-                && page_base_score(plan, expr, alias, &canonical_fold(alias)).is_some()
+            identity_fold(alias) == exact
+                && page_base_score(plan, expr, alias, &plan.fold(alias)).is_some()
         }) {
             return Some((
                 1500,
@@ -1192,13 +1157,13 @@ fn execute_pages(
     }
     let have: HashSet<String> = file_pages
         .iter()
-        .map(|page| canonical_fold(&page.name))
+        .map(|page| identity_fold(&page.name))
         .collect();
     for name in graph.referenced_page_names() {
         if cancelled() {
             return None;
         }
-        let key = canonical_fold(&name);
+        let key = identity_fold(&name);
         if have.contains(&key) {
             continue;
         }
@@ -1321,9 +1286,14 @@ fn execute_blocks(
                 index = index.saturating_add(1);
                 let projection = block.projection();
                 let visible = &projection.visible;
-                if let Some(relevance) =
-                    block_relevance(plan, &branch.predicate, visible, &projection.visible_lower)
-                {
+                let literal_lower;
+                let lower = if plan.remove_accents {
+                    &projection.visible_lower
+                } else {
+                    literal_lower = literal_fold(visible);
+                    &literal_lower
+                };
+                if let Some(relevance) = block_relevance(plan, &branch.predicate, visible, lower) {
                     has_more |= heap.len() >= branch.limit;
                     let retain = heap.len() < branch.limit
                         || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
@@ -1366,13 +1336,16 @@ fn execute_blocks(
                 .into_iter()
                 .map(|winner| {
                     let projection = winner.block.projection();
-                    let matched = eval_ranked_block_expr(
-                        plan,
-                        &branch.predicate,
-                        &projection.visible,
-                        &projection.visible_lower,
-                    )
-                    .expect("rank and evidence evaluators must agree");
+                    let literal_lower;
+                    let lower = if plan.remove_accents {
+                        &projection.visible_lower
+                    } else {
+                        literal_lower = literal_fold(&projection.visible);
+                        &literal_lower
+                    };
+                    let matched =
+                        eval_ranked_block_expr(plan, &branch.predicate, &projection.visible, lower)
+                            .expect("rank and evidence evaluators must agree");
                     // Search hits are result identities, not independent copies
                     // of their entire descendant trees. The source page owns the
                     // hierarchy and live consumers hydrate it once per page.
@@ -1440,6 +1413,65 @@ mod tests {
     use std::cell::Cell;
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn graph_search_obeys_og_accent_switch_on_real_pages_and_blocks() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("tine-accent-search-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("pages/Café.md"), "- café\n").unwrap();
+        let original = fs::read(dir.join("pages/Café.md")).unwrap();
+        let run = |snapshot: Arc<ReadSnapshot>, query: &str| {
+            snapshot.run_graph_search_latest_scoped(
+                &crate::store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+                query,
+                8,
+                8,
+                None,
+                false,
+            )
+        };
+        let default = run(snapshot_for_dir(&dir), "cafe");
+        assert!(default
+            .hits
+            .iter()
+            .any(|hit| matches!(hit, QueryHit::Page { .. })));
+        assert!(default
+            .hits
+            .iter()
+            .any(|hit| matches!(hit, QueryHit::Block { .. })));
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:feature/enable-search-remove-accents? false}",
+        )
+        .unwrap();
+        let off_snapshot = snapshot_for_dir(&dir);
+        assert!(run(Arc::clone(&off_snapshot), "cafe").hits.is_empty());
+        assert_eq!(run(off_snapshot, "café").hits.len(), 2);
+        assert_eq!(fs::read(dir.join("pages/Café.md")).unwrap(), original);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn erased_accent_query_never_matches_the_whole_graph() {
+        let (dir, graph) = fixture();
+        let mark = "\u{301}";
+        assert!(QueryPlan::friendly(mark, 8, 8)
+            .execute(&graph, || false)
+            .hits
+            .is_empty());
+        assert!(QueryPlan::friendly(&format!("{mark} OR foo"), 8, 8)
+            .execute(&graph, || false)
+            .hits
+            .iter()
+            .any(|hit| matches!(hit, QueryHit::Block { .. })));
+        fs::remove_dir_all(dir).unwrap();
+    }
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1726,7 +1758,7 @@ mod tests {
             TextField::VisibleContent,
             "café",
         )
-        .is_none());
+        .is_some());
 
         let expansion = QueryPlan::block_search("i\u{307}", 8);
         let hit = eval_expr(
