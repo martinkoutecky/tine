@@ -45,6 +45,32 @@ it("keeps a sidebar block when resolution fails", async () => {
   expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
 });
 
+it("does not prune a block restored by a different graph while resolution is pending", async () => {
+  const loaded = await backend().loadGraph("");
+  if (loaded.kind === "focused_existing") throw new Error("missing graph");
+  setGraphMeta({ ...loaded.meta, root: "/graph-a" });
+  setRightSidebar([{ kind: "block", uuid: "shared", page: "A", pageKind: "page" }]);
+  let finish!: (value: null) => void;
+  vi.spyOn(backend(), "resolveBlock").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pruning = pruneSidebarBlocks();
+  setGraphMeta({ ...loaded.meta, root: "/graph-b" });
+  setRightSidebar([{ kind: "block", uuid: "shared", page: "B", pageKind: "page" }]);
+  finish(null);
+  await pruning;
+  expect(rightSidebar()).toEqual([{ kind: "block", uuid: "shared", page: "B", pageKind: "page" }]);
+});
+
+it("does not prune a newly pinned sidebar item with the old block's UUID", async () => {
+  setRightSidebar([{ kind: "block", uuid: "shared", page: "Old", pageKind: "page" }]);
+  let finish!: (value: null) => void;
+  vi.spyOn(backend(), "resolveBlock").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pruning = pruneSidebarBlocks();
+  setRightSidebar([{ kind: "block", uuid: "shared", page: "New", pageKind: "page" }]);
+  finish(null);
+  await pruning;
+  expect(rightSidebar()).toEqual([{ kind: "block", uuid: "shared", page: "New", pageKind: "page" }]);
+});
+
 it("restores confirmed favorites after two queued failures", async () => {
   setFavorites([]);
   vi.spyOn(backend(), "setFavorites").mockRejectedValue(new Error("disk full"));
