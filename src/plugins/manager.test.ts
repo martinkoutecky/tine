@@ -73,6 +73,35 @@ afterEach(() => {
 });
 
 describe("installed plugin lifecycle", () => {
+  it("preserves both concurrent setting changes in the persisted map", async () => {
+    const api = backend();
+    const value = {
+      ...manifest("page.tine.settings-race", "Settings race"),
+      capabilities: ["settings.read"],
+      settings: [
+        { key: "first", type: "boolean", label: "First", description: "First setting", default: false },
+        { key: "second", type: "boolean", label: "Second", description: "Second setting", default: false },
+      ],
+    };
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([{ ...record(value.id, value.name), manifest_json: JSON.stringify(value), enabled: false }]);
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    let releaseFirst!: () => void;
+    const writes: string[] = [];
+    vi.spyOn(api, "setAppString").mockImplementation(async (_key, serialized) => {
+      writes.push(serialized);
+      if (writes.length === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+    });
+    const manager = new PluginManager();
+    await manager.initialize();
+    const first = manager.setSetting(value.id, value.version, "first", true);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    const second = manager.setSetting(value.id, value.version, "second", true);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(JSON.parse(writes.at(-1)!)).toEqual({ first: true, second: true });
+    expect(installedPlugins()[0].settings).toEqual({ first: true, second: true });
+  });
   it("uninstalls an incompatible stored manifest through its real package identity", async () => {
     const manifest = {
       schemaVersion: 1,

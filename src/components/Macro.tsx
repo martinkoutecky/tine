@@ -879,6 +879,16 @@ export function youtubeTimestampMacroFor(target: Node): string | null {
   return `{{youtube-timestamp ${Math.max(0, Math.floor(seconds))}}}`;
 }
 
+function httpUrl(value: string): string | undefined {
+  if (!/^https?:\/\//i.test(value)) return undefined;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // A {{video}} / {{youtube}} / {{vimeo}} / {{bilibili}} macro: embeds YouTube,
 // Vimeo or Bilibili as an iframe and direct media files as a <video>. Each of the
 // provider-named macros also accepts a bare id (e.g. `{{vimeo 12345}}`), matching
@@ -893,18 +903,19 @@ export function VideoMacro(props: { body: string }): JSX.Element {
     return { name, arg };
   };
   const url = () => parsed().arg;
+  const safeUrl = () => httpUrl(url());
   const embed = () => {
     const { name, arg } = parsed();
     // `?enablejsapi=1` matches OG (youtube.cljs:58) and, together with the
     // referrerpolicy below, is what makes the embed play under WebKitGTK — a bare
     // src with no referrer is rejected by YouTube's player as error 153.
-    const yt = /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/.exec(arg);
+    const yt = safeUrl() && /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/.exec(arg);
     if (yt) return `https://www.youtube.com/embed/${yt[1]}?enablejsapi=1`;
     if (name === "youtube" && /^[\w-]{11}$/.test(arg)) return `https://www.youtube.com/embed/${arg}?enablejsapi=1`;
-    const vimeo = /vimeo\.com\/(\d+)/.exec(arg);
+    const vimeo = safeUrl() && /vimeo\.com\/(\d+)/.exec(arg);
     if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
     if (name === "vimeo" && /^\d+$/.test(arg)) return `https://player.vimeo.com/video/${arg}`;
-    const bili = /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i.exec(arg);
+    const bili = safeUrl() && /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i.exec(arg);
     const bvid = bili ? bili[1] : name === "bilibili" && /^BV[0-9A-Za-z]+$/.test(arg) ? arg : null;
     if (bvid) return `https://player.bilibili.com/player.html?bvid=${bvid}&high_quality=1`;
     return null;
@@ -956,10 +967,12 @@ export function VideoMacro(props: { body: string }): JSX.Element {
       when={embed()}
       fallback={
         <Show
-          when={/\.(mp4|webm|ogg)(\?|$)/i.test(url())}
-          fallback={<a class="external-link" href={url()} target="_blank" rel="noreferrer">{url()}</a>}
+          when={safeUrl() && /\.(mp4|webm|ogg)(\?|$)/i.test(url())}
+          fallback={safeUrl()
+            ? <a class="external-link" href={safeUrl()} target="_blank" rel="noreferrer">{url()}</a>
+            : <span>{url()}</span>}
         >
-          <video class="embed-video" src={url()} controls />
+          <video class="embed-video" src={safeUrl()} controls />
         </Show>
       }
     >
@@ -974,10 +987,13 @@ export function VideoMacro(props: { body: string }): JSX.Element {
 // rendered as a link (no third-party script embedding).
 export function TweetMacro(props: { body: string }): JSX.Element {
   const url = () => props.body.replace(/^(tweet|twitter)\s*/i, "").trim();
+  const safeUrl = () => httpUrl(url());
   return (
-    <a class="external-link tweet-link" href={url()} target="_blank" rel="noreferrer">
-      🐦 {url()}
-    </a>
+    <Show when={safeUrl()} fallback={<span>🐦 {url()}</span>}>
+      <a class="external-link tweet-link" href={safeUrl()} target="_blank" rel="noreferrer">
+        🐦 {url()}
+      </a>
+    </Show>
   );
 }
 
