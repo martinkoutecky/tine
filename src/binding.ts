@@ -34,8 +34,9 @@ export function stillBound(binding: Binding): boolean {
  * registered clear in registration order: each `graphScopedSignal`'s (closing
  * its popup) and each `clearOnBindingInvalidated` callback (e.g. the outline
  * selection). Each clear is isolated: one that throws does not stop the others
- * or the caller's remaining reset; its error is logged and shown as one error
- * toast with the fixed family `binding.clear` (I-9). Never throws. Idempotent.
+ * or the caller's remaining reset. Each failure is logged as fixed text (I-5)
+ * and together they show one error toast with the fixed family `binding.clear`
+ * (I-9). Never throws. Idempotent.
  * O(number of registered clears). */
 export function invalidateBinding(): void {
   resetGeneration++;
@@ -43,9 +44,9 @@ export function invalidateBinding(): void {
   for (const clear of scopedClears) {
     try {
       clear();
-    } catch (error) {
+    } catch {
       failures++;
-      console.error("binding.clear: a graph-scoped clear failed", error);
+      console.error("binding.clear: a graph-scoped clear failed");
     }
   }
   if (failures > 0) {
