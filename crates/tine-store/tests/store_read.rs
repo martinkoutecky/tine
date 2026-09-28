@@ -377,7 +377,7 @@ fn resolve_then_page_covers_titles_aliases_namespaces_and_journals() {
     let store = f.store();
     let view = store.whole_graph().unwrap();
     for (name, journal, expected) in [
-        ("Title", false, "pages/Title.md"),
+        ("Display Title", false, "pages/Title.md"),
         ("Also Owner", false, "pages/Owner.md"),
         ("Parent/Child", false, "pages/Parent%2FChild.md"),
         ("Sep 25th, 2026", true, "journals/2026_09_25.md"),

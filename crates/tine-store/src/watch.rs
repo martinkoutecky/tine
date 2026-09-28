@@ -112,6 +112,7 @@ fn directory_identity(path: &Path) -> Option<u128> {
 }
 
 fn collect_dir(
+    root: &Path,
     dir: &Path,
     files: &mut HashMap<PathBuf, Stamp>,
     unreadable: &mut HashMap<PathBuf, String>,
@@ -142,13 +143,14 @@ fn collect_dir(
                     continue;
                 }
             };
-            if crate::file_kind::is_graph_text_path(&path) {
+            if crate::model::graph_text_eligible(root, &path) {
                 if kind.is_file() {
                     if let Some(value) = stamp_metadata(&path) {
                         files.insert(path, value);
                     }
                 }
             } else if kind.is_dir()
+                && crate::model::graph_text_directory_scannable(root, &path)
                 && !path
                     .file_name()
                     .and_then(|part| part.to_str())
@@ -160,20 +162,20 @@ fn collect_dir(
     }
 }
 
-fn collect_with_errors(dirs: &[PathBuf; 2]) -> (HashMap<PathBuf, Stamp>, HashMap<PathBuf, String>) {
+fn collect_with_errors(dirs: &[PathBuf; 1]) -> (HashMap<PathBuf, Stamp>, HashMap<PathBuf, String>) {
     let mut files = HashMap::new();
     let mut unreadable = HashMap::new();
     for dir in dirs {
-        collect_dir(dir, &mut files, &mut unreadable);
+        collect_dir(&dirs[0], dir, &mut files, &mut unreadable);
     }
     (files, unreadable)
 }
 
-fn collect(dirs: &[PathBuf; 2]) -> HashMap<PathBuf, Stamp> {
+fn collect(dirs: &[PathBuf; 1]) -> HashMap<PathBuf, Stamp> {
     collect_with_errors(dirs).0
 }
 
-fn collect_with_revs(dirs: &[PathBuf; 2]) -> HashMap<PathBuf, Stamp> {
+fn collect_with_revs(dirs: &[PathBuf; 1]) -> HashMap<PathBuf, Stamp> {
     let mut files = collect(dirs);
     for (path, value) in &mut files {
         value.rev = FileRev::from_file(path).ok();
@@ -281,7 +283,7 @@ struct Pending {
 }
 
 impl Pending {
-    fn add(&mut self, event: notify::Result<notify::Event>, dirs: &[PathBuf; 2]) {
+    fn add(&mut self, event: notify::Result<notify::Event>, dirs: &[PathBuf; 1]) {
         let Ok(event) = event else {
             self.full = true;
             return;
@@ -298,7 +300,7 @@ impl Pending {
             self.paths.extend(
                 paths
                     .into_iter()
-                    .filter(|path| dirs.iter().any(|dir| path.starts_with(dir))),
+                    .filter(|path| crate::model::graph_text_eligible(&dirs[0], path)),
             );
         } else if event.paths.is_empty()
             || event
@@ -318,7 +320,7 @@ pub(crate) struct Core {
     changes: Arc<ChangeFeed>,
     journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     config: Arc<RwLock<ConfigState>>,
-    dirs: RwLock<[PathBuf; 2]>,
+    dirs: RwLock<[PathBuf; 1]>,
     snapshot: Mutex<HashMap<PathBuf, Stamp>>,
     config_stamp: Mutex<Option<Stamp>>,
     unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
@@ -616,7 +618,7 @@ impl Core {
             .map_err(|error| LoadError::Failed {
                 reason: error.to_string(),
             })?;
-        *self.dirs.write().unwrap() = [self.graph.journals_path(), self.graph.pages_path()];
+        *self.dirs.write().unwrap() = [self.graph.root.clone()];
         *self.config.write().unwrap() = ConfigState {
             config: Arc::new(config),
             problem,
@@ -705,7 +707,7 @@ impl WatchHandle {
         config: Arc<RwLock<ConfigState>>,
         watch: WatchMode,
     ) -> Self {
-        let dirs = [graph.journals_path(), graph.pages_path()];
+        let dirs = [graph.root.clone()];
         let snapshot = collect(&dirs);
         let config_stamp = stamp(&graph.root.join("logseq/config.edn"));
         let core = Arc::new(Core {
@@ -887,12 +889,12 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
     let pending = Arc::new(Mutex::new(Pending::default()));
     let mut watcher: Option<notify::RecommendedWatcher> = None;
     let mut active = None;
-    let mut active_dirs: Option<[PathBuf; 2]> = None;
-    let mut active_dir_ids: Option<[Option<u128>; 2]> = None;
+    let mut active_dirs: Option<[PathBuf; 1]> = None;
+    let mut active_dir_ids: Option<[Option<u128>; 1]> = None;
     while !core.closed.load(Ordering::Acquire) {
         let selected = *mode.lock().unwrap();
         let dirs = core.dirs.read().unwrap().clone();
-        let dir_ids = [directory_identity(&dirs[0]), directory_identity(&dirs[1])];
+        let dir_ids = [directory_identity(&dirs[0])];
         if active != Some(selected)
             || active_dirs.as_ref() != Some(&dirs)
             || active_dir_ids.as_ref() != Some(&dir_ids)
@@ -990,7 +992,7 @@ mod tests {
             };
             assert_eq!(incremental_paths(&event), Some(vec![text.clone()]));
             let mut pending = Pending::default();
-            pending.add(Ok(event), &[pages.clone(), root.join("journals")]);
+            pending.add(Ok(event), &[root.clone()]);
             assert_eq!(pending.paths, HashSet::from([text.clone()]));
             assert!(!pending.full);
         }

@@ -11,10 +11,13 @@ pub fn is_graph_text(file: &FileId) -> bool {
 
 /// Whether a path has a supported graph-text extension; does not inspect its area.
 pub(crate) fn is_graph_text_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|part| part.to_str()),
-        Some("md" | "org")
-    )
+    path.extension()
+        .and_then(|part| part.to_str())
+        .is_some_and(|extension| {
+            ["md", "markdown", "org"]
+                .iter()
+                .any(|supported| extension.eq_ignore_ascii_case(supported))
+        })
 }
 
 /// Whether an asset file identity names a Logseq EDN sidecar.
@@ -29,10 +32,12 @@ pub(crate) fn is_asset_sidecar_path(path: &Path) -> bool {
 
 #[cfg(test)]
 #[test]
-fn graph_text_and_sidecar_classes_remain_distinct_and_case_sensitive() {
+fn graph_text_and_sidecar_classes_remain_distinct() {
     assert!(is_graph_text_path(Path::new("pages/Note.md")));
     assert!(is_graph_text_path(Path::new("journals/Note.org")));
-    assert!(!is_graph_text_path(Path::new("pages/Note.MD")));
+    assert!(is_graph_text_path(Path::new("pages/Note.MD")));
+    assert!(is_graph_text_path(Path::new("archive/Note.MARKDOWN")));
+    assert!(is_graph_text_path(Path::new("archive/Note.ORG")));
     assert!(!is_graph_text_path(Path::new("assets/Note.edn")));
     assert!(is_asset_sidecar_path(Path::new("assets/Note.edn")));
     assert!(!is_asset_sidecar_path(Path::new("assets/Note.EDN")));

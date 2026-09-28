@@ -5,23 +5,80 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Encode a page title as a file stem using the graph's configured Logseq format.
+/// Encode a page title as a reversible Windows-safe file stem using the
+/// graph's configured Logseq format. Existing file paths are never recoded.
 pub fn encode_page_name(name: &str, fmt: crate::config::FileNameFormat) -> String {
-    match fmt {
-        crate::config::FileNameFormat::Legacy => name.replace('/', "%2F"),
-        crate::config::FileNameFormat::TripleLowbar => name
+    use crate::config::FileNameFormat;
+    let trailing_safe = name.trim_end_matches([' ', '.']).len();
+    let mut escaped = String::with_capacity(name.len());
+    for (offset, character) in name.char_indices() {
+        let encode = character == '%'
+            || character <= '\u{1f}'
+            || character == '\u{7f}'
+            || matches!(
+                character,
+                '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*' | '#'
+            )
+            || (character == '.'
+                && (fmt == FileNameFormat::Legacy || offset == 0 || offset >= trailing_safe))
+            || (character == ' ' && offset >= trailing_safe);
+        if encode {
+            let mut bytes = [0_u8; 4];
+            for byte in character.encode_utf8(&mut bytes).as_bytes() {
+                push_percent_byte(&mut escaped, *byte);
+            }
+        } else {
+            escaped.push(character);
+        }
+    }
+    let mut encoded = match fmt {
+        FileNameFormat::Legacy => escaped.replace('/', "%2F"),
+        FileNameFormat::TripleLowbar => escaped
             .replace("___", "%5F%5F%5F")
             .replace("_/", "%5F/")
             .replace("/_", "/%5F")
             .replace('/', "___"),
+    };
+    let device = encoded
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_uppercase();
+    let reserved = matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            device.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        });
+    if reserved {
+        let first_len = encoded.chars().next().map(char::len_utf8).unwrap_or(0);
+        let mut safe = String::with_capacity(encoded.len() + 2);
+        for byte in &encoded.as_bytes()[..first_len] {
+            push_percent_byte(&mut safe, *byte);
+        }
+        safe.push_str(&encoded[first_len..]);
+        encoded = safe;
     }
+    encoded
+}
+
+fn push_percent_byte(output: &mut String, byte: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    output.push('%');
+    output.push(char::from(HEX[usize::from(byte >> 4)]));
+    output.push(char::from(HEX[usize::from(byte & 0x0f)]));
 }
 
 /// Decode a page filename according to the graph's Logseq naming format.
+/// Legacy dots become namespace separators before percent decoding.
 /// Cost O(stem bytes); malformed percent escapes are preserved.
 pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> String {
     let encoded = match fmt {
-        crate::config::FileNameFormat::Legacy => stem.to_owned(),
+        crate::config::FileNameFormat::Legacy => stem.replace('.', "/"),
         crate::config::FileNameFormat::TripleLowbar => stem.replace("___", "/"),
     };
     let bytes = encoded.as_bytes();
@@ -47,6 +104,43 @@ pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> Strin
     String::from_utf8_lossy(&output).into_owned()
 }
 
+/// The first nonempty page title in a document preamble. Content after the
+/// first Markdown bullet or Org headline is block content, not page identity.
+/// Cost O(preamble bytes); malformed or empty titles leave filename identity.
+pub fn page_title_from_preamble(content: &str, format: Format) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("- ")
+            || trimmed == "-"
+            || (format == Format::Org && trimmed.starts_with("* "))
+        {
+            break;
+        }
+        if let Some((key, value)) = crate::doc::parse_property_line(line) {
+            if key.eq_ignore_ascii_case("title") && !value.trim().is_empty() {
+                return Some(value.trim().to_owned());
+            }
+        }
+        if format == Format::Org {
+            let directive = trimmed
+                .split_once(':')
+                .and_then(|(key, value)| key.eq_ignore_ascii_case("#+title").then_some(value));
+            let drawer = trimmed
+                .strip_prefix(':')
+                .and_then(|rest| rest.split_once(':'))
+                .and_then(|(key, value)| key.eq_ignore_ascii_case("title").then_some(value));
+            if let Some(title) = directive
+                .or(drawer)
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+            {
+                return Some(title.to_owned());
+            }
+        }
+    }
+    None
+}
+
 /// Whether a page file is a journal or an ordinary page.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,8 +152,9 @@ pub enum PageKind {
     Page,
 }
 
-/// On-disk file format of a page. Markdown (`.md`) is the default; Logseq org
-/// graphs use `.org`. A graph may mix the two — format is decided per file by
+/// On-disk file format of a page. Markdown (`.md` or `.markdown`) is the default; Logseq org
+/// graphs use `.org`. Existing extensions are matched without case sensitivity.
+/// A graph may mix the two — format is decided per file by
 /// extension, never graph-wide (matching OG, which stores `:block/format` per
 /// page). The graph's `:preferred-format` only chooses the extension for NEW
 /// files through `Config::preferred_format`.
@@ -78,7 +173,7 @@ impl Format {
     /// Format of a page file by its extension (`.org` → Org, else Md).
     pub fn from_path(p: &Path) -> Format {
         match p.extension().and_then(|e| e.to_str()) {
-            Some("org") => Format::Org,
+            Some(extension) if extension.eq_ignore_ascii_case("org") => Format::Org,
             _ => Format::Md,
         }
     }

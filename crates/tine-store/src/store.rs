@@ -29,6 +29,7 @@
 //! a UI thread.
 
 use crate::path_identity::canonical_existing_path;
+mod page_identity;
 mod save_failure;
 use std::collections::{BTreeMap, VecDeque};
 use std::collections::{HashMap, HashSet};
@@ -210,9 +211,8 @@ pub struct Change {
 
 impl Change {
     /// The parsed graph page altered by an external observation or an external
-    /// writer whose bytes survived transaction undo, using its graph filename
-    /// name (the old name for a removal). A `title::` property does not replace
-    /// that identity. Own writes
+    /// writer whose bytes survived transaction undo, using its effective
+    /// `title::`-aware name (the old name for a removal). Own writes
     /// list changed files but carry no parsed page entries, so this returns
     /// `None` for them. It also returns `None` for a file with no parsed page
     /// change, including a duplicate journal claimant or sync-conflict copy.
@@ -266,6 +266,7 @@ struct Snapshot {
     journal_format: JournalFormat,
     list: Arc<Vec<PageEntry>>,
     claimants: Arc<HashMap<(PageKind, String), Vec<PageEntry>>>,
+    name_by_path: Arc<HashMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
 }
 
@@ -286,13 +287,29 @@ impl Snapshot {
         let cache_generation = graph.cache_generation();
         let changed_names: Vec<_> = files
             .iter()
-            .filter(|(id, kind, _)| {
-                (id.as_str()
-                    .starts_with(&format!("{}/", config.config.pages_dir))
-                    || id
-                        .as_str()
-                        .starts_with(&format!("{}/", config.config.journals_dir)))
-                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
+            .filter_map(|(id, kind, _)| {
+                let path = graph.root.join(id.as_str());
+                if !crate::model::graph_text_eligible(&graph.root, &path)
+                    || !matches!(
+                        kind,
+                        ChangeKind::Created | ChangeKind::Modified | ChangeKind::Removed
+                    )
+                {
+                    return None;
+                }
+                let entry = graph.entry_for_path(&path)?;
+                if *kind == ChangeKind::Modified && entry.kind == PageKind::Journal {
+                    return None;
+                }
+                let old_name = old.and_then(|snapshot| snapshot.name_by_path.get(&path));
+                if *kind == ChangeKind::Modified
+                    && old_name.is_some_and(|(old_kind, old_name)| {
+                        *old_kind == entry.kind && *old_name == entry.name
+                    })
+                {
+                    return None;
+                }
+                Some((*kind, entry))
             })
             .collect();
         let name_set_changed = config_changed || old.is_none() || !changed_names.is_empty();
@@ -303,27 +320,44 @@ impl Snapshot {
             let previous = old.expect("name index from old generation");
             let mut list = Arc::clone(&previous.list);
             let mut claimants = Arc::clone(&previous.claimants);
-            for (id, kind, _) in changed_names {
-                let path = graph.root.join(id.as_str());
-                let entry = graph.entry_for_path(&path);
-                let Some(entry) = entry else { continue };
-                let key = (entry.kind, tine_core::refs::page_key(&entry.name));
-                let bucket = Arc::make_mut(&mut claimants).entry(key).or_default();
-                bucket.retain(|candidate| candidate.path != path);
-                if *kind == ChangeKind::Created {
-                    bucket.push(entry.clone());
+            for (kind, entry) in changed_names {
+                let path = entry.path.clone();
+                let buckets = Arc::make_mut(&mut claimants);
+                if let Some((old_kind, old_name)) = previous.name_by_path.get(&path) {
+                    let old_key = (*old_kind, tine_core::refs::page_key(old_name));
+                    if let Some(bucket) = buckets.get_mut(&old_key) {
+                        bucket.retain(|candidate| candidate.path != path);
+                        if bucket.is_empty() {
+                            buckets.remove(&old_key);
+                        }
+                    }
                 }
-                bucket.sort_by(|a, b| crate::model::compare_page_claimants(a, b, &journal_format));
+                if kind != ChangeKind::Removed {
+                    let key = (entry.kind, tine_core::refs::page_key(&entry.name));
+                    let bucket = buckets.entry(key).or_default();
+                    bucket.push(entry.clone());
+                    bucket.sort_by(|a, b| {
+                        crate::model::compare_page_claimants(
+                            a,
+                            b,
+                            &journal_format,
+                            config.config.file_name_format,
+                        )
+                    });
+                }
                 let list = Arc::make_mut(&mut list);
                 list.retain(|candidate| candidate.path != path);
                 if entry.kind == PageKind::Journal && entry.date_key.is_some() {
                     list.retain(|candidate| {
                         candidate.kind != PageKind::Journal || candidate.date_key != entry.date_key
                     });
-                    if let Some(winner) = bucket.first() {
+                    if let Some(winner) = buckets
+                        .get(&(entry.kind, tine_core::refs::page_key(&entry.name)))
+                        .and_then(|bucket| bucket.first())
+                    {
                         list.push(winner.clone());
                     }
-                } else if *kind == ChangeKind::Created {
+                } else if kind != ChangeKind::Removed {
                     list.push(entry);
                 }
             }
@@ -332,14 +366,19 @@ impl Snapshot {
             let old = old.expect("name index from old generation");
             (Arc::clone(&old.list), Arc::clone(&old.claimants))
         };
+        let name_by_path = if name_set_changed {
+            Arc::new(
+                list.iter()
+                    .map(|entry| (entry.path.clone(), (entry.kind, entry.name.clone())))
+                    .collect(),
+            )
+        } else {
+            Arc::clone(&old.expect("path names from old generation").name_by_path)
+        };
         let changed_paths: Vec<String> = files
             .iter()
             .filter(|(id, _, _)| {
-                id.as_str()
-                    .starts_with(&format!("{}/", config.config.pages_dir))
-                    || id
-                        .as_str()
-                        .starts_with(&format!("{}/", config.config.journals_dir))
+                crate::model::graph_text_eligible(&graph.root, &graph.root.join(id.as_str()))
             })
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
@@ -371,6 +410,7 @@ impl Snapshot {
             journal_format,
             list,
             claimants,
+            name_by_path,
             unreadable: graph.unreadable_pages(),
         }
     }
@@ -734,7 +774,12 @@ pub(crate) fn journal_ids_from_entries(
         .into_iter()
         .filter_map(|(day, mut entries)| {
             entries.sort_by(|a, b| {
-                crate::model::compare_page_claimants(a, b, &graph.current_journal_format())
+                crate::model::compare_page_claimants(
+                    a,
+                    b,
+                    &graph.current_journal_format(),
+                    graph.current_config().file_name_format,
+                )
             });
             entries.into_iter().next()?.rel_path.map(|id| (day, id))
         })
@@ -1370,164 +1415,6 @@ impl Store {
         Ok(id)
     }
 
-    /// Type a valid `.md` or `.org` file in pages or journals as a page id.
-    /// Syncthing `.sync-conflict-` and Dropbox `(conflicted copy)` names,
-    /// and invalid ids, return `None`; `page()` also refuses such ids. Use
-    /// `read()` with their `FileId` to inspect raw conflict-copy bytes.
-    /// No disk read or wait.
-    pub fn as_page(&self, file: &FileId) -> Option<PageId> {
-        self.validate_file(file).ok()?;
-        let path = file.as_str();
-        if !path.starts_with(&format!("{}/", self.graph.current_config().pages_dir))
-            && !path.starts_with(&format!("{}/", self.graph.current_config().journals_dir))
-        {
-            return None;
-        }
-        let stem = std::path::Path::new(path).file_stem()?.to_str()?;
-        if !crate::file_kind::is_graph_text_path(std::path::Path::new(path)) {
-            return None;
-        }
-        if tine_core::model::is_sync_conflict(stem) {
-            return None;
-        }
-        Some(PageId::from(path))
-    }
-
-    pub(crate) fn validate_file(&self, file: &FileId) -> Result<(), StoreError> {
-        let path = file.as_str();
-        if path.is_empty()
-            || path.starts_with('/')
-            || path.contains('\\')
-            || path
-                .split('/')
-                .any(|part| part.is_empty() || part == "." || part == "..")
-        {
-            return Err(StoreError::InvalidTarget(path.to_owned()));
-        }
-        if !path.starts_with(&format!("{}/", self.graph.current_config().pages_dir))
-            && !path.starts_with(&format!("{}/", self.graph.current_config().journals_dir))
-            && !path.starts_with("assets/")
-            && !path.starts_with("logseq/")
-        {
-            return Err(StoreError::InvalidTarget(path.to_owned()));
-        }
-        Ok(())
-    }
-
-    fn area_root(&self, file: &FileId) -> Result<PathBuf, StoreError> {
-        self.validate_file(file)?;
-        let path = file.as_str();
-        let config = self.graph.current_config();
-        let area = if path.starts_with(&format!("{}/", config.pages_dir)) {
-            config.pages_dir.as_str()
-        } else if path.starts_with(&format!("{}/", config.journals_dir)) {
-            config.journals_dir.as_str()
-        } else {
-            path.split('/').next().unwrap_or_default()
-        };
-        Ok(self.graph.root.join(area))
-    }
-
-    /// A validated OS path. `existing_regular_file` requires a live file in
-    /// pages, journals, or assets for an opener; it refuses meta, trash, and
-    /// conflict-copy paths even if their files exist. A page source may follow
-    /// an older graph layout's in-graph link between pages and journals.
-    /// Otherwise a missing final file is allowed, with ancestors inside its area.
-    /// Cost O(path components), independent of graph size. Refuses an escaped
-    /// target; missing or unreadable existing files return their I/O error.
-    pub fn path_for_os_handoff(
-        &self,
-        file: &FileId,
-        existing_regular_file: bool,
-    ) -> Result<PathBuf, StoreError> {
-        if self.is_closed() {
-            return Err(StoreError::Closed);
-        }
-        let area = self.area_root(file)?;
-        let (area, candidate) = if let Some(rel) = file.as_str().strip_prefix("assets/") {
-            let approved = self.graph.assets_path();
-            let lexical = self.graph.root.join("assets");
-            let live = match canonical_existing_path(&lexical) {
-                Ok(path) => path,
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::NotFound && approved == lexical =>
-                {
-                    lexical
-                }
-                Err(error) => return Err(StoreError::from_io(error)),
-            };
-            if live != approved {
-                return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
-            }
-            (approved.clone(), approved.join(rel))
-        } else {
-            (area, self.graph.root.join(file.as_str()))
-        };
-        if existing_regular_file {
-            let target = canonical_existing_path(&candidate).map_err(StoreError::from_io)?;
-            if !target.is_file() {
-                return Err(if file.as_str().starts_with("assets/") {
-                    StoreError::InvalidTarget(file.as_str().to_owned())
-                } else {
-                    StoreError::PageSource("page source is not a file".into())
-                });
-            }
-            if file.as_str().starts_with("assets/") {
-                let assets = canonical_existing_path(&self.graph.assets_path())
-                    .map_err(StoreError::from_io)?;
-                if !target.starts_with(&assets) {
-                    return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
-                }
-            } else {
-                if self.as_page(file).is_none() {
-                    return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
-                }
-                let config = self.graph.current_config();
-                let pages = canonical_existing_path(&self.graph.root.join(&config.pages_dir))
-                    .map_err(StoreError::from_io)?;
-                let journals = canonical_existing_path(&self.graph.root.join(&config.journals_dir))
-                    .map_err(StoreError::from_io)?;
-                if !target.starts_with(&pages) && !target.starts_with(&journals) {
-                    return Err(StoreError::PageSource(
-                        "page source escapes graph directories".into(),
-                    ));
-                }
-            }
-            return Ok(target);
-        }
-        let (area_canonical, area_missing) = match canonical_existing_path(&area) {
-            Ok(path) => (path, false),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let root =
-                    canonical_existing_path(&self.graph.root).map_err(StoreError::from_io)?;
-                (
-                    root.join(
-                        area.strip_prefix(&self.graph.root)
-                            .map_err(|_| StoreError::InvalidTarget(file.as_str().to_owned()))?,
-                    ),
-                    true,
-                )
-            }
-            Err(error) => return Err(StoreError::from_io(error)),
-        };
-        let (existing, resolved) =
-            crate::model::canonical_existing_ancestor(&candidate).map_err(StoreError::from_io)?;
-        if !candidate.starts_with(&area)
-            || (!resolved.starts_with(&area_canonical)
-                && !(area_missing && area_canonical.starts_with(&resolved)))
-        {
-            return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
-        }
-        let suffix = candidate
-            .strip_prefix(existing)
-            .expect("candidate ancestor");
-        if suffix.as_os_str().is_empty() {
-            Ok(resolved)
-        } else {
-            Ok(resolved.join(suffix))
-        }
-    }
-
     /// Display the recoverable asset trash location in a user-facing error.
     pub fn asset_trash_location_for_user(&self) -> PathBuf {
         self.graph.root.join("logseq/.tine-trash/assets")
@@ -1790,10 +1677,12 @@ impl Store {
     /// failed initial parse, a present file still returns its current parsed
     /// content, but publishes no generation until successful `scan_refresh()`.
     /// Every call waits for the writer lock, including a missing or unchanged
-    /// file. A cold-cache or failed-load read parses only its target file;
+    /// file. A saved path spelled in another case on a case-insensitive volume
+    /// opens the file under its disk spelling and returns that spelling as id.
+    /// A cold-cache or failed-load read parses only its target file;
     /// repeated reads do not invalidate the directory lookup cache. After a
     /// cache-changing write or observation, finding the file can
-    /// walk O(P) page or journal directory entries; parsing costs O(page bytes
+    /// walk O(P) eligible graph text entries; parsing costs O(page bytes
     /// + blocks), and publication can add O(P) metadata.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         let _writer = self.writer.lock().unwrap();
@@ -1804,6 +1693,9 @@ impl Store {
         if self.as_page(&id.file()).is_none() {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
+        let id = self
+            .disk_spelling_for_case_alias(id)
+            .unwrap_or_else(|| id.clone());
         // v0.6.5's page walker never indexes a symlinked page file (it could
         // expose a file outside the graph), so no listing hands out such an
         // id; refuse one here too. Ancestors must stay inside the area. The
@@ -1901,7 +1793,7 @@ impl Store {
         })
     }
 
-    /// Read an ordinary page by decoded file name, or a journal by its file
+    /// Read an ordinary page by effective name, or a journal by its file
     /// stem or parseable display title, using the
     /// file list built before `open` returns. This remains available after a
     /// failed initial parse; aliases require a successful graph view and are
@@ -2280,7 +2172,8 @@ pub enum SavePagesOutcome {
 
 /// Parsed page and the raw-byte revision used for a guarded save.
 pub struct PageRead {
-    /// Same page identity passed to [`Store::page`]; no canonicalization occurs.
+    /// Exact disk path identity. A case-alias request on a case-insensitive
+    /// volume returns the file's disk spelling.
     pub id: PageId,
     /// Parsed document.
     pub doc: PageDto,
@@ -2838,8 +2731,9 @@ impl WholeGraph {
     /// namespace and may propose a new file. Real files win over aliases.
     /// Journal files with a configured date stem rank first, then Markdown
     /// before Org, then filename and full path lexicographically. Ordinary
-    /// page claimants use the latter three rules. Claims come from decoded
-    /// filenames and journal dates, not a parsed `title::` property. After a
+    /// page claimants prefer the file named for the page, then use the latter
+    /// three rules. Ordinary page claims use a preamble `title::` or Org title
+    /// directive when present, then the decoded filename. After a
     /// journal-format change, a new view uses the new title format for date
     /// claims; the parser still tries its documented fallback formats. Old
     /// custom-format links are not rewritten. If an old title no longer parses
@@ -2908,8 +2802,7 @@ impl WholeGraph {
 
     fn validated_page(&self, id: &PageId) -> Result<(), QueryError> {
         let path = id.as_str();
-        let valid_area = path.starts_with(&format!("{}/", self.config.config.pages_dir))
-            || path.starts_with(&format!("{}/", self.config.config.journals_dir));
+        let valid_area = crate::model::graph_text_relative_eligible(path);
         let valid_name = !path.contains('\\')
             && !path
                 .split('/')

@@ -173,10 +173,12 @@ fn public_items(src: &Path) -> BTreeSet<String> {
             .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
         collect(&m.ident.to_string(), &parsed.items, &mut out);
     }
-    let save = src.join("store/save_failure.rs");
-    let parsed = syn::parse_file(&std::fs::read_to_string(&save).unwrap())
-        .unwrap_or_else(|e| panic!("{}: {e}", save.display()));
-    collect("store", &parsed.items, &mut out);
+    for child in ["store/save_failure.rs", "store/page_identity.rs"] {
+        let file = src.join(child);
+        let parsed = syn::parse_file(&std::fs::read_to_string(&file).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        collect("store", &parsed.items, &mut out);
+    }
     out
 }
 
@@ -408,6 +410,9 @@ fn public_paths_are_only_inputs_and_handoffs() {
             &mut actual,
         );
     }
+    let page_identity = root.join("store/page_identity.rs");
+    let parsed = syn::parse_file(&std::fs::read_to_string(&page_identity).unwrap()).unwrap();
+    path_items("store", &parsed.items, &visible_types, &mut actual);
     // Each path is a user-selected OS path input or a path handed to the OS or
     // user for opening, serving, or recovery. Internal graph identities use
     // FileId/PageId. New signatures require a reason even if SURFACE accepts them.

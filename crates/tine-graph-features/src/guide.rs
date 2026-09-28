@@ -108,6 +108,10 @@ pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopy
             tine_core::model::encode_page_name(&name, config.config.file_name_format)
         );
         let markdown = rewrite_bundled_guide_links(template.markdown, &renames);
+        let markdown = markdown
+            .strip_prefix(&format!("title:: {}\n", template.title))
+            .map(|rest| format!("title:: {name}\n{rest}"))
+            .unwrap_or(markdown);
         if create_if_absent(store, Area::Pages, &rel, markdown.as_bytes())? {
             created_pages.push(name);
         } else {

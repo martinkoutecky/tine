@@ -302,6 +302,17 @@ export function PageView(): JSX.Element {
             : backend().getPage(r.name, r.pageKind));
           if (result.kind === "stale") return;
           const dto = result.value;
+          // A saved path can use another case spelling on a case-insensitive
+          // volume. Adopt the file's disk spelling in tabs, Recent, and the
+          // route before loading it into the exact-path working set.
+          if (r.path && dto?.id && dto.id !== r.path && dto.kind === r.pageKind
+            && dto.id.toLowerCase() === r.path.toLowerCase()) {
+            const from = { name: r.name, pageKind: r.pageKind, path: r.path };
+            const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
+            renamePageInNavigation(from, to);
+            router.rewritePageTarget(from, to);
+            return;
+          }
           if (r.path && (!dto || dto.id !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
             throw new Error("The selected physical page is no longer available at that path.");
           }

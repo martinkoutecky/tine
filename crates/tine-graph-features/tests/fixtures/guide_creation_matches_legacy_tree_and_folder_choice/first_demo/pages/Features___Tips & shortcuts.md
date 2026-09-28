@@ -36,5 +36,6 @@ icon:: ⌨️
 	- **Carry unfinished tasks** forward into today (from the command palette) — the last 7 / 30 / 365 days, optionally with their context.
 	- Select several task bullets and press **Ctrl/Cmd+Enter** to advance each one through your workflow in a single Undo step. The selection toolbar can also wrap selected text as a page link or inline code.
 	- **Namespaces**: name a page `Project/Roadmap` and it nests under `Project` in the sidebar. This page lives under `Features`.
+	- **Page names and files**: put `title:: Project/Roadmap` above the first bullet to give an existing page that name, even when its filename differs. Tine keeps the file at its existing path; links and page search use the title. Markdown and Org pages in other graph folders, such as `archive/`, are pages too. New pages get portable filenames, including names with punctuation.
 	- **Page icons**: add a property like `icon:: 📚` at the very top of a page — that's where the ⌨️ on this one comes from.
 	- **Interface zoom** with **Ctrl + / - / 0**, and PDFs, images, and audio all have their own controls.
