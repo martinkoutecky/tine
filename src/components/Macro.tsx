@@ -318,9 +318,12 @@ export function QueryMacro(props: {
     saveCollapsed(collapseKey(), v);
   };
 
-  // Re-run when the reading changes OR after any save lands (dataRev). A
-  // COLLAPSED query fetches once for its count and does not re-run a
-  // whole-graph evaluation on every save while hidden.
+  // A save anywhere in the graph bumps dataRev after 700 ms of quiet. Each
+  // distinct expanded request costs one whole-graph evaluation per revision;
+  // sharedQueryResult coalesces identical open blocks into one IPC (including
+  // the 20-block case), though each host still owns its rendered rows. A
+  // collapsed query fetches once for its count and skips save reruns. The
+  // 10k-graph 3/20-block save measurements are in RECEIPT-14Q4A.md.
   const runRequest = createMemo(() => {
     const query = runnable();
     if (!query) return undefined;

@@ -32,6 +32,7 @@ import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetTabsToJournals, route } from "../router";
 import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
 import { toasts, setToasts } from "../toasts";
+import { bumpDataRev } from "../graphSession";
 
 beforeAll(async () => {
   await initParser();
@@ -93,6 +94,24 @@ function load(raw: string, { readOnly = false }: { readOnly?: boolean } = {}): v
 const TQL_MACRO = "{{tine-query -- task TODO}}";
 
 describe("B1: a TQL block executes through query_run", () => {
+  it("coalesces twenty identical visible query runs after a save revision", async () => {
+    const ids = Array.from({ length: 20 }, (_, index) => `query-${index}`);
+    setDoc({
+      byId: Object.fromEntries([...ids.map((id) => [id, node(id, TQL_MACRO)]), ["todo", node("todo", "TODO A tracked row")]]),
+      pages: [page([...ids, "todo"])], feed: ["Sheet"], loaded: true,
+    });
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    const { root, dispose } = mount(() => <>{ids.map((id) => <Block id={id} />)}</>);
+    try {
+      await vi.waitFor(() => expect(root.querySelectorAll(".query-count")).toHaveLength(20));
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      bumpDataRev();
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    } finally {
+      dispose();
+    }
+  });
+
   it("shows a rejected run without claiming an empty answer", async () => {
     load(TQL_MACRO);
     vi.spyOn(backend(), "queryRun").mockRejectedValue(new Error("result-too-large"));
