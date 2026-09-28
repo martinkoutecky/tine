@@ -161,8 +161,14 @@ await withApp(0, async (browser) => {
   await browser.keys(["Enter"]);
   const pane = await browser.$(".qs-sheet .query-text-pane-input");
   await pane.waitForExist({ timeout: 15_000 });
-  // The field chooser opens first; Escape peels only that layer.
+  // The field chooser opens first; Escape peels only that layer. Wait for the
+  // chooser to be open before Escape and closed after it, or the keypress can
+  // race the auto-open and leave the chooser over the pane.
+  const chooserOpen = () => browser.execute(() => document.querySelector(".qs-sheet .qs-add")?.getAttribute("aria-expanded") === "true");
+  await browser.waitUntil(chooserOpen, { timeout: 10_000, interval: 100, timeoutMsg: "/query did not open the field chooser" });
   await browser.keys(["Escape"]);
+  await browser.waitUntil(async () => !(await chooserOpen()), { timeout: 10_000, interval: 100, timeoutMsg: "Escape did not close the field chooser" });
+  await pane.waitForClickable({ timeout: 10_000 });
   await browser.execute(() => {
     const input = document.querySelector(".qs-sheet .query-text-pane-input");
     if (input instanceof HTMLElement) input.focus();
