@@ -128,6 +128,7 @@ fn guide_explains_page_title_identity_and_files_outside_page_directory() {
         .markdown
         .contains("keeps the file at its existing path"));
     assert!(tips.markdown.contains("archive/"));
+    assert!(tips.markdown.contains(":hidden [\"archive/private\"]"));
 }
 
 #[test]

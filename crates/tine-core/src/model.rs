@@ -104,9 +104,11 @@ pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> Strin
     String::from_utf8_lossy(&output).into_owned()
 }
 
-/// The first nonempty page title in a document preamble. Content after the
-/// first Markdown bullet or Org headline is block content, not page identity.
-/// Cost O(preamble bytes); malformed or empty titles leave filename identity.
+/// First nonempty `title::` in the preamble; Org also accepts `#+title:` and
+/// `:title:`. The scan stops at a trimmed `-` or `- ` line, and for Org at
+/// `* `. Other bullet spellings and deeper Org headlines do not stop it.
+/// Returns `None` when no supported title precedes that boundary. Cost
+/// O(scanned preamble bytes); no I/O or error.
 pub fn page_title_from_preamble(content: &str, format: Format) -> Option<String> {
     for line in content.lines() {
         let trimmed = line.trim_start();

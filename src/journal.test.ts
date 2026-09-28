@@ -1,13 +1,23 @@
 import { describe, it, expect } from "vitest";
 import dateGoldenRaw from "./fixtures/date-golden.json?raw";
 import journalTitleGoldenRaw from "../tests/fixtures/i12-journal-title-golden.json?raw";
+import { JOURNAL_TITLE_FORMATS } from "./journalTitleFormats";
 import {
   formatJournal,
   isJournalTitle,
   parseJournalWith,
   setJournalTitleFormat,
+  parseJournalTitle,
+  localDayKey,
+  localDateFromDayKey,
+  localDayRolloverDelay,
   type JournalDateParts,
 } from "./journal";
+
+it("inverts a valid journal day key in years below 100", () => {
+  const day = localDateFromDayKey(10102);
+  expect([day.getFullYear(), day.getMonth() + 1, day.getDate()]).toEqual([1, 1, 2]);
+});
 
 type FormatVector = {
   fmt: string;
@@ -91,4 +101,24 @@ describe("journal date grammar golden fixture", () => {
       );
     }
   });
+});
+
+it("parses the containing journal's date across configured and fallback titles", () => {
+  setJournalTitleFormat("dd.MM.yyyy");
+  expect(localDayKey(parseJournalTitle("21.07.2026")!)).toBe(20260721);
+  expect(localDayKey(parseJournalTitle("2026-07-21")!)).toBe(20260721);
+  expect(parseJournalTitle("ordinary page")).toBeNull();
+  setJournalTitleFormat(null);
+});
+
+it("computes the next local calendar rollover without 24-hour arithmetic", () => {
+  expect(localDayRolloverDelay(new Date(2026, 6, 21, 23, 59, 59, 900))).toBe(125);
+});
+
+it("offers all three dotted Logseq journal title formats", () => {
+  for (const pattern of ["E, dd.MM.yyyy", "EEE, dd.MM.yyyy", "EEEE, dd.MM.yyyy"]) {
+    expect(JOURNAL_TITLE_FORMATS).toContain(pattern);
+    const title = formatJournal(new Date(2026, 6, 21), pattern);
+    expect(parseJournalWith(title, pattern)).toEqual({ y: 2026, m: 7, d: 21 });
+  }
 });

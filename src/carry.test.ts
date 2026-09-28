@@ -6,8 +6,18 @@ import { pageByName, resetStore } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
 import type { PageRead } from "./types";
+import { setToasts, toasts } from "./toasts";
 
 describe("carry binding", () => {
+  it("reports a source-day read failure through the carry action", async () => {
+    resetStore();
+    setToasts([]);
+    loadSingle({ name: journalTitle(new Date()), kind: "journal", title: "Today", pre_block: null, blocks: [] });
+    const read = vi.spyOn(backend(), "getPage").mockRejectedValueOnce(new Error("source unreadable"));
+    await expect(carryDay("Sep 25th, 2026")).resolves.toBeUndefined();
+    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("source unreadable"))).toBe(true);
+    read.mockRestore();
+  });
   it("does not load or write an old day when today's read finishes after a graph switch (I-20)", async () => {
     resetStore();
     let finish!: (page: PageRead | null) => void;

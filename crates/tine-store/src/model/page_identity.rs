@@ -4,6 +4,77 @@
 use super::*;
 use std::io::{BufRead, BufReader};
 
+impl Graph {
+    /// Build the page list and effective-name claimants from one cold walk.
+    pub(crate) fn snapshot_name_index(
+        &self,
+    ) -> (
+        Arc<Vec<PageEntry>>,
+        HashMap<(PageKind, String), Vec<PageEntry>>,
+    ) {
+        let format = self.current_journal_format();
+        let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
+        let entries = list_graph_pages(self);
+        for entry in &entries {
+            claimants
+                .entry((entry.kind, tine_core::refs::page_key(&entry.name)))
+                .or_default()
+                .push(entry.clone());
+        }
+        for entries in claimants.values_mut() {
+            entries.sort_by(|a, b| {
+                compare_page_claimants(a, b, &format, self.current_config().file_name_format)
+            });
+        }
+        let list = Arc::new(dedup_journal_days(
+            entries,
+            &format,
+            self.current_config().file_name_format,
+        ));
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
+        (list, claimants)
+    }
+}
+
+#[cfg(test)]
+mod cold_index_tests {
+    use super::*;
+
+    #[test]
+    fn cold_name_snapshot_reads_each_page_preamble_once() {
+        let dir =
+            std::env::temp_dir().join(format!("tine-cold-name-snapshot-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        for i in 0..8 {
+            fs::write(
+                dir.join("pages").join(format!("Page {i}.md")),
+                format!("title:: Name {i}\n\n- body\n"),
+            )
+            .unwrap();
+        }
+        let graph = Graph::open(&dir);
+        GRAPH_LIST_CALLS.with(|calls| calls.set(0));
+        GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
+        let (list, claimants) = graph.snapshot_name_index();
+        assert_eq!(list.len(), 8);
+        assert_eq!(claimants.len(), 8);
+        assert_eq!(
+            GRAPH_LIST_CALLS.with(|calls| calls.get()),
+            1,
+            "one graph walk"
+        );
+        assert_eq!(
+            GRAPH_PREAMBLE_READS.with(|reads| reads.get()),
+            8,
+            "one preamble read per page"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
 fn portable_component(name: &str) -> bool {
     if name.is_empty()
         || matches!(name, "." | "..")
@@ -27,7 +98,26 @@ fn portable_component(name: &str) -> bool {
         })
 }
 
-pub(crate) fn graph_text_directory_scannable(root: &Path, path: &Path) -> bool {
+pub(crate) fn configured_hidden(relative: &str, config: &Config) -> bool {
+    config.hidden.iter().any(|prefix| {
+        if prefix.is_empty() {
+            return true;
+        }
+        let prefix = prefix.strip_suffix('/').unwrap_or(prefix);
+        if prefix.starts_with('/')
+            || prefix.starts_with(' ')
+            || prefix.ends_with(' ')
+            || prefix
+                .split('/')
+                .any(|part| !portable_component(part) || matches!(part, "." | ".."))
+        {
+            return false;
+        }
+        relative.starts_with(prefix)
+    })
+}
+
+pub(crate) fn graph_text_directory_scannable(root: &Path, path: &Path, config: &Config) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
@@ -67,24 +157,37 @@ pub(crate) fn graph_text_directory_scannable(root: &Path, path: &Path) -> bool {
             return false;
         }
     }
-    true
+    !configured_hidden(&relative.to_string_lossy().replace('\\', "/"), config)
 }
 
-pub(crate) fn graph_text_eligible(root: &Path, path: &Path) -> bool {
-    if !is_page_file(path) || !graph_text_directory_scannable(root, path.parent().unwrap_or(root)) {
+/// Files the watcher must observe, including provider conflict copies that
+/// appear in the conflict list but must never become page claimants.
+pub(crate) fn graph_text_watch_relevant(root: &Path, path: &Path, config: &Config) -> bool {
+    if !is_page_file(path)
+        || !graph_text_directory_scannable(root, path.parent().unwrap_or(root), config)
+    {
+        return false;
+    }
+    if path.strip_prefix(root).ok().is_some_and(|relative| {
+        configured_hidden(&relative.to_string_lossy().replace('\\', "/"), config)
+    }) {
         return false;
     }
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| !name.starts_with('.') && portable_component(name))
+}
+
+pub(crate) fn graph_text_eligible(root: &Path, path: &Path, config: &Config) -> bool {
+    graph_text_watch_relevant(root, path, config)
         && path
             .file_stem()
             .and_then(|stem| stem.to_str())
             .is_some_and(|stem| !is_sync_conflict(stem))
 }
 
-pub(crate) fn graph_text_relative_eligible(relative: &str) -> bool {
-    graph_text_eligible(Path::new(""), Path::new(relative))
+pub(crate) fn graph_text_relative_eligible(relative: &str, config: &Config) -> bool {
+    graph_text_eligible(Path::new(""), Path::new(relative), config)
 }
 
 /// Read only the preamble instead of every block of every page during name
@@ -92,6 +195,8 @@ pub(crate) fn graph_text_relative_eligible(relative: &str) -> bool {
 pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFormat) -> String {
     let title = (|| {
         let file = fs::File::open(path).ok()?;
+        #[cfg(test)]
+        super::GRAPH_PREAMBLE_READS.with(|reads| reads.set(reads.get() + 1));
         if file.metadata().ok()?.len() > PARSE_INPUT_MAX_BYTES {
             return None;
         }
@@ -124,8 +229,9 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
     let format = graph.current_journal_format();
     let name_format = graph.current_config().file_name_format;
     let journals = graph.journals_path();
-    walk_graph_page_files(root, |path| {
-        if !graph_text_eligible(root, &path) {
+    let config = graph.current_config();
+    walk_graph_page_files(root, &config, |path| {
+        if !graph_text_eligible(root, &path, &config) {
             return;
         }
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
@@ -158,7 +264,7 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
     entries
 }
 
-fn walk_graph_page_files(root: &Path, mut visit: impl FnMut(PathBuf)) {
+fn walk_graph_page_files(root: &Path, config: &Config, mut visit: impl FnMut(PathBuf)) {
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         #[cfg(feature = "test-faults")]
@@ -171,9 +277,9 @@ fn walk_graph_page_files(root: &Path, mut visit: impl FnMut(PathBuf)) {
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
-            if kind.is_file() && graph_text_eligible(root, &path) {
+            if kind.is_file() && graph_text_eligible(root, &path, config) {
                 visit(path);
-            } else if kind.is_dir() && graph_text_directory_scannable(root, &path) {
+            } else if kind.is_dir() && graph_text_directory_scannable(root, &path, config) {
                 pending.push(path);
             }
         }

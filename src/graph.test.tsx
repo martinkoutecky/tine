@@ -127,6 +127,7 @@ async function loadHarness(
   vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn() }));
   vi.doMock("./journal", () => ({
     journalTitle: () => "Jul 10th, 2026",
+    localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
     setJournalTitleFormat: vi.fn(),
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
@@ -139,9 +140,9 @@ async function loadHarness(
   vi.doMock("./workspaces", () => ({ clearWorkspaces: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename } = await import("./graph");
+  const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay } = await import("./graph");
   return {
-    loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, api, events, resetPageIndex, resetAt, waitForWarmCache,
+    loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, api, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
     applyTemplateVars, prepareTemplateVars, openPage,
   };
@@ -156,6 +157,27 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
+  it("shares one template write across simultaneous feed refreshes", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
+    await loadGraphPath(META.root);
+    api.savePages.mockClear();
+    let finishRead!: (value: PageRead | null) => void;
+    api.getPage.mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+    const first = ensureJournalTemplateForDay(new Date());
+    const second = ensureJournalTemplateForDay(new Date());
+    finishRead(null);
+    expect(await Promise.all([first, second])).toEqual(["ready", "ready"]);
+    expect(api.getPage).toHaveBeenCalledTimes(2); // one on graph bind, one shared refresh
+    expect(api.savePages).toHaveBeenCalledTimes(1);
+  });
+  it("returns a typed template read failure for the feed to surface and retry", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
+    await loadGraphPath(META.root);
+    api.getPage.mockRejectedValueOnce(new Error("template read denied"));
+    const result = await ensureJournalTemplateForDay(new Date());
+    expect(result).toMatchObject({ kind: "error", error: expect.any(Error) });
+    if (typeof result !== "string") expect(String(result.error)).toContain("template read denied");
+  });
   it("still switches graph when the current session cannot be saved", async () => {
     const { loadGraphPath, api } = await loadHarness(null);
     await loadGraphPath(META.root);

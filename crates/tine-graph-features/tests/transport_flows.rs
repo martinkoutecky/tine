@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use tine_core::model::PageKind;
+use tine_core::model::{BlockDto, PageDto, PageKind};
 use tine_graph_features::{assets, pages};
-use tine_store::{OpenOptions, PageId, SaveOutcome, Store};
+use tine_store::{OpenOptions, PageId, Resolved, SaveOutcome, Store};
 
 struct Fixture(std::path::PathBuf);
 impl Fixture {
@@ -26,6 +26,77 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.0).unwrap();
     }
+}
+
+#[test]
+fn journal_template_save_matches_master_bytes() {
+    // The same DTO/action as master's journal_template_bytes_survive_reopen_and_idempotent_resave.
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let name = "Jul 30th, 2026";
+    let id = match store.whole_graph().unwrap().resolve(name, true) {
+        Resolved::Absent { id } => id,
+        _ => panic!("expected absent journal"),
+    };
+    let page = PageDto {
+        name: name.into(),
+        kind: PageKind::Journal,
+        title: name.into(),
+        pre_block: None,
+        blocks: ["### Meetings", "### Notes", "### Tasks"]
+            .into_iter()
+            .map(|raw| BlockDto {
+                raw: raw.into(),
+                ..Default::default()
+            })
+            .collect(),
+        rev: None,
+        format: Default::default(),
+        read_only: false,
+        guide: false,
+    };
+    let saved = pages::save_page(
+        &store,
+        tine_store::EditKind::CreatePage,
+        &id,
+        &page,
+        None,
+        false,
+    )
+    .unwrap();
+    assert!(matches!(saved, SaveOutcome::Saved(_)));
+    assert_eq!(
+        std::fs::read(fixture.0.join("journals/2026_07_30.md")).unwrap(),
+        b"- ### Meetings\n- ### Notes\n- ### Tasks\n",
+    );
+    drop(store);
+    let reopened = fixture.store();
+    let loaded = pages::get_page(&reopened, name, PageKind::Journal)
+        .unwrap()
+        .expect("templated journal survives reopening");
+    assert_eq!(
+        loaded
+            .doc
+            .blocks
+            .iter()
+            .map(|block| block.raw.as_str())
+            .collect::<Vec<_>>(),
+        ["### Meetings", "### Notes", "### Tasks"],
+    );
+    let saved = pages::save_page(
+        &reopened,
+        tine_store::EditKind::ReplacePage,
+        &loaded.id,
+        &loaded.doc,
+        Some(loaded.rev.into()),
+        false,
+    )
+    .unwrap();
+    assert!(matches!(saved, SaveOutcome::Unchanged(_)));
+    assert_eq!(
+        std::fs::read(fixture.0.join("journals/2026_07_30.md")).unwrap(),
+        b"- ### Meetings\n- ### Notes\n- ### Tasks\n",
+    );
 }
 
 #[test]

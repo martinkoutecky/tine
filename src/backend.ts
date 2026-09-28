@@ -598,6 +598,7 @@ export interface BackupInfo {
 
 export interface GraphChange {
   binding_generation?: number;
+  path?: string;
   name: string;
   kind: "journal" | "page";
   created: boolean;

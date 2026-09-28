@@ -146,6 +146,19 @@ describe("mobile external link delegation", () => {
 });
 
 describe("journal watcher feed reconciliation", () => {
+  it("rekeys an externally edited title by physical path before publishing the new page", async () => {
+    const id = "pages/Physical.md";
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Physical", pageKind: "page", path: id }], pos: 0, pinned: false }], activeIndex: 0 });
+    setDoc({ byId: { body: node("body", "Physical") },
+      pages: [{ ...page("Physical", "page", ["body"]), id }], feed: ["Physical"], loaded: true });
+    const dto: PageRead = { name: "Effective", kind: "page", title: "Effective", id, rev: "new-rev",
+      pre_block: "title:: Effective", blocks: [{ id: "body", raw: "external", children: [], collapsed: false }] };
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    await handleGraphChange({ path: id, name: "Effective", kind: "page", created: false, removed: false });
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Effective", path: id });
+    expect(pageToDto("Effective")?.blocks[0].raw).toBe("external");
+    expect(pageToDto("Physical")).toBeNull();
+  });
   for (const branch of ["open page", "feed day", "loaded satellite"] as const) {
     it(`keeps an edit typed during the ${branch} watcher fetch`, async () => {
       const name = branch === "feed day" ? "15th July, 2030" : `Watcher ${branch}`;

@@ -14,14 +14,15 @@ impl Store {
         let spelling = rel.to_str()?.replace('\\', "/");
         if spelling == id.as_str()
             || spelling.to_lowercase() != id.as_str().to_lowercase()
-            || !crate::model::graph_text_eligible(&root, &actual)
+            || !crate::model::graph_text_eligible(&root, &actual, &self.graph.current_config())
         {
             return None;
         }
         Some(PageId::from(spelling))
     }
 
-    /// Type an eligible graph `.md` or `.org` file as a page id, including files
+    /// Type an eligible graph `.md`, `.markdown`, or `.org` file as a page id
+    /// (case-insensitive extensions), including files
     /// outside the configured page and journal directories.
     /// Syncthing `.sync-conflict-` and Dropbox `(conflicted copy)` names,
     /// and invalid ids, return `None`; `page()` also refuses such ids. Use
@@ -30,7 +31,11 @@ impl Store {
     pub fn as_page(&self, file: &FileId) -> Option<PageId> {
         self.validate_file(file).ok()?;
         let path = file.as_str();
-        if !crate::model::graph_text_eligible(&self.graph.root, &self.graph.root.join(path)) {
+        if !crate::model::graph_text_eligible(
+            &self.graph.root,
+            &self.graph.root.join(path),
+            &self.graph.current_config(),
+        ) {
             return None;
         }
         Some(PageId::from(path))
@@ -47,11 +52,23 @@ impl Store {
         {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
+        // Raw file ids under pages/journals must not bypass the same configured
+        // graph-text exclusion used by discovery and direct page reads.
+        if crate::file_kind::is_graph_text_path(std::path::Path::new(path))
+            && !path.starts_with("logseq/.tine-trash/")
+            && crate::model::configured_hidden(path, &self.graph.current_config())
+        {
+            return Err(StoreError::InvalidTarget(path.to_owned()));
+        }
         if !path.starts_with(&format!("{}/", self.graph.current_config().pages_dir))
             && !path.starts_with(&format!("{}/", self.graph.current_config().journals_dir))
             && !path.starts_with("assets/")
             && !path.starts_with("logseq/")
-            && !crate::model::graph_text_eligible(&self.graph.root, &self.graph.root.join(path))
+            && !crate::model::graph_text_eligible(
+                &self.graph.root,
+                &self.graph.root.join(path),
+                &self.graph.current_config(),
+            )
         {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
@@ -66,7 +83,11 @@ impl Store {
             config.pages_dir.as_str()
         } else if path.starts_with(&format!("{}/", config.journals_dir)) {
             config.journals_dir.as_str()
-        } else if crate::model::graph_text_eligible(&self.graph.root, &self.graph.root.join(path)) {
+        } else if crate::model::graph_text_eligible(
+            &self.graph.root,
+            &self.graph.root.join(path),
+            &self.graph.current_config(),
+        ) {
             return Ok(self.graph.root.clone());
         } else {
             path.split('/').next().unwrap_or_default()
@@ -130,7 +151,12 @@ impl Store {
                 }
                 let root =
                     canonical_existing_path(&self.graph.root).map_err(StoreError::from_io)?;
-                if !target.starts_with(&root) || !crate::model::graph_text_eligible(&root, &target)
+                if !target.starts_with(&root)
+                    || !crate::model::graph_text_eligible(
+                        &root,
+                        &target,
+                        &self.graph.current_config(),
+                    )
                 {
                     return Err(StoreError::PageSource(
                         "page source escapes graph text scope".into(),
@@ -161,7 +187,11 @@ impl Store {
                 && !(area_missing && area_canonical.starts_with(&resolved)))
             || (self.as_page(file).is_some()
                 && resolved.is_file()
-                && !crate::model::graph_text_eligible(&self.graph.root, &resolved))
+                && !crate::model::graph_text_eligible(
+                    &self.graph.root,
+                    &resolved,
+                    &self.graph.current_config(),
+                ))
         {
             return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
         }

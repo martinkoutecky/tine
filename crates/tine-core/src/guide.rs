@@ -151,3 +151,24 @@ pub fn collect_guide_asset_refs(markdown: &str, into: &mut HashSet<String>) {
         rest = &after[end..];
     }
 }
+
+#[cfg(test)]
+mod journal_guide_tests {
+    #[test]
+    fn journal_controls_are_documented_in_the_bundled_guide() {
+        let tips = include_str!("templates/tips.md");
+        for control in [
+            "/That day",
+            "g n",
+            "g p",
+            "default journal template",
+            "Carry unfinished tasks",
+            ":hidden [\"archive/private\"]",
+        ] {
+            assert!(
+                tips.contains(control),
+                "missing journal Guide control: {control}"
+            );
+        }
+    }
+}

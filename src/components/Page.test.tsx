@@ -3,13 +3,13 @@ import { Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo } from "../document";
+import { pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, moveBlockFeed } from "../document";
 import { setBlockMoving } from "../document/edits/moves";
 import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { loadSingle } from "../document/workingSet";
-import { editingId, endEdit, startEditing } from "../editorController";
+import { editingId, editingOwner, activeSurface, endEdit, startEditing } from "../editorController";
 import { journalTitle } from "../journal";
 import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
@@ -18,7 +18,8 @@ import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../ro
 import { clearConflict } from "../document/save/engine";
 import { markConflict } from "../document/save/engine";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
-import { graphEpoch } from "../graphSession";
+import { graphEpoch, setGraphMeta } from "../graphSession";
+import type { GraphMeta } from "../types";
 
 beforeAll(async () => {
   await initParser();
@@ -34,6 +35,7 @@ afterEach(() => {
   endEdit("blur");
   closeContextMenu();
   resetStore();
+  setGraphMeta(null);
   document.body.innerHTML = "";
   resetTabsToJournals();
 });
@@ -89,6 +91,162 @@ function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): J
 }
 
 describe("Journals feed generation lifecycle", () => {
+  it.each([false, true])("adds a new day around an active editor (dirty: %s)", async (dirty) => {
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2030, 6, 15, 22));
+    const previous = journalTitle(new Date());
+    const old = journalDto(previous, "Existing notes stay here");
+    vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => feedResponse([old]));
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("Existing notes stay here"));
+      startEditing(old.blocks[0].id, 5);
+      await flushMicrotasks();
+      const editor = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      expect(editor).not.toBeNull();
+      if (dirty) {
+        editor.value = "Existing notes with unsaved overnight text";
+        editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "text" }));
+      }
+      editor.focus();
+      editor.setSelectionRange(3, 12, "backward");
+      const text = editor.value;
+      const owner = editingOwner();
+      const surface = activeSurface();
+      const oldPage = pageByName(previous);
+      const oldNode = doc.byId[old.blocks[0].id];
+      vi.setSystemTime(new Date(2030, 6, 16, 8));
+      const today = journalTitle(new Date());
+      await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+      await flushMicrotasks();
+      expect(doc.feed[0]).toBe(today);
+      expect(doc.feed).toContain(previous);
+      expect(pageByName(previous)).toBe(oldPage);
+      expect(doc.byId[old.blocks[0].id]).toBe(oldNode);
+      expect(mounted.root.querySelector("textarea.block-editor")).toBe(editor);
+      expect(editor.value).toBe(text);
+      expect([editor.selectionStart, editor.selectionEnd, editor.selectionDirection]).toEqual([3, 12, "backward"]);
+      expect(document.activeElement).toBe(editor);
+      expect(editingId()).toBe(old.blocks[0].id);
+      expect(editingOwner()).toBe(owner);
+      expect(activeSurface()).toBe(surface);
+      expect(isDirty(previous)).toBe(dirty);
+    } finally {
+      mounted.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("retains an editor acquired while a new-day feed read is in flight", async () => {
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2030, 6, 15, 22));
+    const yesterday = journalTitle(new Date());
+    const old = journalDto(yesterday, "Keep this node");
+    let finishRead!: (value: JournalFeedPage) => void;
+    vi.spyOn(backend(), "journalFeedPage")
+      .mockResolvedValueOnce(feedResponse([old]))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("Keep this node"));
+      vi.setSystemTime(new Date(2030, 6, 16, 8));
+      const refresh = reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+      startEditing(old.blocks[0].id, 4);
+      await flushMicrotasks();
+      const editor = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      editor.focus();
+      editor.setSelectionRange(2, 8, "backward");
+      const owner = editingOwner();
+      const oldNode = doc.byId[old.blocks[0].id];
+      finishRead(feedResponse([old]));
+      await refresh;
+      await flushMicrotasks();
+      expect(doc.feed[0]).toBe(journalTitle(new Date()));
+      expect(doc.byId[old.blocks[0].id]).toBe(oldNode);
+      expect(mounted.root.querySelector("textarea.block-editor")).toBe(editor);
+      expect([editor.selectionStart, editor.selectionEnd, editor.selectionDirection]).toEqual([2, 8, "backward"]);
+      expect(document.activeElement).toBe(editor);
+      expect(editingOwner()).toBe(owner);
+    } finally {
+      mounted.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("moves an edited block between loaded journal days without replacing its model node", async () => {
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const today = journalTitle(new Date());
+    const older = "August 21st, 2026";
+    const first = journalDto(today, "Visible today");
+    const second = journalDto(older, "Move me");
+    vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([first, second]));
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["today-r2", "older-r2"] });
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${second.blocks[0].id}"]`)).not.toBeNull());
+      startEditing(second.blocks[0].id, 3);
+      await vi.waitFor(() => expect(mounted.root.querySelector("textarea.block-editor")).not.toBeNull());
+      const editor = mounted.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      editor.focus();
+      editor.setSelectionRange(2, 2);
+      const original = doc.byId[second.blocks[0].id];
+      expect(await moveBlockFeed(second.blocks[0].id, -1)).toBe("crossed");
+      expect(doc.byId[second.blocks[0].id]).toBe(original);
+      expect(doc.byId[second.blocks[0].id].page).toBe(today);
+      expect(editingId()).toBe(second.blocks[0].id);
+      await vi.waitFor(() => expect(mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${second.blocks[0].id}"] textarea`)).not.toBeNull());
+      const movedEditor = mounted.root.querySelector<HTMLTextAreaElement>(`[data-block-id="${second.blocks[0].id}"] textarea`)!;
+      expect(movedEditor.value).toBe("Move me");
+      expect(document.activeElement).toBe(movedEditor);
+    } finally {
+      mounted.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("writes a configured template before reading each new local day into the feed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2030, 6, 15, 12));
+    setGraphMeta({
+      root: "/tmp/journal-midnight", default_journal_template: "Daily",
+      journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
+    } as GraphMeta);
+    const order: string[] = [];
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    vi.spyOn(backend(), "listTemplates").mockResolvedValue([{
+      name: "Daily", page: "Templates", kind: "page",
+      blocks: [{ id: "template", raw: "Template body", collapsed: false, children: [] }],
+    }]);
+    vi.spyOn(backend(), "resolvePage").mockImplementation(async () => ({ kind: "absent", id: `journals/${localDay()}.md` }));
+    vi.spyOn(backend(), "savePages").mockImplementation(async () => {
+      order.push(`save:${localDay()}`);
+      return { ok: ["revision"] };
+    });
+    vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => {
+      order.push(`feed:${localDay()}`);
+      return feedResponse([]);
+    });
+    const owner = { graphEpoch: graphEpoch(), isLive: () => true };
+    await reloadJournalsFeedFromStart(owner);
+    vi.setSystemTime(new Date(2030, 6, 16, 0, 0, 1));
+    await reloadJournalsFeedFromStart(owner);
+    expect(order).toEqual(["save:20300715", "feed:20300715", "save:20300716", "feed:20300716"]);
+  });
   it("keeps a startup route pending when its feed read is superseded during publication", async () => {
     vi.stubGlobal("IntersectionObserver", class {
       observe() {}

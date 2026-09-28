@@ -64,7 +64,10 @@
  * results that land after a graph switch are dropped (I-20). This module never imports the router: route
  * and feed effects go through handlers the app installs
  * (`installExternalChangeUiHandler`, `installAliasDraftRouteHandler`,
- * `installHistoryRouteContextAdapter`). */
+ * `installHistoryRouteContextAdapter`). An effective title change uses the
+ * exact physical path to rekey navigation, loaded page ownership and its save
+ * baseline in that order. The UI installs `installPageIdentityNavigation`;
+ * rekeying refuses a name collision or an unsafe external reload. */
 export { blockIsGridView, node, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, isConflicted, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, trackAssetWrite, waitingFor, waitingOn } from "./save/engine";
@@ -84,4 +87,5 @@ export { blockExternalId, blockRef, ensureBlockId, persistBlockRefTarget, persis
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
 export { clearSelection, cycleSelectionTasks, deleteSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectedIds, selectionMarkdown } from "./edits/selection";
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";
+export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { carryUnfinished } from "./edits/carry";

@@ -50,8 +50,8 @@ async function report(n: number, today: string, owner: Owner): Promise<void> {
 }
 
 /** Carry unfinished tasks from the latest earlier journal with content to
- * today. This scans the journal-day inventory; a lookup failure is treated as
- * no earlier day and shows that toast. Moving is in memory before today's page
+ * today. This scans and sorts the journal-day inventory; a lookup failure
+ * reports an error toast. Moving is in memory before today's page
  * save; a save failure leaves moved tasks in the editor for resolution. */
 export async function carryPrevDay(): Promise<void> {
   const owner = graphOwner();
@@ -63,8 +63,9 @@ export async function carryPrevDay(): Promise<void> {
     const result = await readOwned(owner, backend().journalContentDays());
     if (result.kind === "stale") return;
     days = result.value;
-  } catch {
-    days = [];
+  } catch (error) {
+    if (owner()) pushToast(`Could not read journal days for carry: ${String(error)}`, "error");
+    return;
   }
   if (!owner()) return;
   const prevKey = days.filter((k) => k < todayKey).sort((a, b) => a - b).pop();
@@ -79,17 +80,22 @@ export async function carryPrevDay(): Promise<void> {
 /** Carry unfinished tasks from a named journal to today. A missing source or
  * today's own page does nothing. The move changes the in-memory working set
  * and saves today's page; failed saves retain the moved tasks in the editor and
- * toast. Cost follows the source/day blocks plus any page load and save. */
+ * toast. Page-read failures also toast. Cost follows the source/day blocks
+ * plus any page load and grouped save. */
 export async function carryDay(pageName: string): Promise<void> {
   const owner = graphOwner();
-  const today = await ensureToday(owner);
-  if (!today || !owner()) return;
-  if (pageName === today) return;
-  if (!(await ensureLoaded(pageName, "journal", owner))) return;
-  if (!owner()) return;
-  if (refuseConflictedMove([today, pageName])) return;
-  const n = carryUnfinished([pageName], carryKeepsContext(), carryHeaderText());
-  await report(n, today, owner);
+  try {
+    const today = await ensureToday(owner);
+    if (!today || !owner()) return;
+    if (pageName === today) return;
+    if (!(await ensureLoaded(pageName, "journal", owner))) return;
+    if (!owner()) return;
+    if (refuseConflictedMove([today, pageName])) return;
+    const n = carryUnfinished([pageName], carryKeepsContext(), carryHeaderText());
+    await report(n, today, owner);
+  } catch (error) {
+    if (owner()) pushToast(`Could not carry tasks: ${String(error)}`, "error");
+  }
 }
 
 /** Carry unfinished tasks from today-1 through today-days, newest first,
@@ -98,20 +104,24 @@ export async function carryDay(pageName: string): Promise<void> {
  * clamped or validated. A failed final save leaves moves in memory and toasts. */
 export async function carryDaysBack(days: number): Promise<void> {
   const owner = graphOwner();
-  const today = await ensureToday(owner);
-  if (!today || !owner()) return;
-  const base = new Date();
-  const candidates: string[] = [];
-  for (let i = 1; i <= days; i++) {
-    const d = new Date(base);
-    d.setDate(d.getDate() - i);
-    candidates.push(journalTitle(d));
+  try {
+    const today = await ensureToday(owner);
+    if (!today || !owner()) return;
+    const base = new Date();
+    const candidates: string[] = [];
+    for (let i = 1; i <= days; i++) {
+      const d = new Date(base);
+      d.setDate(d.getDate() - i);
+      candidates.push(journalTitle(d));
+    }
+    // Load all the day files in parallel rather than one IPC round-trip at a time.
+    const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal", owner)));
+    if (!owner()) return;
+    const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
+    if (refuseConflictedMove([today, ...titles])) return;
+    const n = carryUnfinished(titles, carryKeepsContext(), carryHeaderText());
+    await report(n, today, owner);
+  } catch (error) {
+    if (owner()) pushToast(`Could not carry tasks: ${String(error)}`, "error");
   }
-  // Load all the day files in parallel rather than one IPC round-trip at a time.
-  const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal", owner)));
-  if (!owner()) return;
-  const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
-  if (refuseConflictedMove([today, ...titles])) return;
-  const n = carryUnfinished(titles, carryKeepsContext(), carryHeaderText());
-  await report(n, today, owner);
 }

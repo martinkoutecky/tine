@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
-import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands } from "./keybindings";
+import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal } from "./keybindings";
 import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
 import { setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
@@ -24,6 +24,18 @@ const pluginGraphMeta: GraphMeta = {
   preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
   logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,
 };
+
+it("offers the journal navigation hotstrings and steps from the current journal day", () => {
+  const defaults = Object.fromEntries(commandDefaults().map((command) => [command.id, command.binding]));
+  expect(defaults["go/home"]).toBe("g h");
+  expect(defaults["go/journal-next"]).toBe("g n");
+  expect(defaults["go/journal-prev"]).toBe("g p");
+  router.openPage("Jul 31st, 2026", "journal");
+  goAdjacentJournal(1);
+  expect(router.route()).toMatchObject({ kind: "page", name: "Aug 1st, 2026", pageKind: "journal" });
+  goAdjacentJournal(-1);
+  expect(router.route()).toMatchObject({ kind: "page", name: "Jul 31st, 2026", pageKind: "journal" });
+});
 
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
   return {

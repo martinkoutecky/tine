@@ -114,6 +114,7 @@ fn directory_identity(path: &Path) -> Option<u128> {
 fn collect_dir(
     root: &Path,
     dir: &Path,
+    config: &tine_core::Config,
     files: &mut HashMap<PathBuf, Stamp>,
     unreadable: &mut HashMap<PathBuf, String>,
 ) {
@@ -143,14 +144,14 @@ fn collect_dir(
                     continue;
                 }
             };
-            if crate::model::graph_text_eligible(root, &path) {
+            if crate::model::graph_text_watch_relevant(root, &path, config) {
                 if kind.is_file() {
                     if let Some(value) = stamp_metadata(&path) {
                         files.insert(path, value);
                     }
                 }
             } else if kind.is_dir()
-                && crate::model::graph_text_directory_scannable(root, &path)
+                && crate::model::graph_text_directory_scannable(root, &path, config)
                 && !path
                     .file_name()
                     .and_then(|part| part.to_str())
@@ -162,21 +163,24 @@ fn collect_dir(
     }
 }
 
-fn collect_with_errors(dirs: &[PathBuf; 1]) -> (HashMap<PathBuf, Stamp>, HashMap<PathBuf, String>) {
+fn collect_with_errors(
+    dirs: &[PathBuf; 1],
+    config: &tine_core::Config,
+) -> (HashMap<PathBuf, Stamp>, HashMap<PathBuf, String>) {
     let mut files = HashMap::new();
     let mut unreadable = HashMap::new();
     for dir in dirs {
-        collect_dir(&dirs[0], dir, &mut files, &mut unreadable);
+        collect_dir(&dirs[0], dir, config, &mut files, &mut unreadable);
     }
     (files, unreadable)
 }
 
-fn collect(dirs: &[PathBuf; 1]) -> HashMap<PathBuf, Stamp> {
-    collect_with_errors(dirs).0
+fn collect(dirs: &[PathBuf; 1], config: &tine_core::Config) -> HashMap<PathBuf, Stamp> {
+    collect_with_errors(dirs, config).0
 }
 
-fn collect_with_revs(dirs: &[PathBuf; 1]) -> HashMap<PathBuf, Stamp> {
-    let mut files = collect(dirs);
+fn collect_with_revs(dirs: &[PathBuf; 1], config: &tine_core::Config) -> HashMap<PathBuf, Stamp> {
+    let mut files = collect(dirs, config);
     for (path, value) in &mut files {
         value.rev = FileRev::from_file(path).ok();
     }
@@ -184,7 +188,7 @@ fn collect_with_revs(dirs: &[PathBuf; 1]) -> HashMap<PathBuf, Stamp> {
 }
 
 fn collect_restore(core: &Core) -> RestoreBaseline {
-    let mut files = collect_with_revs(&core.dirs.read().unwrap());
+    let mut files = collect_with_revs(&core.dirs.read().unwrap(), &core.graph.current_config());
     let mut stack = vec![core.graph.assets_path()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -283,7 +287,12 @@ struct Pending {
 }
 
 impl Pending {
-    fn add(&mut self, event: notify::Result<notify::Event>, dirs: &[PathBuf; 1]) {
+    fn add(
+        &mut self,
+        event: notify::Result<notify::Event>,
+        dirs: &[PathBuf; 1],
+        config: &tine_core::Config,
+    ) {
         let Ok(event) = event else {
             self.full = true;
             return;
@@ -300,7 +309,7 @@ impl Pending {
             self.paths.extend(
                 paths
                     .into_iter()
-                    .filter(|path| crate::model::graph_text_eligible(&dirs[0], path)),
+                    .filter(|path| crate::model::graph_text_watch_relevant(&dirs[0], path, config)),
             );
         } else if event.paths.is_empty()
             || event
@@ -455,7 +464,7 @@ impl Core {
                 Some(self.unreadable_dirs.lock().unwrap().clone()),
             )
         } else {
-            let (files, errors) = collect_with_errors(&dirs);
+            let (files, errors) = collect_with_errors(&dirs, &self.graph.current_config());
             (files, Some(errors))
         };
         #[cfg(test)]
@@ -708,7 +717,7 @@ impl WatchHandle {
         watch: WatchMode,
     ) -> Self {
         let dirs = [graph.root.clone()];
-        let snapshot = collect(&dirs);
+        let snapshot = collect(&dirs, &graph.current_config());
         let config_stamp = stamp(&graph.root.join("logseq/config.edn"));
         let core = Arc::new(Core {
             graph,
@@ -856,7 +865,10 @@ impl WatchHandle {
                 files.push((id, kind, new.and_then(|value| value.rev.clone())));
             }
         }
-        *self.core.snapshot.lock().unwrap() = collect_with_revs(&self.core.dirs.read().unwrap());
+        *self.core.snapshot.lock().unwrap() = collect_with_revs(
+            &self.core.dirs.read().unwrap(),
+            &self.core.graph.current_config(),
+        );
         if files.is_empty() && !config_changed {
             self.core.changes.rev()
         } else if matches!(
@@ -907,8 +919,13 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                 let pending = Arc::clone(&pending);
                 let wake = wake.clone();
                 let callback_dirs = dirs.clone();
+                let callback_graph = Arc::clone(&core.graph);
                 if let Ok(mut created) = notify::recommended_watcher(move |event| {
-                    pending.lock().unwrap().add(event, &callback_dirs);
+                    pending.lock().unwrap().add(
+                        event,
+                        &callback_dirs,
+                        &callback_graph.current_config(),
+                    );
                     let _ = wake.send(());
                 }) {
                     let mut watched = true;
@@ -963,6 +980,34 @@ mod tests {
     use crate::store::{OpenOptions, Store};
 
     #[test]
+    fn watcher_inventory_and_incremental_path_share_hidden_policy() {
+        let root = std::env::temp_dir().join(format!("tine-hidden-watch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("archive/private")).unwrap();
+        fs::create_dir_all(root.join("archive/public")).unwrap();
+        let hidden = root.join("archive/private/Secret.md");
+        let visible = root.join("archive/public/Visible.md");
+        fs::write(&hidden, "- hidden\n").unwrap();
+        fs::write(&visible, "- visible\n").unwrap();
+        let config = tine_core::Config::parse(r#"{:hidden ["archive/private"]}"#);
+        let files = collect(&[root.clone()], &config);
+        assert!(!files.contains_key(&hidden));
+        assert!(files.contains_key(&visible));
+        let event = notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Any,
+            )),
+            paths: vec![hidden.clone(), visible.clone()],
+            attrs: Default::default(),
+        };
+        let mut pending = Pending::default();
+        pending.add(Ok(event), &[root.clone()], &config);
+        assert!(!pending.paths.contains(&hidden));
+        assert!(pending.paths.contains(&visible));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn windows_any_events_on_exact_text_files_stay_incremental() {
         use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind};
 
@@ -992,7 +1037,7 @@ mod tests {
             };
             assert_eq!(incremental_paths(&event), Some(vec![text.clone()]));
             let mut pending = Pending::default();
-            pending.add(Ok(event), &[root.clone()]);
+            pending.add(Ok(event), &[root.clone()], &tine_core::Config::default());
             assert_eq!(pending.paths, HashSet::from([text.clone()]));
             assert!(!pending.full);
         }

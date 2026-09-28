@@ -1,0 +1,26 @@
+/** Journal display-title choices from Logseq's `journal-title-formatters`.
+ * These change titles only; file naming follows :journal/file-name-format. */
+export const JOURNAL_TITLE_FORMATS = [
+  "MMM do, yyyy",
+  "MMMM do, yyyy",
+  "do MMM yyyy",
+  "do MMMM yyyy",
+  "E, dd-MM-yyyy",
+  "EEE, dd-MM-yyyy",
+  "EEEE, dd-MM-yyyy",
+  "E, dd.MM.yyyy",
+  "EEE, dd.MM.yyyy",
+  "EEEE, dd.MM.yyyy",
+  "EEE, MM/dd/yyyy",
+  "EEEE, MM/dd/yyyy",
+  "EEE, yyyy/MM/dd",
+  "dd-MM-yyyy",
+  "MM/dd/yyyy",
+  "MM-dd-yyyy",
+  "MM_dd_yyyy",
+  "yyyy/MM/dd",
+  "yyyy-MM-dd",
+  "yyyy-MM-dd EEEE",
+  "yyyy_MM_dd",
+  "yyyyMMdd",
+] as const;

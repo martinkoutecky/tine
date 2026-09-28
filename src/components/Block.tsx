@@ -27,6 +27,7 @@ import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairE
 import { typoTypeReplace } from "../render/typography";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
+import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
 import { openDurableBlock } from "../blockRefActions";
@@ -81,7 +82,7 @@ import { MEDIA_EDITORS } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
-import { journalTitle } from "../journal";
+import { runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
@@ -2071,9 +2072,8 @@ export function Editor(props: { id: string }): JSX.Element {
         return;
       }
       case "today":
-        // GH #220: the link must use the graph's configured journal title
-        // format, or it points at a page that isn't the journal day.
-        replaceTrigger(pageInsert(journalTitle(new Date())));
+      case "thatday":
+        runJournalSlash(item.action, docNode(props.id).page, replaceTrigger);
         return;
       case "upload-asset":
         replaceTrigger(""); // drop the "/upload" trigger text
@@ -2356,17 +2356,15 @@ export function Editor(props: { id: string }): JSX.Element {
   const moveBlockCmd = (e: KeyboardEvent, dir: 1 | -1): boolean => {
     e.preventDefault();
     const start = ref.selectionStart;
+    const end = ref.selectionEnd;
+    const direction = ref.selectionDirection;
     commit(ref.value);
     void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
       startEditing(props.id, start);
       if (outlineScope) moveItem(props.id, dir);
       else await moveBlockFeed(props.id, dir);
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      if (ref.isConnected) {
-        ref.focus();
-        const o = Math.min(start, ref.value.length);
-        ref.setSelectionRange(o, o);
-      }
+      restoreMovedSelection(ref, props.id, start, end, direction);
     }).catch(() => console.error("Block move failed"));
     return true;
   };
