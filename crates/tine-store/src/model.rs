@@ -4,6 +4,7 @@
 //! values remain separate external reference identities.
 
 mod one_block_layout;
+mod page_icons;
 mod page_parse;
 use page_parse::{isolate_page_parse, parse_page_content, parse_page_entry_isolated};
 
@@ -419,6 +420,8 @@ pub(crate) struct Graph {
     pub(crate) warm_passes: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     pub(crate) fail_sync_read_once: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(crate) fail_sync_parse_once: std::sync::atomic::AtomicBool,
     /// File times observed while publishing the parsed page cache. Readers
     /// clone the table with their graph view, so later disk edits cannot alter it.
     observed_mtimes: RwLock<Arc<std::collections::HashMap<String, std::time::SystemTime>>>,
@@ -561,6 +564,7 @@ pub(crate) struct ReadSnapshot {
     alias_owner_paths_by_key: std::sync::OnceLock<HashMap<String, Vec<String>>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
     block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
+    icon_index: std::sync::OnceLock<Arc<HashMap<String, String>>>,
     memos: SnapshotMemos,
     #[cfg(test)]
     block_full_builds: std::sync::atomic::AtomicUsize,
@@ -790,12 +794,39 @@ impl ReadSnapshot {
             alias_owner_paths_by_key: std::sync::OnceLock::new(),
             referenced_names: std::sync::OnceLock::new(),
             block_ref_counts: std::sync::OnceLock::new(),
+            icon_index: std::sync::OnceLock::new(),
             memos: SnapshotMemos::default(),
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        let icons_unchanged = old.is_some_and(|old| {
+            (Arc::ptr_eq(&old.pages, &snapshot.pages) || !changed_paths.is_empty())
+                && changed_paths.iter().all(|path| {
+                    let before = snapshot_page_by_rel(&old.pages, old_positions.as_deref(), path);
+                    let after =
+                        snapshot_page_by_rel(&snapshot.pages, Some(positions.as_ref()), path);
+                    match (before, after) {
+                        (Some((a, ad)), Some((b, bd))) => {
+                            a.kind == b.kind
+                                && a.name == b.name
+                                && ad.pre_block.as_deref().and_then(page_icons::pre_block_icon)
+                                    == bd.pre_block.as_deref().and_then(page_icons::pre_block_icon)
+                                && crate::query::document_aliases(ad)
+                                    == crate::query::document_aliases(bd)
+                        }
+                        _ => false,
+                    }
+                })
+        });
+        let icons = if icons_unchanged {
+            old.and_then(|old| old.icon_index.get()).cloned()
+        } else {
+            None
+        }
+        .unwrap_or_else(|| Arc::new(snapshot.build_page_icon_index()));
+        let _ = snapshot.icon_index.set(icons);
         {
             let previous =
                 old.and_then(|old| old.block_ref_counts.get().map(|counts| (old, counts)));
@@ -984,37 +1015,6 @@ impl ReadSnapshot {
             .iter()
             .filter(|(entry, _)| entry.kind == PageKind::Journal)
             .filter_map(|(entry, doc)| entry.date_key.filter(|_| doc_has_content(&doc.roots)))
-            .collect()
-    }
-
-    pub(crate) fn page_icons(&self, names: &[String]) -> HashMap<String, String> {
-        let mut icons = HashMap::new();
-        let mut real = std::collections::HashSet::new();
-        for (entry, doc) in self.pages.iter() {
-            if entry.kind != PageKind::Page {
-                continue;
-            }
-            let key = tine_core::refs::page_key(&entry.name);
-            real.insert(key.clone());
-            if let Some(icon) = doc.pre_block.as_deref().and_then(pre_block_icon) {
-                icons.entry(key).or_insert(icon);
-            }
-        }
-        for (alias, owner) in self.page_aliases() {
-            if real.contains(&alias) {
-                continue;
-            }
-            if let Some(icon) = icons.get(&tine_core::refs::page_key(&owner)).cloned() {
-                icons.entry(alias).or_insert(icon);
-            }
-        }
-        names
-            .iter()
-            .filter_map(|name| {
-                icons
-                    .get(&tine_core::refs::page_key(name))
-                    .map(|icon| (name.clone(), icon.clone()))
-            })
             .collect()
     }
 
@@ -1353,6 +1353,8 @@ fn snapshot_index_shard(bytes: &[u8]) -> usize {
 fn reference_signature(doc: &Document) -> ReferenceTokenSignature {
     fn add_blocks(signature: &mut ReferenceTokenSignature, blocks: &[DocBlock]) {
         for block in blocks {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::signature_block_probe();
             signature.insert_text(block.raw());
             add_blocks(signature, &block.children);
         }
@@ -2411,6 +2413,8 @@ impl Graph {
             warm_passes: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             fail_sync_read_once: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fail_sync_parse_once: std::sync::atomic::AtomicBool::new(false),
             observed_mtimes: RwLock::new(Arc::new(std::collections::HashMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
             unreadable_pages: RwLock::new(Arc::new(Vec::new())),
@@ -3092,7 +3096,7 @@ impl Graph {
         let cache_ready = self.cache.read().unwrap().is_some();
         if let Ok(content) = &read {
             if cache_ready {
-                self.sync_file_content(&entry.path, content, false);
+                self.sync_file_content(&entry.path, content, false)?;
             }
         } else if read
             .as_ref()
@@ -3442,6 +3446,10 @@ impl Graph {
         #[cfg(test)]
         crate::store::pause_at_hook(&self.cache_publish_pause);
         if let Some(pages) = guard.as_mut() {
+            #[cfg(feature = "test-faults")]
+            if Arc::strong_count(pages) > 1 {
+                crate::cost_counters::cache_page_copies(pages.len() as u64);
+            }
             let pages = Arc::make_mut(pages);
             match self.cached_page_index_for_path(pages, &entry.path) {
                 Some(i) => {
@@ -4155,9 +4163,9 @@ impl Graph {
         }
         // The watcher consumes the self-write marker (one-shot) so the map stays
         // bounded to in-flight writes.
-        SyncFileResult::Reconciled {
-            entry: self.sync_file_content(path, &content, true),
-            rev,
+        match self.sync_file_content(path, &content, true) {
+            Ok(entry) => SyncFileResult::Reconciled { entry, rev },
+            Err(error) => SyncFileResult::ReadFailed(error),
         }
     }
 
@@ -4173,8 +4181,23 @@ impl Graph {
         path: &Path,
         content: &str,
         consume_self_write: bool,
-    ) -> Option<PageEntry> {
-        self.sync_file_content_with_saved(path, content, consume_self_write, None)
+    ) -> io::Result<Option<PageEntry>> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.sync_file_content_with_saved(path, content, consume_self_write, None)
+        })) {
+            Ok(entry) => Ok(entry),
+            Err(_) => {
+                self.invalidate_cache();
+                self.page_index_failures
+                    .write()
+                    .unwrap()
+                    .push(self.rel_path(path));
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "page parser panicked during sync",
+                ))
+            }
+        }
     }
 
     fn sync_file_content_with_saved(
@@ -4253,6 +4276,13 @@ impl Graph {
                 return None;
             }
         }
+        #[cfg(test)]
+        if self
+            .fail_sync_parse_once
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            panic!("injected external sync parser panic");
+        }
         let mut newdoc = parse_doc(path, content);
         {
             let guard = self.cache.read().unwrap();
@@ -4284,14 +4314,24 @@ impl Graph {
                 // one of Tine's own writes as an external change. Normalize the
                 // cached doc through the same serialize→parse round-trip the file
                 // went through (both sides then have empty uuids) and compare.
-                let cached_norm = match Format::from_path(path) {
-                    Format::Md => {
-                        let opts = doc::SerializeOpts::detect(Some(content));
-                        doc::parse(&doc::serialize_with(cached, &opts))
+                let cached_norm =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || match Format::from_path(path) {
+                            Format::Md => {
+                                let opts = doc::SerializeOpts::detect(Some(content));
+                                doc::parse(&doc::serialize_with(cached, &opts))
+                            }
+                            Format::Org => tine_core::org::parse_org(
+                                &tine_core::org::serialize_org_detect(cached, Some(content)),
+                            ),
+                        },
+                    ));
+                let cached_norm = match cached_norm {
+                    Ok(doc) => doc,
+                    Err(_) => {
+                        drop(guard);
+                        panic!("page parser panicked during cached comparison");
                     }
-                    Format::Org => tine_core::org::parse_org(
-                        &tine_core::org::serialize_org_detect(cached, Some(content)),
-                    ),
                 };
                 if cached_norm == newdoc {
                     return None; // unchanged / our own write
@@ -4971,35 +5011,6 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
 /// it (lest it corrupt the user's graph). Markdown pages are always editable.
 fn read_only_org(path: &Path, content: &str) -> bool {
     Format::from_path(path) == Format::Org && !tine_core::org::org_editable(content)
-}
-
-/// A page's `icon::` property value from its pre-block, handling markdown
-/// (`icon:: 🏁`), org property drawers (`:icon: 🏁`) and org `#+ICON:` directives.
-/// None if absent or blank.
-fn pre_block_icon(pre: &str) -> Option<String> {
-    for line in pre.lines() {
-        // Markdown `icon:: value` (single shared parser; needs the `::`).
-        if let Some((k, v)) = tine_core::doc::parse_property_line(line) {
-            let v = v.trim();
-            if k.eq_ignore_ascii_case("icon") && !v.is_empty() {
-                return Some(v.to_string());
-            }
-        }
-        let t = line.trim();
-        // Org property drawer `:icon: value` or directive `#+ICON: value`.
-        for stripped in [t.strip_prefix(':'), t.strip_prefix("#+")]
-            .into_iter()
-            .flatten()
-        {
-            if let Some(idx) = stripped.find(':') {
-                let (k, v) = (&stripped[..idx], stripped[idx + 1..].trim());
-                if k.eq_ignore_ascii_case("icon") && !v.is_empty() {
-                    return Some(v.to_string());
-                }
-            }
-        }
-    }
-    None
 }
 
 /// Stable (deterministic, seed-free) content hash — FNV-1a/64 as hex. Used as a
@@ -9165,7 +9176,7 @@ mod tests {
             pdf,
             "My Paper",
             &[h1.clone(), h2.clone()],
-            &[h1.id.clone()],
+            &[h1.clone()],
         )
         .unwrap();
 
@@ -9229,7 +9240,7 @@ mod tests {
             pdf,
             "Paper",
             &[h.clone()],
-            &[h.id.clone()],
+            &[h.clone()],
         )
         .unwrap();
 
@@ -9382,7 +9393,7 @@ mod tests {
             "paper.pdf",
             "Paper",
             &[h1.clone()],
-            &[h1.id.clone(), h2.id.clone()],
+            &[h1.clone(), h2.clone()],
         )
         .unwrap();
         store.scan_refresh().unwrap();
@@ -10851,6 +10862,42 @@ mod tests {
             matches!(g.sync_file_internal(&logical_winner.path, None), SyncFileResult::Reconciled { entry: Some(entry), .. } if entry.path == logical_winner.path),
             "one duplicate's revision must not mark the other duplicate fresh"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn external_sync_parser_panic_is_a_per_page_read_failure() {
+        let dir = scratch("external-sync-parser-panic");
+        let path = dir.join("pages/External.md");
+        fs::write(&path, "- old\n").unwrap();
+        let store = crate::Store::open(&dir, Default::default()).unwrap().0;
+        let _view = store.whole_graph().unwrap();
+        fs::write(&path, "- changed outside\n").unwrap();
+        store
+            .graph
+            .fail_sync_parse_once
+            .store(true, std::sync::atomic::Ordering::Release);
+        let outcome = store.scan_refresh();
+        assert!(outcome.is_ok(),
+            "I-22: an external page parser panic must be isolated to that page; exemplar sync_file_content_with_saved");
+        assert!(
+            !store
+                .graph
+                .fail_sync_parse_once
+                .load(std::sync::atomic::Ordering::Acquire),
+            "the external sync path must consume the injected parser panic"
+        );
+        store.scan_refresh().unwrap();
+        assert_eq!(
+            store
+                .page(&crate::PageId::from("pages/External.md"))
+                .unwrap()
+                .doc
+                .blocks[0]
+                .raw,
+            "changed outside"
+        );
+        store.close();
         let _ = fs::remove_dir_all(&dir);
     }
 

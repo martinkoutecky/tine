@@ -92,7 +92,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
         "paper.pdf",
         "Paper",
         &[],
-        std::slice::from_ref(&failed.id)
+        std::slice::from_ref(&failed)
     )
     .is_err());
     assert!(
@@ -119,7 +119,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
         "paper.pdf",
         "Paper",
         std::slice::from_ref(&keeper),
-        &[removed.id.clone(), keeper.id.clone()],
+        &[removed.clone(), keeper.clone()],
     )
     .unwrap();
     assert!(
@@ -145,7 +145,7 @@ fn deleted_area_cleanup_waits_for_pair_commit_and_keeps_shared_stamps() {
         "paper.pdf",
         "Paper",
         &[],
-        std::slice::from_ref(&deleted.id),
+        std::slice::from_ref(&deleted),
     )
     .unwrap();
     assert!(

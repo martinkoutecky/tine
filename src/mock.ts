@@ -1650,8 +1650,8 @@ export function mockBackend(): Backend {
         scale: current.scale ?? null,
       };
     },
-    async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseIds: string[]): Promise<void> {
-      mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights };
+    async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseHighlights: Highlight[]): Promise<Highlight[]> {
+      return (mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights }).highlights;
     },
     async writePdfViewState(pdf: string, page: number, scale: number): Promise<void> {
       const current = mockHighlights[pdf] ?? { label: pdf, highlights: [] };

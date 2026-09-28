@@ -19,7 +19,7 @@ const FROZEN_LATE_LANDING_COUNT = 28;
 const ORIGINAL_LATE_KEYS = new Set(`
   src/assetSettings.ts:41 src/capture.tsx:330 src/components/AudioOverlay.tsx:86 src/components/Block.tsx:1321 src/components/Block.tsx:1669
   src/components/Block.tsx:1695 src/components/Block.tsx:1715 src/components/ContextMenu.tsx:660 src/components/ContextMenu.tsx:762 src/components/ContextMenu.tsx:781
-  src/components/LinkedReferences.tsx:114 src/components/LiveRefGroup.tsx:72 src/components/PdfViewer.tsx:1003 src/components/Settings.tsx:1048 src/components/Settings.tsx:1642
+  src/components/LinkedReferences.tsx:114 src/components/LiveRefGroup.tsx:72 src/components/PdfViewer.tsx:979 src/components/Settings.tsx:1048 src/components/Settings.tsx:1642
   src/components/Settings.tsx:1873 src/components/Settings.tsx:1884 src/components/Settings.tsx:194 src/components/Settings.tsx:2188 src/components/Settings.tsx:2384
   src/components/Settings.tsx:2478 src/components/Settings.tsx:2605 src/components/Settings.tsx:2697 src/components/Settings.tsx:2706 src/components/Settings.tsx:2719
   src/components/Settings.tsx:2728 src/components/Settings.tsx:2748 src/components/Settings.tsx:561 src/components/Sidebar.tsx:344 src/components/Sidebar.tsx:413
@@ -37,7 +37,7 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/components/Block.tsx:1321": "legacy block UI result needs a binding audit (line rebased after asset guards)",
   "src/components/LinkedReferences.tsx:114": "legacy UI continuation needs a binding audit",
   "src/components/LiveRefGroup.tsx:72": "legacy UI continuation needs a binding audit",
-  "src/components/PdfViewer.tsx:1003": "census #2: PDF write intent awaits its design batch",
+  "src/components/PdfViewer.tsx:979": "census #2: PDF write intent awaits its design batch",
   "src/components/Settings.tsx:194": "legacy settings UI result needs a binding audit",
   "src/components/Settings.tsx:561": "legacy settings UI result needs a binding audit",
   "src/components/Settings.tsx:1048": "legacy settings UI result needs a binding audit",

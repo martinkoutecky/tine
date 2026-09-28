@@ -42,7 +42,7 @@ export interface SavePageEntry {
 
 export type SavePagesResult =
   | { ok: string[] }
-  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: number[] } };
+  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[] } };
 
 /** Adapt a one-page intent to the shared request while preserving its refusal. */
 export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number): Promise<string> {
@@ -474,12 +474,15 @@ export interface Backend {
    * a graph refresh. */
   openPdf(pdf: string, label: string, kind: "create-page", bindingGeneration: number): Promise<PdfState>;
   /** Replace the caller's base highlight set, retaining disk additions absent
-   * from both highlights and baseIds. Commit sidecar and annotation page together;
+   * from both highlights and baseHighlights. An unchanged local value takes an
+   * external edit; a locally changed value takes the caller's edit. Return the
+   * committed merged set so the caller can advance its baseline.
+   * Commit sidecar and annotation page together;
    * write OG artifacts, then attempt to move removed crops/legacy files to
    * recoverable trash.
    * Malformed data and Store failures reject. Cost O(asset entries + sidecar +
    * annotation page + deleted crop bytes), plus graph refresh if page is missing. */
-  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[], kind: "replace-page", bindingGeneration: number): Promise<void>;
+  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], kind: "replace-page", bindingGeneration: number): Promise<Highlight[]>;
   /** Update page and scale while preserving other sidecar fields; retry and merge
    * concurrent changes up to four attempts. Invalid state/sidecar, I/O, or
    * exhausted conflicts reject. Cost O(asset entries + sidecar) per attempt. */
@@ -1037,8 +1040,8 @@ class TauriBackend implements Backend {
   openPdf(pdf: string, label: string, _kind: "create-page", bindingGeneration: number) {
     return this.assetCall<PdfState>("open_pdf", { pdf, label }, bindingGeneration);
   }
-  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[], _kind: "replace-page", bindingGeneration: number) {
-    return this.assetCall<void>("write_highlights", { pdf, label, highlights, baseIds }, bindingGeneration);
+  writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], _kind: "replace-page", bindingGeneration: number) {
+    return this.assetCall<Highlight[]>("write_highlights", { pdf, label, highlights, baseHighlights }, bindingGeneration);
   }
   writePdfViewState(pdf: string, page: number, scale: number, bindingGeneration: number) {
     return this.assetCall<void>("write_pdf_view_state", { pdf, page, scale }, bindingGeneration);

@@ -13,6 +13,7 @@ pub(super) fn save_pages_outcome_to_wire(outcome: SavePagesOutcome) -> SavePages
             index,
             outcome,
             undo_failed,
+            publication_errors,
         } => SavePagesWire::Failed {
             failed: SavePagesFailure {
                 index,
@@ -20,8 +21,19 @@ pub(super) fn save_pages_outcome_to_wire(outcome: SavePagesOutcome) -> SavePages
                     SaveOutcome::Conflict { disk } => Some(disk.clone().into()),
                     _ => None,
                 },
-                family: save_outcome_to_wire(outcome).expect_err("failed page outcome"),
-                undo_failed,
+                family: if publication_errors.is_empty() {
+                    save_outcome_to_wire(outcome).expect_err("failed page outcome")
+                } else {
+                    "publication-incomplete".into()
+                },
+                undo_failed: undo_failed
+                    .into_iter()
+                    .map(|id| id.as_str().to_owned())
+                    .collect(),
+                publication_errors: publication_errors
+                    .into_iter()
+                    .map(|id| id.as_str().to_owned())
+                    .collect(),
             },
         },
     }

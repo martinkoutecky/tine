@@ -18,8 +18,8 @@ const FROZEN_SWALLOW_COUNT = 26;
 const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/assetCache.ts:130 src/assetCache.ts:212 src/assetCache.ts:264 src/assetCache.ts:69
   src/capture.tsx:259 src/capture.tsx:555 src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:112 src/components/AudioOverlay.tsx:149
-  src/components/Block.tsx:3156 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:42 src/components/Macro.tsx:313 src/components/PdfViewer.tsx:1032
-  src/components/PdfViewer.tsx:1097 src/components/PdfViewer.tsx:535
+  src/components/Block.tsx:3156 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:42 src/components/Macro.tsx:313 src/components/PdfViewer.tsx:1008
+  src/components/PdfViewer.tsx:1073 src/components/PdfViewer.tsx:511
   src/components/UnlinkedReferences.tsx:38 src/components/WindowChrome.tsx:24
   src/debug.ts:14
   src/pageIconBatch.ts:44 src/plugins/manager.ts:121
@@ -40,9 +40,9 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/components/HelpShortcuts.tsx:51": "legacy best-effort operation needs an error-family audit",
   "src/components/LinkedReferences.tsx:42": "legacy error-prose branch; replace with fixed error family",
   "src/components/Macro.tsx:313": "legacy error-prose branch; replace with fixed error family",
-  "src/components/PdfViewer.tsx:535": "best-effort viewer resource cleanup",
-  "src/components/PdfViewer.tsx:1032": "best-effort viewer resource cleanup",
-  "src/components/PdfViewer.tsx:1097": "best-effort viewer resource cleanup",
+  "src/components/PdfViewer.tsx:511": "best-effort viewer resource cleanup",
+  "src/components/PdfViewer.tsx:1008": "best-effort viewer resource cleanup",
+  "src/components/PdfViewer.tsx:1073": "best-effort viewer resource cleanup",
   "src/components/UnlinkedReferences.tsx:38": "legacy error-prose branch; replace with fixed error family",
   "src/components/WindowChrome.tsx:24": "legacy best-effort operation needs an error-family audit",
   "src/debug.ts:14": "legacy best-effort operation needs an error-family audit",

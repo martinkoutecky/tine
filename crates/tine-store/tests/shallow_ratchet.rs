@@ -173,6 +173,10 @@ fn public_items(src: &Path) -> BTreeSet<String> {
             .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
         collect(&m.ident.to_string(), &parsed.items, &mut out);
     }
+    let save = src.join("store/save_failure.rs");
+    let parsed = syn::parse_file(&std::fs::read_to_string(&save).unwrap())
+        .unwrap_or_else(|e| panic!("{}: {e}", save.display()));
+    collect("store", &parsed.items, &mut out);
     out
 }
 

@@ -11,6 +11,9 @@ static FILES_WRITTEN: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_REBUILDS: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_NANOS: AtomicU64 = AtomicU64::new(0);
 static MEMO_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
+static CACHE_PAGE_COPIES: AtomicU64 = AtomicU64::new(0);
+static ICON_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
+static SIGNATURE_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
@@ -35,6 +38,12 @@ pub struct Counts {
     pub snapshot_nanos: u64,
     /// Page slots inspected while carrying query memos across a save.
     pub memo_page_probes: u64,
+    /// Page slots copied by cache mutation while a snapshot holds the vector.
+    pub cache_page_copies: u64,
+    /// Page slots inspected while answering icon requests.
+    pub icon_page_probes: u64,
+    /// Blocks inspected while constructing changed-page reference signatures.
+    pub signature_block_probes: u64,
 }
 
 /// Reset all primitive counters immediately before a measured operation.
@@ -50,6 +59,9 @@ pub fn reset() {
         &SNAPSHOT_REBUILDS,
         &SNAPSHOT_NANOS,
         &MEMO_PAGE_PROBES,
+        &CACHE_PAGE_COPIES,
+        &ICON_PAGE_PROBES,
+        &SIGNATURE_BLOCK_PROBES,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -68,6 +80,9 @@ pub fn snapshot() -> Counts {
         snapshot_rebuilds: SNAPSHOT_REBUILDS.load(Ordering::Relaxed),
         snapshot_nanos: SNAPSHOT_NANOS.load(Ordering::Relaxed),
         memo_page_probes: MEMO_PAGE_PROBES.load(Ordering::Relaxed),
+        cache_page_copies: CACHE_PAGE_COPIES.load(Ordering::Relaxed),
+        icon_page_probes: ICON_PAGE_PROBES.load(Ordering::Relaxed),
+        signature_block_probes: SIGNATURE_BLOCK_PROBES.load(Ordering::Relaxed),
     }
 }
 
@@ -98,4 +113,13 @@ pub(crate) fn snapshot_elapsed(duration: std::time::Duration) {
 }
 pub(crate) fn memo_page_probes(count: u64) {
     MEMO_PAGE_PROBES.fetch_add(count, Ordering::Relaxed);
+}
+pub(crate) fn cache_page_copies(count: u64) {
+    CACHE_PAGE_COPIES.fetch_add(count, Ordering::Relaxed);
+}
+pub(crate) fn icon_page_probe() {
+    ICON_PAGE_PROBES.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn signature_block_probe() {
+    SIGNATURE_BLOCK_PROBES.fetch_add(1, Ordering::Relaxed);
 }

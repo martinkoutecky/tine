@@ -13,6 +13,10 @@ pub(super) fn failed(error: io::Error) -> Why {
     Why::Failed(error.into())
 }
 
+pub(super) fn publication_path_error(error: &Why) -> IoError {
+    io::Error::other(format!("{error:?}")).into()
+}
+
 pub(super) fn content_refusal(error: io::Error) -> Why {
     if error
         .get_ref()

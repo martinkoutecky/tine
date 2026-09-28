@@ -234,7 +234,7 @@ fn save_pages_refuses_an_empty_kind_list_before_writing() {
 }
 
 #[test]
-fn save_pages_rollback_failure_names_entry_index() {
+fn save_pages_rollback_failure_names_recovery_location() {
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let entries = vec![
@@ -256,9 +256,31 @@ fn save_pages_rollback_failure_names_entry_index() {
     let outcome = store.save_pages(&entries);
     assert!(
         matches!(&outcome, SavePagesOutcome::Failed {
-        index: 1, outcome: SaveOutcome::Io(_), undo_failed,
-    } if undo_failed == &vec![1]),
+        index: 1, outcome: SaveOutcome::Io(_), undo_failed, ..
+    } if format!("{undo_failed:?}").contains("pages/B.md")),
         "{outcome:?}"
+    );
+}
+
+#[test]
+fn save_pages_names_files_missing_from_publication_after_disk_write() {
+    let fixture = Fixture::new();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    store.inject_fault(FaultPoint::PublicationReadIo);
+    let outcome = store.save_pages(&[(
+        PageId::from("pages/New.md"),
+        SaveBase::CreateNew,
+        fresh("New", PageKind::Page),
+        vec![tine_store::EditKind::CreatePage],
+    )]);
+    assert!(
+        matches!(&outcome, SavePagesOutcome::Failed { publication_errors, .. }
+        if format!("{publication_errors:?}").contains("pages/New.md")),
+        "{outcome:?}"
+    );
+    assert!(
+        fixture.0.join("pages/New.md").is_file(),
+        "the write landed before publication failed"
     );
 }
 

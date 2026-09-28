@@ -370,7 +370,7 @@ function resolveSaveMember(name: string, kind: PageKind) {
   return backend().resolvePage(name, kind);
 }
 
-function failGroup(g: SaveGroup, failure: { index: number; family: string; diskRev?: string | null; undoFailed: number[] }, order: string[]): boolean {
+function failGroup(g: SaveGroup, failure: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[] }, order: string[], entryPaths: string[] = []): boolean {
   g.state = "open";
   sealedGroups.delete(g);
   for (const name of g.members) dirty.add(name);
@@ -392,7 +392,16 @@ function failGroup(g: SaveGroup, failure: { index: number; family: string; diskR
       lastSaveFailure.set(culprit, family);
     }
   }
-  for (const index of failure.undoFailed) if (order[index]) markConflict(order[index]);
+  for (const path of failure.undoFailed) {
+    const index = entryPaths.indexOf(path);
+    if (index >= 0) markConflict(order[index]);
+    else pushToast(`Rollback incomplete for ${path}; inspect the file on disk before retrying.`, "error");
+  }
+  for (const path of failure.publicationErrors ?? []) {
+    const index = entryPaths.indexOf(path);
+    if (index >= 0) markConflict(order[index]);
+    pushToast(`Publication incomplete for ${path}; inspect the file on disk before retrying.`, "error");
+  }
   changedGroups();
   return false;
 }
@@ -475,7 +484,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     }
     if ("failed" in outcome) {
       for (let i = 0; i < order.length; i++) restoreKinds(order[i], entries[i].kinds);
-      return failGroup(g, outcome.failed, order);
+      return failGroup(g, outcome.failed, order, entries.map((entry) => entry.id));
     }
     for (let i = 0; i < order.length; i++) {
       const name = order[i], target = ids.get(name)!;

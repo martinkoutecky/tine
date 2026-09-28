@@ -8,6 +8,15 @@ replace that file between the final comparison and rename; mandatory cross-proce
 locks are outside this plain-file contract. The editor retains unsaved content
 on every refusal and offers conflict resolution or retry.
 
+After applying a transaction, the store reads each final file before declaring
+its publication complete. A failed read or revision check returns
+`TxOutcome::PublicationIncomplete` with graph-relative file locations; disk
+steps may already have landed. An apply failure keeps any publication errors in
+`TxOutcome::NotCommitted`. `Store::save_pages` carries rollback failures in
+`undo_failed` and omitted final-state files in `publication_errors`, both as
+graph-relative locations. The frontend keeps unsaved edits, marks matching
+pages conflicted, and tells the user which files need inspection before retry.
+
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
 surface is 36 combined operations: 28 `Store` methods and eight `Transaction`

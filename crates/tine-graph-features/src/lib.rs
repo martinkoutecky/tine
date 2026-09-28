@@ -41,7 +41,17 @@ fn store_error(error: StoreError) -> io::Error {
 fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
     match outcome {
         TxOutcome::Committed { steps, .. } => Ok(steps),
-        TxOutcome::NotCommitted { why, rollback, .. } => {
+        TxOutcome::PublicationIncomplete { files, .. } => Err(io::Error::other(format!(
+            "publication-incomplete: disk write applied but final state could not be published for {}; inspect disk before retrying",
+            <[&str]>::join(&files.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ", ")
+        ))),
+        TxOutcome::NotCommitted { why, rollback, publication_errors, .. } => {
+            if !publication_errors.is_empty() {
+                return Err(io::Error::other(format!(
+                    "publication-incomplete: transaction refused ({why:?}); final state could not be published for {}; inspect disk before retrying",
+                    <[&str]>::join(&publication_errors.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ", ")
+                )));
+            }
             if !rollback.undo_failed.is_empty() {
                 let failed: Vec<String> = rollback
                     .undo_failed
