@@ -10,7 +10,8 @@
 //!   runs; `sample` applies after sorting; admission charges each offered row
 //!   and `total` counts every offered row;
 //! - page rows (`@page`): pages ordered by physical path, sorted by the page
-//!   decorations, admitted at the raw page estimate, then sampled;
+//!   decorations, sampled, then admitted at the raw page estimate (og: master
+//!   admitted before sampling, refusing a sampled query over the bound);
 //! - statistics fold the ordered sample, never retained rows.
 //!
 //! og-only: page-ref queries narrow the scanned pages through each page's
@@ -606,6 +607,14 @@ pub(crate) fn execute(
                         fold.add(&values, keys)?;
                     }
                 }
+                // `sample` keeps the first N ordered pages, so sampling before
+                // admission returns the same rows and admits only what is
+                // returned: a sampled page query over the bound is answered,
+                // as a sampled block query is (Reader B, og 14 Q2).
+                if let Some(sample) = sample {
+                    matches.truncate(sample);
+                }
+                let offered = matches.len();
                 let mut budget = ConstructionBudget::new(bounds.max_rows, bounds.max_bytes);
                 let mut rows = Vec::new();
                 for (entry, facts) in matches {
@@ -625,10 +634,7 @@ pub(crate) fn execute(
                     });
                 }
                 result.total = rows.len();
-                result.exceeded = budget.exceeded || matched > result.total;
-                if let Some(sample) = sample {
-                    rows.truncate(sample);
-                }
+                result.exceeded = budget.exceeded || offered > result.total;
                 result.matched_total = Some(matched);
                 result.rows = QueryRows::Page { pages: rows };
             }
@@ -709,7 +715,7 @@ pub(crate) fn query_ir(
         serde_json::to_string(&(resolved.query(), resolved.report())).unwrap_or_default(),
         serde_json::to_string(view).unwrap_or_default(),
     );
-    let answer = graph.query_answer(key, || {
+    let answer = graph.query_answer(key, today, || {
         let bounds = tine_core::query::ir::Bounds {
             max_rows: crate::store::RESULT_BRIDGE_MAX_ROWS,
             max_bytes: crate::store::RESULT_BRIDGE_MAX_BYTES,
@@ -842,7 +848,17 @@ pub(crate) fn run_advanced_query_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> ((AdvancedResult, bool, usize), Option<Arc<Plan>>) {
-    let today = JournalDate::today();
+    run_advanced_query_at(graph, source, max_rows, max_bytes, JournalDate::today())
+}
+
+/// [`run_advanced_query_bounded`] on a given execution day.
+pub(crate) fn run_advanced_query_at(
+    graph: &impl GraphRead,
+    source: &str,
+    max_rows: usize,
+    max_bytes: usize,
+    today: JournalDate,
+) -> ((AdvancedResult, bool, usize), Option<Arc<Plan>>) {
     let (query, _) = parse_query_input(source, QueryInput::Advanced, today, Registry::none());
     let resolved = resolve_for_execution(&query, &ExecutionContext::none(), today);
     let report = resolved.report().clone();

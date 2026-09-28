@@ -143,14 +143,18 @@ pub(crate) struct QueryMemo {
 
 impl QueryMemo {
     /// The memoized answer for `key`, or `compute`'s (retained when it fits).
-    /// `compute` runs with no lock held.
+    /// `today` is the day the caller evaluates relative dates against (read
+    /// once per query): the answer is filed under that day, so an evaluation
+    /// that straddles midnight never lands in the next day's memo. `compute`
+    /// runs with no lock held.
     pub(crate) fn answer(
         &self,
         key: String,
+        today: JournalDate,
         parse_config: &ParseConfig,
         compute: impl FnOnce() -> (Answer, Option<Arc<Plan>>),
     ) -> Answer {
-        let today = JournalDate::today().ordinal_key();
+        let today = today.ordinal_key();
         {
             let mut memo = self.inner.write().unwrap();
             if let Some(memo) = memo.as_mut() {
@@ -173,6 +177,9 @@ impl QueryMemo {
         let mut guard = self.inner.write().unwrap();
         let memo = match guard.as_mut() {
             Some(memo) if memo.today == today && memo.parse_config == *parse_config => memo,
+            // A different day's memo is not replaced by an answer computed for
+            // an older day than it (a query that straddled midnight).
+            Some(memo) if memo.today > today => return answer,
             _ => guard.insert(Memo {
                 today,
                 parse_config: parse_config.clone(),
@@ -269,4 +276,45 @@ fn touch(lru: &mut VecDeque<String>, key: &str) {
         lru.remove(at);
     }
     lru.push_back(key.to_owned());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn groups(total: usize) -> Answer {
+        Answer::Groups(BoundedRefGroups {
+            groups: Arc::new(Vec::new()),
+            total,
+            exceeded: false,
+        })
+    }
+
+    fn total(answer: &Answer) -> usize {
+        match answer {
+            Answer::Groups(groups) => groups.total,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Reader B (og 14 Q2): an answer evaluated against yesterday — a query
+    /// that started before midnight — must not be served as today's.
+    #[test]
+    fn an_answer_is_filed_under_the_day_it_was_evaluated_for() {
+        let memo = QueryMemo::default();
+        let config = ParseConfig::default();
+        let today = JournalDate::today();
+        let yesterday = today.add_days(-1);
+        memo.answer("k".into(), yesterday, &config, || (groups(1), None));
+        let served = memo.answer("k".into(), today, &config, || (groups(2), None));
+        assert_eq!(total(&served), 2, "yesterday's answer was served for today");
+        // …and a late straggler for yesterday does not evict today's memo.
+        memo.answer("y".into(), yesterday, &config, || (groups(3), None));
+        let again = memo.answer("k".into(), today, &config, || (groups(4), None));
+        assert_eq!(
+            total(&again),
+            2,
+            "a straggler for yesterday dropped today's memo"
+        );
+    }
 }

@@ -663,3 +663,32 @@ fn an_admitted_limit_like_pattern_over_long_blocks_answers_within_a_bound() {
     assert!(miss.is_empty());
     assert_eq!(hit.len(), 8);
 }
+
+/// Reader B (og 14 Q2): a sampled `@page` query whose full match set exceeds
+/// the 20,000-row bridge bound is answered with its sample, as a sampled block
+/// query is — not refused with advice ("add a sample") that cannot help. The
+/// unsampled query still reports the bound.
+#[test]
+fn a_sampled_page_query_over_the_row_bound_returns_its_sample() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("pages")).expect("pages");
+    std::fs::create_dir_all(dir.path().join("journals")).expect("journals");
+    for n in 0..20_001 {
+        write(dir.path(), &format!("pages/p{n:05}.md"), "- x\n");
+    }
+    let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).expect("open");
+    let graph = store.whole_graph().expect("load");
+    let (query, mut view) = parse_query_text(
+        "@page and name like 'p%'",
+        QueryDialect::Tql,
+        JournalDate::today(),
+    );
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+    let whole = run_ir(&graph, &query, &view, &ExecutionContext::none());
+    assert!(whole.exceeded, "the unsampled query is over the bound");
+    view.sample = Some(5);
+    let sampled = run_ir(&graph, &query, &view, &ExecutionContext::none());
+    assert!(!sampled.exceeded, "a sample of 5 is within the bound");
+    assert_eq!(page_names(&sampled).len(), 5);
+    assert_eq!(sampled.matched_total, Some(20_001));
+}

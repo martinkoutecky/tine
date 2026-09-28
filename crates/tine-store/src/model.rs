@@ -956,9 +956,10 @@ impl ReadSnapshot {
             };
         }
         let key = format!("S\0{max_rows}\0{max_bytes}\0{source}");
-        let answer = self.query_answer(key, || {
+        let today = tine_core::date::JournalDate::today();
+        let answer = self.query_answer(key, today, || {
             let (groups, plan) =
-                crate::query::exec::run_query_bounded(self, source, max_rows, max_bytes);
+                crate::query::exec::run_query_at(self, source, max_rows, max_bytes, today);
             (answer_groups(groups), Some(plan))
         });
         match answer {
@@ -981,9 +982,10 @@ impl ReadSnapshot {
             return (crate::query::rejected_advanced_query(reason), false, 0);
         }
         let key = format!("A\0{max_rows}\0{max_bytes}\0{source}");
-        let answer = self.query_answer(key, || {
+        let today = tine_core::date::JournalDate::today();
+        let answer = self.query_answer(key, today, || {
             let ((result, exceeded, total), plan) =
-                crate::query::exec::run_advanced_query_bounded(self, source, max_rows, max_bytes);
+                crate::query::exec::run_advanced_query_at(self, source, max_rows, max_bytes, today);
             let result = Arc::new(result);
             (
                 crate::query::memo::Answer::Advanced {
@@ -1007,13 +1009,14 @@ impl ReadSnapshot {
     pub(crate) fn query_answer(
         &self,
         key: String,
+        today: tine_core::date::JournalDate,
         compute: impl FnOnce() -> (
             crate::query::memo::Answer,
             Option<Arc<crate::query::exec::Plan>>,
         ),
     ) -> crate::query::memo::Answer {
         let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
-        self.memos.query.answer(key, &parse_config, compute)
+        self.memos.query.answer(key, today, &parse_config, compute)
     }
 
     pub(crate) fn backlinks_bounded(
@@ -9878,14 +9881,22 @@ mod tests {
                 snapshot
                     .memos
                     .derived_memo_bounded(generation, format!("test\0{i}"), empty_groups);
-            let _ = snapshot.query_answer(format!("test\0{i}"), empty_advanced);
+            let _ = snapshot.query_answer(
+                format!("test\0{i}"),
+                tine_core::date::JournalDate::today(),
+                empty_advanced,
+            );
         }
         let oversized_key = "x".repeat(DERIVED_CACHE_MAX_ENTRY_BYTES / 2 + 1);
         let _ =
             snapshot
                 .memos
                 .derived_memo_bounded(generation, oversized_key.clone(), empty_groups);
-        let _ = snapshot.query_answer(oversized_key.clone(), empty_advanced);
+        let _ = snapshot.query_answer(
+            oversized_key.clone(),
+            tine_core::date::JournalDate::today(),
+            empty_advanced,
+        );
         let derived = snapshot.memos.derived_cache.read().unwrap();
         assert_eq!(
             derived.as_ref().unwrap().results.len(),
