@@ -263,6 +263,24 @@ fn save_pages_rollback_failure_names_entry_index() {
 }
 
 #[test]
+fn single_save_reports_incomplete_rollback() {
+    let fixture = Fixture::new();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    store.inject_fault(FaultPoint::MidStepIoAt(0));
+    store.inject_fault(FaultPoint::UndoWithdrawalIo);
+    let outcome = store.save(
+        tine_store::EditKind::CreatePage,
+        &PageId::from("pages/New.md"),
+        SaveBase::CreateNew,
+        &fresh("New", PageKind::Page),
+    );
+    assert!(
+        matches!(outcome, SaveOutcome::Io(ref error) if error.message.contains("rollback incomplete") && error.message.contains("pages/New.md")),
+        "{outcome:?}"
+    );
+}
+
+#[test]
 fn save_pages_crash_worker() {
     let Ok(root) = std::env::var("TINE_SAVE_PAGES_CRASH_ROOT") else {
         return;

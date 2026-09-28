@@ -10,6 +10,10 @@ use tine_store::{PageId, SaveBase, SaveOutcome, Store};
 static CASE_LOCK: Mutex<()> = Mutex::new(());
 
 fn graph(pages: usize, blocks: usize) -> (Store, PageId) {
+    graph_with_target(pages, blocks, 0)
+}
+
+fn graph_with_target(pages: usize, blocks: usize, target: usize) -> (Store, PageId) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
@@ -21,7 +25,7 @@ fn graph(pages: usize, blocks: usize) -> (Store, PageId) {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     for index in 0..pages {
-        let body = if index == 0 {
+        let body = if index == target {
             "- before\n".repeat(blocks)
         } else {
             format!("- unrelated {index}\n")
@@ -30,7 +34,7 @@ fn graph(pages: usize, blocks: usize) -> (Store, PageId) {
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
-    (store, PageId::from("pages/Page0000.md"))
+    (store, PageId::from(format!("pages/Page{target:04}.md")))
 }
 
 fn edit(pages: usize, blocks: usize) -> (Counts, usize) {
@@ -96,6 +100,38 @@ fn edit_cost_is_page_bounded() {
             "I-25: bytes written must be about page bytes; exemplar transaction.rs:349 Step::Save"
         );
     }
+}
+
+#[test]
+fn memo_carry_checks_only_the_changed_page() {
+    let _case = CASE_LOCK.lock().unwrap();
+    let mut max_probes = 0;
+    for blocks in [1, 60] {
+        for pages in [1, 1000] {
+            let (store, id) = graph_with_target(pages, blocks, pages - 1);
+            let old = store.whole_graph().unwrap();
+            let _ = old.backlinks("Target").unwrap();
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = "after".into();
+            cost_counters::reset();
+            let outcome = store.save(
+                tine_store::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            );
+            assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+            let counts = cost_counters::snapshot();
+            eprintln!(
+                "memo carry: blocks={blocks} pages={pages} probes={} bytes_written={}",
+                counts.memo_page_probes, counts.bytes_written
+            );
+            max_probes = max_probes.max(counts.memo_page_probes);
+            store.close();
+        }
+    }
+    assert!(max_probes <= 2, "I-13: carrying a memo must inspect only the edited page; exemplar model.rs:850 carry_memos_from, observed {max_probes} page probes");
 }
 
 #[test]

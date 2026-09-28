@@ -29,6 +29,7 @@
 //! a UI thread.
 
 use crate::path_identity::canonical_existing_path;
+mod save_failure;
 use std::collections::{BTreeMap, VecDeque};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -1301,6 +1302,7 @@ impl Store {
     /// must preserve the other bytes separately if they are needed. Its own observed write is not
     /// republished as an external watcher echo. Keep unsaved edits on every
     /// refusal.
+    /// An incomplete rollback returns `Io` naming the page; inspect disk before retrying.
     pub fn save(
         &self,
         kind: crate::EditKind,
@@ -1310,7 +1312,11 @@ impl Store {
     ) -> SaveOutcome {
         match self.save_pages(&[(id.clone(), base, doc.clone(), vec![kind])]) {
             SavePagesOutcome::Ok(mut outcomes) => outcomes.remove(0),
-            SavePagesOutcome::Failed { outcome, .. } => outcome,
+            SavePagesOutcome::Failed {
+                outcome,
+                undo_failed,
+                ..
+            } => save_failure::single_page_failure(outcome, &undo_failed, id),
         }
     }
 

@@ -855,15 +855,19 @@ impl ReadSnapshot {
             return;
         }
         let mut edits = Vec::new();
+        let old_positions = Arc::clone(&old.reference_candidate_index.read().unwrap().positions);
+        let new_positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
         for path in changed_paths {
-            let before = old
-                .pages
-                .iter()
-                .find(|(entry, _)| entry.rel_path_str() == path);
-            let after = self
-                .pages
-                .iter()
-                .find(|(entry, _)| entry.rel_path_str() == path);
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::memo_page_probes(2);
+            let before = old_positions
+                .get(path)
+                .and_then(|&i| old.pages.get(i))
+                .filter(|(e, _)| e.rel_path_str() == path);
+            let after = new_positions
+                .get(path)
+                .and_then(|&i| self.pages.get(i))
+                .filter(|(e, _)| e.rel_path_str() == path);
             let (Some((_, previous)), Some((entry, current))) = (before, after) else {
                 return;
             };
