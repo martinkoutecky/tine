@@ -8,6 +8,7 @@ import { setBlockMoving } from "../document/edits/moves";
 import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
+import { loadSingle } from "../document/workingSet";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { journalTitle } from "../journal";
 import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
@@ -88,6 +89,76 @@ function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): J
 }
 
 describe("Journals feed generation lifecycle", () => {
+  it("keeps a startup route pending when its feed read is superseded during publication", async () => {
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    let resolveFirst!: (value: JournalFeedPage) => void;
+    let resolveSecond!: (value: JournalFeedPage) => void;
+    const api = vi.spyOn(backend(), "journalFeedPage")
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      // A second live surface or watcher asks while the first native read waits
+      // for the store's initial snapshot publication.
+      const newer = reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+      expect(api).toHaveBeenCalledTimes(2);
+      // Another page load can fill the shared working-set feed first, while
+      // the Journals route still needs its own feed response.
+      loadSingle({ ...journalDto("ordinary page"), kind: "page" }, { endEdit: false });
+      resolveFirst(feedResponse([journalDto("superseded")]));
+      await flushMicrotasks();
+      expect(mounted.root.textContent).not.toContain("Journal feed read failed");
+      expect(mounted.root.querySelector(".page-loading"),
+        "OG-09B: a superseded startup feed read must wait for the winning feed; exemplar PageView in src/components/Page.tsx"
+      ).not.toBeNull();
+      resolveSecond(feedResponse([journalDto("published")]));
+      await newer;
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("published"));
+      expect(mounted.root.textContent).not.toContain("Couldn't open this page");
+    } finally {
+      mounted.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("retries the visible Journals route when the superseding owner disappears", async () => {
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    let resolveFirst!: (value: JournalFeedPage) => void;
+    let resolveSecond!: (value: JournalFeedPage) => void;
+    const api = vi.spyOn(backend(), "journalFeedPage")
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }))
+      .mockResolvedValueOnce(feedResponse([journalDto("recovered")]));
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      let ownerLive = true;
+      const newer = reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => ownerLive });
+      ownerLive = false;
+      resolveFirst(feedResponse([journalDto("superseded")]));
+      await flushMicrotasks();
+      resolveSecond(feedResponse([journalDto("orphaned")]));
+      await newer;
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("recovered"));
+      expect(api,
+        "OG-09B: a visible Journals route must retry when its superseding owner disappears; exemplar PageView in src/components/Page.tsx"
+      ).toHaveBeenCalledTimes(3);
+      expect(mounted.root.textContent).not.toContain("Couldn't open this page");
+    } finally {
+      mounted.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("settles an initial Journals route load without reacting to its own feed replacement", async () => {
     const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("settled")]));
     const mounted = mount(() => <PageView />);

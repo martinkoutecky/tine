@@ -33,6 +33,9 @@ let journalAsOfDay: number | null = null;
 let nextBeforeDay: number | null = null;
 let feedGeneration = 0;
 let loadingGeneration: number | null = null;
+let latestFeedRestart: Promise<void> | null = null;
+let publishedFeedEpoch: number | null = null;
+let publishedFeedNames: readonly string[] | null = null;
 let feedDone = false;
 let pendingFeedRestart = false;
 
@@ -67,10 +70,26 @@ function ownerIsLive(owner: JournalsFeedOwner): boolean {
   return graphEpoch() === owner.graphEpoch && owner.isLive();
 }
 
+function hasPublishedFeed(epoch: number): boolean {
+  return publishedFeedEpoch === epoch && publishedFeedNames === feedNames();
+}
+
 /** The single start-over owner for route loads, watcher changes and calendar
  * rollover.  It intentionally keeps the old feed/cursor until a response has
  * passed all ownership checks. */
-async function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Promise<void> {
+function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Promise<void> {
+  if (!ownerIsLive(owner)) return Promise.resolve();
+  const pending = runJournalFeedRestart(owner, retried);
+  latestFeedRestart = pending;
+  void pending.then(() => {
+    if (latestFeedRestart === pending) latestFeedRestart = null;
+  }, () => {
+    if (latestFeedRestart === pending) latestFeedRestart = null;
+  });
+  return pending;
+}
+
+async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean): Promise<void> {
   // An already-dead watcher/surface must be entirely inert.  In particular it
   // must not steal the generation from a live request that is about to land.
   if (!ownerIsLive(owner)) return;
@@ -96,6 +115,8 @@ async function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Pr
     // old true value during that store write and starts a duplicate restart.
     pendingFeedRestart = false;
     loadFeed(withToday(response.pages), { endEdit: false });
+    publishedFeedEpoch = owner.graphEpoch;
+    publishedFeedNames = feedNames();
     journalAsOfDay = response.as_of_day;
     nextBeforeDay = response.next_before_day;
     feedDone = response.done;
@@ -131,10 +152,17 @@ export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Pro
   await restartJournalFeed(owner);
 }
 
-/** Render the active pane route. Page routes fetch a file; a missing page becomes
- * an empty editable page, while read failure shows an error. Journal routes
- * load the feed. Route ownership discards stale loads. O(loaded page or feed
- * window) plus backend read latency. */
+/** Render the active pane route. Ordinary page routes fetch a file; a missing
+ * page becomes empty and editable, while a read failure shows an error. Guide
+ * routes load bundled pages. Journal routes wait for the live feed read when an
+ * older startup read is superseded. In-place refresh keeps an existing feed
+ * visible; a route load shows a placeholder until its read settles. A read
+ * failure with no existing feed shows an error. Route ownership discards stale
+ * loads. Page cost is O(loaded pages + page blocks + cached sheet dimensions +
+ * evicted blocks); Guide cost is O(guide pages × (loaded pages + cached sheet
+ * dimensions) + guide blocks + evicted blocks); feed cost is O(journals log
+ * journals + loaded pages + returned blocks + cached sheet dimensions +
+ * evicted blocks). */
 export function PageView(): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
@@ -193,9 +221,24 @@ export function PageView(): JSX.Element {
           // restartJournalFeed synchronously reads the working set safety gate.
           // Keep those reads out of this route/epoch loader's dependency set:
           // loadFeed replaces doc.feed, and subscribing here would self-reload.
-          await untrack(() => restartJournalFeed(journalOwner(r, epoch, tabId, revision)));
+          const initialRead = untrack(() => restartJournalFeed(journalOwner(r, epoch, tabId, revision)));
+          const initialGeneration = feedGeneration;
+          await initialRead;
           if (!owned()) return;
-          if (!isLoaded()) throw new Error("Journal feed read failed.");
+          // A watcher or second Journals surface can supersede this read while
+          // both native calls wait on the initial store publication. The older
+          // request is correctly discarded, but its route must await the winner.
+          while (!hasPublishedFeed(epoch) && latestFeedRestart && owned()) {
+            await latestFeedRestart;
+          }
+          if (!owned()) return;
+          // A superseding owner may have disappeared before publishing. The
+          // still-visible route takes one fresh read in that case.
+          if (!hasPublishedFeed(epoch) && feedGeneration !== initialGeneration && !pendingFeedRestart) {
+            await restartJournalFeed(journalOwner(r, epoch, tabId, revision));
+          }
+          if (!owned()) return;
+          if (!hasPublishedFeed(epoch)) throw new Error("Journal feed read failed.");
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);
@@ -271,7 +314,10 @@ export function PageView(): JSX.Element {
         if (generation === feedGeneration && ownerIsLive(owner)) await restartJournalFeed(owner);
         return;
       }
-      if (response.pages.length) appendFeed(response.pages);
+      if (response.pages.length) {
+        appendFeed(response.pages);
+        publishedFeedNames = feedNames();
+      }
       nextBeforeDay = response.next_before_day;
       feedDone = response.done;
     } catch {
