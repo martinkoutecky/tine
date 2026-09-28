@@ -307,9 +307,11 @@ export interface Backend {
   /** Open an http(s)/mailto URL in the OS default app. */
   openExternal(url: string): Promise<void>;
   // Graph binding: every asset/PDF method that takes `bindingGeneration` needs
-  // a positive safe-integer generation for this window's current graph. Missing
-  // or invalid ones reject with missing-graph-binding; stale ones with
-  // stale-graph-binding. Pre-IPC null and size-limit paths may return first.
+  // a positive safe-integer generation for this window's current graph. The frontend
+  // rejects missing/invalid generations with missing-graph-binding; after IPC, a
+  // missing graph rejects with `no graph loaded for window …`, and a stale generation
+  // against a bound graph rejects with stale-graph-binding. Pre-IPC null and size-limit
+  // paths may return or reject first.
   /** Open an existing regular assets-relative file in the desktop OS default app.
    * In-area symlinks may resolve; invalid/escaped paths, missing files, I/O, and
    * unsupported mobile handoff reject. Cost O(path components). */
@@ -410,7 +412,8 @@ export interface Backend {
   saveAsset(name: string, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
   /** Read the OS clipboard image, convert to PNG, and save under a unique name.
    * Return null if clipboard access/conversion yields no image; save failures
-   * reject. A saved image returns its assets-relative name. */
+   * reject. A saved image returns its assets-relative name. Cost O(image bytes +
+   * collision candidates). */
   pasteImage(bindingGeneration: number): Promise<string | null>;
   /** Decode an image off the OS clipboard to PNG bytes WITHOUT saving (the
    *  caller seeds the render cache + writes to disk in the background, so the
@@ -463,10 +466,10 @@ export interface Backend {
    *  actually populate the clipboard, so paste yielded nothing). */
   copyImageToClipboard(bytes: Uint8Array): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
-  /** Open persisted PDF highlights and view state. Create a sidecar or annotation
-   * page only if no usable OG or legacy counterpart exists; legacy files remain
-   * until highlight write.
-   * Malformed sidecars, ambiguous page files, and Store failures reject.
+  /** Open persisted PDF highlights and view state. Prefer OG-key sidecar and
+   * annotation-page files; consult the matching legacy counterpart only when the OG
+   * file is absent. Create missing files only when neither usable counterpart exists;
+   * legacy files remain until highlight write. Malformed sidecars, ambiguous page files, and Store failures reject.
    * Cost O(asset entries + sidecar + annotation page); a missing page can require
    * a graph refresh. */
   openPdf(pdf: string, label: string, kind: "create-page", bindingGeneration: number): Promise<PdfState>;
