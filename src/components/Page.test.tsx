@@ -663,6 +663,10 @@ describe("tag-page table", () => {
         ],
       },
     ];
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: { anchor: "block", filter: { kind: "true" }, source: { kind: "og", original: '(tag "Tag")', og_options: "" } },
+      view: {},
+    });
     vi.spyOn(backend(), "queryRun").mockResolvedValue({
       anchor: "block", groups, diagnostics: [],
       report: { ran: ["tag"], ignored: [], supported: true }, total: 1, exceeded: false,
@@ -679,14 +683,15 @@ describe("tag-page table", () => {
       </>
     ));
 
-    await tick();
-    const toggle = root.querySelector(".tag-table-toggle") as HTMLButtonElement | null;
-    expect(toggle).not.toBeNull();
-    toggle!.click();
+    const toggle = await vi.waitFor(() => {
+      const found = root.querySelector<HTMLButtonElement>(".tag-table-toggle");
+      if (!found) throw new Error("tag table toggle has not loaded");
+      return found;
+    });
+    toggle.click();
     expect(readPageProperty("Tag", "tine.tag-table")).toBe("true");
 
-    await tick();
-    expect(root.textContent).toContain("Tagged row");
+    await vi.waitFor(() => expect(root.textContent).toContain("Tagged row"));
     expect(root.textContent).toContain("Martin");
 
     (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();

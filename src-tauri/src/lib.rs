@@ -42,12 +42,12 @@ use commands::{
     preview_block, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
     read_highlights, read_journal_file, read_local_image, read_text_file, rename_file_to_page,
     rename_page, resolve_block, resolve_blocks, resolve_page, resolve_sync_conflict,
-    run_graph_search, save_asset, save_pages, save_pdf_area_image,
-    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
-    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
-    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
-    stream_asset_path, sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset,
-    trash_journal_file, trash_sync_conflict, write_highlights, write_pdf_view_state,
+    run_graph_search, save_asset, save_pages, save_pdf_area_image, save_workspaces, search,
+    set_default_journal_template, set_doc_mode_enter_for_new_block, set_guide_announced,
+    set_journal_title_format, set_logical_outdenting, set_preferred_format, set_preferred_workflow,
+    set_show_brackets, set_start_of_week, set_timetracking_enabled, stream_asset_path,
+    sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
+    trash_sync_conflict, write_highlights, write_pdf_view_state,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, diag_private,

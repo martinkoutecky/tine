@@ -24,13 +24,14 @@ import { Block } from "./Block";
 import { initParser } from "../render/parse";
 import { backend, QueryPrintRefusedError } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { blockProperty, resetStore } from "../document";
+import { blockProperty, resetStore, setRaw } from "../document";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import type { RefGroup } from "../types";
 import type { ExplainEmptyResult, ParsedQuery, Query, QueryResult, ViewSettings } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetTabsToJournals, route } from "../router";
 import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
+import { toasts, setToasts } from "../toasts";
 
 beforeAll(async () => {
   await initParser();
@@ -42,6 +43,7 @@ afterEach(() => {
   resetStore();
   resetTabsToJournals();
   localStorage.clear();
+  setToasts([]);
   document.body.innerHTML = "";
 });
 
@@ -538,6 +540,45 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
       });
       save.click();
       await vi.waitFor(() => expect(doc.byId.query.raw).toBe("{{query (task TODO)}} and {{query (task DONE)}}"));
+    } finally {
+      dispose();
+    }
+  });
+  it("refuses an in-flight edit when the authored macro's raw extent moves", async () => {
+    const original = "{{query (task TODO)}} and {{query (task TODO)}}";
+    load(original);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    let finishPrint: ((text: string) => void) | undefined;
+    vi.spyOn(backend(), "printQuery").mockImplementation(async (_query, _view, dialect) =>
+      dialect === "og" ? new Promise<string>((resolve) => { finishPrint = resolve; }) : "-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const gears = await vi.waitFor(() => {
+        const found = root.querySelectorAll<HTMLButtonElement>(".qs-gear");
+        if (found.length !== 2) throw new Error("two macros not rendered");
+        return found;
+      });
+      gears[1].click();
+      const input = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
+        if (!found) throw new Error("pane not open");
+        return found;
+      });
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async (source: string) => parsedAs(source));
+      type(input, "-- task DONE");
+      const save = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save not ready");
+        return found;
+      });
+      save.click();
+      await vi.waitFor(() => expect(finishPrint).toBeDefined());
+      setRaw("query", `prefix ${original}`);
+      finishPrint!("(task DONE)");
+      await settle();
+      expect(doc.byId.query.raw).toBe(`prefix ${original}`);
+      expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("changed"))).toBe(true);
     } finally {
       dispose();
     }

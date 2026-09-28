@@ -36,7 +36,8 @@ export function CrossingNotice(props: {
   *  is evidence the save path already has, rather than "here is the feature
   *  that crossed", which nothing today can honestly answer. */
   changed?: string;
-  onUndo: () => void;
+  /** Returns true only when the ordinary undo applied the crossing entry. */
+  onUndo: () => boolean;
   onKeep: () => void;
   /** Called at most once, on close, when "Don't show this again" is ticked. */
   onDontShowAgain: () => void;
@@ -101,7 +102,7 @@ export function CrossingNotice(props: {
               ? "Put the query back the way it was"
               : "Something else was changed since; use the ordinary Undo to step back to it"
           }
-          onClick={() => close(props.onUndo)}
+          onClick={() => { if (props.onUndo() && dontShow()) props.onDontShowAgain(); }}
         >
           {props.canUndo ? "Undo that change" : "Undo (use Ctrl+Z)"}
         </button>

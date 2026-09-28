@@ -1020,21 +1020,31 @@ function taggedCount(groups: readonly RefGroup[] | undefined): number {
   return groups?.reduce((sum, group) => sum + group.blocks.length, 0) ?? 0;
 }
 
-async function tagTableGroups(pageName: string): Promise<RefGroup[]> {
-  const reading = await backend().parseQuery(tagQuery(pageName), "macro_query");
-  const answer = await backend().queryRun(reading.query, reading.view);
-  const diagnostic = (answer.diagnostics ?? []).find((item) => !item.disabled);
-  if (diagnostic) throw new Error(diagnostic.message);
-  return answer.anchor === "block" ? answer.groups : [];
+async function tagTableGroups(pageName: string, owners: object): Promise<{ groups: RefGroup[]; error?: string } | undefined> {
+  const owner = latestOwner(owners, "tag-table", graphOwner());
+  try {
+    const reading = await readOwned(owner, backend().parseQuery(tagQuery(pageName), "macro_query"));
+    if (reading.kind === "stale") return undefined;
+    const result = await readOwned(owner, backend().queryRun(reading.value.query, reading.value.view));
+    if (result.kind === "stale") return undefined;
+    const answer = result.value;
+    const diagnostic = (answer.diagnostics ?? []).find((item) => !item.disabled);
+    return diagnostic
+      ? { groups: [], error: diagnostic.message }
+      : { groups: answer.anchor === "block" ? answer.groups : [] };
+  } catch (error) {
+    return { groups: [], error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
+  const owners = {};
   const [groups] = createResource(
     () => (props.page.kind === "page" ? `${props.page.name}\0${dataRev()}` : null),
-    () => tagTableGroups(props.page.name)
+    () => tagTableGroups(props.page.name, owners)
   );
   const enabled = () => tagTableEnabled(props.page.name);
-  const visible = () => props.page.kind === "page" && (enabled() || taggedCount(groups()) > 0);
+  const visible = () => props.page.kind === "page" && (enabled() || taggedCount(groups()?.groups) > 0);
   return (
     <Show when={visible()}>
       <button
@@ -1050,9 +1060,10 @@ export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
 }
 
 export function TagPageTable(props: { pageName: string }): JSX.Element {
+  const owners = {};
   const [groups] = createResource(
     () => `${props.pageName}\0${dataRev()}`,
-    () => tagTableGroups(props.pageName)
+    () => tagTableGroups(props.pageName, owners)
   );
   const addRow = async () => {
     const ok = await appendToTodayJournal(`${tagRef(props.pageName)} `);
@@ -1063,14 +1074,16 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   };
   return (
     <div class="tag-page-table">
-      <SheetTable
-        ownerId={`tag-page:${encodeURIComponent(props.pageName)}`}
-        rowSource="query"
-        groups={groups() ?? []}
-        addRow={addRow}
-        addRowLabel={`Add ${tagRef(props.pageName)} row`}
-        schemaPage={props.pageName}
-      />
+      <Show when={!groups()?.error} fallback={<div role="alert">Tag table couldn't load: {groups()?.error}</div>}>
+        <SheetTable
+          ownerId={`tag-page:${encodeURIComponent(props.pageName)}`}
+          rowSource="query"
+          groups={groups()?.groups ?? []}
+          addRow={addRow}
+          addRowLabel={`Add ${tagRef(props.pageName)} row`}
+          schemaPage={props.pageName}
+        />
+      </Show>
     </div>
   );
 }

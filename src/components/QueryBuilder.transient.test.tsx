@@ -487,7 +487,7 @@ describe("QueryBuilder registry sharing (Harvest W4-P1 item 3)", () => {
 });
 
 describe("QueryBuilder registry landing (I-20)", () => {
-  it.each(["data", "declaration"])("withdraws obsolete rows while the %s revision is pending", async (kind) => {
+  it.each(["data", "declaration"])("keeps rows visible but type edits disabled while the %s revision is pending", async (kind) => {
     const registry = vi.mocked(backend().queryRegistry);
     registry.mockReset();
     let release!: (value: RegistrySnapshot) => void;
@@ -501,7 +501,10 @@ describe("QueryBuilder registry landing (I-20)", () => {
       if (kind === "data") setDataRev((n) => n + 1);
       else requestQueryRegistryRefresh();
       await settleRegistry(registry);
-      expect(propertyKeys(sheet)).toEqual([]);
+      expect(propertyKeys(sheet)).toEqual(["obsolete-type"]);
+      sheet.querySelector<HTMLButtonElement>(".qs-add")!.click();
+      expect(sheet.querySelector(".qs-registry-pending")).not.toBeNull();
+      sheet.querySelector<HTMLButtonElement>(".qs-add")!.click();
       release(snapshot([["current-type", 4]]));
       await settleRegistry(registry);
       expect(propertyKeys(sheet)).toEqual(["current-type"]);

@@ -47,6 +47,7 @@ flushAll
 flushPage
 formatForBlock
 formatForPage
+graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze edits; batch14q4a-followup
 groupedPages  # why: show waiting pages in conflict bar; batch03
 hasSelection
 indentBlock

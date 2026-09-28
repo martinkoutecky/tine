@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
+import { QueryMacro } from "./Macro";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
@@ -128,6 +129,17 @@ async function settle(): Promise<void> {
 }
 
 describe("query `<% current page %>` dispatch to the focused pane (GH #301)", () => {
+  it("binds a read-only query to the currentPage supplied by BEGIN_QUERY", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groupsFor("todo")));
+    const { dispose } = mount(() => <QueryMacro body="query (task TODO)" currentPage="Embedded" />);
+    try {
+      await vi.waitFor(() => expect(run).toHaveBeenCalled());
+      expect(run.mock.calls[0][2]).toEqual({ current_page: "Embedded" });
+    } finally {
+      dispose();
+    }
+  });
   it("substitutes the focused page at execution time, keeps the authored text literal, and re-runs on navigation — coalescing identical transitions", async () => {
     loadQueryDoc("{{query (and (page <% current page %>) (task TODO))}}");
     const runQuery = vi

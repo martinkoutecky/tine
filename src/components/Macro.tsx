@@ -4,7 +4,7 @@ import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../rout
 import { openPageInSidebar, openPageContextMenu, pageIdentityKey } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
-import { blockProperty, blockWritable, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+import { blockProperty, blockWritable, formatForPage, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
@@ -48,7 +48,7 @@ import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDe
 import { blockDtoExternalId } from "../blockIdentity";
 import { QueryPrintRefusedError } from "../backend";
 import { focusedRouter } from "../panes";
-import { pushToast } from "../toasts";
+import { pushToast, pushToastUnique } from "../toasts";
 
 const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
@@ -326,10 +326,9 @@ export function QueryMacro(props: {
     if (!query) return undefined;
     const context = executionContext();
     const search = friendlySearch();
-    const key = JSON.stringify([
-      graphEpoch(), query.query, query.view, context ?? null, search, collapsed() ? "collapsed" : dataRev(),
-    ]);
-    return { query, context, search, key };
+    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed()]);
+    const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}`;
+    return { query, context, search, displayKey, key };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
   const [operation] = createResource(runRequest, async (request): Promise<QueryOperation | undefined> => {
@@ -357,7 +356,7 @@ export function QueryMacro(props: {
         grouped.set(key, group);
       }
       return {
-        requestKey: request.key,
+        requestKey: request.displayKey,
         groups: [...grouped.values()], pages: null, diagnostics: [],
         report: null, search: hits.length === landed.value.hits.length ? landed.value : { ...landed.value, hits }, matchedTotal: null,
       };
@@ -370,7 +369,7 @@ export function QueryMacro(props: {
     if (landed.kind === "stale") return undefined;
     const result = landed.value;
     return {
-      requestKey: request.key,
+      requestKey: request.displayKey,
       groups: result.anchor === "block" ? withoutHostBlock(result.groups, props.blockId) : [],
       pages: result.anchor === "page" ? result.pages : null,
       diagnostics: result.diagnostics ?? [],
@@ -384,7 +383,7 @@ export function QueryMacro(props: {
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();
     const landed = operation.error === undefined ? operation.latest : undefined;
-    return current && landed?.requestKey === current.key ? landed : undefined;
+    return current && landed?.requestKey === current.displayKey ? landed : undefined;
   };
   const groups = () => displayed()?.groups ?? [];
   const pageRows = () => displayed()?.pages ?? null;
@@ -449,6 +448,11 @@ export function QueryMacro(props: {
 
   // -- editing: every edit is printed by the engine and written back as bytes --
   const [printError, setPrintError] = createSignal<string | null>(null);
+  const refuseChanged = () => {
+    setPrintError(BLOCK_CHANGED);
+    pushToastUnique(BLOCK_CHANGED, "error");
+    return false;
+  };
   // Rewrite just THIS macro inside the owning block, targeted by the extent's
   // own recovered name+argument (a block can hold more than one query).
   const targetMacro = (raw: string): MacroExtent | null => {
@@ -496,8 +500,7 @@ export function QueryMacro(props: {
     try {
       const expressible = await readOwned(owner, backend().queryOgExpressible(next.query, next.view));
       if (expressible.kind === "stale") {
-        setPrintError(BLOCK_CHANGED);
-        return false;
+        return refuseChanged();
       }
       name = expressible.value ? current : QUERY_MACRO_NAMES[1];
       dialect = macroPrintDialect(name);
@@ -517,8 +520,7 @@ export function QueryMacro(props: {
     }
     const node = docNode(blockId);
     if (printed.kind === "stale" || !node) {
-      setPrintError(BLOCK_CHANGED);
-      return false;
+      return refuseChanged();
     }
     // A page that turned read-only while the print was in flight refuses the
     // write; report "not saved" so the sheet arms no focus (master 93ff682a3).
@@ -528,8 +530,7 @@ export function QueryMacro(props: {
     }
     const target = targetMacro(node.raw);
     if (!target) {
-      setPrintError(BLOCK_CHANGED);
-      return false;
+      return refuseChanged();
     }
     setPrintError(null);
     const argument = printed.value;
@@ -574,13 +575,13 @@ export function QueryMacro(props: {
         backend().printQuery(nextQuery, current.view, sourcePrintDialect(current.query.source), true),
       );
       if (printed.kind === "stale") {
-        setPrintError(BLOCK_CHANGED);
+        refuseChanged();
         return;
       }
       const node = docNode(blockId);
       const target = node && targetMacro(node.raw);
       if (!node || !target || !blockWritable(blockId)) {
-        setPrintError(BLOCK_CHANGED);
+        refuseChanged();
         return;
       }
       const saved = withUndoUnit(`query:title:${blockId}`, [node.page], () => {
@@ -618,7 +619,7 @@ export function QueryMacro(props: {
   // Undo is offered only while the entry `undo()` would take back IS the crossing save.
   const crossingIsStillUndoable = () => {
     const tag = crossedTag();
-    return !!tag && undoTopTag() === tag;
+    return !!tag && !graphRewriteFrozen() && undoTopTag() === tag;
   };
   const crossingNotice = () => (
     <CrossingNotice
@@ -629,7 +630,12 @@ export function QueryMacro(props: {
       autoFocus={!noticeFocused()}
       onFocused={() => setNoticeFocused(true)}
       onUndo={() => {
-        if (undo()) dismissCrossing();
+        if (undo()) {
+          dismissCrossing();
+          return true;
+        }
+        pushToastUnique("Undo is unavailable while the graph is being rewritten.", "error");
+        return false;
       }}
       onKeep={dismissCrossing}
       onDontShowAgain={dismissCrossingNoticeForever}

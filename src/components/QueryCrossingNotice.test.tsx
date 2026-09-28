@@ -19,6 +19,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
+import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
+import { toasts, setToasts } from "../toasts";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
@@ -36,6 +38,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  setToasts([]);
   vi.restoreAllMocks();
   resetSharedQueryResultsForTests();
   resetStore();
@@ -243,6 +246,26 @@ describe("C4: a save that does not cross says nothing", () => {
 });
 
 describe("C2: [Undo that change] is the ordinary undo, and knows when it is not", () => {
+  it("keeps the notice and block when a frozen rewrite refuses Undo", async () => {
+    load('{{query (task TODO)}}');
+    arrangeCrossing();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let release: (() => void) | null = null;
+    try {
+      await saveThroughPane(root, "-- task DONE");
+      const shown = await waitForNotice(root);
+      const crossed = doc.byId.query.raw;
+      release = tryFreezeGraphRewrite();
+      expect(release).not.toBeNull();
+      shown.querySelector<HTMLButtonElement>(".query-crossing-notice-undo")!.click();
+      expect(doc.byId.query.raw).toBe(crossed);
+      expect(notice(root)).not.toBeNull();
+      expect(toasts().some((toast) => toast.message.includes("Undo is unavailable"))).toBe(true);
+    } finally {
+      release?.();
+      dispose();
+    }
+  });
   for (const pageOnly of [false, true]) {
     it(`restores the block byte-for-byte and closes (${pageOnly ? "page-only" : "global"} history)`, async () => {
       load('{{query (task TODO)}}');

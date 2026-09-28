@@ -64,7 +64,7 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/commands.rs",
         "spawn_blocking(",
-        36,
+        34,
         "command future",
         "caller awaits blocking result",
     ),
