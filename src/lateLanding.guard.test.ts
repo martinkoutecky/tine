@@ -25,7 +25,7 @@ const ORIGINAL_LATE_KEYS = new Set(`
   src/components/Settings.tsx:2728 src/components/Settings.tsx:2748 src/components/Settings.tsx:560 src/components/Sidebar.tsx:344 src/components/Sidebar.tsx:413
   src/components/UnlinkedReferences.tsx:53 src/debug.ts:38 src/editor/linkDefault.ts:58 src/filedrop.ts:84 src/graph.ts:269
   src/graph.ts:313 src/graph.ts:53 src/graph.ts:76 src/guide.ts:75 src/launcherRanking.ts:43
-  src/mediaEditorSettings.ts:56 src/mediaEditorSettings.ts:67 src/nativeChrome.ts:68 src/nativeChrome.ts:81 src/pageIconBatch.ts:42
+  src/mediaEditorSettings.ts:61 src/mediaEditorSettings.ts:72 src/nativeChrome.ts:68 src/nativeChrome.ts:81 src/pageIconBatch.ts:42
   src/pageIndex.ts:71 src/plugins/manager.ts:267 src/plugins/manager.ts:273 src/plugins/manager.ts:781 src/plugins/registry.ts:455
   src/plugins/registry.ts:513 src/print.ts:111 src/render/inline.tsx:1241 src/render/inline.tsx:794 src/router.ts:733
   src/session.ts:286 src/session.ts:302 src/sheet/queryHydration.ts:325 src/spellcheckSettings.ts:88 src/themes/manager.ts:50
@@ -52,8 +52,8 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/editor/linkDefault.ts:58": "legacy UI continuation needs a binding audit",
   "src/graph.ts:76": "census #1: graph-session continuation awaits its design batch",
   "src/launcherRanking.ts:43": "legacy UI continuation needs a binding audit",
-  "src/mediaEditorSettings.ts:56": "device-local autodetect revision check owns the result",
-  "src/mediaEditorSettings.ts:67": "device-local startup read revision check owns the result",
+  "src/mediaEditorSettings.ts:61": "device-local autodetect revision check owns the result",
+  "src/mediaEditorSettings.ts:72": "device-local startup read revision check owns the result",
   "src/nativeChrome.ts:68": "legacy UI continuation needs a binding audit",
   "src/nativeChrome.ts:81": "legacy UI continuation needs a binding audit",
   "src/pageIndex.ts:71": "legacy UI continuation needs a binding audit",
