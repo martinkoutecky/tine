@@ -21,6 +21,19 @@ export function pushToast(
   if (!opts.sticky) setTimeout(() => dismissToast(id), 3200);
   return id;
 }
+/** Return the existing ID for an identical visible status, or create one.
+ * Cost O(visible toasts); no failure beyond pushToast's signal update. */
+export function pushToastUnique(
+  message: string,
+  kind: Toast["kind"],
+  opts: { sticky?: boolean; action?: { label: string; run: () => void }; onDismiss?: () => void } = {}
+): number {
+  const existing = toasts().find((toast) => {
+    const text = toast.message;
+    return text === message && toast.kind === kind;
+  });
+  return existing?.id ?? pushToast(message, kind, opts);
+}
 export function dismissToast(id: number) {
   const toast = toasts().find((t) => t.id === id);
   toast?.onDismiss?.();

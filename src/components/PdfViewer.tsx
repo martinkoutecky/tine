@@ -175,14 +175,13 @@ export function KeyedPdfViewer(props: { target: () => PdfTarget | null }): JSX.E
   );
 }
 
-/** Mount a graph-owned PDF viewer. Opening can create annotation sidecar/page
- * files, reads at most 256 MiB, and accepts 1–5000 pages. Annotation-open errors
- * toast while asset/render failures show in the view. Actions write highlights,
- * crops and view state. Failed saves stay marked; conflicts offer Keep mine or
- * Use disk version. Close and graph switch drain writes or wait for resolution.
- * Missing navigation falls back to this PDF/page 1. Cleanup cancels work and
- * destroys the document. Cost follows PDF bytes and visible pages, not graph size;
- * callers need no knowledge of save ordering. */
+/** Mount a graph-owned PDF viewer. Opening may create annotation files and
+ * refresh graph state in O(pages in graph), plus asset listing and PDF bytes.
+ * Reads at most 256 MiB and accepts 1–5000 pages; invalid PDFs show an error.
+ * Annotation failures toast. Failed highlight saves stay marked; conflicts
+ * require a decision or confirmed discard. Failed crop cleanup blocks drain
+ * until retry. Close and graph switch drain work; unmount starts any pending
+ * view-state flush asynchronously. */
 export function PdfViewer(props: {
   filename: string;
   label: string;
@@ -380,10 +379,14 @@ export function PdfViewer(props: {
   const highlights = highlightState.highlights;
   const unsavedHighlights = highlightState.unsaved;
   const highlightConflict = highlightState.conflict;
+  const highlightDecisionBusy = highlightState.decisionBusy;
+  const highlightCleanupPending = highlightState.cleanupPending;
   const highlightGraphOwner = graphOwner(() => isPdfOwnershipCurrent(owner));
   const persist = highlightState.persist;
   const useDiskHighlights = highlightState.useDiskVersion;
   const keepMineHighlights = highlightState.keepMine;
+  const discardMineHighlights = highlightState.discardMine;
+  const retryHighlightCleanup = highlightState.retryCleanup;
 
   const copyCreatedHighlightRef = async (id: string) => {
     await writeClipboardText(`((${id}))`);
@@ -949,7 +952,7 @@ export function PdfViewer(props: {
     let restoredPage: number | null = null;
     let restoredScale: number | null = null;
     try {
-      const result = await readOwned(loadOwner,
+      const result = await writeOwned(loadOwner,
         backend().openPdf(props.filename, props.label, "create-page", binding.backendGeneration));
       if (result.kind === "stale") return;
       const state = result.value;
@@ -957,10 +960,8 @@ export function PdfViewer(props: {
       restoredPage = state.page;
       restoredScale = state.scale;
     } catch (error) {
-      if (loadOwner()) {
-        highlightState.load([]);
-        pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
-      }
+      if (loadOwner()) highlightState.load([]);
+      pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
     }
     let bytes: Uint8Array;
     try {
@@ -1744,7 +1745,7 @@ export function PdfViewer(props: {
     >
       <div class="pdf-toolbar">
         <span class="pdf-title">{props.label}</span>
-        <Show when={unsavedHighlights()}><span class="pdf-unsaved">Unsaved highlight</span></Show>
+        <Show when={unsavedHighlights()}><span class="pdf-unsaved">{highlightCleanupPending() ? "Area image cleanup pending" : "Unsaved highlight"}</span></Show>
         <div class="pdf-toolbar-actions">
           <button class="icon-btn pdf-close-btn" title="Close PDF" onClick={() => void closeSafely()}>
             ✕
@@ -1854,9 +1855,16 @@ export function PdfViewer(props: {
         <div class="conflict-banner pdf-highlight-conflict" role="alert">
           <span class="conflict-msg">Highlight conflict. Resolve it before editing more highlights.</span>
           <div class="conflict-actions">
-            <button class="conflict-btn keep" onClick={() => void keepMineHighlights()}>Keep mine</button>
-            <button class="conflict-btn" onClick={() => void useDiskHighlights()}>Use disk version</button>
+            <button class="conflict-btn keep" disabled={highlightDecisionBusy()} onClick={() => void keepMineHighlights()}>Keep mine</button>
+            <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void useDiskHighlights()}>Use disk version</button>
+            <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void discardMineHighlights()}>Discard my changes</button>
           </div>
+        </div>
+      </Show>
+      <Show when={highlightCleanupPending()}>
+        <div class="conflict-banner pdf-highlight-cleanup" role="alert">
+          <span class="conflict-msg">Area image cleanup is pending. Retry before closing or switching graphs.</span>
+          <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void retryHighlightCleanup()}>Retry cleanup</button>
         </div>
       </Show>
       <Show when={settingsOpen()}>

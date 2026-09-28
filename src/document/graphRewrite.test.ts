@@ -8,6 +8,8 @@ import { setRaw } from "./edits/blocks";
 import { pasteClipboardPayload } from "./edits/paste";
 import { moveBlock, moveItem } from "./edits/moves";
 import { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
+import { bumpGraphEpoch } from "../graphSession";
+import { setToasts, toasts } from "../toasts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -45,6 +47,21 @@ it("routes both rename controls through the document intent", () => {
     expect(source).toContain("renamePageOnDisk(");
     expect(source).not.toContain("backend().renamePage(");
   }
+});
+
+it("reports a durable rename failure after the graph owner retires", async () => {
+  setToasts([]);
+  let rejectRename!: (error: Error) => void;
+  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() =>
+    new Promise<void>((_resolve, reject) => { rejectRename = reject; }));
+  const pending = renamePageOnDisk("A", "B");
+  await vi.waitFor(() => expect(rename).toHaveBeenCalledOnce());
+  bumpGraphEpoch();
+  const failure = new Error("rename rollback incomplete");
+  rejectRename(failure);
+  await expect(pending).rejects.toBe(failure);
+  expect(toasts().at(-1)?.message).toContain("rename rollback incomplete");
+  setToasts([]);
 });
 
 it("refuses a page creation that started before the rename freeze", async () => {

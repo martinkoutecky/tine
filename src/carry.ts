@@ -49,9 +49,10 @@ async function report(n: number, today: string, owner: Owner): Promise<void> {
   pushToast(n ? `Carried ${n} item${n === 1 ? "" : "s"} to today` : "No unfinished tasks to carry");
 }
 
-/** Carry unfinished tasks from the previous *non-empty* day to today. "Previous
- *  day" means the most recent journal before today that actually has content
- *  (not literally yesterday, which is often blank). */
+/** Carry unfinished tasks from the latest earlier journal with content to
+ * today. This scans the journal-day inventory; a lookup failure is treated as
+ * no earlier day and shows that toast. Moving is in memory before today's page
+ * save; a save failure leaves moved tasks in the editor for resolution. */
 export async function carryPrevDay(): Promise<void> {
   const owner = graphOwner();
   const today = new Date();
@@ -75,7 +76,10 @@ export async function carryPrevDay(): Promise<void> {
   await carryDay(journalTitle(d));
 }
 
-/** Carry one day's unfinished tasks to today (used from a day's context menu). */
+/** Carry unfinished tasks from a named journal to today. A missing source or
+ * today's own page does nothing. The move changes the in-memory working set
+ * and saves today's page; failed saves retain the moved tasks in the editor and
+ * toast. Cost follows the source/day blocks plus any page load and save. */
 export async function carryDay(pageName: string): Promise<void> {
   const owner = graphOwner();
   const today = await ensureToday(owner);
@@ -88,8 +92,10 @@ export async function carryDay(pageName: string): Promise<void> {
   await report(n, today, owner);
 }
 
-/** Carry unfinished tasks from the last `days` days (today−1 … today−days) to
- *  today, newest first. Only days that have a file are touched. */
+/** Carry unfinished tasks from today-1 through today-days, newest first,
+ * skipping missing files. Starts one page lookup per requested day in parallel;
+ * work grows with days and the loaded blocks. The numeric argument is not
+ * clamped or validated. A failed final save leaves moves in memory and toasts. */
 export async function carryDaysBack(days: number): Promise<void> {
   const owner = graphOwner();
   const today = await ensureToday(owner);

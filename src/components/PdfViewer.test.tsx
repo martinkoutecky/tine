@@ -467,6 +467,70 @@ describe("PdfViewer OG area-highlight selection", () => {
     } finally { dispose(); }
   });
 
+  it.each(["malformed EDN", "I/O failure"])("lets close and graph-switch drain proceed after confirmed discard of %s", async (failure) => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("44444444-4444-4444-8444-444444444444");
+    vi.spyOn(Date, "now").mockReturnValue(5678);
+    vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("paper/1_crop.png");
+    const write = vi.spyOn(backend(), "writeHighlights").mockRejectedValue(new Error("conflict"));
+    vi.spyOn(backend(), "readHighlights").mockRejectedValue(new Error(failure));
+    const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    const rollback = vi.spyOn(backend(), "rollbackPdfAreaImage");
+    const { host, wrap, dispose } = await mountAreaViewer();
+    try {
+      (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
+      dragArea(wrap, { x: 45, y: 55 });
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await flush();
+      expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
+      (host.querySelector('button[title="Close PDF"]') as HTMLButtonElement).click();
+      await flush();
+      expect(host.querySelector(".pdf-viewer")).not.toBeNull();
+      expect(await drainPdfWork()).toBe(false);
+      for (const label of ["Use disk version", "Keep mine"]) {
+        [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
+          .find((button) => button.textContent === label)!.click();
+        await flush();
+        expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
+      }
+      [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
+        .find((button) => button.textContent === "Discard my changes")!.click();
+      await flush();
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(host.querySelector(".pdf-highlight-conflict")).toBeNull();
+      expect(await drainPdfWork()).toBe(true);
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(rollback).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it("disables both PDF conflict choices throughout crop retirement", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("44444444-4444-4444-8444-444444444444");
+    vi.spyOn(Date, "now").mockReturnValue(5678);
+    vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("paper/1_crop.png");
+    vi.spyOn(backend(), "writeHighlights").mockRejectedValue(new Error("conflict"));
+    vi.spyOn(backend(), "readHighlights").mockResolvedValue([]);
+    let finish!: () => void;
+    vi.spyOn(backend(), "rollbackPdfAreaImage").mockImplementationOnce(() =>
+      new Promise<void>((resolve) => { finish = resolve; }));
+    const { host, wrap, dispose } = await mountAreaViewer();
+    try {
+      (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
+      dragArea(wrap, { x: 45, y: 55 });
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await flush();
+      [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
+        .find((button) => button.textContent === "Use disk version")!.click();
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      const buttons = [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")];
+      expect(buttons.find((button) => button.textContent === "Keep mine")?.disabled).toBe(true);
+      expect(buttons.find((button) => button.textContent === "Use disk version")?.disabled).toBe(true);
+      finish();
+      await flush();
+    } finally { dispose(); }
+  });
+
   it.each(["both fail", "second succeeds", "first succeeds"])("keeps two overlapping area crops accounted for: %s", async (outcome) => {
     const ids = ["44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"] as const;
     vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(ids[0]).mockReturnValueOnce(ids[1]);

@@ -187,9 +187,8 @@ export function blockRef(id: string): LoadedBlockRef {
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Ensure a block has a durable external UUID synchronously, while deliberately
- * leaving its live store key unchanged. Existing ids win; otherwise a fresh
- * transient key receives a UUID in the page's Markdown/Org property syntax. */
+/** Stamp an external UUID in memory without changing the live store key.
+ * Existing IDs win; otherwise start a page flush that may fail after return. */
 export function ensureStableBlockId(id: string): string | null {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return null;
@@ -205,22 +204,17 @@ export function ensureStableBlockId(id: string): string | null {
   return uuid;
 }
 
-/** Like `blockRef`, but first persists the block's `id::` so the reference
- *  resolves after a restart. Used for parking a block durably: the right sidebar,
- *  a new tab, and zoom all stamp `id::` so the spot survives a relaunch (Martin's
- *  call — he wants these to persist; the `id::` is harmless in the file and is
- *  stripped from clipboard copies anyway, see `blockSubtreeMarkdown`). */
+/** Like `blockRef`, but first stamp an `id::` in memory and start a page flush.
+ * The returned ref resolves immediately; save failure is not reported here. */
 export function persistentBlockRef(id: string): LoadedBlockRef {
   ensureStableBlockId(id);
   return blockRef(id);
 }
 
-/** Make a freshly-inserted `((uuid))` reference durable: ensure the TARGET block
- *  (which may live on a page that isn't loaded — block search spans the whole
- *  graph) carries `id:: uuid` on disk, so the ref still resolves after a restart.
- *  The owning page is loaded only if absent (`ensurePageLoaded` never clobbers
- *  unsaved edits). A no-op if the block already has an `id::`. Fire-and-forget:
- *  the ref resolves in-session via the in-memory uuid even before this lands. */
+/** Find a new block-reference target, loading its page if needed, and stamp
+ * its ID in memory. Missing or changed targets are no-ops. Its page save is
+ * started without awaiting it and can fail after this promise resolves; no
+ * durability receipt is returned. Cost includes a page lookup and page save. */
 export async function persistBlockRefTarget(
   uuid: string,
   page: string,

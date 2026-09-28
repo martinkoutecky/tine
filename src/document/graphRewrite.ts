@@ -1,10 +1,11 @@
 import { backend } from "../backend";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, writeOwned } from "../owned";
 import type { PageTarget } from "../router";
 import { endEdit } from "../editorController";
 import { flushAll } from "./save/engine";
 import { resetStore } from "./workingSet";
 import { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
+import { pushToast } from "../toasts";
 
 let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget) => void) | null = null;
 
@@ -14,8 +15,12 @@ export function installRenameRefreshHandler(handler: (from: string, to: string, 
   refreshRenamedNavigation = handler;
 }
 
-/** A rename rewrites references across the graph. No user write may enter memory
- * between the final flush and the reset after the backend has changed files. */
+/** Freeze user edits, flush current pages, then ask the backend to rename a
+ * page and rewrite references across the graph. Returns false when already
+ * frozen, flush fails or graph ownership retires; backend errors reject.
+ * On success reset the working set and refresh navigation. Cost grows with
+ * graph pages and references. A backend failure can require inspecting disk
+ * before retrying. */
 export async function renamePageOnDisk(from: string, to: string, target?: PageTarget): Promise<boolean> {
   if (graphRewriteFrozen()) return false;
   // Blur is synchronous: commit the current editor buffer before closing the
@@ -29,9 +34,15 @@ export async function renamePageOnDisk(from: string, to: string, target?: PageTa
     // Delayed intents now fail pageWritable even if they started before this.
     endEdit("graph-switch");
     if (!(await flushAll()) || !owner()) return false;
-    const result = await readOwned(owner, target?.path
-      ? backend().renamePage(from, to, "rename-page", target.path)
-      : backend().renamePage(from, to, "rename-page"));
+    let result;
+    try {
+      result = await writeOwned(owner, target?.path
+        ? backend().renamePage(from, to, "rename-page", target.path)
+        : backend().renamePage(from, to, "rename-page"));
+    } catch (error) {
+      if (!owner()) pushToast(`Rename failed: ${String(error)}`, "error");
+      throw error;
+    }
     if (result.kind === "stale") return false;
     resetStore();
     refreshRenamedNavigation?.(from, to, target);

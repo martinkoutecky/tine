@@ -35,9 +35,11 @@ function clipboardIdsForBlock(block: ClipboardBlock): string[] {
     .map((property) => property.value.trim());
 }
 
-/** Check IDs on off-screen pages before inserting ordinary pasted outline text.
- * The no-ID path stays synchronous; an ID-bearing paste waits for one bounded
- * backend lookup and is discarded if its target/graph changes meanwhile. */
+/** Check pasted IDs against loaded blocks and a backend resolveBlocks call
+ * containing every distinct pasted ID. Request size grows with input IDs and
+ * has no fixed cap. No-ID input returns a copy synchronously (or [] for a
+ * missing target). Lookup failure strips all IDs; retired authority returns
+ * null. */
 export function sanitizeOutlineIdsForPaste(
   targetId: string,
   nodes: readonly OutlineNode[],

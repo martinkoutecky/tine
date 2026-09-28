@@ -37,6 +37,11 @@ export function guideTargetForLink(target: string, sourcePage?: string): string 
   return title ? guidePageName(title) : target;
 }
 
+/** Load bundled Guide templates into the read-only working set and return
+ * their pages. Reuse a current cached promise unless force is true; force
+ * starts a new load, but an earlier same-graph completion can still land.
+ * A failed cached promise keeps rejecting until a forced load replaces it.
+ * A stale completion returns []. Cost follows Guide page count/content. */
 export async function ensureGuidePagesLoaded(force = false): Promise<GuidePage[]> {
   if (!force && guideLoad && guideLoadOwner?.()) return guideLoad;
   const owner = graphOwner();
@@ -78,6 +83,10 @@ export async function openGuide(): Promise<void> {
   }
 }
 
+/** Ask the backend to copy a Guide page into tine-guide/ and open the resulting
+ * graph page. An existing copy is opened rather than created. Errors are
+ * displayed as toasts and this function still resolves, so completion does
+ * not certify that a copy exists. Cost follows copied Guide pages/assets. */
 export async function copyGuideIntoGraph(pageName: string): Promise<void> {
   const owner = graphOwner();
   const page = pageByName(pageName);

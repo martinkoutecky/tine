@@ -1,5 +1,6 @@
 # tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
-# Counts against 01-arrival.md budget A, extended for batch save: <=36 Store+Transaction ops,
+# Counts against 01-arrival.md budget A, extended for batch save and read-only
+# transaction expectation: <=37 Store+Transaction ops,
 # <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
 const model::PARSE_INPUT_MAX_BYTES
 enum edit_kind::EditKind
@@ -38,6 +39,8 @@ fn transaction::Store::transaction
 fn transaction::Transaction::commit
 fn transaction::Transaction::create
 fn transaction::Transaction::create_unique
+# Read-only revision dependency for a later step; avoids mutating sidecars to force a guard.
+fn transaction::Transaction::expect
 fn transaction::Transaction::move_file
 fn transaction::Transaction::replace
 fn transaction::Transaction::rewrite_refs

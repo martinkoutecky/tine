@@ -347,6 +347,11 @@ async function warmQueryMacros(
   }
 }
 
+/** Resolve block refs and supported macros in export nodes into warmed.
+ * Ref lookups run in parallel, query macros use one bounded native export
+ * batch, and page embeds can read whole pages. Cost grows with refs, queries
+ * and embedded page content. Failed resolutions generally leave the literal
+ * macro for export; stale graph ownership stops later phases. */
 export function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
   return warmExportResolutionsOwned(nodes, warmed, graphOwner());
 }

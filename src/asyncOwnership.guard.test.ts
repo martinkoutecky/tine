@@ -24,7 +24,7 @@ describe("async ownership guard", () => {
     check("src/components/WorkspaceSwitcher.tsx", "  const remove = async", "  return (", [/graphOwner\(\)/, /confirmed\.kind === "stale"/, /writeOwned\(owner, deleteWorkspace/]);
     check("src/workspaces.ts", "function enqueue<", "function cloneSession(", [/graphOwner\(\)/, /assert\(\)/, /serializeDurable\(operationQueue, owner, run\)/]);
     check("src/guide.ts", "function markGuideAnnounced(", "export function maybeShowGuideAnnouncement", [/if \(!owner\(\)\) return/, /writeOwned\(owner, backend\(\)\.setGuideAnnounced/]);
-    check("src/graph.ts", "async function injectCustomCss(", "/** Pick a folder", [/graphOwner\(\)/, /readOwned\(owner, backend\(\)\.readCustomCss\(\)\)/, /if \(!owner\(\)\) return/]);
+    check("src/graph.ts", "async function injectCustomCss(", "export async function switchGraph(", [/graphOwner\(\)/, /readOwned\(owner, backend\(\)\.readCustomCss\(\)\)/, /if \(!owner\(\)\) return/]);
     check("src/components/Page.tsx", "function PageSection(", "  return (\n    <div class=\"page-section\">", [/routeIntentRevision\(\)/, /backendGeneration/, /router\.activeId\(\)/]);
     check("src/inpageFind.ts", "export async function revealInPageFindMatch(", "interface TextPart", [/captureBinding\(\)/, /sameRoute\(paneRouter\(paneId\)\.route\(\), route\)/, /if \(!current\(\)\) return false/]);
     check("src/focusFullscreen.ts", "export function setFocusFullscreen(", "  return task;", [/request !== generation/, /ownsFullscreen/, /tail\.then/]);

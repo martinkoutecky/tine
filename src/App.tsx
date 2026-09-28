@@ -395,8 +395,12 @@ export function PaneEdgeHighlights(): JSX.Element {
   );
 }
 
-/** Install mobile external-link delegation after a current platform read. A
- * retired owner installs nothing. O(1) per click; platform failures reject. */
+/** Read the platform and install click delegation on iOS/Android while owner
+ * is current; desktop or retired ownership returns inert cleanup. Clicks on
+ * http, https and mailto anchors are intercepted and sent to the native
+ * external opener. The opener is fire-and-forget; its failure does not reject
+ * installation. Platform-read failure rejects. Click work follows DOM
+ * ancestor depth; cleanup removes the listener. */
 export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen()): Promise<() => void> {
   const platform = await readOwned(owner, backend().appPlatform());
   if (platform.kind === "stale" || platform.value === "desktop") return () => {};
@@ -513,7 +517,7 @@ export function App(): JSX.Element {
   onMount(() => {
     let unsub = () => {};
     let alive = true;
-    const owner = graphOwner(() => alive);
+    const owner = ownedWhen(() => alive);
     void readOwnedResource(owner, backend().onConflictsChanged(() => void refreshSyncConflicts()), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
     onCleanup(() => { alive = false; unsub(); });
@@ -523,7 +527,7 @@ export function App(): JSX.Element {
   onMount(() => {
     let unsub = () => {};
     let alive = true;
-    const owner = graphOwner(() => alive);
+    const owner = ownedWhen(() => alive);
     void readOwnedResource(owner, backend().onGraphChanged((c) => void applyGraphChange(c)), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
     onCleanup(() => { alive = false; unsub(); });

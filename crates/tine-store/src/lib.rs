@@ -7,14 +7,16 @@
 //! are synchronous and should run off a UI thread.
 //!
 //! Use [`Store::save`] for one guarded page edit, or [`Transaction`] for a set
-//! of guarded file changes. Structured page saves require an [`EditKind`]; raw
+//! of guarded file changes, including a read-only revision expectation that
+//! can precede a dependent write. Structured page saves require an [`EditKind`]; raw
 //! page-file changes use [`Store::transaction`] with `Some(kind)`, while
 //! asset/config changes pass `None`. Restore also declares
 //! `replace-page`. The kinds remain in memory and add no disk bytes. Missing
 //! structured-save kinds are refused before writing. A [`FileRev`] identifies the bytes an edit was
 //! based on. Creates use a no-clobber rename; replacements use an ordinary
 //! rename after the final revision guard. An external process can replace a
-//! file between that comparison and the rename. Keep unsaved
+//! file between that comparison and the rename; an expectation likewise leaves
+//! a window before a later step's write. Keep unsaved
 //! edits on every refusal. [`Store::subscribe`] delivers published changes in
 //! order to one consumer without replay; displacement has a typed end reason. A held
 //! [`WholeGraph`] view never waits on later writers, while acquiring the first

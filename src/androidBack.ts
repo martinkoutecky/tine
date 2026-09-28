@@ -44,9 +44,11 @@ export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
   setupFailed?(error: unknown): void;
 }
 
-/** Installs exactly one official AppPlugin listener on Android.  Until setup
- * resolves, after setup rejection, and after cleanup, no JS listener exists and
- * Tauri's AppPlugin retains its native WebView/activity fallback. */
+/** On Android, register one AppPlugin Back listener for this installation.
+ * Dispatch dismisses a transient, then a drawer, then WebView history, then
+ * requests root close. Other platforms install nothing. Setup failures call
+ * setupFailed when supplied and do not reject through the returned cleanup
+ * function. Cleanup unregisters an installed listener; dispatch is O(1). */
 export function installAndroidBackHandler(deps: AndroidBackInstallDeps): () => void {
   let disposed = false;
   let listener: AndroidBackListener | null = null;

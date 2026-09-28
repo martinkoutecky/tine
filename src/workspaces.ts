@@ -154,6 +154,11 @@ function workspaceId(): string {
   return uuid ? `workspace-${uuid}` : `workspace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+/** Clear the in-memory workspace registry, then load and validate the graph's
+ * persisted registry. Use the current live session for its active workspace
+ * without rewriting files. Invalid registry or backend failure rejects and
+ * leaves the in-memory registry clear. Operations are serialized per graph;
+ * cost follows registry and live-session bytes. */
 export function initializeWorkspaces(): Promise<void> {
   return enqueue(async (scope) => {
     clearWorkspaces();
@@ -169,6 +174,11 @@ export function initializeWorkspaces(): Promise<void> {
   });
 }
 
+/** Attempt a live-session flush, snapshot it into the active workspace and
+ * persist the registry. The session flush toasts but resolves on failure, so
+ * registry persistence may proceed without a durable session file. Registry
+ * failure rejects and rereads persisted state when possible. Cost follows
+ * session and registry bytes. */
 export function saveActiveWorkspace(): Promise<void> {
   return enqueue(async (scope) => {
     await scope.after(writeOwned(scope.owner, flushSession()));
@@ -186,6 +196,11 @@ export function saveActiveWorkspace(): Promise<void> {
   });
 }
 
+/** Attempt to flush the current session, save it in the registry, persist the
+ * target as active, then apply the target session to the UI. Unknown ID rejects.
+ * Registry failure rejects and attempts a disk reread. If applying the target
+ * fails after persistence, the persisted active ID may already have changed.
+ * Cost follows session and registry bytes. */
 export function switchWorkspace(targetId: string): Promise<void> {
   return enqueue(async (scope) => {
     await scope.after(writeOwned(scope.owner, flushSession()));
@@ -209,6 +224,12 @@ export function switchWorkspace(targetId: string): Promise<void> {
   });
 }
 
+/** Create and activate a workspace with a default Journals session. The name
+ * is trimmed and limited to 80 characters; empty or duplicate names are
+ * allowed. Flush the current session and persist the new registry before
+ * applying the new workspace UI. Returns its generated ID on success;
+ * persistence and graph-change errors reject. Cost follows session and registry
+ * bytes. */
 export function createWorkspace(name: string): Promise<string> {
   return enqueue(async (scope) => {
     await scope.after(writeOwned(scope.owner, flushSession()));
@@ -249,6 +270,11 @@ export function renameWorkspace(id: string, name: string): Promise<void> {
   });
 }
 
+/** Delete a workspace from the graph registry. Unknown IDs reject. Deleting
+ * the active workspace activates the first survivor; deleting the last
+ * creates a new empty-named default workspace instead. Persist the registry
+ * before applying replacement UI. Backend errors reject. Cost follows session
+ * and registry bytes. */
 export function deleteWorkspace(id: string): Promise<void> {
   return enqueue(async (scope) => {
     const current = registry();
