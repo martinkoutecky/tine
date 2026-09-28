@@ -89,21 +89,23 @@ fn trailing_newlines(s: &str) -> usize {
 /// Parse org `content` into a [`Document`]: headlines become blocks (nesting =
 /// headline level), the pre-headline region becomes `pre_block`, and each
 /// block's body is kept verbatim in `raw` (leading stars stripped).
+/// A lone `\r` ends a line (mldoc `eol_chars`; K01a), so it becomes `\n`. A
+/// CRLF is left alone: its `\r` stays in the verbatim body and round-trips.
+/// The store's writer restores each lone `\r` (`model/line_endings.rs`).
+pub fn lone_cr_to_lf(content: &str) -> std::borrow::Cow<'_, str> {
+    if !content.contains('\r') {
+        return content.into();
+    }
+    content
+        .split("\r\n")
+        .map(|part| part.replace('\r', "\n"))
+        .collect::<Vec<_>>()
+        .join("\r\n")
+        .into()
+}
+
 pub fn parse_org(content: &str) -> Document {
-    // A lone `\r` ends a line (mldoc `eol_chars`; K01a). CRLF keeps its `\r` in
-    // the verbatim bodies, so only lone ones become `\n`; such a file then no
-    // longer round-trips byte-for-byte and `org_editable` serves it read-only.
-    let normalized;
-    let content = if content.contains('\r') {
-        normalized = content
-            .split("\r\n")
-            .map(|part| part.replace('\r', "\n"))
-            .collect::<Vec<_>>()
-            .join("\r\n");
-        normalized.as_str()
-    } else {
-        content
-    };
+    let content = &*lone_cr_to_lf(content);
     let body = content.trim_end_matches('\n');
     if body.is_empty() {
         return Document::default();
@@ -222,7 +224,12 @@ fn emit_org(block: &DocBlock, level: usize, out: &mut Vec<String>) {
 /// trailing-newline run (default one newline for a new file). The org analogue
 /// of `doc::serialize_with(&doc, &SerializeOpts::detect(existing))`.
 pub fn serialize_org_detect(doc: &Document, existing: Option<&str>) -> String {
-    serialize_org_with(doc, existing.map(trailing_newlines).unwrap_or(1))
+    serialize_org_with(
+        doc,
+        existing
+            .map(|e| trailing_newlines(&lone_cr_to_lf(e)))
+            .unwrap_or(1),
+    )
 }
 
 /// Whether `serialize_org(parse_org(content))` reproduces `content`
@@ -232,10 +239,11 @@ pub fn org_round_trips(content: &str) -> bool {
 }
 
 /// Whether Tine may safely **edit and write** this org file — i.e. it
-/// round-trips byte-for-byte through [`parse_org`]/[`serialize_org_with`].
-/// Otherwise the page is loaded read-only and never written.
+/// round-trips byte-for-byte through [`parse_org`]/[`serialize_org_with`] once
+/// lone `\r` line breaks are read as `\n` (the store's writer puts each one
+/// back). Otherwise the page is loaded read-only and never written.
 pub fn org_editable(content: &str) -> bool {
-    org_round_trips(content)
+    org_round_trips(&lone_cr_to_lf(content))
 }
 
 #[cfg(test)]
@@ -290,14 +298,19 @@ mod tests {
     }
 
     #[test]
-    fn lone_cr_org_parses_its_lines_and_is_read_only() {
+    fn lone_cr_org_parses_its_lines_and_is_editable() {
         let lone = "* a\r* b\r** c\r";
         assert_eq!(parse_org(lone), parse_org(&lone.replace('\r', "\n")));
+        assert!(org_editable(lone), "lone CR is a line break, not content");
+        assert!(org_editable("* a\r\n* b\r** c\r\n"), "mixed CRLF/CR");
         assert!(
-            !org_editable(lone),
-            "a lone-CR org file cannot be reproduced"
+            !org_editable("* a\r*** c\r"),
+            "a skipped level still is not"
         );
-        assert!(org_editable("* a\r\n* b\r\n"), "CRLF still round-trips");
+        assert_eq!(
+            serialize_org_detect(&parse_org(lone), Some(lone)),
+            lone.replace('\r', "\n")
+        );
     }
 
     #[test]

@@ -4444,7 +4444,8 @@ impl Graph {
                 // editor blocks edits), but defend the write path too — a stale
                 // editor or a direct save must not rewrite it. The org serializer
                 // is itself byte-exact (no trivia dance / CRLF rewrite needed):
-                // the block bodies carry their verbatim text, including any `\r`.
+                // the block bodies carry their verbatim text, including a CRLF's
+                // `\r`; a lone `\r` line break is put back by `restore_org`.
                 if let Some(e) = existing {
                     if !tine_core::org::org_editable(e) {
                         return Err(io::Error::new(
@@ -4453,7 +4454,8 @@ impl Graph {
                         ));
                     }
                 }
-                tine_core::org::serialize_org_detect(&doc, existing)
+                let content = tine_core::org::serialize_org_detect(&doc, existing);
+                line_endings::restore_org(content, existing)
             }
         };
         Ok((content, doc))

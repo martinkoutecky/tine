@@ -36,12 +36,17 @@ fn source(ending: impl Fn(usize) -> &'static str) -> String {
 
 struct Page {
     root: PathBuf,
+    path: String,
     store: Store,
     id: PageId,
 }
 
 impl Page {
     fn new(source: &str) -> Self {
+        Self::at("pages/p.md", source)
+    }
+
+    fn at(path: &str, source: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "tine-lone-cr-{}-{}",
@@ -50,12 +55,13 @@ impl Page {
         ));
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
-        fs::write(root.join("pages/p.md"), source).unwrap();
+        fs::write(root.join(path), source).unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         Page {
             root,
+            path: path.into(),
             store,
-            id: PageId::from("pages/p.md"),
+            id: PageId::from(path),
         }
     }
 
@@ -74,7 +80,7 @@ impl Page {
             matches!(outcome, SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_)),
             "{outcome:?}"
         );
-        fs::read_to_string(self.root.join("pages/p.md")).unwrap()
+        fs::read_to_string(self.root.join(&self.path)).unwrap()
     }
 }
 
@@ -189,4 +195,74 @@ fn lone_cr_page_without_a_final_terminator_keeps_its_last_line() {
         doc.blocks.push(block("d"));
     });
     assert_eq!(appended, "- a!\r- b\r\t- c\r- d");
+}
+
+/// An org page (K01a follow-up): headlines separate blocks, bodies are verbatim.
+const ORG: &[&str] = &[
+    "#+title: Fix",
+    "",
+    "* one",
+    "body line",
+    "** child",
+    "* two",
+    "* three",
+];
+
+fn org_source(ending: impl Fn(usize) -> &'static str) -> String {
+    ORG.iter()
+        .enumerate()
+        .map(|(i, line)| format!("{line}{}", ending(i)))
+        .collect()
+}
+
+#[test]
+fn lone_cr_org_page_is_editable_and_parses_like_its_lf_twin() {
+    let lf = Page::at("pages/p.org", &org_source(|_| "\n"));
+    let cr = Page::at("pages/p.org", &org_source(|_| "\r"));
+    let (lf_doc, cr_doc) = (lf.doc(), cr.doc());
+    assert!(!cr_doc.read_only, "a lone-CR org page is editable");
+    assert_eq!(shape(&cr_doc), shape(&lf_doc));
+    assert_eq!(cr_doc.pre_block, lf_doc.pre_block);
+}
+
+#[test]
+fn lone_cr_org_page_keeps_its_bytes_through_saves() {
+    let original = org_source(|_| "\r");
+    let page = Page::at("pages/p.org", &original);
+    for _ in 0..3 {
+        assert_eq!(page.save(EditKind::ReplacePage, |_| {}), original);
+    }
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[2].raw = "three!".into();
+    });
+    assert_eq!(edited, original.replace("* three", "* three!"));
+    let body = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "one\nbody line\nsecond body line".into();
+    });
+    assert_eq!(
+        body,
+        original
+            .replace("* three", "* three!")
+            .replace("body line\r", "body line\rsecond body line\r")
+    );
+
+    let page = Page::at("pages/p.org", &original);
+    let inserted = page.save(EditKind::InsertBlocks, |doc| {
+        doc.blocks.insert(1, block("new"));
+    });
+    assert_eq!(inserted, original.replace("* two", "* new\r* two"));
+}
+
+#[test]
+fn mixed_crlf_and_cr_org_page_keeps_each_untouched_terminator() {
+    let original = org_source(|i| if i % 2 == 0 { "\r\n" } else { "\r" });
+    let page = Page::at("pages/p.org", &original);
+    assert!(!page.doc().read_only);
+    assert_eq!(page.doc().blocks.len(), 3);
+    assert_eq!(page.save(EditKind::ReplacePage, |_| {}), original);
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        // A CRLF org line keeps its `\r` in the verbatim body (pre-K01a model).
+        doc.blocks[2].raw = doc.blocks[2].raw.replace("three", "three!");
+    });
+    assert_eq!(edited, original.replace("* three", "* three!"));
 }
