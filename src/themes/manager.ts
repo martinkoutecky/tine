@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { parseThemeManifest, themeManifestCss, themeVersionKey, type ThemeManifest } from "./manifest";
+import { pushToast } from "../toasts";
 
 const STORAGE_KEY = "theme.packages.v1";
 const MAX_INSTALLED_THEMES = 32;
@@ -19,13 +20,19 @@ export { installedThemes, revokedThemeVersions };
 function parseStoredThemes(text: string): ThemeManifest[] {
   try {
     const value: unknown = JSON.parse(text);
-    if (!Array.isArray(value) || value.length > MAX_INSTALLED_THEMES) return [];
-    const themes: ThemeManifest[] = [];
-    for (const candidate of value) {
-      try { themes.push(parseThemeManifest(candidate)); } catch {}
+    if (!Array.isArray(value) || value.length > MAX_INSTALLED_THEMES) {
+      pushToast("Installed theme settings are invalid.", "error");
+      return [];
     }
+    const themes: ThemeManifest[] = [];
+    let invalid = false;
+    for (const candidate of value) {
+      try { themes.push(parseThemeManifest(candidate)); } catch { invalid = true; }
+    }
+    if (invalid) pushToast("Some installed themes could not be loaded.", "error");
     return themes;
   } catch {
+    pushToast("Installed theme settings could not be parsed.", "error");
     return [];
   }
 }
@@ -46,7 +53,8 @@ export async function initThemePackages(initialRevocations: ReadonlySet<string> 
   // restored through an empty startup revocation window.
   applyThemeRevocations(initialRevocations);
   let text = "[]";
-  try { text = await backend().getAppString(STORAGE_KEY, "[]"); } catch {}
+  try { text = await backend().getAppString(STORAGE_KEY, "[]"); }
+  catch { pushToast("Could not load installed themes.", "error"); }
   setInstalledThemes(managed(parseStoredThemes(text)));
 }
 

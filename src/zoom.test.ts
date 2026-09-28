@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toasts, setToasts } from "./toasts";
 import {
   ZOOM_WHEEL_MOMENTUM_TAIL_MS,
   decideWheelZoomGesture,
   interfaceZoom,
+  zoomIn,
   installInterfaceZoomWheel,
   zoomReset,
   type WheelZoomGestureState,
@@ -189,4 +191,14 @@ describe("installInterfaceZoomWheel", () => {
     expect(wheel.stopped()).toBe(true);
     expect(interfaceZoom()).toBe(1.1);
   });
+});
+it("reports a failed interface zoom storage write", () => {
+  const old = interfaceZoom();
+  vi.stubGlobal("localStorage", { setItem: () => { throw new Error("quota"); }, removeItem: () => { throw new Error("quota"); } });
+  zoomIn();
+  expect(interfaceZoom()).toBeGreaterThan(old);
+  expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+  vi.unstubAllGlobals();
+  zoomReset();
+  setToasts([]);
 });

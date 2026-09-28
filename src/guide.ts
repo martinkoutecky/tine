@@ -98,7 +98,14 @@ function markGuideAnnounced(binding: Binding) {
   if (meta && !meta.guide_announced) {
     setGraphMeta({ ...meta, guide_announced: true });
   }
-  void backend().setGuideAnnounced(true).catch(() => {});
+  void backend().setGuideAnnounced(true).catch(() => {
+    if (!stillBound(binding)) return;
+    const current = graphMeta();
+    if (current && current.root === meta?.root && current.guide_announced) {
+      setGraphMeta({ ...current, guide_announced: false });
+    }
+    pushToast("Could not save Guide announcement preference.", "error");
+  });
 }
 
 export function maybeShowGuideAnnouncement() {

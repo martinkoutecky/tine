@@ -11,6 +11,8 @@
 import { createStore } from "solid-js/store";
 import { backend } from "./backend";
 import { MEDIA_EDITORS, type MediaEditor } from "./mediaEditors";
+import { writePreference, seedPreference } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const [commands, setCommands] = createStore<Record<string, string>>({});
 const commandRevision = new Map<string, number>();
@@ -24,9 +26,13 @@ export function mediaEditorCommand(settingKey: string): string {
 export function setMediaEditorCommand(settingKey: string, value: string): void {
   const v = value.trim();
   commandRevision.set(settingKey, (commandRevision.get(settingKey) ?? 0) + 1);
-  setCommands(settingKey, v);
-  void backend().setAppString(settingKey, v).catch(() => {});
+  const read = commandReaders.get(settingKey) ?? (() => mediaEditorCommand(settingKey));
+  commandReaders.set(settingKey, read);
+  writePreference(read, (next) => setCommands(settingKey, next), v,
+    (next) => backend().setAppString(settingKey, next), "media editor command");
 }
+
+const commandReaders = new Map<string, () => string>();
 
 /** Resolve the launch command for an editor. Uses the user's configured template
  *  if set; otherwise runs a one-time autodetect probe (`detect_media_editor`) and,
@@ -49,8 +55,8 @@ export async function resolveMediaEditorCommand(ed: MediaEditor): Promise<string
 /** Run one native probe for ed.id; callers choose when. If this key changes
  * during the probe, return its current command with applied:false. Otherwise
  * return the trimmed result with applied:true, even when empty. A nonempty
- * result updates reactive state and starts an unawaited device-local settings
- * write whose failure is swallowed. Probe failure rejects. O(1) backend calls
+ * result updates reactive state and starts a device-local settings
+ * write whose failure restores the previous command and shows an error. Probe failure rejects. O(1) backend calls
  * plus native probe latency; applied does not promise persistence. */
 export async function detectMediaEditorCommand(ed: MediaEditor): Promise<{ command: string; applied: boolean }> {
   const revision = commandRevision.get(ed.settingKey) ?? 0;
@@ -69,9 +75,13 @@ export async function initMediaEditorSettings(): Promise<void> {
       const revision = commandRevision.get(e.settingKey) ?? 0;
       try {
         const v = await backend().getAppString(e.settingKey, "");
-        if ((commandRevision.get(e.settingKey) ?? 0) === revision) setCommands(e.settingKey, v || "");
+        if ((commandRevision.get(e.settingKey) ?? 0) === revision) {
+          setCommands(e.settingKey, v || "");
+          const read = commandReaders.get(e.settingKey);
+          if (read) seedPreference(read);
+        }
       } catch {
-        /* keep empty */
+        pushToast(`Could not load ${e.id} editor command.`, "error");
       }
     }),
   );

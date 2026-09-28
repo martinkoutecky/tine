@@ -8,6 +8,7 @@ import { captureBinding } from "../binding";
 import { isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
+import { pushToast } from "../toasts";
 import { switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
@@ -101,7 +102,10 @@ async function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Pr
   } catch {
     // A failed refresh must leave the displayed feed and its cursor usable.
     // Focus, visibility, load-more, or the next calendar check will retry.
-    if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+    if (generation === feedGeneration && ownerIsLive(owner)) {
+      pendingFeedRestart = true;
+      pushToast("Could not load journal feed. It will retry when the view refreshes.", "error");
+    }
   } finally {
     if (loadingGeneration === generation) loadingGeneration = null;
   }
@@ -187,6 +191,7 @@ export function PageView(): JSX.Element {
           // loadFeed replaces doc.feed, and subscribing here would self-reload.
           await untrack(() => restartJournalFeed(journalOwner(r, epoch, tabId, revision)));
           if (!owned()) return;
+          if (!isLoaded()) throw new Error("Journal feed read failed.");
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);

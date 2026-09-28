@@ -10,6 +10,8 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY = "space_after_ref_completion";
 
@@ -21,15 +23,16 @@ const [spaceAfter, setSpaceAfterSig] = createSignal(true);
 export const spaceAfterRefCompletion = spaceAfter;
 
 export function setSpaceAfterRefCompletion(on: boolean): void {
-  setSpaceAfterSig(on);
-  void backend().setAppBool(KEY, on).catch(() => {});
+  writePreference(spaceAfter, setSpaceAfterSig, on, (next) => backend().setAppBool(KEY, next), "reference completion preference");
 }
 
 /** Load the persisted preference at startup. Tine default: ON (differs from Logseq). */
 export async function initRefCompletionSettings(): Promise<void> {
+  const revision = preferenceRevision(spaceAfter);
   try {
-    setSpaceAfterSig(await backend().getAppBool(KEY, true));
+    const value = await backend().getAppBool(KEY, true);
+    if (preferenceReadCurrent(spaceAfter, revision)) { setSpaceAfterSig(value); seedPreference(spaceAfter); }
   } catch {
-    /* default on */
+    pushToast("Could not load reference completion preference.", "error");
   }
 }

@@ -16,6 +16,7 @@ import { setJournalTitleFormat, isJournalTitle } from "./journal";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { currentPdfOwnership, type PdfOwnership } from "./pdfOwnership";
 import { navigationName } from "./pageIndex";
+import { changeGraphSetting, writeGraphSignal, seedGraphSignal } from "./graphPreferences";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -23,7 +24,7 @@ function loadTheme(): "light" | "dark" {
     const t = localStorage.getItem(THEME_KEY);
     if (t === "dark" || t === "light") return t;
   } catch {
-    // ignore
+    if (typeof localStorage !== "undefined") pushToast("Could not load theme preference.", "error");
   }
   return "light";
 }
@@ -32,7 +33,8 @@ export const [theme, setTheme] = createSignal<"light" | "dark">(loadTheme());
 /** Apply the stored theme to the document (call once at startup). */
 export function applyTheme() {
   document.documentElement.setAttribute("data-theme", theme());
-  void backend().setSystemBarAppearance(theme() === "dark").catch(() => {});
+  void backend().setSystemBarAppearance(theme() === "dark")
+    .catch(() => pushToast("Could not update system bar appearance.", "error"));
 }
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
@@ -41,8 +43,8 @@ export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
  *  The signal is the runtime source of truth; the file is re-read on next open. */
 export function changeWorkflow(wf: "now" | "todo") {
   if (wf === workflow()) return;
-  setWorkflow(wf);
-  void backend().setPreferredWorkflow(wf).catch(() => {});
+  writeGraphSignal("workflow", workflow, setWorkflow, wf,
+    (next) => backend().setPreferredWorkflow(next), "preferred workflow");
 }
 
 export function timetrackingEnabled(): boolean {
@@ -54,10 +56,7 @@ export function logbookWithSecondSupport(): boolean {
 }
 
 export function changeTimetrackingEnabled(enabled: boolean) {
-  const m = graphMeta();
-  if (m && m.enable_timetracking === enabled) return;
-  if (m) setGraphMeta({ ...m, enable_timetracking: enabled });
-  void backend().setTimetrackingEnabled(enabled).catch(() => {});
+  changeGraphSetting("enable_timetracking", enabled, (next) => backend().setTimetrackingEnabled(next!), "time tracking preference");
 }
 
 export function showBrackets(): boolean {
@@ -65,10 +64,7 @@ export function showBrackets(): boolean {
 }
 
 export function changeShowBrackets(on: boolean) {
-  const m = graphMeta();
-  if (m && m.show_brackets === on) return;
-  if (m) setGraphMeta({ ...m, show_brackets: on });
-  void backend().setShowBrackets(on).catch(() => {});
+  changeGraphSetting("show_brackets", on, (next) => backend().setShowBrackets(next), "bracket display preference");
 }
 
 /** In document mode, should plain Enter retain the ordinary structural split?
@@ -79,10 +75,7 @@ export function docModeEnterForNewBlock(): boolean {
 }
 
 export function changeDocModeEnterForNewBlock(on: boolean) {
-  const m = graphMeta();
-  if (m && m.doc_mode_enter_for_new_block === on) return;
-  if (m) setGraphMeta({ ...m, doc_mode_enter_for_new_block: on });
-  void backend().setDocModeEnterForNewBlock(on).catch(() => {});
+  changeGraphSetting("doc_mode_enter_for_new_block", on, (next) => backend().setDocModeEnterForNewBlock(next!), "document mode Enter preference");
 }
 
 /** Logical (Roam-like) outdenting leaves following siblings under their current
@@ -93,10 +86,7 @@ export function logicalOutdenting(): boolean {
 }
 
 export function changeLogicalOutdenting(on: boolean) {
-  const m = graphMeta();
-  if (m && m.logical_outdenting === on) return;
-  if (m) setGraphMeta({ ...m, logical_outdenting: on });
-  void backend().setLogicalOutdenting(on).catch(() => {});
+  changeGraphSetting("logical_outdenting", on, (next) => backend().setLogicalOutdenting(next!), "logical outdenting preference");
 }
 
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
@@ -104,15 +94,18 @@ function loadStr(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
+    if (typeof localStorage !== "undefined") pushToast("Could not load display preference.", "error");
     return null;
   }
 }
-function saveStr(key: string, val: string | null) {
+function saveStr(key: string, val: string | null): boolean {
   try {
     if (val === null) localStorage.removeItem(key);
     else localStorage.setItem(key, val);
+    return true;
   } catch {
-    // ignore
+    pushToast("Could not save display preference.", "error");
+    return false;
   }
 }
 
@@ -131,8 +124,8 @@ export function applyAccent() {
   }
 }
 export function changeAccent(c: string | null) {
+  if (!saveStr(ACCENT_KEY, c)) return;
   setAccentColor(c);
-  saveStr(ACCENT_KEY, c);
   applyAccent();
 }
 
@@ -142,13 +135,13 @@ export const [wideMode, setWideMode] = createSignal(loadStr(WIDE_KEY) === "1");
 export const [documentMode, setDocumentMode] = createSignal(loadStr(DOC_KEY) === "1");
 export function toggleWideMode() {
   const v = !wideMode();
+  if (!saveStr(WIDE_KEY, v ? "1" : null)) return;
   setWideMode(v);
-  saveStr(WIDE_KEY, v ? "1" : null);
 }
 export function toggleDocumentMode() {
   const v = !documentMode();
+  if (!saveStr(DOC_KEY, v ? "1" : null)) return;
   setDocumentMode(v);
-  saveStr(DOC_KEY, v ? "1" : null);
 }
 
 // --- typographic replacements (a "Differs from Logseq" opinion): render `->` as
@@ -168,9 +161,8 @@ function loadTypographyMode(): TypographyMode {
 export const [typographyMode, setTypographyModeSig] =
   createSignal<TypographyMode>(loadTypographyMode());
 export function setTypographyMode(m: TypographyMode) {
+  if (!saveStr(TYPO_KEY, m === "render" ? null : m)) return;
   setTypographyModeSig(m);
-  // Persist only the non-default; absent key ⇒ "render".
-  saveStr(TYPO_KEY, m === "render" ? null : m);
   bumpGraphEpoch(); // re-render open pages so the change is immediate
 }
 
@@ -182,8 +174,8 @@ export function setTypographyMode(m: TypographyMode) {
 const AUTOPAIR_KEY = "logseq-claude.autopair";
 export const [autoPairing, setAutoPairingSig] = createSignal(loadStr(AUTOPAIR_KEY) === "1");
 export function setAutoPairing(v: boolean) {
+  if (!saveStr(AUTOPAIR_KEY, v ? "1" : null)) return;
   setAutoPairingSig(v);
-  saveStr(AUTOPAIR_KEY, v ? "1" : null);
 }
 
 // --- first day of week (calendar + scheduled/deadline date pickers) ---
@@ -203,18 +195,13 @@ export function firstDayOfWeek(): number {
  *  immediately. */
 export function changeStartOfWeek(l: number) {
   const n = Math.min(6, Math.max(0, Math.floor(l)));
-  const m = graphMeta();
-  if (m) setGraphMeta({ ...m, start_of_week: n });
-  void backend().setStartOfWeek(n).catch(() => {});
+  changeGraphSetting("start_of_week", n, (next) => backend().setStartOfWeek(next), "start of week");
 }
 
 /** Persist the format new pages/journals are created in (`:preferred-format`)
  *  and update graphMeta optimistically. Existing files keep their own format. */
 export function changePreferredFormat(fmt: "md" | "org") {
-  const m = graphMeta();
-  if (!m || m.preferred_format === fmt) return;
-  setGraphMeta({ ...m, preferred_format: fmt });
-  void backend().setPreferredFormat(fmt).catch(() => {});
+  changeGraphSetting("preferred_format", fmt, (next) => backend().setPreferredFormat(next), "preferred page format");
 }
 
 /** Change the journal display-title format (`:journal/page-title-format`).
@@ -241,7 +228,14 @@ export function changeJournalTitleFormat(fmt: string) {
       if (message) pushToast(message, "info");
       void refreshJournalConflicts(true); // surface any days the migration couldn't merge
     })
-    .catch(() => {});
+    .catch(() => {
+      if (graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next) {
+        setGraphMeta({ ...graphMeta()!, journal_page_title_format: m.journal_page_title_format });
+        setJournalTitleFormat(m.journal_page_title_format);
+        bumpGraphEpoch();
+      }
+      pushToast("Could not save journal title format.", "error");
+    });
 }
 
 export function journalMigrationSkipMessage(result: import("./types").JournalMigrationResult): string | null {
@@ -496,7 +490,7 @@ export async function enterFocusMode() {
   try {
     await setFocusFullscreen(true);
   } catch {
-    // ignore (window plugin unavailable)
+    pushToast("Could not enter fullscreen focus mode.", "error");
   }
 }
 export async function exitFocusMode() {
@@ -506,20 +500,22 @@ export async function exitFocusMode() {
   try {
     await setFocusFullscreen(false);
   } catch {
-    // ignore
+    pushToast("Could not leave fullscreen focus mode.", "error");
   }
 }
 
 export function toggleTheme() {
   const next = theme() === "light" ? "dark" : "light";
-  setTheme(next);
-  document.documentElement.setAttribute("data-theme", next);
-  void backend().setSystemBarAppearance(next === "dark").catch(() => {});
   try {
     localStorage.setItem(THEME_KEY, next);
   } catch {
-    // ignore
+    pushToast("Could not save theme preference.", "error");
+    return;
   }
+  setTheme(next);
+  document.documentElement.setAttribute("data-theme", next);
+  void backend().setSystemBarAppearance(next === "dark")
+    .catch(() => pushToast("Could not update system bar appearance.", "error"));
 }
 
 // Left sidebar open/collapsed — persisted (default open; store only when collapsed).
@@ -547,8 +543,8 @@ export function resetLeftSidebarSections() {
 }
 
 function persistLeftOpen(v: boolean) {
+  if (!saveStr(SIDEBAR_OPEN_KEY, v ? null : "0")) return;
   setSidebarOpen(v);
-  saveStr(SIDEBAR_OPEN_KEY, v ? null : "0");
   scheduleSessionSave(); // durable open/closed state (localStorage isn't kept)
 }
 export function setLeftSidebarOpen(v: boolean, trigger?: HTMLElement | null) {
@@ -601,7 +597,7 @@ function loadSidebarWidth(): number {
     const v = Number(localStorage.getItem(SIDEBAR_W_KEY));
     if (v >= 180 && v <= 600) return v;
   } catch {
-    // ignore
+    if (typeof localStorage !== "undefined") pushToast("Could not load sidebar width.", "error");
   }
   return 246;
 }
@@ -610,7 +606,7 @@ export function persistSidebarWidth() {
   try {
     localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidth()));
   } catch {
-    // ignore
+    pushToast("Could not save sidebar width.", "error");
   }
 }
 
@@ -620,7 +616,7 @@ function loadRsWidth(): number {
     const v = Number(localStorage.getItem(RS_W_KEY));
     if (v >= 220 && v <= 800) return v;
   } catch {
-    // ignore
+    if (typeof localStorage !== "undefined") pushToast("Could not load right sidebar width.", "error");
   }
   return 360;
 }
@@ -629,7 +625,7 @@ export function persistRightSidebarWidth() {
   try {
     localStorage.setItem(RS_W_KEY, String(rightSidebarWidth()));
   } catch {
-    // ignore
+    pushToast("Could not save right sidebar width.", "error");
   }
 }
 
@@ -639,7 +635,7 @@ function loadPdfWidth(): number {
     const v = Number(localStorage.getItem(PDF_W_KEY));
     if (v >= 320 && v <= 1200) return v;
   } catch {
-    // ignore
+    if (typeof localStorage !== "undefined") pushToast("Could not load PDF pane width.", "error");
   }
   return 560;
 }
@@ -648,7 +644,7 @@ export function persistPdfPaneWidth() {
   try {
     localStorage.setItem(PDF_W_KEY, String(pdfPaneWidth()));
   } catch {
-    // ignore
+    pushToast("Could not save PDF pane width.", "error");
   }
 }
 
@@ -670,9 +666,8 @@ export function isFavorite(name: string): boolean {
   );
 }
 function persistFavorites(next: FavItem[]) {
-  // Persist to config.edn :favorites so favorites travel with the graph and stay
-  // scoped to it. config.edn stores names only; kind is re-derived on seed.
-  void backend().setFavorites(next.map((f) => f.name)).catch(() => {});
+  writeGraphSignal("favorites", favorites, setFavorites, next,
+    (value) => backend().setFavorites(value.map((f) => f.name)), "favorites");
 }
 export function toggleFavorite(name: string, kind: "page" | "journal" = "page") {
   const f = favorites();
@@ -682,7 +677,6 @@ export function toggleFavorite(name: string, kind: "page" | "journal" = "page") 
   const next = f.some(matches)
     ? f.filter((x) => !matches(x))
     : [...f, { name, kind }];
-  setFavorites(next);
   persistFavorites(next);
 }
 export function removeDeletedPageFromNavigation(target: PageTarget): void;
@@ -695,7 +689,6 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
   kind = target.pageKind;
   const nextFavs = favorites().filter((f) => f.name !== name);
   if (nextFavs.length !== favorites().length) {
-    setFavorites(nextFavs);
     persistFavorites(nextFavs);
   }
 
@@ -744,7 +737,6 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
 
   const nextFavorites = dedupe(favorites());
   if (nextFavorites.some((item, i) => item !== favorites()[i]) || nextFavorites.length !== favorites().length) {
-    setFavorites(nextFavorites);
     persistFavorites(nextFavorites);
   }
 
@@ -790,6 +782,7 @@ export function seedFavorites(names: string[]) {
   setFavorites(
     names.map((name): FavItem => ({ name, kind: isJournalTitle(name) ? "journal" : "page" }))
   );
+  seedGraphSignal("favorites");
 }
 
 // Recently-visited pages (navigation history), newest first. Unlike Favorites,
@@ -1257,10 +1250,12 @@ export function removeDeletedBlocksFromSidebar(uuids: ReadonlySet<string>) {
 export async function pruneSidebarBlocks(): Promise<void> {
   const blocks = rightSidebar().filter((i): i is SidebarBlock => i.kind === "block");
   if (!blocks.length) return;
-  const resolved = await Promise.all(
-    blocks.map((b) => backend().resolveBlock(b.uuid).catch(() => null))
-  );
-  const dead = new Set(blocks.filter((_, i) => !resolved[i]).map((b) => b.uuid));
+  const resolved = await Promise.allSettled(blocks.map((b) => backend().resolveBlock(b.uuid)));
+  const dead = new Set(blocks.filter((_, i) =>
+    resolved[i].status === "fulfilled" && !resolved[i].value).map((b) => b.uuid));
+  if (resolved.some((result) => result.status === "rejected")) {
+    pushToast("Could not check some sidebar blocks. Try again after the graph loads.", "error");
+  }
   if (dead.size) {
     setRightSidebar(rightSidebar().filter((i) => i.kind !== "block" || !dead.has(i.uuid)));
   }

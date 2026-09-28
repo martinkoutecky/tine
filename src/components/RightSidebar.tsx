@@ -178,9 +178,8 @@ export function RightSidebar(): JSX.Element {
   );
 }
 
-// Ensure the item's page is loaded into the working set. Fire-and-forget side
-// effect (NOT a resource whose error state could gate rendering): the body
-// renders off actual store presence, so a failed early attempt is harmless.
+// Ensure the item's page is loaded into the working set. Return an error signal
+// so a failed load is visible while the item stays available for retry.
 // Re-runs on graphEpoch so a sidebar restored *before* the graph is open
 // retries once it opens.
 function useEnsurePage(
@@ -189,8 +188,10 @@ function useEnsurePage(
   path: () => string | undefined,
   enabled: () => boolean,
 ) {
+  const [loadError, setLoadError] = createSignal(false);
   createEffect(() => {
     if (!enabled()) return;
+    setLoadError(false);
     const epoch = graphEpoch();
     const n = name();
     const k = kind();
@@ -214,10 +215,11 @@ function useEnsurePage(
           }
         })
         .catch(() => {
-          // graph not open yet / page missing — retried on graphEpoch.
+          if (active && epoch === graphEpoch()) setLoadError(true);
         });
     }
   });
+  return loadError;
 }
 
 function SidebarItemView(props: {
@@ -244,7 +246,7 @@ function PageItem(props: {
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
 }): JSX.Element {
-  useEnsurePage(
+  const loadError = useEnsurePage(
     () => props.item.name,
     () => props.item.pageKind,
     () => props.item.path,
@@ -271,7 +273,7 @@ function PageItem(props: {
         </button>
       </div>
       <Show when={!props.collapsed}>
-        <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading" />}>
+        <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ? "Could not load this sidebar page. Collapse and expand to retry." : ""}</div>}>
           <div id={bodyId} class="rs-item-body">
             <For each={page()!.roots}>{(id) => <Block id={id} />}</For>
             {/* OG shows a page's Linked/Unlinked References in the sidebar view too,
@@ -292,7 +294,7 @@ function BlockItem(props: {
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
 }): JSX.Element {
-  useEnsurePage(
+  const loadError = useEnsurePage(
     () => props.item.page,
     () => props.item.pageKind,
     () => props.item.path,
@@ -341,7 +343,7 @@ function BlockItem(props: {
           fallback={
             <Show
               when={pageLoaded()}
-              fallback={<div id={bodyId} class="rs-item-body rs-item-loading" />}
+              fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ? "Could not load this sidebar page. Collapse and expand to retry." : ""}</div>}
             >
               <div id={bodyId} class="rs-item-body rs-item-missing">This block is no longer available.</div>
             </Show>

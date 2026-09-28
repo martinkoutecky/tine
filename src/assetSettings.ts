@@ -13,6 +13,8 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY = "asset_name_format";
 
@@ -30,16 +32,19 @@ export const assetNameFormat = fmt;
 /** Set + persist the template. Blank reverts to the default. */
 export function setAssetNameFormat(s: string): void {
   const v = s.trim() || DEFAULT_ASSET_NAME_FORMAT;
-  setFmtSig(v);
-  void backend().setAppString(KEY, v).catch(() => {});
+  writePreference(fmt, setFmtSig, v, (next) => backend().setAppString(KEY, next), "asset filename format");
 }
 
 /** Load the persisted template at startup (default = plain original name). */
 export async function initAssetSettings(): Promise<void> {
+  const revision = preferenceRevision(fmt);
   try {
     const v = await backend().getAppString(KEY, DEFAULT_ASSET_NAME_FORMAT);
-    setFmtSig(v || DEFAULT_ASSET_NAME_FORMAT);
+    if (preferenceReadCurrent(fmt, revision)) {
+      setFmtSig(v || DEFAULT_ASSET_NAME_FORMAT);
+      seedPreference(fmt);
+    }
   } catch {
-    /* keep the default */
+    pushToast("Could not load asset filename format.", "error");
   }
 }
