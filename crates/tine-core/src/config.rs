@@ -390,7 +390,7 @@ fn scan_keyword(s: &str, key: &str, top_level_only: bool) -> Option<usize> {
                 }
                 continue;
             }
-            _ if (!top_level_only || depth == 0) && s[i..].starts_with(key) => {
+            _ if (!top_level_only || depth == 0) && b[i..].starts_with(key.as_bytes()) => {
                 let after = i + key.len();
                 let boundary = after >= b.len()
                     || matches!(
@@ -1216,5 +1216,41 @@ mod commented_dirs_test {
         let cfg = Config::parse(edn);
         assert_eq!(cfg.journals_dir, "journals");
         assert_eq!(cfg.pages_dir, "pages");
+    }
+}
+
+#[cfg(test)]
+mod non_ascii_scan_tests {
+    use super::*;
+
+    /// I-22: every scanner indexes bytes, and a non-ASCII character anywhere in
+    /// config.edn (outside strings and comments too) must never panic a reader.
+    #[test]
+    fn non_ascii_anywhere_never_panics_the_scanners() {
+        let base = r#"{:journals-directory "j" :pages-directory "p" :hidden ["a"]
+ :preferred-workflow :todo :shortcuts {:a "b" :c false} :start-of-week 2
+ :block-hidden-properties #{:x} :default-templates {:journals "T"}
+ :default-home {:page "H"} :favorites ["F"] :logbook/settings {:with-second-support? false}
+ :macros {"m" "v"} :ui/show-brackets? false :file/name-format :triple-lowbar}"#;
+        let keys = [
+            ":journals-directory",
+            ":hidden",
+            ":favorites",
+            ":ui/show-brackets?",
+        ];
+        for insert in ["é", "日本", "🙂"] {
+            for at in (0..=base.len()).filter(|at| base.is_char_boundary(*at)) {
+                let edn = format!("{}{insert}{}", &base[..at], &base[at..]);
+                let _ = Config::parse(&edn);
+                for key in keys {
+                    let _ = find_keyword(&edn, key);
+                    let _ = find_keyword_at_map_level(&edn, key);
+                }
+                for from in (0..edn.len()).filter(|from| edn.is_char_boundary(*from)) {
+                    let _ = next_value_span(&edn, from, edn.len());
+                    let _ = skip_blank(&edn, from);
+                }
+            }
+        }
     }
 }
