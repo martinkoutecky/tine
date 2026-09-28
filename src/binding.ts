@@ -29,11 +29,28 @@ export function stillBound(binding: Binding): boolean {
     && binding.backendGeneration === (backend().graphBindingGeneration?.() ?? 0);
 }
 
-/** Retire every binding (store reset: graph switch, restore) and close every
- * graph-scoped popup. O(number of graph-scoped signals). */
+/** Retire every binding (store reset: graph switch, restore): bumps a
+ * module-private, non-reactive reset generation (not `graphEpoch`) and runs every
+ * registered clear in registration order: each `graphScopedSignal`'s (closing
+ * its popup) and each `clearOnBindingInvalidated` callback (e.g. the outline
+ * selection). Each clear is isolated: one that throws does not stop the others
+ * or the caller's remaining reset; its error is logged and shown as one error
+ * toast with the fixed family `binding.clear` (I-9). Never throws. Idempotent.
+ * O(number of registered clears). */
 export function invalidateBinding(): void {
   resetGeneration++;
-  for (const clear of scopedClears) clear();
+  let failures = 0;
+  for (const clear of scopedClears) {
+    try {
+      clear();
+    } catch (error) {
+      failures++;
+      console.error("binding.clear: a graph-scoped clear failed", error);
+    }
+  }
+  if (failures > 0) {
+    pushToast(`Some state of the previous graph could not be cleared (binding.clear, ${failures} failed).`, "error");
+  }
 }
 
 /** I-20: module state that names graph content (a block id, page name or
@@ -46,7 +63,9 @@ export function invalidateBinding(): void {
  * closes on a switch. A writer that holds the value it was opened with checks
  * `signal() === value` before writing and otherwise calls `refuseStaleWrite`.
  * Exemplar: `formulaEditor` (src/ui.ts) and FormulaEditor's `save`.
- * Reads are O(1) and track `graphEpoch`. */
+ * Reads are O(1) and track `graphEpoch`; a change of the backend binding
+ * generation alone is seen on the next read but does not notify (a graph switch
+ * also clears the value through `invalidateBinding`). */
 export function graphScopedSignal<T>(): readonly [Accessor<T | null>, (value: T | null) => void] {
   const [held, setHeld] = createSignal<{ value: T; binding: Binding } | null>(null);
   scopedClears.add(() => setHeld(null));
@@ -59,7 +78,9 @@ export function graphScopedSignal<T>(): readonly [Accessor<T | null>, (value: T 
 }
 
 /** Register a clear for existing module state of the graph-scoped class that
- * is not a `graphScopedSignal` (e.g. the outline selection). */
+ * is not a `graphScopedSignal` (e.g. the outline selection). The registration
+ * is permanent (call it at module level); the same function registers once.
+ * A throwing clear is isolated and surfaced by `invalidateBinding`. */
 export function clearOnBindingInvalidated(clear: () => void): void {
   scopedClears.add(clear);
 }

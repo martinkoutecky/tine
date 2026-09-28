@@ -6,7 +6,7 @@ import type { JournalConflict, SyncConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
-import { captureBinding, graphScopedSignal } from "./binding";
+import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./binding";
 import { graphOwner, latestOwner, readOwned, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./routerBridge";
@@ -248,6 +248,8 @@ export function journalMigrationSkipMessage(result: import("./types").JournalMig
 // the user to reconcile; we surface them rather than letting a day silently show
 // twice in the feed. ---
 export const [journalConflicts, setJournalConflicts] = createSignal<JournalConflict[]>([]);
+// I-20: its reconcile actions take graph-relative paths; a switch empties it.
+clearOnBindingInvalidated(() => setJournalConflicts([]));
 /** Re-fetch the duplicate-journal-day list; with `notify`, toast if any exist. */
 export async function refreshJournalConflicts(notify = false): Promise<void> {
   const owner = graphOwner();
@@ -272,6 +274,7 @@ export async function refreshJournalConflicts(notify = false): Promise<void> {
 // Excluded from the page list; surfaced here so the user can review + merge them
 // (Settings → Backups & recovery) instead of them rotting as garbage pages. ---
 export const [syncConflicts, setSyncConflicts] = createSignal<SyncConflict[]>([]);
+clearOnBindingInvalidated(() => setSyncConflicts([])); // I-20, as journalConflicts
 /** Re-fetch the sync-conflict list; with `notify`, toast if any exist. */
 export async function refreshSyncConflicts(notify = false): Promise<void> {
   const owner = graphOwner();
