@@ -965,10 +965,13 @@ mod tests {
         use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind};
 
         let root = std::env::temp_dir().join(format!(
-            "tine-win-any-{}-{:?}-{:?}",
+            "tine-win-any-{}-{}",
             std::process::id(),
-            std::thread::current().id(),
+            // Debug of SystemTime prints `{` and `:`; Windows rejects them in file names.
             SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let pages = root.join("pages");
         fs::create_dir_all(&pages).unwrap();

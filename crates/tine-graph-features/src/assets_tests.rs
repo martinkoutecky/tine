@@ -16,7 +16,8 @@ fn nested_asset_reads_and_openers_stay_inside_assets() {
     validate_stream_asset(&store, "sub/x.png").unwrap();
     assert_eq!(
         path_for_os_handoff(&store, "sub/x.png").unwrap(),
-        root.join("assets/sub/x.png")
+        // The handoff path is canonical (a verbatim `\\?\` path on Windows), as on master.
+        root.join("assets/sub/x.png").canonicalize().unwrap()
     );
     for bad in [
         "../outside.png",
