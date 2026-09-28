@@ -257,8 +257,16 @@ let paneRouteProvider: () => Route[] = () => [];
 export function registerPaneRouteProvider(provider: () => Route[]) {
   paneRouteProvider = provider;
 }
+// Open drafts outside the block editor (a sheet prop cell): each names the page
+// its commit writes to, so eviction cannot discard the draft (og 15a K17a).
+const draftPins = new Set<() => string | null | undefined>();
+export function pinPageWhileDrafting(page: () => string | null | undefined): () => void {
+  draftPins.add(page);
+  return () => draftPins.delete(page);
+}
 function pinnedPages(): Set<string> {
   const pin = new Set<string>(doc.feed);
+  for (const draft of draftPins) { const name = draft(); if (name) pin.add(name); }
   for (const r of paneRouteProvider()) {
     if (r.kind === "page") pin.add(r.name);
   }
