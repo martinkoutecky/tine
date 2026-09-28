@@ -10,6 +10,7 @@
 import { backend } from "./backend";
 import { graphOwner, readOwned } from "./owned";
 import { pushToast } from "./toasts";
+import { flushAll } from "./document";
 import type { PrintOpts } from "./types";
 
 /** The default export options (match the Rust `PrintOpts::default`). */
@@ -107,6 +108,12 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
   const owner = graphOwner();
   let html: string;
   try {
+    const saved = await flushAll();
+    if (!owner()) return;
+    if (!saved) {
+      pushToast("PDF export stopped because some page edits could not be saved. Resolve the save conflict and try again.", "error");
+      return;
+    }
     const result = await readOwned(owner, backend().pagePrintHtml(name, opts));
     if (result.kind === "stale") return;
     html = await preparePrintHtml(result.value);

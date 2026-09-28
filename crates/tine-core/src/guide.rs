@@ -182,6 +182,13 @@ mod journal_guide_tests {
 #[cfg(test)]
 mod rename_guide_tests {
     #[test]
+    fn pdf_export_save_refusal_is_documented_in_the_bundled_guide() {
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("**Export to PDF…** saves pending page edits"));
+        assert!(tips.contains("stops the export and shows an error"));
+    }
+
+    #[test]
     fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide() {
         let tips = include_str!("templates/tips.md");
         for control in [
