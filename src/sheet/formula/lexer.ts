@@ -90,7 +90,15 @@ function lexNumber(src: string, offset: number): { token: Token; next: number } 
   return { token: { kind: "number", raw, value: Number(raw), offset, end: i }, next: i };
 }
 
+/** Longest formula source the lexer accepts (UTF-16 units). Formulas arrive from
+ *  shared/imported graph properties, so the token array must stay bounded (I-22);
+ *  64 Ki matches the query-source ceiling and is far past any hand-written formula. */
+export const FORMULA_MAX_SOURCE_CHARS = 64 * 1024;
+
 export function lexFormula(src: string): LexResult {
+  if (src.length > FORMULA_MAX_SOURCE_CHARS) {
+    return { ok: false, error: { offset: FORMULA_MAX_SOURCE_CHARS, message: "Formula is too long" } };
+  }
   const tokens: Token[] = [];
   let i = 0;
 
