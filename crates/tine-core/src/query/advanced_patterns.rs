@@ -729,7 +729,8 @@ fn parse_adv_group(
         ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
         return None;
     }
-    let inner = &c[1..c.len().saturating_sub(1)];
+    // A lone `(` has no body; slicing `1..0` would panic on hostile input.
+    let inner = c.get(1..c.len().saturating_sub(1)).unwrap_or("");
     let head = inner
         .split_whitespace()
         .next()
@@ -1031,7 +1032,9 @@ fn adv_text_list(values: Vec<String>) -> Value {
 
 /// Resolve a `between` bound token to a `yyyymmdd` ordinal: `today`/`yesterday`/
 /// `tomorrow`, signed durations `±N[dwmy]`, `yyyy-MM-dd`, or a journal title.
-fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
+/// The ONE date-literal resolver: the advanced lowering and the executor's date
+/// comparisons both call it (I-12).
+pub fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
     let t = tok.trim();
     match t.to_ascii_lowercase().as_str() {
         "today" | "now" => return Some(today.ordinal_key()),

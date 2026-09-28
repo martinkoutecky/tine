@@ -15,6 +15,8 @@ enum store::Area
 enum store::ChangeKind
 enum store::Origin
 enum store::WatchMode
+enum store::IrRequest
+enum store::IrAnswer
 enum store::OpenError
 enum transaction::Content
 enum transaction::Refusal
@@ -161,6 +163,7 @@ fn store::WholeGraph::parsed_page_ids
 fn store::WholeGraph::preview_block
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::query
+fn store::WholeGraph::query_ir
 fn store::WholeGraph::resolve
 fn store::WholeGraph::rev
 fn store::WholeGraph::referenced_assets
@@ -184,7 +187,7 @@ struct store::ConfigState
 struct store::Change
 enum store::SubscriptionEnd
 struct store::Subscription
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchMode,WholeGraph,}
 struct store::GraphAccessInspection
 struct store::OpenOptions
 struct store::WholeGraph

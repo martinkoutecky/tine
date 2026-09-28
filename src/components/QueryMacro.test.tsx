@@ -557,3 +557,30 @@ describe("QueryMacro sheet integration", () => {
     dispose();
   });
 });
+
+describe("QueryMacro through query_parse + query_run", () => {
+  it("binds the rendering page and renders a page-anchored answer as page rows", async () => {
+    loadQueryDoc("{{query (page-property type book)}}");
+    const parse = vi.spyOn(backend(), "queryParse").mockResolvedValue({ query: "ir", view: {} });
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue({
+      anchor: "page",
+      pages: [
+        { path: "pages/Dune.md", name: "Dune", kind: "page", properties: [["type", "book"]] },
+        { path: "pages/Emma.md", name: "Emma", kind: "page", properties: [["type", "book"]] },
+      ],
+      report: { ran: [], ignored: [], supported: true },
+      total: 2,
+      exceeded: false,
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelectorAll(".query-page").length).toBe(2));
+      expect(parse).toHaveBeenCalledWith("(page-property type book)", "macro_query");
+      expect(run).toHaveBeenCalledWith({ query: "ir", view: {} }, "Sheet");
+      expect([...root.querySelectorAll(".query-page")].map((el) => el.textContent)).toEqual(["Dune", "Emma"]);
+      expect(root.querySelector(".query-count")?.textContent).toBe("2");
+    } finally {
+      dispose();
+    }
+  });
+});

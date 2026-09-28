@@ -296,22 +296,22 @@ export function QueryMacro(props: {
         return [...grouped.values()];
       }
       setSearchExecution(null);
-      // Advanced (datalog) queries take a separate path that maps the supported
-      // clause subset onto the engine and reports what ran vs was ignored.
-      if (isAdvanced()) {
-        const result = await readOwned(owner, sharedQueryResult(
-          scope,
-          `advanced\0${requestKey}`,
-          () => backend().runAdvancedQuery(form()),
-        ));
-        if (result.kind === "stale") return [];
-        const r = result.value;
-        setAdvInfo({ ran: r.ran, ignored: r.ignored, supported: r.supported });
-        return r.groups;
-      }
-      setAdvInfo(null);
-      const result = await readOwned(owner, sharedQueryResult(scope, `simple\0${requestKey}`, () => backend().runQuery(form())));
-      return result.kind === "current" ? result.value : [];
+      // OG DSL and advanced (datalog) sources both run through the one engine:
+      // parse to the IR, run it bound to the page this macro renders on (#301).
+      // An advanced source also reports what ran vs was ignored. A page-level
+      // filter answers pages: each renders as a page group with no blocks.
+      const page = currentPage();
+      const result = await readOwned(owner, sharedQueryResult(
+        scope,
+        `ir\0${page ?? ""}\0${requestKey}`,
+        async () => backend().queryRun(await backend().queryParse(form(), "macro_query"), page),
+      ));
+      if (result.kind === "stale") return [];
+      const r = result.value;
+      setAdvInfo(isAdvanced() ? r.report : null);
+      return r.anchor === "page"
+        ? r.pages.map((row): RefGroup => ({ page: row.name, kind: row.kind, path: row.path, blocks: [] }))
+        : r.groups;
     }
   );
   const groupsError = () => {
@@ -341,7 +341,7 @@ export function QueryMacro(props: {
   });
   const total = () => currentView() === "search"
     ? searchPresentationHits().length
-    : groups()?.reduce((a, g) => a + g.blocks.length, 0) ?? 0;
+    : groups()?.reduce((a, g) => a + (g.blocks.length || 1), 0) ?? 0; // a page row has no blocks
   // A `(sort-by …)` query is sorted GLOBALLY by the engine and returned as one
   // block per group in that order — so the list view must render flat (a single
   // ordered sequence with a per-row page breadcrumb), not grouped by page, or the

@@ -368,6 +368,33 @@ export interface AdvancedQueryResult {
   supported: boolean;
 }
 
+/** `query_parse`'s answer (tine-core `query::wire_parse::ParsedQuery`). The IR
+ *  and its view are opaque here: they go back to `query_run` unchanged. */
+export interface ParsedQueryIr {
+  query: unknown;
+  view: unknown;
+}
+
+/** One `@page` row of a `query_run` answer (tine-core `query::ir::PageRow`). */
+export interface QueryPageRow {
+  path: string;
+  name: string;
+  kind: PageKind;
+  journal_day?: number;
+  properties: [string, string][];
+}
+
+/** `query_run`'s answer (tine-core `query::ir::QueryResult`, SPEC §7.1). */
+export type QueryRunResult = (
+  | { anchor: "block"; groups: RefGroup[] }
+  | { anchor: "page"; pages: QueryPageRow[] }
+) & {
+  report: { ran: string[]; ignored: string[]; supported: boolean };
+  total: number;
+  matched_total?: number;
+  exceeded: boolean;
+};
+
 export interface GraphMeta {
   root: string;
   journals_dir: string;

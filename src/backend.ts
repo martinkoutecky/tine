@@ -4,6 +4,8 @@
 
 import type {
   AdvancedQueryResult,
+  ParsedQueryIr,
+  QueryRunResult,
   BacklinkFilterContext,
   BacklinkFilterTarget,
   AssetInfo,
@@ -282,6 +284,10 @@ export interface Backend {
   /** Advanced (datalog-subset) query: maps the supported clauses onto the engine
    *  and reports what ran vs was ignored. */
   runAdvancedQuery(query: string): Promise<AdvancedQueryResult>;
+  /** A `{{query …}}` argument (OG DSL or advanced) parsed to the query IR. */
+  queryParse(text: string, dialect: "macro_query"): Promise<ParsedQueryIr>;
+  /** Run a parsed query; `currentPage` binds OG's `?current-page` (#301). */
+  queryRun(parsed: ParsedQueryIr, currentPage?: string): Promise<QueryRunResult>;
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
   queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
@@ -805,6 +811,13 @@ class TauriBackend implements Backend {
   }
   runAdvancedQuery(query: string) {
     return this.call<AdvancedQueryResult>("run_advanced_query", { query });
+  }
+  queryParse(text: string, dialect: "macro_query") {
+    return this.call<ParsedQueryIr>("query_parse", { text, dialect });
+  }
+  queryRun(parsed: ParsedQueryIr, currentPage?: string) {
+    const context = currentPage === undefined ? undefined : { current_page: currentPage };
+    return this.call<QueryRunResult>("query_run", { query: parsed.query, view: parsed.view, context });
   }
   queryFacets(autocomplete = false) {
     return this.call<[string, string[]][]>(

@@ -136,7 +136,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "closeGraphWindow", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
   "getPage", "resolvePage", "graphSourceFiles", "guidePages", "getBacklinks",
   "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
-  "pagePrintHtml", "runQuery", "exportQuerySubtrees", "runAdvancedQuery", "queryFacets", "pageIcons",
+  "pagePrintHtml", "runQuery", "exportQuerySubtrees", "runAdvancedQuery", "queryParse", "queryRun", "queryFacets", "pageIcons",
   "readCustomCss", "openExternal", "openAsset", "openPageFile", "detectMediaEditor", "listOrphanAssets",
   "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath", "listSyncConflicts",
   "syncConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",

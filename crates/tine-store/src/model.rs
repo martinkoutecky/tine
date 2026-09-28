@@ -513,6 +513,7 @@ pub(crate) trait GraphRead {
     fn block_page_hint(&self, uuid: &str) -> Option<String>;
     fn page_list_arc(&self) -> Arc<Vec<PageEntry>>;
     fn referenced_page_names(&self) -> Vec<String>;
+    fn query_index(&self) -> Arc<crate::query::index::QueryIndex>;
 }
 
 impl<R: GraphRead> GraphRead for Arc<R> {
@@ -547,6 +548,9 @@ impl<R: GraphRead> GraphRead for Arc<R> {
     fn referenced_page_names(&self) -> Vec<String> {
         self.as_ref().referenced_page_names()
     }
+    fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
+        self.as_ref().query_index()
+    }
 }
 
 /// The immutable page and index input for one published generation. Evaluators
@@ -574,6 +578,7 @@ pub(crate) struct ReadSnapshot {
     block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
     icon_index: std::sync::OnceLock<Arc<HashMap<String, String>>>,
     memos: SnapshotMemos,
+    query_index: crate::query::index::QueryIndexSlot,
     #[cfg(test)]
     block_full_builds: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -790,6 +795,10 @@ impl ReadSnapshot {
                 Arc::new(names)
             }
         };
+        let query_index = crate::query::index::QueryIndexSlot::succeeding(
+            old.map(|old| (&old.query_index, Arc::ptr_eq(&old.pages, &pages))),
+            changed_paths,
+        );
         let snapshot = Self {
             pages,
             config,
@@ -808,6 +817,7 @@ impl ReadSnapshot {
             block_ref_counts: std::sync::OnceLock::new(),
             icon_index: std::sync::OnceLock::new(),
             memos: SnapshotMemos::default(),
+            query_index,
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -892,8 +902,7 @@ impl ReadSnapshot {
 
     pub(crate) fn carry_memos_from(&self, old: &Self, changed_paths: &[String]) {
         if changed_paths.is_empty()
-            || (old.memos.derived_cache.read().unwrap().is_none()
-                && old.memos.advanced_cache.read().unwrap().is_none())
+            || (old.memos.derived_cache.read().unwrap().is_none() && old.memos.query.is_empty())
         {
             return;
         }
@@ -921,14 +930,17 @@ impl ReadSnapshot {
         }
         *self.memos.derived_cache.write().unwrap() =
             old.memos.derived_cache.read().unwrap().clone();
-        *self.memos.advanced_cache.write().unwrap() =
-            old.memos.advanced_cache.read().unwrap().clone();
+        let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
+        self.memos
+            .query
+            .carry_from(&old.memos.query, &parse_config, &edits);
         for (entry, previous, current) in edits {
             self.memos
                 .scope_derived_invalidation(self, &entry, Some(&previous), &current, 0, true);
         }
     }
 
+    /// `{{query}}` through the legacy block-group bridge, memoized.
     pub(crate) fn run_query_bounded(
         &self,
         source: &str,
@@ -936,16 +948,23 @@ impl ReadSnapshot {
         max_bytes: usize,
     ) -> BoundedRefGroups {
         if tine_core::query::admit_source(source).is_err() {
+            let groups = Arc::new(Vec::new());
             return BoundedRefGroups {
-                groups: Arc::new(Vec::new()),
+                groups,
                 total: 0,
                 exceeded: false,
             };
         }
-        self.memos
-            .derived_memo_bounded(0, format!("Q\0{max_rows}\0{max_bytes}\0{source}"), || {
-                crate::query::run_query_bounded(self, source, max_rows, max_bytes)
-            })
+        let key = format!("S\0{max_rows}\0{max_bytes}\0{source}");
+        let answer = self.query_answer(key, || {
+            let (groups, plan) =
+                crate::query::exec::run_query_bounded(self, source, max_rows, max_bytes);
+            (answer_groups(groups), Some(plan))
+        });
+        match answer {
+            crate::query::memo::Answer::Groups(groups) => groups,
+            _ => unreachable!("S keys hold block groups"),
+        }
     }
 
     pub(crate) fn run_advanced_query_bounded_cached(
@@ -955,22 +974,46 @@ impl ReadSnapshot {
         max_bytes: usize,
     ) -> (tine_core::query::AdvancedResult, bool, usize) {
         if let Err(reason) = tine_core::query::admit_source(source) {
-            let message = match reason {
+            let reason = match reason {
                 tine_core::query::SourceRefusal::TooLarge => "query-too-large",
                 tine_core::query::SourceRefusal::TooDeep => "query-nesting-too-deep",
             };
-            return (crate::query::rejected_advanced_query(message), false, 0);
+            return (crate::query::rejected_advanced_query(reason), false, 0);
         }
-        let cached = self.memos.advanced_memo_bounded(
-            0,
-            format!("AQ\0{max_rows}\0{max_bytes}\0{source}"),
-            || crate::query::run_advanced_query_bounded(self, source, max_rows, max_bytes),
-        );
-        (
-            cached.result.as_ref().clone(),
-            cached.exceeded,
-            cached.total,
-        )
+        let key = format!("A\0{max_rows}\0{max_bytes}\0{source}");
+        let answer = self.query_answer(key, || {
+            let ((result, exceeded, total), plan) =
+                crate::query::exec::run_advanced_query_bounded(self, source, max_rows, max_bytes);
+            let result = Arc::new(result);
+            (
+                crate::query::memo::Answer::Advanced {
+                    result,
+                    total,
+                    exceeded,
+                },
+                plan,
+            )
+        });
+        match answer {
+            crate::query::memo::Answer::Advanced {
+                result,
+                total,
+                exceeded,
+            } => (result.as_ref().clone(), exceeded, total),
+            _ => unreachable!("A keys hold advanced results"),
+        }
+    }
+
+    pub(crate) fn query_answer(
+        &self,
+        key: String,
+        compute: impl FnOnce() -> (
+            crate::query::memo::Answer,
+            Option<Arc<crate::query::exec::Plan>>,
+        ),
+    ) -> crate::query::memo::Answer {
+        let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
+        self.memos.query.answer(key, &parse_config, compute)
     }
 
     pub(crate) fn backlinks_bounded(
@@ -1174,6 +1217,9 @@ impl GraphRead for ReadSnapshot {
     }
     fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
         Arc::clone(&self.list)
+    }
+    fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
+        (self.query_index).get(&self.pages, &self.config, self.cache_generation)
     }
     fn referenced_page_names(&self) -> Vec<String> {
         self.referenced_names
@@ -2023,26 +2069,18 @@ struct DerivedCache {
     bytes: usize,
 }
 
-#[derive(Clone)]
-struct AdvancedCache {
-    gen: u64,
-    today: i64,
-    results: std::collections::HashMap<String, (CachedAdvancedResult, usize)>,
-    lru: std::collections::VecDeque<String>,
-    bytes: usize,
-}
-
 #[derive(Default)]
 struct SnapshotMemos {
     derived_cache: RwLock<Option<DerivedCache>>,
-    advanced_cache: RwLock<Option<AdvancedCache>>,
+    query: crate::query::memo::QueryMemo,
 }
 
-#[derive(Clone)]
-struct CachedAdvancedResult {
-    result: Arc<tine_core::query::AdvancedResult>,
-    total: usize,
-    exceeded: bool,
+fn answer_groups(groups: crate::query::BoundedGroups) -> crate::query::memo::Answer {
+    crate::query::memo::Answer::Groups(BoundedRefGroups {
+        groups: Arc::new(groups.groups),
+        total: groups.total,
+        exceeded: groups.exceeded,
+    })
 }
 
 // Query results contain owned DTO subtrees and can be close to graph-sized. A
@@ -3489,9 +3527,7 @@ impl SnapshotMemos {
     ) {
         // A generation with no memo entries has nothing to prune. In particular,
         // avoid rebuilding its alias and real-page sets for a routine save.
-        if self.derived_cache.read().unwrap().is_none()
-            && self.advanced_cache.read().unwrap().is_none()
-        {
+        if self.derived_cache.read().unwrap().is_none() {
             return;
         }
         // Resolve aliases BEFORE taking the derived lock (page_aliases may take the
@@ -3515,14 +3551,10 @@ impl SnapshotMemos {
         {
             let mut g = self.derived_cache.write().unwrap();
             let Some(dc) = g.as_mut() else {
-                drop(g);
-                self.scope_advanced_invalidation(entry, previous_doc, doc, newgen, scoped, today);
                 return;
             };
             if !scoped || dc.today != today {
                 *g = None; // full invalidate (alias/page-set/cold-cache, or day rollover)
-                drop(g);
-                self.scope_advanced_invalidation(entry, previous_doc, doc, newgen, scoped, today);
                 return;
             }
             let mut removed_bytes = 0usize;
@@ -3557,9 +3589,6 @@ impl SnapshotMemos {
                     Some(("br", uuid)) => {
                         crate::query::page_affects_block_referrers(uuid, candidate)
                     }
-                    Some(("q", source)) => {
-                        crate::query::page_affects_query(source, entry, candidate)
-                    }
                     Some(("B", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
                         crate::query::page_affects_backlinks(
                             &real_pages,
@@ -3578,9 +3607,6 @@ impl SnapshotMemos {
                             candidate,
                         )
                     }),
-                    Some(("Q", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|source| {
-                        crate::query::page_affects_query(source, entry, candidate)
-                    }),
                     Some(("R", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|uuid| {
                         crate::query::page_affects_block_referrers(uuid, candidate)
                     }),
@@ -3596,64 +3622,6 @@ impl SnapshotMemos {
             dc.lru.retain(|key| dc.results.contains_key(key));
             dc.gen = newgen; // survivors are valid for the post-bump generation
         }
-        self.scope_advanced_invalidation(entry, previous_doc, doc, newgen, scoped, today);
-    }
-
-    fn scope_advanced_invalidation(
-        &self,
-        entry: &PageEntry,
-        previous_doc: Option<&Document>,
-        doc: &Document,
-        newgen: u64,
-        scoped: bool,
-        today: i64,
-    ) {
-        let mut cache = self.advanced_cache.write().unwrap();
-        let Some(advanced) = cache.as_mut() else {
-            return;
-        };
-        if !scoped || advanced.today != today {
-            *cache = None;
-            return;
-        }
-        let mut removed_bytes = 0usize;
-        advanced.results.retain(|key, (result, result_bytes)| {
-            if result
-                .result
-                .groups
-                .iter()
-                .any(|group| tine_core::refs::same_page(&group.page, &entry.name))
-            {
-                removed_bytes = removed_bytes.saturating_add(*result_bytes);
-                return false;
-            }
-            // Split only structural fields; the final query source is opaque and
-            // may itself contain NUL bytes. Treating it as another delimiter used
-            // to make warm invalidation evaluate a truncated query.
-            let query_src = if let Some(rest) = key.strip_prefix("AQ\0") {
-                let mut parts = rest.splitn(3, '\0');
-                let _max_rows = parts.next();
-                let _max_bytes = parts.next();
-                parts.next()
-            } else {
-                None
-            };
-            let page_affects = |candidate: &Document| {
-                query_src.is_none_or(|query_src| {
-                    crate::query::page_affects_advanced_query(query_src, entry, candidate)
-                })
-            };
-            let affects = page_affects(doc) || previous_doc.is_some_and(page_affects);
-            if affects {
-                removed_bytes = removed_bytes.saturating_add(*result_bytes);
-            }
-            !affects
-        });
-        advanced.bytes = advanced.bytes.saturating_sub(removed_bytes);
-        advanced
-            .lru
-            .retain(|key| advanced.results.contains_key(key));
-        advanced.gen = newgen;
     }
 }
 
@@ -3736,66 +3704,6 @@ impl SnapshotMemos {
                 let mut results = std::collections::HashMap::new();
                 results.insert(key.clone(), (result.clone(), result_bytes));
                 *g = Some(DerivedCache {
-                    gen,
-                    today,
-                    results,
-                    lru: std::collections::VecDeque::from([key]),
-                    bytes: result_bytes,
-                });
-            }
-        }
-        result
-    }
-
-    fn advanced_memo_bounded(
-        &self,
-        gen: u64,
-        key: String,
-        compute: impl FnOnce() -> (tine_core::query::AdvancedResult, bool, usize),
-    ) -> CachedAdvancedResult {
-        let today = tine_core::date::JournalDate::today().ordinal_key();
-        {
-            let mut g = self.advanced_cache.write().unwrap();
-            if let Some(dc) = g.as_mut() {
-                if dc.gen == gen && dc.today == today {
-                    if let Some((r, _)) = dc.results.get(&key) {
-                        let result = r.clone();
-                        touch_lru(&mut dc.lru, &key);
-                        return result;
-                    }
-                }
-            }
-        }
-        let (computed, exceeded, total) = compute();
-        let result = CachedAdvancedResult {
-            result: Arc::new(computed),
-            total,
-            exceeded,
-        };
-        let result_bytes = ref_groups_estimated_bytes(&result.result.groups)
-            .saturating_add(result.result.ran.iter().map(String::len).sum::<usize>())
-            .saturating_add(result.result.ignored.iter().map(String::len).sum::<usize>())
-            .saturating_add(result_cache_key_estimated_bytes(&key));
-        if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
-            return result;
-        }
-        let mut g = self.advanced_cache.write().unwrap();
-        match g.as_mut() {
-            Some(dc) if dc.gen == gen && dc.today == today => {
-                if let Some((_, old_bytes)) = dc
-                    .results
-                    .insert(key.clone(), (result.clone(), result_bytes))
-                {
-                    dc.bytes = dc.bytes.saturating_sub(old_bytes);
-                }
-                dc.bytes = dc.bytes.saturating_add(result_bytes);
-                touch_lru(&mut dc.lru, &key);
-                prune_result_cache(&mut dc.results, &mut dc.lru, &mut dc.bytes);
-            }
-            _ => {
-                let mut results = std::collections::HashMap::new();
-                results.insert(key.clone(), (result.clone(), result_bytes));
-                *g = Some(AdvancedCache {
                     gen,
                     today,
                     results,
@@ -6102,20 +6010,11 @@ mod tests {
     ) -> Arc<tine_core::query::AdvancedResult> {
         let max_bytes = 32 * 1024 * 1024;
         let _ = snapshot.run_advanced_query_bounded_cached(source, max_rows, max_bytes);
-        let key = format!("AQ\0{max_rows}\0{max_bytes}\0{source}");
-        snapshot
-            .memos
-            .advanced_cache
-            .read()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .results
-            .get(&key)
-            .unwrap()
-            .0
-            .result
-            .clone()
+        let key = format!("A\0{max_rows}\0{max_bytes}\0{source}");
+        match snapshot.memos.query.cached(&key) {
+            Some(crate::query::memo::Answer::Advanced { result, .. }) => result,
+            _ => panic!("advanced answer is memoized"),
+        }
     }
 
     #[test]
@@ -9655,12 +9554,13 @@ mod tests {
         let simple = snapshot.run_query_bounded(&nested, 20_000, 32 * 1024 * 1024);
         assert!(simple.groups.is_empty());
         assert!(snapshot.memos.derived_cache.read().unwrap().is_none());
+        assert!(snapshot.memos.query.is_empty());
 
         let advanced = format!("[:find (pull ?b [*]) :where {nested}]");
         let result = advanced_result(&snapshot, &advanced);
         assert!(!result.supported);
         assert_eq!(result.ignored, vec!["query-nesting-too-deep"]);
-        assert!(snapshot.memos.advanced_cache.read().unwrap().is_none());
+        assert!(snapshot.memos.query.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9948,62 +9848,44 @@ mod tests {
     }
 
     #[test]
-    fn derived_and_advanced_memos_are_lru_bounded() {
+    fn derived_and_query_memos_are_lru_bounded() {
         let dir = scratch("memo-lru-bound");
         let store = model_store(&dir);
         let snapshot = published_snapshot(&store);
         let generation = snapshot.cache_generation;
+        let empty_advanced = || {
+            let result = Arc::new(tine_core::query::AdvancedResult {
+                groups: Vec::new(),
+                ran: Vec::new(),
+                ignored: Vec::new(),
+                supported: true,
+            });
+            let answer = crate::query::memo::Answer::Advanced {
+                result,
+                total: 0,
+                exceeded: false,
+            };
+            (answer, None)
+        };
+        let empty_groups = || crate::query::BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
         for i in 0..(DERIVED_CACHE_MAX_ENTRIES + 20) {
-            let _ = snapshot
-                .memos
-                .derived_memo_bounded(generation, format!("test\0{i}"), || {
-                    crate::query::BoundedGroups {
-                        groups: Vec::new(),
-                        total: 0,
-                        exceeded: false,
-                    }
-                });
-            let _ = snapshot
-                .memos
-                .advanced_memo_bounded(generation, format!("test\0{i}"), || {
-                    (
-                        tine_core::query::AdvancedResult {
-                            groups: Vec::new(),
-                            ran: Vec::new(),
-                            ignored: Vec::new(),
-                            supported: true,
-                        },
-                        false,
-                        0,
-                    )
-                });
+            let _ =
+                snapshot
+                    .memos
+                    .derived_memo_bounded(generation, format!("test\0{i}"), empty_groups);
+            let _ = snapshot.query_answer(format!("test\0{i}"), empty_advanced);
         }
         let oversized_key = "x".repeat(DERIVED_CACHE_MAX_ENTRY_BYTES / 2 + 1);
-        let _ = snapshot
-            .memos
-            .derived_memo_bounded(generation, oversized_key.clone(), || {
-                crate::query::BoundedGroups {
-                    groups: Vec::new(),
-                    total: 0,
-                    exceeded: false,
-                }
-            });
-        let _ = snapshot
-            .memos
-            .advanced_memo_bounded(generation, oversized_key.clone(), || {
-                (
-                    tine_core::query::AdvancedResult {
-                        groups: Vec::new(),
-                        ran: Vec::new(),
-                        ignored: Vec::new(),
-                        supported: true,
-                    },
-                    false,
-                    0,
-                )
-            });
+        let _ =
+            snapshot
+                .memos
+                .derived_memo_bounded(generation, oversized_key.clone(), empty_groups);
+        let _ = snapshot.query_answer(oversized_key.clone(), empty_advanced);
         let derived = snapshot.memos.derived_cache.read().unwrap();
-        let advanced = snapshot.memos.advanced_cache.read().unwrap();
         assert_eq!(
             derived.as_ref().unwrap().results.len(),
             DERIVED_CACHE_MAX_ENTRIES
@@ -10013,18 +9895,11 @@ mod tests {
             .unwrap()
             .results
             .contains_key(&oversized_key));
-        assert!(!advanced
-            .as_ref()
-            .unwrap()
-            .results
-            .contains_key(&oversized_key));
-        assert_eq!(
-            advanced.as_ref().unwrap().results.len(),
-            DERIVED_CACHE_MAX_ENTRIES
-        );
+        assert_eq!(snapshot.memos.query.len(), DERIVED_CACHE_MAX_ENTRIES);
+        assert!(snapshot.memos.query.cached(&oversized_key).is_none());
         let oldest = format!("test\0{}", 0);
         assert!(!derived.as_ref().unwrap().results.contains_key(&oldest));
-        assert!(!advanced.as_ref().unwrap().results.contains_key(&oldest));
+        assert!(snapshot.memos.query.cached(&oldest).is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 

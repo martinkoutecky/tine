@@ -91,6 +91,7 @@ function queryMap(payload: string): BeginQueryMatch {
 
   let title: string | undefined;
   let query: string | undefined;
+  let inputs: string | undefined;
   let i = 1;
   while (i < mapEnd - 1) {
     i = skipTrivia(source, i);
@@ -107,6 +108,11 @@ function queryMap(payload: string): BeginQueryMatch {
     if (key === ":query") {
       if (query !== undefined) return { kind: "unsupported", reason: "duplicate :query entry" };
       query = value;
+    } else if (key === ":inputs") {
+      if (inputs !== undefined || !value.startsWith("[")) {
+        return { kind: "unsupported", reason: "expected :inputs to be a vector" };
+      }
+      inputs = value;
     } else if (key === ":title") {
       if (title !== undefined || !value.startsWith('"')) {
         return { kind: "unsupported", reason: "expected :title to be a string" };
@@ -119,7 +125,9 @@ function queryMap(payload: string): BeginQueryMatch {
   if (!query?.startsWith("[") || !/:find\b/.test(query) || !/:where\b/.test(query)) {
     return { kind: "unsupported", reason: "expected an advanced :query vector" };
   }
-  return { kind: "supported", query, title };
+  // The query vector plus its positional inputs is one execution source
+  // (master 0eed673, #301): `:inputs [:current-page]` binds the host page.
+  return { kind: "supported", query: `${query}${inputs ? ` :inputs ${inputs}` : ""}`, title };
 }
 
 /** Match only a parser-confirmed, terminated custom/query that owns the whole block.
