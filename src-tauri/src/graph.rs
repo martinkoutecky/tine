@@ -1,4 +1,4 @@
-use crate::backup::{backup_async, backup_graph_now, report_launch_outcome, BackupOutcome};
+use crate::backup::backup_async;
 use crate::settings::{
     approved_external_assets, remember_external_assets_approval, remember_graph,
 };
@@ -115,15 +115,15 @@ pub(crate) fn capture_graph_binding(
 struct LoadedGraph {
     store: Store,
     meta: GraphMeta,
-    launch_backup_done: bool,
-    launch_backup_outcome: BackupOutcome,
 }
 
+/// Open a graph without writing to it. Title-named journal files are proposed
+/// for renaming in Settings, never renamed here (master e6f9b6e1ceae): a
+/// rename at open lands as an unrequested change in a synced or git-kept graph.
 fn open_graph_for_load(
     root: &str,
     approved_assets: Option<&Path>,
     watch: tine_store::WatchMode,
-    take_launch_backup: impl FnOnce(&Store) -> BackupOutcome,
 ) -> Result<LoadedGraph, String> {
     let (store, meta, _) = Store::open(
         Path::new(root),
@@ -133,25 +133,7 @@ fn open_graph_for_load(
         },
     )
     .map_err(|error| open_error_text(error, true))?;
-    let needs_migration = tine_graph_features::journals::has_journal_filename_migrations(&store);
-    let launch_backup_outcome = if needs_migration {
-        take_launch_backup(&store)
-    } else {
-        BackupOutcome::success(0)
-    };
-    let launch_backup_done =
-        launch_backup_outcome.copied > 0 && launch_backup_outcome.failure.is_none();
-    if needs_migration && launch_backup_done {
-        // Recover any journals mis-saved under their title (see method docs),
-        // but only after the launch snapshot has captured the original names.
-        tine_graph_features::journals::migrate_journal_filenames(&store);
-    }
-    Ok(LoadedGraph {
-        store,
-        meta,
-        launch_backup_done,
-        launch_backup_outcome,
-    })
+    Ok(LoadedGraph { store, meta })
 }
 
 #[derive(serde::Serialize)]
@@ -260,16 +242,10 @@ pub(crate) fn load_graph_for_label(
     }
     let root = root_key.display().to_string();
     let approved_assets = approved_external_assets(app, &root_key);
-    let LoadedGraph {
-        store,
-        meta,
-        launch_backup_done,
-        launch_backup_outcome,
-    } = open_graph_for_load(
+    let LoadedGraph { store, meta } = open_graph_for_load(
         &root,
         approved_assets.as_deref(),
         crate::watcher::watch_mode(app),
-        |store| backup_graph_now(app, store, &root_key, ""),
     )?;
     let slot = Arc::new(GraphSlot::new(store, root_key));
     let warm_generation = begin_warm_cache(&slot);
@@ -280,10 +256,7 @@ pub(crate) fn load_graph_for_label(
         .bind(window_label.to_string(), slot.clone())?;
     state.note_focused(window_label);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
-    report_launch_outcome(&launch_backup_outcome);
-    if !launch_backup_done {
-        backup_async(app.clone(), slot.clone());
-    }
+    backup_async(app.clone(), slot.clone());
     remember_graph(app, &meta.root)?;
     if let Some(window) = app.get_webview_window(window_label) {
         let name = Path::new(&meta.root)
@@ -523,80 +496,66 @@ mod tests {
         dir
     }
 
-    fn copy_graph_text_dir(src: &Path, dest: &Path) -> BackupOutcome {
-        let _ = std::fs::create_dir_all(dest);
-        let mut copied = 0usize;
-        let mut failed = false;
-        let Ok(rd) = std::fs::read_dir(src) else {
-            return BackupOutcome::failed(0, "source", std::io::ErrorKind::Other);
-        };
-        for entry in rd {
-            let Ok(entry) = entry else {
-                failed = true;
-                continue;
-            };
-            let p = entry.path();
-            if !matches!(
-                p.extension().and_then(|x| x.to_str()),
-                Some("md") | Some("org")
-            ) {
-                continue;
-            }
-            if std::fs::copy(&p, dest.join(entry.file_name())).is_ok() {
-                copied += 1;
-            } else {
-                failed = true;
-            }
-        }
-        if failed {
-            BackupOutcome::failed(copied, "copy", std::io::ErrorKind::Other)
-        } else {
-            BackupOutcome::success(copied)
-        }
-    }
-
     #[test]
-    fn graph_load_snapshots_original_journal_filename_before_migration() {
-        let dir = scratch("pre-migrate-backup");
+    fn graph_load_proposes_journal_renames_instead_of_performing_them() {
+        let dir = scratch("propose-journal-rename");
         std::fs::create_dir_all(dir.join("logseq")).unwrap();
         std::fs::write(
             dir.join("logseq").join("config.edn"),
             "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
         )
         .unwrap();
-        std::fs::write(
-            dir.join("journals").join("Thursday, 25-06-2026.org"),
+        let title_named = dir.join("journals").join("Thursday, 25-06-2026.org");
+        std::fs::write(&title_named, "* original title-named journal\n").unwrap();
+
+        let loaded = open_graph_for_load(dir.to_str().unwrap(), None, Default::default()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&title_named).unwrap(),
             "* original title-named journal\n",
-        )
-        .unwrap();
-        let backup = dir.join("backup");
-
-        let loaded =
-            open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), |_store| {
-                copy_graph_text_dir(&dir.join("journals"), &backup.join("journals"))
-            })
-            .unwrap();
-
-        assert!(loaded.launch_backup_done, "pre-migration backup ran");
-        assert!(
-            backup
-                .join("journals")
-                .join("Thursday, 25-06-2026.org")
-                .exists(),
-            "backup must contain the original pre-migration filename"
+            "opening a graph must not rename journal files"
         );
-        assert!(
-            dir.join("journals").join("2026_06_25.org").exists(),
-            "load still migrates the journal filename"
+        assert!(!dir.join("journals").join("2026_06_25.org").exists());
+        assert_eq!(
+            tine_graph_features::journals::journal_filename_migrations(&loaded.store),
+            vec![tine_graph_features::journals::JournalFilenameMigration {
+                from: "Thursday, 25-06-2026.org".into(),
+                to: "2026_06_25.org".into(),
+            }],
+            "the rename is proposed instead"
         );
-        assert!(
-            !dir.join("journals")
-                .join("Thursday, 25-06-2026.org")
-                .exists(),
-            "live graph was renamed"
-        );
-
+        drop(loaded);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Master e6f9b6e1ceae: journal files are renamed only when the user applies
+    /// the Settings proposal, after a snapshot. A second caller (graph open, a
+    /// journal-format change) renames the user's files unasked. Exemplar:
+    /// `commands.rs::apply_journal_filename_migrations`.
+    #[test]
+    fn only_the_applied_proposal_renames_journal_files() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let mut callers = Vec::new();
+        for dir in ["src-tauri/src", "crates/tine-graph-features/src"] {
+            for entry in std::fs::read_dir(root.join(dir)).unwrap() {
+                let path = entry.unwrap().path();
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                // A call, not the definition or this census's own string literals.
+                let calls = text.lines().filter(|line| {
+                    line.contains("migrate_journal_filenames(")
+                        && !line.contains("fn migrate_journal_filenames(")
+                        && !line.contains('"')
+                });
+                if calls.count() > 0 {
+                    callers.push(path.file_name().unwrap().to_string_lossy().into_owned());
+                }
+            }
+        }
+        assert_eq!(
+            callers,
+            ["commands.rs"],
+            "only apply_journal_filename_migrations may rename journal files (master e6f9b6e1ceae)"
+        );
     }
 
     #[cfg(unix)]
@@ -606,11 +565,9 @@ mod tests {
         let outside = scratch("layout-outside");
         std::fs::remove_dir(dir.join("pages")).unwrap();
         std::os::unix::fs::symlink(outside.join("pages"), dir.join("pages")).unwrap();
-        let new = open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), |_| {
-            BackupOutcome::failed(0, "source", std::io::ErrorKind::Other)
-        })
-        .err()
-        .unwrap();
+        let new = open_graph_for_load(dir.to_str().unwrap(), None, Default::default())
+            .err()
+            .unwrap();
         assert_eq!(
             new,
             "unsafe graph layout: pages directory escapes graph root: \"pages\""

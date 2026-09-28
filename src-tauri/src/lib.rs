@@ -29,11 +29,12 @@ mod watcher;
 
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
-    asset_trash_stats, block_ref_counts, block_referrers, capture_quick_switch, close_graph_window,
-    copy_guide_into_graph, delete_page, detect_media_editor, edit_asset_external,
-    empty_asset_trash, export_query_subtrees, get_backlink_filter_context, get_backlinks, get_page,
-    get_page_by_path, get_unlinked_refs, graph_source_files, guide_pages, import_asset,
-    import_native_capture, journal_content_days, journal_feed_page, list_journal_conflicts,
+    apply_journal_filename_migrations, asset_trash_stats, block_ref_counts, block_referrers,
+    capture_quick_switch, close_graph_window, copy_guide_into_graph, delete_page,
+    detect_media_editor, edit_asset_external, empty_asset_trash, export_query_subtrees,
+    get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
+    graph_source_files, guide_pages, import_asset, import_native_capture, journal_content_days,
+    journal_feed_page, list_journal_conflicts, list_journal_filename_migrations,
     list_orphan_assets, list_sync_conflicts, list_templates, load_workspaces, merge_pages,
     open_asset, open_page_file, open_pdf, page_icons, page_inventory, page_print_html,
     preview_block, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
@@ -810,6 +811,8 @@ pub fn run() {
             asset_trash_stats,
             empty_asset_trash,
             list_journal_conflicts,
+            list_journal_filename_migrations,
+            apply_journal_filename_migrations,
             list_sync_conflicts,
             sync_conflict_diff,
             resolve_sync_conflict,

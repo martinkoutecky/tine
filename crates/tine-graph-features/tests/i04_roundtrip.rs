@@ -23,8 +23,8 @@ fn merge_source_preamble_survives_in_lsdoc_tree() {
     let tree = serde_json::to_string(&projection).unwrap();
     assert!(projection.blocks.len() >= 2 && tree.contains("free text") && tree.contains("moved"),
         "I-4: merged free-text preamble and blocks must be Logseq-readable; exemplar pages::merge_pages: {tree}");
-    assert!(bytes.contains("alias:: Source"),
-        "I-4: conflicting source property must survive as block content; exemplar pages::merge_pages");
+    assert!(bytes.starts_with("alias:: Destination, Source\n"),
+        "I-4: merged aliases are united in the survivor header, as OG merge-pages!; exemplar pages::merge_pages");
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

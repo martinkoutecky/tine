@@ -79,6 +79,9 @@ export interface PageRead extends PageDto {
   id: string;
 }
 
+/** What the backend rename did; `unchanged`: nothing written (a case-only rename). */
+export type RenameDone = "renamed" | "merged" | "unchanged";
+
 export type ResolvedPage =
   | { kind: "existing"; id: string; others: string[] }
   | { kind: "alias"; owners: string[] }
@@ -412,6 +415,9 @@ export interface PrintOpts {
   /** Page margin, mm (all four sides). */
   margin_mm: number;
 }
+/** A title-named journal file and the date name it would get (proposed only). */
+export type JournalFilenameMigration = { from: string; to: string };
+
 export type JournalMigrationResult = {
   migrated: number;
   skipped: { file: string; reason: string }[];

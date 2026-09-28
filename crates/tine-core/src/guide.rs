@@ -172,3 +172,22 @@ mod journal_guide_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod rename_guide_tests {
+    #[test]
+    fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide() {
+        let tips = include_str!("templates/tips.md");
+        for control in [
+            "offers to **merge** them",
+            "the aliases join",
+            "Opening a graph never renames journal files",
+            "**Rename to date names**",
+        ] {
+            assert!(
+                tips.contains(control),
+                "missing family-16 Guide control: {control}"
+            );
+        }
+    }
+}

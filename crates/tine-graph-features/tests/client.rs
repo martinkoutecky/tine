@@ -474,25 +474,17 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
         journals::read_journal_file(&store, "Jun 18th, 2026.org").unwrap(),
         "- duplicate\n"
     );
+    // One deliberate difference: v0.6.5 renamed `Jun 18th, 2026.org` beside
+    // `2026_06_18.md` (an md/org twin). It is not proposed (stale confirmations
+    // are refused: tests/journal_migrations.rs), so it stays, listed by
+    // `journal_conflicts`. Every other file matches.
+    let listed = journals::journal_filename_migrations(&store);
     assert_eq!(
-        format!("{:?}", journals::has_journal_filename_migrations(&store)),
-        "true"
+        format!("{listed:?}"),
+        r#"[JournalFilenameMigration { from: "Jun 19th, 2026.md", to: "2026_06_19.md" }]"#
     );
-    // One deliberate difference: v0.6.5 renamed `Jun 18th, 2026.org` to
-    // `2026_06_18.org` beside `2026_06_18.md`, creating an md/org twin. The
-    // twin rule refuses that move, so the title-named duplicate stays as it was
-    // (still listed by `journal_conflicts`). Every other file matches.
-    let migration = journals::migrate_journal_filenames(&store);
-    assert_eq!(migration.migrated, 1);
-    assert_eq!(migration.skipped.len(), 2);
-    assert!(migration
-        .skipped
-        .iter()
-        .any(|skip| skip.file == "Jun 18th, 2026.org" && skip.reason.contains("same-day")));
-    assert!(migration
-        .skipped
-        .iter()
-        .any(|skip| skip.file == "Jun 20th, 2026.md" && skip.reason.contains("already exists")));
+    let migration = journals::migrate_journal_filenames(&store, &listed);
+    assert_eq!((migration.migrated, migration.skipped.len()), (1, 0));
     assert!(new_root.join("journals/Jun 20th, 2026.md").exists());
     assert!(new_root.join("journals/Jun 18th, 2026.org").exists());
     assert!(!new_root.join("journals/2026_06_18.org").exists());
@@ -573,8 +565,10 @@ fn failed_journal_repair_restores_legacy_filename() {
     let (root, store) = fixture("journal-repair-rollback");
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("journals/Jun 18th, 2026.md"), "- preserve\n").unwrap();
+    let listed = journals::journal_filename_migrations(&store);
     store.inject_fault(FaultPoint::MidStepIoAt(0));
-    assert_eq!(journals::migrate_journal_filenames(&store).migrated, 0);
+    let migration = journals::migrate_journal_filenames(&store, &listed);
+    assert_eq!(migration.migrated, 0);
     assert_eq!(
         fs::read(root.join("journals/Jun 18th, 2026.md")).unwrap(),
         b"- preserve\n"
@@ -1417,13 +1411,11 @@ fn merge_keeps_source_preamble_text_and_conflicting_properties() {
     pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
     let merged = std::fs::read_to_string(root.join("pages/dst.md")).unwrap();
     let parsed = tine_core::doc::parse(&merged);
-    assert!(merged.contains("alias:: Destination alias"));
+    assert!(merged.contains("alias:: Destination alias, Source alias"));
     assert!(merged.contains("note:: only source"));
     assert!(!merged.contains("Source page preamble"));
     assert!(
-        parsed.roots.iter().any(|block| {
-            block.raw() == "alias:: Source alias\nfree text before bullets"
-        }),
+        parsed.roots.iter().any(|block| block.raw() == "free text before bullets"),
         "I-4: merge must keep leftover source preamble lines verbatim in one block; exemplar pages::merge_pages"
     );
 }

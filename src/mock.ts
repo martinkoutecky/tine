@@ -10,6 +10,7 @@ import { MARKER_RE } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
 import { canonicalFold, matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
 import { parseJournalWith } from "./journal";
+import { mockJournalFiles } from "./mockJournalFiles";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
  * host's permissive/non-portable Date string parser. Keep the same explicit
@@ -982,8 +983,8 @@ export function mockBackend(): Backend {
     async deletePage(): Promise<void> {
       // no-op in mock
     },
-    async renamePage(): Promise<void> {
-      // no-op in mock
+    async renamePage(): Promise<import("./types").RenameDone> {
+      return "unchanged"; // no-op in mock
     },
     async publishHtml(): Promise<[string, number]> {
       return ["/mock/graph/publish", all.length];
@@ -1141,8 +1142,8 @@ export function mockBackend(): Backend {
     async setPreferredFormat(): Promise<void> {
       // no-op in the browser mock
     },
-    async setJournalTitleFormat(): Promise<import("./types").JournalMigrationResult> {
-      return { migrated: 0, skipped: [] };
+    async setJournalTitleFormat(): Promise<void> {
+      // no-op in the browser mock
     },
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock
@@ -1413,29 +1414,7 @@ export function mockBackend(): Backend {
     async emptyAssetTrash(): Promise<number> {
       return 3;
     },
-    async listJournalConflicts() {
-      // Default demo state is clean: no sticky "duplicate journal day" toast and no
-      // reconcile banner cluttering the marketing screenshots. The reconcile flow is
-      // demoed on demand via `?conflicts` (mirrors the `?big` virtualization gate).
-      if (typeof location !== "undefined" && !/[?&]conflicts\b/.test(location.search)) return [];
-      return [
-        {
-          title: "Friday, 26-06-2026",
-          files: [
-            { name: "2026_06_26.org", path: "journals/2026_06_26.org", preview: "Tried out the Org demo graph in Tine today", canonical: true },
-            { name: "Friday, 26-06-2026.org", path: "journals/Friday, 26-06-2026.org", preview: "something something", canonical: false },
-          ],
-        },
-      ];
-    },
-    async trashJournalFile(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async readJournalFile(name: string): Promise<string> {
-      return name.startsWith("Friday")
-        ? "* something something\n*\n"
-        : "* Tried out the Org demo graph in Tine today\n* TODO follow up on the [[kitchen-sink]] feature tour\nSCHEDULED: <2026-06-27 Sat>\n* DONE loaded the graph and clicked around\n";
-    },
+    ...mockJournalFiles(),
     async getPageByPath(path: string) {
       const page = all.find((p) => mockPagePath(p) === path);
       if (page) return { ...page, id: path };

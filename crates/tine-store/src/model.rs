@@ -7157,10 +7157,10 @@ mod tests {
         .unwrap();
         // A canonical file for another day must be left untouched.
         fs::write(dir.join("journals").join("2026_06_24.org"), "* prior\n").unwrap();
-
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let listed = tine_graph_features::journals::journal_filename_migrations(&store);
         assert_eq!(
-            tine_graph_features::journals::migrate_journal_filenames(&store).migrated,
+            tine_graph_features::journals::migrate_journal_filenames(&store, &listed).migrated,
             1,
             "exactly the title-named file renamed"
         );

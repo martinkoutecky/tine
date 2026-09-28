@@ -23,7 +23,7 @@ it("refuses typing, paste, and move while rename IPC is in flight", async () => 
   }, pages: [{ name: "A", kind: "page", title: "A", preBlock: null, roots: ["a", "b"], format: "md", readOnly: false, guide: false }], feed: ["A"], loaded: true });
   activatePageInstance("A");
   let finish!: () => void;
-  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve("renamed"); }));
   installRenameRefreshHandler(() => expect(doc.pages).toHaveLength(0));
   const pending = renamePageOnDisk("A", "B");
   await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1));
@@ -37,23 +37,25 @@ it("refuses typing, paste, and move while rename IPC is in flight", async () => 
   await expect(createPage("New", { name: "New", kind: "page", title: "New", pre_block: null, blocks: [] })).rejects.toMatchObject({ reason: "graph-rewrite" });
   expect(await deletePage("A", "page")).toBe(false);
   finish();
-  expect(await pending).toBe(true);
+  expect(await pending).toBe("renamed");
   expect(doc.pages).toHaveLength(0);
 });
 
 it("routes both rename controls through the document intent", () => {
   for (const file of ["src/components/Page.tsx", "src/components/ContextMenu.tsx"]) {
     const source = readFileSync(file, "utf8");
-    expect(source).toContain("renamePageOnDisk(");
+    expect(source).toContain("renameOrMergePage(");
     expect(source).not.toContain("backend().renamePage(");
   }
+  // The one app-layer rename entry resolves the collision, then uses the intent.
+  expect(readFileSync("src/graph.ts", "utf8")).toContain("renamePageOnDisk(from, to, target, into)");
 });
 
 it("reports a durable rename failure after the graph owner retires", async () => {
   setToasts([]);
   let rejectRename!: (error: Error) => void;
   const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() =>
-    new Promise<void>((_resolve, reject) => { rejectRename = reject; }));
+    new Promise((_resolve, reject) => { rejectRename = reject; }));
   const pending = renamePageOnDisk("A", "B");
   await vi.waitFor(() => expect(rename).toHaveBeenCalledOnce());
   bumpGraphEpoch();
@@ -71,7 +73,7 @@ it("refuses a page creation that started before the rename freeze", async () => 
   const creating = createPage("New", { name: "New", kind: "page", title: "New", pre_block: null, blocks: [] });
   await vi.waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
   let finishRename!: () => void;
-  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise<void>((done) => { finishRename = done; }));
+  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finishRename = () => done("renamed"); }));
   installRenameRefreshHandler(() => {});
   const renaming = renamePageOnDisk("A", "B");
   await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1));
@@ -79,5 +81,5 @@ it("refuses a page creation that started before the rename freeze", async () => 
   await expect(creating).rejects.toMatchObject({ reason: "graph-rewrite" });
   expect(save).not.toHaveBeenCalled();
   finishRename();
-  expect(await renaming).toBe(true);
+  expect(await renaming).toBe("renamed");
 });

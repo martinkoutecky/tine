@@ -7,7 +7,7 @@ import { graphOwner, readOwned, writeOwned } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer } from "./ui";
 import { pushToast } from "./toasts";
-import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler } from "./document";
+import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk } from "./document";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
@@ -226,6 +226,48 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
 }
 
 installRenameRefreshHandler(refreshAfterRename);
+
+export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled";
+
+/** Rename a page; when `to` reaches one other page (its file, or the owner of
+ *  that alias), ask to merge into it as OG Logseq does (GH #327,
+ *  `merge-pages!`): the backend appends the source's blocks, unites aliases,
+ *  rewrites references and trashes the source in one transaction; a `from`
+ *  with no file only has its references repointed. `cancelled`: the user
+ *  declined or the graph changed before anything was written. The other
+ *  outcomes are `renamePageOnDisk`'s; `renameOutcomeMessage` words them.
+ *  Backend errors reject. Cost: one or two name resolutions, a confirm dialog
+ *  when merging, plus the rename. */
+export async function renameOrMergePage(from: string, to: string, target?: PageTarget): Promise<RenameOutcome> {
+  const owner = graphOwner();
+  const found = await readOwned(owner, backend().resolvePage(to, "page"));
+  if (found.kind === "stale") return "cancelled";
+  const reached = found.value.kind === "existing" ? (found.value.others.length ? [] : [found.value.id])
+    : found.value.kind === "alias" ? found.value.owners : [];
+  let into: string | undefined;
+  if (reached.length === 1) {
+    const source = target?.path ?? await readOwned(owner, backend().resolvePage(from, target?.pageKind ?? "page"))
+      .then((own) => own.kind !== "stale" && own.value.kind === "existing" ? own.value.id : undefined);
+    if (source !== reached[0]) into = reached[0];
+  }
+  if (into) {
+    const confirmed = await readOwned(owner, backend().confirm(`Page “${to}” already exists. Merge “${from}” into it?`));
+    if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
+  }
+  const done = await renamePageOnDisk(from, to, target, into);
+  return done === "stale" ? "cancelled" : done;
+}
+
+/** The user-facing message for a rename that did not rename, or null. */
+export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | null {
+  switch (outcome) {
+    case "unchanged": return `Nothing renamed: “${to}” is the same page name as “${from}” (page names ignore letter case).`;
+    case "busy": return "Another rename is still rewriting the graph. Try again when it finishes.";
+    case "unflushed": return "Couldn't save pending edits — resolve the conflict before renaming.";
+    case "uncertain": return `The graph changed while renaming “${from}”. Check whether “${to}” exists before trying again.`;
+    default: return null;
+  }
+}
 
 export type JournalTemplateEnsureResult = "ready" | "deferred" | "stale" | { kind: "error"; error: unknown };
 

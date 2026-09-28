@@ -225,6 +225,9 @@ fn crash_feature_worker() {
         "rename" => {
             pages::rename_page_expected(&store, "A", "B", None).unwrap();
         }
+        "rename-merge" => {
+            pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md")).unwrap();
+        }
         "conflict" => {
             let copy = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
             let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", copy)
@@ -251,10 +254,75 @@ fn crash_feature_worker() {
     panic!("I-2: feature fault did not abort; exemplar Transaction::commit");
 }
 
+const RENAME_MERGE_SOURCE: &[u8] = b"type:: note\n\n- moved source [[Old/Kid]]\n";
+
+/// I-2 for `pages::rename_or_merge_page` at one crash boundary, and after the
+/// same merge is retried (`done`): no source block twice in the survivor,
+/// `[[Old]]`/`[[New]]` always resolve to a live page, and every source byte is
+/// in the survivor or in trash. A descendant ref may name `New/Kid` before
+/// its move lands (the plain rename's window); it converges on retry.
+fn rename_merge_boundary_holds(root: &Path, boundary: usize, done: bool) {
+    let at = format!("boundary {boundary}, retried {done}; exemplar pages::rename_or_merge_page");
+    let merged = fs::read_to_string(root.join("pages/New.md")).unwrap();
+    assert!(
+        merged.contains("kept destination"),
+        "I-2: survivor kept at {at}"
+    );
+    for needle in ["moved source", "type:: note"] {
+        assert!(
+            merged.matches(needle).count() <= 1,
+            "I-2: rename-merge duplicated {needle:?} in the survivor at {at}:\n{merged}"
+        );
+    }
+    let source_live =
+        fs::read(root.join("pages/Old.md")).ok().as_deref() == Some(RENAME_MERGE_SOURCE);
+    assert!(
+        source_live
+            || (merged.contains("moved source [[New/Kid]]")
+                && recovery_has(root, RENAME_MERGE_SOURCE)),
+        "I-2: rename-merge source bytes must be live or merged and in trash at {at}:\n{merged}"
+    );
+    let reference = fs::read_to_string(root.join("pages/Ref.md")).unwrap();
+    assert!(
+        reference == "- [[Old]] reference [[Old/Kid]]\n"
+            || reference == "- [[New]] reference [[New/Kid]]\n",
+        "I-2: rename-merge reference rewrite must be whole old/new bytes at {at}"
+    );
+    assert!(
+        !reference.contains("[[Old]]") || source_live,
+        "I-2: [[Old]] must resolve to the live source until its referrers are rewritten at {at}"
+    );
+    let kid = fs::read(root.join("pages/Old___Kid.md"))
+        .ok()
+        .or_else(|| fs::read(root.join("pages/New___Kid.md")).ok());
+    assert_eq!(
+        kid.as_deref(),
+        Some(&b"- kid body\n"[..]),
+        "I-2: descendant kept at {at}"
+    );
+    if done {
+        assert_eq!(merged.matches("moved source").count(), 1,
+            "I-2: retry must leave the source blocks in the survivor exactly once at {at}:\n{merged}");
+        assert!(
+            !root.join("pages/Old.md").exists() && recovery_has(root, RENAME_MERGE_SOURCE),
+            "I-2: retry must finish with the source in trash at {at}"
+        );
+        assert_eq!(
+            reference, "- [[New]] reference [[New/Kid]]\n",
+            "I-2: retry must finish referrers at {at}"
+        );
+        assert!(
+            root.join("pages/New___Kid.md").exists(),
+            "I-2: retry must finish the descendant move at {at}"
+        );
+    }
+}
+
 #[test]
 fn feature_journeys_kill_reopen_keep_content() {
-    for journey in ["merge", "rename", "conflict"] {
-        for boundary in 0..2 {
+    for journey in ["merge", "rename", "rename-merge", "conflict"] {
+        // rename-merge steps: save survivor, rewrite Ref.md, move Old/Kid, trash Old.
+        for boundary in 0..if journey == "rename-merge" { 4 } else { 2 } {
             let root = scratch(journey);
             match journey {
                 "merge" => {
@@ -264,6 +332,21 @@ fn feature_journeys_kill_reopen_keep_content() {
                 "rename" => {
                     fs::write(root.join("pages/A.md"), b"- original page\n").unwrap();
                     fs::write(root.join("pages/Ref.md"), b"- [[A]] reference\n").unwrap();
+                }
+                "rename-merge" => {
+                    fs::write(
+                        root.join("logseq/config.edn"),
+                        b"{:file/name-format :triple-lowbar}\n",
+                    )
+                    .unwrap();
+                    fs::write(root.join("pages/Old.md"), RENAME_MERGE_SOURCE).unwrap();
+                    fs::write(root.join("pages/Old___Kid.md"), b"- kid body\n").unwrap();
+                    fs::write(root.join("pages/New.md"), b"- kept destination\n").unwrap();
+                    fs::write(
+                        root.join("pages/Ref.md"),
+                        b"- [[Old]] reference [[Old/Kid]]\n",
+                    )
+                    .unwrap();
                 }
                 "conflict" => {
                     fs::write(root.join("pages/Foo.md"), b"- mine content\n").unwrap();
@@ -298,6 +381,20 @@ fn feature_journeys_kill_reopen_keep_content() {
                         "I-2: merge must keep both blocks at step {boundary}; exemplar pages::merge_pages");
                     assert!(root.join("pages/src.md").exists() || recovery_has(&root, b"- moved source\n"),
                         "I-2: source must remain live or recoverable at step {boundary}; exemplar pages::merge_pages");
+                }
+                "rename-merge" => {
+                    rename_merge_boundary_holds(&root, boundary, false);
+                    if root.join("pages/Old.md").exists() {
+                        pages::rename_or_merge_page(
+                            &reopened,
+                            "Old",
+                            "New",
+                            None,
+                            Some("pages/New.md"),
+                        )
+                        .unwrap();
+                    }
+                    rename_merge_boundary_holds(&root, boundary, true);
                 }
                 "rename" => {
                     let moved = fs::read(root.join("pages/B.md")).ok();

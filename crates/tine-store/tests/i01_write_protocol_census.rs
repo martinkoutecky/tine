@@ -64,7 +64,8 @@ impl<'ast> Visit<'ast> for Mutations {
                             | "create"
                     ))
                     || (parent == "OpenOptions" && method == "new")
-                    || (parent == "libc" && matches!(method, "syscall" | "renameatx_np"))
+                    || (parent == "libc"
+                        && matches!(method, "syscall" | "renameatx_np" | "renameat"))
                     || (parent == "FileSystem" && method == "MoveFileExW")
                 {
                     self.hits

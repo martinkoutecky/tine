@@ -96,31 +96,105 @@ fn move_at(
     use std::os::unix::ffi::OsStrExt;
     let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
     let to = std::ffi::CString::new(to.as_os_str().as_bytes())?;
+    #[cfg(test)]
+    let refused_for_test = REFUSE_NOREPLACE_FLAG.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    let refused_for_test = false;
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    let result = unsafe {
-        // Android's renameat2 wrapper is unavailable on older API levels.
-        libc::syscall(
-            libc::SYS_renameat2,
-            from_dir,
-            from.as_ptr(),
-            to_dir,
-            to.as_ptr(),
-            libc::RENAME_NOREPLACE as libc::c_uint,
-        )
+    let result = if refused_for_test {
+        -1
+    } else {
+        unsafe {
+            // Android's renameat2 wrapper is unavailable on older API levels.
+            libc::syscall(
+                libc::SYS_renameat2,
+                from_dir,
+                from.as_ptr(),
+                to_dir,
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE as libc::c_uint,
+            )
+        }
     };
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    let result = unsafe {
-        libc::renameatx_np(
-            from_dir,
-            from.as_ptr(),
-            to_dir,
-            to.as_ptr(),
-            libc::RENAME_EXCL as libc::c_uint,
-        ) as libc::c_long
+    let result = if refused_for_test {
+        -1
+    } else {
+        unsafe {
+            libc::renameatx_np(
+                from_dir,
+                from.as_ptr(),
+                to_dir,
+                to.as_ptr(),
+                libc::RENAME_EXCL as libc::c_uint,
+            ) as libc::c_long
+        }
     };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = match refused_for_test {
+        true => io::Error::from_raw_os_error(libc::EINVAL),
+        false => io::Error::last_os_error(),
+    };
+    destination_absent_where_the_flag_is_refused(error, to_dir, &to)?;
+    let result = unsafe { libc::renameat(from_dir, from.as_ptr(), to_dir, to.as_ptr()) };
     (result == 0)
         .then_some(())
         .ok_or_else(io::Error::last_os_error)
+}
+
+/// GH #538 (master 1739c5109a72; Martin's decision B1, 2026-09-24): Android
+/// 11-14 shared storage (MediaProvider's FUSE daemon) and NFS answer the
+/// no-replace flag with `EINVAL` while a plain rename works, so every save,
+/// create and page rename failed there. Only a refusal of the flag itself
+/// (`EINVAL`, `ENOSYS`, `EOPNOTSUPP`/`ENOTSUP`) lets [`move_at`] fall back to a
+/// plain rename, and only after this absence check; an occupied `to` stays
+/// `EEXIST` with nothing moved, and every other failure is returned. Given up
+/// on such storage only: a file an external writer creates at `to` in the
+/// microseconds between the check and the rename is replaced. Windows has no
+/// such refusal on record and keeps its single call.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios"
+))]
+fn destination_absent_where_the_flag_is_refused(
+    error: io::Error,
+    to_dir: std::os::fd::RawFd,
+    to: &std::ffi::CStr,
+) -> io::Result<()> {
+    let refused = [libc::EINVAL, libc::ENOSYS, libc::EOPNOTSUPP, libc::ENOTSUP];
+    if !error
+        .raw_os_error()
+        .is_some_and(|errno| refused.contains(&errno))
+    {
+        return Err(error);
+    }
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    let probe = unsafe {
+        libc::fstatat(
+            to_dir,
+            to.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if probe == 0 {
+        return Err(io::Error::from_raw_os_error(libc::EEXIST));
+    }
+    match io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT) {
+        true => Ok(()),
+        false => Err(error),
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Make this thread's no-replace moves fail as flag-refusing storage does
+    /// (`EINVAL`, GH #538); `no_replace_tests.rs` drives it through the store.
+    pub(crate) static REFUSE_NOREPLACE_FLAG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(windows)]

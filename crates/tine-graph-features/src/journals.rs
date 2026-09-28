@@ -1,7 +1,7 @@
 //! Journal feed, duplicate-day reconciliation, and filename migration. All
 //! reads use the store's area inventory; writes are guarded transactions.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::io;
 
@@ -321,43 +321,133 @@ pub struct MigrationResult {
     pub skipped: Vec<MigrationSkip>,
 }
 
-/// Whether a top-level title-named journal has an available canonical name.
-/// Unreadable scan entries are skipped. Cost O(J).
-pub fn has_journal_filename_migrations(store: &Store) -> bool {
-    let entries = files(store);
-    let existing: HashSet<_> = entries.iter().map(|entry| entry.rel.clone()).collect();
-    let fmt = format(store);
-    entries
-        .iter()
-        .filter(|entry| !entry.rel.contains('/'))
-        .any(|entry| {
-            migration_target(entry, &fmt).is_some_and(|target| !existing.contains(&target))
-        })
+/// A title-named journal file and the date name it would get. Both are file
+/// names inside the journals directory, extension included (never a `/`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JournalFilenameMigration {
+    pub from: String,
+    pub to: String,
 }
 
-/// Best-effort one-file transactions. Occupied targets and same-day twins stay
-/// in place; each eligible file left behind is reported with its reason.
-/// Caller takes the pre-migration backup. Cost O(J + migrated file bytes).
-pub fn migrate_journal_filenames(store: &Store) -> MigrationResult {
-    let entries = files(store);
-    let mut existing: HashSet<_> = entries.iter().map(|entry| entry.rel.clone()).collect();
+/// The journals listing indexed for [`migration_plan`]. Cost O(J) to build.
+struct Listing {
+    entries: Vec<FileEntry>,
+    rels: HashSet<String>,
+    days: BTreeMap<Day, usize>,
+}
+
+impl Listing {
+    fn new(store: &Store) -> Self {
+        let entries = files(store);
+        let rels = entries.iter().map(|entry| entry.rel.clone()).collect();
+        let mut days = BTreeMap::new();
+        for day in entries.iter().filter_map(|entry| entry.day) {
+            *days.entry(day).or_insert(0) += 1;
+        }
+        Self {
+            entries,
+            rels,
+            days,
+        }
+    }
+}
+
+/// The one answer to "may this journal file be renamed to its date name now?"
+/// for [`journal_filename_migrations`] and [`migrate_journal_filenames`]: a
+/// top-level journal whose stem parses as a `:journal/page-title-format` title
+/// gets `to` from `:journal/file-name-format`, unless that file exists,
+/// another journal file (any extension, including a second title) has the
+/// same day, or `to` is not a valid journal file name. `Err` is the reason;
+/// `None` means the file is not a title-named journal. Cost O(log J).
+fn migration_plan(
+    entry: &FileEntry,
+    listing: &Listing,
+    fmt: &JournalFormat,
+    store: &Store,
+) -> Option<Result<String, String>> {
+    if entry.rel.contains('/') {
+        return None;
+    }
+    let target = migration_target(entry, fmt)?;
+    let same_day = entry
+        .day
+        .is_some_and(|day| listing.days.get(&day).copied().unwrap_or(0) > 1);
+    Some(if listing.rels.contains(&target) {
+        Err(format!("target {target} already exists"))
+    } else if same_day {
+        Err("another same-day journal file exists (see duplicate journal days)".to_owned())
+    } else if store.file_id(Area::Journals, &target).is_err() {
+        Err("target filename is invalid".to_owned())
+    } else {
+        Ok(target)
+    })
+}
+
+/// Exactly the renames [`migrate_journal_filenames`] would perform now, given
+/// this list back (see `migration_plan`). Read-only; the Settings panel lists
+/// them and graph open never calls this (master e6f9b6e1ceae). Sorted by
+/// `from`; an unlistable journals directory gives an empty list. Cost
+/// O(J log J) over one directory listing; no file contents are read.
+pub fn journal_filename_migrations(store: &Store) -> Vec<JournalFilenameMigration> {
+    let listing = Listing::new(store);
     let fmt = format(store);
+    listing
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let to = migration_plan(entry, &listing, &fmt, store)?.ok()?;
+            Some(JournalFilenameMigration {
+                from: entry.rel.clone(),
+                to,
+            })
+        })
+        .collect()
+}
+
+/// Best-effort one-file transactions over exactly the `confirmed` proposals
+/// the user saw (from [`journal_filename_migrations`]). Each proposal renames
+/// only when `migration_plan` still gives the same `to` for its `from`;
+/// otherwise it is reported as skipped with the reason. A file not in
+/// `confirmed` is never renamed. References are not rewritten (the name stays
+/// the journal's title). Caller takes the pre-migration backup. Cost
+/// O(J log J + confirmed × J + migrated file bytes).
+pub fn migrate_journal_filenames(
+    store: &Store,
+    confirmed: &[JournalFilenameMigration],
+) -> MigrationResult {
+    let fmt = format(store);
+    let mut listing = Listing::new(store);
     let mut result = MigrationResult::default();
-    for entry in entries.into_iter().filter(|entry| !entry.rel.contains('/')) {
-        let Some(target) = migration_target(&entry, &fmt) else {
-            continue;
-        };
+    for proposal in confirmed {
         let skip = |reason: String| MigrationSkip {
-            file: entry.rel.clone(),
+            file: proposal.from.clone(),
             reason,
         };
-        if existing.contains(&target) {
-            result
-                .skipped
-                .push(skip(format!("target {target} already exists")));
-            continue;
-        }
-        let rev = match store.read(&entry.id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+        let plan = listing
+            .entries
+            .iter()
+            .find(|entry| entry.rel == proposal.from)
+            .map(|entry| {
+                (
+                    entry.id.clone(),
+                    migration_plan(entry, &listing, &fmt, store),
+                )
+            });
+        let entry = match plan {
+            Some((id, Some(Ok(to)))) if to == proposal.to => id,
+            Some((_, Some(Err(reason)))) => {
+                result.skipped.push(skip(reason));
+                continue;
+            }
+            _ => {
+                result
+                    .skipped
+                    .push(skip("changed since it was listed".to_owned()));
+                continue;
+            }
+        };
+        let target = proposal.to.clone();
+        let rev = match store.read(&entry, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((_, rev)) => rev,
             Err(error) => {
                 result
@@ -367,16 +457,15 @@ pub fn migrate_journal_filenames(store: &Store) -> MigrationResult {
             }
         };
         let Ok(to) = store.file_id(Area::Journals, &target) else {
-            result
-                .skipped
-                .push(skip("target filename is invalid".to_owned()));
-            continue;
+            continue; // `migration_plan` already refused an invalid name.
         };
         let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-        tx.move_file(&entry.id, rev, &to, None);
+        tx.move_file(&entry, rev, &to, None);
         match tx_error(tx.commit()) {
             Ok(_) => {
-                existing.insert(target);
+                // The day count is unchanged: the moved file keeps its day.
+                listing.rels.remove(&proposal.from);
+                listing.rels.insert(target);
                 result.migrated += 1;
             }
             Err(error) => {

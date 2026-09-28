@@ -46,7 +46,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         ),
         (
             "rename_page",
-            "tine_graph_features::pages::rename_page_expected",
+            "tine_graph_features::pages::rename_or_merge_page",
         ),
         (
             "copy_guide_into_graph",
@@ -54,7 +54,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         ),
         (
             "set_journal_title_format",
-            "set_journal_page_title_format_and_migrate",
+            "tine_graph_features::config::set_journal_page_title_format",
         ),
         (
             "trash_journal_file",

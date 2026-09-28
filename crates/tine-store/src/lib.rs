@@ -81,6 +81,8 @@ mod atomic_file;
 pub mod cost_counters;
 pub mod directory_durability;
 mod no_replace;
+#[cfg(test)]
+mod no_replace_tests;
 mod path_identity;
 #[cfg(test)]
 mod production_index_guard_tests;
