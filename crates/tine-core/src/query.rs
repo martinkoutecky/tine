@@ -158,9 +158,16 @@ pub fn query_nesting_within_limit(source: &str) -> bool {
     true
 }
 
-/// Result of an advanced (datalog) query: matched groups + which clause heads
-/// ran vs were ignored, so the UI shows "ran X; ignored Y" rather than a blunt
-/// "unsupported". `supported` is false when no supported clause was recognized.
+/// Result of an advanced (datalog) query run over Tine's recognized clause
+/// subset, so the UI shows "ran X; ignored Y" rather than a blunt "unsupported".
+///
+/// `ran` lists the clause heads that were evaluated; `ignored` lists the ones
+/// that were not understood and were DROPPED from the predicate, so when
+/// `ignored` is non-empty `groups` answers a different query than the one
+/// written (usually a broader one) and must be presented as partial.
+/// `supported` is false, and `groups` empty, when no clause was recognized or
+/// when the source was refused before parsing (`ignored` then holds
+/// `"query-too-large"` or `"query-nesting-too-deep"`).
 #[deny(missing_docs)]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AdvancedResult {
@@ -216,7 +223,14 @@ pub struct QueryExportBatch {
     pub omitted_queries: usize,
 }
 
-/// Whether the source uses advanced datalog syntax.
+/// Coarse lexical test for datalog: true when the substring `:find` or `:where`
+/// occurs ANYWHERE in the source (a leading `[:find` included), even inside an
+/// OG string literal or a `[[page]]` ref. So an OG DSL query that merely
+/// mentions `:where` is classified as datalog: `parse_query_source` (the OG
+/// branch of `parse_query_text`) refuses it as "advanced", and
+/// [`query_nesting_within_limit`] treats `;` in it as a comment. This is not
+/// the §7.1 macro discriminator (`parse::advanced_form`, which skips strings
+/// and refs). No size check. O(source length).
 pub fn is_advanced(query_src: &str) -> bool {
     let s = query_src.trim_start();
     s.starts_with("[:find") || s.contains(":where") || s.contains(":find")

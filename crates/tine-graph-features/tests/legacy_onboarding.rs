@@ -132,6 +132,18 @@ fn guide_explains_page_title_identity_and_files_outside_page_directory() {
 }
 
 #[test]
+fn guide_explains_favorites_groups_nesting_and_page_storage() {
+    let tips = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Tips & shortcuts")
+        .expect("tips guide is bundled");
+    assert!(tips.markdown.contains("+ New group"));
+    assert!(tips.markdown.contains("to any depth"));
+    assert!(tips.markdown.contains("tine/favorites:: true"));
+    assert!(tips.markdown.contains("config.edn :favorites"));
+}
+
+#[test]
 fn pdf_guide_explains_conflict_discard_and_crop_cleanup_retry() {
     let pdf = bundled_guide_pages()
         .into_iter()

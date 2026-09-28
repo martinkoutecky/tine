@@ -74,7 +74,7 @@ export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flu
 export { applyGraphChange, installExternalChangeUiHandler } from "./external";
 export { appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, registerPaneRouteProvider, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
-export { emptyPage, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
+export { emptyPage, favoritesArrangementPage, favoritesArrangementBlocks, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
 export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } from "./tree";
 export type { OutlineScope } from "./tree";
 export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, withUndoUnit } from "./history";

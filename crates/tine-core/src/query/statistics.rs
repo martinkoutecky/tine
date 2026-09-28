@@ -131,6 +131,16 @@ pub struct StatisticsFold {
 }
 
 impl StatisticsFold {
+    /// Start a fold for `view`. The view is first replaced by
+    /// [`effective_statistics_view`](super::view::effective_statistics_view)
+    /// (Board default grouping, explicit empty grouping cleared, an implicit
+    /// whole-result `count` when grouping has no aggregate); [`Self::view`]
+    /// returns that effective view.
+    ///
+    /// `Ok(None)` when the effective view requests no aggregate: the caller
+    /// skips statistics and the result carries none. `Err(StatisticsResourceLimit)`
+    /// when the fixed per-aggregate overhead alone exceeds `max_bytes`; the rest
+    /// of `max_bytes` is the budget [`Self::add`] charges new group keys against.
     pub fn new(
         view: &ViewSettings,
         max_bytes: usize,
@@ -171,10 +181,24 @@ impl StatisticsFold {
         }))
     }
 
+    /// The EFFECTIVE view the fold was built for (see [`Self::new`]).
     pub fn view(&self) -> &ViewSettings {
         &self.view
     }
 
+    /// Fold one result row. `values[i]` is the raw value for the effective
+    /// view's i-th aggregate (`None` = absent); the slice must have exactly one
+    /// entry per aggregate: extra entries are ignored, and missing ones are
+    /// neither summed nor counted as skipped. `keys` are the row's group keys:
+    /// the row is counted in EVERY listed group (group counts can sum to more
+    /// than `count`), in no group when `keys` is empty, and `keys` is ignored
+    /// when the view has no grouping or groups by a `formula:` field.
+    ///
+    /// `Err(StatisticsResourceLimit)` when a NEW group key's retained-size
+    /// charge exceeds the remaining budget. The row has then already been added
+    /// to `count`, the overall cells and every group before the failing key;
+    /// there is no rollback, so the caller must discard the fold.
+    /// O(aggregates × keys).
     pub fn add(
         &mut self,
         values: &[Option<String>],
@@ -243,6 +267,12 @@ impl StatisticsFold {
             .is_some_and(|field| field.as_str().starts_with("formula:"))
     }
 
+    /// The wire statistics. Groups are in first-seen order and present only
+    /// when grouping is `Exact`; `None` for no grouping and for `formula:`
+    /// grouping (`UnsupportedFormula`, overall cells still exact). A cell with
+    /// no honest number is a marker: `EmptyGroup` (zero rows in scope),
+    /// `NonNumeric` (rows, but no finite number), `NonFinite` (sum/avg
+    /// overflowed). `DivisionByZero` is never produced here.
     pub fn finish(self) -> QueryStatistics {
         let grouping_status = if self.unsupported_formula() {
             Status::UnsupportedFormula

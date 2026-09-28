@@ -747,7 +747,7 @@ function PageMenu(props: {
   close: (restoreFocus?: boolean) => void;
 }): JSX.Element {
   const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(props.path ? { path: props.path } : {}) });
-  const fav = () => isFavorite(props.name);
+  const fav = () => isFavorite(props.name, props.pageKind);
   const readOnly = () => {
     const page = pageByName(props.name);
     return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;

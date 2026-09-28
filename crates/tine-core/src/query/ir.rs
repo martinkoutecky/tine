@@ -10,10 +10,10 @@
 //!
 //! **The wire format is fixed by SPEC §3.1 and is not a lane's choice.** Every
 //! enum is internally tagged on `kind` with `snake_case` names and every struct
-//! field is `snake_case`, because the frontend mirror in
-//! `src/editor/queryIr.ts` is hand-written against it and pinned by the
-//! golden fixtures in `crates/tine-core/src/query/fixtures/query-ir/` (read from
-//! both sides).
+//! field is `snake_case`, because a hand-written frontend mirror
+//! (`src/editor/queryIr.ts` on master; not yet in og, lane Q4a) is pinned
+//! against it by the golden fixtures in
+//! `crates/tine-core/src/query/fixtures/query-ir/`.
 //!
 //! [`Span`] offsets are **UTF-16 code units** into the original source text: the
 //! consumer is JavaScript, so the conversion from the byte offsets the parsers
@@ -31,9 +31,10 @@ use serde::{Deserialize, Serialize};
 /// cannot render, re-edit or export (Y1), and the way that used to happen was a
 /// second `/\{\{query\b/` regex somewhere the first author never looked.
 ///
-/// The TypeScript twin is `QUERY_MACRO_NAMES` in `src/editor/queryMacroName.ts`,
-/// and `src/queryMacroNameConsistency.test.ts` compares the two literals by
-/// reading THIS file, so the pair cannot drift silently (I-12).
+/// On master the TypeScript twin is `QUERY_MACRO_NAMES` in
+/// `src/editor/queryMacroName.ts`, pinned to this literal by
+/// `src/queryMacroNameConsistency.test.ts` (I-12). og has no TypeScript twin
+/// yet; the frontend lane that adds one must add that consistency test.
 ///
 /// **Order is not semantics.** Readers must match the LONGEST candidate rather
 /// than the first, so that reordering this array can never change which macro a
@@ -483,16 +484,16 @@ impl Filter {
         }
     }
 
-    /// Every `content match` payload in this tree, in depth-first order
-    /// (SPEC §5.10, R3).
+    /// Every `content match` payload (see [`Leaf::match_source`]) in this tree,
+    /// in depth-first order (SPEC §5.10, R3), INCLUDING leaves inside `Off`
+    /// subtrees. Call it on [`Query::evaluable_filter`]'s result to get only the
+    /// payloads that execute.
     ///
-    /// **The Match leaf's payload is the SEARCH QUERY, and it is parsed exactly
-    /// once per execution.** This is the one place the tree is asked which of
-    /// its leaves carry one; the walk (`compiled::CompiledLeaves::for_query`) and
-    /// P1's SQL compiler both read it and both consume the SAME parsed
-    /// `search_query::Matcher` that the parse produces, so neither can end up
-    /// with its own idea of what `foo -draft OR "a b"` means (I-12). Raw FTS
-    /// token syntax is NOT this language.
+    /// A match payload is `crate::search_query` syntax, not raw FTS token
+    /// syntax. This is the one place the tree is asked which of its leaves carry
+    /// one, so an executor should parse each payload once and share the parsed
+    /// matcher rather than re-deriving what `foo -draft OR "a b"` means (I-12).
+    /// No og executor consumes it yet (lane Q2). O(tree size).
     pub fn match_sources(&self) -> Vec<&str> {
         let mut out: Vec<&str> = Vec::new();
         self.for_each_leaf(&mut |leaf| {
@@ -980,9 +981,9 @@ impl Bounds {
     }
 }
 
-/// One query. The TypeScript mirror of this JSON lives in
-/// `src/editor/queryIr.ts` and is pinned by the golden fixtures under
-/// `crates/tine-core/src/query/fixtures/query-ir/`.
+/// One query. Its JSON is pinned by the golden fixtures under
+/// `crates/tine-core/src/query/fixtures/query-ir/` (the TypeScript mirror,
+/// `src/editor/queryIr.ts` on master, is not yet in og).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Query {
     pub anchor: Anchor,
@@ -1009,9 +1010,14 @@ impl Query {
         self.diagnostics.iter().any(|d| !d.disabled)
     }
 
-    /// **Semantic equality** (§3.5). Drops `source`, spans and diagnostic text;
-    /// flattens nested `And`/`Or` of the same kind; removes identity elements;
-    /// keeps child order and `Off` nodes. Round-trip tests compare these.
+    /// **Semantic equality** (§3.5): the stored, editable form round-trip tests
+    /// compare. Sets `source` to `Builder`; drops diagnostic spans, messages and
+    /// suggestions (keeping each diagnostic's `kind` and `disabled`) and `Raw`
+    /// spans. Tree rule: an originally empty `And`/`Or` becomes `True`/`False`;
+    /// nested same-kind `And`/`Or` flatten; single-child groups collapse;
+    /// `Off(Off(x))` becomes `Off(x)`. It does NOT remove identity elements,
+    /// absorb, or fold constants (`And(a, True)` keeps `True`), and it keeps
+    /// child order and `Off` nodes. O(tree size); allocates a copy.
     pub fn normalized(&self) -> Query {
         Query {
             anchor: self.anchor,

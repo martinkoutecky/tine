@@ -140,6 +140,16 @@ fn advanced_form(form: &str) -> bool {
 /// `source.original` holds the exact form slice and `source.og_options` the
 /// opaque map or the empty string. The §4.1 precedence merge of the host
 /// block's `tine.*` properties happens above this, in the command.
+///
+/// Limits (I-22) are not uniform. `Og` and the OG branch of `MacroQuery` apply
+/// the size and nesting limits to the form; `Tql`/`MacroTql` apply the size
+/// limit to the form (nesting is bounded by the TQL parser's recursion limit
+/// and reported as `Syntax`). `Advanced` and the advanced branch of
+/// `MacroQuery` apply **no** limit here: the whole text is stored in
+/// `Source::Advanced.original` and the limits are enforced only at
+/// [`resolve_for_execution`], where an oversize form resolves as unsupported.
+/// The options map of a macro input is never size-checked. Callers admitting
+/// untrusted text should call [`admit_source`](super::admit_source) first.
 pub fn parse_query_input(
     text: &str,
     input: QueryInput,
@@ -272,9 +282,10 @@ pub(crate) fn parse_query_source(query_src: &str, today: JournalDate) -> (Query,
 pub(crate) const ADVANCED_UNRESOLVED_MESSAGE: &str =
     "this is an advanced (datalog) query, not the simple DSL";
 
-/// The message a resolution that could not bind the query reports (§4.4). The
-/// strict no-results behaviour is unchanged: a partially recognized tree is
-/// never run.
+/// The message a resolution that could not bind the query reports (§4.4):
+/// no clause lowered, or the source exceeded the size/nesting limits. A
+/// PARTIALLY recognized form is not this case: it runs the lowered clauses
+/// (see [`resolve_for_execution`]).
 pub(crate) const ADVANCED_UNSUPPORTED_MESSAGE: &str =
     "this advanced query's clauses are not supported, so it returns no results";
 
@@ -316,8 +327,12 @@ impl ResolvedQuery {
         self.today
     }
 
-    /// Whether this binding produced executable IR at all. A refused advanced
-    /// resolution is `false`: it has diagnostics and a report, and no counts.
+    /// Whether this execution may be evaluated: `false` when the advanced
+    /// lowering refused (`report().supported == false`) **or** when the bound
+    /// query carries any enabled diagnostic ([`Query::is_invalid`]): an OG/TQL
+    /// parse error, a size/depth refusal, or datalog that reached the OG parser
+    /// as `Source::Og`. A non-executable query has diagnostics and a report,
+    /// and no counts or explain plan.
     pub fn is_executable(&self) -> bool {
         self.report.supported && !self.query.is_invalid()
     }
@@ -333,11 +348,19 @@ impl ResolvedQuery {
 /// For [`Source::Advanced`] it calls the ONE existing lowerer,
 /// [`advanced_pred`], with the AUTHORED source (`Source::Advanced.original`,
 /// `:query`/`:inputs` and all), the caller's current page, and this execution's
-/// day. The lowering's `ran`/`ignored`/`supported` report is carried through
-/// verbatim, its diagnostics replace the provisional inspection one, and static
-/// (size/depth) diagnostics survive. Missing required inputs or unsupported
-/// clauses keep today's strict no-results behaviour: the filter is
-/// [`Filter::False`] and nothing partial runs.
+/// day, and carries its `ran`/`ignored` report through verbatim. The
+/// provisional inspection diagnostic is removed; static (size/depth)
+/// diagnostics survive.
+///
+/// **Execution is partial:** if at least one clause lowers, the conjunction of
+/// the lowered clauses runs with `supported = true`, and every clause it could
+/// not lower (unsupported patterns, a `?current-page` pattern with no current
+/// page, `:result-transform`) is dropped and listed only in `report.ignored`,
+/// so the answer may be broader than the authored query. Only when no clause
+/// lowers, or the source exceeds the size/nesting limits, is the filter
+/// [`Filter::False`], `supported = false`, and the
+/// `ADVANCED_UNSUPPORTED_MESSAGE` `Syntax` diagnostic added (a size refusal
+/// also lists `query-too-large` in `ignored`).
 ///
 /// For every other source the IR is already the query; only the execution-day
 /// snapshot is added, which is what makes an OG `(between -7d today)` and a TQL

@@ -16,7 +16,7 @@ pub(crate) trait ConfigClient {
 
 impl ConfigClient for Graph {
     fn set_favorites(&self, names: &[String]) -> io::Result<()> {
-        config::set_favorites(&open(self), names)
+        config::set_favorites(&open(self), names, None)
     }
 
     fn set_preferred_workflow(&self, workflow: &str) -> io::Result<()> {

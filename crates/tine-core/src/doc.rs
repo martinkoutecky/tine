@@ -1016,7 +1016,10 @@ fn strip_n_ws(line: &str, n: usize) -> &str {
 /// writes files with NO trailing newline; imposing one would rewrite every file.
 #[derive(Debug, Clone)]
 pub struct SerializeOpts {
-    /// Number of trailing `\n` characters to end the file with.
+    /// Trailing `\n` count to end the file with when the last block does not
+    /// already end in blank lines. When it does (parse gives EOF blank lines to
+    /// the last block), the serializer appends exactly one `\n`, so a detect →
+    /// parse → serialize round trip reproduces the original count.
     pub trailing_newlines: usize,
     /// Emit a blank line between the page-property pre-block and the first block.
     pub blank_after_props: bool,
@@ -1104,7 +1107,12 @@ pub fn serialize(doc: &Document) -> String {
     serialize_with(doc, &SerializeOpts::default())
 }
 
-/// Serialize, reproducing a file's detected formatting (see [`SerializeOpts`]).
+/// Serialize a Markdown [`Document`] from scratch (no source bytes), applying the
+/// three detected knobs in [`SerializeOpts`]: indent unit, blank line after the
+/// page-property preamble, and trailing newlines. Everything else is canonical:
+/// `- ` bullets, continuation lines at indent + two spaces, and LF line endings
+/// (the caller restores CRLF). Not for Org pages. Infallible, pure, O(blocks of
+/// the page).
 pub fn serialize_with(doc: &Document, opts: &SerializeOpts) -> String {
     let mut out: Vec<String> = Vec::new();
     if let Some(pre) = &doc.pre_block {
@@ -1121,7 +1129,11 @@ pub fn serialize_with(doc: &Document, opts: &SerializeOpts) -> String {
         emit_block(block, 0, &opts.indent, &mut out);
     }
     let mut s = out.join("\n");
-    s.push_str(&"\n".repeat(opts.trailing_newlines));
+    // `parse` gives blank EOF lines to the last block's raw, so the body may
+    // already end in them; they then need exactly the one `\n` that `parse`
+    // strips. Appending the detected count again doubled them (2n-1) per save.
+    let tail = s.len() - s.trim_end_matches('\n').len();
+    s.push_str(&"\n".repeat(if tail > 0 { 1 } else { opts.trailing_newlines }));
     s
 }
 

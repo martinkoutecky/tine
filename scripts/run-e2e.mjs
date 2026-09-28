@@ -98,6 +98,8 @@ const suites = {
     ["page-properties", "scripts/e2e-page-properties.mjs", {}],
     ["journal-format", "scripts/e2e-journal-format.mjs", {}],
     ["journal-future-feed", "scripts/e2e-journal-future-feed.mjs", {}],
+    // Needs libfaketime; fails (never skips) naming the remedy when it is absent.
+    ["journal-rollover", "scripts/e2e-journal-rollover.mjs", {}],
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
     ["sheets", "scripts/e2e-sheets.mjs", {}],
     ["formula-builder", "scripts/probe-formula-builder.mjs", {}],

@@ -1,9 +1,17 @@
 // Real-app regression for ADR 0038: one process, two graph windows. Uses only
 // disposable /tmp graphs and an isolated app-data directory.
+//
+// og batches 7-10 (I-20, late landing): an edit typed in one graph and not yet
+// saved when the same window switches to another graph must land in the graph
+// it was typed in, never in the new one, and nothing from the old graph may
+// paint into the window after the switch has settled.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import path from "node:path";
+import { APP_ID } from "./lib/app-identity.mjs";
+import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
 
 const APP = process.env.TINE_APP || "/tmp/tine-multiprocess";
 const TD = process.env.TAURI_DRIVER || "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";
@@ -11,7 +19,7 @@ const WD = process.env.WEBKIT_DRIVER || "/tmp/tine-webdriver/usr/bin/WebKitWebDr
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4454);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4455);
 const WAIT_TIMEOUT = Number(process.env.E2E_WAIT_TIMEOUT_MS || 60_000);
-const ROOT = "/tmp/tine-multigraph-e2e";
+const ROOT = process.env.E2E_TMP_DIR || `/tmp/tine-multigraph-e2e-${process.pid}`;
 const A = `${ROOT}/alpha`;
 const B = `${ROOT}/beta`;
 const XDG = `${ROOT}/xdg`;
@@ -33,6 +41,16 @@ fs.rmSync(ROOT, { recursive: true, force: true });
 seed(A, "ALPHA_SENTINEL", "Alpha Page");
 seed(B, "BETA_SENTINEL", "Beta Page");
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${XDG}/${dir}`, { recursive: true });
+// Both graphs are known, so the in-window graph switcher offers them.
+fs.mkdirSync(`${XDG}/data/${APP_ID}`, { recursive: true });
+fs.writeFileSync(`${XDG}/data/${APP_ID}/tine-settings.json`, JSON.stringify({
+  known_graphs: [{ name: "alpha", path: A }, { name: "beta", path: B }],
+  last_graph_path: A,
+}, null, 2));
+const LATE = "LATE_ALPHA_EDIT";
+const graphFiles = (root) => ["pages", "journals"].flatMap((dir) =>
+  fs.readdirSync(`${root}/${dir}`).map((name) => `${root}/${dir}/${name}`));
+const graphContains = (root, text) => graphFiles(root).filter((file) => fs.readFileSync(file, "utf8").includes(text));
 
 const env = {
   ...process.env,
@@ -61,6 +79,40 @@ await sleep(2500);
 
 let browser;
 const forwarded = [];
+const productFailures = [];
+async function waitForGraphName(name) {
+  await browser.waitUntil(() => browser.execute((wanted) =>
+    document.querySelector(".graph-switch-name")?.textContent?.trim() === wanted, name), {
+    timeout: WAIT_TIMEOUT, interval: 200, timeoutMsg: `the window did not switch to graph ${name}`,
+  });
+}
+async function bodyEventually(text, timeout = 15_000) {
+  const deadline = Date.now() + timeout;
+  let toasts = [];
+  while (Date.now() < deadline) {
+    const state = await browser.execute((wanted) => ({
+      has: document.body.innerText.includes(wanted),
+      toasts: [...document.querySelectorAll(".toast")].map((node) => node.textContent),
+    }), text);
+    toasts = [...new Set([...toasts, ...state.toasts])];
+    if (state.has) return { ok: true, toasts };
+    await sleep(200);
+  }
+  return { ok: false, toasts };
+}
+/** Pick a known graph from this window's graph switcher (in-place switch). */
+async function chooseGraph(root) {
+  await browser.execute(() => document.querySelector(".graph-switch-btn")?.dispatchEvent(
+    new MouseEvent("click", { bubbles: true, button: 0, view: window })));
+  await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".graph-switch-row").length > 0), {
+    timeout: 5000, timeoutMsg: "the graph switcher did not list known graphs",
+  });
+  return browser.execute((target) => {
+    const row = [...document.querySelectorAll(".graph-switch-row")].find((candidate) => candidate.getAttribute("title") === target);
+    row?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, view: window }));
+    return Boolean(row);
+  }, root);
+}
 try {
   browser = await remote({
     hostname: "127.0.0.1",
@@ -81,6 +133,53 @@ try {
     timeout: WAIT_TIMEOUT,
     timeoutMsg: "alpha graph never painted",
   });
+  // ---- I-20: an unsaved edit racing an in-window graph switch -------------
+  // Runs before any peer window exists: after a graph has had a peer window
+  // that WebDriver closed, choosing it in place is a silent no-op on both og
+  // and master (RECEIPT-12E P3), which is not this journey's contract.
+  await openPageByName(browser, "Alpha Page");
+  const alphaBlock = await browser.$("//div[contains(concat(' ', normalize-space(@class), ' '), ' block-content ') and normalize-space(.) = 'Alpha Page body']");
+  await alphaBlock.waitForExist({ timeout: 10_000 });
+  await alphaBlock.click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.keys(["End"]);
+  await browser.keys(` ${LATE}`);
+  // Switch while the edit is still unsaved (no Escape, no wait for the save).
+  const switched = await chooseGraph(B);
+  if (!switched) throw new Error("the beta row was not offered by the graph switcher");
+  await waitForGraphName("beta");
+  // The switched window shows beta's own journal. A feed that fails to load
+  // here is recorded as a product failure and the journey continues.
+  const betaFeed = await bodyEventually("BETA_SENTINEL");
+  if (!betaFeed.ok) productFailures.push(`after the in-place switch the beta window never showed beta's journal; toasts ${JSON.stringify(betaFeed.toasts)}`);
+  // The typed edit lands in alpha's own page file, and nowhere in beta.
+  await browser.waitUntil(() => fs.readFileSync(`${A}/pages/Alpha Page.md`, "utf8").includes(LATE), {
+    timeout: 10_000,
+    timeoutMsg: `the edit typed before the switch never reached alpha: ${JSON.stringify(fs.readFileSync(`${A}/pages/Alpha Page.md`, "utf8"))}; in beta: ${JSON.stringify(graphContains(B, LATE))}`,
+  });
+  await sleep(2000);
+  const leakedFiles = graphContains(B, LATE);
+  if (leakedFiles.length) throw new Error(`the alpha edit landed in beta: ${JSON.stringify(leakedFiles)}`);
+  if (fs.existsSync(`${B}/pages/Alpha Page.md`)) throw new Error("the switch created an Alpha Page in beta");
+  const settled = await browser.execute(() => ({
+    name: document.querySelector(".graph-switch-name")?.textContent?.trim() ?? "",
+    text: document.body.innerText,
+    editing: Boolean(document.querySelector("textarea.block-editor")),
+  }));
+  if (settled.name !== "beta") throw new Error(`the switched window names graph ${JSON.stringify(settled.name)}`);
+  for (const alphaText of [LATE, "Alpha Page body", "ALPHA_SENTINEL"]) {
+    if (settled.text.includes(alphaText)) throw new Error(`alpha content ${JSON.stringify(alphaText)} painted into the beta window after the switch settled`);
+  }
+  // Switching back shows the edit where it was typed.
+  const back = await chooseGraph(A);
+  if (!back) throw new Error("the alpha row was not offered by the graph switcher");
+  await waitForGraphName("alpha");
+  await openPageByName(browser, "Alpha Page");
+  if (!(await bodyEventually(LATE)).ok) throw new Error("the edit is not shown after switching back to alpha");
+  // Leave alpha on its journal, the state the multi-window checks below start from.
+  await openJournals(browser);
+  if (!(await bodyEventually("ALPHA_SENTINEL")).ok) throw new Error("alpha's journal did not return after switching back");
+
   const initial = await browser.getWindowHandles();
   // Tauri exposes the hidden static capture webview as a WebDriver handle too.
   if (initial.length !== 2) throw new Error(`expected main + hidden capture, got ${initial.length}`);
@@ -180,7 +279,9 @@ try {
   const alphaBody = await browser.$("body").getText();
   if (!alphaBody.includes("ALPHA_SENTINEL")) throw new Error("alpha died when beta closed");
 
+  if (productFailures.length) throw new Error(`product failures: ${JSON.stringify(productFailures)}`);
   console.log(JSON.stringify({
+    lateEditLandedInOwnGraph: true,
     graphWindows: handles.length - 1,
     betaName,
     betaTarget,
@@ -191,6 +292,23 @@ try {
     quickCaptureIsolated: true,
     peerCloseKeptAlpha: true,
   }, null, 2));
+} catch (error) {
+  try {
+    console.error("state:", JSON.stringify(await browser.execute(() => ({
+      graph: document.querySelector(".graph-switch-name")?.textContent?.trim() ?? null,
+      title: document.querySelector("h1.page-title")?.textContent ?? null,
+      rows: [...document.querySelectorAll(".graph-switch-row")].map((row) => row.getAttribute("title")),
+      editing: document.querySelector("textarea.block-editor")?.value ?? null,
+      toasts: [...document.querySelectorAll(".toast")].map((node) => node.textContent),
+      body: document.body.innerText.slice(0, 600),
+    }))));
+  } catch {}
+  for (const root of [A, B]) {
+    try {
+      for (const file of graphFiles(root)) console.error(`${file}:`, JSON.stringify(fs.readFileSync(file, "utf8")));
+    } catch {}
+  }
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   for (const child of forwarded) child.kill("SIGKILL");

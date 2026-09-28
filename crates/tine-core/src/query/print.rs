@@ -70,9 +70,14 @@ impl PrintDialect {
 
 /// Print a query in the requested dialect (§4.3, §7.1).
 ///
-/// `view` is explicit because the view directives (`sort-by`, `sample`,
-/// `aggregate`, `group-by`) live outside the filter and are re-emitted into the
-/// OG text when expressible (M15).
+/// `view` is explicit because two view directives, `sort-by` (single key) and
+/// `sample`, live outside the filter and are re-emitted into the OG text (M15).
+/// `aggregate` and `group-by` are NEVER printed: they persist only as
+/// `tine.col-aggregates::` / `tine.group-by::` block properties, which the
+/// caller must write; columns and the view kind likewise. A multi-key sort makes
+/// the OG dialect refuse (`og_expressible` is false). The macro dialects append
+/// the options map verbatim from `query.source.og_options()`, never derived from
+/// `view`; `TqlMacro` ignores `view` entirely.
 ///
 /// `preserve_form` is the **source-preserving** path: a title-only edit must not
 /// convert the author's filter. It re-emits `source.original` plus the changed

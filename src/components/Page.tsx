@@ -73,6 +73,15 @@ function responseMatches(day: number, response: JournalFeedPage): boolean {
   return response.as_of_day === day && localDayKey() === day;
 }
 
+/** A window that has not yet bound a graph (startup, before `load_graph`
+ *  returns) has no journals to read: the backend refuses every graph read with
+ *  missing-graph-binding. That refusal is not a failed read — the bind bumps
+ *  the graph epoch, which re-runs the Journals route loader. So an unbound
+ *  window issues no feed read and reports nothing (og 12e P2). */
+function windowUnbound(): boolean {
+  return backend().graphBindingGeneration() === 0;
+}
+
 function ownerIsLive(owner: JournalsFeedOwner): boolean {
   return graphEpoch() === owner.graphEpoch && owner.isLive();
 }
@@ -102,7 +111,7 @@ let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeed
 
 /** Ensure today's configured template before any feed read for that day. */
 async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<unknown | null> {
-  if (!ownerIsLive(owner)) return null;
+  if (!ownerIsLive(owner) || windowUnbound()) return null;
   const date = new Date();
   const day = localDayKey(date);
   const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
@@ -141,7 +150,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
 async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean, rollover: boolean): Promise<unknown | null> {
   // An already-dead watcher/surface must be entirely inert.  In particular it
   // must not steal the generation from a live request that is about to land.
-  if (!ownerIsLive(owner)) return null;
+  if (!ownerIsLive(owner) || windowUnbound()) return null;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
   const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
   if (!rollover && feedHasActiveEdit()) {
@@ -288,6 +297,9 @@ export function PageView(): JSX.Element {
           setReady(true);
           return;
         } else if (r.kind === "journals") {
+          // Before the window binds its graph there is nothing to read; stay
+          // loading. The bind's epoch bump re-runs this loader.
+          if (untrack(windowUnbound)) return;
           // restartJournalFeed synchronously reads the working set safety gate.
           // Keep those reads out of this route/epoch loader's dependency set:
           // loadFeed replaces doc.feed, and subscribing here would self-reload.
@@ -751,13 +763,20 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     const root = graphMeta()?.root;
     const tabId = router.activeId();
     const intentRevision = router.routeIntentRevision();
+    // The rename's own refresh (`refreshAfterRename`) removes the renamed page
+    // from every tab's history without a navigation intent, so a tab showing it
+    // falls back to its previous entry — any page, not only the journals. That
+    // move is ours, not the user's: while no navigation intent intervened, a tab
+    // that showed the renamed page still belongs to this rename.
+    const routeShowsRenamed = route.kind === "page" && route.name === target.name
+      && route.pageKind === target.pageKind && (target.path === undefined || route.path === target.path);
     const stillOnRenameTab = () => {
       const current = router.route();
       return router.activeId() === tabId
         && router.routeIntentRevision() === intentRevision
         && binding.backendGeneration === captureBinding().backendGeneration
         && graphMeta()?.root === root
-        && (sameRoute(current, route) || current.kind === "journals"
+        && (routeShowsRenamed || sameRoute(current, route) || current.kind === "journals"
           || (current.kind === "page" && current.name === next && current.pageKind === "page"));
     };
     renameSubmitted = true;
@@ -890,14 +909,14 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           </button>
           <button
             class="fav-star"
-            classList={{ active: isFavorite(props.page.name) }}
-            title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
+            classList={{ active: isFavorite(props.page.name, props.page.kind) }}
+            title={isFavorite(props.page.name, props.page.kind) ? "Unfavorite" : "Add to favorites"}
             onClick={() => toggleFavorite(props.page.name, props.page.kind)}
           >
             <svg viewBox="0 0 24 24" class="star-icon" aria-hidden="true">
               <path
                 d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z"
-                fill={isFavorite(props.page.name) ? "currentColor" : "none"}
+                fill={isFavorite(props.page.name, props.page.kind) ? "currentColor" : "none"}
                 stroke="currentColor"
                 stroke-width="1.6"
                 stroke-linejoin="round"

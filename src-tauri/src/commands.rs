@@ -1189,13 +1189,6 @@ fn with_config_store<T>(
 }
 
 #[tauri::command]
-pub(crate) fn set_favorites(names: Vec<String>, state: GraphContext<'_>) -> Result<(), String> {
-    with_config_store(&state, |store| {
-        tine_graph_features::config::set_favorites(store, &names).map_err(|e| e.to_string())
-    })
-}
-
-#[tauri::command]
 pub(crate) fn set_preferred_workflow(
     workflow: String,
     state: GraphContext<'_>,

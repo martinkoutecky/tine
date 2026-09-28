@@ -42,10 +42,10 @@ use commands::{
     rename_page, resolve_block, resolve_blocks, resolve_page, resolve_sync_conflict,
     run_advanced_query, run_graph_search, run_query, save_asset, save_pages, save_pdf_area_image,
     save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
-    set_favorites, set_guide_announced, set_journal_title_format, set_logical_outdenting,
-    set_preferred_format, set_preferred_workflow, set_show_brackets, set_start_of_week,
-    set_timetracking_enabled, stream_asset_path, sync_conflict_diff, tine_open_devtools, tine_quit,
-    trash_asset, trash_journal_file, trash_sync_conflict, write_highlights, write_pdf_view_state,
+    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
+    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
+    stream_asset_path, sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset,
+    trash_journal_file, trash_sync_conflict, write_highlights, write_pdf_view_state,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, diag_private,
@@ -65,7 +65,8 @@ use plugins::{
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
     get_link_first_match, get_smooth_scroll, list_known_graphs, load_session, save_session,
-    set_app_bool, set_app_string, set_capture_enter_files, set_link_first_match, set_smooth_scroll,
+    set_app_bool, set_app_string, set_capture_enter_files, set_favorites, set_link_first_match,
+    set_smooth_scroll,
 };
 use spellcheck::{
     apply_spellcheck, apply_spellcheck_all, list_spellcheck_dictionaries, parse_spellcheck_langs,
