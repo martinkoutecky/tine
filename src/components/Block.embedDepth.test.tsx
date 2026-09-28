@@ -7,6 +7,7 @@ import { loadSingle } from "../document/workingSet";
 import type { BlockDto, PageDto, PageRead, RefGroup } from "../types";
 import { Block } from "./Block";
 import { LinkDepthContext } from "./linkDepth";
+import { OUTLINE_MAX_DEPTH } from "../editor/outline";
 
 let liveGroupBudget = Number.POSITIVE_INFINITY;
 let observedLiveGroups = 0;
@@ -58,6 +59,17 @@ function mountBlock(id: string, initialLinkDepth = 0) {
   ), root);
   return { root, dispose };
 }
+
+it("renders a legal 128-level outline in jsdom without overflowing", () => {
+  let child: BlockDto = { id: "deep-127", raw: "deepest leaf", collapsed: false, children: [] };
+  for (let depth = OUTLINE_MAX_DEPTH - 2; depth >= 0; depth--) {
+    child = { id: `deep-${depth}`, raw: `level ${depth}`, collapsed: false, children: [child] };
+  }
+  loadSingle(page("Deep", [child]));
+  const { root, dispose } = mountBlock(child.id);
+  expect(root.textContent).toContain("deepest leaf");
+  dispose();
+});
 
 function page(name: string, blocks: BlockDto[]): PageDto {
   return { name, title: name, kind: "page", pre_block: null, blocks };

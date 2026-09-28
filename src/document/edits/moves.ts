@@ -5,8 +5,9 @@ import { markDirty, persistTogether, refuseConflictedMove } from "../save/engine
 import { captureBinding, stillBound } from "../../binding";
 import { pushUndo } from "../history";
 import { createSignal } from "solid-js";
-import { rootsOf, nextVisible } from "../tree";
+import { rootsOf, nextVisible, existingSubtreeFits } from "../tree";
 import { topSelected } from "./selection";
+import { pushToast } from "../../toasts";
 
 /** Move a block to be a child of `newParent` (or root of its page) at `index`.
  *  Used by drag-and-drop. */
@@ -18,6 +19,10 @@ export function moveBlockInternal(id: string, newParent: string | null, index: n
   while (p !== null) {
     if (p === id) return;
     p = doc.byId[p].parent;
+  }
+  if (!existingSubtreeFits(id, newParent)) {
+    pushToast("Outline is too deep to move", "error");
+    return false;
   }
   const oldPage = node.page;
   const newPage = newParent ? doc.byId[newParent].page : oldPage;
@@ -49,6 +54,7 @@ export function moveBlockInternal(id: string, newParent: string | null, index: n
   );
   if (newPage !== oldPage) void persistTogether([oldPage, newPage], "move-blocks", [[oldPage, newPage]]);
   else markDirty(oldPage, "move-blocks");
+  return true;
 }
 
 /** Move a block under `newParent` (or, when `newParent` is null, to the roots of
@@ -69,6 +75,10 @@ export async function moveBlock(
   while (p !== null) {
     if (p === id) return;
     p = doc.byId[p].parent;
+  }
+  if (!existingSubtreeFits(id, newParent)) {
+    pushToast("Outline is too deep to move", "error");
+    return false;
   }
   const oldPage = node.page;
   // A root drop has no parent to read the page from — use the explicit target
@@ -122,6 +132,7 @@ export async function moveBlock(
   } else {
     markDirty(oldPage, ["move-blocks", "save-block"]);
   }
+  return true;
 }
 
 /** Move a block up/down among its siblings (mod+Up/Down). Keyed <For> keeps the

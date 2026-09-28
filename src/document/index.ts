@@ -79,7 +79,7 @@ export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } fro
 export type { OutlineScope } from "./tree";
 export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, withUndoUnit } from "./history";
 export type { HistoryRouteContext } from "./history";
-export { deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineChildren, mergeWithPrev, outdentBlock, replaceChildOrders, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
+export { deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineChildren, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
 export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste";
 export { appendToTodayJournal, captureToPage } from "./edits/capture";
 export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, pageHeaderProperties, promotePagePreamble, readPageProperties, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedDeep, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";

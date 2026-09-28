@@ -53,14 +53,14 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
   if (!page || !pageWritable(name)) return false;
   if (page.roots.length) {
     // Append after the last top-level block (end of the page).
-    insertOutlineAfter(page.roots[page.roots.length - 1], nodes);
+    if (!insertOutlineAfter(page.roots[page.roots.length - 1], nodes)) return false;
   } else {
     // Empty (or brand-new) page: seed an empty anchor root, append after it, then
     // drop the anchor — reuses insertOutlineAfter's subtree creation rather than a
     // bespoke root builder. One undo unit: the anchor/insert/delete sequence used
     // to push three undo entries, so one undo left the anchor + row behind
     // (Phase-6 review finding, validated).
-    withUndoUnit("capture", [name], () => {
+    const inserted = withUndoUnit("capture", [name], () => {
       const anchor = freshId();
       setDoc(
         produce((s) => {
@@ -69,9 +69,11 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
         })
       );
       markDirty(name, "insert-blocks");
-      insertOutlineAfter(anchor, nodes);
+      if (!insertOutlineAfter(anchor, nodes)) return false;
       deleteBlock(anchor);
+      return true;
     });
+    if (!inserted) return false;
   }
   const saved = await flushPage(name);
   return owner() && saved;

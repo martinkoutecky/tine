@@ -29,6 +29,7 @@ import { setToasts, toasts } from "../toasts";
 import { observeMatrixDimensions } from "./matrix";
 import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
+import { OUTLINE_MAX_DEPTH, outlineDepth } from "../editor/outline";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -344,6 +345,29 @@ describe("sheet structural mutations", () => {
 
     undo();
     expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("refuses a structural paste that fits the source but exceeds the populated target depth", async () => {
+    loadStructuralPasteDoc();
+    const byId = { ...doc.byId };
+    let parent = "s11c";
+    for (let i = 0; i < OUTLINE_MAX_DEPTH - 5; i++) {
+      const id = `deep-${i}`;
+      byId[parent] = { ...byId[parent], children: [id] };
+      byId[id] = { id, raw: `level ${i}`, collapsed: false, parent, page: "Sheet", children: [] };
+      parent = id;
+    }
+    setDoc({ ...doc, byId });
+    const copied = { kind: "range", gridId: "src", anchor: { row: 0, col: 0 }, focus: { row: 1, col: 1 } } as const;
+    const { text } = sheetSelectionText(copied);
+    await copySheetSelection(copied);
+    const copiedOutline = structuralSheetPasteNode(text);
+    expect(copiedOutline).not.toBeNull();
+    expect(outlineDepth([copiedOutline!])).toBeGreaterThan(OUTLINE_MAX_DEPTH - 4);
+    const before = pageToDto("Sheet");
+    expect(splatStructuralSheetSelection({ kind: "cell", gridId: "target", row: 0, col: 0 }, text)).toBeNull();
+    expect(pageToDto("Sheet")).toEqual(before);
+    expect(toasts().some((toast) => toast.message.includes("too deep"))).toBe(true);
   });
 
   it("splat appends exactly the missing rows when the footprint extends past the grid", async () => {

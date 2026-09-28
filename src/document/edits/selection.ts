@@ -1,4 +1,4 @@
-import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf, indexInSiblings } from "../tree";
+import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf, indexInSiblings, existingSubtreeFits } from "../tree";
 import { doc, setDoc } from "../model";
 import { createSignal, createRoot, createMemo } from "solid-js";
 import { endEdit, editingId } from "../../editorController";
@@ -13,6 +13,7 @@ import { markDirty, persistTogether } from "../save/engine";
 import { moveBlockInternal } from "./moves";
 import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
+import { pushToast } from "../../toasts";
 
 installClearOutlineSelection(() => clearSelection());
 // I-20: selected ids name blocks of the bound graph; a same-id block in the next
@@ -183,6 +184,10 @@ export function indentSelection() {
   const destPage = doc.byId[newParent].page;
   const same = ids.filter((id) => doc.byId[id]?.page === destPage);
   if (!same.length) return;
+  if (same.some((id) => !existingSubtreeFits(id, newParent))) {
+    pushToast("Outline is too deep to indent", "error");
+    return;
+  }
   pushUndo("indent-sel", [destPage]);
   for (const id of same) moveBlockInternal(id, newParent, doc.byId[newParent].children.length);
   writeCollapsed(newParent, false);

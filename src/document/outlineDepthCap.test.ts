@@ -8,7 +8,7 @@ import { exportOpml } from "../editor/exportOpml";
 import { initParser } from "../render/parse";
 import { doc } from "./model";
 import { pageToDto } from "./convert";
-import { loadFeed, pageByName, insertOutlineAfter, insertOutlineChildren, replaceEmptyBlockWithOutline, captureToPage, blockSubtreeMarkdown, buildClipboardPayload, exportNodesFor, resetStore } from ".";
+import { loadFeed, pageByName, insertOutlineAfter, insertOutlineChildren, insertEmptyChildBlock, replaceEmptyBlockWithOutline, replaceChildOrders, splitBlock, captureToPage, blockSubtreeMarkdown, buildClipboardPayload, exportNodesFor, indentBlock, moveBlock, resetStore } from ".";
 
 // og 15b (I-22 / I-4): the frontend's one outline ceiling is the backend's
 // admission cap. A benign page AT the cap loads, serializes, exports and
@@ -44,6 +44,10 @@ function subtreeSize(): number {
 }
 
 describe("outline depth cap", () => {
+  it("matches the 128-level master ceiling", () => {
+    expect(OUTLINE_MAX_DEPTH).toBe(128);
+  });
+
   it("mirrors the Rust admission cap", async () => {
     const { readFileSync } = await import("node:fs");
     const rust = readFileSync(new URL("../../crates/tine-store/src/model.rs", import.meta.url), "utf8");
@@ -82,8 +86,8 @@ describe("outline depth cap", () => {
 
     // Children of a root land at depth 2.
     expect(insertOutlineChildren(host, deepOutline(OUTLINE_MAX_DEPTH))).toBeNull();
-    expect(insertOutlineAfter(host, deepOutline(OUTLINE_MAX_DEPTH + 1))).toBe(host);
-    expect(replaceEmptyBlockWithOutline(empty, deepOutline(OUTLINE_MAX_DEPTH + 1))).toBe(empty);
+    expect(insertOutlineAfter(host, deepOutline(OUTLINE_MAX_DEPTH + 1))).toBeNull();
+    expect(replaceEmptyBlockWithOutline(empty, deepOutline(OUTLINE_MAX_DEPTH + 1))).toBeNull();
     expect(subtreeSize()).toBe(before);
 
     expect(insertOutlineChildren(host, deepOutline(OUTLINE_MAX_DEPTH - 1))).not.toBeNull();
@@ -100,6 +104,31 @@ describe("outline depth cap", () => {
     expect(() => insertOutlineAfter(host, nodes)).not.toThrow();
     expect(insertOutlineChildren(host, nodes)).toBeNull();
     expect(subtreeSize()).toBe(before);
+  });
+
+  it("indent and reparent refuse a subtree that would cross the cap", async () => {
+    loadFeed([page("Deep", [
+      { id: id(900), raw: "host", collapsed: false, children: [] },
+      ...deepDto(OUTLINE_MAX_DEPTH),
+    ])]);
+    const [host, deep] = pageByName("Deep")!.roots;
+    const before = pageToDto("Deep");
+    expect(indentBlock(deep, 0)).toBe(false);
+    expect(await moveBlock(deep, host, 0)).toBe(false);
+    expect(pageToDto("Deep")).toEqual(before);
+  });
+
+  it("child creation and sheet reparenting refuse a 129th outline level", () => {
+    loadFeed([page("Deep", [
+      ...deepDto(OUTLINE_MAX_DEPTH),
+      { id: id(900), raw: "spare", collapsed: false, children: [] },
+    ])]);
+    const leaf = id(OUTLINE_MAX_DEPTH);
+    const before = pageToDto("Deep");
+    expect(insertEmptyChildBlock(leaf, 0)).toBeNull();
+    expect(splitBlock(leaf, 0, true, true)).toBe(false);
+    expect(replaceChildOrders({ [leaf]: [id(900)] })).toBe(false);
+    expect(pageToDto("Deep")).toEqual(before);
   });
 
   it("parses no outline from text past the source ceiling", () => {

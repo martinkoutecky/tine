@@ -114,7 +114,8 @@ export async function installFileDrop(): Promise<() => void> {
         if (storedAssets) reportStaleAsset();
         return;
       }
-      withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
+      const inserted = withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
+      if (!inserted) { pushToast("Dropped files could not be inserted at this outline depth.", "error"); return; }
       pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
     } catch (e) {
       pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");

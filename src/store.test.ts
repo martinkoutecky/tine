@@ -302,7 +302,7 @@ describe("ordered list (logseq.order-list-type)", () => {
     const [target, untouched] = dto.blocks.map((block) => block.id);
     const untouchedBefore = pageToDto("Test")!.blocks[1].raw;
 
-    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }]);
+    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }])!;
 
     expect(blockProperty(pasted, "logseq.order-list-type")).toBe("number");
     expect(pageToDto("Test")!.blocks.find((block) => block.id === pasted)!.raw).toBe(`pasted\n${ORD}`);
@@ -317,7 +317,7 @@ describe("ordered list (logseq.order-list-type)", () => {
     const last = replaceEmptyBlockWithOutline(target, [
       { raw: "first", children: [] },
       { raw: "second", children: [] },
-    ]);
+    ])!;
 
     expect(blockProperty(target, "logseq.order-list-type")).toBe("number");
     expect(blockProperty(last, "logseq.order-list-type")).toBe("number");
@@ -331,7 +331,7 @@ describe("ordered list (logseq.order-list-type)", () => {
     const untouchedBefore = pageToDto("Test")!.blocks.find((block) => block.id === untouched)!.raw;
 
     await (moveBlock as (...args: unknown[]) => Promise<void>)(source, null, 2, "Test", target);
-    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }]);
+    const pasted = insertOutlineAfter(target, [{ raw: "pasted", children: [] }])!;
 
     expect(doc.byId[source].raw).toBe(`move me\n${ORG_ORD}`);
     expect(doc.byId[pasted].raw).toBe(`pasted\n${ORG_ORD}`);
@@ -1429,7 +1429,7 @@ describe("undo / redo", () => {
     const [a, b] = dto.blocks;
 
     expect(() =>
-      withUndoUnit("throwing", ["Test"], () => {
+    withUndoUnit("throwing", ["Test"], () => {
         setRaw(a.id, "ONE");
         setRaw(b.id, "TWO");
         throw new Error("boom");
@@ -1441,6 +1441,21 @@ describe("undo / redo", () => {
     undo();
     expect(doc.byId[a.id].raw).toBe("one");
     expect(doc.byId[b.id].raw).toBe("two");
+  });
+
+  it("withUndoUnit rolls back a callback that returns false", () => {
+    const dto = load([blk("one"), blk("two")]);
+    const [a, b] = dto.blocks;
+    const result = withUndoUnit("refused", ["Test"], () => {
+      setRaw(a.id, "ONE");
+      setRaw(b.id, "TWO");
+      return false;
+    });
+    expect(result).toBe(false);
+    expect(doc.byId[a.id].raw).toBe("one");
+    expect(doc.byId[b.id].raw).toBe("two");
+    undo();
+    expect(doc.byId[a.id].raw).toBe("one");
   });
 
   it("withUndoUnit redo works after undo", () => {

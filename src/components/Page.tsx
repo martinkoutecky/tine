@@ -733,7 +733,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     // clicking could only ever re-focus that indented block, never give them a new
     // unindented last block. Stacking empty last blocks is intentionally allowed.
     const id = insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
-    startEditing(id, 0, null, editSurface());
+    if (id) startEditing(id, 0, null, editSurface());
+    else pushToast("Could not add a block to this page.", "error");
   };
   // A page emptied of its last block (explicit Delete bypasses the Backspace
   // last-block guard) would render nothing to type into. Re-seed the phantom empty

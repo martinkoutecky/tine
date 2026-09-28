@@ -334,6 +334,8 @@ function applyEntry(e: UndoEntry): UndoEntry {
   return inverse;
 }
 
+/** Group a synchronous edit into one undo step. A thrown error or literal
+ * `false` restores the pre-edit snapshot before returning/throwing. */
 export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
   if (graphRewriteFrozen()) return undefined as T;
   if (pages.some((page) => pageByName(page) && !pageWritable(page))) return undefined as T;
@@ -344,19 +346,23 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
   const tagBefore = lastUndoTag;
   pushUndo(tag, pages);
   undoSuppressionDepth++;
-  try {
-    return fn();
-  } catch (err) {
-    undoSuppressionDepth--;
+  const rollback = () => {
     const entry = undoStack[undoStack.length - 1];
     if (entry) applyEntry(entry);
     undoStack.length = 0;
     undoStack.push(...undoBefore);
     redoStack = redoBefore;
     lastUndoTag = tagBefore;
+  };
+  try {
+    const result = fn();
+    if (result === false) rollback();
+    return result;
+  } catch (err) {
+    rollback();
     throw err;
   } finally {
-    if (undoSuppressionDepth > 0) undoSuppressionDepth--;
+    undoSuppressionDepth--;
   }
 }
 

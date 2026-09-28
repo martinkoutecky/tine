@@ -15,11 +15,10 @@ export interface OutlineNode {
   children: OutlineNode[];
 }
 
-/** The one outline nesting ceiling, 1-based and inclusive: mirrors Rust
- *  `PARSE_INPUT_MAX_DEPTH` (tine-store model.rs), which admits pages at parse
- *  and save. Every frontend outline inserter refuses a result deeper than this,
- *  so recursive consumers never see more (I-22); a page at the cap stays legal. */
-export const OUTLINE_MAX_DEPTH = 512;
+/** One-based outline nesting ceiling shared with Rust page admission and save.
+ *  Inserters, indent and reparenting refuse a deeper result. Callouts, quote
+ *  markers and inline delimiters have independent parser safety ceilings. */
+export const OUTLINE_MAX_DEPTH = 128;
 /** Longest outline text parsed (UTF-16 units). A UTF-8 file is never shorter in
  *  bytes, so this cannot refuse anything the 64 MiB file admission accepts. */
 export const OUTLINE_MAX_SOURCE_CHARS = 64 * 1024 * 1024;

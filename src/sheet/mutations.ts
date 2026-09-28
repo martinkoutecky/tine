@@ -1,4 +1,4 @@
-import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
+import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, outlineFits, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
 import { clipboardWriteRevision, copyRich } from "../clipboard";
 import { captureBinding, stillBound } from "../binding";
 import { isSheetCellHidden, joinProps, splitProps } from "../editor/properties";
@@ -504,10 +504,11 @@ export function wrapCompactGridCell(cellId: string): string | null {
 export function appendSheetCellChild(cellId: string): string | null {
   const node = docNode(cellId);
   if (!node || blockPageReadOnly(cellId)) return null;
-  return withUndoUnit("sheet:add-child-bullet", [node.page], () => {
-    if (isCompactGridCell(cellId) && !wrapCompactGridCell(cellId)) return null;
-    return insertEmptyChildBlock(cellId, docNode(cellId)?.children.length ?? 0);
+  const result = withUndoUnit("sheet:add-child-bullet", [node.page], () => {
+    if (isCompactGridCell(cellId) && !wrapCompactGridCell(cellId)) return false;
+    return insertEmptyChildBlock(cellId, docNode(cellId)?.children.length ?? 0) ?? false;
   });
+  return result || null;
 }
 
 export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "right"): boolean {
@@ -715,6 +716,13 @@ export function splatStructuralSheetSelection(
   const anchor = { row: rect.top, col: rect.left };
   const height = rows.length;
   const width = Math.max(...rows.map((row) => row.children.length));
+  // Every destination cell is two levels below the grid; its imported child
+  // starts three levels below. Check all cells before creating rows or clearing
+  // any populated destination.
+  if (rows.some((row) => row.children.some((cell) => cell.children.length && !outlineFits(sel.gridId, cell.children, 3)))) {
+    pushToast("Pasted outline is too deep", "error");
+    return null;
+  }
   const result =
     withSheetUndo(sel.gridId, "sheet:paste-splat", () => {
       if (!ensureGridRows(sel.gridId, anchor.row + height - 1)) return false;
