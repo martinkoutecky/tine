@@ -5,6 +5,7 @@ icon:: 🧭
 	- Each page is read-only here. Use **Copy the guide into your graph** on any Guide page when you want an editable, interlinked sandbox under `tine-guide/`.
 - ## Start here
   - [[tine-guide/Features/Sheets]] — create grids, tables, boards, queries, and formulas over ordinary bullets.
+  - [[tine-guide/Features/Queries]] — keep live lists of matching blocks and pages with simple or advanced queries.
   - [[tine-guide/Features/Formulas]] — build read-only computed columns with the visual formula editor.
   - [[tine-guide/Features/Quick capture]] — set up a global capture box that files notes into your graph.
   - [[tine-guide/Features/PDF annotation]] — highlight PDFs and turn those highlights into linked note blocks.
