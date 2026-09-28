@@ -825,6 +825,8 @@ pub struct GraphMeta {
     pub macros: std::collections::HashMap<String, String>,
     /// `:feature/enable-timetracking?` effective value; default true.
     pub enable_timetracking: bool,
+    /// `:feature/enable-search-remove-accents?` effective value; default true.
+    pub enable_search_remove_accents: bool,
     /// `:ui/show-brackets?` effective value; default true.
     pub show_brackets: bool,
     /// `:shortcut/doc-mode-enter-for-new-block?` effective value; default false.
@@ -921,6 +923,7 @@ impl GraphMeta {
             preferred_format: config.preferred_format.ext().to_string(),
             macros: config.macros.clone(),
             enable_timetracking: config.enable_timetracking,
+            enable_search_remove_accents: config.enable_search_remove_accents,
             show_brackets: config.show_brackets,
             doc_mode_enter_for_new_block: config.doc_mode_enter_for_new_block,
             logical_outdenting: config.logical_outdenting,

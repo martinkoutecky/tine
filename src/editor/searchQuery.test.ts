@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { SEARCH_SYNTAX, canonicalFold, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
+import { SEARCH_SYNTAX, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
+import { searchFold } from "./searchFold";
 
 // Mirrors crates/tine-core/src/search_query.rs tests — keep the two in sync.
 const hit = (q: string, text: string) =>
-  matcherMatches(parseSearchQuery(q), canonicalFold(text), text);
+  matcherMatches(parseSearchQuery(q), searchFold(text), text);
 
 describe("searchQuery parser (#44)", () => {
   it("executes every example displayed by Ctrl K syntax help", () => {
@@ -91,7 +92,12 @@ describe("searchQuery parser (#44)", () => {
     expect(hit("Cafe\u0301", "Café")).toBe(true);
     expect(hit("가", "\u1100\u1161")).toBe(true);
     expect(hit("i\u0307", "İ")).toBe(true);
-    expect(hit("cafe", "café")).toBe(false);
+    expect(hit("cafe", "café")).toBe(true);
+    expect(hit("lodz", "Łódź")).toBe(true);
+    expect(hit("елка", "ёлка")).toBe(true);
+    expect(hit("か", "が")).toBe(false);
+    expect(hit("и", "й")).toBe(false);
+    expect(hit("कु", "क")).toBe(false);
     expect(hit("/Café/", "Cafe\u0301")).toBe(false);
     expect(matchHighlight(parseSearchQuery("Résumé"), "\u{1F9E0} Re\u0301sume\u0301"))
       .toEqual({ start: 3, len: 8 });
@@ -99,6 +105,35 @@ describe("searchQuery parser (#44)", () => {
       .toEqual([{ start: 0, end: 3 }]);
     expect(matchHighlights(parseSearchQuery("i\u0307"), "İ"))
       .toEqual([{ start: 0, end: 1 }]);
+    expect(matchHighlights(parseSearchQuery("가"), "ㄱㅏ"))
+      .toEqual([{ start: 0, end: 2 }]);
+    expect(matchHighlights(parseSearchQuery("cafe"), "🧠 cafe\u0301 café"))
+      .toEqual([{ start: 3, end: 8 }, { start: 9, end: 13 }]);
+  });
+
+  it("mirrors master's accent and letter-mark examples with a graph opt-out", () => {
+    for (const [raw, plain] of [
+      ["Příliš žluťoučký kůň", "prilis zlutoucky kun"],
+      ["γειά", "γεια"], ["שָׁלוֹם", "שלום"], ["مَرْحَبًا", "مرحبا"],
+      ["Øresund", "oresund"], ["Đà Nẵng", "da nang"], ["Ｔｉｎｅ", "tine"],
+    ]) expect(searchFold(raw), raw).toBe(searchFold(plain));
+    for (const [raw, plain] of [["が", "か"], ["कु", "क"], ["й", "и"]])
+      expect(searchFold(raw), raw).not.toBe(searchFold(plain));
+    const off = parseSearchQuery("cafe", false);
+    expect(matcherMatches(off, searchFold("café", false), "café")).toBe(false);
+    expect(matcherMatches(parseSearchQuery("café", false), searchFold("cafe\u0301", false), "cafe\u0301")).toBe(true);
+    expect(matchHighlights(off, "café")).toEqual([]);
+    expect(searchFold("Ｔｉｎｅ", false)).toBe("tine");
+  });
+
+  it("keeps erased accent terms false when positive and true when excluded", () => {
+    const mark = "\u0301";
+    expect(simpleTerm(parseSearchQuery(mark))).toBeNull();
+    expect(hit(mark, "anything")).toBe(false);
+    expect(hit(`${mark} alpha`, "alpha")).toBe(false);
+    expect(hit(`${mark} OR alpha`, "alpha")).toBe(true);
+    expect(hit(`alpha -${mark}`, "alpha")).toBe(true);
+    expect(parseSearchQuery(`-${mark}`).kind).toBe("empty");
   });
 
   it("compiles friendly search to ordinary query DSL and preserves saved source losslessly", () => {

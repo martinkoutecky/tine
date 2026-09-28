@@ -6,6 +6,8 @@ import type { Format } from "./types";
 import { focusedPaneId, layoutPaneIds, paneRouter } from "./panes";
 import { sameRoute } from "./router";
 import { captureBinding, stillBound } from "./binding";
+import { searchSubstringSpans } from "./editor/searchQuery";
+import { searchRemoveAccents } from "./ui";
 
 export interface InPageFindMatch {
   blockId: string;
@@ -101,17 +103,14 @@ export function inPageFindPreservesEditorBlur(): boolean {
   return state.preserveEditorBlur();
 }
 
-export function findTextOccurrences(text: string, query: string): { start: number; end: number }[] {
+/** Non-overlapping original UTF-16 ranges using the caller's graph fold policy.
+ * Empty query has no matches. The mapped substring scan costs O(text × query)
+ * plus deduplication across candidate spans. */
+export function findTextOccurrences(text: string, query: string, removeAccents: boolean): { start: number; end: number }[] {
   if (!query) return [];
-  const haystack = text.toLocaleLowerCase();
-  const needle = query.toLocaleLowerCase();
   const out: { start: number; end: number }[] = [];
-  let from = 0;
-  while (from <= haystack.length) {
-    const idx = haystack.indexOf(needle, from);
-    if (idx === -1) break;
-    out.push({ start: idx, end: idx + query.length });
-    from = idx + Math.max(needle.length, 1);
+  for (const span of searchSubstringSpans(text, query, Number.POSITIVE_INFINITY, removeAccents)) {
+    if (!out.length || span.start >= out[out.length - 1].end) out.push(span);
   }
   return out;
 }
@@ -120,6 +119,7 @@ export function collectInPageFindMatches(
   blocks: readonly InPageFindBlock[],
   query: string,
   format: Format = "md",
+  removeAccents = true,
 ): InPageFindMatch[] {
   const q = query.trim();
   if (!q) return [];
@@ -127,7 +127,7 @@ export function collectInPageFindMatches(
   const walk = (bs: readonly InPageFindBlock[]) => {
     for (const b of bs) {
       const text = cachedRenderedBlockText(b.id, b.raw, format);
-      findTextOccurrences(text, q).forEach((m, ordinalInBlock) => {
+      findTextOccurrences(text, q, removeAccents).forEach((m, ordinalInBlock) => {
         out.push({ blockId: b.id, ordinalInBlock, start: m.start, end: m.end });
       });
       walk(b.children);
@@ -140,6 +140,7 @@ export function collectInPageFindMatches(
 function currentMatchesFor(query: string): InPageFindMatch[] {
   const q = query.trim();
   if (!q) return [];
+  const removeAccents = searchRemoveAccents();
   state.surfaceRevision();
   const out: InPageFindMatch[] = [];
   const walk = (ids: readonly string[], format: Format) => {
@@ -147,7 +148,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
       const n = docNode(id);
       if (!n) continue;
       const text = cachedRenderedBlockText(id, n.raw, format);
-      findTextOccurrences(text, q).forEach((m, ordinalInBlock) => {
+      findTextOccurrences(text, q, removeAccents).forEach((m, ordinalInBlock) => {
         out.push({ blockId: id, ordinalInBlock, start: m.start, end: m.end });
       });
       walk(n.children, format);
@@ -160,7 +161,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
       const surfaceId = element.dataset.inpageFindSurface;
       if (!surfaceId) continue;
       const text = searchableTextForRoot(element);
-      findTextOccurrences(text, q).forEach((match, ordinalInBlock) => {
+      findTextOccurrences(text, q, removeAccents).forEach((match, ordinalInBlock) => {
         out.push({
           blockId: `surface:${surfaceId}`,
           surfaceId,
@@ -428,7 +429,7 @@ function textRanges(root: HTMLElement, query: string): Range[] {
     return null;
   };
   const ranges: Range[] = [];
-  for (const m of findTextOccurrences(text, q)) {
+  for (const m of findTextOccurrences(text, q, searchRemoveAccents())) {
     const a = pointForStart(m.start);
     const b = pointForEnd(m.end);
     if (!a || !b) continue;

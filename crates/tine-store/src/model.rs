@@ -1089,10 +1089,18 @@ impl ReadSnapshot {
         explain: bool,
     ) -> tine_core::query_plan::QueryExecution {
         match scope {
-            Some(scope) => {
-                crate::query_plan::QueryPlan::friendly_for_page(source, block_limit, scope)
-            }
-            None => crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit),
+            Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
+                source,
+                block_limit,
+                scope,
+                self.config.enable_search_remove_accents,
+            ),
+            None => crate::query_plan::QueryPlan::friendly_with_policy(
+                source,
+                page_limit,
+                block_limit,
+                self.config.enable_search_remove_accents,
+            ),
         }
         .execute_with_explain(
             self,
@@ -3754,10 +3762,18 @@ impl Graph {
         explain: bool,
     ) -> tine_core::query_plan::QueryExecution {
         match scope {
-            Some(scope) => {
-                crate::query_plan::QueryPlan::friendly_for_page(source, block_limit, scope)
-            }
-            None => crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit),
+            Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
+                source,
+                block_limit,
+                scope,
+                self.current_config().enable_search_remove_accents,
+            ),
+            None => crate::query_plan::QueryPlan::friendly_with_policy(
+                source,
+                page_limit,
+                block_limit,
+                self.current_config().enable_search_remove_accents,
+            ),
         }
         .execute_with_explain(&self.test_read_snapshot(), || false, explain)
     }

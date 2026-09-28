@@ -430,7 +430,7 @@ pub(crate) enum WorkspaceSaveOutcome {
     PublishedUnsynced,
 }
 
-fn atomic_write_workspaces_with_sync(
+fn atomic_write_json_with_sync(
     path: &std::path::Path,
     data: &str,
     sync: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
@@ -438,13 +438,13 @@ fn atomic_write_workspaces_with_sync(
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let parent = path.parent().ok_or("workspace registry has no parent")?;
+    let parent = path.parent().ok_or("JSON file has no parent")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("workspaces.json");
+        .unwrap_or("data.json");
     let tmp = parent.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
     let result = (|| -> std::io::Result<()> {
         let mut file = std::fs::OpenOptions::new()
@@ -472,7 +472,7 @@ fn atomic_write_workspaces(
     path: &std::path::Path,
     data: &str,
 ) -> Result<WorkspaceSaveOutcome, String> {
-    atomic_write_workspaces_with_sync(
+    atomic_write_json_with_sync(
         path,
         data,
         tine_store::directory_durability::sync_directory_entry,
@@ -549,28 +549,41 @@ pub(crate) fn load_session(
     Ok(std::fs::read_to_string(path).ok())
 }
 
+/// Durably replace the bound graph's app-data session JSON with unvalidated
+/// `data`: unique temp, file fsync, rename, then directory fsync. No bound graph
+/// or any I/O failure returns an error. A post-rename directory-sync error is
+/// also returned although the new file is already visible; its power-loss
+/// durability is uncertain. Synchronous; O(data bytes) and two syncs.
 #[tauri::command]
 pub(crate) fn save_session(
     data: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    // Unique temp name per write so two concurrent saves (a burst of tab actions)
-    // can't clobber each other's temp file before the rename.
-    static SEQ: AtomicU64 = AtomicU64::new(0);
     let slot = slot_for_context(&state)?;
-    let p = session_path(&app, &slot.root_key).ok_or("no app-data dir")?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let path = session_path(&app, &slot.root_key).ok_or("no app-data dir")?;
+    atomic_write_session(&path, &data)
+}
+
+fn atomic_write_session(path: &std::path::Path, data: &str) -> Result<(), String> {
+    atomic_write_session_with_sync(
+        path,
+        data,
+        tine_store::directory_durability::sync_directory_entry,
+    )
+}
+
+fn atomic_write_session_with_sync(
+    path: &std::path::Path,
+    data: &str,
+    sync: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
+) -> Result<(), String> {
+    match atomic_write_json_with_sync(path, data, sync)? {
+        WorkspaceSaveOutcome::Durable => Ok(()),
+        WorkspaceSaveOutcome::PublishedUnsynced => {
+            Err("session directory sync failed after publication".into())
+        }
     }
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = p.with_extension(format!("json.tmp{seq}"));
-    // The rename replaces the session atomically, but without fsync this is not
-    // a guarantee that the newest session survives a power loss.
-    std::fs::write(&tmp, data.as_bytes()).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -578,12 +591,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn session_save_syncs_published_file_and_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions").join("session.json");
+        atomic_write_session_with_sync(&path, "new tabs", |parent| {
+            assert_eq!(parent, path.parent().unwrap());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "new tabs");
+            Ok(())
+        })
+        .unwrap();
+        let error = atomic_write_session_with_sync(&path, "newer tabs", |_| {
+            Err(std::io::Error::other("directory sync failed"))
+        })
+        .unwrap_err();
+        assert!(error.contains("directory sync failed"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "newer tabs");
+    }
+
+    #[test]
     fn workspace_sync_failure_after_rename_reports_publication_and_allows_next_save() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("workspaces.json");
         let first =
             r#"{"version":1,"activeId":"a","workspaces":[{"id":"a","name":"First","blob":{}}]}"#;
-        let outcome = atomic_write_workspaces_with_sync(&path, first, |_| {
+        let outcome = atomic_write_json_with_sync(&path, first, |_| {
             Err(std::io::Error::other("injected directory sync I/O failure"))
         })
         .unwrap();

@@ -4,6 +4,7 @@ import { setToasts, toasts } from "./toasts";
 import { backend } from "./backend";
 import { resetStore } from "./document";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
+import { mainRouter } from "./panes";
 import type { PaneSnapshot } from "./router";
 import { applySidebarSession, favoritesSectionExpanded, recentSectionExpanded, rightSidebar, parseStoredSidebarItems, openBlockInSidebar, openPageInSidebar, recentPages, setRecentPages, setRightSidebar, setFavoritesSectionExpanded, setRecentSectionExpanded } from "./ui";
 
@@ -49,6 +50,34 @@ describe("persisted split session", () => {
     finish(JSON.stringify(old));
     await pending;
     expect(recentPages()).toEqual([{ name: "New graph", kind: "page" }]);
+    vi.restoreAllMocks();
+  });
+
+  it("does not overwrite live sidebar or recent changes when startup restore finishes late", async () => {
+    let finish!: (raw: string) => void;
+    const old = { ...buildPersistedSession(), recentPages: [{ name: "Saved", kind: "page" as const }], rightSidebar: true };
+    vi.spyOn(backend(), "loadSession").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = restoreSession();
+    setRecentPages([{ name: "Live", kind: "page" }]);
+    finish(JSON.stringify(old));
+    await pending;
+    expect(recentPages()).toEqual([{ name: "Live", kind: "page" }]);
+    vi.restoreAllMocks();
+  });
+
+  it("refuses a late restore after a route changes away and back to identical state", async () => {
+    let finish!: (raw: string) => void;
+    const saved = { ...buildPersistedSession(), recentPages: [{ name: "Saved", kind: "page" as const }] };
+    vi.spyOn(backend(), "loadSession").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const initial = JSON.stringify(buildPersistedSession());
+    const pending = restoreSession();
+    mainRouter().openPage("Temporary", "page");
+    resetPaneLayoutToSingle(journals());
+    setRecentPages(JSON.parse(initial).recentPages);
+    expect(JSON.stringify(buildPersistedSession())).toBe(initial);
+    finish(JSON.stringify(saved));
+    await pending;
+    expect(recentPages()).not.toEqual(saved.recentPages);
     vi.restoreAllMocks();
   });
 

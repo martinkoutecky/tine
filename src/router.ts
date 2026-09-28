@@ -600,14 +600,21 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // instead of growing after the scroll. See AstBody / docs/adr (P1 lazy body).
     renderedBlocks.add(liveId() ?? target.block);
     openPageTarget(target);
+    const binding = captureBinding();
+    const tabId = activeId();
+    const intent = routeIntentRevision();
+    const openedRoute = route();
+    const current = () => stillBound(binding) && activeId() === tabId
+      && routeIntentRevision() === intent && sameRoute(route(), openedRoute);
     // Let the page render, then scroll + briefly highlight the target block.
     let tries = 0;
     const tick = () => {
-      if (typeof document === "undefined") return;
+      if (!current()) return;
       const id = liveId();
       if (id) renderedBlocks.add(id);
+      const scroller = mainScroller();
       const el = id
-        ? document.querySelector(`.ls-block[data-block-id="${id}"]`)
+        ? scroller?.querySelector(`.ls-block[data-block-id="${id}"]`)
         : null;
       if (el) {
         el.scrollIntoView({ block: "center", behavior: "smooth" });

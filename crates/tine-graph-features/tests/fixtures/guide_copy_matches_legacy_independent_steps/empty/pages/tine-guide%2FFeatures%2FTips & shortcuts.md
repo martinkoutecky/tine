@@ -8,6 +8,7 @@ icon:: ⌨️
 	- Use **Search syntax** for phrases, alternatives, exclusions, and regular expressions. Choose **Open all results** to keep the complete search in a graph-specific tab instead of choosing only one hit.
 	- That result tab can switch between **Search**, **List**, **Table**, and **Board** without changing what matched. Rename it when the search is worth keeping: Tine turns it into an ordinary query page in your graph. The compact filter button handles friendly fields and date ranges; **Query builder** opens the deeper visual editor when needed.
 	- Page-title matching keeps exact, prefix, substring, and fuzzy results in that order. Repeated choices may break ties inside one class using device-local history; disable or reset this under Search settings if you prefer fixed ordering.
+	- The quick switcher, page search, suggestions, and find-in-page ignore accents, case, and compatibility-width differences by default: `cafe` finds `café`, `lodz` finds `Łódź`, and `Tine` finds `Ｔｉｎｅ`. Marks that form another letter stay significant (`か` and `が` differ). To require accents in these searches, set `:feature/enable-search-remove-accents? false` in `logseq/config.edn`. This changes matching only; page names and Markdown keep their original spelling.
 - ## Create one yourself
 	- 1. Press **Ctrl+K**.
 	- 2. Type part of a page name, a block phrase, or a command such as `Open Guide`.
@@ -37,6 +38,7 @@ icon:: ⌨️
 	- Renaming a page to the name of another existing page offers to **merge** them, as Logseq does: the blocks move to the end of the page that remains, the aliases join, links to the old name point to it, and the merged file goes to the graph trash (recoverable).
 	- Tine saves pending edits before a rename. A page whose edits cannot be saved stops the rename only if the rename would change that page, or its unsaved text mentions the old name; the message names it. Other pages keep their unsaved edits through the rename. A page named by `title::`, or in Org by `#+TITLE:`, gets the new name in that line.
 	- **Carry unfinished tasks** forward into today (from the command palette) — the last 7 / 30 / 365 days, optionally with their context.
+	- **Export to PDF…** saves pending page edits before preparing the printout. If a page cannot be saved, Tine stops the export and shows an error so the PDF does not silently omit your changes.
 	- Select several task bullets and press **Ctrl/Cmd+Enter** to advance each one through your workflow in a single Undo step. The selection toolbar can also wrap selected text as a page link or inline code.
 	- **Namespaces**: name a page `Project/Roadmap` and it nests under `Project` in the sidebar. This page lives under `Features`.
 	- **Page names and files**: put `title:: Project/Roadmap` above the first bullet to give an existing page that name, even when its filename differs. Tine keeps the file at its existing path; links and page search use the title. Markdown and Org pages in other graph folders, such as `archive/`, are pages too. New pages get portable filenames, including names with punctuation.

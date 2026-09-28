@@ -430,6 +430,7 @@ export interface GraphMeta {
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")
   macros: Record<string, string>; // :macros — user text-substitution macros ($1..$N)
   enable_timetracking: boolean; // :feature/enable-timetracking?, default true
+  enable_search_remove_accents?: boolean; // :feature/enable-search-remove-accents?, default true
   show_brackets: boolean; // :ui/show-brackets?, default true
   /** :shortcut/doc-mode-enter-for-new-block?, false when absent / older backend. */
   doc_mode_enter_for_new_block?: boolean;

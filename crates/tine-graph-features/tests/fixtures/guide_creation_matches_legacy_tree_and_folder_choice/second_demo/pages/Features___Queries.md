@@ -17,6 +17,7 @@ icon:: 🔎
 		- `(property status active)`, `(page-property type book)`, `(page-tags public)`, `(all-page-tags)` — by block or page properties and tags. A page-level filter returns pages, not blocks.
 		- `(between -7d today)` — journal blocks in a date range; `(between scheduled today +7d)` also works on `scheduled` or `deadline`. Dates are `today`, `yesterday`, `tomorrow`, `2026-01-31`, a journal title like `[[Jan 31st, 2026]]`, or an offset like `-7d`, `+2w`, `-1m`, `+1y` (lowercase units, at most 10,000 years).
 		- `(sort-by priority desc)`, `(sample 10)` — order the results (by `priority`, `page`, `scheduled`, `deadline` or any property), or keep only the first N after sorting.
+		- A bare word or quoted text finds block content; Tine's `(search "cafe")` predicate uses the search syntax. Both respect `:feature/enable-search-remove-accents? false` in `logseq/config.edn`, so `cafe` then differs from `café`.
 	- A block property on the query block itself can set the view: `tine.sort:: priority desc` and `tine.sample:: 10` win over the same directive in the query text.
 - ## Advanced (datalog) queries
 	- `{{query {:query [:find (pull ?b [*]) :where …]}}}` and `#+BEGIN_QUERY` blocks run a supported subset of Logseq's datalog: task markers, priority, page references, properties, page, namespace, page tags, scheduled/deadline and journal date ranges.

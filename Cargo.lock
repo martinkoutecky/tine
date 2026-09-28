@@ -4831,6 +4831,7 @@ dependencies = [
  "sha2",
  "sqlparser",
  "unicode-normalization",
+ "unicode-segmentation",
  "uuid",
 ]
 

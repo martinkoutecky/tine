@@ -10,6 +10,7 @@
 import { backend } from "./backend";
 import { graphOwner, readOwned } from "./owned";
 import { pushToast } from "./toasts";
+import { flushAll } from "./document";
 import type { PrintOpts } from "./types";
 
 /** The default export options (match the Rust `PrintOpts::default`). */
@@ -20,6 +21,7 @@ export const DEFAULT_PRINT_OPTS: PrintOpts = {
 };
 
 export const PRINT_IFRAME_SANDBOX = "allow-same-origin allow-modals";
+let printInProgress = false;
 
 let printRenderers: Promise<{
   katex: typeof import("katex").default;
@@ -102,16 +104,31 @@ export async function preparePrintHtml(html: string): Promise<string> {
   return `<!doctype html>${parsed.documentElement.outerHTML}`;
 }
 
-/** Export a page to PDF via the OS print dialog. Safe to call repeatedly. */
+/** Export through a hidden print frame and the OS dialog. First flush every
+ * dirty page in the graph, costing O(dirty pages) writes. A failed save or any
+ * unresolved conflict shows an error toast and opens no dialog. Missing pages
+ * and backend errors also toast; this function does not reject. It resolves
+ * when the frame is attached, before its load/fonts/print dialog complete.
+ * Concurrent calls while a frame is being prepared or printed are ignored. */
 export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRINT_OPTS): Promise<void> {
+  if (printInProgress) return;
+  printInProgress = true;
   const owner = graphOwner();
   let html: string;
   try {
+    const saved = await flushAll();
+    if (!owner()) { printInProgress = false; return; }
+    if (!saved) {
+      pushToast("PDF export stopped because some page edits could not be saved. Resolve the save conflict and try again.", "error");
+      printInProgress = false;
+      return;
+    }
     const result = await readOwned(owner, backend().pagePrintHtml(name, opts));
-    if (result.kind === "stale") return;
+    if (result.kind === "stale") { printInProgress = false; return; }
     html = await preparePrintHtml(result.value);
-    if (!owner()) return;
+    if (!owner()) { printInProgress = false; return; }
   } catch (e) {
+    printInProgress = false;
     if (!owner()) return;
     // `no-page` (deleted mid-action) or any core error — never leave a dangling frame.
     pushToast(`Couldn't prepare “${name}” for PDF`, "error");
@@ -133,13 +150,17 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
   iframe.srcdoc = html;
 
   let done = false;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
   const cleanup = () => {
     if (done) return;
     done = true;
+    clearTimeout(watchdog);
     iframe.remove();
+    printInProgress = false;
   };
 
   iframe.onload = async () => {
+    if (done) return;
     const win = iframe.contentWindow;
     if (!win) {
       cleanup();
@@ -151,13 +172,11 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
       const fonts = iframe.contentDocument?.fonts;
       if (fonts?.ready) await fonts.ready;
       await new Promise((r) => setTimeout(r, 400));
+      if (done) return;
       if (!owner()) { cleanup(); return; }
       win.addEventListener("afterprint", cleanup, { once: true });
       win.focus();
       win.print();
-      // Fallback: if the engine never fires afterprint (or the user cancels without
-      // one), reclaim the frame after a minute.
-      setTimeout(cleanup, 60_000);
     } catch (e) {
       pushToast("Print failed", "error");
       console.error("iframe print failed");
@@ -165,5 +184,8 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     }
   };
 
+  iframe.onerror = cleanup;
+  // A failed load, stalled font, or missing afterprint must release the guard.
+  watchdog = setTimeout(cleanup, 60_000);
   document.body.appendChild(iframe);
 }

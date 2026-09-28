@@ -25,10 +25,12 @@
  * that carries IDs, never per keystroke or save;
  * it returns null when the target graph changes and strips uncertain IDs on a
  * lookup failure. The caller needs no knowledge of which pages are loaded.
- * `persistentBlockRef` and `persistBlockRefTarget` wait for the target ID's
- * page save before the reference can enter persisted UI or edited content;
- * failure returns null or false. Cost is one target page save, plus a page
- * lookup when the target is not loaded. Callers need no debounce knowledge.
+ * `persistentBlockRef` waits for the target ID's page save before placing a
+ * reference in persisted UI. `persistBlockRefTarget` validates the target
+ * before a source edit, then saves the target ID before the source reference
+ * in one ordered group. A crash between those writes may leave an unreferenced
+ * ID, never a dangling reference. Failure returns null or false. Cost is one
+ * page or grouped save, plus a page lookup when the target is not loaded.
  *
  * Saving. Pages save as whole-page snapshots, never as operations. `markDirty`
  * requires an edit kind and schedules a trailing 400 ms save, capped at 3 s

@@ -18,20 +18,164 @@
 //! quick switcher uses to keep today's fuzzy page-name ranking; any second
 //! term / operator / regex switches both pages and blocks to this grammar.
 
+use std::ops::Range;
+use std::sync::OnceLock;
+use unicode_normalization::char::canonical_combining_class;
 use unicode_normalization::UnicodeNormalization;
+use unicode_segmentation::UnicodeSegmentation;
 
-/// Canonical comparison representation for non-regex search. Lowercasing is
-/// locale-independent; NFC makes canonically equivalent spellings compare
-/// alike without compatibility folding or removing accents.
+fn is_nonspacing_mark(ch: char) -> bool {
+    if ch.is_ascii() {
+        return false;
+    }
+    static MN: OnceLock<regex::Regex> = OnceLock::new();
+    MN.get_or_init(|| regex::Regex::new(r"\A\p{Mn}\z").unwrap())
+        .is_match(ch.encode_utf8(&mut [0; 4]))
+}
+
+fn is_ignorable_mark(ch: char) -> bool {
+    matches!(ch, '\u{034f}' | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180d}'
+        | '\u{180f}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0100}'..='\u{e01ef}')
+}
+
+fn is_cyrillic(ch: char) -> bool {
+    matches!(ch, '\u{0400}'..='\u{052f}' | '\u{1c80}'..='\u{1c8f}'
+        | '\u{2de0}'..='\u{2dff}' | '\u{a640}'..='\u{a69f}')
+}
+
+fn unstroke(ch: char) -> char {
+    match ch {
+        'ł' => 'l',
+        'ø' => 'o',
+        'đ' => 'd',
+        'ħ' => 'h',
+        'ŧ' => 't',
+        other => other,
+    }
+}
+
+fn fold_lowered(lowered: &str) -> String {
+    let mut out = String::with_capacity(lowered.len());
+    let mut base = None;
+    for ch in lowered.nfkd().map(unstroke) {
+        let mn = is_nonspacing_mark(ch);
+        let class = canonical_combining_class(ch);
+        let retained = !mn
+            || (!is_ignorable_mark(ch)
+                && (class == 0
+                    || matches!(class, 8 | 9 | 84 | 91 | 103 | 118 | 129 | 130 | 132)
+                    || base.is_some_and(|b| is_cyrillic(b) && !(b == 'е' && ch == '\u{0308}'))));
+        if retained {
+            out.push(ch);
+        }
+        if class == 0 && !mn {
+            base = Some(ch);
+        }
+    }
+    out.nfc().collect()
+}
+
+/// The one comparison form for non-regex search. It matches master's accent,
+/// compatibility and letter-making-mark policy without changing stored text.
 pub fn canonical_fold(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_ascii_lowercase();
+    }
+    fold_lowered(&value.to_lowercase())
+}
+
+/// OG's explicit `:feature/enable-search-remove-accents? false` behavior:
+/// compatibility forms still fold, but accents remain significant.
+pub fn literal_fold(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_ascii_lowercase();
+    }
+    value.to_lowercase().nfkc().collect()
+}
+
+/// Lowercase plus NFC page identity, without compatibility or accent folding.
+pub fn identity_fold(value: &str) -> String {
     value.to_lowercase().nfc().collect()
 }
 
-/// One AND-term: a substring to test (already canonically folded) plus whether it is
+/// Fold with original UTF-16 spans for search evidence. Each output scalar
+/// points to its whole source grapheme, including discarded combining marks.
+pub fn canonical_fold_with_map(value: &str) -> (String, Vec<Range<usize>>) {
+    fold_with_map(value, true)
+}
+
+/// Mapped comparison form when the graph disables accent removal.
+pub fn literal_fold_with_map(value: &str) -> (String, Vec<Range<usize>>) {
+    fold_with_map(value, false)
+}
+
+fn fold_with_map(value: &str, remove_accents: bool) -> (String, Vec<Range<usize>>) {
+    let lowered = value.to_lowercase();
+    let mut sources = Vec::new();
+    let mut at = 0;
+    for ch in value.chars() {
+        let start = at;
+        at += ch.len_utf16();
+        for _ in ch.to_lowercase() {
+            sources.push(start..at);
+        }
+    }
+    let mut output = String::new();
+    let mut spans = Vec::new();
+    let mut source_at = 0;
+    for grapheme in lowered.graphemes(true) {
+        let count = grapheme.chars().count();
+        let contributors = &sources[source_at..source_at + count];
+        source_at += count;
+        let span =
+            contributors.first().map_or(0, |s| s.start)..contributors.last().map_or(0, |s| s.end);
+        let folded = if remove_accents {
+            fold_lowered(grapheme)
+        } else {
+            grapheme.nfkc().collect()
+        };
+        for ch in folded.chars() {
+            output.push(ch);
+            spans.push(span.clone());
+        }
+    }
+    // Compatibility decomposition can make adjacent raw graphemes compose:
+    // `ㄱㅏ` becomes the Hangul L+V pair and then one syllable. Compose the
+    // complete output and union the contributing original spans.
+    let mut composed = String::new();
+    let mut composed_spans = Vec::new();
+    let mut at = 0;
+    for grapheme in output.graphemes(true) {
+        let count = grapheme.chars().count();
+        let contributors = &spans[at..at + count];
+        at += count;
+        let span =
+            contributors.first().map_or(0, |s| s.start)..contributors.last().map_or(0, |s| s.end);
+        for ch in grapheme.nfc() {
+            composed.push(ch);
+            composed_spans.push(span.clone());
+        }
+    }
+    let output = composed;
+    let spans = composed_spans;
+    debug_assert_eq!(
+        output,
+        if remove_accents {
+            canonical_fold(value)
+        } else {
+            literal_fold(value)
+        }
+    );
+    (output, spans)
+}
+
+/// One AND-term: a substring folded according to the matcher policy, plus whether it is
 /// negated (`-term` → must NOT be present).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
-    /// Lowercase-plus-NFC needle for `visible_lower.contains(..)`.
+    /// Needle folded with the matcher's policy. Compare only with a body folded
+    /// the same way: `canonical_fold` by default, `literal_fold` when accents
+    /// remain significant. `projection().visible_lower` is canonical only.
     pub text: String,
     pub negated: bool,
     /// The term came from a `"quoted phrase"` — an explicit opt-in to the
@@ -73,6 +217,11 @@ pub enum Matcher {
 impl Matcher {
     /// Parse a raw query string into a matcher.
     pub fn parse(query: &str) -> Matcher {
+        Self::parse_with_policy(query, true)
+    }
+
+    /// Parse using the graph's OG accent-removal setting.
+    pub fn parse_with_policy(query: &str, remove_accents: bool) -> Matcher {
         let q = query.trim();
         if q.is_empty() {
             return Matcher::Empty;
@@ -87,7 +236,7 @@ impl Matcher {
                 Err(e) => Matcher::InvalidRegex(e.to_string()),
             };
         }
-        let groups = parse_boolean(q);
+        let groups = parse_boolean(q, remove_accents);
         // A group with no positive term (e.g. the whole query is `-foo`) would
         // match nearly everything — drop it; if none survive, the query is Empty.
         let groups: Vec<AndGroup> = groups
@@ -101,8 +250,10 @@ impl Matcher {
         }
     }
 
-    /// Does `visible` match? `lower` is the pre-folded lowercase-plus-NFC body
-    /// (hot path for boolean terms); `orig` is the original body (needed by regex).
+    /// Does the body match? `lower` must use the same policy as the matcher:
+    /// `canonical_fold` for `parse`/policy true, `literal_fold` for policy false.
+    /// A mismatched fold silently misses accent-bearing terms. `orig` is the
+    /// original body for regex; Empty/InvalidRegex match nothing.
     pub fn matches(&self, lower: &str, orig: &str) -> bool {
         match self {
             Matcher::Regex(re) => re.is_match(orig),
@@ -117,13 +268,13 @@ impl Matcher {
         match self {
             Matcher::Boolean(groups) if groups.len() == 1 && groups[0].len() == 1 => {
                 let t = &groups[0][0];
-                (!t.negated && !t.quoted).then_some(t.text.as_str())
+                (!t.negated && !t.quoted && !t.text.is_empty()).then_some(t.text.as_str())
             }
             _ => None,
         }
     }
 
-    /// Rank a page name (already lowercase-plus-NFC in `lower`, original in `orig`) for
+    /// Rank a page name (already folded in `lower`, original in `orig`) for
     /// the non-simple path: prefix > substring, else `None` if it doesn't match.
     pub fn score_name(&self, lower: &str, orig: &str) -> Option<i32> {
         match self {
@@ -150,7 +301,7 @@ fn group_matches(group: &AndGroup, lower: &str) -> bool {
 
 /// Tokenize + group a boolean query. `OR` (bare, uppercase) starts a new group;
 /// other tokens accumulate into the current group.
-fn parse_boolean(q: &str) -> Vec<AndGroup> {
+fn parse_boolean(q: &str, remove_accents: bool) -> Vec<AndGroup> {
     let tokens = tokenize(q);
     let mut groups: Vec<AndGroup> = Vec::new();
     let mut cur: AndGroup = Vec::new();
@@ -163,7 +314,11 @@ fn parse_boolean(q: &str) -> Vec<AndGroup> {
             continue;
         }
         cur.push(Term {
-            text: canonical_fold(&tok.text),
+            text: if remove_accents {
+                canonical_fold(&tok.text)
+            } else {
+                literal_fold(&tok.text)
+            },
             negated: tok.negated,
             quoted: tok.quoted,
         });
@@ -344,13 +499,124 @@ mod tests {
     }
 
     #[test]
-    fn canonical_unicode_equivalence_does_not_fold_accents() {
+    fn canonical_unicode_equivalence_and_default_accent_fold() {
         assert!(hit("café", "a cafe\u{301} here"));
         assert!(hit("cafe\u{301}", "a café here"));
         assert!(hit("\u{ac00}", "Hangul \u{1100}\u{1161}"));
         assert!(hit("i\u{307}", "\u{130}"));
-        assert!(!hit("cafe", "café"));
+        assert!(hit("cafe", "café"));
+        assert!(hit("lodz", "Łódź"));
+        assert!(hit("елка", "ёлка"));
+        assert!(!hit("か", "が"));
+        assert!(!hit("и", "й"));
+        assert!(!hit("कु", "क"));
         // Regular expressions retain their original-text semantics.
         assert!(!hit("/café/", "cafe\u{301}"));
+    }
+
+    #[test]
+    fn master_accent_fold_policy_keeps_letter_making_marks() {
+        // a3e7bfda9: Latin/Greek/RTL accents, strokes, ignorable marks,
+        // Cyrillic ё, and compatibility width fold; letter-making marks stay.
+        for (raw, plain) in [
+            ("café", "cafe"),
+            ("Příliš žluťoučký kůň", "prilis zlutoucky kun"),
+            ("γειά", "γεια"),
+            ("שָׁלוֹם", "שלום"),
+            ("مَرْحَبًا", "مرحبا"),
+            ("ёлка", "елка"),
+            ("Łódź", "lodz"),
+            ("Øresund", "oresund"),
+            ("Đà Nẵng", "da nang"),
+            ("Ħal", "hal"),
+            ("Ŧ", "t"),
+            ("Ｔｉｎｅ", "tine"),
+            ("a\u{034f}b", "ab"),
+        ] {
+            assert_eq!(canonical_fold(raw), canonical_fold(plain), "{raw:?}");
+        }
+        for (raw, plain) in [
+            ("が", "か"),
+            ("ぱ", "は"),
+            ("क्", "क"),
+            ("कु", "क"),
+            ("กุ", "ก"),
+            ("ກຸ", "ກ"),
+            ("ཀི", "ཀ"),
+            ("й", "и"),
+            ("ї", "і"),
+            ("ў", "у"),
+            ("ѐ", "е"),
+        ] {
+            assert_ne!(canonical_fold(raw), canonical_fold(plain), "{raw:?}");
+        }
+        let (folded, spans) = canonical_fold_with_map("🧠 cafe\u{301} café");
+        assert_eq!(folded, "🧠 cafe cafe");
+        assert_eq!(spans[5], 6..8);
+        assert_eq!(spans[6], 8..9);
+    }
+
+    #[test]
+    fn master_a6_compatibility_fixtures_keep_source_ranges() {
+        // 48321626a/6370058fa fold.rs accepted_a6_fixtures: ligatures,
+        // width, Jamo composition, dotted I and contextual sigma.
+        for (raw, folded, span_at) in [
+            ("ofﬁce", "office", (2, 2..3)),
+            ("😀Ｔｉｎｅ", "😀tine", (1, 2..3)),
+            ("ㄱㅏ", "가", (0, 0..2)),
+            ("İstanbul", "istanbul", (0, 0..1)),
+            ("ΟΣ Σ", "ος σ", (1, 1..2)),
+        ] {
+            let (mapped, spans) = canonical_fold_with_map(raw);
+            assert_eq!(canonical_fold(raw), folded, "{raw:?}");
+            assert_eq!(mapped, folded, "{raw:?}");
+            assert_eq!(spans[span_at.0], span_at.1, "{raw:?}");
+        }
+        assert_ne!(canonical_fold("Straße"), canonical_fold("STRASSE"));
+    }
+
+    #[test]
+    fn master_a6_reordering_and_hangul_fixtures_match_mapped_text() {
+        for (raw, expected) in [
+            ("prefix ㄱ\u{301}ㅏ suffix", "prefix 가 suffix"),
+            ("한글", "한글"),
+            ("Kelvin", "kelvin"),
+            ("Ｐｒｏｊｅｃｔ ｶﾞｲﾄﾞ 豈", "project ガイド 豈"),
+            ("a\u{301}", "a"),
+            ("ΟΣ Σ", "ος σ"),
+        ] {
+            let (mapped, spans) = canonical_fold_with_map(raw);
+            assert_eq!(canonical_fold(raw), expected, "{raw:?}");
+            assert_eq!(mapped, expected, "{raw:?}");
+            assert_eq!(spans.len(), mapped.chars().count(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn config_off_uses_literal_case_and_canonical_equivalence() {
+        let match_off = Matcher::parse_with_policy("cafe", false);
+        assert!(!match_off.matches(&literal_fold("café"), "café"));
+        assert!(Matcher::parse_with_policy("café", false)
+            .matches(&literal_fold("cafe\u{301}"), "cafe\u{301}"));
+        assert_eq!(literal_fold("Ｔｉｎｅ"), "tine");
+        assert_ne!(identity_fold("Ｔｉｎｅ"), identity_fold("Tine"));
+        let (mapped, spans) = literal_fold_with_map("Ｔｉｎｅ");
+        assert_eq!(mapped, "tine");
+        assert_eq!(spans, vec![0..1, 1..2, 2..3, 3..4]);
+    }
+
+    #[test]
+    fn erased_accent_terms_keep_boolean_semantics() {
+        // 6370058fa lib.rs a6_erased_terms_keep_positive_false_and_negative_true_semantics.
+        let mark = "\u{301}";
+        assert_eq!(Matcher::parse(mark).simple_term(), None);
+        assert!(!hit(mark, "anything"));
+        assert!(!hit(&format!("{mark} alpha"), "alpha"));
+        assert!(hit(&format!("{mark} OR alpha"), "alpha"));
+        assert!(hit(&format!("alpha -{mark}"), "alpha"));
+        assert!(matches!(
+            Matcher::parse(&format!("-{mark}")),
+            Matcher::Empty
+        ));
     }
 }

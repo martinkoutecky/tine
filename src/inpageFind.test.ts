@@ -16,6 +16,7 @@ import { focusPane, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import { resetStore } from "./document";
 import { setDoc } from "./document/model";
 import type { PaneSnapshot } from "./router";
+import { setGraphMeta } from "./graphSession";
 
 beforeAll(async () => {
   await initParser();
@@ -37,6 +38,7 @@ const querySnapshot = (): PaneSnapshot => ({
 });
 
 afterEach(() => {
+  setGraphMeta(null);
   clearInPageFindRenderedTextCacheForTests();
   resetRenderedBlockTextCallCountForTests();
   resetStore();
@@ -95,10 +97,22 @@ describe("in-page find model", () => {
   });
 
   it("uses non-overlapping browser-style text occurrences", () => {
-    expect(findTextOccurrences("aaaa", "aa")).toEqual([
+    expect(findTextOccurrences("aaaa", "aa", true)).toEqual([
       { start: 0, end: 2 },
       { start: 2, end: 4 },
     ]);
+  });
+
+  it("finds folded accents and keeps highlights on the original graphemes", () => {
+    expect(findTextOccurrences("🧠 cafe\u0301 café", "cafe", true)).toEqual([
+      { start: 3, end: 8 }, { start: 9, end: 13 },
+    ]);
+  });
+
+  it("honors the graph's accent-removal opt-out", () => {
+    setGraphMeta({ enable_search_remove_accents: false } as never);
+    expect(findTextOccurrences("café", "cafe", false)).toEqual([]);
+    expect(findTextOccurrences("café", "café", false)).toEqual([{ start: 0, end: 4 }]);
   });
 
   it("keeps the same occurrence order and count across a many-block fixture", () => {

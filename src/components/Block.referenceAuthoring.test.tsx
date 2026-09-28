@@ -7,7 +7,7 @@ import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { initParser } from "../render/parse";
-import type { BlockDto, PageDto, PageEntry } from "../types";
+import type { BlockDto, PageDto, PageEntry, PageRead } from "../types";
 import { Block } from "./Block";
 
 beforeAll(() => initParser());
@@ -189,7 +189,7 @@ describe("reference authoring", () => {
     }
   });
 
-  it("does not insert a block reference when the target ID save fails", async () => {
+  it("keeps the paired reference visible for conflict resolution when the grouped save fails", async () => {
     const uuid = "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add";
     vi.spyOn(backend(), "search").mockResolvedValue([{
       page: "Source", kind: "page", blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }], evidence: [],
@@ -210,7 +210,37 @@ describe("reference authoring", () => {
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
       accept(textarea);
       await vi.waitFor(() => expect(backend().savePages).toHaveBeenCalled());
-      expect(doc.byId["reference-authoring"].raw).toBe("((test");
+      expect(doc.byId["reference-authoring"].raw).toBe(`((${uuid})) `);
+      expect(vi.mocked(backend().savePages).mock.calls[0][0].map((item) => item.page.name).sort())
+        .toEqual(["Reference authoring", "Source"]);
+    } finally { dispose(); }
+  });
+
+  it("does not stamp a target ID when the editor intent expires during target lookup", async () => {
+    const uuid = "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add";
+    let finish!: (page: PageRead) => void;
+    vi.spyOn(backend(), "search").mockResolvedValue([{
+      page: "Source", kind: "page", blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }], evidence: [],
+    }]);
+    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
+    loadSingle(page("((test"));
+    startEditing("reference-authoring", 6);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "((test", 6);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
+      accept(textarea);
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      inputAt(textarea, "changed", 7);
+      finish({ id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
+        blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }] });
+      await vi.waitFor(() => expect(pageByName("Source")).toBeTruthy());
+      expect(save).not.toHaveBeenCalled();
+      expect(doc.byId[uuid].raw).toBe("test");
     } finally { dispose(); }
   });
 
