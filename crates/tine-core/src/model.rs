@@ -740,6 +740,8 @@ pub struct GraphMeta {
     pub default_journal_template: Option<String>,
     /// Favorited page names (read from config.edn `:favorites`).
     pub favorites: Vec<String>,
+    /// The page holding the Favorites arrangement (`:tine/favorites-page`).
+    pub favorites_page: Option<String>,
     /// Effective journal title format (`:journal/page-title-format`, default
     /// `MMM do, yyyy`) — so the frontend formats "today" to match the backend.
     pub journal_page_title_format: String,
@@ -845,6 +847,7 @@ impl GraphMeta {
             block_hidden_properties: config.block_hidden_properties.clone(),
             default_journal_template: config.default_journal_template.clone(),
             favorites: config.favorites.clone(),
+            favorites_page: config.favorites_page.clone(),
             journal_page_title_format: journal_format.title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),
             preferred_format: config.preferred_format.ext().to_string(),

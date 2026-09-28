@@ -39,6 +39,8 @@ ensurePageLoaded
 exportNodesFor
 extendFeedForScroll
 extendSelectionTo
+favoritesArrangementBlocks  # why: favorites arrangement read with collapsed:: moved off the raw; batch12c
+favoritesArrangementPage  # why: favorites arrangement page written whole through createPage; batch12c
 feedNames
 finishPageHeaderEdit
 flushAll

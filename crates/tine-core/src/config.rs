@@ -51,6 +51,10 @@ pub struct Config {
     pub default_journal_template: Option<String>,
     /// `:favorites ["Page" …]` — favorited page names (on-disk, graph-portable).
     pub favorites: Vec<String>,
+    /// `:tine/favorites-page "Name"` — the page holding the Favorites arrangement
+    /// (labels, nesting, order). Logseq ignores the key; `:favorites` stays the
+    /// flat membership list Logseq reads.
+    pub favorites_page: Option<String>,
     /// `:journal/file-name-format` — Logseq's journal filename format (cljs-time /
     /// Joda tokens). `None` uses `"yyyy_MM_dd"`. The store compiles a configured
     /// format and uses it to propose names for new journal files.
@@ -153,6 +157,7 @@ impl Default for Config {
             property_pages_excludelist: Vec::new(),
             default_journal_template: None,
             favorites: Vec::new(),
+            favorites_page: None,
             journal_file_name_format: None,
             journal_page_title_format: None,
             preferred_format: crate::model::Format::Md,
@@ -213,6 +218,8 @@ impl Config {
         cfg.default_journal_template =
             nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
+        cfg.favorites_page =
+            string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
         cfg.journal_file_name_format =
             string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
         cfg.journal_page_title_format =
@@ -272,7 +279,7 @@ impl Config {
 /// Index just past the closing quote of an EDN string opening at byte `open` (a
 /// `"`), skipping `\"` / `\\`. Returns end-of-string if unterminated. (`"` is
 /// ASCII → the returned index is a char boundary.)
-fn edn_str_end(s: &str, open: usize) -> usize {
+pub fn edn_str_end(s: &str, open: usize) -> usize {
     let b = s.as_bytes();
     let mut i = open + 1;
     while i < b.len() {

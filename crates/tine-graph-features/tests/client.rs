@@ -295,7 +295,9 @@ fn guide_copy_matches_legacy_independent_steps() {
 fn config_setters_match_legacy_values_and_bytes() {
     type New = fn(&Store) -> std::io::Result<()>;
     let operations: [(&str, New); 11] = [
-        ("favorites", |s| config::set_favorites(s, &["A] B".into()])),
+        ("favorites", |s| {
+            config::set_favorites(s, &["A] B".into()], None)
+        }),
         ("workflow", |s| config::set_preferred_workflow(s, "todo")),
         ("timetracking", |s| {
             config::set_timetracking_enabled(s, false)

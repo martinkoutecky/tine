@@ -6,7 +6,7 @@
 use std::io;
 
 use tine_core::config::{
-    find_keyword, match_close_brace, match_close_bracket, next_value_span, skip_blank,
+    edn_str_end, find_keyword, match_close_brace, match_close_bracket, next_value_span, skip_blank,
 };
 
 use tine_store::{Area, Content, FileId, FileRev, Store, StoreError};
@@ -62,15 +62,20 @@ pub fn custom_css(store: &Store) -> String {
 }
 
 /// Persist the favorites list to `:favorites [...]`, replacing the existing
-/// vector or inserting one, preserving the rest of the file.
-pub fn set_favorites(store: &Store, names: &[String]) -> io::Result<()> {
+/// vector or inserting one, preserving the rest of the file. `page`, when
+/// given, is recorded as `:tine/favorites-page "Name"` in the SAME guarded
+/// write, so membership and the arrangement page's name never land apart.
+pub fn set_favorites(store: &Store, names: &[String], page: Option<&str>) -> io::Result<()> {
     update(store, |content| {
         let mut content = content.to_string();
+        if let Some(page) = page {
+            set_favorites_page(&mut content, page);
+        }
         let vec_str = format!(
             "[{}]",
             names
                 .iter()
-                .map(|n| format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\"")))
+                .map(|n| edn_string(n))
                 .collect::<Vec<_>>()
                 .join(" ")
         );
@@ -94,6 +99,31 @@ pub fn set_favorites(store: &Store, names: &[String]) -> io::Result<()> {
         }
         Ok(content)
     })
+}
+
+fn edn_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// `:tine/favorites-page "Name"`: replace a string value, or insert the key.
+/// Logseq ignores unknown keys, so the file stays Logseq-readable.
+fn set_favorites_page(content: &mut String, page: &str) {
+    const KEY: &str = ":tine/favorites-page";
+    let quoted = edn_string(page);
+    if let Some(start) = find_keyword(content, KEY) {
+        let after = start + KEY.len();
+        let j = skip_blank(content, after);
+        if content.as_bytes().get(j) == Some(&b'"') {
+            let end = edn_str_end(content, j);
+            content.replace_range(start..end, &format!("{KEY} {quoted}"));
+        } else {
+            content.insert_str(after, &format!(" {quoted}"));
+        }
+    } else if let Some(brace) = content.find('{') {
+        content.insert_str(brace + 1, &format!("\n {KEY} {quoted}\n"));
+    } else {
+        *content = format!("{{{KEY} {quoted}}}\n");
+    }
 }
 
 /// Persist the task workflow to `:preferred-workflow :todo`/`:now`, replacing

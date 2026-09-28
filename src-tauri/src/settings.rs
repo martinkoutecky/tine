@@ -724,3 +724,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 }
+
+/// Favorites membership (`:favorites`) and, once the graph has one, the
+/// arrangement page (`:tine/favorites-page`), in one guarded config write.
+#[tauri::command]
+pub(crate) fn set_favorites(
+    names: Vec<String>,
+    page: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::config::set_favorites(&slot.store, &names, page.as_deref())
+        .map_err(|e| e.to_string())
+}

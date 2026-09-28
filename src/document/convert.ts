@@ -4,6 +4,7 @@ import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine } from "../editor/properties";
 import { journalTitle } from "../journal";
+import { rawWithCollapsed } from "./edits/properties";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
 export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
@@ -46,6 +47,20 @@ export function switcherPage(name: string): PageDto {
 
 export function queryWorkspacePage(name: string, raw: string): PageDto {
   return { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw, collapsed: false, children: [] }] };
+}
+
+/** The Favorites arrangement page (family 22): a marker pre-block plus the
+ *  arrangement's bullets, written whole through `createPage`. */
+/** The Favorites arrangement page, whole. Collapse persists as `collapsed::`
+ *  in the raw (the save path writes raw only), as for every other block. */
+export function favoritesArrangementPage(name: string, marker: string, blocks: BlockDto[]): PageDto {
+  const persist = (nodes: BlockDto[]): BlockDto[] => nodes.map((b) =>
+    ({ ...b, raw: rawWithCollapsed(b.raw, b.collapsed, "md"), children: persist(b.children) }));
+  return { name, kind: "page", title: name, pre_block: marker, blocks: persist(blocks) };
+}
+/** Read side: the page's blocks with `collapsed::` left in the flag only. */
+export function favoritesArrangementBlocks(blocks: readonly BlockDto[]): BlockDto[] {
+  return blocks.map((b) => ({ ...b, raw: rawWithCollapsed(b.raw, false, "md"), children: favoritesArrangementBlocks(b.children) }));
 }
 
 export function appendAliasDraft(owner: PageDto, draft: PageDto): PageDto {
