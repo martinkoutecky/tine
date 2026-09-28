@@ -7,6 +7,7 @@ import {
   registerTransientLayer,
 } from "../transientLayers";
 import { CalendarJump } from "./CalendarJump";
+import { bumpGraphEpoch } from "../graphSession";
 
 afterEach(() => {
   clearTransientLayersForTest();
@@ -34,6 +35,23 @@ function lowerSentinel(id: string) {
 }
 
 describe("CalendarJump transient ownership", () => {
+  it("drops old graph journal dots while the calendar stays open", async () => {
+    let resolveOld!: (days: number[]) => void;
+    const days = vi.spyOn(backend(), "journalContentDays")
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+      .mockResolvedValue([]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <CalendarJump />, root);
+    try {
+      root.querySelector<HTMLButtonElement>('button[title="Go to date"]')!.click();
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(1));
+      bumpGraphEpoch();
+      resolveOld([new Date().getFullYear() * 10000 + (new Date().getMonth() + 1) * 100 + 1]);
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(2));
+      expect(root.querySelectorAll(".dp-cell.has-content")).toHaveLength(0);
+    } finally { dispose(); }
+  });
   it("exposes the same date-picker opener for a compact toolbar parent", async () => {
     let openFromOverflow: (() => void) | undefined;
     const root = document.createElement("div");

@@ -1,5 +1,5 @@
 import { journalTitle } from "../../journal";
-import { parseOutline, type OutlineNode } from "../../editor/outline";
+import { OUTLINE_MAX_DEPTH, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
 import { type PageKind } from "../../types";
 import { graphOwner, readOwned } from "../../owned";
 import { pageByName, freshId, setDoc } from "../model";
@@ -40,7 +40,8 @@ export async function captureToPage(title: string, markdown: string): Promise<bo
  *  append and the new-page capture; never clobbers in-progress edits
  *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether it landed. */
 async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNode[]): Promise<boolean> {
-  if (!nodes.length) return false;
+  // Captured blocks land at root level, so the outline's own depth is the result's (I-22).
+  if (!nodes.length || outlineDepth(nodes) > OUTLINE_MAX_DEPTH) return false;
   const owner = graphOwner();
   if (!pageByName(name)) {
     const result = await readOwned(owner, backend().getPage(name, kind));
@@ -52,14 +53,14 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
   if (!page || !pageWritable(name)) return false;
   if (page.roots.length) {
     // Append after the last top-level block (end of the page).
-    insertOutlineAfter(page.roots[page.roots.length - 1], nodes);
+    if (!insertOutlineAfter(page.roots[page.roots.length - 1], nodes)) return false;
   } else {
     // Empty (or brand-new) page: seed an empty anchor root, append after it, then
     // drop the anchor — reuses insertOutlineAfter's subtree creation rather than a
     // bespoke root builder. One undo unit: the anchor/insert/delete sequence used
     // to push three undo entries, so one undo left the anchor + row behind
     // (Phase-6 review finding, validated).
-    withUndoUnit("capture", [name], () => {
+    const inserted = withUndoUnit("capture", [name], () => {
       const anchor = freshId();
       setDoc(
         produce((s) => {
@@ -68,9 +69,11 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
         })
       );
       markDirty(name, "insert-blocks");
-      insertOutlineAfter(anchor, nodes);
+      if (!insertOutlineAfter(anchor, nodes)) return false;
       deleteBlock(anchor);
+      return true;
     });
+    if (!inserted) return false;
   }
   const saved = await flushPage(name);
   return owner() && saved;

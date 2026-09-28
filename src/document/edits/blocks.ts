@@ -10,11 +10,12 @@ import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, remov
 import { pushRawUndo, pushUndo } from "../history";
 import { markDirty, noteTitleIdentityIntent } from "../save/engine";
 import { produce } from "solid-js/store";
-import { type OutlineNode } from "../../editor/outline";
+import { OUTLINE_MAX_DEPTH, outlineDepth, type OutlineNode } from "../../editor/outline";
 import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly, readPropertyValue } from "../../editor/properties";
 import { startEditing, editingId, endEdit } from "../../editorController";
-import { indexInSiblings, rootsOf, OutlineScope, prevVisible } from "../tree";
+import { depthOf, existingSubtreeFits, indexInSiblings, rootsOf, OutlineScope, prevVisible } from "../tree";
 import { existingBlockId } from "./identity";
+import { pushToast } from "../../toasts";
 
 // ---------------------------------------------------------------------------
 // Mutations (each schedules a debounced save of the affected page)
@@ -57,6 +58,10 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
 export function insertEmptyChildBlock(parentId: string, at: number): string | null {
   const parent = doc.byId[parentId];
   if (!parent || !blockWritable(parentId) || at < 0 || at > parent.children.length) return null;
+  if (!outlineFits(parentId, [{ raw: "", children: [] }], 1)) {
+    pushToast("Outline is too deep to insert a child", "error");
+    return null;
+  }
   pushUndo(`insert-child:${parentId}`, [parent.page]);
   const id = freshId();
   const pageName = parent.page;
@@ -84,6 +89,10 @@ export function replaceChildOrders(nextByParent: Record<string, readonly string[
     for (const childId of nextByParent[parentId]) {
       const child = doc.byId[childId];
       if (!child || child.page !== parent.page) return false;
+      if (!existingSubtreeFits(childId, parentId)) {
+        pushToast("Outline is too deep to move", "error");
+        return false;
+      }
     }
   }
   pushUndo("replace-child-orders", [...pages]);
@@ -100,12 +109,18 @@ export function replaceChildOrders(nextByParent: Record<string, readonly string[
   return true;
 }
 
-/** Append parsed outline blocks as children of `parentId`.
- *  Shared by normal editor paste (via parseOutline) and sheet indented paste. */
+/** Whether an outline fits beside `hostId`, or `levelsBelowHost` levels below
+ * it, under the shared depth ceiling. Bounds every recursive outline insert. */
+export function outlineFits(hostId: string, nodes: readonly OutlineNode[], levelsBelowHost = 0): boolean {
+  return !!doc.byId[hostId] && depthOf(hostId) + levelsBelowHost + outlineDepth(nodes) <= OUTLINE_MAX_DEPTH;
+}
+
+/** Append parsed outline blocks as children of `parentId`; null means empty,
+ *  read-only, missing parent, or over-depth refusal. Shared by editor and sheet paste. */
 export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): string | null {
   if (!nodes.length) return null;
   const parent = doc.byId[parentId];
-  if (!parent || !blockWritable(parentId)) return null;
+  if (!parent || !blockWritable(parentId) || !outlineFits(parentId, nodes, 1)) return null;
   const pageName = parent.page;
   let lastId: string | null = null;
   pushUndo("paste-children", [pageName]);
@@ -147,13 +162,20 @@ export function splitBlock(
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
-  pushUndo("split", [node.page]);
   const fmt = formatForBlock(id);
   // The caret offset is in editor-visible space (hidden props aren't shown), so
   // split the visible text and keep the hidden props on the original block.
   const { visible, hidden } = splitProps(node.raw, isBuiltinHidden, fmt);
   const before = visible.slice(0, offset);
   const after = visible.slice(offset);
+  const childSplit = before.trim() === "" && after.trim() !== ""
+    ? keepStartInScope
+    : (node.children.length > 0 && !node.collapsed) || forceChild;
+  if (childSplit && !outlineFits(id, [{ raw: "", children: [] }], 1)) {
+    pushToast("Outline is too deep to insert a child", "error");
+    return false;
+  }
+  pushUndo("split", [node.page]);
   const pageName = node.page;
   // Ordered-list items propagate: a block split off an ordered item is itself
   // ordered (OG inherits `:logseq.order-list-type`), toggleable per-block later.
@@ -222,14 +244,16 @@ export function splitBlock(
   markDirty(pageName, ["save-block", "insert-blocks"]);
 }
 
-/** Tab: make the block the last child of its previous sibling. */
+/** Tab: make the block the last child of its previous sibling. Returns false
+ *  when that would exceed the outline cap; the caller shows the refusal. */
 export function indentBlock(id: string, caretOffset: number) {
   if (!blockWritable(id)) return;
   const i = indexInSiblings(id);
   if (i <= 0) return;
-  pushUndo("indent", [doc.byId[id].page]);
   const sibs = rootsOf(id);
   const newParent = sibs[i - 1];
+  if (!existingSubtreeFits(id, newParent)) return false;
+  pushUndo("indent", [doc.byId[id].page]);
   const pageName = doc.byId[id].page;
   setDoc(
     produce((s) => {
@@ -337,14 +361,14 @@ export function mergeWithPrev(
   return true;
 }
 
-/** Insert a parsed outline (from a paste) as siblings right after `afterId`.
- *  Returns the last top-level inserted block id (to focus). */
-export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): string {
-  if (!nodes.length) return afterId;
+/** Insert parsed outline siblings after `afterId`. Returns the last inserted id
+ *  for focus, or null for empty input, read-only, missing host or excess depth. */
+export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): string | null {
+  if (!nodes.length) return null;
   // Read-only gate at the choke point — file drops (and any future caller)
   // must not mutate a page the round-trip self-check marked read-only
   // (Phase-6 review finding, validated).
-  if (!blockWritable(afterId)) return afterId;
+  if (!blockWritable(afterId) || !outlineFits(afterId, nodes)) return null;
   pushUndo("paste", [doc.byId[afterId].page]);
   const parent = doc.byId[afterId].parent;
   const pageName = doc.byId[afterId].page;
@@ -379,16 +403,18 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
   return lastId;
 }
 
-/** Replace one empty leaf with a parsed outline in one store transaction and one
- * undo entry. Structured/multiline paste uses this instead of insert-then-delete,
- * which could leave a partial import after one Undo. */
-export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): string {
+/** Replace one empty leaf with a parsed outline in one transaction and undo
+ * entry, reusing the host id for the first root and its hidden properties.
+ * Returns the last root id, or null if the host is not empty/writable or the
+ * outline exceeds the cap. */
+export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): string | null {
   const current = doc.byId[id];
-  if (!nodes.length || !current || current.children.length || !blockWritable(id)) return id;
+  if (!nodes.length || !current || current.children.length || !blockWritable(id)) return null;
+  if (!outlineFits(id, nodes)) return null;
   const format = formatForBlock(id);
   const incoming = new Set<string>();
   const split = splitProps(current.raw, isBuiltinHidden, format);
-  if (split.visible.trim()) return id;
+  if (split.visible.trim()) return null;
   pushUndo("paste-replace-empty", [current.page]);
   let lastId = id;
   setDoc(produce((state) => {

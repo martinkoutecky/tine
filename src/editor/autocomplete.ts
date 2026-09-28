@@ -5,6 +5,7 @@ import { TEMPLATE_VARS } from "./templateVars";
 import { isBareTagPrefix, tagRef } from "../tags";
 import { propertyKeyNorm } from "../render/block";
 import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
+import { searchFold } from "./searchFold";
 
 export type TriggerKind =
   | "page"
@@ -338,15 +339,17 @@ function canonicalCompare<T extends NamedAutocompleteItem<unknown>>(a: T, b: T):
 export function orderAcItems<T>(
   matches: readonly NamedAutocompleteItem<T>[],
   createItem: NamedAutocompleteItem<T>,
-  opts: { query: string; policy: LinkAutocompletePolicy },
+  opts: { query: string; policy: LinkAutocompletePolicy; removeAccents?: boolean },
 ): T[] {
   const query = canonicalName(opts.query.trim());
+  const removeAccents = opts.removeAccents !== false;
+  const foldedQuery = searchFold(opts.query.trim(), removeAccents);
   if (!query) return [];
   const exact = matches.filter((match) => canonicalName(match.name) === query).sort(canonicalCompare);
   if (exact.length) return exact.map((match) => match.item);
 
-  const prefix = matches.filter((match) => canonicalName(match.name).startsWith(query)).sort(canonicalCompare);
-  const fuzzy = matches.filter((match) => !canonicalName(match.name).startsWith(query)).sort(canonicalCompare);
+  const prefix = matches.filter((match) => searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);
+  const fuzzy = matches.filter((match) => !searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);
   const ordered = [...prefix, ...fuzzy];
   if (opts.policy === "typed") return [createItem.item, ...ordered.map((match) => match.item)];
   if (opts.policy === "existing") return [...ordered.map((match) => match.item), createItem.item];

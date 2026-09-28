@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import type { PaneSnapshot } from "./router";
-import { buildPersistedSession } from "./session";
+import { buildPersistedSession, restoreSession } from "./session";
 import { resetStore } from "./document";
 import { applySidebarSession, rightSidebar } from "./ui";
+import { setToasts, toasts } from "./toasts";
 import {
   activeWorkspaceId,
   createWorkspace,
@@ -47,6 +48,89 @@ beforeEach(() => {
 });
 
 describe("named workspace switching", () => {
+  it("restores the registry's active workspace after a crash between registry and session saves", async () => {
+    resetPaneLayoutToSingle(pages(["Old session"]));
+    const oldSession = { ...buildPersistedSession(), workspaceId: "old" };
+    resetPaneLayoutToSingle(pages(["Target workspace"]));
+    const targetSession = { ...buildPersistedSession(), workspaceId: "target" };
+    resetPaneLayoutToSingle(journals());
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(JSON.stringify(oldSession));
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1,
+      activeId: "target",
+      workspaces: [
+        { id: "old", name: "Old", blob: oldSession },
+        { id: "target", name: "Target", blob: targetSession },
+      ],
+    }));
+    await restoreSession();
+    expect(activeWorkspaceId()).toBe("target");
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Target workspace", pageKind: "page" });
+  });
+  it("uses the active workspace snapshot when the live session file is missing", async () => {
+    resetPaneLayoutToSingle(pages(["Parked page"]));
+    const parked = buildPersistedSession();
+    resetPaneLayoutToSingle(journals());
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(null);
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1, activeId: "default",
+      workspaces: [{ id: "default", name: "", blob: parked }],
+    }));
+    await restoreSession();
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Parked page", pageKind: "page" });
+  });
+  it("keeps an interphase live edit made after the session read before registry initialization", async () => {
+    resetPaneLayoutToSingle(pages(["Old session"]));
+    const old = { ...buildPersistedSession(), workspaceId: "old" };
+    resetPaneLayoutToSingle(pages(["Parked target"]));
+    const parked = { ...buildPersistedSession(), workspaceId: "target" };
+    resetPaneLayoutToSingle(journals());
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(JSON.stringify(old));
+    let finishRegistry!: (raw: string) => void;
+    const loadRegistry = vi.spyOn(backend(), "loadWorkspaces").mockImplementation(() => new Promise((resolve) => { finishRegistry = resolve; }));
+    const registry = JSON.stringify({
+      version: 1, activeId: "target", workspaces: [
+        { id: "old", name: "Old", blob: old },
+        { id: "target", name: "Target", blob: parked },
+      ],
+    });
+    const pending = restoreSession();
+    await vi.waitFor(() => expect(loadRegistry).toHaveBeenCalledOnce());
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Old session", pageKind: "page" });
+    paneRouter("main").openPage("Live edit", "page");
+    finishRegistry(registry);
+    await pending;
+    expect(loadRegistry).toHaveBeenCalled();
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Live edit", pageKind: "page" });
+    expect(toasts().some((toast) => toast.message.includes("workspace recovery"))).toBe(true);
+    setToasts([]);
+  });
+  it("does not replace an edit between session application and registry initialization", async () => {
+    resetPaneLayoutToSingle(pages(["Old session"]));
+    const old = { ...buildPersistedSession(), workspaceId: "old" };
+    resetPaneLayoutToSingle(pages(["Parked target"]));
+    const parked = { ...buildPersistedSession(), workspaceId: "target" };
+    resetPaneLayoutToSingle(journals());
+    let finishSession!: (raw: string) => void;
+    vi.spyOn(backend(), "loadSession").mockImplementation(() => new Promise((resolve) => { finishSession = resolve; }));
+    const loadRegistry = vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1, activeId: "target", workspaces: [
+        { id: "old", name: "Old", blob: old },
+        { id: "target", name: "Target", blob: parked },
+      ],
+    }));
+    const pending = restoreSession();
+    finishSession(JSON.stringify(old));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Old session", pageKind: "page" });
+    expect(loadRegistry).not.toHaveBeenCalled();
+    paneRouter("main").openPage("Interphase edit", "page");
+    await pending;
+    expect(paneRouter("main").route()).toEqual({ kind: "page", name: "Interphase edit", pageKind: "page" });
+    expect(toasts().some((toast) => toast.message.includes("workspace recovery"))).toBe(true);
+    setToasts([]);
+  });
   it("does not publish a workspace when the live session save fails", async () => {
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
     const saveRegistry = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
@@ -102,6 +186,7 @@ describe("named workspace switching", () => {
     await expect(initializeWorkspaces()).rejects.toThrow("unreadable");
     expect(workspaces()).toEqual([]);
     expect(activeWorkspaceId()).toBe("");
+    expect(buildPersistedSession().workspaceId).toBeUndefined();
   });
 
   it("does not persist a workspace switch queued before a graph reset", async () => {

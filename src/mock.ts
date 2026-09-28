@@ -9,7 +9,8 @@ import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
-import { canonicalFold, matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { searchFold } from "./editor/searchFold";
 import { parseJournalWith } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
 
@@ -636,16 +637,19 @@ type MockBackend = Backend & {
   runQuery(query: string): Promise<RefGroup[]>;
   runAdvancedQuery(query: string): Promise<{ groups: RefGroup[]; ran: string[]; ignored: string[]; supported: boolean }>;
 };
-export function mockBackend(): MockBackend {
-  const all = [...PAGES, ...NAMED];
+export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): MockBackend {
+  const all = [...PAGES, ...NAMED, ...extraPages];
+  // Page ownership uses narrow identity; search membership uses the graph fold.
+  const identity = (name: string) => name.toLowerCase().normalize("NFC");
+  const fold = (text: string) => searchFold(text, removeAccents);
   const find = (name: string) =>
-    all.find((p) => p.name.toLowerCase() === name.toLowerCase()) ?? null;
+    all.find((p) => identity(p.name) === identity(name)) ?? null;
   const mockResolve = (name: string, kind: "journal" | "page"): ResolvedPage => {
-    const page = all.find((p) => p.kind === kind && p.name.toLowerCase() === name.toLowerCase());
+    const page = all.find((p) => p.kind === kind && identity(p.name) === identity(name));
     if (page) return { kind: "existing", id: mockPagePath(page), others: [] };
     if (kind === "page") {
       const owners = all.filter((p) => p.pre_block?.split(/\n/).some((line) =>
-        /^alias::\s*/i.test(line) && line.replace(/^alias::\s*/i, "").split(",").some((alias) => alias.trim().toLowerCase() === name.toLowerCase())
+        /^alias::\s*/i.test(line) && line.replace(/^alias::\s*/i, "").split(",").some((alias) => identity(alias.trim()) === identity(name))
       )).map(mockPagePath).sort();
       if (owners.length) return { kind: "alias", owners };
     }
@@ -668,7 +672,7 @@ export function mockBackend(): MockBackend {
   const collect = (keep: (b: BlockDto) => boolean, exclude?: string): RefGroup[] => {
     const groups: RefGroup[] = [];
     for (const p of all) {
-      if (exclude && p.name.toLowerCase() === exclude.toLowerCase()) continue;
+      if (exclude && identity(p.name) === identity(exclude)) continue;
       const matched: BlockDto[] = [];
       // Track the ancestor chain so a matched nested block carries a breadcrumb
       // (like the real backend's query::collect), exercising the block-ref panel.
@@ -700,6 +704,7 @@ export function mockBackend(): MockBackend {
         preferred_format: "md",
         enable_timetracking: true,
         show_brackets: true,
+        enable_search_remove_accents: removeAccents,
         doc_mode_enter_for_new_block: false,
         logical_outdenting: false,
         logbook_with_second_support: true,
@@ -1185,10 +1190,10 @@ export function mockBackend(): MockBackend {
       return [...map.entries()].map(([k, vs]) => [k, [...vs].sort()] as [string, string[]]);
     },
     async search(query: string, limit: number): Promise<RefGroup[]> {
-      const q = canonicalFold(query.trim());
+      const q = fold(query.trim());
       if (!q) return [];
       let n = limit;
-      const groups = collect((b) => canonicalFold(b.raw).includes(q));
+      const groups = collect((b) => fold(b.raw).includes(q));
       for (const g of groups) {
         if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
         n -= g.blocks.length;
@@ -1198,7 +1203,7 @@ export function mockBackend(): MockBackend {
     async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
       // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
-      const matcher = parseSearchQuery(source);
+      const matcher = parseSearchQuery(source, removeAccents);
       if (matcher.kind === "invalid") {
         return {
           hits: [],
@@ -1209,8 +1214,8 @@ export function mockBackend(): MockBackend {
       }
       const bare = simpleTerm(matcher);
       const pageMatches = scope ? [] : all
-        .map((page) => ({ page, score: bare ? fuzzyScore(bare, canonicalFold(page.name)) : 0 }))
-        .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, canonicalFold(page.name), page.name))
+        .map((page) => ({ page, score: bare ? fuzzyScore(bare, fold(page.name)) : 0 }))
+        .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, fold(page.name), page.name))
         .sort((a, b) => b.score - a.score);
       const pages = pageMatches
         .slice(0, pageLimit)
@@ -1227,27 +1232,27 @@ export function mockBackend(): MockBackend {
           }],
           score,
           match_class: bare
-            ? canonicalFold(page.name) === bare ? "exact" as const
-              : canonicalFold(page.name).startsWith(bare) ? "prefix" as const
-              : canonicalFold(page.name).includes(bare) ? "substring" as const
+            ? fold(page.name) === bare ? "exact" as const
+              : fold(page.name).startsWith(bare) ? "prefix" as const
+              : fold(page.name).includes(bare) ? "substring" as const
               : "fuzzy" as const
             : undefined,
         }));
       const inScope = (group: RefGroup) => {
         if (!scope) return true;
-        const page = all.find((candidate) => candidate.kind === group.kind && canonicalFold(candidate.name) === canonicalFold(group.page));
+        const page = all.find((candidate) => candidate.kind === group.kind && identity(candidate.name) === identity(group.page));
         if (!page) return false;
         return scope.path
           ? mockPagePath(page) === scope.path
-          : page.kind === scope.pageKind && canonicalFold(page.name) === canonicalFold(scope.name);
+          : page.kind === scope.pageKind && identity(page.name) === identity(scope.name);
       };
-      const blockMatches = collect((block) => matcherMatches(matcher, canonicalFold(block.raw), block.raw))
+      const blockMatches = collect((block) => matcherMatches(matcher, fold(block.raw), block.raw))
         .filter(inScope)
         .flatMap((group) => group.blocks.map((block) => ({ group, block })));
       const blocks = blockMatches
         .slice(0, Math.max(0, blockLimit))
         .map(({ group, block }) => {
-          const owner = all.find((candidate) => candidate.kind === group.kind && canonicalFold(candidate.name) === canonicalFold(group.page));
+          const owner = all.find((candidate) => candidate.kind === group.kind && identity(candidate.name) === identity(group.page));
           return {
             entity: "block" as const,
             page: group.page,
@@ -1294,9 +1299,9 @@ export function mockBackend(): MockBackend {
       ];
     },
     async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
-      const q = canonicalFold(query.trim());
+      const q = fold(query.trim());
       return all
-        .filter((p) => canonicalFold(p.name).includes(q))
+        .filter((p) => fold(p.name).includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
     },

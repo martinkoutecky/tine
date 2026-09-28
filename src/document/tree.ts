@@ -1,6 +1,7 @@
 import { doc, blockIsOpaqueSheetView, mainPages, formatForBlock } from "./model";
 import { createRoot, createMemo } from "solid-js";
 import { splitProps, isBuiltinHidden } from "../editor/properties";
+import { OUTLINE_MAX_DEPTH } from "../editor/outline";
 
 // ---------------------------------------------------------------------------
 // Tree helpers
@@ -135,4 +136,17 @@ export function depthOf(id: string): number {
     p = doc.byId[p].parent;
   }
   return d;
+}
+
+/** Check the deepest descendant after reparenting an existing subtree. */
+export function existingSubtreeFits(id: string, newParent: string | null): boolean {
+  if (!doc.byId[id]) return false;
+  const firstDepth = newParent === null ? 0 : depthOf(newParent) + 1;
+  const pending: Array<[string, number]> = [[id, firstDepth]];
+  while (pending.length) {
+    const [current, depth] = pending.pop()!;
+    if (depth >= OUTLINE_MAX_DEPTH) return false;
+    for (const child of doc.byId[current].children) pending.push([child, depth + 1]);
+  }
+  return true;
 }

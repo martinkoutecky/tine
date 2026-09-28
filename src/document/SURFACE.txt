@@ -86,6 +86,7 @@ node
 orderedListMarker
 outdentBlock
 outdentSelection
+outlineFits  # why: one placement cap shared by editor paste and structural sheet paste; batch15b-followup
 pageByName
 pageHeaderProperties  # why: one answerer for the rendered page header and the properties panel (Rule 3); batch14q5-followup
 pageRoots

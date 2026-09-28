@@ -728,17 +728,20 @@ fn trash_counts(counts: [(u64, u64); 5]) -> Vec<(TrashKind, u64, u64)> {
     .collect()
 }
 
+/// Bytes of regular files under one trash entry. Iterative: a delivered tree
+/// of any depth costs heap, not stack (I-22).
 fn trash_entry_bytes(path: &std::path::Path) -> std::io::Result<u64> {
-    let kind = fs::symlink_metadata(path)?.file_type();
-    if kind.is_file() {
-        return Ok(fs::metadata(path)?.len());
-    }
-    if !kind.is_dir() {
-        return Ok(0);
-    }
     let mut bytes = 0;
-    for child in fs::read_dir(path)? {
-        bytes += trash_entry_bytes(&child?.path())?;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let kind = fs::symlink_metadata(&path)?.file_type();
+        if kind.is_file() {
+            bytes += fs::metadata(&path)?.len();
+        } else if kind.is_dir() {
+            for child in fs::read_dir(&path)? {
+                pending.push(child?.path());
+            }
+        }
     }
     Ok(bytes)
 }
@@ -748,19 +751,28 @@ fn remove_trash_entry_counted(
     removed_bytes: &mut u64,
     remove_file: &mut impl FnMut(&Path) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.is_dir() {
-        for child in fs::read_dir(path)? {
-            remove_trash_entry_counted(&child?.path(), removed_bytes, remove_file)?;
+    // Post-order with an explicit stack: a directory is removed after its
+    // children, and depth costs heap, not stack (I-22).
+    let mut pending = vec![(path.to_path_buf(), false)];
+    while let Some((path, emptied)) = pending.pop() {
+        if emptied {
+            fs::remove_dir(&path)?;
+            continue;
         }
-        fs::remove_dir(path)
-    } else {
-        remove_file(path)?;
-        if metadata.is_file() {
-            *removed_bytes = removed_bytes.saturating_add(metadata.len());
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            pending.push((path.clone(), true));
+            for child in fs::read_dir(&path)? {
+                pending.push((child?.path(), false));
+            }
+        } else {
+            remove_file(&path)?;
+            if metadata.is_file() {
+                *removed_bytes = removed_bytes.saturating_add(metadata.len());
+            }
         }
-        Ok(())
     }
+    Ok(())
 }
 
 pub(crate) fn journal_ids_from_entries(
@@ -1293,8 +1305,9 @@ impl Store {
     /// can list files and `move_file` can move one to a live area with a guard,
     /// but there is no dedicated untrash workflow or recovery-root import.
     /// Only asset trash has an in-API purge; other recovery and trash entries
-    /// accumulate until managed outside this API. Restore recovery roots count
-    /// as `Legacy` with their contained bytes. Cost O(trash entries and files
+    /// accumulate until managed outside this API. Graph-side and asset-sidecar
+    /// restore recovery roots count as `Legacy` with their contained bytes.
+    /// Any stat or read error fails the call. Cost O(trash entries and files
     /// inside trashed directories). Each tuple is `(kind, count, bytes)`.
     pub fn trash_stats(&self) -> Result<Vec<(TrashKind, u64, u64)>, StoreError> {
         if self.is_closed() {
@@ -1303,13 +1316,11 @@ impl Store {
         let trash = trash_root(&self.graph.root);
         let mut counts = [(0, 0); 5];
         let entries = match fs::read_dir(trash) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(trash_counts(counts))
-            }
+            Ok(entries) => Some(entries),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(StoreError::from_io(error)),
         };
-        for entry in entries {
+        for entry in entries.into_iter().flatten() {
             let entry = entry.map_err(StoreError::from_io)?;
             let kind = entry.file_type().map_err(StoreError::from_io)?;
             if kind.is_dir() {
@@ -1336,6 +1347,18 @@ impl Store {
                     bytes,
                 );
             }
+        }
+        let asset_recovery = self.graph.assets_path().join(".tine-restore-recovery");
+        match fs::read_dir(asset_recovery) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry.map_err(StoreError::from_io)?;
+                    let bytes = trash_entry_bytes(&entry.path()).map_err(StoreError::from_io)?;
+                    add_trash_count(&mut counts, TrashKind::Legacy, bytes);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::from_io(error)),
         }
         Ok(trash_counts(counts))
     }
@@ -1506,7 +1529,9 @@ impl Store {
     /// other visible metadata is omitted, including from `unreadable`.
     /// Results carry relative file paths, not decoded page display names;
     /// there is no page-name listing API while the initial graph load is failed.
-    /// Stat/list failures for included entries appear in `unreadable`.
+    /// Stat/list failures, non-UTF-8 names and invalid file ids appear in
+    /// `unreadable`; backup must refuse an incomplete listing. A failure on
+    /// the starting directory also appears there while the call returns `Ok`.
     /// `None` lists the whole area; a supplied path that does not exist gives
     /// an empty listing. This call does not wait for the initial parse and is
     /// available after a parse failure. Cost O(entries).
@@ -1554,7 +1579,16 @@ impl Store {
             root.clone()
         };
         let mut listing = Listing::default();
-        fn walk(store: &Store, area: Area, root: &Path, dir: &Path, out: &mut Listing) {
+        // One directory per call; subdirectories are queued, not recursed into,
+        // so a delivered tree of any depth costs heap, not stack (I-22).
+        fn walk(
+            store: &Store,
+            area: Area,
+            root: &Path,
+            dir: &Path,
+            out: &mut Listing,
+            pending: &mut Vec<PathBuf>,
+        ) {
             #[cfg(test)]
             let forced = SCAN_FAULTS.with(|faults| {
                 let rel = dir.strip_prefix(root).unwrap_or(dir).to_string_lossy();
@@ -1570,13 +1604,14 @@ impl Store {
             let entries = match forced.map_or_else(|| fs::read_dir(dir), Err) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    out.unreadable.push((
-                        dir.strip_prefix(root)
-                            .unwrap_or(dir)
-                            .to_string_lossy()
-                            .replace('\\', "/"),
-                        error.into(),
-                    ));
+                    let rel = dir
+                        .strip_prefix(root)
+                        .unwrap_or(dir)
+                        .to_string_lossy()
+                        .into_owned();
+                    #[cfg(windows)]
+                    let rel = rel.replace('\\', "/");
+                    out.unreadable.push((rel, error.into()));
                     return;
                 }
             };
@@ -1589,7 +1624,22 @@ impl Store {
                     }
                 };
                 let name = entry.file_name();
-                let Some(name) = name.to_str() else { continue };
+                let Some(name) = name.to_str() else {
+                    let path = entry.path();
+                    let rel = path
+                        .strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .into_owned();
+                    #[cfg(windows)]
+                    let rel = rel.replace('\\', "/");
+                    out.unreadable.push((
+                        rel,
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, "non-UTF-8 file name")
+                            .into(),
+                    ));
+                    continue;
+                };
                 if name.starts_with('.') {
                     continue;
                 }
@@ -1598,7 +1648,9 @@ impl Store {
                     .strip_prefix(root)
                     .unwrap_or(&path)
                     .to_string_lossy()
-                    .replace('\\', "/");
+                    .into_owned();
+                #[cfg(windows)]
+                let rel = rel.replace('\\', "/");
                 if area == Area::Meta && rel != "config.edn" && rel != "custom.css" {
                     continue;
                 }
@@ -1621,7 +1673,18 @@ impl Store {
                     }
                 };
                 if ty.is_dir() {
-                    walk(store, area, root, &path, out);
+                    if store.file_id(area, &rel).is_ok() {
+                        pending.push(path);
+                    } else {
+                        out.unreadable.push((
+                            rel,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "invalid directory id",
+                            )
+                            .into(),
+                        ));
+                    }
                 } else if ty.is_file() {
                     match entry.metadata() {
                         Ok(meta) => {
@@ -1647,6 +1710,15 @@ impl Store {
                                         mtime: meta.modified().ok(),
                                     }),
                                 });
+                            } else {
+                                out.unreadable.push((
+                                    rel,
+                                    std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        "invalid file id",
+                                    )
+                                    .into(),
+                                ));
                             }
                         }
                         Err(error) => out.unreadable.push((rel, error.into())),
@@ -1655,7 +1727,12 @@ impl Store {
             }
         }
         match fs::symlink_metadata(&start) {
-            Ok(_) => walk(self, area, &root, &start, &mut listing),
+            Ok(_) => {
+                let mut pending = vec![start];
+                while let Some(dir) = pending.pop() {
+                    walk(self, area, &root, &dir, &mut listing, &mut pending);
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => listing
                 .unreadable
@@ -5195,6 +5272,29 @@ mod rev5_tests {
             vec!["Unreadable.md", "nested"]
         );
         assert!(listing.files.is_empty());
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_reports_non_utf8_names_for_backup_completeness() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = std::env::temp_dir().join(format!("tine-scan-nonutf8-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let name = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
+        fs::write(root.join("pages").join(name), b"- text\n").unwrap();
+        fs::write(root.join("pages/invalid\\name.md"), b"- text\n").unwrap();
+        fs::create_dir_all(root.join("pages/invalid\\directory")).unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let listing = store.scan_area(Area::Pages, None).unwrap();
+        assert_eq!(listing.unreadable.len(), 3);
+        assert!(listing
+            .unreadable
+            .iter()
+            .all(|(_, error)| error.kind == std::io::ErrorKind::InvalidData));
+        store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();
     }

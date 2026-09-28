@@ -365,9 +365,10 @@ function applyEntry(e: UndoEntry): UndoEntry {
 }
 
 /** Run a synchronous edit as one undo step over `pages`, O(their blocks) to
- *  snapshot. Nested units fold into the outer unit. An exception restores the
- *  snapshot and stacks, then rethrows. A frozen rewrite or loaded read-only page
- *  skips `fn` and returns undefined; success-reporting callers must check it. */
+ *  snapshot. Nested units fold into the outer unit. A thrown error or a literal
+ *  `false` return restores the snapshot and stacks (then rethrows / returns).
+ *  A frozen rewrite or loaded read-only page skips `fn` and returns undefined;
+ *  success-reporting callers must check it. */
 export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
   if (graphRewriteFrozen()) return undefined as T;
   if (pages.some((page) => pageByName(page) && !pageWritable(page))) return undefined as T;
@@ -378,9 +379,9 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
   const tagBefore = lastUndoTag;
   pushUndo(tag, pages);
   undoSuppressionDepth++;
-  try {
-    return fn();
-  } catch (err) {
+  let suppressed = true;
+  const rollback = () => {
+    suppressed = false;
     undoSuppressionDepth--;
     const entry = undoStack[undoStack.length - 1];
     if (entry) applyEntry(entry);
@@ -389,9 +390,16 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
     redoStack = redoBefore;
     lastUndoTag = tagBefore;
     bumpHistory();
+  };
+  try {
+    const result = fn();
+    if (result === false) rollback();
+    return result;
+  } catch (err) {
+    if (suppressed) rollback();
     throw err;
   } finally {
-    if (undoSuppressionDepth > 0) undoSuppressionDepth--;
+    if (suppressed) undoSuppressionDepth--;
   }
 }
 

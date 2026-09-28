@@ -247,15 +247,24 @@ fn write_payload(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Sync every payload directory, children before parents. An explicit stack:
+/// a snapshot mirrors the graph's depth, which costs heap, not stack (I-22).
 fn sync_payload_dirs(dir: &std::path::Path) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            sync_payload_dirs(&entry.path())?;
+    let mut pending = vec![(dir.to_path_buf(), false)];
+    while let Some((dir, children_synced)) = pending.pop() {
+        if children_synced {
+            tine_store::directory_durability::sync_directory_entry(&dir)?;
+            record_backup_op("payload_dir_sync");
+            continue;
+        }
+        pending.push((dir.clone(), true));
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push((entry.path(), false));
+            }
         }
     }
-    tine_store::directory_durability::sync_directory_entry(dir)?;
-    record_backup_op("payload_dir_sync");
     Ok(())
 }
 
@@ -1064,6 +1073,26 @@ mod tests {
         dir
     }
 
+    /// I-22: a snapshot mirrors the graph's directory depth. Linux caps a
+    /// path near 2000 one-letter levels, Windows long paths near 16,000, so
+    /// the Linux-maximal tree runs on one ninth of a 2 MiB worker stack.
+    #[test]
+    fn deep_payload_directories_sync_without_recursion() {
+        let root = scratch("backup-deep-payload");
+        let mut dir = root.clone();
+        while dir.as_os_str().len() < 3990 {
+            dir.push("d");
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024 / 9)
+            .spawn(move || sync_payload_dirs(&root))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn backup_payload_and_directories_sync_before_publication() {
@@ -1155,6 +1184,36 @@ mod tests {
         assert_eq!(token, format!("backup-failed:pages:{:?}", failure.kind),
             "I-9: forced copy failure must reach the launch diagnostic adapter; exemplar backup.rs backup_async");
         store.close();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uncapturable_page_names_fail_the_safety_snapshot_before_restore() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = scratch("backup-uncapturable-names");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        let non_utf = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
+        let non_utf_path = root.join("pages").join(non_utf);
+        let invalid_id_path = root.join("pages/invalid\\name.md");
+        let invalid_dir_path = root.join("pages/invalid\\directory");
+        std::fs::write(&non_utf_path, b"- keep A\n").unwrap();
+        std::fs::write(&invalid_id_path, b"- keep B\n").unwrap();
+        std::fs::create_dir_all(&invalid_dir_path).unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let (copied, failed, failure) = copy_store_area(
+            &store,
+            Area::Pages,
+            &root.join("backup-out"),
+            is_graph_text,
+            &|| false,
+        );
+        assert_eq!((copied, failed), (0, 3));
+        assert!(require_safety_snapshot(BackupOutcome { copied, failure }, 2).is_err());
+        assert_eq!(std::fs::read(&non_utf_path).unwrap(), b"- keep A\n");
+        assert_eq!(std::fs::read(&invalid_id_path).unwrap(), b"- keep B\n");
+        store.close();
+        drop(store);
         std::fs::remove_dir_all(root).unwrap();
     }
 

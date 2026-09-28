@@ -98,6 +98,8 @@ pub struct Config {
     /// `:feature/enable-timetracking?` — OG default ON; only explicit false
     /// disables marker-driven CLOCK entries.
     pub enable_timetracking: bool,
+    /// OG `:feature/enable-search-remove-accents?`; default true.
+    pub enable_search_remove_accents: bool,
     /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
     /// brackets around page references.
     pub show_brackets: bool,
@@ -186,6 +188,7 @@ impl Default for Config {
             file_name_format: FileNameFormat::Legacy,
             macros: HashMap::new(),
             enable_timetracking: true,
+            enable_search_remove_accents: true,
             show_brackets: true,
             doc_mode_enter_for_new_block: false,
             logical_outdenting: false,
@@ -269,6 +272,17 @@ impl Config {
         };
         cfg.macros = parse_macros(edn);
         cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
+        cfg.enable_search_remove_accents =
+            find_keyword(edn, ":feature/enable-search-remove-accents?")
+                .map(|at| {
+                    let from = skip_blank(edn, at + ":feature/enable-search-remove-accents?".len());
+                    !edn[from..].strip_prefix("false").is_some_and(|rest| {
+                        rest.chars().next().is_none_or(|ch| {
+                            ch.is_whitespace() || matches!(ch, ',' | '}' | ']' | ')' | ';' | '#')
+                        })
+                    })
+                })
+                .unwrap_or(true);
         cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(true);
         cfg.doc_mode_enter_for_new_block =
             bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?").unwrap_or(false);
@@ -390,7 +404,7 @@ fn scan_keyword(s: &str, key: &str, top_level_only: bool) -> Option<usize> {
                 }
                 continue;
             }
-            _ if (!top_level_only || depth == 0) && s[i..].starts_with(key) => {
+            _ if (!top_level_only || depth == 0) && b[i..].starts_with(key.as_bytes()) => {
                 let after = i + key.len();
                 let boundary = after >= b.len()
                     || matches!(
@@ -911,6 +925,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn accent_removal_defaults_on_and_only_explicit_false_disables_it() {
+        assert!(Config::parse("{}").enable_search_remove_accents);
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? true}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? false}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? :false}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? falsehood}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            Config::parse("{:feature/enable-search-remove-accents? \"false\"}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? ; comment\nfalse}")
+                .enable_search_remove_accents
+        );
+        assert!(
+            !Config::parse("{:feature/enable-search-remove-accents? false; comment\n}")
+                .enable_search_remove_accents
+        );
+    }
+
+    #[test]
     fn hidden_vector_is_decoded_and_bad_value_is_ignored() {
         let cfg = Config::parse(
             r#"{:hidden ["archive\u002fprivate" ; ignored
@@ -1216,5 +1263,41 @@ mod commented_dirs_test {
         let cfg = Config::parse(edn);
         assert_eq!(cfg.journals_dir, "journals");
         assert_eq!(cfg.pages_dir, "pages");
+    }
+}
+
+#[cfg(test)]
+mod non_ascii_scan_tests {
+    use super::*;
+
+    /// I-22: every scanner indexes bytes, and a non-ASCII character anywhere in
+    /// config.edn (outside strings and comments too) must never panic a reader.
+    #[test]
+    fn non_ascii_anywhere_never_panics_the_scanners() {
+        let base = r#"{:journals-directory "j" :pages-directory "p" :hidden ["a"]
+ :preferred-workflow :todo :shortcuts {:a "b" :c false} :start-of-week 2
+ :block-hidden-properties #{:x} :default-templates {:journals "T"}
+ :default-home {:page "H"} :favorites ["F"] :logbook/settings {:with-second-support? false}
+ :macros {"m" "v"} :ui/show-brackets? false :file/name-format :triple-lowbar}"#;
+        let keys = [
+            ":journals-directory",
+            ":hidden",
+            ":favorites",
+            ":ui/show-brackets?",
+        ];
+        for insert in ["é", "日本", "🙂"] {
+            for at in (0..=base.len()).filter(|at| base.is_char_boundary(*at)) {
+                let edn = format!("{}{insert}{}", &base[..at], &base[at..]);
+                let _ = Config::parse(&edn);
+                for key in keys {
+                    let _ = find_keyword(&edn, key);
+                    let _ = find_keyword_at_map_level(&edn, key);
+                }
+                for from in (0..edn.len()).filter(|from| edn.is_char_boundary(*from)) {
+                    let _ = next_value_span(&edn, from, edn.len());
+                    let _ = skip_blank(&edn, from);
+                }
+            }
+        }
     }
 }

@@ -1,9 +1,35 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { preparePrintHtml, PRINT_IFRAME_SANDBOX } from "./print";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { exportPagePdf, preparePrintHtml, PRINT_IFRAME_SANDBOX } from "./print";
+import { backend } from "./backend";
+import * as documentStore from "./document";
+import { toasts, setToasts } from "./toasts";
 
 describe("print document privilege boundary", () => {
   afterEach(() => {
     document.head.querySelectorAll("[data-print-test]").forEach((element) => element.remove());
+  });
+
+  it("refuses PDF export when pending page edits could not be saved", async () => {
+    setToasts([]);
+    const flush = vi.spyOn(documentStore, "flushAll").mockResolvedValue(false);
+    const renderPage = vi.spyOn(backend(), "pagePrintHtml").mockResolvedValue("<html></html>");
+    try {
+      await exportPagePdf("Draft");
+      expect(flush).toHaveBeenCalledOnce();
+      expect(renderPage).not.toHaveBeenCalled();
+      expect(toasts().some((toast) => toast.message.includes("could not be saved"))).toBe(true);
+    } finally { vi.restoreAllMocks(); setToasts([]); }
+  });
+
+  it("coalesces concurrent export requests into one print frame", async () => {
+    const flush = vi.spyOn(documentStore, "flushAll").mockResolvedValue(true);
+    const render = vi.spyOn(backend(), "pagePrintHtml").mockResolvedValue("<html><body>Draft</body></html>");
+    try {
+      await Promise.all([exportPagePdf("Draft"), exportPagePdf("Draft")]);
+      expect(flush).toHaveBeenCalledOnce();
+      expect(render).toHaveBeenCalledOnce();
+      expect(document.querySelectorAll('iframe[aria-hidden="true"]')).toHaveLength(1);
+    } finally { document.querySelectorAll('iframe[aria-hidden="true"]').forEach((frame) => frame.remove()); vi.restoreAllMocks(); }
   });
 
   it("renders math and code locally while removing every executable or remote resource", async () => {

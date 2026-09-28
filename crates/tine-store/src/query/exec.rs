@@ -53,6 +53,7 @@ pub(crate) struct Plan {
     compiled: CompiledLeaves,
     track: bool,
     today: JournalDate,
+    remove_accents: bool,
     registry: Option<Arc<Registry>>,
 }
 
@@ -64,6 +65,7 @@ impl Plan {
         query: &Query,
         today: JournalDate,
         block_rows: bool,
+        remove_accents: bool,
         registry: impl FnOnce() -> Arc<Registry>,
     ) -> Plan {
         let evaluable = query.evaluable_filter();
@@ -75,10 +77,11 @@ impl Plan {
         let registry = filter.has_props_leaf().then(registry);
         Plan {
             anchor,
-            compiled: CompiledLeaves::for_query(&filter),
+            compiled: CompiledLeaves::for_query(&filter, remove_accents),
             track: eval::uses_path_refs(&filter),
             filter,
             today,
+            remove_accents,
             registry,
         }
     }
@@ -103,6 +106,7 @@ impl Plan {
             &doc.roots,
             atom_format(entry),
             self.today,
+            self.remove_accents,
             &self.compiled,
             config,
             self.registry.as_deref().unwrap_or(Registry::none()),
@@ -680,9 +684,13 @@ pub(crate) fn plan(
     today: JournalDate,
     block_rows: bool,
 ) -> Plan {
-    Plan::new(query, today, block_rows, || {
-        graph.with_pages(|pages| index.registry(pages))
-    })
+    Plan::new(
+        query,
+        today,
+        block_rows,
+        graph.config().enable_search_remove_accents,
+        || graph.with_pages(|pages| index.registry(pages)),
+    )
 }
 
 /// [`crate::WholeGraph::query_ir`]'s body: the one IR front door over a snapshot.

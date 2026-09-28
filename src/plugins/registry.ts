@@ -4,7 +4,9 @@ import { ownedWhen, writeOwned } from "../owned";
 import {
   PLUGIN_API_VERSION,
   PLUGIN_CAPABILITIES,
+  PLUGIN_MANIFEST_MAX_BYTES,
   PLUGIN_PLATFORMS,
+  PLUGIN_WASM_MAX_BYTES,
   parsePluginManifest,
   type PluginCapability,
   type PluginPlatform,
@@ -26,7 +28,6 @@ export const COMMUNITY_REGISTRY_URL =
 // false, and refreshCommunityRegistry() below is a no-op.
 export const COMMUNITY_REGISTRY_ENABLED = __TINE_COMMUNITY_REGISTRY__;
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
-const MAX_WASM_BYTES = 8 * 1024 * 1024;
 const MAX_AUDIT_BYTES = 256 * 1024;
 const NETWORK_READ_TIMEOUT_MS = 15_000;
 const CACHE_LOAD_TIMEOUT_MS = 2_000;
@@ -665,8 +666,8 @@ export function loadSafetyReport(plugin: RegistryPlugin, version: RegistryVersio
 export async function installCommunityPlugin(plugin: RegistryPlugin, version: RegistryVersion) {
   if (version.audit.status !== "passed") throw new Error("registry audit is not passing");
   const [manifestBytes, wasm] = await Promise.all([
-    boundedBytes(version.manifestUrl, 64 * 1024),
-    boundedBytes(version.wasmUrl, MAX_WASM_BYTES),
+    boundedBytes(version.manifestUrl, PLUGIN_MANIFEST_MAX_BYTES),
+    boundedBytes(version.wasmUrl, PLUGIN_WASM_MAX_BYTES),
   ]);
   if ((await digestHex(manifestBytes)) !== version.manifestSha256) {
     throw new Error("plugin manifest digest does not match the signed registry");

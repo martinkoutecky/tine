@@ -116,13 +116,17 @@ describe("orderAcItems (autocomplete default action)", () => {
       .toEqual(["zulu", "alpha", "create"]);
   });
 
-  it("uses NFC identity without compatibility-folding fullwidth names", () => {
+  it("keeps NFC identity but compatibility-folds autocomplete ranking", () => {
     const widthDistinct = [
       { name: "\uff21", item: "fullwidth" },
       { name: "Alpha", item: "alpha" },
     ];
     expect(orderAcItems(widthDistinct, { name: "a", item: "create" }, { query: "a", policy: "adaptive" }))
-      .toEqual(["alpha", "create", "fullwidth"]);
+      .toEqual(["fullwidth", "create", "alpha"]);
+    expect(orderAcItems([{ name: "Café", item: "cafe-page" }], { name: "cafe", item: "create" }, { query: "cafe", policy: "adaptive" }))
+      .toEqual(["cafe-page", "create"]);
+    expect(orderAcItems([{ name: "Café", item: "cafe-page" }], { name: "cafe", item: "create" }, { query: "cafe", policy: "adaptive", removeAccents: false }))
+      .toEqual(["create", "cafe-page"]);
   });
 });
 

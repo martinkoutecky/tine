@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePluginManifest, supportsPlatform } from "./manifest";
+import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES, parsePluginManifest, supportsPlatform } from "./manifest";
 
 const base = {
   schemaVersion: 1,
@@ -88,5 +88,16 @@ describe("parsePluginManifest", () => {
       },
     });
     expect(manifest.portedFrom?.authors).toEqual(["Original Author"]);
+  });
+});
+
+describe("plugin package size limits", () => {
+  it("mirror the backend install limits in src-tauri/src/plugins.rs", async () => {
+    const { readFileSync } = await import("node:fs");
+    const rust = readFileSync(new URL("../../src-tauri/src/plugins.rs", import.meta.url), "utf8");
+    expect(rust).toContain(`const MAX_MANIFEST_BYTES: usize = 64 * 1024;`);
+    expect(rust).toContain(`const MAX_WASM_BYTES: usize = 8 * 1024 * 1024;`);
+    expect(PLUGIN_MANIFEST_MAX_BYTES).toBe(64 * 1024);
+    expect(PLUGIN_WASM_MAX_BYTES).toBe(8 * 1024 * 1024);
   });
 });

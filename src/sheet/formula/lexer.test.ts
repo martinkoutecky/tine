@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { lexFormula } from "./lexer";
+import { FORMULA_MAX_SOURCE_CHARS, lexFormula } from "./lexer";
+import { parseFormula } from "./parser";
 
 function lexOk(src: string) {
   const result = lexFormula(src);
@@ -55,5 +56,24 @@ describe("formula lexer", () => {
       ")",
       "eof",
     ]);
+  });
+});
+
+describe("formula source bound (og 15b, I-22)", () => {
+  it("refuses an over-long imported formula before tokenizing it", () => {
+    const huge = Array.from({ length: 300_000 }, () => "1").join("+");
+    const result = lexFormula(huge);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toBe("Formula is too long");
+    expect(parseFormula(huge).ok).toBe(false);
+  });
+
+  it("still lexes and parses a benign formula exactly at the limit", () => {
+    let formula = Array.from({ length: FORMULA_MAX_SOURCE_CHARS / 2 }, () => "1").join("+");
+    formula = formula.padEnd(FORMULA_MAX_SOURCE_CHARS, " ");
+    expect(formula.length).toBe(FORMULA_MAX_SOURCE_CHARS);
+    const lexed = lexFormula(formula);
+    expect(lexed.ok && lexed.tokens.length).toBe(FORMULA_MAX_SOURCE_CHARS - 1 + 1);
+    expect(parseFormula(formula).ok).toBe(true);
   });
 });

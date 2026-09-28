@@ -106,13 +106,20 @@ impl Store {
     /// Replaced files are retired too. An unlisted `config.edn` and
     /// `custom.css` stay live. Only `config.edn` is accepted in the Meta area;
     /// Trash targets and non-`.edn` assets are refused. A supplied config is
-    /// refused if it exceeds 64 MiB, names unsafe managed directories, or
-    /// changes the current pages/journals directories: this restore places
+    /// refused if it exceeds 64 MiB, is not UTF-8, fails the same parse-input
+    /// admission as graph load, names unsafe managed directories, or changes
+    /// the current pages/journals directories: this restore places
     /// files in the current directories. Any `.edn` file under
     /// assets counts as a sidecar, regardless of a matching PDF. The store
     /// copies sidecar bytes and supplies no EDN parser or sidecar schema.
     /// Other asset files are left in place. The method then copies new files
-    /// without replacing a concurrent winner. It blocks saves and transactions
+    /// with a no-replace publish. If another writer creates a target after it
+    /// was retired, that live file is kept, its id is the only entry in
+    /// `kept_external`, and restore stops with `RestoreFailed`: later inputs are
+    /// not copied and later extras are not retired. `kept_external` is non-empty
+    /// only on failure. An empty or text-free input is accepted and retires all
+    /// live pages and journals; the safety snapshot and recovery roots retain
+    /// their prior bytes. It blocks saves and transactions
     /// for the full operation. Cost includes all input bytes, all live page,
     /// journal, and sidecar bytes hashed for baseline and publication, and an
     /// asset-tree walk excluding earlier `.tine-restore-recovery` sidecars,
@@ -129,8 +136,9 @@ impl Store {
     /// guarded but publication waits for successful `scan_refresh()` recovery.
     /// An in-flight save holding the writer lock
     /// finishes before this restore; a later save checks against restored
-    /// bytes. Check `recovery` and
-    /// `kept_external` when reconciling disk state. Existing `WholeGraph` views
+    /// bytes. After any failure, check `done.recovery` and
+    /// `done.kept_external` when reconciling disk state; a retry retires the
+    /// partial result again. Existing `WholeGraph` views
     /// remain captured snapshots until the final publication. `page()` and the
     /// watcher wait for the writer lock; `scan_area()` can observe intermediate
     /// files because it reads disk without that lock.
@@ -203,18 +211,19 @@ impl Store {
                     source.seek(SeekFrom::Start(0))?;
                     let mut bytes = Vec::new();
                     source.take(file.len + 1).read_to_end(&mut bytes)?;
-                    if let Ok(text) = std::str::from_utf8(&bytes) {
-                        let config = tine_core::config::Config::parse(text);
-                        self.graph.validate_config_layout(&config)?;
-                        let current = self.graph.current_config();
-                        if config.pages_dir != current.pages_dir
-                            || config.journals_dir != current.journals_dir
-                        {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                "restore config changes managed directories",
-                            ));
-                        }
+                    crate::model::validate_parse_bytes_for_path(&bytes, Path::new("config.edn"))?;
+                    let text = std::str::from_utf8(&bytes)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                    let config = tine_core::config::Config::parse(text);
+                    self.graph.validate_config_layout(&config)?;
+                    let current = self.graph.current_config();
+                    if config.pages_dir != current.pages_dir
+                        || config.journals_dir != current.journals_dir
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "restore config changes managed directories",
+                        ));
                     }
                     Ok(())
                 })();
@@ -350,7 +359,6 @@ impl Store {
                 bound,
                 live_dir,
                 Path::new(recovery_prefix),
-                Path::new(""),
                 &restored,
                 area,
                 &mut changed,
@@ -455,6 +463,39 @@ mod config_directory_tests {
             ],
         );
         assert!(result.is_ok(), "{result:?}");
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn restore_refuses_unloadable_config_before_retiring_pages() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-restore-invalid-config-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("pages/A.md"), b"- keep me\n").unwrap();
+        let source = root.join("candidate.edn");
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        for bytes in [
+            vec![0xff, 0xfe],
+            format!("{}\n", "(".repeat(129) + &")".repeat(129)).into_bytes(),
+        ] {
+            fs::write(&source, &bytes).unwrap();
+            let input = RestoreFile {
+                area: Area::Meta,
+                rel: "config.edn".into(),
+                source: File::open(&source).unwrap(),
+                len: bytes.len() as u64,
+            };
+            assert!(store
+                .restore(crate::EditKind::ReplacePage, vec![input])
+                .is_err());
+            assert_eq!(fs::read(root.join("pages/A.md")).unwrap(), b"- keep me\n");
+        }
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();
@@ -635,55 +676,69 @@ fn copy_new(recovery: &Recovery, live: &Path, source: &mut File, len: u64) -> io
     result
 }
 
+/// Retire every live text file (or asset sidecar) under `live_dir` that the
+/// restore did not write. Directories are queued, not recursed into, so a
+/// delivered tree of any depth costs heap, not stack (I-22). The directory
+/// popped next (the last one queued) keeps a handle opened from its parent, so
+/// a deep chain costs O(depth) opens, not O(depth²), with at most two open.
 fn retire_extras(
     recovery: &Recovery,
     live_dir: &Path,
     recovery_prefix: &Path,
-    rel: &Path,
     restored: &HashSet<PathBuf>,
     area: Area,
     changed: &mut bool,
 ) -> io::Result<()> {
-    let current = match real_parent(&recovery.root, &live_dir.join(rel), false) {
-        Ok(value) => value,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    for entry in current.read_dir(".")? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let child = rel.join(&name);
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
-            if area == Area::Assets {
-                if name == ASSET_RECOVERY {
+    let mut pending: Vec<(PathBuf, Option<Dir>)> = vec![(PathBuf::new(), None)];
+    while let Some((rel, handle)) = pending.pop() {
+        let current = match handle.map_or_else(
+            || real_parent(&recovery.root, &live_dir.join(&rel), false),
+            Ok,
+        ) {
+            Ok(value) => value,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        let queued = pending.len();
+        for entry in current.read_dir(".")? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let child = rel.join(&name);
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                if area == Area::Assets {
+                    if name == ASSET_RECOVERY {
+                        continue;
+                    }
+                } else if name.to_str().is_none_or(|s| s.starts_with('.')) {
                     continue;
                 }
-            } else if name.to_str().is_none_or(|s| s.starts_with('.')) {
-                continue;
+                pending.push((child, None));
+            } else if ((area == Area::Assets
+                && kind.is_file()
+                && crate::file_kind::is_asset_sidecar_path(&child))
+                || (area != Area::Assets
+                    && (kind.is_file() || kind.is_symlink())
+                    && crate::file_kind::is_graph_text_path(&child)))
+                && !restored.contains(&child)
+            {
+                let live = live_dir.join(&child);
+                let recover = recovery_prefix.join(&child);
+                if move_if_present(recovery, &live, &recover)? {
+                    *changed = true;
+                }
             }
-            retire_extras(
-                recovery,
-                live_dir,
-                recovery_prefix,
-                &child,
-                restored,
-                area,
-                changed,
-            )?;
-        } else if ((area == Area::Assets
-            && kind.is_file()
-            && crate::file_kind::is_asset_sidecar_path(&child))
-            || (area != Area::Assets
-                && (kind.is_file() || kind.is_symlink())
-                && crate::file_kind::is_graph_text_path(&child)))
-            && !restored.contains(&child)
-        {
-            let live = live_dir.join(&child);
-            let recover = recovery_prefix.join(&child);
-            if move_if_present(recovery, &live, &recover)? {
-                *changed = true;
-            }
+        }
+        if pending.len() > queued {
+            let (rel, handle) = pending.last_mut().expect("queued above");
+            let name = rel.file_name().expect("queued child has a name");
+            // Any failure here leaves `None`: `real_parent` then repeats the
+            // same checks from the root and reports the error.
+            *handle = current
+                .symlink_metadata(name)
+                .ok()
+                .filter(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+                .and_then(|_| current.open_dir(name).ok());
         }
     }
     Ok(())

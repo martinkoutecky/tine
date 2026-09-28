@@ -29,7 +29,7 @@ import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
+import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
 import { openDurableBlock } from "../blockRefActions";
 import {
   clearFocusSurface,
@@ -44,7 +44,7 @@ import {
   takeCaretFor,
   takeHistoryEditorSelectionFor,
 } from "../editorController";
-import { parseOutline, type OutlineNode } from "../editor/outline";
+import { OUTLINE_MAX_SOURCE_CHARS, parseOutline, type OutlineNode } from "../editor/outline";
 import { structuredHtmlOutline } from "../editor/htmlPaste";
 import {
   toggleInlineFormat,
@@ -85,7 +85,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { graphMeta, dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
@@ -986,14 +986,8 @@ function templateToOutline(
     children: b.children.map((c) => templateToOutline(c, currentPage)),
   };
 }
-// Markdown for a freshly saved asset: images embed inline, everything else
-// (PDFs included) becomes an asset reference — a .pdf reference renders as a clickable chip that
-// opens the PDF pane.
-// `onSubmit`/`onCancel` (set only by the quick-capture window) repurpose a plain
-// Enter / Escape when the autocomplete popup is closed: Enter commits the capture
-// instead of splitting the block, Escape dismisses instead of entering
-// block-selection. Everything else — autocomplete, slash commands, formatting —
-// is the identical page-editing experience because it's the identical component.
+// Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
+// Enter/Escape when autocomplete is closed to commit or dismiss the capture.
 export function Editor(props: { id: string }): JSX.Element {
   // Non-null only inside the quick-capture window (see CaptureCtx).
   const cap = useContext(CaptureCtx);
@@ -1334,7 +1328,7 @@ export function Editor(props: { id: string }): JSX.Element {
     setAcItems(orderAcItems(
       result.value.map((page) => ({ name: page.name, item: pageItem(page.name) })),
       { name: q, item: createItem },
-      { query: q, policy: linkAutocompletePolicy() },
+      { query: q, policy: linkAutocompletePolicy(), removeAccents: searchRemoveAccents() },
     ));
   };
 
@@ -1422,10 +1416,7 @@ export function Editor(props: { id: string }): JSX.Element {
       caret === undefined
         ? withRefCompletionSpace(r.raw, r.caret, text, spaceAfterRefCompletion())
         : r;
-    // The Calculator slash command can turn an already-mounted plain editor into
-    // a whole ```calc fence. Keep calc mode sticky once entered (an in-progress
-    // malformed fence must still commit as calc), but allow this explicit
-    // completion transition without requiring blur + re-entry (GH #57).
+    // Let a calculator completion enter calc mode in the mounted editor (GH #57).
     const enteredCalc = !editingCalc() ? calcSource(spaced.raw) : null;
     commit(spaced.raw);
     if (enteredCalc !== null) setEditingCalc(true);
@@ -1468,6 +1459,7 @@ export function Editor(props: { id: string }): JSX.Element {
     } catch (error) { pushToast(`Couldn’t save to assets/: ${String(error)}`, "error"); return; }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
     const page = pageByName(docNode(props.id)?.page ?? "");
+    // Saved images embed inline; other assets, including PDFs, become links.
     const md = assetMarkdown(stored, {
       label: origName,
       pagePath: page?.id,
@@ -1818,17 +1810,22 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     if (item.blockRef) {
-      // Insert the target's authored ID (or its runtime fallback), while using the
-      // runtime ID to find an id-less target that still needs an `id::` stamped.
       const { uuid, externalId, page, kind } = item.blockRef;
       const binding = captureBinding();
       const trigger = ac();
       const editorValue = ref.value;
-      void persistBlockRefTarget(uuid, page, kind, undefined, externalId).then((saved) => {
-        if (!stillBound(binding) || ac() !== trigger || ref.value !== editorValue) return;
-        if (saved) replaceTrigger(`((${externalId}))`);
-        else pushToast("Could not save the referenced block ID. Try again after resolving the page save.", "error");
-      }).catch((error) => pushToast(`Could not save the referenced block ID: ${String(error)}`, "error"));
+      let inserted = false;
+      void persistBlockRefTarget(uuid, page, kind, undefined, externalId, () => {
+        if (!stillBound(binding) || ac() !== trigger || ref.value !== editorValue) return null;
+        const sourcePage = docNode(props.id)?.page;
+        if (!sourcePage) return null;
+        replaceTrigger(`((${externalId}))`);
+        inserted = true;
+        return sourcePage;
+      }).then((saved) => {
+        if (!saved && stillBound(binding) && (inserted || ac() === trigger))
+          pushToast("Could not save the block reference. Resolve the page save and try again.", "error");
+      }).catch((error) => { if (stillBound(binding)) pushToast(`Could not save the block reference: ${String(error)}`, "error"); });
       return;
     }
     if (item.plugin) {
@@ -1930,6 +1927,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const wasEmpty =
         docNode(props.id).raw.trim() === "" && docNode(props.id).children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
+      if (!lastId) { pushToast("Outline is too deep to insert", "error"); return; }
       if (wasEmpty) deleteBlock(props.id);
       startEditing(lastId, docNode(lastId).raw.length);
       return;
@@ -2469,7 +2467,9 @@ export function Editor(props: { id: string }): JSX.Element {
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll) { nudgeListItem(ll, +2); return true; }
       if (outlineScope?.roots.includes(props.id)) return true;
-      commit(ref.value); indentBlock(props.id, ref.selectionStart); return true;
+      commit(ref.value);
+      if (indentBlock(props.id, ref.selectionStart) === false) pushToast("Outline is too deep to indent", "error");
+      return true;
     },
     "editor/outdent": (e) => {
       e.preventDefault();
@@ -2869,12 +2869,12 @@ export function Editor(props: { id: string }): JSX.Element {
         const trimmed = multilineExitTrim(raw, start, kind);
         if (trimmed !== null) {
           e.preventDefault();
-          let newId = props.id;
+          let newId: string | null = props.id;
           withUndoUnit(`multiline-exit:${props.id}`, [node().page], () => {
             commit(trimmed);
             newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
           });
-          startEditing(newId, 0, null, editSurface());
+          if (newId) startEditing(newId, 0, null, editSurface());
           return;
         }
       }
@@ -2928,7 +2928,7 @@ export function Editor(props: { id: string }): JSX.Element {
         // adds a new sibling bullet below, which the user can Tab to nest as a
         // note under the highlight.
         const newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
-        startEditing(newId, 0, null, editSurface());
+        if (newId) startEditing(newId, 0, null, editSurface());
       } else {
         const zoomRoot = outlineScope?.forceExpandedRoot === props.id;
         splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface());
@@ -3175,6 +3175,7 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     if (text.includes("\n")) {
       e.preventDefault();
+      if (text.length > OUTLINE_MAX_SOURCE_CHARS) { pushToast("Pasted text is too large", "error"); return; }
       if (syntaxSensitive) {
         pasteLiteralText(text);
         return;
@@ -3261,29 +3262,27 @@ export function Editor(props: { id: string }): JSX.Element {
   function insertPastedOutline(nodes: OutlineNode[], tag: string, asChildren = false) {
     const current = docNode(props.id);
     if (!current) return;
-    const availableDepth = 128 - depthOf(props.id) - (asChildren ? 1 : 0);
-    const pending = nodes.map((node) => ({ node, depth: 1 }));
-    while (pending.length) {
-      const { node, depth } = pending.pop()!;
-      if (depth > availableDepth) { pushToast("Pasted outline is too deep", "error"); return; }
-      for (const child of node.children) pending.push({ node: child, depth: depth + 1 });
-    }
+    if (!outlineFits(props.id, nodes, asChildren ? 1 : 0)) { pushToast("Pasted outline is too deep", "error"); return; }
     const rawAtPaste = ref.value;
     const pageAtPaste = current.page;
     const insert = (prepared: OutlineNode[] | null) => {
       if (!prepared?.length || !ref.isConnected || ref.value !== rawAtPaste || docNode(props.id)?.page !== pageAtPaste) return;
       if (asChildren) {
-        commit(rawAtPaste);
-        insertOutlineChildren(props.id, prepared);
+        const inserted = withUndoUnit(tag, [pageAtPaste], () => {
+          commit(rawAtPaste);
+          return insertOutlineChildren(props.id, prepared) ?? false;
+        });
+        if (!inserted) pushToast("Pasted outline was refused", "error");
         return;
       }
       const wasEmpty = rawAtPaste.trim() === "" && docNode(props.id).children.length === 0;
       const lastId = withUndoUnit(tag, [pageAtPaste], () => {
         commit(rawAtPaste);
-        return wasEmpty
+        return (wasEmpty
           ? replaceEmptyBlockWithOutline(props.id, prepared)
-          : insertOutlineAfter(props.id, prepared);
+          : insertOutlineAfter(props.id, prepared)) ?? false;
       });
+      if (!lastId) { pushToast("Pasted outline was refused", "error"); return; }
       if (docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
     };
     const prepared = sanitizeOutlineIdsForPaste(props.id, nodes);

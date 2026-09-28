@@ -1314,7 +1314,11 @@ pub(crate) fn search_cancellable_result(
     limit: usize,
     cancelled: impl Fn() -> bool,
 ) -> Option<Vec<RefGroup>> {
-    let plan = crate::query_plan::QueryPlan::block_search_literal(query, limit);
+    let plan = crate::query_plan::QueryPlan::block_search_literal_with_policy(
+        query,
+        limit,
+        graph.config().enable_search_remove_accents,
+    );
     let execution = plan.execute(graph, cancelled);
     if execution.cancelled {
         None
@@ -1658,7 +1662,11 @@ fn finish_quick_switch_top(
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
 pub(crate) fn quick_switch(graph: &impl GraphRead, query: &str, limit: usize) -> Vec<PageEntry> {
-    let plan = crate::query_plan::QueryPlan::legacy_page_search(query, limit);
+    let plan = crate::query_plan::QueryPlan::legacy_page_search_with_policy(
+        query,
+        limit,
+        graph.config().enable_search_remove_accents,
+    );
     let execution = plan.execute(graph, || false);
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
@@ -2188,6 +2196,67 @@ mod tests {
         store.whole_graph().unwrap().test_read_snapshot()
     }
 
+    #[test]
+    fn advanced_content_and_search_follow_real_graph_accent_policy() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-query-accent-off-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:feature/enable-search-remove-accents? false}",
+        )
+        .unwrap();
+        fs::write(dir.join("pages/Accent.md"), "- café body\n- cafe body\n").unwrap();
+        let graph = test_snapshot(&dir);
+        let raw = |query: &str| {
+            run_query(&graph, query)
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.raw))
+                .collect::<Vec<_>>()
+        };
+        for query in ["\"cafe\"", "(search \"cafe\")"] {
+            assert_eq!(raw(query), vec!["cafe body"], "{query}");
+        }
+        assert_eq!(raw("(search \"café\")"), vec!["café body"]);
+        let tql_raw = |source: &str| {
+            use tine_core::query::{parse_query_text, resolve_for_execution, QueryDialect};
+            let (query, view) = parse_query_text(source, QueryDialect::Tql, TODAY);
+            assert!(
+                query.diagnostics.is_empty(),
+                "{source}: {:?}",
+                query.diagnostics
+            );
+            let resolved = resolve_for_execution(
+                &query,
+                &tine_core::query::ir::ExecutionContext::none(),
+                TODAY,
+            );
+            exec::run_block_groups(&graph, &resolved, &view, usize::MAX, usize::MAX)
+                .0
+                .groups
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.raw))
+                .collect::<Vec<_>>()
+        };
+        for source in [
+            "content like '%cafe%'",
+            "content like 'cafe%'",
+            "content = 'cafe body'",
+            "content in ('cafe body')",
+            "content match 'cafe'",
+        ] {
+            assert_eq!(tql_raw(source), vec!["cafe body"], "{source}");
+        }
+        for source in ["content != 'cafe body'", "content not in ('cafe body')"] {
+            assert_eq!(tql_raw(source), vec!["café body"], "{source}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     // Fixed "today" so relative-date tests are deterministic: 2026-06-16.
     const TODAY: JournalDate = JournalDate {
         year: 2026,
@@ -2395,9 +2464,9 @@ mod tests {
         assert!(selects("\"C:\\tmp\"", "open C:\\tmp now"));
         assert!(selects("\"quick brown\"", "the quick brown fox"));
         assert!(!selects("\"slow\"", "the quick brown fox"));
-        // Canonical composition, no accent folding.
+        // Canonical composition and the shared default search fold.
         assert!(selects("\"Résumé\"", "Re\u{301}sume\u{301}"));
-        assert!(!selects("\"Resume\"", "Re\u{301}sume\u{301}"));
+        assert!(selects("\"Resume\"", "Re\u{301}sume\u{301}"));
     }
 
     /// Macro arguments arrive without their source quotes after the parser has
@@ -3980,7 +4049,7 @@ mod tests {
                 .sum()
         }
 
-        const DEPTH: usize = 512;
+        const DEPTH: usize = crate::model::PARSE_INPUT_MAX_DEPTH;
         let dir =
             std::env::temp_dir().join(format!("tine-non-overlap-results-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

@@ -32,7 +32,7 @@ use tine_core::query::path_refs::{closure_contains, closure_names, dfs_path_refs
 use tine_core::query::registry::Registry;
 use tine_core::query::text::LikePattern;
 use tine_core::refs;
-use tine_core::search_query::{canonical_fold, Matcher};
+use tine_core::search_query::{canonical_fold, literal_fold, Matcher};
 use unicode_normalization::UnicodeNormalization;
 
 /// A `(content-regex …)` pattern compiles into at most this much program. The
@@ -52,12 +52,12 @@ pub(crate) struct CompiledLeaves {
 }
 
 impl CompiledLeaves {
-    pub(crate) fn for_query(filter: &Filter) -> CompiledLeaves {
+    pub(crate) fn for_query(filter: &Filter, remove_accents: bool) -> CompiledLeaves {
         let mut out = CompiledLeaves::default();
         for source in filter.match_sources() {
             out.matchers
                 .entry(source.to_string())
-                .or_insert_with(|| Matcher::parse(source));
+                .or_insert_with(|| Matcher::parse_with_policy(source, remove_accents));
         }
         filter.any_leaf(&mut |leaf| {
             if let Leaf::Attr {
@@ -188,6 +188,7 @@ pub(crate) struct EvalCtx<'a> {
     /// represented by `page_props` and is never a block-row element.
     pub(crate) page_roots: &'a [DocBlock],
     pub(crate) today: JournalDate,
+    pub(crate) remove_accents: bool,
     pub(crate) compiled: &'a CompiledLeaves,
     /// The page's on-disk format: the atomizer parses a property value with the
     /// page's own inline grammar (§6.2 E4).
@@ -208,6 +209,7 @@ impl<'a> EvalCtx<'a> {
         page_roots: &'a [DocBlock],
         format: AtomFormat,
         today: JournalDate,
+        remove_accents: bool,
         compiled: &'a CompiledLeaves,
         config: &'a ParseConfig,
         registry: &'a Registry,
@@ -221,6 +223,7 @@ impl<'a> EvalCtx<'a> {
             page_props,
             page_roots,
             today,
+            remove_accents,
             compiled,
             format,
             config,
@@ -698,30 +701,33 @@ fn compare_atom_text(op: CmpOp, value: &Value, key: &str, ctx: &EvalCtx) -> bool
 
 fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bool {
     let projection = block.projection();
-    let folded = || value.as_text().map(canonical_fold);
+    let body = projection.visible_folded(ctx.remove_accents);
+    let fold = |text: &str| {
+        if ctx.remove_accents {
+            canonical_fold(text)
+        } else {
+            literal_fold(text)
+        }
+    };
+    let folded = || value.as_text().map(fold);
     // `content in (…)` is `=` against any one of the listed texts (§4.2.3).
     let listed = |items: &[Value]| {
-        items.iter().any(|item| {
-            item.as_text()
-                .is_some_and(|text| projection.visible_lower == canonical_fold(text))
-        })
+        items
+            .iter()
+            .any(|item| item.as_text().is_some_and(|text| body == fold(text)))
     };
     match op {
-        CmpOp::Like => {
-            folded().is_some_and(|pattern| ctx.cache.like(&projection.visible_lower, &pattern))
-        }
-        CmpOp::StartsWith => {
-            folded().is_some_and(|prefix| projection.visible_lower.starts_with(&prefix))
-        }
-        CmpOp::Eq => folded().is_some_and(|text| projection.visible_lower == text),
-        CmpOp::NotEq => folded().is_some_and(|text| projection.visible_lower != text),
+        CmpOp::Like => folded().is_some_and(|pattern| ctx.cache.like(body, &pattern)),
+        CmpOp::StartsWith => folded().is_some_and(|prefix| body.starts_with(&prefix)),
+        CmpOp::Eq => folded().is_some_and(|text| body == text),
+        CmpOp::NotEq => folded().is_some_and(|text| body != text),
         CmpOp::In => value.as_list().is_some_and(listed),
         CmpOp::NotIn => value.as_list().is_some_and(|items| !listed(items)),
         // §5.10: an empty or invalid Match is a FALSE leaf.
         CmpOp::Match => value.as_text().is_some_and(|text| {
             ctx.compiled
                 .match_program(text)
-                .is_some_and(|m| m.matches(&projection.visible_lower, &projection.visible))
+                .is_some_and(|m| m.matches(body, &projection.visible))
         }),
         // An invalid (or over-limit) regex is retained but matches nothing.
         CmpOp::Regex => value.as_text().is_some_and(|text| {

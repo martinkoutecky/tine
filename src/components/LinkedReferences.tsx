@@ -2,11 +2,12 @@ import { For, Show, createResource, createSignal, createMemo, createEffect, onCl
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
-import { openPageInSidebar, openPageContextMenu } from "../ui";
+import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
 import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { canonicalFold, matcherMatches, parseSearchQuery } from "../editor/searchQuery";
+import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
+import { searchFold } from "../editor/searchFold";
 
 const norm = (s: string) => s.trim().toLowerCase();
 const pageIdentity = (s: string) => {
@@ -75,7 +76,7 @@ function searchableFilterEntry(
   return {
     text: entry.text,
     facets: entry.facets,
-    normalizedText: canonicalFold(entry.text),
+    normalizedText: searchFold(entry.text, searchRemoveAccents()),
   };
 }
 
@@ -196,7 +197,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   });
 
-  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery()));
+  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
   const searchError = createMemo(() => {
     const parsed = parsedSearch();
     return parsed.kind === "invalid" ? parsed.error : null;

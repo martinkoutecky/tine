@@ -83,9 +83,9 @@ fn renderer_flattens_tail_without_losing_text() {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let mut source = String::new();
-    for depth in 0..180 {
+    for depth in 0..120 {
         source.push_str(&" ".repeat(depth * 2));
-        source.push_str(if depth == 179 {
+        source.push_str(if depth == 119 {
             "- LAST-CHILD\n"
         } else {
             "- parent\n"
@@ -242,7 +242,7 @@ fn hostile_child() {
         }
         "wide_outline" => {
             let mut text = String::new();
-            for depth in 0..512 {
+            for depth in 0..128 {
                 text.push_str(&" ".repeat(depth));
                 text.push_str("- item\n");
             }
@@ -250,7 +250,7 @@ fn hostile_child() {
         }
         "wide_org_headlines" => {
             let mut text = String::new();
-            for depth in 1..=512 {
+            for depth in 1..=128 {
                 text.push_str(&"*".repeat(depth));
                 text.push_str(" item\n");
             }
@@ -330,4 +330,203 @@ fn hostile_child() {
         let _ = tine_graph_features::pdf::read_highlights(&store, "sample.pdf");
     }
     store.close();
+}
+
+/// I-4 + I-22: the benign extreme of the nesting cap. A page exactly at the
+/// 128-level admission cap, with realistic multi-line, referencing content,
+/// must open, edit, save byte-exactly, reopen, diff against a conflict copy,
+/// print, publish and answer queries, on the 2 MiB stack a Tauri command
+/// worker runs on. Every recursive consumer is bounded by that cap.
+#[test]
+fn benign_page_at_depth_cap_round_trips_on_a_command_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(benign_page_at_depth_cap)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn at_cap_outline(leaf: &str) -> String {
+    let mut text = String::from("title:: Deep\n\n");
+    for depth in 0..128 {
+        let indent = "  ".repeat(depth);
+        let body = if depth == 127 {
+            leaf.to_owned()
+        } else {
+            format!("level {depth} [[Tag]] with **bold** and ((not a ref))")
+        };
+        text.push_str(&format!(
+            "{indent}- {body}\n{indent}  second line {depth}\n"
+        ));
+        if depth == 127 {
+            text.push_str(&format!(
+                "{indent}  #+BEGIN_NOTE\n{indent}  > quoted\n{indent}  #+END_NOTE\n"
+            ));
+        }
+        if depth % 97 == 0 {
+            text.push_str(&format!("{indent}  note:: n{depth}\n"));
+        }
+    }
+    text
+}
+
+#[test]
+fn over_cap_page_is_visible_as_unreadable_with_named_reason() {
+    let root = std::env::temp_dir().join(format!("tine-i22-too-deep-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("pages")).unwrap();
+    let mut source = String::new();
+    for depth in 0..129 {
+        source.push_str(&format!("{}- level {depth}\n", "  ".repeat(depth)));
+    }
+    fs::write(root.join("pages/TooDeep.md"), source).unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert!(store.page(&PageId::from("pages/TooDeep.md")).is_err());
+    let reason = format!("{:?}", store.whole_graph().unwrap().unreadable_files());
+    assert!(
+        reason.contains("outline nesting exceeds 128 levels"),
+        "{reason}"
+    );
+    store.close();
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn benign_page_at_depth_cap() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!("i22-at-cap-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::create_dir_all(root.join("journals")).unwrap();
+    let source = at_cap_outline("LEAF needle");
+    assert!(tine_store::parse_input_depth_within_limit(&source));
+    let path = root.join("pages/Deep.md");
+    fs::write(&path, &source).unwrap();
+    fs::write(
+        root.join("pages/Deep.sync-conflict-20260928.md"),
+        at_cap_outline("LEAF other"),
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+    let id = PageId::from("pages/Deep.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc.clone();
+    let mut depth = 1;
+    let mut leaf = &mut doc.blocks[0];
+    while !leaf.children.is_empty() {
+        leaf = &mut leaf.children[0];
+        depth += 1;
+    }
+    assert_eq!(depth, 128, "the page opens with all 128 levels");
+    leaf.raw = leaf.raw.replace("LEAF needle", "LEAF edited");
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        at_cap_outline("LEAF edited"),
+        "I-4: an edit at the cap changes only the edited block"
+    );
+    let diff = tine_graph_features::conflicts::sync_conflict_diff(
+        &store,
+        "pages/Deep.md",
+        "pages/Deep.sync-conflict-20260928.md",
+    )
+    .unwrap();
+    assert!(diff.is_some(), "merge review opens at the cap");
+    let html = tine_graph_features::print::page_print_html(&store, "Deep", Default::default())
+        .unwrap()
+        .unwrap();
+    assert!(html.contains("LEAF edited"));
+    tine_graph_features::publish::publish_html(&store).unwrap();
+    let whole = store.whole_graph().unwrap();
+    whole
+        .query("(and [[Tag]] \"level\")", tine_store::QueryDialect::Simple)
+        .unwrap();
+    whole.backlinks("tag").unwrap();
+    drop(whole);
+    store.close();
+    let reopened = Store::open(&root, Default::default()).unwrap().0;
+    assert!(reopened
+        .whole_graph()
+        .unwrap()
+        .unreadable_files()
+        .is_empty());
+    reopened.page(&id).unwrap();
+    reopened.close();
+    let _ = fs::remove_dir_all(&root);
+}
+
+fn at_cap_org(leaf: &str) -> String {
+    let mut text = String::new();
+    for depth in 1..=128 {
+        let body = if depth == 128 {
+            leaf.to_owned()
+        } else {
+            format!("level {depth} [[Tag]]")
+        };
+        text.push_str(&format!("{} {body}\nbody {depth}\n", "*".repeat(depth)));
+        if depth == 128 {
+            text.push_str("#+BEGIN_NOTE\n> quoted\n#+END_NOTE\n");
+        }
+    }
+    text
+}
+
+/// The Org twin of the benign extreme: 128 headline levels open, edit and
+/// save byte-exactly on a command-worker stack.
+#[test]
+fn benign_org_page_at_depth_cap_round_trips_on_a_command_stack() {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .join(format!("i22-at-cap-org-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(root.join("pages")).unwrap();
+            fs::create_dir_all(root.join("journals")).unwrap();
+            let path = root.join("pages/DeepOrg.org");
+            fs::write(&path, at_cap_org("LEAF needle")).unwrap();
+            let store = Store::open(&root, Default::default()).unwrap().0;
+            assert!(store.whole_graph().unwrap().unreadable_files().is_empty());
+            let id = PageId::from("pages/DeepOrg.org");
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc.clone();
+            let mut leaf = &mut doc.blocks[0];
+            let mut depth = 1;
+            while !leaf.children.is_empty() {
+                leaf = &mut leaf.children[0];
+                depth += 1;
+            }
+            assert_eq!(depth, 128, "all 128 Org headline levels open");
+            leaf.raw = leaf.raw.replace("LEAF needle", "LEAF edited");
+            assert!(matches!(
+                store.save(
+                    tine_store::EditKind::ReplacePage,
+                    &id,
+                    SaveBase::Existing(read.rev),
+                    &doc
+                ),
+                tine_store::SaveOutcome::Saved(_)
+            ));
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                at_cap_org("LEAF edited")
+            );
+            store.close();
+            let _ = fs::remove_dir_all(&root);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
