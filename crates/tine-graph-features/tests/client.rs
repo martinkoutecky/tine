@@ -1224,7 +1224,7 @@ fn operation_result(result: &std::io::Result<()>, root: &std::path::Path) -> Str
 }
 
 #[test]
-fn page_rename_matches_legacy_for_refs_namespace_alias_and_title() {
+fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
     for (index, (label, old_name, new_name, files, config)) in [
         (
             "plain",
@@ -1249,19 +1249,6 @@ fn page_rename_matches_legacy_for_refs_namespace_alias_and_title() {
                 ("pages/ref.md", "- [[a/child]] [[a]]\n"),
             ],
             Some("{:file/name-format :triple-lowbar}"),
-        ),
-        (
-            "alias-title",
-            "Target",
-            "Changed",
-            vec![
-                (
-                    "pages/Target.md",
-                    "title:: Display Target\nalias:: Alternate\n- [[Target]]\n",
-                ),
-                ("pages/ref.md", "- [[Target]] [[Alternate]]\n"),
-            ],
-            None,
         ),
         (
             "case-only",
@@ -1297,7 +1284,6 @@ fn page_rename_matches_legacy_for_refs_namespace_alias_and_title() {
                 1 => "\"ok\"",
                 2 => "\"ok\"",
                 3 => "\"ok\"",
-                4 => "\"ok\"",
                 _ => unreachable!(),
             }
         );
@@ -1307,9 +1293,8 @@ fn page_rename_matches_legacy_for_refs_namespace_alias_and_title() {
             match index {
                 0 => "simple",
                 1 => "namespace",
-                2 => "title_alias",
-                3 => "case_change",
-                4 => "tags",
+                2 => "case_change",
+                3 => "tags",
                 _ => unreachable!(),
             },
         );

@@ -1,4 +1,4 @@
-title:: Feature showcase
+title:: tine-guide/Feature showcase
 type:: reference
 tags:: demo, showcase
 alias:: Kitchen sink (features)

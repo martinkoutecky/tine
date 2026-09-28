@@ -118,6 +118,19 @@ fn bundled_guide_pages_are_read_only_virtual_pages() {
 }
 
 #[test]
+fn guide_explains_page_title_identity_and_files_outside_page_directory() {
+    let tips = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Tips & shortcuts")
+        .expect("tips guide is bundled");
+    assert!(tips.markdown.contains("title:: Project/Roadmap"));
+    assert!(tips
+        .markdown
+        .contains("keeps the file at its existing path"));
+    assert!(tips.markdown.contains("archive/"));
+}
+
+#[test]
 fn pdf_guide_explains_conflict_discard_and_crop_cleanup_retry() {
     let pdf = bundled_guide_pages()
         .into_iter()

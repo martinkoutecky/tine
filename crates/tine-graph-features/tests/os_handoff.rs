@@ -79,7 +79,7 @@ fn open_targets_require_existing_regular_files() {
         std::os::unix::fs::symlink(&outside, root.join("assets/escape.bin")).unwrap();
         assert_eq!(
             page_target(&store, "pages/Escape.md").unwrap_err(),
-            "page source escapes graph directories"
+            "page source escapes graph text scope"
         );
         assert_eq!(
             asset_target(&store, "escape.bin").unwrap_err(),

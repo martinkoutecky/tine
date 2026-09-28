@@ -8,6 +8,18 @@ replace that file between the final comparison and rename; mandatory cross-proce
 locks are outside this plain-file contract. The editor retains unsaved content
 on every refusal and offers conflict resolution or retry.
 
+The store discovers regular `.md`, `.markdown`, and `.org` pages (case insensitive
+extensions) throughout the graph, except
+hidden and reserved folders such as `assets/`, `publish/`, and `node_modules/`.
+The graph-relative file path remains the write identity. An ordinary page's
+nonempty preamble `title::` (or Org title directive) is its logical name;
+without one, the configured filename decoder supplies the name. Name lookup,
+the published inventory, references, and direct page reads use that one
+effective name. A file named for a logical page wins over a second file that
+claims the same name through `title::`. Editing a title rekeys the published
+name without moving the file. New page filenames use a reversible, injective
+Windows-safe codec; existing noncanonical paths remain pinned.
+
 After applying a transaction, the store reads each final file before declaring
 its publication complete. A failed read or revision check returns
 `TxOutcome::PublicationIncomplete` with graph-relative file locations; disk

@@ -5,7 +5,12 @@
 
 mod one_block_layout;
 mod page_icons;
+mod page_identity;
 mod page_parse;
+use page_identity::{effective_page_name, list_graph_pages};
+pub(crate) use page_identity::{
+    graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
+};
 use page_parse::{isolate_page_parse, parse_page_content, parse_page_entry_isolated};
 
 use crate::path_identity::canonical_existing_path;
@@ -97,7 +102,7 @@ pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
 }
 
 pub(crate) fn validate_parse_bytes_for_path(bytes: &[u8], path: &Path) -> io::Result<()> {
-    validate_parse_bytes_format(bytes, path.extension().is_some_and(|ext| ext == "org"))
+    validate_parse_bytes_format(bytes, Format::from_path(path) == Format::Org)
 }
 
 fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<()> {
@@ -367,6 +372,7 @@ fn slash_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+#[cfg(test)]
 fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
     let tail = path.strip_prefix(dir).unwrap_or(path);
     if tail.as_os_str().is_empty() {
@@ -1976,11 +1982,23 @@ pub(crate) fn compare_page_claimants(
     a: &PageEntry,
     b: &PageEntry,
     fmt: &JournalFormat,
+    name_fmt: FileNameFormat,
 ) -> std::cmp::Ordering {
     let date_rank =
         |entry: &PageEntry| entry.kind == PageKind::Journal && is_date_stem_entry(entry, fmt);
+    let filename_rank = |entry: &PageEntry| {
+        entry.kind == PageKind::Page
+            && entry
+                .path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| {
+                    tine_core::refs::same_page(&decode_page_name(stem, name_fmt), &entry.name)
+                })
+    };
     date_rank(b)
         .cmp(&date_rank(a))
+        .then_with(|| filename_rank(b).cmp(&filename_rank(a)))
         .then_with(|| {
             let md = |entry: &PageEntry| entry.path.extension().is_some_and(|ext| ext == "md");
             md(b).cmp(&md(a))
@@ -2439,26 +2457,18 @@ impl Graph {
         Arc<Vec<PageEntry>>,
         HashMap<(PageKind, String), Vec<PageEntry>>,
     ) {
-        let config = self.current_config();
         let format = self.current_journal_format();
         let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
-        for (kind, dir, rel_dir) in [
-            (PageKind::Page, self.pages_path(), &config.pages_dir),
-            (
-                PageKind::Journal,
-                self.journals_path(),
-                &config.journals_dir,
-            ),
-        ] {
-            for entry in list_md(&dir, kind, &format, config.file_name_format, rel_dir) {
-                claimants
-                    .entry((kind, tine_core::refs::page_key(&entry.name)))
-                    .or_default()
-                    .push(entry);
-            }
+        for entry in list_graph_pages(self) {
+            claimants
+                .entry((entry.kind, tine_core::refs::page_key(&entry.name)))
+                .or_default()
+                .push(entry);
         }
         for entries in claimants.values_mut() {
-            entries.sort_by(|a, b| compare_page_claimants(a, b, &format));
+            entries.sort_by(|a, b| {
+                compare_page_claimants(a, b, &format, self.current_config().file_name_format)
+            });
         }
         (self.list_pages_shared(), claimants)
     }
@@ -2589,9 +2599,8 @@ impl Graph {
 
     /// Resolve a graph-root-relative path (as produced by [`rel_path`]) back to an
     /// absolute file path, validating it points at a real graph text file. This is
-    /// the security gate for every path-addressed command (#21): it accepts ONLY
-    /// `.md`/`.org` files under `<journals-dir>/` or `<pages-dir>/`, with nested
-    /// sub-directories allowed but no `..`/`.`/absolute/empty/backslash segments.
+    /// the security gate for every path-addressed command (#21): it accepts
+    /// eligible graph text throughout the graph, with no path traversal.
     /// Anything else returns `None`, so a path-addressed read/save can never
     /// escape the graph.
     #[cfg(test)]
@@ -2600,26 +2609,8 @@ impl Graph {
         if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
             return None;
         }
-        let (base, tail_rel) = if let Some(tail) =
-            rel.strip_prefix(&format!("{}/", self.current_config().journals_dir))
-        {
-            (self.journals_path(), tail)
-        } else if let Some(tail) =
-            rel.strip_prefix(&format!("{}/", self.current_config().pages_dir))
-        {
-            (self.pages_path(), tail)
-        } else {
-            return None;
-        };
-        // The remaining segments are the file's path UNDER that dir. Nested
-        // sub-directories are allowed (#21) but the can't-escape-the-graph
-        // invariant is kept lexically: every segment must be a plain name — no
-        // empty segment (`a//b`, a trailing `/`), no `.`/`..` traversal. With no
-        // `..` and no absolute/backslash (rejected above), `base.join(tail)`
-        // provably stays within `base`; there must be at least one segment (a bare
-        // `pages` is a dir, not a file).
         let mut tail = PathBuf::new();
-        for seg in tail_rel.split('/') {
+        for seg in rel.split('/') {
             if seg.is_empty() || seg == "." || seg == ".." {
                 return None;
             }
@@ -2628,11 +2619,11 @@ impl Graph {
         if tail.as_os_str().is_empty() {
             return None;
         }
-        let abs = base.join(tail);
+        let abs = self.root.join(tail);
         if !path_stays_within_root(&self.root, &abs) || path_uses_managed_alias(&self.root, &abs) {
             return None;
         }
-        crate::file_kind::is_graph_text_path(&abs).then_some(abs)
+        graph_text_eligible(&self.root, &abs).then_some(abs)
     }
 
     /// Whether a journal file is a "shadow": a non-date-stem file (e.g. a leftover
@@ -2675,25 +2666,14 @@ impl Graph {
                 return Arc::clone(entries);
             }
         }
-        let mut entries = Vec::new();
-        let nf = self.current_config().file_name_format;
-        entries.extend(list_md(
-            &self.journals_path(),
-            PageKind::Journal,
-            &self.current_journal_format(),
-            nf,
-            &self.current_config().journals_dir,
-        ));
-        entries.extend(list_md(
-            &self.pages_path(),
-            PageKind::Page,
-            &self.current_journal_format(),
-            nf,
-            &self.current_config().pages_dir,
-        ));
+        let entries = list_graph_pages(self);
         // A duplicate-day journal (canonical + leftover title-named file) must show
         // once in quick-switch / All-Pages, not twice (both resolve to one page).
-        let entries = dedup_journal_days(entries, &self.current_journal_format());
+        let entries = dedup_journal_days(
+            entries,
+            &self.current_journal_format(),
+            self.current_config().file_name_format,
+        );
         let entries = Arc::new(entries);
         *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&entries)));
         entries
@@ -2727,7 +2707,11 @@ impl Graph {
         // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
         // page name, so otherwise the day renders twice. The stray stays visible
         // via journal_conflicts() for reconciliation.
-        let mut js = dedup_journal_days(raw, &self.current_journal_format());
+        let mut js = dedup_journal_days(
+            raw,
+            &self.current_journal_format(),
+            self.current_config().file_name_format,
+        );
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
@@ -2943,28 +2927,23 @@ impl Graph {
                 }
             }
 
-            let dir = match kind {
-                PageKind::Journal => self.journals_path(),
-                PageKind::Page => self.pages_path(),
-            };
-            let rel_dir = match kind {
-                PageKind::Journal => &self.current_config().journals_dir,
-                PageKind::Page => &self.current_config().pages_dir,
-            };
             let mut built = FindEntryIndex::new();
-            for entry in list_md(
-                &dir,
-                kind,
-                &self.current_journal_format(),
-                self.current_config().file_name_format,
-                rel_dir,
-            ) {
-                let entry_key = (kind, tine_core::refs::page_key(&entry.name));
+            for entry in list_graph_pages(self)
+                .into_iter()
+                .filter(|entry| entry.kind == kind)
+            {
+                let entry_key = (entry.kind, tine_core::refs::page_key(&entry.name));
                 built.entries.entry(entry_key).or_default().push(entry);
             }
             for claimants in built.entries.values_mut() {
-                claimants
-                    .sort_by(|a, b| compare_page_claimants(a, b, &self.current_journal_format()));
+                claimants.sort_by(|a, b| {
+                    compare_page_claimants(
+                        a,
+                        b,
+                        &self.current_journal_format(),
+                        self.current_config().file_name_format,
+                    )
+                });
             }
             built.mark_kind_loaded(kind);
 
@@ -3461,7 +3440,14 @@ impl Graph {
             match self.cached_page_index_for_path(pages, &entry.path) {
                 Some(i) => {
                     let slot = &mut pages[i];
+                    let identity_changed = slot.0.kind != entry.kind
+                        || tine_core::refs::page_key(&slot.0.name)
+                            != tine_core::refs::page_key(&entry.name);
+                    slot.0 = entry;
                     slot.1 = doc;
+                    if identity_changed {
+                        *self.cache_index.write().unwrap() = Some(build_page_cache_index(pages));
+                    }
                 }
                 None => {
                     let name_key = page_cache_key(entry.kind, &entry.name);
@@ -3996,7 +3982,7 @@ impl Graph {
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
     pub(crate) fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
-        if !is_page_file(path) {
+        if !graph_text_eligible(&self.root, path) {
             return None;
         }
         let stem = path.file_stem().and_then(|s| s.to_str())?;
@@ -4020,16 +4006,14 @@ impl Graph {
                 rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
             })
-        } else if path.starts_with(self.pages_path()) {
+        } else {
             Some(PageEntry {
-                name: decode_page_name(stem, self.current_config().file_name_format),
+                name: effective_page_name(path, stem, self.current_config().file_name_format),
                 kind: PageKind::Page,
                 date_key: None,
                 rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
             })
-        } else {
-            None
         }
     }
 
@@ -4825,14 +4809,18 @@ fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
 /// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
 /// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
 /// the input order are preserved.
-fn dedup_journal_days(entries: Vec<PageEntry>, fmt: &JournalFormat) -> Vec<PageEntry> {
+fn dedup_journal_days(
+    entries: Vec<PageEntry>,
+    fmt: &JournalFormat,
+    name_fmt: FileNameFormat,
+) -> Vec<PageEntry> {
     let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let mut out: Vec<PageEntry> = Vec::new();
     for e in entries {
         match e.date_key {
             Some(k) if e.kind == PageKind::Journal => {
                 if let Some(&i) = idx_of.get(&k) {
-                    if compare_page_claimants(&e, &out[i], fmt).is_lt() {
+                    if compare_page_claimants(&e, &out[i], fmt, name_fmt).is_lt() {
                         out[i] = e;
                     }
                 } else {
@@ -4848,7 +4836,7 @@ fn dedup_journal_days(entries: Vec<PageEntry>, fmt: &JournalFormat) -> Vec<PageE
 
 #[cfg(test)]
 thread_local! {
-    static LIST_MD_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+    static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
     static CACHE_LINEAR_SCAN_STEPS: std::cell::Cell<usize> = std::cell::Cell::new(0);
 }
 
@@ -4857,6 +4845,7 @@ fn count_cache_linear_scan(n: usize) {
     CACHE_LINEAR_SCAN_STEPS.with(|steps| steps.set(steps.get() + n));
 }
 
+#[cfg(test)]
 fn list_md(
     dir: &Path,
     kind: PageKind,
@@ -4864,9 +4853,6 @@ fn list_md(
     name_fmt: FileNameFormat,
     rel_dir: &str,
 ) -> Vec<PageEntry> {
-    #[cfg(test)]
-    LIST_MD_CALLS.with(|calls| calls.set(calls.get() + 1));
-
     let mut out = Vec::new();
     walk_page_files(dir, |path| {
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
@@ -4880,7 +4866,7 @@ fn list_md(
                 Some(d) => (fmt.title(d), Some(d.ordinal_key())),
                 None => (stem.to_string(), None),
             },
-            PageKind::Page => (decode_page_name(stem, name_fmt), None),
+            PageKind::Page => (effective_page_name(&path, stem, name_fmt), None),
         };
         out.push(PageEntry {
             name,
@@ -4893,6 +4879,7 @@ fn list_md(
     out
 }
 
+#[cfg(test)]
 fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
     // Descend into sub-directories (#21). Logseq scans the whole graph root
     // recursively, so a page archived under `pages/client-a/foo.md` is a real
@@ -5195,7 +5182,7 @@ pub(crate) fn classify_legacy_trash_entry(path: &Path, ft: fs::FileType) -> Tras
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase());
-    if matches!(ext.as_deref(), Some("md" | "org")) {
+    if matches!(ext.as_deref(), Some("md" | "markdown" | "org")) {
         return original_path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -6485,12 +6472,12 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    fn reset_list_md_calls() {
-        LIST_MD_CALLS.with(|calls| calls.set(0));
+    fn reset_graph_list_calls() {
+        GRAPH_LIST_CALLS.with(|calls| calls.set(0));
     }
 
-    fn list_md_calls() -> usize {
-        LIST_MD_CALLS.with(|calls| calls.get())
+    fn graph_list_calls() -> usize {
+        GRAPH_LIST_CALLS.with(|calls| calls.get())
     }
 
     fn reset_cache_linear_scan_steps() {
@@ -6536,7 +6523,7 @@ mod tests {
         let g = Graph::open(&dir);
         assert!(g.warm_cache_cancellable(|| false));
 
-        reset_list_md_calls();
+        reset_graph_list_calls();
         for i in 0..16 {
             let entry = g
                 .find_entry(&format!("Page {i}"), PageKind::Page)
@@ -6544,7 +6531,7 @@ mod tests {
             assert_eq!(entry.name, format!("Page {i}"));
         }
         assert_eq!(
-            list_md_calls(),
+            graph_list_calls(),
             1,
             "all page lookups in one generation should share one raw page scan"
         );
@@ -6553,7 +6540,7 @@ mod tests {
             assert!(g.find_entry(&format!("Page {i}"), PageKind::Page).is_some());
         }
         assert_eq!(
-            list_md_calls(),
+            graph_list_calls(),
             1,
             "warm find_entry index should serve repeated lookups without rescanning"
         );
@@ -10115,6 +10102,7 @@ mod tests {
                     .join("deep.org")
             )
         );
+        assert_eq!(g.resolve_rel("Note.md"), Some(dir.join("Note.md")));
         // Rejections: traversal (incl. FROM a subdir), absolute, empty/`.` segment,
         // wrong dir, wrong/no extension, a bare dir. Nesting itself is NOT rejected.
         for bad in [
@@ -10131,7 +10119,6 @@ mod tests {
             "journals/note.txt",
             "journals/",
             "pages/sub/",
-            "Note.md",
             "",
         ] {
             assert_eq!(g.resolve_rel(bad), None, "should reject {bad:?}");
