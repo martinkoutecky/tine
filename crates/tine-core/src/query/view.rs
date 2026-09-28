@@ -41,12 +41,11 @@ fn property_value<'a>(block_properties: &'a [(String, String)], name: &str) -> O
 /// query-visible field names; `tine.fields::` keeps the typed schema
 /// (`name=type`), and a value containing `=` is therefore never a column list.
 ///
-/// Every consumer — `merge_block_property_view` here, and the static publisher
-/// in `publish.rs` — calls THIS function rather than re-deriving the
-/// precedence, so a published page cannot disagree with the app about which
-/// columns a query shows (D-4/D-12: one producer of one answer). The
-/// TypeScript half is `src/editor/queryViewProperties.ts`, and the two are
-/// pinned to one another by `query/fixtures/query-columns/resolution.json`.
+/// Every consumer calls THIS function rather than re-deriving the precedence
+/// (D-4/D-12: one producer of one answer). In og the only consumer so far is
+/// `merge_block_property_view`; master's static publisher and TypeScript half
+/// (`src/editor/queryViewProperties.ts`) are later lanes, and the precedence is
+/// pinned by `query/fixtures/query-columns/resolution.json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryColumns {
     /// A property named these columns, in this order. Token spelling is
@@ -248,11 +247,10 @@ fn effective_view_kind(block_properties: &[(String, String)], parsed: &ViewSetti
 ///     way.
 ///  4. otherwise `Unset`.
 ///
-/// Called by `merge_block_property_view` here and by the query-backed publisher
-/// in `publish.rs`; `src/editor/queryViewProperties.ts::resolveQueryGrouping` is
-/// the TypeScript adapter, and the pair is pinned by
-/// `query/fixtures/query-grouping/resolution.json`. Components never interpret
-/// the property themselves.
+/// In og, called by `merge_block_property_view`; master's query-backed
+/// publisher and TypeScript adapter (`resolveQueryGrouping`) are later lanes.
+/// The precedence is pinned by `query/fixtures/query-grouping/resolution.json`.
+/// Components never interpret the property themselves.
 pub fn resolve_query_grouping(
     block_properties: &[(String, String)],
     parsed: &ViewSettings,
@@ -287,9 +285,20 @@ pub fn resolve_query_grouping(
 /// property is absent. The merge happens in exactly one place, this function,
 /// so a caller cannot get the order wrong.
 ///
-/// A property whose value does not parse is not a reason to drop the field: the
-/// DSL's value stands, because a half-read property is worse evidence than the
-/// text the author wrote. Nothing here rewrites the query.
+/// For `view`, `sort`, `col-aggregates` and `sample`, a property whose value
+/// does not parse (or parses to nothing) is not a reason to drop the field: the
+/// DSL's value stands. `col-aggregates` is read partially: unknown segments are
+/// dropped and the recognised ones replace the DSL's list.
+///
+/// Grouping and columns are different: they go through
+/// [`resolve_query_grouping`] and [`resolve_query_columns`], where a PRESENT
+/// but empty or unreadable `tine.group-field` / `tine.columns` is an explicit
+/// clear that overrides the DSL. An explicit no-grouping is returned as
+/// `group_by = Some(Field(""))` (distinct from `None`, "nothing said
+/// anything", the only state a Board default may fill); an explicit no-columns
+/// empties `columns`. A legacy `tine.group-by` or DSL `(group-by …)` value is
+/// returned rewritten to its canonical `FieldId`, interpreted at the current
+/// view. Nothing here rewrites the query.
 pub fn merge_block_property_view(
     parsed: &ViewSettings,
     block_properties: &[(String, String)],
@@ -615,8 +624,8 @@ pub struct EmptyExplanation {
 ///
 /// Nothing here reads a graph: it takes the resolved tree apart, prints each
 /// conjunct and states which probe queries have to be counted. The evaluator is
-/// the caller's — the database read for both backends, the walk for the oracle
-/// — and [`ExplainPlan::answer`] reassembles the same rows either way, so the
+/// the caller's (in og, lane Q2's; nothing counts probes yet), and
+/// [`ExplainPlan::answer`] reassembles the rows from its counts, so the
 /// decomposition, the printing and the `And`/non-`And` rule exist once.
 pub struct ExplainPlan {
     /// Every probe query, in the order the evaluator must count them. Empty
@@ -673,6 +682,14 @@ impl ExplainPlan {
     }
 }
 
+/// Build the [`ExplainPlan`] for a resolved query. A non-executable query
+/// ([`ResolvedQuery::is_executable`](crate::query::ResolvedQuery::is_executable)
+/// false) gets an empty plan. Otherwise the evaluable (`Off`-free), normalized
+/// filter is decomposed: a root `And` of two or more conjuncts yields two
+/// probes per conjunct (it alone, then the `And` of all the others), and any
+/// other root yields one probe for the whole filter. Each probe keeps the
+/// query's anchor and source, has its diagnostics cleared, and is printed as
+/// TQL for the row label. Pure; O(conjuncts²) filter clones.
 pub fn explain_empty_plan(resolved: &crate::query::ResolvedQuery) -> ExplainPlan {
     use crate::query::ir::Filter;
 
@@ -1043,8 +1060,12 @@ mod tests {
         );
     }
 }
-/// Resolve the implicit Board grouping for execution without authoring a saved
-/// default. Q3 consumes this same effective-view seam after scoped resolution.
+/// The view statistics actually execute under, without authoring a saved
+/// default. Three rewrites, in order: a Board with no grouping groups by
+/// `state` (ADR 0030); an explicit empty grouping (`Some(Field(""))`) becomes
+/// `None`; and a view that groups but requests no aggregate gains one
+/// whole-result `("", Count)` aggregate. Q3 consumes this same effective-view
+/// seam after scoped resolution. Pure.
 pub fn effective_statistics_view(view: &super::ir::ViewSettings) -> super::ir::ViewSettings {
     use super::ir::{AggFn, Field, ViewKind};
     let mut effective = view.clone();

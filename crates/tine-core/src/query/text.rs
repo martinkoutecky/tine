@@ -4,8 +4,11 @@
 //! `query` module, og's one answerer for them; master's SQL framing helpers
 //! and raw-path visible projections are execution-side (SQL) and not ported.
 
-/// SQL `LIKE` over an already-folded haystack. `%` matches any run, `_` one
-/// scalar, and `\` escapes the following scalar.
+/// SQL `LIKE` over an already-folded haystack; the caller folds the pattern
+/// the same way. `%` matches any run (including empty), `_` exactly one
+/// Unicode scalar, `\` escapes the following scalar, and the match is anchored
+/// at both ends. An unpaired trailing `\` makes the pattern match nothing
+/// (SQLite's `ESCAPE` rejects it).
 ///
 /// Iterative greedy matching with a single `%` restart point (I-22: the query
 /// text is hostile input). A later `%` subsumes every earlier one, so only the

@@ -265,12 +265,20 @@ pub struct MacroExtent {
 /// Brace-, string- and page-ref-aware (`edn.ts::queryMacroExtent`): a `}}`
 /// inside a string, a nested `{…}` options map, or a `[[page]]` ref does not end
 /// it early — which is exactly what a lazy `/\{\{query.*?\}\}/` gets wrong.
+///
+/// Cost: each `{{query`/`{{tine-query` candidate scans (and records every
+/// brace in) the whole rest of `raw`, terminated or not, so k candidates cost
+/// O(k·n) on raw block text, which is not bounded by `QUERY_SOURCE_MAX_BYTES`.
 pub fn query_macro_extent(raw: &str) -> Option<MacroExtent> {
     query_macro_extent_from(raw, 0)
 }
 
 /// Every query macro in `raw`, in source order. A block may hold several
 /// (X2), and a rewrite must target the right one by extent.
+///
+/// Cost: each `{{query`/`{{tine-query` candidate scans (and records every
+/// brace in) the whole rest of `raw`, terminated or not, so k candidates cost
+/// O(k·n) on raw block text, which is not bounded by `QUERY_SOURCE_MAX_BYTES`.
 pub fn query_macro_extents(raw: &str) -> Vec<MacroExtent> {
     let mut out = Vec::new();
     let mut from = 0usize;

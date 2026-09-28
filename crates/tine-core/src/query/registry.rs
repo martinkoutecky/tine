@@ -402,14 +402,21 @@ pub fn flatten_property_atoms(
     out
 }
 
-/// Every atom of ONE owner, keyed by normalized property name, from the owner's
-/// property lines in source order — the shape both physical producers write
+/// Every atom of ONE owner, grouped by normalized property name, from the
+/// owner's property lines — the shape both physical producers write
 /// `property_atoms` from (§5.8, D-4/M6: one computation, two writers).
 ///
 /// `properties` is `(raw key, value)` in the order the physical `properties`
-/// rows are numbered, which is exactly the `ordinal` those rows carry. Several
-/// lines may share one normalized key (`k::` twice; `K::` and `k::`); the
-/// flattening rule makes them one atom list.
+/// rows are numbered; a line's index is its `ordinal`. Several lines may share
+/// one normalized key (`k::` twice; `K::` and `k::`); the flattening rule makes
+/// them one atom list.
+///
+/// Returns one `(source_name, normalized_name, atoms)` per distinct normalized
+/// key, SORTED BY `normalized_name` (not source order): `source_name` is the
+/// raw key of the FIRST line with that normalized key, and `normalized_name` is
+/// its `property_key_norm`. Lines whose normalized key is empty are dropped;
+/// internal keys are NOT excluded; a key whose values yield no atoms is still
+/// returned, with an empty list. Pure.
 pub fn owner_property_atoms(
     properties: &[(String, String)],
     format: AtomFormat,
