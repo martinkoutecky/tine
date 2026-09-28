@@ -19,6 +19,10 @@ pub struct Config {
     pub journals_dir: String,
     /// Configured ordinary-page directory, relative to the graph root.
     pub pages_dir: String,
+    /// OG `:hidden` graph-relative literal path prefixes. A malformed or
+    /// over-limit vector is ignored (empty), as OG falls back to defaults on a
+    /// bad config: hiding every file would make the whole graph appear empty.
+    pub hidden: Vec<String>,
     /// Preferred task marker cycle.
     pub preferred_workflow: Workflow,
     /// User keybinding overrides from `:shortcuts {:cmd "binding"}` (string
@@ -139,6 +143,7 @@ impl Default for Config {
         Config {
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
+            hidden: Vec::new(),
             preferred_workflow: Workflow::Now,
             shortcuts: HashMap::new(),
             all_pages_public: false,
@@ -187,6 +192,7 @@ impl Config {
         if let Some(v) = string_value(edn, ":pages-directory") {
             cfg.pages_dir = v;
         }
+        cfg.hidden = parse_hidden_paths(edn).unwrap_or_default();
         if let Some(v) = keyword_value(edn, ":preferred-workflow") {
             cfg.preferred_workflow = if v == "todo" {
                 Workflow::Todo
@@ -512,6 +518,133 @@ fn int_value(edn: &str, key: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
+/// Read `:hidden` as a bounded vector of strings. An invalid value hides all
+/// graph text rather than silently turning an intended exclusion into none.
+fn parse_hidden_paths(edn: &str) -> Result<Vec<String>, ()> {
+    let Some(start) = find_keyword(edn, ":hidden") else {
+        return Ok(Vec::new());
+    };
+    let from = skip_blank(edn, start + ":hidden".len());
+    // OG treats a non-vector value as no configured hidden paths.
+    if edn.as_bytes().get(from) != Some(&b'[') {
+        return Ok(Vec::new());
+    }
+    let mut scan_end = from.saturating_add(64 * 1024).min(edn.len());
+    while !edn.is_char_boundary(scan_end) {
+        scan_end -= 1;
+    }
+    let close_relative = match_close_bracket(&edn[from..scan_end], 0);
+    if close_relative == scan_end - from {
+        return Err(());
+    }
+    let close = from + close_relative;
+    let bytes = edn.as_bytes();
+    let mut paths = Vec::new();
+    let mut entries = 0usize;
+    let mut i = from + 1;
+    while i < close {
+        match bytes[i] {
+            b' ' | b'\t' | b'\n' | b'\r' | b',' => i += 1,
+            b';' => {
+                while i < close && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'"' => {
+                let end = edn_str_end(&edn[..close + 1], i);
+                entries += 1;
+                if end > close || bytes.get(end - 1) != Some(&b'"') || entries > 256 {
+                    return Err(());
+                }
+                paths.push(decode_hidden_string(&edn[i + 1..end - 1])?);
+                i = end;
+            }
+            b'#' if bytes.get(i + 1) == Some(&b'_') => {
+                i = skip_hidden_form(edn, skip_blank(edn, i + 2), close, 0)?;
+            }
+            _ => {
+                entries += 1;
+                if entries > 256 {
+                    return Err(());
+                }
+                i = skip_hidden_form(edn, i, close, 0)?;
+            }
+        }
+    }
+    Ok(paths)
+}
+
+fn decode_hidden_string(inner: &str) -> Result<String, ()> {
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let decoded = match chars.next().ok_or(())? {
+            '"' => '"',
+            '\\' => '\\',
+            '/' => '/',
+            'b' => '\u{0008}',
+            'f' => '\u{000c}',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            'u' => {
+                let mut code = 0u32;
+                for _ in 0..4 {
+                    code = code * 16
+                        + chars
+                            .next()
+                            .and_then(|digit| digit.to_digit(16))
+                            .ok_or(())?;
+                }
+                char::from_u32(code).ok_or(())?
+            }
+            _ => return Err(()),
+        };
+        out.push(decoded);
+    }
+    Ok(out)
+}
+
+fn skip_hidden_form(edn: &str, start: usize, close: usize, depth: usize) -> Result<usize, ()> {
+    if depth >= 32 || start >= close {
+        return Err(());
+    }
+    let bytes = edn.as_bytes();
+    let (open, left, right) = match bytes[start] {
+        b'[' => (start, b'[', b']'),
+        b'{' => (start, b'{', b'}'),
+        b'(' => (start, b'(', b')'),
+        b'#' if bytes.get(start + 1) == Some(&b'{') => (start + 1, b'{', b'}'),
+        b'#' if bytes.get(start + 1) == Some(&b'_') => {
+            return skip_hidden_form(edn, skip_blank(edn, start + 2), close, depth + 1);
+        }
+        b'"' => {
+            let end = edn_str_end(&edn[..close + 1], start);
+            return (end <= close && bytes.get(end - 1) == Some(&b'"'))
+                .then_some(end)
+                .ok_or(());
+        }
+        _ => {
+            let mut end = start;
+            while end < close
+                && !matches!(
+                    bytes[end],
+                    b' ' | b'\t' | b'\r' | b'\n' | b',' | b']' | b'}' | b')' | b';'
+                )
+            {
+                end += 1;
+            }
+            return (end > start).then_some(end).ok_or(());
+        }
+    };
+    let end = match_close(&edn[..close + 1], open, left, right);
+    (end < close).then_some(end + 1).ok_or(())
+}
+
 /// Quoted strings in the vector following `key` (`:favorites ["a" "b"]`),
 /// string-aware so a value containing `]` doesn't end the vector early.
 fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
@@ -706,6 +839,24 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_vector_is_decoded_and_bad_value_is_ignored() {
+        let cfg = Config::parse(
+            r#"{:hidden ["archive\u002fprivate" ; ignored
+                                  42 #_"discard" "pages/Secret"]}"#,
+        );
+        assert_eq!(cfg.hidden, ["archive/private", "pages/Secret"]);
+        assert!(Config::parse(r#"{:hidden #{"archive"}}"#).hidden.is_empty());
+        assert!(Config::parse(r#"{:hidden [42]}"#).hidden.is_empty());
+        for bad in ["{:hidden [\"unfinished\"", r#"{:hidden ["bad\q"]}"#] {
+            assert!(Config::parse(bad).hidden.is_empty(), "{bad}");
+        }
+        let oversized = format!("{{:hidden [\"{}\"]}}", "x".repeat(64 * 1024));
+        assert!(Config::parse(&oversized).hidden.is_empty());
+        let too_many = format!("{{:hidden [{}]}}", "nil ".repeat(257));
+        assert!(Config::parse(&too_many).hidden.is_empty());
+    }
 
     #[test]
     fn parses_macros_map() {

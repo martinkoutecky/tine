@@ -6,7 +6,9 @@ import { captureBinding, type Binding, stillBound } from "../../binding";
 import { pageToDto, appendAliasDraft } from "../convert";
 import type { PageDto, PageKind } from "../../types";
 import { backend, saveOnePage, type SavePageEntry } from "../../backend";
-import { forgetPage, reloadPage, loadSingle } from "../workingSet";
+import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath } from "../workingSet";
+import { readPropertyValue, readOrgPageProperty } from "../../editor/properties";
+import { graphOwner, readOwned } from "../../owned";
 import { pushToast } from "../../toasts";
 import { errorFamily } from "../../errorFamily";
 import { graphRewriteFrozen } from "../graphRewriteState";
@@ -15,6 +17,10 @@ import { adoptFoldedPageHeader } from "../edits/properties";
 
 type IntentKinds = EditKind | EditKinds;
 const kindLedger = new Map<string, EditKind[]>();
+const titleIdentityIntents = new Set<string>();
+/** Only explicit edits to the page's own title need an extra exact-path read
+ * when the title is removed; ordinary saves stay page-bounded. */
+export function noteTitleIdentityIntent(name: string): void { titleIdentityIntents.add(name); }
 function noteKinds(name: string, kinds: IntentKinds): void {
   const pending = kindLedger.get(name) ?? [];
   for (const kind of typeof kinds === "string" ? [kinds] : kinds)
@@ -500,6 +506,10 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     dissolveGroup(g);
     for (let i = 0; i < order.length; i++) {
       const name = order[i], target = ids.get(name)!;
+      if (!target.owner) await settleSavedTitleIdentity(name, target.id, entries[i].page, outcome.ok[i]);
+    }
+    for (let i = 0; i < order.length; i++) {
+      const name = order[i], target = ids.get(name)!;
       if (!target.owner) continue;
       if (dirty.has(name) || isDirty(target.owner.name) || isSaving(target.owner.name)
           || isConflicted(target.owner.name) || pageInstanceGeneration(target.owner.name) !== target.ownerGeneration) {
@@ -598,6 +608,50 @@ export function trackAssetWrite<T>(write: Promise<T>): Promise<T> {
 export function setBaseRev(name: string, rev: string | null) {
   baseRev.set(name, rev);
 }
+/** Transfer one exact loaded file's save ownership after its effective title
+ * changes. A pending old-name save is allowed to retire; any newer dirty intent
+ * is scheduled under the new name and remains revision guarded. */
+export function rekeyPageSaveState(oldName: string, newName: string, rev: string | null): void {
+  if (dirty.delete(oldName)) dirty.add(newName);
+  const kinds = kindLedger.get(oldName);
+  kindLedger.delete(oldName);
+  if (kinds) kindLedger.set(newName, kinds);
+  baseRev.delete(oldName);
+  baseRev.set(newName, rev);
+  lastSaveFailure.delete(oldName);
+  if (titleIdentityIntents.delete(oldName) && dirty.has(newName)) titleIdentityIntents.add(newName);
+  const generation = pageInstanceGenerations.get(oldName);
+  pageInstanceGenerations.delete(oldName);
+  if (generation !== undefined) pageInstanceGenerations.set(newName, generation);
+  if (dirty.has(newName)) scheduleSave();
+}
+async function settleSavedTitleIdentity(name: string, id: string, dto: PageDto, rev: string): Promise<void> {
+  if (dto.kind !== "page") return;
+  const binding = captureBinding();
+  const generation = pageInstanceGeneration(name);
+  const title = (dto.format === "org"
+    ? readOrgPageProperty(dto.pre_block, "title")
+    : readPropertyValue(dto.pre_block, "title"))?.trim();
+  let effective = title;
+  if (!effective && titleIdentityIntents.has(name)) {
+    try {
+      const result = await readOwned(graphOwner(), backend().getPageByPath(id));
+      if (result.kind === "stale") return;
+      effective = result.value?.name;
+    } catch (error) {
+      pushToast(`Saved the page, but could not refresh its title: ${String(error)}`, "error");
+      return;
+    }
+  }
+  if (!stillBound(binding) || generation !== pageInstanceGeneration(name) || pageByName(name)?.id !== id) return;
+  if (effective && effective !== name) {
+    if (!rekeyPageIdentityByPath(id, effective, rev, true)) {
+      pushToast("Saved the title, but its page identity could not be adopted safely. Reopen this page by its file path.", "error");
+      return;
+    }
+  }
+  titleIdentityIntents.delete(name);
+}
 /** Tombstone a page so any pending/in-flight save can't recreate its file. */
 export function tombstone(name: string) {
   deletedPages.add(name);
@@ -612,6 +666,7 @@ export function forgetSaveState(name: string) {
   kindLedger.delete(name);
   baseRev.delete(name);
   lastSaveFailure.delete(name);
+  titleIdentityIntents.delete(name);
 }
 /** After flushAll has drained before a graph switch, cancel timers, invalidate
  *  in-flight saves (bump the graph token), and clear all guard state. */
@@ -628,6 +683,7 @@ export function resetSaveState() {
   graphToken++;
   dirty.clear();
   kindLedger.clear();
+  titleIdentityIntents.clear();
   baseRev.clear();
   deletedPages.clear();
   deletingGroupMembers.clear();
@@ -797,6 +853,7 @@ async function doSave(
       setPageId(name, id);
       baseRev.set(name, rev);
       if (dto.pre_block) adoptFoldedPageHeader(name, dto.pre_block);
+      await settleSavedTitleIdentity(name, id, dto, rev);
       if (baseline === null) bumpPageInventoryRev();
       lastSaveFailure.delete(name);
       return true;

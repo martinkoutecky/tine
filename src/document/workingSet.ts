@@ -1,5 +1,5 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
-import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, conflictReason, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
+import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, rekeyPageSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, conflictReason, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
 import { doc, setDoc, FeedPage, pageByName } from "./model";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
@@ -11,6 +11,7 @@ import { backend } from "../backend";
 import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { type Route } from "../routeTypes";
+import { type PageTarget } from "../routeTypes";
 import { editingId, endEdit } from "../editorController";
 import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
@@ -18,6 +19,37 @@ import { isBlockMoving } from "./edits/moves";
 import { journalTitle } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToast } from "../toasts";
+
+let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
+/** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
+export function installPageIdentityNavigation(handler: (from: PageTarget, to: PageTarget) => void): void {
+  publishIdentityNavigation = handler;
+}
+
+/** Adopt an effective-name change for the same physical page. Navigation is
+ * rekeyed first, then the working set and its save baseline change together.
+ * External changes require a safe reload disposition; an acknowledged own
+ * save may retain newer unsaved editor text under the new name. */
+export function rekeyPageIdentityByPath(id: string, newName: string, rev: string | null, ownSaved = false): boolean {
+  const old = doc.pages.find((page) => page.id === id && page.name !== newName);
+  if (!old) return false;
+  const oldName = old.name;
+  if (doc.pages.some((page) => page.name === newName && page.id !== id)) return false;
+  if (group(old.name) || isConflicted(old.name) || (!ownSaved && reloadDisposition(old.name) !== "reload")) return false;
+  const from: PageTarget = { name: oldName, pageKind: old.kind, path: id };
+  const to: PageTarget = { name: newName, pageKind: old.kind, path: id };
+  if (!publishIdentityNavigation) return false;
+  publishIdentityNavigation(from, to);
+  rekeyPageSaveState(oldName, newName, rev);
+  setDoc(produce((state) => {
+    const page = state.pages.find((candidate) => candidate.id === id && candidate.name === oldName);
+    if (page) { page.name = newName; page.title = newName; }
+    state.feed = state.feed.map((name) => name === oldName ? newName : name);
+    for (const node of Object.values(state.byId)) if (node.page === oldName) node.page = newName;
+  }));
+  invalidateUndoForPage(oldName);
+  return true;
+}
 
 function upsertPage(dto: PageDto & { id?: string }) {
   // A real page with this name exists again → lift any delete tombstone so edits

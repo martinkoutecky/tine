@@ -289,7 +289,7 @@ impl Snapshot {
             .iter()
             .filter_map(|(id, kind, _)| {
                 let path = graph.root.join(id.as_str());
-                if !crate::model::graph_text_eligible(&graph.root, &path)
+                if !crate::model::graph_text_eligible(&graph.root, &path, &graph.current_config())
                     || !matches!(
                         kind,
                         ChangeKind::Created | ChangeKind::Modified | ChangeKind::Removed
@@ -378,7 +378,12 @@ impl Snapshot {
         let changed_paths: Vec<String> = files
             .iter()
             .filter(|(id, _, _)| {
-                crate::model::graph_text_eligible(&graph.root, &graph.root.join(id.as_str()))
+                let root = &graph.root;
+                crate::model::graph_text_eligible(
+                    root,
+                    &root.join(id.as_str()),
+                    &graph.current_config(),
+                )
             })
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
@@ -1661,29 +1666,22 @@ impl Store {
         Ok(listing)
     }
 
-    /// Read and parse one page, returning `NotFound` if it is absent. A
-    /// newly observed external edit publishes `Origin::External` before
-    /// returning; a file absent from the previous published name index is
-    /// reported as `Created`, while changed known files are `Modified`.
-    /// Later observation of the same bytes does not duplicate it.
-    /// A duplicate-day journal stray can be read by its physical id; because
-    /// it is not the day's parsed claimant, this read does not publish it or
-    /// add it to graph-wide answers.
-    /// A missing file returns `NotFound` without waiting for the initial parse.
-    /// A file under an unreadable directory is read directly when its path is
-    /// accessible; the returned error reflects that read or path validation.
-    /// An observed edit can wait for that parse and for a concurrent writer,
-    /// restore, or site publication while acquiring the writer lock. After a
-    /// failed initial parse, a present file still returns its current parsed
-    /// content, but publishes no generation until successful `scan_refresh()`.
-    /// Every call waits for the writer lock, including a missing or unchanged
-    /// file. A saved path spelled in another case on a case-insensitive volume
-    /// opens the file under its disk spelling and returns that spelling as id.
-    /// A cold-cache or failed-load read parses only its target file;
-    /// repeated reads do not invalidate the directory lookup cache. After a
-    /// cache-changing write or observation, finding the file can
-    /// walk O(P) eligible graph text entries; parsing costs O(page bytes
-    /// + blocks), and publication can add O(P) metadata.
+    /// Read one physical page. `NotFound` alone means absence and permits an
+    /// empty editable page; unsafe, parse, size, I/O and closed-store errors
+    /// must surface as failures. Every call holds the writer lock, even a miss.
+    /// A new external file publishes `Origin::External`/`Created`; a changed
+    /// known file publishes `Modified`. Equal bytes do not publish again.
+    /// A readable duplicate-day stray is returned but never published or
+    /// added to graph-wide answers. Missing files do not wait for initial
+    /// parsing; present files remain directly readable after a failed initial
+    /// parse, with publication deferred until successful `scan_refresh()`.
+    /// An accessible path below an unreadable directory is read directly.
+    /// Observed edits may wait for parsing, another writer, restore or site
+    /// publication. Case aliases return the file's actual disk spelling.
+    /// A cold read parses only the target, but canonicality may build a live
+    /// O(P + preamble bytes) name index on first lookup or invalidation.
+    /// Warm lookup skips that scan. Target parse costs O(bytes + blocks);
+    /// publication adds O(P) metadata. Reads write no page bytes.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         let _writer = self.writer.lock().unwrap();
         let before_generation = self.graph.cache_generation();
@@ -1794,17 +1792,16 @@ impl Store {
     }
 
     /// Read an ordinary page by effective name, or a journal by its file
-    /// stem or parseable display title, using the
-    /// file list built before `open` returns. This remains available after a
+    /// stem or parseable display title. First lookup or invalidation builds a
+    /// live O(P) file/preamble index, seeing files created after `open`;
+    /// warm lookups reuse it. This remains available after a
     /// failed initial parse; aliases require a successful graph view and are
     /// not resolved here. When files claim the same name or journal day, it
     /// uses the same claimant ranking as `WholeGraph::resolve` (canonical
     /// date-stem journal first, then Markdown before Org). A missing name
     /// returns `None`. The selected file is
     /// read through `page()`, with the same safety, revision, and publication
-    /// rules. The file-list index becomes cold after a cache-changing write
-    /// or observation; the next lookup can walk O(P) directory entries, then
-    /// uses indexed lookup plus the page read.
+    /// rules, including lock wait and read errors. It writes no page bytes.
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         let lookup = if kind == PageKind::Journal {
             self.graph
@@ -2802,7 +2799,7 @@ impl WholeGraph {
 
     fn validated_page(&self, id: &PageId) -> Result<(), QueryError> {
         let path = id.as_str();
-        let valid_area = crate::model::graph_text_relative_eligible(path);
+        let valid_area = crate::model::graph_text_relative_eligible(path, &self.config.config);
         let valid_name = !path.contains('\\')
             && !path
                 .split('/')

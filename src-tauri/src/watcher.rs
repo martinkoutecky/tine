@@ -10,6 +10,7 @@ use tine_store::{Change, ChangeKind, Origin, SubscriptionEnd, WatchMode};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 struct GraphChange {
+    path: String,
     name: String,
     kind: PageKind,
     created: bool,
@@ -74,6 +75,7 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
             conflicts_dirty = true;
         } else if let Some((page_kind, name)) = change.page(id) {
             events.push(GraphChange {
+                path: id.as_str().to_owned(),
                 name: name.to_owned(),
                 kind: page_kind,
                 created: matches!(kind, ChangeKind::Created),
@@ -91,6 +93,7 @@ fn dispatch(app: &tauri::AppHandle, label: &str, binding_generation: u64, change
             label,
             "graph-changed",
             serde_json::json!({
+                "path": event.path,
                 "name": event.name,
                 "kind": event.kind,
                 "created": event.created,
@@ -174,7 +177,8 @@ mod tests {
         .unwrap()
         .0;
         let slot = GraphSlot::new(store, root.clone());
-        let modified = |name: &str, kind| GraphChange {
+        let modified = |name: &str, path: &str, kind| GraphChange {
+            path: path.into(),
             name: name.into(),
             kind,
             created: false,
@@ -184,7 +188,10 @@ mod tests {
         let events = events_after(&slot, || {
             atomic_write(&root, "pages/foo.md", "title:: Bar\n\n- two, longer\n")
         });
-        assert_eq!(events, vec![modified("Bar", PageKind::Page)]);
+        assert_eq!(
+            events,
+            vec![modified("Bar", "pages/foo.md", PageKind::Page)]
+        );
 
         let events = events_after(&slot, || {
             atomic_write(&root, "journals/Jul 10th, 2026.md", "- shadow edited\n")
@@ -194,7 +201,14 @@ mod tests {
         let events = events_after(&slot, || {
             atomic_write(&root, "journals/2026_07_10.md", "- day two\n")
         });
-        assert_eq!(events, vec![modified("Jul 10th, 2026", PageKind::Journal)]);
+        assert_eq!(
+            events,
+            vec![modified(
+                "Jul 10th, 2026",
+                "journals/2026_07_10.md",
+                PageKind::Journal
+            )]
+        );
 
         let events = events_after(&slot, || {
             std::fs::remove_file(root.join("pages/foo.md")).unwrap()
@@ -202,6 +216,7 @@ mod tests {
         assert_eq!(
             events,
             vec![GraphChange {
+                path: "pages/foo.md".into(),
                 name: "Bar".into(),
                 kind: PageKind::Page,
                 created: false,
@@ -232,6 +247,7 @@ mod tests {
         .0;
         let slot = GraphSlot::new(store, root.clone());
         let event = |created, removed| GraphChange {
+            path: "pages/New.md".into(),
             name: "New".into(),
             kind: PageKind::Page,
             created,
@@ -339,6 +355,7 @@ mod tests {
         assert_eq!(
             events,
             vec![GraphChange {
+                path: "pages/B.md".into(),
                 name: "B".into(),
                 kind: PageKind::Page,
                 created: false,

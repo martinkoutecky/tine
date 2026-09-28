@@ -170,6 +170,14 @@ describe("default journal template graph bind", () => {
     expect(api.getPage).toHaveBeenCalledTimes(2); // one on graph bind, one shared refresh
     expect(api.savePages).toHaveBeenCalledTimes(1);
   });
+  it("returns a typed template read failure for the feed to surface and retry", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
+    await loadGraphPath(META.root);
+    api.getPage.mockRejectedValueOnce(new Error("template read denied"));
+    const result = await ensureJournalTemplateForDay(new Date());
+    expect(result).toMatchObject({ kind: "error", error: expect.any(Error) });
+    if (typeof result !== "string") expect(String(result.error)).toContain("template read denied");
+  });
   it("still switches graph when the current session cannot be saved", async () => {
     const { loadGraphPath, api } = await loadHarness(null);
     await loadGraphPath(META.root);

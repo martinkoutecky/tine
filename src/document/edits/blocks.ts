@@ -8,10 +8,10 @@ export function revealNode(id: string): void {
 import { applyMarkerTransition } from "../../logbook";
 import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, removeDeletedBlocksFromSidebar } from "../../ui";
 import { pushRawUndo, pushUndo } from "../history";
-import { markDirty } from "../save/engine";
+import { markDirty, noteTitleIdentityIntent } from "../save/engine";
 import { produce } from "solid-js/store";
 import { type OutlineNode } from "../../editor/outline";
-import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly } from "../../editor/properties";
+import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly, readPropertyValue } from "../../editor/properties";
 import { startEditing, editingId, endEdit } from "../../editorController";
 import { indexInSiblings, rootsOf, OutlineScope, prevVisible } from "../tree";
 import { existingBlockId } from "./identity";
@@ -33,6 +33,12 @@ function outlineRaw(raw: string, format: "md" | "org", incoming: Set<string>): s
 export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean }) {
   if (!blockWritable(id)) return;
   const prev = doc.byId[id].raw;
+  const page = pageByName(doc.byId[id].page);
+  if (page?.kind === "page" && page.roots[0] === id
+      && (doc.byId[id].originatedFromPageHeader || (!page.preBlock && isPropertiesOnly(prev)))
+      && readPropertyValue(prev, "title") !== readPropertyValue(raw, "title")) {
+    noteTitleIdentityIntent(page.name);
+  }
   const next =
     opts?.timetracking === false
       ? raw

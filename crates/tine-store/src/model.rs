@@ -7,6 +7,7 @@ mod one_block_layout;
 mod page_icons;
 mod page_identity;
 mod page_parse;
+pub(crate) use page_identity::configured_hidden;
 use page_identity::{effective_page_name, list_graph_pages};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
@@ -2452,28 +2453,6 @@ impl Graph {
         }
     }
 
-    pub(crate) fn snapshot_name_index(
-        &self,
-    ) -> (
-        Arc<Vec<PageEntry>>,
-        HashMap<(PageKind, String), Vec<PageEntry>>,
-    ) {
-        let format = self.current_journal_format();
-        let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
-        for entry in list_graph_pages(self) {
-            claimants
-                .entry((entry.kind, tine_core::refs::page_key(&entry.name)))
-                .or_default()
-                .push(entry);
-        }
-        for entries in claimants.values_mut() {
-            entries.sort_by(|a, b| {
-                compare_page_claimants(a, b, &format, self.current_config().file_name_format)
-            });
-        }
-        (self.list_pages_shared(), claimants)
-    }
-
     /// Construct a read-only graph projection from one caller-owned document
     /// snapshot. The empty `root` is only a fail-closed fallback: whole-graph
     /// consumers use the preinstalled cache and page list, so they can never
@@ -2624,7 +2603,7 @@ impl Graph {
         if !path_stays_within_root(&self.root, &abs) || path_uses_managed_alias(&self.root, &abs) {
             return None;
         }
-        graph_text_eligible(&self.root, &abs).then_some(abs)
+        graph_text_eligible(&self.root, &abs, &self.current_config()).then_some(abs)
     }
 
     /// Whether a journal file is a "shadow": a non-date-stem file (e.g. a leftover
@@ -3983,7 +3962,7 @@ impl Graph {
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
     pub(crate) fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
-        if !graph_text_eligible(&self.root, path) {
+        if !graph_text_eligible(&self.root, path, &self.current_config()) {
             return None;
         }
         let stem = path.file_stem().and_then(|s| s.to_str())?;
@@ -4835,7 +4814,9 @@ fn dedup_journal_days(
 
 #[cfg(test)]
 thread_local! {
-    static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+#[cfg(test)]
+static GRAPH_PREAMBLE_READS: std::cell::Cell<usize> = std::cell::Cell::new(0);
     static CACHE_LINEAR_SCAN_STEPS: std::cell::Cell<usize> = std::cell::Cell::new(0);
 }
 

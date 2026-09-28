@@ -27,6 +27,7 @@ import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairE
 import { typoTypeReplace } from "../render/typography";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
+import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
 import { openDurableBlock } from "../blockRefActions";
@@ -2355,17 +2356,15 @@ export function Editor(props: { id: string }): JSX.Element {
   const moveBlockCmd = (e: KeyboardEvent, dir: 1 | -1): boolean => {
     e.preventDefault();
     const start = ref.selectionStart;
+    const end = ref.selectionEnd;
+    const direction = ref.selectionDirection;
     commit(ref.value);
     void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
       startEditing(props.id, start);
       if (outlineScope) moveItem(props.id, dir);
       else await moveBlockFeed(props.id, dir);
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      if (ref.isConnected) {
-        ref.focus();
-        const o = Math.min(start, ref.value.length);
-        ref.setSelectionRange(o, o);
-      }
+      restoreMovedSelection(ref, props.id, start, end, direction);
     }).catch(() => console.error("Block move failed"));
     return true;
   };

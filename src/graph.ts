@@ -227,7 +227,7 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
 
 installRenameRefreshHandler(refreshAfterRename);
 
-export type JournalTemplateEnsureResult = "ready" | "deferred" | "stale";
+export type JournalTemplateEnsureResult = "ready" | "deferred" | "stale" | { kind: "error"; error: unknown };
 
 type JournalTemplateOwner = { root: string; epoch: number; day: number; title: string; template: string };
 let journalTemplateFlight: { owner: JournalTemplateOwner; promise: Promise<JournalTemplateEnsureResult> } | null = null;
@@ -243,11 +243,12 @@ function templateOwnerCurrent(owner: JournalTemplateOwner): boolean {
  * graph + blocks in the chosen template + page save). Concurrent refreshes
  * share a flight. `ready` means no template, existing content, absent named
  * template, or a successful guarded write; it does not prove insertion.
- * `deferred` means `canWrite()` refused the write, an alias conflicted, or a
- * read/write failed; `stale` means the graph,
- * configured template or local day changed during the operation. No exception
- * is exposed to the caller. The write uses the document's edit-kind and
- * base-revision door. */
+ * `deferred` means a write guard refused or an alias conflicted; `error`
+ * carries a read/write failure for the feed's route error/toast policy.
+ * `stale` means the graph, template or local day changed, possibly after a
+ * successful save. A cold named lookup can scan O(graph pages) preambles;
+ * the day read, template inventory, expansion and save add their own cost.
+ * The write uses the document's edit-kind and base-revision door. */
 export async function ensureJournalTemplateForDay(
   date: Date,
   canWrite: () => boolean = () => true,
@@ -259,7 +260,8 @@ export async function ensureJournalTemplateForDay(
     root: meta.root, epoch: graphEpoch(), day: localDayKey(date), title: journalTitle(date), template,
   };
   if (!templateOwnerCurrent(owner)) return "stale";
-  if (!canWrite()) return "deferred";
+  try { if (!canWrite()) return "deferred"; }
+  catch (error) { return { kind: "error", error }; }
   if (journalTemplateFlight &&
       journalTemplateFlight.owner.root === owner.root &&
       journalTemplateFlight.owner.epoch === owner.epoch &&
@@ -295,8 +297,8 @@ export async function ensureJournalTemplateForDay(
         bindingGeneration: binding.backendGeneration,
       });
       return templateOwnerCurrent(owner) ? "ready" : "stale";
-    } catch {
-      return templateOwnerCurrent(owner) ? "deferred" : "stale";
+    } catch (error) {
+      return templateOwnerCurrent(owner) ? { kind: "error", error } : "stale";
     }
   })();
   const flight = { owner, promise };

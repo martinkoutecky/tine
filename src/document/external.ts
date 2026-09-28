@@ -3,9 +3,9 @@ import { captureBinding } from "../binding";
 import { graphOwner, readOwned } from "../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
-import { feedNames, pageByName } from "./model";
+import { doc, feedNames, pageByName } from "./model";
 import { markConflict } from "./save/engine";
-import { reloadDisposition, reloadPageIfStillSafe, restoreTodayJournalInFeed } from "./workingSet";
+import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, restoreTodayJournalInFeed } from "./workingSet";
 
 /** Route and feed actions belong to the app; the document module owns the
  * decision to call them. The snapshot keeps one watcher event on one UI view. */
@@ -38,16 +38,18 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
   const restartJournalFeed = () => {
     if (c.kind === "journal") ui?.restartJournalFeed();
   };
-  const disp = reloadDisposition(c.name);
+  const loadedName = c.path ? doc.pages.find((page) => page.id === c.path)?.name : undefined;
+  const currentName = loadedName ?? c.name;
+  const disp = reloadDisposition(currentName);
   const markObservedConflict = async () => {
-    const id = pageByName(c.name)?.id;
+    const id = pageByName(currentName)?.id;
     let revision: string | null | undefined;
     try {
       if (c.removed) revision = null;
       else {
         const result = await readOwned(owner, id
           ? backend().getPageByPath(id)
-          : backend().getPage(c.name, c.kind));
+          : backend().getPage(currentName, c.kind));
         if (result.kind === "stale") return;
         revision = result.value?.rev ?? null;
       }
@@ -55,8 +57,8 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
       // Without a fresh observation, the old load revision remains a
       // conservative guard: Keep mine cannot clobber changed bytes.
     }
-    if (owner() && pageByName(c.name)?.id === id && reloadDisposition(c.name) === "conflict")
-      markConflict(c.name, { kind: "disk-changed" }, revision);
+    if (owner() && pageByName(currentName)?.id === id && reloadDisposition(currentName) === "conflict")
+      markConflict(currentName, { kind: "disk-changed" }, revision);
   };
   if (c.removed) {
     if (disp === "conflict") await markObservedConflict();
@@ -74,6 +76,14 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
 
   if (disp === "conflict") await markObservedConflict();
   if (disp === "conflict" || disp === "skip") {
+    restartJournalFeed();
+    return;
+  }
+  if (c.path && loadedName && loadedName !== c.name) {
+    const result = await readOwned(owner, backend().getPageByPath(c.path));
+    if (result.kind === "stale" || !result.value || result.value.id !== c.path) return;
+    if (!rekeyPageIdentityByPath(c.path, result.value.name, result.value.rev ?? null)) return;
+    reloadPageIfStillSafe(result.value.name, toLoadablePage(result.value, result.value.name));
     restartJournalFeed();
     return;
   }

@@ -25,9 +25,13 @@ export function localDayKey(now = new Date()): number {
   return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
 }
 
-/** Inverse for a valid local yyyymmdd key; invalid keys normalize as JS dates do. */
+/** Inverse for a valid local yyyymmdd key, returning local midnight. Invalid
+ * keys normalize as JS dates do; nonfinite keys produce an invalid Date. */
 export function localDateFromDayKey(key: number): Date {
-  return new Date(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100);
+  const date = new Date(0);
+  date.setHours(0, 0, 0, 0);
+  date.setFullYear(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100);
+  return date;
 }
 
 /** Milliseconds until the next local midnight plus margin, clamped to at least 1. */
@@ -43,8 +47,10 @@ let dayKeyArmed = false;
  * rollover timer; the real clock is unchanged. */
 export function setCurrentDayKeyForTest(key: number): void { setDayKey(key); }
 
-/** Reactive local day for controls that stay mounted through midnight; resyncs
- * on focus/wake. O(1); the browser clock is the source and there is no I/O. */
+/** Reactive local day for controls that stay mounted through midnight. O(1),
+ * without file I/O. The first browser call synchronizes from the clock and
+ * installs one recurring midnight timer plus focus/visibility listeners for
+ * the module lifetime; later calls read the signal. There is no disposer. */
 export function currentDayKey(): number {
   if (!dayKeyArmed && typeof window !== "undefined") {
     dayKeyArmed = true;

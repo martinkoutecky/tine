@@ -49,6 +49,40 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn configured_hidden_paths_are_not_page_claimants_or_path_targets() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.0.join("logseq")).unwrap();
+    std::fs::create_dir_all(f.0.join("archive/private")).unwrap();
+    std::fs::create_dir_all(f.0.join("archive/public")).unwrap();
+    std::fs::write(
+        f.0.join("logseq/config.edn"),
+        r#"{:hidden ["archive/private" "pages/Private"]}"#,
+    )
+    .unwrap();
+    std::fs::write(f.0.join("archive/private/Secret.md"), "- hidden\n").unwrap();
+    std::fs::write(f.0.join("archive/public/Visible.Markdown"), "- visible\n").unwrap();
+    std::fs::write(f.0.join("pages/Private.md"), "- hidden\n").unwrap();
+    let store = f.store();
+    assert!(store
+        .page_named("Secret", PageKind::Page)
+        .unwrap()
+        .is_none());
+    assert!(store
+        .page_named("Private", PageKind::Page)
+        .unwrap()
+        .is_none());
+    assert!(store
+        .page_named("Visible", PageKind::Page)
+        .unwrap()
+        .is_some());
+    assert!(store
+        .as_page(&PageId::from("archive/private/Secret.md").file())
+        .is_none());
+    assert!(store.file_id(Area::Pages, "Private.md").is_err());
+    assert!(store.page(&PageId::from("pages/Private.md")).is_err());
+}
+
+#[test]
 fn page_reads_and_publishes_external_edit() {
     let f = Fixture::new();
     let store = f.store();

@@ -24,7 +24,7 @@ use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use validation::{
-    rewrite, valid_utf8_file, validate_config_bytes, validate_config_content,
+    rewrite, rewrite_move, valid_utf8_file, validate_config_bytes, validate_config_content,
     validate_page_content, validate_stream,
 };
 
@@ -562,16 +562,11 @@ impl<'a> Transaction<'a> {
         self
     }
 
-    /// Queue a guarded no-replace move. Optional reference rewrites affect
-    /// the destination's references, not its `title::`, aliases, or namespace
-    /// children. If bytes change, the old source moves to trash; if
-    /// bytes stay equal, the source is renamed directly without a trash copy.
-    /// After a move, `resolve` follows the destination filename. A retained
-    /// `title::` can still affect display text, but `Change::page` and
-    /// `PageDto.name` use the destination's decoded filename claim.
-    /// Updating `title::` requires a separate page save and is not atomic with
-    /// this move. Referrers created after the source view are not included in
-    /// queued rewrites; query referrers again after commit if that matters.
+    /// Queue a guarded no-replace move. Optional ref rewrites rebind an own
+    /// Markdown `title::` matching the mapped old identity and destination;
+    /// other titles, aliases and namespace children stay untouched. Changed
+    /// bytes move the old source to trash; unchanged bytes rename directly.
+    /// `resolve` follows the destination; later referrers need a later query.
     /// Twin claims are refused. A read-only Org source may move without a
     /// rewrite; asking to rewrite its bytes invokes the round-trip check.
     /// A case-only rename can succeed on a case-sensitive filesystem; on a
@@ -996,7 +991,12 @@ impl<'a> Transaction<'a> {
                 self.absent(to)?;
                 self.twin(to, Some(file))?;
                 let new = match (&old, renames) {
-                    (Some(old), Some(map)) => Some(rewrite(old, &self.path(to)?, map)?),
+                    (Some(old), Some(map)) => Some(rewrite_move(
+                        old,
+                        &self.path(to)?,
+                        map,
+                        self.store.config().file_name_format,
+                    )?),
                     (Some(old), None) => Some(old.clone()),
                     (None, None) => None,
                     (None, Some(_)) => unreachable!(),

@@ -55,6 +55,7 @@ insertOutlineChildren
 installAliasDraftRouteHandler
 installExternalChangeUiHandler
 installHistoryRouteContextAdapter
+installPageIdentityNavigation  # why: route/tab rekey must precede exact-path working-set identity adoption; batch11e
 installRenameRefreshHandler
 isBlockMoving
 isConflicted
@@ -96,6 +97,7 @@ readSchedule
 redo
 refuseConflictedMove  # why: carry conflict preflight before mutation; batch03
 registerPaneRouteProvider
+rekeyPageIdentityByPath  # why: watcher and own save adopt a changed effective title by physical path; batch11e
 reloadHlsIfLoaded
 removeOwnNumberedList
 renamePageOnDisk

@@ -163,6 +163,7 @@ mod journal_guide_tests {
             "g p",
             "default journal template",
             "Carry unfinished tasks",
+            ":hidden [\"archive/private\"]",
         ] {
             assert!(
                 tips.contains(control),

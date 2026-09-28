@@ -2,7 +2,7 @@ import { doc, formatForBlock, pageByName, setDoc, freshId } from "../model";
 import { facetsOf } from "../../render/facets";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
-import { markDirty } from "../save/engine";
+import { markDirty, noteTitleIdentityIntent } from "../save/engine";
 import { PROP_LINE, readPropertyValue, readOrgPageProperty, orgPreBlockWithProperty, isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
@@ -125,6 +125,7 @@ export function readPageProperty(pageName: string, key: string): string | null {
 export function setPageProperty(pageName: string, key: string, value: string | null) {
   const idx = doc.pages.findIndex((x) => x.name === pageName);
   if (idx < 0 || !pageWritable(pageName)) return;
+  if (key.toLowerCase() === "title") noteTitleIdentityIntent(pageName);
   pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
   const page = doc.pages[idx];
   const first = page.format === "md" ? doc.byId[page.roots[0]] : null;

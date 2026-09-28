@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, renamePageOnDisk, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, renamePageOnDisk, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
-import { PaneContext, focusedRouter } from "../panes";
+import { PaneContext, focusedRouter, rewritePageTargetAcrossPanes } from "../panes";
 import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding } from "../binding";
@@ -28,6 +28,14 @@ import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../
 import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
+
+installPageIdentityNavigation((from, to) => {
+  // Rewrite both pinned and formerly pathless routes to the exact file owner.
+  // The document working set publishes the new logical name afterward.
+  renamePageInNavigation(from, to);
+  rewritePageTargetAcrossPanes(from, to);
+  rewritePageTargetAcrossPanes({ name: from.name, pageKind: from.pageKind }, to);
+});
 
 export const FEED_PAGE = 3;
 let journalAsOfDay: number | null = null;
@@ -111,6 +119,13 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
     const ensured = await ensureJournalTemplateForDay(date, () => ownerIsLive(flight.owner)
       && !pageHasActiveEdit(journalTitle(date)) && (rollover || !feedHasActiveEdit()));
     const liveOwner = flight.owner;
+    if (typeof ensured === "object") {
+      if (ownerIsLive(liveOwner)) {
+        pendingFeedRestart = true;
+        pushToast("Could not load journal feed. It will retry when the view refreshes.", "error");
+      }
+      return ensured.error;
+    }
     if (ensured !== "ready" || localDayKey() !== day || !ownerIsLive(liveOwner)) {
       if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
       return null;
@@ -199,8 +214,9 @@ export { withToday, toLoadablePage } from "../document";
  * configured daily template first. Cost follows the journal inventory scan,
  * returned page blocks, and at most one template write. A dead owner or active
  * feed edit leaves the visible feed unchanged. A deferred/stale template attempt
- * postpones the feed read without a toast; a failed feed read keeps the old feed
- * and shows an error toast. The caller does not receive an error or write directly. */
+ * postpones the feed read; a template or feed failure keeps the old feed,
+ * schedules retry on edit release, focus/visibility or day rollover, and
+ * shows an error toast. This call does not schedule an immediate retry. */
 export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Promise<void> {
   await refreshJournalFeedForCurrentDay(owner);
 }
@@ -211,11 +227,11 @@ export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Pro
  * older startup read is superseded. In-place refresh keeps an existing feed
  * visible; a route load shows a placeholder until its read settles. A read
  * failure with no existing feed shows an error. Route ownership discards stale
- * loads. Page cost is O(loaded pages + page blocks + cached sheet dimensions +
- * evicted blocks); Guide cost is O(guide pages × (loaded pages + cached sheet
- * dimensions) + guide blocks + evicted blocks); feed cost is O(journals log
- * journals + loaded pages + returned blocks + cached sheet dimensions +
- * evicted blocks). */
+ * loads. Working-set admission costs O(loaded pages + admitted page blocks +
+ * cached sheet dimensions + evicted blocks). Guide routes fetch all bundled
+ * Guide pages; journal feeds scan/sort inventory and admit returned blocks.
+ * Reference and query children, including Agenda and optional tag tables,
+ * may await whole-graph parsing and traverse graph-wide blocks. */
 export function PageView(): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
@@ -305,8 +321,9 @@ export function PageView(): JSX.Element {
           // A path-pinned route (#21) loads that SPECIFIC file — the way to reach a
           // duplicate-day stray that shares a (kind,name) with the canonical day;
           // everything else resolves by name as before.
-          const result = await readOwned(routeOwner, r.path
-            ? backend().getPageByPath(r.path)
+          const loadedPath = r.path ? undefined : loadedPage(r.name)?.id;
+          const result = await readOwned(routeOwner, r.path || loadedPath
+            ? backend().getPageByPath(r.path ?? loadedPath!)
             : backend().getPage(r.name, r.pageKind));
           if (result.kind === "stale") return;
           const dto = result.value;
@@ -319,6 +336,18 @@ export function PageView(): JSX.Element {
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
             renamePageInNavigation(from, to);
             router.rewritePageTarget(from, to);
+            return;
+          }
+          if (dto?.id && dto.kind === r.pageKind && dto.name !== r.name
+              && dto.id === (r.path ?? loadedPath)) {
+            if (!rekeyPageIdentityByPath(dto.id, dto.name, dto.rev ?? null)
+                && loadedPage(r.name)?.id === dto.id) {
+              throw new Error("The selected physical page has an active edit or conflicting identity.");
+            }
+            const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
+            const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
+            renamePageInNavigation(from, to);
+            rewritePageTargetAcrossPanes(from, to);
             return;
           }
           if (r.path && (!dto || dto.id !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
@@ -1021,13 +1050,13 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   );
 }
 
-/** Journal carry controls. Rendering reads the local reactive day and user
- * carry-button preference in O(1). Clicks delegate to `carry.ts`: previous-day
- * reads all content-day keys and chooses the latest earlier one; last-N checks
- * N calendar days, where N is the saved carry-days preference; both move
- * unfinished tasks through the document save path and report failures by toast.
- * Today's journal pulls tasks in, an older journal pushes to today, and named
- * pages have no controls. */
+/** Journal carry controls; named pages render none. Rendering reads the local
+ * day and saved preference in O(1). Previous-day selection fetches all content
+ * days and sorts O(J log J); last-N starts N day-page lookups. A carry groups
+ * saves of today and every source page that supplied tasks. Failed grouped
+ * saves retain moved tasks in the editor and toast. Source-page and inventory
+ * read failures also toast; no earlier day gives an info toast. N is not
+ * validated. */
 export function CarryActions(props: { page: FeedPage }): JSX.Element {
   const isJournal = () => props.page.kind === "journal";
   const isToday = () => isJournal() && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));

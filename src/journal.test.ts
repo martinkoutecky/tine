@@ -9,9 +9,15 @@ import {
   setJournalTitleFormat,
   parseJournalTitle,
   localDayKey,
+  localDateFromDayKey,
   localDayRolloverDelay,
   type JournalDateParts,
 } from "./journal";
+
+it("inverts a valid journal day key in years below 100", () => {
+  const day = localDateFromDayKey(10102);
+  expect([day.getFullYear(), day.getMonth() + 1, day.getDate()]).toEqual([1, 1, 2]);
+});
 
 type FormatVector = {
   fmt: string;

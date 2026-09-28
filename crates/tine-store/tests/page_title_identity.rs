@@ -56,7 +56,11 @@ fn title_property_owns_page_name_through_store() {
         "title:: Effective\n\n- body\n",
     )
     .unwrap();
-    fs::write(root.join("pages/Referrer.md"), "- [[Effective]]\n").unwrap();
+    fs::write(
+        root.join("pages/Referrer.md"),
+        "- [[Effective]] [[Renamed]] [[Saved]]\n",
+    )
+    .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Effective", false),
@@ -89,6 +93,13 @@ fn title_property_owns_page_name_through_store() {
         store.whole_graph().unwrap().resolve("Effective", false),
         Resolved::Absent { .. }
     ));
+    assert!(store
+        .whole_graph()
+        .unwrap()
+        .backlinks("Renamed")
+        .unwrap()
+        .iter()
+        .any(|group| group.page == "Referrer"));
     let mut renamed = store
         .page_named("Renamed", PageKind::Page)
         .unwrap()
@@ -112,6 +123,13 @@ fn title_property_owns_page_name_through_store() {
         store.whole_graph().unwrap().resolve("Renamed", false),
         Resolved::Absent { .. }
     ));
+    assert!(store
+        .whole_graph()
+        .unwrap()
+        .backlinks("Saved")
+        .unwrap()
+        .iter()
+        .any(|group| group.page == "Referrer"));
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
