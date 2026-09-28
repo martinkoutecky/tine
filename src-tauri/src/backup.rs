@@ -247,15 +247,24 @@ fn write_payload(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Sync every payload directory, children before parents. An explicit stack:
+/// a snapshot mirrors the graph's depth, which costs heap, not stack (I-22).
 fn sync_payload_dirs(dir: &std::path::Path) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            sync_payload_dirs(&entry.path())?;
+    let mut pending = vec![(dir.to_path_buf(), false)];
+    while let Some((dir, children_synced)) = pending.pop() {
+        if children_synced {
+            tine_store::directory_durability::sync_directory_entry(&dir)?;
+            record_backup_op("payload_dir_sync");
+            continue;
+        }
+        pending.push((dir.clone(), true));
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push((entry.path(), false));
+            }
         }
     }
-    tine_store::directory_durability::sync_directory_entry(dir)?;
-    record_backup_op("payload_dir_sync");
     Ok(())
 }
 
@@ -1062,6 +1071,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// I-22: a snapshot mirrors the graph's directory depth. Linux caps a
+    /// path near 2000 one-letter levels, Windows long paths near 16,000, so
+    /// the Linux-maximal tree runs on one ninth of a 2 MiB worker stack.
+    #[test]
+    fn deep_payload_directories_sync_without_recursion() {
+        let root = scratch("backup-deep-payload");
+        let mut dir = root.clone();
+        while dir.as_os_str().len() < 3990 {
+            dir.push("d");
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024 / 9)
+            .spawn(move || sync_payload_dirs(&root))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
     }
 
     #[cfg(not(windows))]

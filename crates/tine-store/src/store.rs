@@ -728,17 +728,20 @@ fn trash_counts(counts: [(u64, u64); 5]) -> Vec<(TrashKind, u64, u64)> {
     .collect()
 }
 
+/// Bytes of regular files under one trash entry. Iterative: a delivered tree
+/// of any depth costs heap, not stack (I-22).
 fn trash_entry_bytes(path: &std::path::Path) -> std::io::Result<u64> {
-    let kind = fs::symlink_metadata(path)?.file_type();
-    if kind.is_file() {
-        return Ok(fs::metadata(path)?.len());
-    }
-    if !kind.is_dir() {
-        return Ok(0);
-    }
     let mut bytes = 0;
-    for child in fs::read_dir(path)? {
-        bytes += trash_entry_bytes(&child?.path())?;
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let kind = fs::symlink_metadata(&path)?.file_type();
+        if kind.is_file() {
+            bytes += fs::metadata(&path)?.len();
+        } else if kind.is_dir() {
+            for child in fs::read_dir(&path)? {
+                pending.push(child?.path());
+            }
+        }
     }
     Ok(bytes)
 }
@@ -748,19 +751,28 @@ fn remove_trash_entry_counted(
     removed_bytes: &mut u64,
     remove_file: &mut impl FnMut(&Path) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.is_dir() {
-        for child in fs::read_dir(path)? {
-            remove_trash_entry_counted(&child?.path(), removed_bytes, remove_file)?;
+    // Post-order with an explicit stack: a directory is removed after its
+    // children, and depth costs heap, not stack (I-22).
+    let mut pending = vec![(path.to_path_buf(), false)];
+    while let Some((path, emptied)) = pending.pop() {
+        if emptied {
+            fs::remove_dir(&path)?;
+            continue;
         }
-        fs::remove_dir(path)
-    } else {
-        remove_file(path)?;
-        if metadata.is_file() {
-            *removed_bytes = removed_bytes.saturating_add(metadata.len());
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            pending.push((path.clone(), true));
+            for child in fs::read_dir(&path)? {
+                pending.push((child?.path(), false));
+            }
+        } else {
+            remove_file(&path)?;
+            if metadata.is_file() {
+                *removed_bytes = removed_bytes.saturating_add(metadata.len());
+            }
         }
-        Ok(())
     }
+    Ok(())
 }
 
 pub(crate) fn journal_ids_from_entries(
@@ -1554,7 +1566,16 @@ impl Store {
             root.clone()
         };
         let mut listing = Listing::default();
-        fn walk(store: &Store, area: Area, root: &Path, dir: &Path, out: &mut Listing) {
+        // One directory per call; subdirectories are queued, not recursed into,
+        // so a delivered tree of any depth costs heap, not stack (I-22).
+        fn walk(
+            store: &Store,
+            area: Area,
+            root: &Path,
+            dir: &Path,
+            out: &mut Listing,
+            pending: &mut Vec<PathBuf>,
+        ) {
             #[cfg(test)]
             let forced = SCAN_FAULTS.with(|faults| {
                 let rel = dir.strip_prefix(root).unwrap_or(dir).to_string_lossy();
@@ -1621,7 +1642,7 @@ impl Store {
                     }
                 };
                 if ty.is_dir() {
-                    walk(store, area, root, &path, out);
+                    pending.push(path);
                 } else if ty.is_file() {
                     match entry.metadata() {
                         Ok(meta) => {
@@ -1655,7 +1676,12 @@ impl Store {
             }
         }
         match fs::symlink_metadata(&start) {
-            Ok(_) => walk(self, area, &root, &start, &mut listing),
+            Ok(_) => {
+                let mut pending = vec![start];
+                while let Some(dir) = pending.pop() {
+                    walk(self, area, &root, &dir, &mut listing, &mut pending);
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => listing
                 .unreadable

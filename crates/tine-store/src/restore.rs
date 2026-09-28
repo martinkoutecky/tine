@@ -350,7 +350,6 @@ impl Store {
                 bound,
                 live_dir,
                 Path::new(recovery_prefix),
-                Path::new(""),
                 &restored,
                 area,
                 &mut changed,
@@ -635,55 +634,69 @@ fn copy_new(recovery: &Recovery, live: &Path, source: &mut File, len: u64) -> io
     result
 }
 
+/// Retire every live text file (or asset sidecar) under `live_dir` that the
+/// restore did not write. Directories are queued, not recursed into, so a
+/// delivered tree of any depth costs heap, not stack (I-22). The directory
+/// popped next (the last one queued) keeps a handle opened from its parent, so
+/// a deep chain costs O(depth) opens, not O(depth²), with at most two open.
 fn retire_extras(
     recovery: &Recovery,
     live_dir: &Path,
     recovery_prefix: &Path,
-    rel: &Path,
     restored: &HashSet<PathBuf>,
     area: Area,
     changed: &mut bool,
 ) -> io::Result<()> {
-    let current = match real_parent(&recovery.root, &live_dir.join(rel), false) {
-        Ok(value) => value,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    for entry in current.read_dir(".")? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let child = rel.join(&name);
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
-            if area == Area::Assets {
-                if name == ASSET_RECOVERY {
+    let mut pending: Vec<(PathBuf, Option<Dir>)> = vec![(PathBuf::new(), None)];
+    while let Some((rel, handle)) = pending.pop() {
+        let current = match handle.map_or_else(
+            || real_parent(&recovery.root, &live_dir.join(&rel), false),
+            Ok,
+        ) {
+            Ok(value) => value,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        let queued = pending.len();
+        for entry in current.read_dir(".")? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let child = rel.join(&name);
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                if area == Area::Assets {
+                    if name == ASSET_RECOVERY {
+                        continue;
+                    }
+                } else if name.to_str().is_none_or(|s| s.starts_with('.')) {
                     continue;
                 }
-            } else if name.to_str().is_none_or(|s| s.starts_with('.')) {
-                continue;
+                pending.push((child, None));
+            } else if ((area == Area::Assets
+                && kind.is_file()
+                && crate::file_kind::is_asset_sidecar_path(&child))
+                || (area != Area::Assets
+                    && (kind.is_file() || kind.is_symlink())
+                    && crate::file_kind::is_graph_text_path(&child)))
+                && !restored.contains(&child)
+            {
+                let live = live_dir.join(&child);
+                let recover = recovery_prefix.join(&child);
+                if move_if_present(recovery, &live, &recover)? {
+                    *changed = true;
+                }
             }
-            retire_extras(
-                recovery,
-                live_dir,
-                recovery_prefix,
-                &child,
-                restored,
-                area,
-                changed,
-            )?;
-        } else if ((area == Area::Assets
-            && kind.is_file()
-            && crate::file_kind::is_asset_sidecar_path(&child))
-            || (area != Area::Assets
-                && (kind.is_file() || kind.is_symlink())
-                && crate::file_kind::is_graph_text_path(&child)))
-            && !restored.contains(&child)
-        {
-            let live = live_dir.join(&child);
-            let recover = recovery_prefix.join(&child);
-            if move_if_present(recovery, &live, &recover)? {
-                *changed = true;
-            }
+        }
+        if pending.len() > queued {
+            let (rel, handle) = pending.last_mut().expect("queued above");
+            let name = rel.file_name().expect("queued child has a name");
+            // Any failure here leaves `None`: `real_parent` then repeats the
+            // same checks from the root and reports the error.
+            *handle = current
+                .symlink_metadata(name)
+                .ok()
+                .filter(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+                .and_then(|_| current.open_dir(name).ok());
         }
     }
     Ok(())
