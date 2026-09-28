@@ -1,0 +1,56 @@
+/* GH #164 properties panel: rows for keys with no preset, and the add-row.
+   The panel's base rules live with the other panels in app.css. */
+.pp-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pp-remove {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+.pp-remove:hover {
+  color: var(--text-primary);
+}
+.pp-add {
+  border-top: 1px solid var(--border-color);
+  margin-top: 4px;
+  padding-top: 10px;
+}
+.pp-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pp-add-key {
+  flex: 0 0 38%;
+  min-width: 0;
+}
+.pp-add-value {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pp-add-commit {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.pp-add-commit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pp-add-commit:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}

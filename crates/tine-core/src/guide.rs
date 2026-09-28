@@ -197,4 +197,23 @@ mod rename_guide_tests {
             );
         }
     }
+
+    #[test]
+    fn property_editor_is_documented_in_the_bundled_guide() {
+        // GH #164 (family 4): both doors, the add-row, non-ASCII keys, and the
+        // read-only refusal; nothing else tells a reader the form exists.
+        let tips = include_str!("templates/tips.md");
+        for control in [
+            "**Page properties…**",
+            "right-click a block for **Properties…**",
+            "**Add a property**",
+            "does not have to be plain ASCII",
+            "offers no property editing at all",
+        ] {
+            assert!(
+                tips.contains(control),
+                "missing family-4 Guide control: {control}"
+            );
+        }
+    }
 }

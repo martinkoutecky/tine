@@ -6,7 +6,7 @@ import { initParser } from "../render/parse";
 import { blockProperty, resetStore } from "../document";
 import { type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
-import { closeContextMenu, closeExportModal, exportModal, openContextMenu, openPageContextMenu } from "../ui";
+import { closeContextMenu, closeExportModal, closePageProps, exportModal, openContextMenu, openPageContextMenu, pagePropsPanel } from "../ui";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
@@ -61,6 +61,21 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     });
   }
   const menuLabels = () => [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
+
+  it("offers block Properties… only on a writable block, opening the block scope (GH #164)", () => {
+    load(true);
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    expect(menuLabels()).not.toContain("Properties…");
+    closeContextMenu();
+    resetStore();
+    load();
+    openContextMenu(30, 40, "leaf");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((el) => el.textContent?.trim() === "Properties…")!.click();
+    expect(pagePropsPanel()).toMatchObject({ scope: { kind: "block", id: "leaf" }, x: 30, y: 40 });
+    closePageProps();
+    dispose();
+  });
 
   it("does not mark a colliding block in the new graph as a template", async () => {
     load();

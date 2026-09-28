@@ -92,6 +92,7 @@ persistentBlockRef
 prevVisible
 promotePagePreamble
 queryWorkspacePage
+readPageProperties  # why: list every page property for the GH #164 properties editor; batch14q5
 readPageProperty
 readSchedule
 redo

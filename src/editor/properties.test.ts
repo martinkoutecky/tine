@@ -14,6 +14,8 @@ import {
   splitPagePreamble,
   orgPreBlockWithProperty,
   readOrgPageProperty,
+  hideAll,
+  isEditablePropertyKey,
 } from "./properties";
 
 describe("canonical Markdown page-header grammar (GH #163)", () => {
@@ -261,5 +263,22 @@ describe("org caret mapping across a hidden drawer", () => {
     const insideDrawer = raw.indexOf(":id:") + 2;
     const visOff = rawOffsetToVisibleOffset(raw, insideDrawer, isBuiltinHidden, "org");
     expect(visOff).toBe("Title".length);
+  });
+});
+
+// GH #164 (og 14 Q5): the classifier and the add-row validator ask the same
+// Unicode key class as the matcher that later has to find the key again.
+describe("non-ASCII property keys (GH #164)", () => {
+  it("hides a non-ASCII-keyed property line like any other, reversibly", () => {
+    const raw = "Body line\nklíč:: hodnota";
+    const { visible, hidden } = splitProps(raw, hideAll);
+    expect(visible).toBe("Body line");
+    expect(hidden).toBe("klíč:: hodnota");
+    expect(joinProps(visible, hidden)).toBe(raw);
+  });
+
+  it("accepts exactly the keys PROP_LINE can match back", () => {
+    for (const ok of ["status", "klíč", "logseq.order-list-type", "a/b", "日本"]) expect(isEditablePropertyKey(ok), ok).toBe(true);
+    for (const bad of ["", "a b", "a::b", "a:b", "#tag", "k\nv"]) expect(isEditablePropertyKey(bad), bad).toBe(false);
   });
 });

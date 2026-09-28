@@ -114,6 +114,29 @@ export function readPageProperty(pageName: string, key: string): string | null {
   return first && isPropertiesOnly(first.raw) ? readPropertyValue(first.raw, key) : null;
 }
 
+/** Every page property as `[key, value]`, in file order, read from exactly the
+ *  sources and grammar {@link readPageProperty} reads: pre-block (`#+key: ` for
+ *  Org, `key::` for Markdown), then a properties-only Markdown first root. The
+ *  first spelling of a key (case-insensitive) wins, so each listed key reads
+ *  back through readPageProperty. Missing page → []. Cost O(pre-block +
+ *  first-root bytes). */
+export function readPageProperties(pageName: string): [string, string][] {
+  const p = pageByName(pageName);
+  if (!p) return [];
+  const out = new Map<string, [string, string]>();
+  const scan = (text: string | null, org: boolean) => {
+    for (const line of text?.split("\n") ?? []) {
+      const m = org ? /^#\+([^\s:]+): (.*)$/u.exec(line) : PROP_LINE.exec(line);
+      const key = m && (org ? m[1].toLowerCase() : m[1]);
+      if (key && !out.has(key.toLowerCase())) out.set(key.toLowerCase(), [key, m[2].trim()]);
+    }
+  };
+  scan(p.preBlock, p.format === "org");
+  const first = p.format === "md" ? doc.byId[p.roots[0]] : null;
+  if (first && isPropertiesOnly(first.raw)) scan(first.raw, false);
+  return [...out.values()];
+}
+
 /** Set/clear a page property in an active Markdown header editor first;
  *  otherwise use a properties-only first root only when pre-block is empty,
  *  and use the format's pre-block in every other case. Missing/read-only pages

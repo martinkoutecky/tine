@@ -457,11 +457,15 @@ export function agendaQuery(): string {
 // immediately (the block id, consumed once on mount, then cleared).
 export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = createSignal<string | null>(null);
 
-// Page-properties panel (alias / public / tags / icon / title), opened from the
-// page-title gear or the "/Page properties" command. Anchored at x,y.
-export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ name: string; x: number; y: number; binding: ReturnType<typeof captureBinding> } | null>(null);
+// Properties panel at x,y, one panel for two scopes (GH #164): a page's pre-block
+// (title gear, "/Page properties", page menu) or one block's (block menu).
+export type PropsPanelScope = { kind: "page"; name: string } | { kind: "block"; id: string };
+export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ scope: PropsPanelScope; x: number; y: number; binding: ReturnType<typeof captureBinding> } | null>(null);
 export function openPageProps(name: string, x: number, y: number) {
-  setPagePropsPanel({ name, x, y, binding: captureBinding() });
+  setPagePropsPanel({ scope: { kind: "page", name }, x, y, binding: captureBinding() });
+}
+export function openBlockProps(id: string, x: number, y: number) {
+  setPagePropsPanel({ scope: { kind: "block", id }, x, y, binding: captureBinding() });
 }
 export function closePageProps() {
   setPagePropsPanel(null);

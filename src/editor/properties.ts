@@ -6,6 +6,14 @@ import { transitionFence, type FenceState } from "./fences";
 /** Ordinary `key:: value` lines share the page-header key class at column zero. */
 export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
 
+/** Whether `key` may be committed as a property key from the UI (GH #164).
+ *  Asks the matcher that later has to FIND the key ({@link PROP_LINE}), so any
+ *  accepted key can be changed and removed again. Compares the recovered key,
+ *  because `a::b` yields a line PROP_LINE matches with key `a`. Cost O(key). */
+export function isEditablePropertyKey(key: string): boolean {
+  return PROP_LINE.exec(`${key}:: value`)?.[1] === key;
+}
+
 const PAGE_HEADER_KEY = /^[\p{L}\p{M}\p{N}_./-]+$/u;
 
 /** Parse one canonical Markdown page-header property line. This grammar is
