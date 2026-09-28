@@ -39,7 +39,7 @@ use tine_core::query::{
 };
 use tine_core::refs;
 
-use super::eval::{self, AtomCache, CompiledLeaves, EvalCtx};
+use super::eval::{self, CompiledLeaves, EvalCache, EvalCtx};
 use super::index::{atom_format, PageFacts, QueryIndex};
 use super::{result_dto, shallow_dto_estimated_bytes, BoundedGroups, ConstructionBudget};
 use crate::model::GraphRead;
@@ -92,7 +92,7 @@ impl Plan {
         doc: &'a Document,
         facts: &'a PageFacts,
         config: &'a ParseConfig,
-        atoms: &'a AtomCache,
+        atoms: &'a EvalCache,
     ) -> EvalCtx<'a> {
         EvalCtx::new(
             &entry.name,
@@ -152,7 +152,7 @@ impl Plan {
         if self.skips(entry, facts) {
             return false;
         }
-        let atoms = AtomCache::default();
+        let atoms = EvalCache::default();
         let ctx = self.ctx(entry, doc, facts, config, &atoms);
         match self.anchor {
             Anchor::Page => eval::eval_page(&self.filter, &ctx),
@@ -422,7 +422,7 @@ pub(crate) fn execute(
     let mut fold = StatisticsFold::new(view, bounds.max_bytes)?;
     graph.with_pages(|pages| -> Result<(), StatisticsResourceLimit> {
         let config = index.parse_config();
-        let atoms = AtomCache::default();
+        let atoms = EvalCache::default();
         match plan.anchor {
             Anchor::Block => {
                 let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<&DocBlock>)> = Vec::new();
@@ -633,7 +633,7 @@ pub(crate) fn execute(
 fn count(graph: &impl GraphRead, index: &QueryIndex, plan: &Plan) -> usize {
     graph.with_pages(|pages| {
         let config = index.parse_config();
-        let atoms = AtomCache::default();
+        let atoms = EvalCache::default();
         let mut count = 0usize;
         let mut hits = Vec::new();
         for (entry, doc) in pages {

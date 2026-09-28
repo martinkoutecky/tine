@@ -630,3 +630,36 @@ fn an_edit_moves_the_answer_and_an_unrelated_edit_keeps_it() {
     save("pages/A.md", "DONE first");
     assert!(answer(&store).is_empty());
 }
+
+/// G3 (og 14 Q2) I-22/I-25: a `LIKE` pattern at the admitted source limit
+/// over long blocks answers through the real entry point within a bound. The
+/// old per-comparison matcher cost O(block × pattern) (~8e9 steps per block
+/// here) and did not answer.
+#[test]
+fn an_admitted_limit_like_pattern_over_long_blocks_answers_within_a_bound() {
+    let block = format!("{}c", "a".repeat(128 * 1024));
+    let page: String = (0..8).map(|_| format!("- {block}\n")).collect();
+    let fixture = open(&[
+        ("pages/Long.md", &page),
+        ("pages/Short.md", "- a short c\n"),
+    ]);
+    let run = "a".repeat(65_000);
+    let source = format!("content like '%{run}b'");
+    assert!(source.len() <= tine_core::query::QUERY_SOURCE_MAX_BYTES);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let graph = fixture.graph.clone();
+    std::thread::spawn(move || {
+        let miss = block_lines(&run_text(&graph, &source, QueryDialect::Tql));
+        let hit = block_lines(&run_text(
+            &graph,
+            &format!("content like '%{}c'", "a".repeat(65_000)),
+            QueryDialect::Tql,
+        ));
+        let _ = tx.send((miss, hit));
+    });
+    let (miss, hit) = rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("an admitted LIKE pattern must answer within its bound (I-22)");
+    assert!(miss.is_empty());
+    assert_eq!(hit.len(), 8);
+}

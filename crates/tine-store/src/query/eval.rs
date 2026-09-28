@@ -30,7 +30,7 @@ use tine_core::query::atom::{
 use tine_core::query::ir::{Attr, CmpOp, Filter, Leaf, ObservedType, Quant, Rel, Value};
 use tine_core::query::path_refs::{closure_contains, closure_names, dfs_path_refs, PathRefCounts};
 use tine_core::query::registry::Registry;
-use tine_core::query::text::like_matches;
+use tine_core::query::text::LikePattern;
 use tine_core::refs;
 use tine_core::search_query::{canonical_fold, Matcher};
 use unicode_normalization::UnicodeNormalization;
@@ -118,27 +118,35 @@ fn planning_text<'a>(projected: Option<&'a str>, raw: &'a str, marker: &str) -> 
     })
 }
 
-/// One execution's memo of `property_atoms` per distinct (format, key, value):
-/// a graph repeats few distinct values across many blocks, and atomizing one
-/// runs the inline parser. Dies with the execution; at most
-/// [`AtomCache::MAX_ENTRIES`] values are retained (the rest are recomputed).
+/// One execution's memo of the work a query repeats per block: atomizing a
+/// property value (a graph repeats few distinct values across many blocks,
+/// and atomizing runs the inline parser), and compiling a `LIKE` pattern
+/// (folded per call site, compiled once per distinct pattern). Dies with the
+/// execution; at most [`EvalCache::MAX_ENTRIES`] values are retained (the rest
+/// are recomputed).
 #[derive(Default)]
-pub(crate) struct AtomCache(RefCell<AtomSlots>);
+pub(crate) struct EvalCache {
+    atoms: RefCell<AtomSlots>,
+    likes: RefCell<HashMap<String, Rc<LikePattern>>>,
+}
 
 /// Indexed by `format == Org`, then source key, then value; looked up by
 /// `&str` so a hit allocates nothing.
 type AtomSlots = ([HashMap<String, HashMap<String, Rc<[Atom]>>>; 2], usize);
 
-impl AtomCache {
+impl EvalCache {
     const MAX_ENTRIES: usize = 65_536;
 
     fn get(&self, key: &str, value: &str, format: AtomFormat, config: &ParseConfig) -> Rc<[Atom]> {
         let org = usize::from(format == AtomFormat::Org);
-        if let Some(atoms) = self.0.borrow().0[org].get(key).and_then(|by| by.get(value)) {
+        if let Some(atoms) = self.atoms.borrow().0[org]
+            .get(key)
+            .and_then(|by| by.get(value))
+        {
             return Rc::clone(atoms);
         }
         let atoms: Rc<[Atom]> = property_atoms(key, value, format, config).into();
-        let mut cache = self.0.borrow_mut();
+        let mut cache = self.atoms.borrow_mut();
         if cache.1 < Self::MAX_ENTRIES {
             cache.1 += 1;
             cache.0[org]
@@ -147,6 +155,22 @@ impl AtomCache {
                 .insert(value.to_owned(), Rc::clone(&atoms));
         }
         atoms
+    }
+
+    /// `haystack LIKE pattern` (both already folded), compiling each distinct
+    /// pattern once per execution: O(pattern) to fold and look up, then
+    /// [`LikePattern::matches`]' linear scan.
+    fn like(&self, haystack: &str, pattern: &str) -> bool {
+        let hit = self.likes.borrow().get(pattern).cloned();
+        let compiled = hit.unwrap_or_else(|| {
+            let compiled = Rc::new(LikePattern::compile(pattern));
+            let mut likes = self.likes.borrow_mut();
+            if likes.len() < Self::MAX_ENTRIES {
+                likes.insert(pattern.to_owned(), Rc::clone(&compiled));
+            }
+            compiled
+        });
+        compiled.matches(haystack)
     }
 }
 
@@ -171,7 +195,7 @@ pub(crate) struct EvalCtx<'a> {
     pub(crate) config: &'a ParseConfig,
     /// ONE coherent registry snapshot for the whole query (§6.2).
     pub(crate) registry: &'a Registry,
-    pub(crate) atoms: &'a AtomCache,
+    pub(crate) cache: &'a EvalCache,
 }
 
 impl<'a> EvalCtx<'a> {
@@ -187,7 +211,7 @@ impl<'a> EvalCtx<'a> {
         compiled: &'a CompiledLeaves,
         config: &'a ParseConfig,
         registry: &'a Registry,
-        atoms: &'a AtomCache,
+        cache: &'a EvalCache,
     ) -> Self {
         EvalCtx {
             journal,
@@ -201,7 +225,7 @@ impl<'a> EvalCtx<'a> {
             format,
             config,
             registry,
-            atoms,
+            cache,
         }
     }
 }
@@ -271,8 +295,8 @@ fn eval_block_leaf(
     match leaf {
         Leaf::Attr { attr, op, value } => match attr {
             Attr::Content => eval_content(*op, value, block, ctx),
-            Attr::Task => eval_optional_text(*op, value, block.marker()),
-            Attr::Priority => eval_optional_text(*op, value, block.priority()),
+            Attr::Task => eval_optional_text(*op, value, block.marker(), ctx),
+            Attr::Priority => eval_optional_text(*op, value, block.priority(), ctx),
             Attr::Scheduled => eval_planning(
                 *op,
                 value,
@@ -333,7 +357,7 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
         Filter::Off { .. } => true,
         Filter::Leaf { leaf } => match leaf {
             Leaf::Attr { attr, op, value } => match attr {
-                Attr::Name => eval_page_name(*op, value, ctx.page_name),
+                Attr::Name => eval_page_name(*op, value, ctx.page_name, ctx),
                 Attr::Journal => {
                     let wanted = value.as_bool();
                     match op {
@@ -349,7 +373,7 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                         .page_key
                         .rsplit_once('/')
                         .map(|(head, _)| head.to_string());
-                    eval_optional_text(*op, value, parent.as_deref())
+                    eval_optional_text(*op, value, parent.as_deref(), ctx)
                 }
                 _ => false,
             },
@@ -519,7 +543,7 @@ fn flatten_atoms(source_key: &str, rows: &[&str], ctx: &EvalCtx) -> Vec<Atom> {
     let mut out: Vec<Atom> = Vec::new();
     for value in rows {
         for atom in ctx
-            .atoms
+            .cache
             .get(source_key, value, ctx.format, ctx.config)
             .iter()
         {
@@ -603,7 +627,7 @@ fn eval_atom_value(
         ObservedType::Date => atom
             .day
             .is_some_and(|day| compare_day(op, value, day, ctx.today)),
-        _ => return compare_atom_text(op, value, &atom.key),
+        _ => return compare_atom_text(op, value, &atom.key, ctx),
     };
     // An OG `(property key value)` literal is text, and OG compares it as a
     // string: a date- or number-typed key still equals its exact text (og
@@ -611,7 +635,7 @@ fn eval_atom_value(
     typed
         || (op == CmpOp::Eq
             && matches!(value, Value::Text { .. })
-            && compare_atom_text(op, value, &atom.key))
+            && compare_atom_text(op, value, &atom.key, ctx))
 }
 
 fn compare_number(op: CmpOp, value: &Value, num: f64) -> bool {
@@ -647,7 +671,7 @@ fn compare_number(op: CmpOp, value: &Value, num: f64) -> bool {
     }
 }
 
-fn compare_atom_text(op: CmpOp, value: &Value, key: &str) -> bool {
+fn compare_atom_text(op: CmpOp, value: &Value, key: &str, ctx: &EvalCtx) -> bool {
     let operand = |value: &Value| match value {
         Value::Text { text } => Some(atom_key(text)),
         Value::Number { number } => Some(atom_key(&format_number(*number))),
@@ -663,7 +687,7 @@ fn compare_atom_text(op: CmpOp, value: &Value, key: &str) -> bool {
     match op {
         CmpOp::In => value.as_list().is_some_and(listed),
         CmpOp::NotIn => value.as_list().is_some_and(|items| !listed(items)),
-        CmpOp::Like => operand(value).is_some_and(|pattern| like_matches(key, &pattern)),
+        CmpOp::Like => operand(value).is_some_and(|pattern| ctx.cache.like(key, &pattern)),
         CmpOp::StartsWith => operand(value).is_some_and(|prefix| key.starts_with(&prefix)),
         CmpOp::Eq => operand(value).is_some_and(|operand| key == operand),
         // K3: `!=` is "coercible AND unequal"; a text atom always coerces.
@@ -684,7 +708,7 @@ fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bo
     };
     match op {
         CmpOp::Like => {
-            folded().is_some_and(|pattern| like_matches(&projection.visible_lower, &pattern))
+            folded().is_some_and(|pattern| ctx.cache.like(&projection.visible_lower, &pattern))
         }
         CmpOp::StartsWith => {
             folded().is_some_and(|prefix| projection.visible_lower.starts_with(&prefix))
@@ -711,7 +735,7 @@ fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bo
 
 /// A comparison on an OPTIONAL text attribute (`task`, `priority`, page
 /// `namespace`). Absent makes every comparison false (§3.4).
-fn eval_optional_text(op: CmpOp, value: &Value, actual: Option<&str>) -> bool {
+fn eval_optional_text(op: CmpOp, value: &Value, actual: Option<&str>, ctx: &EvalCtx) -> bool {
     let text = value.as_text();
     let listed = |actual: &str| {
         value.as_list().map(|items| {
@@ -733,7 +757,8 @@ fn eval_optional_text(op: CmpOp, value: &Value, actual: Option<&str>) -> bool {
         CmpOp::In => actual.and_then(listed).unwrap_or(false),
         CmpOp::NotIn => actual.and_then(listed).is_some_and(|hit| !hit),
         CmpOp::Like => actual.zip(text).is_some_and(|(actual, text)| {
-            like_matches(&actual.to_ascii_lowercase(), &text.to_ascii_lowercase())
+            ctx.cache
+                .like(&actual.to_ascii_lowercase(), &text.to_ascii_lowercase())
         }),
         CmpOp::StartsWith => actual.zip(text).is_some_and(|(actual, text)| {
             actual
@@ -744,7 +769,7 @@ fn eval_optional_text(op: CmpOp, value: &Value, actual: Option<&str>) -> bool {
     }
 }
 
-fn eval_page_name(op: CmpOp, value: &Value, page_name: &str) -> bool {
+fn eval_page_name(op: CmpOp, value: &Value, page_name: &str, ctx: &EvalCtx) -> bool {
     let key = refs::page_key(page_name);
     let text = value.as_text();
     let listed = || {
@@ -760,8 +785,10 @@ fn eval_page_name(op: CmpOp, value: &Value, page_name: &str) -> bool {
         CmpOp::NotEq => text.is_some_and(|text| key != refs::page_key(text)),
         CmpOp::StartsWith => text.is_some_and(|text| key.starts_with(&page_prefix_key(text))),
         // A LIKE pattern keeps its boundary slashes: they are pattern text.
-        CmpOp::Like => text
-            .is_some_and(|text| like_matches(&key, &text.to_lowercase().nfc().collect::<String>())),
+        CmpOp::Like => text.is_some_and(|text| {
+            ctx.cache
+                .like(&key, &text.to_lowercase().nfc().collect::<String>())
+        }),
         CmpOp::In => listed().unwrap_or(false),
         CmpOp::NotIn => listed().is_some_and(|hit| !hit),
         _ => false,
