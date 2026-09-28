@@ -34,6 +34,9 @@ export type PersistedLayoutNode =
       paneId: string;
     } & PaneSnapshot);
 
+/** Saved pane and sidebar state. workspaceId names the workspace that produced
+ * this session; a different registry active ID can select its parked snapshot
+ * during startup recovery. Missing fields retain legacy defaults. */
 export interface PersistedSession extends PaneSnapshot {
   workspaceId?: string;
   leftSidebar?: boolean;
@@ -50,11 +53,48 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let currentWorkspaceId: string | null = null;
 let restoredWorkspaceId: string | null = null;
 let restoredSessionPresent: boolean | null = null;
+let sessionIntentRevision = 0;
+let restoreEvidence: { owner: ReturnType<typeof graphOwner>; snapshot: string; intent: string; present: boolean | null; workspaceId: string | null } | null = null;
+
+function intentToken(): string {
+  return JSON.stringify([sessionIntentRevision, ...layoutPaneIds().map((id) => [id, paneRouter(id).routeIntentRevision()])]);
+}
 
 export function setSessionWorkspaceId(id: string | null): void { currentWorkspaceId = id; }
-export function restoredSessionWorkspaceId(): string | null { return restoredWorkspaceId; }
-export function wasSessionRestored(): boolean | null { return restoredSessionPresent; }
-export function clearRestoredSessionWorkspaceId(): void { restoredWorkspaceId = null; restoredSessionPresent = null; }
+export function discardWorkspaceRestoreEvidence(): void { restoreEvidence = null; restoredWorkspaceId = null; restoredSessionPresent = null; }
+
+/** Capture one startup recovery decision before the registry read and clear the
+ * session's workspace ID until a registry is installed. On landing,
+ * a live route or session intent always wins over a parked workspace, including
+ * when its serialized snapshot has returned to the same value. A refused parked
+ * recovery is shown to the user. Cost is one session snapshot at each boundary;
+ * malformed parked sessions reject. */
+export function prepareWorkspaceRecovery(): (activeId: string, parked: PersistedSession) => PersistedSession {
+  const evidence = restoreEvidence;
+  restoreEvidence = null;
+  const beforeClear = JSON.stringify(buildPersistedSession());
+  const beforeClearIntent = intentToken();
+  const intervened = !!evidence && (!evidence.owner() || evidence.snapshot !== beforeClear || evidence.intent !== beforeClearIntent);
+  setSessionWorkspaceId(null);
+  const startSnapshot = JSON.stringify(buildPersistedSession());
+  const startIntent = intentToken();
+  return (activeId, parked) => {
+    const changed = JSON.stringify(buildPersistedSession()) !== startSnapshot || intentToken() !== startIntent
+      || intervened;
+    const wantsParked = !!evidence && (evidence.present === false || !!evidence.workspaceId && evidence.workspaceId !== activeId);
+    if (changed && wantsParked) {
+      pushToastUnique("Live changes were kept; workspace recovery was skipped.", "error");
+      return buildPersistedSession();
+    }
+    if (wantsParked) {
+      const parsed = parsePersistedSession(JSON.stringify(parked));
+      if (!parsed) throw new Error("The active workspace snapshot is invalid");
+      applyParsedSession(parsed);
+      scheduleSessionSave();
+    }
+    return buildPersistedSession();
+  };
+}
 
 function validRoute(r: unknown): Route | null {
   if (!r || typeof r !== "object") return null;
@@ -304,6 +344,7 @@ function clearSessionSaveFailure(): void {
  * one Retry toast and rejects; stale graph ownership also rejects. Completion
  * certifies persistence for the current graph. Cost follows session bytes and backend latency. */
 export async function flushSession(): Promise<void> {
+  sessionIntentRevision++;
   const owner = graphOwner();
   clearTimeout(saveTimer);
   try {
@@ -317,6 +358,7 @@ export async function flushSession(): Promise<void> {
 }
 
 export function scheduleSessionSave() {
+  sessionIntentRevision++;
   const owner = graphOwner();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -327,17 +369,21 @@ export function scheduleSessionSave() {
   }, 150);
 }
 
-/** Best-effort load of saved session state. Missing or invalid session data,
- * and load errors, leave current/default state without rejecting. Sidebar and
- * recent state may apply even when active tabs are not pristine and stay as
- * they are. Finally attempt workspace-registry initialization; its errors
- * are also swallowed. Cost follows session bytes and registry load. */
+/** Best-effort load of this graph's saved session; never rejects. Saved tabs,
+ * layout, sidebar and recents apply together only while the UI is the pristine
+ * one-pane Journals default and no route or session intent changed during the
+ * read. A missing file restores legacy recents; invalid or unreadable data
+ * leaves the live UI. Load failure, graph change, or a live change skips registry
+ * initialization. Otherwise registry initialization may apply its parked active
+ * workspace and schedule a save; a refused recovery or registry error shows a
+ * toast. Backend loads may migrate legacy session/registry files. Cost follows
+ * session and registry bytes; recovery may write the session file. */
 export async function restoreSession(): Promise<void> {
   const owner = graphOwner();
-  restoredWorkspaceId = null;
-  restoredSessionPresent = null;
+  discardWorkspaceRestoreEvidence();
   const initialSession = JSON.stringify(buildPersistedSession());
-  const mayApply = () => owner() && JSON.stringify(buildPersistedSession()) === initialSession;
+  const initialIntent = intentToken();
+  const mayApply = () => owner() && JSON.stringify(buildPersistedSession()) === initialSession && intentToken() === initialIntent;
   let initializeRegistry = true;
   try {
     let raw: string | null = null;
@@ -370,11 +416,12 @@ export async function restoreSession(): Promise<void> {
     // like the existing session restore; a bad registry must not block the app.
     try {
       if (!initializeRegistry) return;
+      restoreEvidence = { owner, snapshot: JSON.stringify(buildPersistedSession()), intent: intentToken(), present: restoredSessionPresent, workspaceId: restoredWorkspaceId };
       const { initializeWorkspaces } = await import("./workspaces");
       if (!owner()) return;
       await initializeWorkspaces();
-    } catch {
-      // unavailable before graph binding, older backend, or invalid registry
+    } catch (error) {
+      if (owner()) pushToastUnique(`Could not restore workspaces: ${String(error)}`, "error");
     }
   }
 }

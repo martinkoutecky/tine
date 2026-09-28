@@ -549,6 +549,11 @@ pub(crate) fn load_session(
     Ok(std::fs::read_to_string(path).ok())
 }
 
+/// Durably replace the bound graph's app-data session JSON with unvalidated
+/// `data`: unique temp, file fsync, rename, then directory fsync. No bound graph
+/// or any I/O failure returns an error. A post-rename directory-sync error is
+/// also returned although the new file is already visible; its power-loss
+/// durability is uncertain. Synchronous; O(data bytes) and two syncs.
 #[tauri::command]
 pub(crate) fn save_session(
     data: String,

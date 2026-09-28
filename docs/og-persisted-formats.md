@@ -31,9 +31,12 @@ atomic publication have the same payload as their final name.
 
 The graph session JSON may carry `workspaceId`, the ID of the workspace that
 produced it. On startup, a matching live session is fresher than the registry's
-parked snapshot; if `workspaceId` differs from the registry's `activeId`, the
-registry's active workspace snapshot wins. This resolves a crash after the
-registry switch was published but before its scheduled session save.
+parked snapshot. If the session is missing or its `workspaceId` differs from the
+registry's `activeId`, the registry's active workspace snapshot wins only when
+no live route or session intent changed since the session read. An intervening
+live edit wins instead, and the skipped recovery is reported to the user. This
+resolves a crash after the registry switch was published but before its
+scheduled session save without replacing newer live work.
 
 There is **no separate retained-draft format** on this og tree. Unsaved editor
 state is not a durable draft capsule; that is inventory family 9, status todo.

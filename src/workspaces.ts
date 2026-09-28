@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, readOwned, serializeDurable, writeOwned, type Owned, type Owner } from "./owned";
 import { pushToast } from "./toasts";
-import { applyParsedSession, buildPersistedSession, clearRestoredSessionWorkspaceId, flushSession, parsePersistedSession, restoredSessionWorkspaceId, scheduleSessionSave, setSessionWorkspaceId, wasSessionRestored, type PersistedSession } from "./session";
+import { applyParsedSession, buildPersistedSession, discardWorkspaceRestoreEvidence, flushSession, parsePersistedSession, prepareWorkspaceRecovery, scheduleSessionSave, setSessionWorkspaceId, type PersistedSession } from "./session";
 
 export interface Workspace {
   id: string;
@@ -155,28 +155,24 @@ function workspaceId(): string {
   return uuid ? `workspace-${uuid}` : `workspace-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** Clear the in-memory workspace registry, then load and validate the graph's
- * persisted registry. Use the current live session for its active workspace
- * without rewriting files. Invalid registry or backend failure rejects and
- * leaves the in-memory registry clear. Operations are serialized per graph;
- * cost follows registry and live-session bytes. */
+/** Clear the in-memory registry and session workspace ID, then load and validate
+ * this graph's registry. If loading fails, later session saves omit workspaceId.
+ * The backend creates a missing registry from the session file. One session-owned
+ * recovery decision compares the original restore and current live intent:
+ * a missing or mismatched session selects the parked active workspace and
+ * schedules a session save, unless a newer live edit intervened. Such an edit
+ * wins and a toast reports the skipped recovery. A matching session stays live.
+ * Invalid registry, backend failure, graph change, or malformed parked session
+ * rejects and leaves the registry clear. Calls serialize per graph; cost follows
+ * registry and session bytes plus one UI apply when recovery succeeds. */
 export function initializeWorkspaces(): Promise<void> {
   return enqueue(async (scope) => {
-    const restoredId = restoredSessionWorkspaceId();
-    const sessionPresent = wasSessionRestored();
-    clearWorkspaces();
-    const initialSession = JSON.stringify(buildPersistedSession());
+    const recover = prepareWorkspaceRecovery();
+    setWorkspaceList([]);
+    setActiveId("");
     const loaded = parseRegistry(await scope.after(readOwned(scope.owner, backend().loadWorkspaces())));
     if (!loaded) throw new Error("The named-workspace registry is invalid");
-    if (sessionPresent === false || (restoredId && restoredId !== loaded.activeId)) {
-      if (JSON.stringify(buildPersistedSession()) !== initialSession)
-        throw new Error("The session changed while recovering the active workspace");
-      install(loaded);
-      applyWorkspace(loaded.workspaces.find((workspace) => workspace.id === loaded.activeId)!);
-      return;
-    }
-    // A matching live session is newer than the registry's parked snapshot.
-    const current = buildPersistedSession();
+    const current = recover(loaded.activeId, loaded.workspaces.find((workspace) => workspace.id === loaded.activeId)!.blob);
     loaded.workspaces = loaded.workspaces.map((workspace) =>
       workspace.id === loaded.activeId ? { ...workspace, blob: current } : workspace
     );
@@ -310,14 +306,16 @@ export function workspaceDisplayName(workspace: Pick<Workspace, "name">): string
   return workspace.name || "Default";
 }
 
-/** Clear only the reactive workspace list and active ID. Persisted records and
- * the live session remain. Registry operations fail until reinitialization.
- * O(1) signal writes; synchronous, with no disk I/O. */
+/** Clear the reactive workspace list and active ID, the session's workspace ID
+ * and pending startup recovery evidence. Later session saves omit workspaceId
+ * until another registry is installed. Persisted files remain; registry
+ * operations fail until reinitialization. Does not cancel an in-flight load.
+ * O(1), synchronous, no disk I/O. */
 export function clearWorkspaces() {
   setWorkspaceList([]);
   setActiveId("");
   setSessionWorkspaceId(null);
-  clearRestoredSessionWorkspaceId();
+  discardWorkspaceRestoreEvidence();
 }
 
 export function resetWorkspacesForTest() {
