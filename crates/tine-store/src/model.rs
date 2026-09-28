@@ -145,9 +145,14 @@ pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
     true
 }
 
-/// Whether source text stays below the parser and renderer nesting ceiling.
-/// Counts list/outline columns, closed callouts, quote markers, and matched
-/// inline delimiters; Org headline levels are checked by the path-aware reader.
+/// Whether source text is within the parser and renderer nesting ceiling
+/// (`PARSE_INPUT_MAX_DEPTH` = 512 levels, inclusive). Per line it sums
+/// list-item column levels, open `#+BEGIN_<name>` callouts (every non-literal
+/// BEGIN counts until its matching END — an unclosed one counts for the rest of
+/// the file), and `>` quote markers; paired `()[]{}` on a line add their depth to
+/// callouts + quotes. Fenced code and src/example/export/comment bodies are not
+/// counted. Lone `\r`/CRLF end lines. Org headline levels are checked separately
+/// by the path-aware reader. Pure, O(n).
 pub fn parse_input_depth_within_limit(input: &str) -> bool {
     let input: &str = &doc::normalize_line_endings(input); // a lone `\r` ends a line (K01a)
     let mut bullet_columns = Vec::new();

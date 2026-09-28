@@ -257,9 +257,14 @@ let paneRouteProvider: () => Route[] = () => [];
 export function registerPaneRouteProvider(provider: () => Route[]) {
   paneRouteProvider = provider;
 }
-// Open drafts outside the block editor (a sheet prop cell): each names the page
-// its commit writes to, so eviction cannot discard the draft (og 15a K17a).
 const draftPins = new Set<() => string | null | undefined>();
+/** Keep the page a draft outside the block editor will write to (e.g. a sheet
+ * prop cell) from being evicted from the working set (og 15a K17a). `page` is
+ * called at each eviction check and names a store page name (null/undefined pins
+ * nothing). Returns the unpin function; nothing unpins automatically — call it
+ * from `onCleanup`. The pin is not cleared by a graph switch (it is re-read
+ * against the new graph). O(1) to register; each eviction check calls every
+ * registered accessor. */
 export function pinPageWhileDrafting(page: () => string | null | undefined): () => void {
   draftPins.add(page);
   return () => draftPins.delete(page);

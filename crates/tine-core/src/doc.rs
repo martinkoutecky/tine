@@ -863,7 +863,8 @@ fn promote_preamble_collapsed_heading(pre_block: &mut Option<String>, roots: &mu
 
 /// Rewrite every line terminator to `\n`. Page text ends a line at `\r\n`,
 /// `\n` or a lone `\r`, as mldoc (`eol_chars = ['\r'; '\n']`) and lsdoc's lexer
-/// do. Borrows when the text has no `\r`; otherwise one O(n) copy.
+/// do. Borrows when the text has no `\r`; otherwise two O(n) copies (CRLF
+/// first, then lone CR, so `\r\r\n` becomes `\n\n`).
 pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
     if content.contains('\r') {
         std::borrow::Cow::Owned(content.replace("\r\n", "\n").replace('\r', "\n"))
@@ -872,12 +873,15 @@ pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// Parse Markdown page text into a [`Document`] (pre-block + block forest by
+/// bullet column). Ends a line at `\r\n`, `\n` or a lone `\r`; the model is
+/// LF-canonical, so the file's terminators are not kept here and must be
+/// restored at the write boundary (tine-store `model/line_endings.rs`). Assigns
+/// no block uuids (empty). Does not enforce the nesting ceiling — callers
+/// validate first (`parse_input_depth_within_limit`). Pure, infallible; O(n)
+/// except that each unclosed `#+BEGIN_` line scans ahead to its block's end.
 pub fn parse(content: &str) -> Document {
-    // Normalize CRLF and lone CR to LF (`normalize_line_endings`) so the model
-    // never carries a stray `\r` (which would pollute property / `id::` values
-    // and break matching) and a lone-CR file keeps its lines. The file's own
-    // terminators are reproduced at the write boundary (tine-store
-    // `model/line_endings.rs`), not here: the model is LF-canonical.
+    // A stray `\r` in the model would pollute property / `id::` values.
     let normalized = normalize_line_endings(content);
     let content: &str = &normalized;
     let body = content.strip_suffix('\n').unwrap_or(content);
@@ -1045,8 +1049,10 @@ impl Default for SerializeOpts {
 }
 
 impl SerializeOpts {
-    /// Infer the formatting of an existing on-disk file so a save reproduces it.
-    /// `None` (new file) falls back to the default.
+    /// Infer the three formatting knobs (trailing newlines, blank after the
+    /// preamble, indent unit) of an existing file, read in its LF form. Line
+    /// terminators are not detected here; the store writer restores them.
+    /// `None` (new file) gives the default.
     pub fn detect(existing: Option<&str>) -> SerializeOpts {
         match existing {
             None => SerializeOpts::default(),
