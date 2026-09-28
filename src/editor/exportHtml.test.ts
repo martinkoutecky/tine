@@ -12,6 +12,13 @@ const forest: ExportNode[] = [
 ];
 
 describe("exportHtml", () => {
+  it("keeps body drawer lookalikes in Org exports", () => {
+    const raw = "* Heading\nBody\n:PROPERTIES:\n:note: prose\n:END:";
+    const html = exportHtml([{ raw, format: "org", children: [] }], {
+      stripLinks: false, removeEmphasis: false, removeTags: false,
+    });
+    expect(html, "Org drawer rule: exportHtml keeps the body drawer exemplar").toContain(":note: prose");
+  });
   it("serializes an escaped nested HTML fragment and omits properties", () => {
     const result = exportHtml(forest, {
       stripLinks: false,

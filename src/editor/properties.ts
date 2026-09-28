@@ -187,6 +187,16 @@ function orgDrawerKey(line: string): string | null {
 
 type LineClass = "v" | "h" | "d"; // visible | hidden-payload | dropped(org wrapper)
 
+/** A block drawer belongs immediately after its title and contiguous planning lines. */
+export function orgBlockDrawerRange(lines: string[]): [number, number] | null {
+  if (lines.length === 0) return null;
+  let start = lines[0].trim().toUpperCase() === ":PROPERTIES:" ? 0 : 1;
+  while (start < lines.length && /^\s*(?:SCHEDULED|DEADLINE):\s*</i.test(lines[start])) start++;
+  if (lines[start]?.trim().toUpperCase() !== ":PROPERTIES:") return null;
+  const end = lines.findIndex((line, i) => i > start && line.trim().toUpperCase() === ":END:");
+  return end > start ? [start, end] : null;
+}
+
 /** Classify every line as visible / hidden-property / dropped-org-wrapper.
  *  Fence-aware. For org, a block-properties `:PROPERTIES:`/`:END:` drawer whose
  *  inner lines are ALL built-in-hidden is dropped whole (wrapper marked `d`,
@@ -199,6 +209,7 @@ function classifyLines(
   format: PropFormat
 ): LineClass[] {
   const cls: LineClass[] = new Array(lines.length).fill("v");
+  const drawer = format === "org" ? orgBlockDrawerRange(lines) : null;
   let fence: FenceState | null = null;
   let i = 0;
   while (i < lines.length) {
@@ -213,7 +224,7 @@ function classifyLines(
       i++; // inside a code fence — never metadata
       continue;
     }
-    if (format === "org" && l.trim().toUpperCase() === ":PROPERTIES:") {
+    if (drawer && i === drawer[0]) {
       let j = i + 1;
       while (j < lines.length && lines[j].trim().toUpperCase() !== ":END:") j++;
       if (j < lines.length) {
@@ -335,23 +346,17 @@ export function joinProps(visible: string, hidden: string, format: PropFormat = 
   const hiddenLines = hidden.split("\n").filter((l) => l.trim() !== "");
   if (hiddenLines.length === 0) return visible;
   const lines = visible ? visible.split("\n") : [];
-  const start = lines.findIndex((l) => l.trim().toUpperCase() === ":PROPERTIES:");
-  const end =
-    start >= 0 ? lines.findIndex((l, i) => i > start && l.trim().toUpperCase() === ":END:") : -1;
-  if (start >= 0 && end > start) {
+  const drawer = orgBlockDrawerRange(lines);
+  if (drawer) {
+    const [, end] = drawer;
     lines.splice(end, 0, ...hiddenLines); // extend the existing drawer, before :END:
     return lines.join("\n");
   }
   if (lines.length === 0) return [":PROPERTIES:", ...hiddenLines, ":END:"].join("\n");
   const [title, ...rest] = lines;
-  const isSched = (l: string) => l.startsWith("SCHEDULED");
-  const isDead = (l: string) => l.startsWith("DEADLINE");
-  const scheduled = rest.filter(isSched);
-  const deadline = rest.filter(isDead);
-  const body = rest.filter((l) => !isSched(l) && !isDead(l));
-  return [title, ...scheduled, ...deadline, ":PROPERTIES:", ...hiddenLines, ":END:", ...body].join(
-    "\n"
-  );
+  let planEnd = 0;
+  while (planEnd < rest.length && /^\s*(?:SCHEDULED|DEADLINE):\s*</i.test(rest[planEnd])) planEnd++;
+  return [title, ...rest.slice(0, planEnd), ":PROPERTIES:", ...hiddenLines, ":END:", ...rest.slice(planEnd)].join("\n");
 }
 
 /** First value for `key` (case-insensitive) in a property block, or null. */

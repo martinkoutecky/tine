@@ -210,6 +210,13 @@ describe("org :PROPERTIES: drawer hiding (GH #37)", () => {
     expect(joinProps(visible, hidden, "org")).toBe(raw);
   });
 
+  it("keeps a body drawer and its id lookalike visible", () => {
+    const raw = "Title\nBody\n:PROPERTIES:\n:id: body-id\n:END:";
+    const split = splitProps(raw, isBuiltinHidden, "org");
+    expect(split.visible, "Org drawer rule: splitProps must leave the body drawer exemplar visible").toBe(raw);
+    expect(split.hidden).toBe("");
+  });
+
   it("does NOT treat a stray md `key::` line in an org block as metadata", () => {
     const raw = "Title\ncollapsed:: true";
     const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");

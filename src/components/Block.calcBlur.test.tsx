@@ -38,6 +38,24 @@ function page(name: string, blocks: BlockDto[]): PageDto {
 // commit must NOT run planning-normalization over the calc expressions (which
 // would reorder a SCHEDULED:-looking line and mangle the block).
 describe("calc block persistence on blur", () => {
+  it("retains ordinary block text after the calc fence when an expression changes", () => {
+    const original = "```calc\n1 + 1\n```\nordinary text";
+    loadSingle(page("Calc suffix", [blk("calc-suffix", original)]));
+    const id = pageByName("Calc suffix")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => <Block id={id} />);
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      expect(ta.value).toBe("1 + 1");
+      ta.focus();
+      ta.value = "2 + 2";
+      ta.dispatchEvent(new FocusEvent("blur"));
+      expect(doc.byId[id].raw, "calc exit rule: Block keeps text after the closing fence").toBe("```calc\n2 + 2\n```\nordinary text");
+    } finally {
+      dispose();
+    }
+  });
+
   it("stays a calc block on blur and preserves expression order", () => {
     loadSingle(page("Calc", [blk("calc-1", "```calc\n1 + 1\n```")]));
     const id = pageByName("Calc")!.roots[0];

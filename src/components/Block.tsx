@@ -1086,7 +1086,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // drawer canonicalizes its position — so `next === raw` alone wouldn't catch
     // a block whose drawer wasn't already canonical, and would churn the file.
     if (!commitAsCalc && text === editorValue()) return;
-    const visible = commitAsCalc ? serializeCalcExitCommit(text) : text;
+    const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : text;
     const next = joinProps(visible, splitProps(node().raw, hideFn(), pageFmt()).hidden, pageFmt());
     // No-op commit (text that reconstructs the identical raw): don't mark the page
     // dirty or push undo — avoids churn and can't rewrite the block's bytes.

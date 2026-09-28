@@ -130,4 +130,10 @@ describe("calc exit commit serialization", () => {
     const raw = "```calc\n1 + 2\n```";
     expect(serializeCalcExitCommit(raw)).toBe(raw);
   });
+
+  it("preserves text after the closing fence when the calc editor exits", () => {
+    const raw = "```calc\n1 + 2\n```\nordinary text\n- [ ] task";
+    expect(serializeCalcExitCommit(raw), "calc exit rule: serializeCalcExitCommit preserves the ordinary-text suffix").toBe(raw);
+    expect(serializeCalcExitCommit("2 + 3", raw)).toBe("```calc\n2 + 3\n```\nordinary text\n- [ ] task");
+  });
 });

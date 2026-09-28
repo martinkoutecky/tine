@@ -39,11 +39,19 @@ export function wrapCalc(inner: string): string {
   return "```calc\n" + inner + "\n```";
 }
 
-/** Serialize the calc editor's visible buffer for an exit commit. Accept either
- *  the normal bare expression buffer or an already-fenced calc value, and always
- *  write one canonical ```calc fence. */
-export function serializeCalcExitCommit(text: string): string {
-  return wrapCalc(calcSource(text) ?? text);
+/** Serialize the calc editor's visible buffer for an exit commit. Re-fence the
+ *  expressions while retaining text after the closing fence from the current
+ *  value (or from the prior raw block when the editor shows bare expressions). */
+export function serializeCalcExitCommit(text: string, previousRaw?: string): string {
+  const source = calcSource(text);
+  const suffixAfterFence = (raw?: string): string[] => {
+    const lines = raw?.split("\n") ?? [];
+    const close = lines.findIndex((line, i) => i > 0 && line.trim() === "```");
+    return close >= 0 ? lines.slice(close + 1) : [];
+  };
+  const suffix = source !== null ? suffixAfterFence(text) : [];
+  if (suffix.length === 0) suffix.push(...suffixAfterFence(previousRaw));
+  return [wrapCalc(source ?? text), ...suffix].join("\n");
 }
 
 // This is intentionally a local decimal implementation rather than a dependency.
