@@ -21,6 +21,17 @@ describe("print document privilege boundary", () => {
     } finally { vi.restoreAllMocks(); setToasts([]); }
   });
 
+  it("coalesces concurrent export requests into one print frame", async () => {
+    const flush = vi.spyOn(documentStore, "flushAll").mockResolvedValue(true);
+    const render = vi.spyOn(backend(), "pagePrintHtml").mockResolvedValue("<html><body>Draft</body></html>");
+    try {
+      await Promise.all([exportPagePdf("Draft"), exportPagePdf("Draft")]);
+      expect(flush).toHaveBeenCalledOnce();
+      expect(render).toHaveBeenCalledOnce();
+      expect(document.querySelectorAll('iframe[aria-hidden="true"]')).toHaveLength(1);
+    } finally { document.querySelectorAll('iframe[aria-hidden="true"]').forEach((frame) => frame.remove()); vi.restoreAllMocks(); }
+  });
+
   it("renders math and code locally while removing every executable or remote resource", async () => {
     expect(PRINT_IFRAME_SANDBOX.split(/\s+/)).not.toContain("allow-scripts");
     const local = document.createElement("link");
