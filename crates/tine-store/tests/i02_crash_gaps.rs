@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_graph_features::{conflicts, pages};
-use tine_store::{Area, FaultPoint, OpenOptions, PageId, RestoreFile, SaveBase, Store};
+use tine_store::{Area, FaultPoint, OpenOptions, PageId, RenameMap, RestoreFile, SaveBase, Store};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -133,6 +133,63 @@ fn transaction_kill_reopen_preserves_each_old_or_new_file() {
             || recovery_has(&root, b"old C"),
             "I-2: trashed asset remains live or recoverable at boundary {boundary}; exemplar Transaction::commit");
         drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn crash_rewritten_move_worker() {
+    let Ok(root) = std::env::var("TINE_CRASH_MOVE_ROOT") else {
+        return;
+    };
+    let point = match std::env::var("TINE_CRASH_MOVE_POINT").as_deref() {
+        Ok("rename") => FaultPoint::AbortAfterMoveRename,
+        Ok("rewrite") => FaultPoint::AbortAfterMoveRewrite,
+        _ => return,
+    };
+    let store = open(Path::new(&root));
+    let source = store.file_id(Area::Pages, "Old.md").unwrap();
+    let destination = store.file_id(Area::Pages, "New.md").unwrap();
+    let rev = store.read(&source, None).unwrap().1;
+    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+    tx.move_file(
+        &source,
+        rev,
+        &destination,
+        Some(&RenameMap(vec![("Old".into(), "New".into())])),
+    );
+    store.inject_fault(point);
+    let _ = tx.commit();
+    panic!("rewritten move did not abort at injected boundary");
+}
+
+#[test]
+fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
+    for (point, expected) in [
+        ("rename", b"- [[Old]]\n".as_slice()),
+        ("rewrite", b"- [[New]]\n".as_slice()),
+    ] {
+        let root = scratch("rewritten-move");
+        fs::write(root.join("pages/Old.md"), b"- [[Old]]\n").unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("crash_rewritten_move_worker")
+            .arg("--nocapture")
+            .env("TINE_CRASH_MOVE_ROOT", &root)
+            .env("TINE_CRASH_MOVE_POINT", point)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "child must abort at {point}");
+        for _ in 0..2 {
+            let reopened = open(&root);
+            reopened.whole_graph().unwrap();
+            assert!(
+                !root.join("pages/Old.md").exists(),
+                "source must not reappear after {point}"
+            );
+            assert_eq!(fs::read(root.join("pages/New.md")).unwrap(), expected);
+            drop(reopened);
+        }
         fs::remove_dir_all(root).unwrap();
     }
 }

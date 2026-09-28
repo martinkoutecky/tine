@@ -285,6 +285,10 @@ pub enum FaultPoint {
     TwinAfterPublish,
     /// Abort the process immediately after the indexed step has reached disk.
     AbortAfterStep(usize),
+    /// Abort after a rewritten move has renamed the old bytes to the destination.
+    AbortAfterMoveRename,
+    /// Abort after a rewritten move has published its new destination bytes.
+    AbortAfterMoveRewrite,
 }
 
 #[cfg(not(any(test, feature = "test-faults")))]
@@ -306,6 +310,8 @@ pub(crate) enum FaultPoint {
     UndoWithdrawalIo,
     TwinAfterPublish,
     AbortAfterStep(usize),
+    AbortAfterMoveRename,
+    AbortAfterMoveRewrite,
 }
 
 #[cfg(any(test, feature = "test-faults"))]
@@ -1459,19 +1465,62 @@ impl<'a> Transaction<'a> {
                         rev: FileRev::from_bytes(old),
                     });
                 }
+                // Keep one live name through every crash point: rename the old
+                // page to its destination, then replace its bytes through the
+                // same audited atomic save primitive used for other rewrites.
+                // A crash before the replacement leaves the old page at the new
+                // name; after it, the rewritten page is there. Neither state
+                // exposes both source and destination as live pages.
+                undo.kind = UndoKind::Rename;
+                undo.new = Some(Expected::Bytes(old.to_vec()));
+                self.fault_collision(&dst);
                 if self.page(dst_id) {
                     self.store.graph.transaction_note_page(&dst, new);
                 }
-                undo.new = Some(Expected::Bytes(new.clone()));
-                self.fault_collision(&dst);
-                self.arm_directory_sync_fault();
-                if let Err(error) = atomic_write_new(&dst, new) {
-                    if crate::directory_durability::is_directory_sync_failure(&error) {
-                        undo.created = true;
-                    }
-                    return Err(collision(dst_id, error, &dst));
+                if self.page(&plan.src) {
+                    self.store.graph.transaction_note_delete(&src);
                 }
+                move_file_noreplace(&src, &dst).map_err(|error| collision(dst_id, error, &dst))?;
                 undo.created = true;
+                sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
+                #[cfg(feature = "test-faults")]
+                if fault(self.store, FaultPoint::AbortAfterMoveRename) {
+                    std::process::abort();
+                }
+                self.fault_mid_step(index)?;
+
+                let trash_id = self.trash_id(&plan.src);
+                let trash = self.path(&trash_id)?;
+                if let Some(parent) = trash.parent() {
+                    fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
+                }
+                // Preserve the original bytes for the same recovery affordance
+                // as the old destination-first move. This copy is outside the
+                // live page area and uses the audited no-replace publication.
+                atomic_write_new(&trash, old).map_err(failed)?;
+                undo.trash = Some(trash_id);
+
+                self.arm_directory_sync_fault();
+                if let Err(error) = atomic_write_with_check(&dst, new, || {
+                    if fs::read(&dst)? == old {
+                        Ok(())
+                    } else {
+                        Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "moved page changed before rewrite",
+                        ))
+                    }
+                }) {
+                    if crate::directory_durability::is_directory_sync_failure(&error) {
+                        undo.new = Some(Expected::Bytes(new.clone()));
+                    }
+                    return Err(failed(error));
+                }
+                undo.new = Some(Expected::Bytes(new.clone()));
+                #[cfg(feature = "test-faults")]
+                if fault(self.store, FaultPoint::AbortAfterMoveRewrite) {
+                    std::process::abort();
+                }
                 self.fault_mid_step(index)?;
                 self.fault_twin(dst_id);
                 if let Some(twin) = self.disk_twin(dst_id)? {
@@ -1480,19 +1529,6 @@ impl<'a> Transaction<'a> {
                         disk: disk_rev(&self.path(&twin)?),
                     });
                 }
-                let trash_id = self.trash_id(&plan.src);
-                let trash = self.path(&trash_id)?;
-                if let Some(parent) = trash.parent() {
-                    fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
-                }
-                undo.trash = Some(trash_id.clone());
-                if self.page(&plan.src) {
-                    self.store.graph.transaction_note_delete(&src);
-                }
-                move_file_noreplace(&src, &trash).map_err(|e| collision(&plan.src, e, &src))?;
-                undo.moved = true;
-                sync_move_dirs(self.store, &src, &trash).map_err(failed)?;
-                self.fault_mid_step(index)?;
                 if fs::read(&trash).map_err(failed)? != old {
                     return Err(Why::Conflict {
                         file: plan.src.clone(),
