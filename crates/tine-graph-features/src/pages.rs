@@ -309,6 +309,7 @@ pub fn rename_page_expected(
         new,
         expected_path,
         None,
+        &[],
         #[cfg(test)]
         || {},
     )
@@ -327,23 +328,41 @@ pub fn rename_page_expected(
 /// step, so a crash never leaves a reference to a name with no live page and a
 /// retry after reopen never duplicates the moved blocks (see `merged_survivor`).
 /// An `old` with no file only repoints its references at the survivor. It
-/// refuses before any write when `merge_into` no longer solely claims the new
-/// name (`NotFound`), the formats differ, an Org file does not round-trip, or a
-/// descendant's target exists. Cost: the rename's, plus O(source + survivor
-/// bytes and blocks).
+/// refuses before any write when, for an `old` with a file, a page other than
+/// `merge_into` claims the new name (`AlreadyExists`); when `merge_into` no
+/// longer claims it (`NotFound`; also for an `old` with no file whose new name
+/// another page claims); when the formats differ (`InvalidInput`); when an Org
+/// file it would change does not round-trip (`PermissionDenied`, or
+/// `InvalidInput` for a moved page whose Org title it rebinds); or when a
+/// descendant's target exists (`AlreadyExists`). Cost: the rename's, plus
+/// O(source + survivor bytes and blocks).
+///
+/// The report lists every page file the operation moved, trashed or rewrote
+/// (GH #535), so the caller refreshes only those. `unsaved_paths` names the
+/// page files (graph-relative, as [`PageId`]) whose in-memory edits the caller
+/// could not save: when the plan would move, trash or rewrite one of them, the
+/// whole operation refuses before any write (`WouldBlock`, naming the page),
+/// because rewriting it would turn those edits into a conflict against bytes
+/// the user never saw. Pages it does not touch need not be saved. `WouldBlock`
+/// also reports giving up after pages kept changing under repeated replans.
+/// Every write is one `tine-store` transaction: all steps are checked before
+/// the first write and a failure rolls back; only a failed rollback or
+/// publication leaves partial state, and its error says to inspect disk.
 pub fn rename_or_merge_page(
     store: &Store,
     old: &str,
     new: &str,
     expected_path: Option<&str>,
     merge_into: Option<&str>,
-) -> io::Result<RenameOutcome> {
+    unsaved_paths: &[String],
+) -> io::Result<RenameReport> {
     rename_page_after_inventory(
         store,
         old,
         new,
         expected_path,
         merge_into,
+        unsaved_paths,
         #[cfg(test)]
         || {},
     )
@@ -355,8 +374,9 @@ fn rename_page_after_inventory(
     new: &str,
     expected_path: Option<&str>,
     merge_into: Option<&str>,
+    unsaved_paths: &[String],
     #[cfg(test)] after_inventory: impl Fn(),
-) -> io::Result<RenameOutcome> {
+) -> io::Result<RenameReport> {
     let old = old.trim();
     let new = new.trim();
     if new.is_empty() {
@@ -366,7 +386,7 @@ fn rename_page_after_inventory(
         // v0.6.5 model.rs 3549: a case-only rename changes nothing. OG renames
         // the page's display name; here the name is its file, and a case-only
         // move is refused on case-folding filesystems, so it is reported.
-        return Ok(RenameOutcome::Unchanged);
+        return Ok(RenameReport::unchanged());
     }
     crate::retry_on_conflict("page changed repeatedly during rename", || {
         let graph = refreshed_view(store)?;
@@ -570,7 +590,41 @@ fn rename_page_after_inventory(
             RenameOutcome::Renamed
         };
         if edits.is_empty() && merged.is_none() {
-            return Ok(Some(RenameOutcome::Unchanged));
+            return Ok(Some(RenameReport::unchanged()));
+        }
+        let touched: Vec<TouchedPage> = edits
+            .iter()
+            .map(|(id, _)| (id, moves.contains_key(id)))
+            .chain(
+                merge
+                    .iter()
+                    .flat_map(|(src, dst)| [(dst, false), (src, true)]),
+            )
+            .map(|(id, moved)| TouchedPage {
+                path: id.as_str().to_owned(),
+                moved,
+            })
+            .collect();
+        if let Some(blocked) = touched
+            .iter()
+            .find(|page| unsaved_paths.contains(&page.path))
+        {
+            let name = inventory
+                .0
+                .iter()
+                .find(|entry| {
+                    physical(&entry.target)
+                        .iter()
+                        .any(|id| id.as_str() == blocked.path)
+                })
+                .map_or(blocked.path.as_str(), |entry| entry.name.as_str());
+            return Err(error(
+                io::ErrorKind::WouldBlock,
+                &format!(
+                    "“{name}” has changes Tine could not save, and this rename would rewrite it. \
+                     Save or discard those changes, then rename again."
+                ),
+            ));
         }
         // Crash order (I-2): survivor, then referrer rewrites, then namespace
         // descendant moves, then the source trash LAST. Every boundary leaves
@@ -601,8 +655,35 @@ fn rename_page_after_inventory(
         if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
             tx.trash(&src.file(), survivor.src_rev);
         }
-        Ok(crate::commit_retry(tx.commit())?.then_some(outcome))
+        Ok(crate::commit_retry(tx.commit())?.then_some(RenameReport { outcome, touched }))
     })
+}
+
+/// What [`rename_or_merge_page`] did, and the page files it wrote.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RenameReport {
+    pub outcome: RenameOutcome,
+    /// Every page file moved, trashed or rewritten; empty when `Unchanged`.
+    pub touched: Vec<TouchedPage>,
+}
+
+impl RenameReport {
+    fn unchanged() -> Self {
+        Self {
+            outcome: RenameOutcome::Unchanged,
+            touched: Vec::new(),
+        }
+    }
+}
+
+/// One page file a rename or merge wrote.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct TouchedPage {
+    /// Graph-relative path before the operation (the frontend's page id).
+    pub path: String,
+    /// The file left this path (moved, or trashed by a merge); otherwise it
+    /// was rewritten in place.
+    pub moved: bool,
 }
 
 /// What [`rename_or_merge_page`] did; serialized lowercase for the frontend.

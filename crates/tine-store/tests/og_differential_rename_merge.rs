@@ -70,6 +70,7 @@ fn rename_merge_paths_and_bytes_match_master_7160c501() {
         &input.new,
         Some(&input.src),
         Some(&input.dst),
+        &[],
     )
     .unwrap();
 
