@@ -17,6 +17,7 @@ icon:: 🧩
 - ## Create one yourself
 	- 1. Open **Settings → Plugins → Browse**.
 	- 2. Inspect a plugin's capabilities and safety report, then install it.
+		- A command or slash action reads only the block you run it on. A decoration sees the text of visible blocks only if the plugin declares `graph.read.visible`.
 	- 3. Switch to **Installed**, open its details, and enable it.
 	- 4. What you should see: only the host-owned command, slash action, or decoration that the plugin declared; disabling it removes that behavior while leaving your graph readable.
 	- For authoring, packaging, API versioning, and registry submission, see the [developer guide](https://github.com/martinkoutecky/tine/blob/master/docs/plugins/README.md).
