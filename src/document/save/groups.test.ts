@@ -141,13 +141,20 @@ describe("save groups", () => {
     expect(save.mock.calls[1][0][0].page.blocks.map((b) => b.raw)).toContain("X latest");
   });
 
-  it("S2: undoFailed conflicts its member; repeated conflicts all members with one toast", async () => {
+  it("S2: recovery locations conflict their member; repeated conflicts all members with one toast", async () => {
     const moved = block("X");
     loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
-    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "io", undoFailed: [1] } });
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "io", undoFailed: ["pages/A.md"] } });
     await moveBlock(moved.id, null, 0, "B");
     expect(await flushPage("B")).toBe(false);
     expect(isConflicted("A")).toBe(true);
+    resetStore(); setToasts([]);
+    loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
+    save.mockResolvedValue({ failed: { index: 0, family: "publication-incomplete", undoFailed: [], publicationErrors: ["pages/A.md"] } });
+    await moveBlock(moved.id, null, 0, "B");
+    expect(await flushPage("B")).toBe(false);
+    expect(isConflicted("A")).toBe(true);
+    expect(toasts().some((toast) => toast.message.includes("pages/A.md"))).toBe(true);
     resetStore(); setToasts([]);
     loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", [])]);
     save.mockResolvedValue({ failed: { index: 0, family: "repeated", undoFailed: [] } });

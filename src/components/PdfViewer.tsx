@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createSignal, createUniqueId, on, onCleanup, onMount, type JSX } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
+import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
@@ -40,13 +41,6 @@ const PDF_THEME_KEY = "ls-pdf-viewer-theme";
 const PDF_THEMES = ["light", "warm", "dark"] as const;
 type PdfTheme = (typeof PDF_THEMES)[number];
 
-interface PdfOutlineItem {
-  id: string;
-  label: string;
-  destination: string | unknown[] | null;
-  children: PdfOutlineItem[];
-}
-
 function storedPdfTheme(): PdfTheme {
   try {
     const stored = window.localStorage.getItem(PDF_THEME_KEY);
@@ -54,25 +48,6 @@ function storedPdfTheme(): PdfTheme {
   } catch {
     return "light";
   }
-}
-
-function sanitizeOutlineItems(value: unknown, parentId = "outline"): PdfOutlineItem[] {
-  if (!Array.isArray(value)) return [];
-  const sanitized: PdfOutlineItem[] = [];
-  value.forEach((candidate, index) => {
-    if (!candidate || typeof candidate !== "object") return;
-    const raw = candidate as Record<string, unknown>;
-    const id = `${parentId}-${index}`;
-    const label = typeof raw.title === "string" && raw.title.trim() ? raw.title : "Untitled";
-    const destination = typeof raw.dest === "string" || Array.isArray(raw.dest) ? raw.dest : null;
-    sanitized.push({
-      id,
-      label,
-      destination,
-      children: sanitizeOutlineItems(raw.items, id),
-    });
-  });
-  return sanitized;
 }
 
 function isPdfPageRef(value: unknown): value is { num: number; gen: number } {
@@ -270,10 +245,8 @@ export function PdfViewer(props: {
   let findInputEl: HTMLInputElement | undefined;
   let pending: Pending | null = null;
   let pendingArea: PendingArea | null = null;
-  // The highlight ids last synced to disk (load baseline, refreshed after each
-  // successful write) — sent so the backend's 3-way merge honors deletions while
-  // preserving externally-added highlights.
-  let baseIds: string[] = [];
+  // Loaded values let the backend distinguish a local edit from an external edit.
+  let baseHighlights: Highlight[] = [];
   let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
   let disposed = false;
   let navigationToken = 0;
@@ -411,19 +384,22 @@ export function PdfViewer(props: {
       // dimensions. Enrich old Tine rectangles lazily on the first real edit so
       // merely opening a graph never rewrites it.
       const persisted = await highlightsForWrite(highlights());
-      const ids = persisted.map((h) => h.id);
-      await trackAssetWrite(
-        backend().writeHighlights(props.filename, props.label, persisted, baseIds, "replace-page", binding.backendGeneration)
+      const merged = await trackAssetWrite(
+        backend().writeHighlights(props.filename, props.label, persisted, baseHighlights, "replace-page", binding.backendGeneration)
       );
-      setHighlights(persisted);
-      baseIds = ids; // what's now on disk becomes the next write's baseline
+      setHighlights(merged);
+      baseHighlights = merged;
       setUnsavedHighlights(false);
     } catch (e) {
       pushToast(`Couldn't save highlight — it remains unsaved in the PDF. (${String(e)})`, "error");
       return false;
     }
     // Refresh the loaded notes page (content + save baseline) to include the change.
-    await reloadHlsIfLoaded(hlsName);
+    try {
+      await reloadHlsIfLoaded(hlsName);
+    } catch (error) {
+      pushToast(`Highlight saved, but notes couldn't reload. (${String(error)})`, "error");
+    }
     return true;
   };
 
@@ -1007,7 +983,7 @@ export function PdfViewer(props: {
       setHighlights([]);
       pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
     }
-    baseIds = highlights().map((h) => h.id); // load baseline for the 3-way merge
+    baseHighlights = highlights();
     let bytes: Uint8Array;
     try {
       bytes = await backend().readAsset(props.filename, MAX_PDF_BYTES);

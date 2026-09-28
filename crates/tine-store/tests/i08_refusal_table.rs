@@ -98,12 +98,13 @@ fn all_production_refusals_have_scenarios() {
         transaction.push('\n');
         transaction.push_str(&fs::read_to_string(child).unwrap());
     }
-    let store = fs::read_to_string(root.join("crates/tine-store/src/store.rs")).unwrap();
+    let store =
+        fs::read_to_string(root.join("crates/tine-store/src/store/save_failure.rs")).unwrap();
     let store = store
         .split("    pub fn save(")
         .nth(1)
         .unwrap()
-        .split("    pub fn trash_stats(")
+        .split("fn single_page_failure(")
         .next()
         .unwrap();
     let store = format!("    pub fn save({store}");

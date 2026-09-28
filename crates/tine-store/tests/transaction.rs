@@ -566,6 +566,21 @@ fn unique_names_and_stream_limit() {
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
+#[cfg(feature = "test-faults")]
+#[test]
+fn post_apply_read_failure_cannot_report_complete_publication() {
+    use tine_store::FaultPoint;
+    let f = Fixture::with_watch(WatchMode::Poll, &[("assets/x.bin", b"old")]);
+    let id = f.id(Area::Assets, "x.bin");
+    let mut tx = f.store.transaction(None);
+    tx.replace(&id, f.rev(&id), b"new".to_vec());
+    f.store.inject_fault(FaultPoint::PublicationReadIo);
+    let outcome = tx.commit();
+    assert!(!matches!(outcome, TxOutcome::Committed { .. }),
+        "I-9: a post-apply read error must not report complete publication; exemplar transaction.rs post-apply sweep: {outcome:?}");
+    assert_eq!(f.bytes("assets/x.bin"), Some(b"new".to_vec()));
+}
+
 #[test]
 fn transaction_revision_advances_only_for_disk_change() {
     let f = Fixture::with_watch(

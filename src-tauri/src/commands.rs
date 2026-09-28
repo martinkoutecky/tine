@@ -11,13 +11,13 @@ use tauri::{State, WebviewWindow};
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
+use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 #[cfg(test)]
-use tine_store::SaveBase;
-use tine_store::{
-    FacetPolicy, PageId, Resolved, SaveOutcome, SavePagesOutcome, StoreError, WholeGraph,
-};
+use tine_store::{SaveBase, SaveOutcome, SavePagesOutcome};
 mod save_wire;
-use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
+#[cfg(test)]
+use save_wire::save_outcome_to_wire;
+use save_wire::save_pages_outcome_to_wire;
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -637,7 +637,9 @@ pub(crate) struct SavePagesFailure {
     family: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     disk_rev: Option<String>,
-    undo_failed: Vec<usize>,
+    undo_failed: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    publication_errors: Vec<String>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -689,6 +691,7 @@ pub(crate) fn save_pages(
                     family: save_store_error(error),
                     disk_rev: None,
                     undo_failed: Vec::new(),
+                    publication_errors: Vec::new(),
                 },
             })
         }
@@ -702,7 +705,7 @@ mod save_wire_tests {
 
     #[test]
     fn save_wire_families_are_distinct() {
-        const RULE: &str = "I-9: wire failures use fixed families and omit page names/paths; exemplar commands::save_outcome_to_wire";
+        const RULE: &str = "I-9: save failure families stay fixed while recovery locations remain explicit; exemplar commands::save_outcome_to_wire";
         assert_eq!(
             save_outcome_to_wire(SaveOutcome::Conflict {
                 disk: String::from("rev").into()
@@ -732,11 +735,23 @@ mod save_wire_tests {
         let wire = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
             index: 2,
             outcome: SaveOutcome::Repeated,
-            undo_failed: vec![0],
+            undo_failed: vec![tine_store::FileId::from("pages/A.md".to_string())],
+            publication_errors: Vec::new(),
         });
         let encoded = serde_json::to_string(&wire).unwrap();
         assert_eq!(
-            encoded, r#"{"failed":{"index":2,"family":"repeated","undoFailed":[0]}}"#,
+            encoded, r#"{"failed":{"index":2,"family":"repeated","undoFailed":["pages/A.md"]}}"#,
+            "{RULE}"
+        );
+        let incomplete = save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+            index: 0,
+            outcome: SaveOutcome::Io(std::io::Error::other("publication failed").into()),
+            undo_failed: Vec::new(),
+            publication_errors: vec![tine_store::FileId::from("pages/A.md".to_string())],
+        });
+        assert_eq!(
+            serde_json::to_string(&incomplete).unwrap(),
+            r#"{"failed":{"index":0,"family":"publication-incomplete","undoFailed":[],"publicationErrors":["pages/A.md"]}}"#,
             "{RULE}"
         );
         let families = [
@@ -774,7 +789,8 @@ mod save_wire_tests {
                 serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
                     index: 1,
                     outcome,
-                    undo_failed: vec![0],
+                    undo_failed: vec![tine_store::FileId::from("pages/A.md".to_string())],
+                    publication_errors: Vec::new(),
                 }))
                 .unwrap();
             let rev_field = if family == "conflict" {
@@ -785,7 +801,7 @@ mod save_wire_tests {
             assert_eq!(
                 encoded,
                 format!(
-                    r#"{{"failed":{{"index":1,"family":"{family}"{rev_field},"undoFailed":[0]}}}}"#
+                    r#"{{"failed":{{"index":1,"family":"{family}"{rev_field},"undoFailed":["pages/A.md"]}}}}"#
                 ),
                 "{RULE}"
             );
@@ -2509,9 +2525,9 @@ pub(crate) async fn write_highlights(
     pdf: String,
     label: String,
     highlights: Vec<tine_core::pdf::Highlight>,
-    base_ids: Vec<String>,
+    base_highlights: Vec<tine_core::pdf::Highlight>,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<Vec<tine_core::pdf::Highlight>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pdf::write_highlights(
@@ -2519,7 +2535,7 @@ pub(crate) async fn write_highlights(
             &pdf,
             &label,
             &highlights,
-            &base_ids,
+            &base_highlights,
         )
         .map_err(feature_pdf_error)
     })

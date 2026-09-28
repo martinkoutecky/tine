@@ -8,14 +8,16 @@
 //! against the final disk file.
 //! Transactions are not crash atomic and cannot exclude external processes.
 //! Steps may mix page, journal, asset, and metadata files; changed final
-//! files share one publication after a successful initial load.
+//! files share one publication after a successful initial load. A failed final
+//! read or revision check returns the affected file locations and makes the
+//! publication incomplete; callers inspect disk and refresh before retrying.
 
 use std::collections::{BTreeMap, HashSet};
 
 mod io_helpers;
 use io_helpers::{
     collision, content_refusal, directory_read_error, disk_rev, failed, failed_trash_dir,
-    sync_move_dirs,
+    publication_path_error, sync_move_dirs,
 };
 use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom};
@@ -206,6 +208,16 @@ pub enum TxOutcome {
         /// no view covers the write until recovery's first view does.
         graph_rev: GraphRev,
     },
+    /// Disk steps applied, but at least one final file could not be read for
+    /// publication. The caller must inspect disk and refresh before retrying.
+    PublicationIncomplete {
+        /// Applied step results in input order.
+        steps: Vec<StepResult>,
+        /// Graph-relative files whose final state could not be observed.
+        files: Vec<(FileId, IoError)>,
+        /// Last successfully published graph generation.
+        graph_rev: GraphRev,
+    },
     /// The transaction did not commit. Preflight checks every step before any
     /// write; an apply failure attempts undo of prior steps and the failed
     /// step, which may already have written, in reverse application order.
@@ -222,6 +234,8 @@ pub enum TxOutcome {
         why: Why,
         /// Differences undo could not remove; empty on preflight failure.
         rollback: Rollback,
+        /// Final files that could not be read for publication after rollback.
+        publication_errors: Vec<(FileId, IoError)>,
         /// Last generation published for the final disk state. If both own and
         /// external changes survive undo, the external publication comes last.
         /// During a failed initial load this is the unchanged current revision:
@@ -256,6 +270,8 @@ pub enum FaultPoint {
     DirectorySyncIo,
     /// Simulate an I/O error at the indexed step.
     MidStepIoAt(usize),
+    /// Simulate a read error while determining the post-apply publication.
+    PublicationReadIo,
     /// Simulate an external write while undoing a live file.
     UndoLiveWrite,
     /// Simulate failure to withdraw bytes written by this transaction during undo.
@@ -280,6 +296,7 @@ pub(crate) enum FaultPoint {
     MidStepIo,
     DirectorySyncIo,
     MidStepIoAt(usize),
+    PublicationReadIo,
     UndoLiveWrite,
     UndoWithdrawalIo,
     TwinAfterPublish,
@@ -1731,6 +1748,7 @@ impl<'a> Transaction<'a> {
                 step: 0,
                 why: Why::Refused(Refusal::Closed),
                 rollback: Rollback::default(),
+                publication_errors: Vec::new(),
                 graph_rev: rev(),
             };
         }
@@ -1765,6 +1783,7 @@ impl<'a> Transaction<'a> {
                         step: index,
                         why: Why::Refused(Refusal::RepeatedFile(id)),
                         rollback: Rollback::default(),
+                        publication_errors: Vec::new(),
                         graph_rev: rev(),
                     };
                 }
@@ -1790,6 +1809,7 @@ impl<'a> Transaction<'a> {
                         step: index,
                         why,
                         rollback: Rollback::default(),
+                        publication_errors: Vec::new(),
                         graph_rev: rev(),
                     }
                 }
@@ -1873,13 +1893,15 @@ impl<'a> Transaction<'a> {
             }
         }
         let mut changed_any = false;
+        let mut publication_errors = Vec::new();
         let mut published_own = Vec::new();
         let mut published_external = Vec::new();
         for (name, baseline) in &before {
             let id = FileId::from(name.clone());
             let path = match self.path(&id) {
                 Ok(path) => path,
-                Err(_) => {
+                Err(error) => {
+                    publication_errors.push((id.clone(), publication_path_error(&error)));
                     self.store.graph.invalidate_cache();
                     continue;
                 }
@@ -1891,7 +1913,8 @@ impl<'a> Transaction<'a> {
                 let now_rev = match FileRev::from_file(&path) {
                     Ok(rev) => Some(rev),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                    Err(_) => {
+                    Err(error) => {
+                        publication_errors.push((id.clone(), error.into()));
                         self.store.graph.invalidate_cache();
                         continue;
                     }
@@ -1922,14 +1945,17 @@ impl<'a> Transaction<'a> {
                 }
                 continue;
             }
-            let now = match if self.page(&id) {
+            let now = match if fault(self.store, FaultPoint::PublicationReadIo) {
+                Err(io::Error::other("injected publication read error"))
+            } else if self.page(&id) {
                 crate::model::read_parse_bytes(&path)
             } else {
                 fs::read(&path)
             } {
                 Ok(bytes) => Some(bytes),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                Err(_) => {
+                Err(error) => {
+                    publication_errors.push((id.clone(), error.into()));
                     self.store.graph.invalidate_cache();
                     continue;
                 }
@@ -2079,6 +2105,12 @@ impl<'a> Transaction<'a> {
                 step,
                 why,
                 rollback,
+                publication_errors,
+                graph_rev: published_rev,
+            },
+            None if !publication_errors.is_empty() => TxOutcome::PublicationIncomplete {
+                steps: results,
+                files: publication_errors,
                 graph_rev: published_rev,
             },
             None => TxOutcome::Committed {

@@ -25,6 +25,7 @@ fn rollback_failure_keeps_recovery_family_and_locations() {
                 },
             )],
         },
+        publication_errors: Vec::new(),
         graph_rev,
     };
     let wire = tx_error(outcome).unwrap_err().to_string();

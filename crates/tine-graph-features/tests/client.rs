@@ -700,7 +700,7 @@ fn highlights_first_write_and_update_persist_both_artifacts() {
     let (a, store) = fixture("hl-new");
     for (items, base) in [
         (vec![highlight("a")], vec![]),
-        (vec![highlight("a"), highlight("b")], vec!["a".into()]),
+        (vec![highlight("a"), highlight("b")], vec![highlight("a")]),
     ] {
         pdf::write_highlights(&store, "paper.pdf", "Paper", &items, &base).unwrap();
         for rel in ["assets/paper.edn", "pages/hls__paper.md"] {
@@ -708,6 +708,67 @@ fn highlights_first_write_and_update_persist_both_artifacts() {
         }
     }
     assert_eq!(pdf::read_highlights(&store, "paper.pdf").len(), 2);
+}
+
+#[test]
+fn highlight_save_preserves_external_recolour_when_local_value_is_unchanged() {
+    let (_root, store) = fixture("hl-external-recolour");
+    let loaded = highlight("a");
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    let mut external = loaded.clone();
+    external.color = "green".into();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+
+    let mut added = highlight("b");
+    added.color = "blue".into();
+    pdf::write_highlights(
+        &store,
+        "paper.pdf",
+        "Paper",
+        &[loaded.clone(), added],
+        &[loaded.clone()],
+    )
+    .unwrap();
+    let saved = pdf::read_highlights(&store, "paper.pdf");
+    assert_eq!(
+        saved[0].color, "green",
+        "C1 #13: unchanged local highlights must retain external edits"
+    );
+}
+
+#[test]
+fn highlight_save_merges_disjoint_local_and_external_fields() {
+    let (_root, store) = fixture("hl-disjoint-fields");
+    let loaded = highlight("a");
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    let mut external = loaded.clone();
+    external.text = Some("external text".into());
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+    let mut local = loaded.clone();
+    local.color = "blue".into();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[local], &[loaded]).unwrap();
+    let saved = pdf::read_highlights(&store, "paper.pdf");
+    assert_eq!(saved[0].color, "blue");
+    assert_eq!(
+        saved[0].text.as_deref(),
+        Some("external text"),
+        "C1 #13: disjoint edits of one highlight must merge"
+    );
+}
+
+#[test]
+fn highlight_save_keeps_external_deletion_when_local_value_is_unchanged() {
+    let (_root, store) = fixture("hl-external-deletion");
+    let loaded = highlight("a");
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
+    let committed =
+        pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[loaded]).unwrap();
+    assert!(
+        committed.is_empty(),
+        "C1 #13: an unchanged local copy must not resurrect an externally deleted highlight"
+    );
+    assert!(pdf::read_highlights(&store, "paper.pdf").is_empty());
 }
 
 #[test]
@@ -896,7 +957,7 @@ fn old_vs_new_matrix_on_identical_fixtures() {
     );
     for (items, base) in [
         (vec![highlight("a")], vec![]),
-        (vec![highlight("a"), highlight("b")], vec!["a".into()]),
+        (vec![highlight("a"), highlight("b")], vec![highlight("a")]),
     ] {
         pdf::write_highlights(&store, "paper.pdf", "Paper", &items, &base).unwrap();
         same("assets/paper.edn");
@@ -979,7 +1040,7 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
     pdf::open_pdf(&store, pdf_name, "My Paper").unwrap();
     assert!(!a.join("assets").join(format!("{key}.edn")).exists());
     assert_eq!(fs::read(a.join("assets").join(format!("{legacy}.edn"))).unwrap(), b"{:highlights [{:id \"one\" :page 1 :position {:page 1 :bounding {:top 0 :left 0 :width 1 :height 1} :rects ()} :content {:text \"one\"} :properties {:color \"yellow\"}}] :extra {}}\n");
-    pdf::write_highlights(&store, pdf_name, "My Paper", &[h.clone()], &[h.id.clone()]).unwrap();
+    pdf::write_highlights(&store, pdf_name, "My Paper", &[h.clone()], &[h.clone()]).unwrap();
     for rel in [format!("assets/{key}.edn"), format!("pages/hls__{key}.md")] {
         assert_fixture_file(
             &a,
@@ -1070,7 +1131,7 @@ fn annotation_notes_survive_update_with_legacy_bytes() {
     .unwrap();
     fs::write(a.join("pages/hls__paper.md"), &page).unwrap();
     let store = Store::open(&a, Default::default()).unwrap().0;
-    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h.clone()], &[h.id.clone()]).unwrap();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h.clone()], &[h.clone()]).unwrap();
     let new_page = fs::read(a.join("pages/hls__paper.md")).unwrap();
     assert!(String::from_utf8_lossy(&new_page).contains("private note"));
     assert_eq!(new_page, b"file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\n\n- one\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: one\n\t- private note\n");

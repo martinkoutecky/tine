@@ -135,6 +135,38 @@ fn memo_carry_checks_only_the_changed_page() {
 }
 
 #[test]
+fn held_snapshot_edit_and_icon_request_have_bounded_page_work() {
+    let _case = CASE_LOCK.lock().unwrap();
+    for blocks in [1, 60] {
+        for pages in [1, 1000] {
+            let (store, id) = graph(pages, blocks);
+            let old = store.whole_graph().unwrap();
+            cost_counters::reset();
+            let _icons = old.page_icons(&["Page0000".into()]);
+            let icon = cost_counters::snapshot();
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = "after".into();
+            cost_counters::reset();
+            let outcome = store.save(
+                tine_store::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &doc,
+            );
+            assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+            let edit = cost_counters::snapshot();
+            eprintln!("remaining I-13/I-25: blocks={blocks} pages={pages} icon_probes={} cache_copies={} signature_blocks={} bytes_written={} files_written={}", icon.icon_page_probes, edit.cache_page_copies, edit.signature_block_probes, edit.bytes_written, edit.files_written);
+            if std::env::var_os("TINE_I13_OBSERVE").is_none() {
+                assert!(icon.icon_page_probes <= 2, "I-13: page_icons must inspect only requested names; exemplar model.rs:990 page_icons, observed {}", icon.icon_page_probes);
+                assert_eq!(edit.signature_block_probes, blocks as u64, "I-25: reference signature may scan the changed page only; exemplar model.rs:1353 reference_signature");
+            }
+            store.close();
+        }
+    }
+}
+
+#[test]
 fn single_page_print_builds_one_corpus() {
     let _case = CASE_LOCK.lock().unwrap();
     for pages in [20, 2000] {

@@ -4,7 +4,7 @@
 //! sidecar refusal; it does not inspect sidecar references. Missing or invalid
 //! crops, I/O failures, and repeated conflicts are returned to the caller.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::pdf::{self, Highlight, PdfState};
@@ -21,6 +21,41 @@ fn optional(store: &Store, id: &FileId) -> io::Result<Option<(String, FileRev)>>
         Ok(value) => Ok(Some(value)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
+    }
+}
+
+fn merge_highlight(loaded: &Highlight, local: &Highlight, disk: &Highlight) -> Highlight {
+    let local_geometry = local.page != loaded.page || local.position != loaded.position;
+    Highlight {
+        id: local.id.clone(),
+        page: if local_geometry {
+            local.page
+        } else {
+            disk.page
+        },
+        position: if local_geometry {
+            &local.position
+        } else {
+            &disk.position
+        }
+        .clone(),
+        color: if local.color != loaded.color {
+            &local.color
+        } else {
+            &disk.color
+        }
+        .clone(),
+        text: if local.text != loaded.text {
+            &local.text
+        } else {
+            &disk.text
+        }
+        .clone(),
+        image: if local.image != loaded.image {
+            local.image
+        } else {
+            disk.image
+        },
     }
 }
 
@@ -327,8 +362,10 @@ pub fn rollback_pdf_area_image(
     })
 }
 
-/// Merge highlights with external additions, then commit the sidecar and hls
-/// page together. OG artifacts are written before best-effort moves of deleted
+/// Three-way merge caller edits against loaded highlight values and the current
+/// sidecar. Caller-changed fields win; unchanged fields follow disk, including
+/// external edits and deletions. Returns the committed set for the next baseline.
+/// Commit the sidecar and hls page together. OG artifacts precede best-effort moves of deleted
 /// crops and legacy artifacts to recoverable trash. Cost O(asset entries + sidecar
 /// + page + deleted crop bytes), plus a graph refresh when the page is absent.
 pub fn write_highlights(
@@ -336,8 +373,8 @@ pub fn write_highlights(
     pdf_name: &str,
     label: &str,
     highlights: &[Highlight],
-    base_ids: &[String],
-) -> io::Result<()> {
+    base_highlights: &[Highlight],
+) -> io::Result<Vec<Highlight>> {
     let key = pdf::asset_key(pdf_name);
     let primary = asset(store, &format!("{key}.edn"))?;
     let legacy = pdf::legacy_asset_key(pdf_name);
@@ -346,7 +383,8 @@ pub fn write_highlights(
         .transpose()?;
     let name = pdf::hls_page_name(&key);
     let old_name = pdf::hls_page_name(&legacy);
-    let base: HashSet<&str> = base_ids.iter().map(String::as_str).collect();
+    let base: HashMap<&str, &Highlight> =
+        base_highlights.iter().map(|h| (h.id.as_str(), h)).collect();
     crate::retry_on_conflict("highlight sidecar changed repeatedly during update", || {
         let current = optional(store, &primary)?;
         let old = if current.is_none() {
@@ -366,9 +404,23 @@ pub fn write_highlights(
         valid_edn(raw)?;
         let disk = pdf::parse_highlights(raw);
         let have: HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
-        let mut merged = highlights.to_vec();
+        let disk_by_id: HashMap<&str, &Highlight> =
+            disk.iter().map(|h| (h.id.as_str(), h)).collect();
+        let mut merged: Vec<Highlight> = highlights
+            .iter()
+            .filter_map(|local| {
+                match (
+                    base.get(local.id.as_str()),
+                    disk_by_id.get(local.id.as_str()),
+                ) {
+                    (Some(loaded), Some(current)) => Some(merge_highlight(loaded, local, current)),
+                    (Some(loaded), None) if *loaded == local => None,
+                    _ => Some(local.clone()),
+                }
+            })
+            .collect();
         for item in &disk {
-            if !have.contains(item.id.as_str()) && !base.contains(item.id.as_str()) {
+            if !have.contains(item.id.as_str()) && !base.contains_key(item.id.as_str()) {
                 merged.push(item.clone());
             }
         }
@@ -503,6 +555,6 @@ pub fn write_highlights(
             cleanup.trash(&id.file(), rev);
             let _ = cleanup.commit();
         }
-        Ok(Some(()))
+        Ok(Some(merged))
     })
 }

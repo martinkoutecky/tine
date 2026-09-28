@@ -645,7 +645,7 @@ fn write_highlights_preserves_externally_added_ones() {
         "paper.pdf",
         "Paper",
         &[mk_hl("H1", "one"), mk_hl("H3", "three")],
-        &["H1".into()],
+        &[mk_hl("H1", "one")],
     )
     .unwrap();
     assert!(
@@ -655,7 +655,7 @@ fn write_highlights_preserves_externally_added_ones() {
     );
 
     // Now DELETE H2: baseline is everything currently on disk; current omits H2.
-    let base: Vec<String> = ids(&store).into_iter().collect();
+    let base = pdf::read_highlights(&store, "paper.pdf");
     pdf::write_highlights(
         &store,
         "paper.pdf",
@@ -978,6 +978,44 @@ fn page_icons_answer_from_cached_pages_with_page_key_lookup() {
     assert_eq!(icons.get("Icon Alias").map(String::as_str), Some("star"));
     assert!(!icons.contains_key("NoIcon"));
     assert!(!icons.contains_key("Missing"));
+    store.close();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn page_icons_index_updates_after_icon_and_alias_edit() {
+    let root = mk("page-icons-edit");
+    std::fs::write(
+        root.join("pages/IconPage.md"),
+        "icon:: star\nalias:: Old Alias\n- body\n",
+    )
+    .unwrap();
+    let store = store_at(&root);
+    let old = store.whole_graph().unwrap();
+    let id = tine_store::PageId::from("pages/IconPage.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    doc.pre_block = Some("icon:: moon\nalias:: New Alias\n".into());
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    let current = store.whole_graph().unwrap();
+    assert_eq!(
+        old.page_icons(&["Old Alias".into()])
+            .get("Old Alias")
+            .map(String::as_str),
+        Some("star")
+    );
+    let icons = current.page_icons(&["IconPage".into(), "Old Alias".into(), "New Alias".into()]);
+    assert_eq!(icons.get("IconPage").map(String::as_str), Some("moon"));
+    assert_eq!(icons.get("New Alias").map(String::as_str), Some("moon"));
+    assert!(!icons.contains_key("Old Alias"));
     store.close();
     let _ = std::fs::remove_dir_all(&root);
 }

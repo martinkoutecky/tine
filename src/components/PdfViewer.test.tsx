@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { Show, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { loadFeed, resetStore } from "../document";
 import {
   KeyedPdfViewer as OwnedKeyedPdfViewer,
   PdfViewer as OwnedPdfViewer,
@@ -151,6 +152,32 @@ describe("PdfViewer resource safety", () => {
       expect(host.querySelector(".pdf-load-error")?.textContent).toContain("Couldn't load this PDF");
       expect(host.querySelector(".pdf-load-error")?.textContent).toContain("invalid pdf");
       expect(host.querySelector(".pdf-page")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the outline usable when PDF metadata is deeply nested", async () => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    const pdf = documentWithPages([page(612, 792)]);
+    const root: { title: string; dest: unknown[]; items: unknown[] } = { title: "Top", dest: [0], items: [] };
+    let cursor = root;
+    for (let i = 0; i < 12000; i++) {
+      const child = { title: `Level ${i}`, dest: [0], items: [] };
+      cursor.items = [child];
+      cursor = child;
+    }
+    pdf.getOutline.mockResolvedValue([root]);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(pdf) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      (host.querySelector('button[title="Outline"]') as HTMLButtonElement).click();
+      await flush();
+      expect(host.querySelector(".pdf-outline-label")?.textContent).toBe("Top");
     } finally {
       dispose();
     }
@@ -389,7 +416,7 @@ describe("PdfViewer OG area-highlight selection", () => {
 
   it("opens the area color chooser from a non-macOS Shift drag", async () => {
     const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights);
     const { host, wrap, dispose } = await mountAreaViewer();
     try {
       dragArea(wrap, { x: 40, y: 50 }, { shiftKey: true });
@@ -420,7 +447,7 @@ describe("PdfViewer OG area-highlight selection", () => {
 
   it("does not start direct area selection from Control alone off macOS", async () => {
     const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights);
     const { host, wrap, dispose } = await mountAreaViewer();
     try {
       dragArea(wrap, { x: 40, y: 50 }, { ctrlKey: true });
@@ -456,7 +483,7 @@ describe("PdfViewer OG area-highlight selection", () => {
 
   it("clears toolbar Area mode after a valid drag so ordinary drags stay ordinary", async () => {
     const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights);
     const { host, wrap, dispose } = await mountAreaViewer();
     try {
       const areaButton = host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement;
@@ -497,7 +524,7 @@ describe("PdfViewer OG area-highlight selection", () => {
     vi.spyOn(crypto, "randomUUID").mockReturnValue(id);
     vi.spyOn(Date, "now").mockReturnValue(1234);
     const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights);
     const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
     const writeViewState = vi.spyOn(backend(), "writePdfViewState").mockResolvedValue(undefined);
     const selection = { removeAllRanges: vi.fn() } as unknown as Selection;
@@ -668,7 +695,7 @@ describe("PdfViewer OG state and reference behavior", () => {
   it("copies a newly persisted highlight block reference like OG", async () => {
     vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: null, scale: null });
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights);
     const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
     getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
     vi.spyOn(crypto, "randomUUID").mockReturnValue("11111111-1111-4111-8111-111111111111");
@@ -717,7 +744,7 @@ describe("PdfViewer OG state and reference behavior", () => {
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
     const writeHighlights = vi.spyOn(backend(), "writeHighlights")
       .mockRejectedValueOnce(new Error("io:Other"))
-      .mockResolvedValue(undefined);
+      .mockImplementation(async (_pdf, _label, highlights) => highlights);
     getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
     vi.spyOn(crypto, "randomUUID").mockReturnValue("11111111-1111-4111-8111-111111111111");
     const host = document.createElement("div");
@@ -777,7 +804,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       scale: 1,
     });
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights);
     const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
     getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
 
@@ -804,7 +831,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       await flush();
       expect(writeHighlights).toHaveBeenCalledOnce();
       expect(writeHighlights.mock.calls[0][2].map((highlight) => highlight.id)).toEqual([textId, areaId]);
-      expect(writeHighlights.mock.calls[0][3]).toEqual([textId, areaId]);
+      expect(writeHighlights.mock.calls[0][3].map((highlight) => highlight.id)).toEqual([textId, areaId]);
       expect(writeText).toHaveBeenCalledWith(`((${textId}))`);
 
       const areaHighlight = host.querySelector(`[data-highlight-id="${areaId}"]`) as HTMLElement;
@@ -823,6 +850,43 @@ describe("PdfViewer OG state and reference behavior", () => {
       expect(areaActionLabels).toEqual(expect.arrayContaining(["Copy ref", "Linked references"]));
     } finally {
       dispose();
+    }
+  });
+
+  it("keeps the committed highlight baseline after notes reload fails", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    resetStore();
+    loadFeed([{ id: "pages/hls__paper.md", name: "hls__paper", title: "hls__paper", kind: "page", pre_block: null, rev: "old", blocks: [] }]);
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(backend(), "getPage").mockRejectedValue(new Error("reload failed"));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
+    const write = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights.map((h) => ({ ...h, color: "green" })));
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      TestIntersectionObserver.instances[0].show(host.querySelector(".pdf-page")!);
+      await flush();
+      for (let i = 0; i < 2; i++) {
+        (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
+        await flush();
+        const copy = [...host.querySelectorAll<HTMLButtonElement>(".pdf-color-menu button")]
+          .find((button) => button.textContent?.trim() === "Copy ref")!;
+        copy.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        await flush();
+      }
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(write.mock.calls[1][3][0].color).toBe("green");
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("false");
+    } finally {
+      dispose();
+      resetStore();
     }
   });
 
@@ -1074,7 +1138,7 @@ describe("PdfViewer local transient ownership", () => {
       page: 2,
       scale: 2,
     });
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights);
     const writeViewState = vi.spyOn(backend() as any, "writePdfViewState").mockResolvedValue(undefined);
     const selection = { removeAllRanges: vi.fn() } as unknown as Selection;
     vi.spyOn(window, "getSelection").mockReturnValue(selection);
@@ -1288,7 +1352,7 @@ describe("PdfViewer released-OG themes and outline", () => {
     const firstPdf = documentWithPages([firstPage]);
     getDocumentMock.mockReturnValueOnce({ promise: Promise.resolve(firstPdf) });
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
-    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockImplementation(async (_pdf, _label, highlights) => highlights);
     const writeViewState = vi.spyOn(backend() as any, "writePdfViewState").mockResolvedValue(undefined);
     const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
     const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
