@@ -17,7 +17,7 @@ const LANDING = /\b(?:ensurePageLoaded|reloadPage|markDirty|markConflict|forgetP
 // the list may only shrink as ownership is moved behind the session door.
 const FROZEN_LATE_LANDING_COUNT = 62;
 const ORIGINAL_LATE_KEYS = new Set(`
-  src/assetSettings.ts:41 src/capture.tsx:330 src/components/AudioOverlay.tsx:86 src/components/Block.tsx:1322 src/components/Block.tsx:1669
+  src/assetSettings.ts:41 src/capture.tsx:330 src/components/AudioOverlay.tsx:86 src/components/Block.tsx:1321 src/components/Block.tsx:1669
   src/components/Block.tsx:1695 src/components/Block.tsx:1715 src/components/ContextMenu.tsx:660 src/components/ContextMenu.tsx:762 src/components/ContextMenu.tsx:781
   src/components/LinkedReferences.tsx:114 src/components/LiveRefGroup.tsx:72 src/components/PdfViewer.tsx:1003 src/components/Settings.tsx:1045 src/components/Settings.tsx:1642
   src/components/Settings.tsx:1868 src/components/Settings.tsx:1884 src/components/Settings.tsx:193 src/components/Settings.tsx:2188 src/components/Settings.tsx:2384
@@ -35,7 +35,7 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/assetSettings.ts:41": "legacy settings UI result needs a binding audit",
   "src/capture.tsx:330": "legacy UI continuation needs a binding audit",
   "src/components/AudioOverlay.tsx:86": "legacy UI continuation needs a binding audit",
-  "src/components/Block.tsx:1322": "legacy block UI result needs a binding audit (line rebased after asset guards)",
+  "src/components/Block.tsx:1321": "legacy block UI result needs a binding audit (line rebased after asset guards)",
   "src/components/LinkedReferences.tsx:114": "legacy UI continuation needs a binding audit",
   "src/components/LiveRefGroup.tsx:72": "legacy UI continuation needs a binding audit",
   "src/components/PdfViewer.tsx:1003": "census #2: PDF write intent awaits its design batch",
