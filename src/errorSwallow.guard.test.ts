@@ -12,16 +12,16 @@ function sources(dir: string): string[] {
 const SWALLOW = /\bcatch\s*\{\s*\}|\.catch\s*\(\s*\(\s*\)\s*=>\s*(?:\{\s*\}|undefined)\s*\)/;
 const PROSE_BRANCH = /(?:\b(?:message|msg|errorText|errText)|\b\w+\.message|String\s*\([^)]*\))\s*(?:\.\s*(?:startsWith|includes)\s*\(|(?:===|==|!==|!=))/;
 
-// Existing I-9 exceptions at a4c46c22c. Every entry is annotated; this
-// inventory and its frozen count may only shrink.
+// Existing I-9 exceptions from a4c46c22c, with line keys rebased to the
+// current source. Every entry is annotated; the exceptions may only shrink.
 const FROZEN_SWALLOW_COUNT = 26;
 const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/assetCache.ts:130 src/assetCache.ts:212 src/assetCache.ts:264 src/assetCache.ts:69
   src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
-  src/components/Block.tsx:3151 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 src/components/Macro.tsx:350 src/components/PdfViewer.tsx:989
+  src/components/Block.tsx:3146 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:44 src/components/Macro.tsx:350 src/components/PdfViewer.tsx:989
   src/components/PdfViewer.tsx:1054 src/components/PdfViewer.tsx:488
   src/capture.tsx:264 src/capture.tsx:572 src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
-  src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 
+  src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:44 
   
   src/components/UnlinkedReferences.tsx:39 src/components/WindowChrome.tsx:24
   src/debug.ts:14
@@ -39,9 +39,9 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/components/AboutTab.tsx:17": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:117": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:154": "legacy best-effort operation needs an error-family audit",
-  "src/components/Block.tsx:3151": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
+  "src/components/Block.tsx:3146": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
   "src/components/HelpShortcuts.tsx:51": "legacy best-effort operation needs an error-family audit",
-  "src/components/LinkedReferences.tsx:43": "legacy error-prose branch; replace with fixed error family",
+  "src/components/LinkedReferences.tsx:44": "legacy error-prose branch; replace with fixed error family",
   "src/components/Macro.tsx:350": "legacy error-prose branch; replace with fixed error family (line rebased after query diagnostics)",
   "src/components/PdfViewer.tsx:488": "best-effort viewer resource cleanup",
   "src/components/PdfViewer.tsx:989": "best-effort viewer resource cleanup",

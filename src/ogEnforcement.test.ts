@@ -8,10 +8,14 @@ import {
 } from "../scripts/lib/og-enforcement.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Whole-repository scans belong to collection, outside Vitest's per-assertion
+// timer; the assertions still inspect the exact source snapshot read here.
+const sizeCounts = readSizeCounts(root);
+const writerCounts = readWriterSiteCounts(root);
 
 describe("og campaign enforcement", () => {
   it("ratchets production file size against the post-batch-5 baseline", () => {
-    const { current, baseline } = readSizeCounts(root);
+    const { current, baseline } = sizeCounts;
     expect(() => checkSizeRatchet(current, baseline)).not.toThrow();
   });
 
@@ -26,7 +30,7 @@ describe("og campaign enforcement", () => {
       "plugin-package", "desktop-launcher", "debug-log",
     ]);
     expect(() => checkFormatCount()).not.toThrow();
-    const { current, baseline } = readWriterSiteCounts(root);
+    const { current, baseline } = writerCounts;
     expect(() => checkWriterSites(current, baseline)).not.toThrow();
   });
 
