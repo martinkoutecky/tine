@@ -17,7 +17,7 @@ import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
 import { clearConflict } from "../document/save/engine";
 import { markConflict } from "../document/save/engine";
-import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRightSidebar } from "../ui";
+import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
 import { graphEpoch } from "../graphSession";
 
 beforeAll(async () => {
@@ -1080,6 +1080,27 @@ describe("page actions entry point", () => {
 });
 
 describe("page route loading", () => {
+  it("rekeys a pinned page route and Recent entry to the disk spelling", async () => {
+    const dto: PageRead = {
+      name: "contents", title: "contents", kind: "page", id: "pages/contents.md",
+      pre_block: null,
+      blocks: [{ id: "contents-root", raw: "Table of contents", children: [], collapsed: false }],
+    };
+    const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    setRecentPages([{ name: "Contents", kind: "page", path: "pages/Contents.md" }]);
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Contents", pageKind: "page", path: "pages/Contents.md" });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "contents", path: "pages/contents.md" }));
+      expect(read).toHaveBeenCalledWith("pages/Contents.md");
+      expect(root.textContent).toContain("Table of contents");
+      expect(recentPages().filter((r) => r.path === "pages/Contents.md")).toEqual([]);
+    } finally {
+      dispose();
+      clearRecent();
+    }
+  });
+
   it("fails closed when a shared zoom UUID is loaded from a different exact owner", async () => {
     const sharedId = "77777777-7777-4777-8777-777777777777";
     const sharedRaw = "Same copied UUID and content";
