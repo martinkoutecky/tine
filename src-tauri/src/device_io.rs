@@ -14,6 +14,30 @@ mod no_replace;
 mod atomic_file;
 use tine_store::directory_durability;
 
+/// Reads a user-chosen regular file outside the graph, never more than `max`
+/// bytes: the metadata check refuses early, and the read itself stops at
+/// `max + 1` so a file that grows (or lies about its length) after the check
+/// cannot allocate past the limit (I-22).
+pub(crate) fn read_regular_file_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let meta = file.metadata().map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+    if meta.len() > max {
+        return Err("image too large".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > max {
+        return Err("image too large".into());
+    }
+    Ok(bytes)
+}
+
 /// Device source errors remain distinct so the command can preserve its wire text.
 #[derive(Debug)]
 pub(crate) enum DeviceAssetImportError {
@@ -46,6 +70,29 @@ pub(crate) fn import_asset_from_path(
 #[cfg(test)]
 mod asset_import_tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bounded_image_read_stops_at_the_limit_even_when_metadata_undercounts() {
+        // og 15b K09 (I-22): the local-image read stops at the limit itself.
+        // A procfs file reports length 0 to metadata but yields more bytes,
+        // the deterministic stand-in for a file that grows after the check.
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("grows.png");
+        std::os::unix::fs::symlink("/proc/self/status", &image).unwrap();
+        assert_eq!(fs::metadata(&image).unwrap().len(), 0);
+        assert_eq!(
+            read_regular_file_bounded(&image, 16).unwrap_err(),
+            "image too large"
+        );
+        let small = dir.path().join("small.png");
+        fs::write(&small, [7u8; 16]).unwrap();
+        assert_eq!(read_regular_file_bounded(&small, 16).unwrap(), [7u8; 16]);
+        assert_eq!(
+            read_regular_file_bounded(dir.path(), 16).unwrap_err(),
+            "not a file"
+        );
+    }
 
     #[test]
     fn import_path_selects_name_before_open_and_streams_once() {

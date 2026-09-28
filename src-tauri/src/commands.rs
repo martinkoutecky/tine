@@ -1706,17 +1706,8 @@ pub(crate) fn read_local_image(
         return Err("not an image file".into());
     }
     let p = refuse_bound_graph_path(p, &state)?;
-    let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
-    if !meta.is_file() {
-        return Err("not a file".into());
-    }
     const MAX_BYTES: u64 = 64 * 1024 * 1024;
-    if meta.len() > MAX_BYTES {
-        return Err("image too large".into());
-    }
-    std::fs::read(&p)
-        .map(tauri::ipc::Response::new)
-        .map_err(|e| e.to_string())
+    crate::device_io::read_regular_file_bounded(&p, MAX_BYTES).map(tauri::ipc::Response::new)
 }
 
 #[tauri::command]
