@@ -47,6 +47,34 @@ beforeEach(() => {
 });
 
 describe("named workspace switching", () => {
+  it("reloads a published registry after a post-rename sync failure before the next write", async () => {
+    let disk = registryFromCurrent();
+    let failOnce = true;
+    vi.spyOn(backend(), "loadWorkspaces").mockImplementation(async () => disk);
+    vi.spyOn(backend(), "saveWorkspaces").mockImplementation(async (raw) => {
+      disk = raw;
+      if (failOnce && JSON.parse(raw).workspaces[0].name === "First") {
+        failOnce = false;
+        throw new Error("injected directory sync I/O failure");
+      }
+      return "durable";
+    });
+    await initializeWorkspaces();
+    await expect(renameWorkspace("default", "First")).rejects.toThrow("injected directory sync");
+    await createWorkspace("Second");
+    expect(JSON.parse(disk).workspaces.map((workspace: { name: string }) => workspace.name)).toEqual(["First", "Second"]);
+  });
+  it("installs a visible registry even when its directory sync failed", async () => {
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
+    const save = vi.spyOn(backend(), "saveWorkspaces")
+      .mockResolvedValueOnce("published-unsynced")
+      .mockResolvedValue("durable");
+    await initializeWorkspaces();
+    await renameWorkspace("default", "First");
+    expect(workspaces()[0].name).toBe("First");
+    await createWorkspace("Second");
+    expect(JSON.parse(save.mock.calls[1][0]).workspaces.map((workspace: { name: string }) => workspace.name)).toEqual(["First", "Second"]);
+  });
   it("does not install an old graph registry after its read finishes on another graph", async () => {
     let finish!: (raw: string) => void;
     vi.spyOn(backend(), "loadWorkspaces").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
@@ -69,7 +97,7 @@ describe("named workspace switching", () => {
 
   it("does not persist a workspace switch queued before a graph reset", async () => {
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
-    const save = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    const save = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     await initializeWorkspaces();
     const pending = switchWorkspace("default");
     resetStore();
@@ -95,7 +123,7 @@ describe("named workspace switching", () => {
       "research"
     );
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
-    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
 
     await initializeWorkspaces();
@@ -135,7 +163,7 @@ describe("named workspace switching", () => {
   it("never calls a graph writer across save, switch, new, rename, and delete", async () => {
     resetPaneLayoutToSingle(pages(["Byte-identical page"]));
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
-    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
     const savePages = vi.spyOn(backend(), "savePages");
 
@@ -177,7 +205,7 @@ describe("named workspace switching", () => {
         { id: "parked", name: "Parked", blob: parked },
       ],
     }));
-    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
     vi.spyOn(backend(), "saveSession").mockResolvedValue();
     const savePages = vi.spyOn(backend(), "savePages");
 

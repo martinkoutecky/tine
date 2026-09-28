@@ -74,6 +74,9 @@ export async function loadGraphPath(
   if (graphTransitioning() && ownsTransition) return { kind: "aborted" };
   if (ownsTransition) {
     setGraphTransitioning(true);
+  }
+  try {
+  if (ownsTransition) {
     const active = document.activeElement;
     if (active instanceof HTMLElement) active.blur();
     endEdit("graph-switch");
@@ -81,7 +84,6 @@ export async function loadGraphPath(
     await Promise.resolve();
     if (!stillBound(startingBinding)) return { kind: "aborted" };
   }
-  try {
   // Whether we're switching to a *different* graph than last time. Only then do
   // we drop the persisted right-sidebar items; reopening the same graph at
   // startup keeps them (and we prune stale block refs below).

@@ -710,6 +710,30 @@ describe("trailing page block target", () => {
 });
 
 describe("page actions entry point", () => {
+  it("discards the first A read after navigating A to B to A", async () => {
+    let finishOld!: (page: PageRead | null) => void;
+    let finishNew!: (page: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage")
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }))
+      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishNew = resolve; }));
+    mainPaneRouter.openPage("A", "page", { inPlace: true });
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      mainPaneRouter.openPage("B", "page", { inPlace: true });
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+      mainPaneRouter.openPage("A", "page", { inPlace: true });
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+      finishOld({ name: "A", kind: "page", title: "A", pre_block: null,
+        id: "pages/A.md", blocks: [{ id: "a-root", raw: "old", collapsed: false, children: [] }] });
+      await flushMicrotasks();
+      finishNew({ name: "A", kind: "page", title: "A", pre_block: null,
+        id: "pages/A.md", blocks: [{ id: "a-root", raw: "new", collapsed: false, children: [] }] });
+      await flushMicrotasks();
+      expect(pageByName("A")?.roots.map((id) => doc.byId[id]?.raw)).toEqual(["new"]);
+    } finally { mounted.dispose(); }
+  });
   it("keeps the current tab when an older page read returns a canonical name", async () => {
     let finish!: (page: PageRead | null) => void;
     const read = vi.spyOn(backend(), "getPage")

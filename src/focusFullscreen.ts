@@ -1,7 +1,9 @@
-/** Native fullscreen ownership for focus mode.
- * setFocusFullscreen: O(1) native calls, serialized. A newer request cancels a
- * pending older intent. Native errors reject; the UI keeps its focus signal.
- * Callers need not track the window's previous fullscreen state. */
+/** Focus-mode ownership of native fullscreen. Requests queue; a superseded
+ * request waiting at a generation check resolves without native mutation. A
+ * native call already in flight may finish before a newer request reverses it.
+ * Exit preserves fullscreen that was on before focus mode. Non-Tauri calls
+ * resolve without native work. Native errors reject without retry or rollback;
+ * the UI focus signal is separate. O(1) native calls per request. */
 import { isTauri } from "./backend";
 
 let generation = 0;

@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
+import { pushToast } from "./toasts";
 import { applyParsedSession, buildPersistedSession, flushSession, parsePersistedSession, scheduleSessionSave, type PersistedSession } from "./session";
 
 export interface Workspace {
@@ -109,7 +110,25 @@ function registry(): WorkspaceRegistry {
 
 async function persist(next: WorkspaceRegistry, scope: WorkspaceOperation): Promise<void> {
   scope.assert();
-  await scope.after(backend().saveWorkspaces(JSON.stringify(next)));
+  let outcome: "durable" | "published-unsynced";
+  try {
+    outcome = await scope.after(backend().saveWorkspaces(JSON.stringify(next)));
+  } catch (error) {
+    // A transport failure may arrive after publication. Read the serialized
+    // registry before another queued operation can build a replacement.
+    scope.assert();
+    try {
+      const loaded = parseRegistry(await scope.after(backend().loadWorkspaces()));
+      if (loaded) install(loaded);
+      else clearWorkspaces();
+    } catch {
+      scope.assert();
+      clearWorkspaces();
+    }
+    throw error;
+  }
+  if (outcome === "published-unsynced")
+    pushToast("Workspace changes are visible, but directory sync failed; they may not survive a power loss.", "error");
 }
 
 function install(next: WorkspaceRegistry) {
@@ -252,6 +271,9 @@ export function workspaceDisplayName(workspace: Pick<Workspace, "name">): string
   return workspace.name || "Default";
 }
 
+/** Clear only the reactive workspace list and active ID. Persisted records and
+ * the live session remain. Registry operations fail until reinitialization.
+ * O(1) signal writes; synchronous, with no disk I/O. */
 export function clearWorkspaces() {
   setWorkspaceList([]);
   setActiveId("");

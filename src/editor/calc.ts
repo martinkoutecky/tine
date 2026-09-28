@@ -39,9 +39,11 @@ export function wrapCalc(inner: string): string {
   return "```calc\n" + inner + "\n```";
 }
 
-/** Serialize the calc editor's visible buffer for an exit commit. Re-fence the
- *  expressions while retaining text after the closing fence from the current
- *  value (or from the prior raw block when the editor shows bare expressions). */
+/** Wrap bare text or expressions in a first-line ```calc fence in a new fence.
+ * A missing close uses all later lines as expressions. Keep lines after the
+ * first close in text; if none exist, use the suffix after the first close in
+ * previousRaw, even when text is fenced. Malformed input is wrapped, not
+ * rejected. Pure O(text length + previousRaw length). */
 export function serializeCalcExitCommit(text: string, previousRaw?: string): string {
   const source = calcSource(text);
   const suffixAfterFence = (raw?: string): string[] => {

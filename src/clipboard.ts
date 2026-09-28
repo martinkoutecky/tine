@@ -42,6 +42,12 @@ export interface ConsumedCutGrant {
 
 let slot: ClipboardPayloadSlot | null = null;
 let nextGeneration = 0;
+let writeRevision = 0;
+
+/** O(1) per-webview ownership token for every clipboard replacement, even without a private payload. */
+export function clipboardWriteRevision(): number {
+  return writeRevision;
+}
 
 /** Read the live private slot. Callers must treat the returned payload as immutable. */
 export function peekClipboardPayload(): ClipboardPayloadSlot | null {
@@ -51,6 +57,7 @@ export function peekClipboardPayload(): ClipboardPayloadSlot | null {
 /** Clear any private payload synchronously before replacing the OS clipboard. */
 export function clearClipboardPayload(): void {
   slot = null;
+  writeRevision++;
 }
 
 /**
@@ -65,7 +72,9 @@ export function consumeClipboardCutGrant(expectedGeneration: number): ConsumedCu
   return grant;
 }
 
-/** A pending Cut that no longer owns its source becomes an ordinary copy. */
+/** Downgrade only a matching in-memory Cut grant to Copy. The caller decides
+ * whether the source still qualifies. This leaves OS clipboard text and source
+ * blocks alone; stale/missing grants are O(1) no-ops. */
 export function cancelClipboardCutGrant(expectedGeneration: number): void {
   consumeClipboardCutGrant(expectedGeneration);
 }
@@ -181,7 +190,7 @@ export function copyBlockOutline(
   return write.catch((error) => {
     // A rejected external write must not leave a private cut grant behind.
     // A newer clipboard action owns its own generation and must survive.
-    if (slot?.generation === pendingGeneration) clearClipboardPayload();
+    if (pendingGeneration !== undefined && slot?.generation === pendingGeneration) clearClipboardPayload();
     throw error;
   });
 }

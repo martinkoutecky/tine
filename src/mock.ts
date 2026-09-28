@@ -1599,8 +1599,8 @@ export function mockBackend(): Backend {
       }
       return mockWorkspaces;
     },
-    async saveWorkspaces(data: string): Promise<void> {
-      mockWorkspaces = data;
+    async saveWorkspaces(data: string): Promise<"durable"> {
+      mockWorkspaces = data; return "durable";
     },
     async gpuEnv(): Promise<GpuEnv> {
       return { software_forced: false, appimage: false };

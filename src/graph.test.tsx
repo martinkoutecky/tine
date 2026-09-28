@@ -156,6 +156,16 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
+  it("releases a graph transition invalidated during blur", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    const { invalidateBinding } = await import("./binding");
+    const { setGraphTransitioning } = await import("./ui");
+    const pending = loadGraphPath(META.root);
+    invalidateBinding();
+    expect(await pending).toEqual({ kind: "aborted" });
+    expect(setGraphTransitioning).toHaveBeenLastCalledWith(false);
+    expect(api.loadGraph).not.toHaveBeenCalled();
+  });
   it("does not open an old folder-picker choice after a newer graph binding", async () => {
     const { switchGraph, api } = await loadHarness(null);
     let finish!: (path: string) => void;
