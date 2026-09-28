@@ -51,6 +51,6 @@ fn page_serializer_matches_master_ddf408c55_for_ten_tricky_pages() {
         "unexpected master byte differences: {differences:?}"
     );
     assert_eq!(differences[0].0, "pages/Whitespace.md");
-    assert_eq!(differences[0].1.as_bytes(), b"- first\n\n- second  \n\n\n");
+    assert_eq!(differences[0].1.as_bytes(), b"- first\n\n- second  \n\n");
     assert_eq!(differences[0].2.as_bytes(), b"\n- first\n\n- second  \n\n");
 }
