@@ -237,6 +237,38 @@ fn safe_version(value: &str) -> bool {
     })
 }
 
+/// Publish a plugin package durably (og 15a K09, I-2), mirroring `atomic_file`:
+/// each file is fsynced and published in the private staging directory (which
+/// is then synced), the staging directory is renamed into place, and the
+/// directories that gained an entry are synced. A crash therefore leaves either
+/// no package or a complete one, never a torn manifest or wasm at `target`.
+fn publish_package(
+    root: &Path,
+    target: &Path,
+    id: &str,
+    version: &str,
+    manifest: &[u8],
+    wasm: &[u8],
+) -> Result<(), String> {
+    let sync = tine_store::directory_durability::sync_directory_entry;
+    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let temp = unique_install_dir(root, id, version)?;
+    let parent = target.parent().unwrap_or(root);
+    let result = (|| -> std::io::Result<()> {
+        crate::device_io::atomic_write_new(&temp.join("manifest.json"), manifest)?;
+        crate::device_io::atomic_write_new(&temp.join("plugin.wasm"), wasm)?;
+        std::fs::create_dir_all(parent)?;
+        sync(root)?; // the staging directory and a new `<id>` directory
+        std::fs::rename(&temp, target)?;
+        sync(parent)?; // `<version>` appeared
+        sync(root) // the staging entry left
+    })();
+    if result.is_err() && temp.exists() {
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+    result.map_err(|e| e.to_string())
+}
+
 fn unique_install_dir(root: &Path, id: &str, version: &str) -> Result<PathBuf, String> {
     for _ in 0..128 {
         let sequence = INSTALL_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -414,22 +446,14 @@ pub(crate) fn install_plugin(
             );
         }
     } else {
-        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-        let temp = unique_install_dir(&root, &id, &version)?;
-        let result = (|| -> Result<(), String> {
-            std::fs::write(temp.join("manifest.json"), manifest_json.as_bytes())
-                .map_err(|e| e.to_string())?;
-            std::fs::write(temp.join("plugin.wasm"), &wasm).map_err(|e| e.to_string())?;
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            std::fs::rename(&temp, &target).map_err(|e| e.to_string())?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_dir_all(&temp);
-        }
-        result?;
+        publish_package(
+            &root,
+            &target,
+            &id,
+            &version,
+            manifest_json.as_bytes(),
+            &wasm,
+        )?;
     }
     Ok(InstalledPlugin {
         id,
@@ -594,6 +618,80 @@ mod tests {
         std::fs::write(package.join("manifest.json"), test_manifest(id, version)).unwrap();
         std::fs::write(package.join("plugin.wasm"), b"\0asm\x01\0\0\0").unwrap();
         package
+    }
+
+    #[test]
+    fn plugin_install_publishes_a_complete_package_durably() {
+        // og 15a K09 (I-2): the install path fsyncs each file and every
+        // directory that gains an entry before and after the rename, as
+        // `atomic_file` does. Power loss cannot be simulated, so the fsync
+        // shape is pinned at the source and the result checked behaviourally.
+        let source = include_str!("plugins.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        let install = &production[production.find("pub(crate) fn install_plugin(").unwrap()..];
+        let install = &install[..install.find("\n}\n").unwrap()];
+        assert!(
+            install.contains("publish_package(") && !install.contains("std::fs::write("),
+            "I-2: plugin install must publish through publish_package (fsynced files + directories)"
+        );
+        let publish = &production[production.find("fn publish_package(").unwrap()..];
+        let publish = &publish[..publish.find("\n}\n").unwrap()];
+        assert_eq!(
+            publish
+                .matches("crate::device_io::atomic_write_new(")
+                .count(),
+            2
+        );
+        assert!(
+            publish.contains("sync_directory_entry")
+                && publish.matches("sync(parent)").count() == 1
+        );
+
+        let root = std::env::temp_dir().join(format!("tine-plugin-publish-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let target = package_dir(&root, "dev.tine.demo", "1.0.0").unwrap();
+        let manifest = test_manifest("dev.tine.demo", "1.0.0");
+        publish_package(
+            &root,
+            &target,
+            "dev.tine.demo",
+            "1.0.0",
+            manifest.as_bytes(),
+            b"\0asm\x01\0\0\0",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target.join("manifest.json")).unwrap(),
+            manifest
+        );
+        assert_eq!(
+            std::fs::read(target.join("plugin.wasm")).unwrap(),
+            b"\0asm\x01\0\0\0"
+        );
+        let names = |dir: &Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            names(&root),
+            vec!["dev.tine.demo"],
+            "no staging directory left behind"
+        );
+        assert_eq!(
+            names(&target),
+            vec!["manifest.json", "plugin.wasm"],
+            "no temp file left behind"
+        );
+        assert!(
+            publish_package(&root, &target, "dev.tine.demo", "1.0.0", b"{}", b"x").is_err(),
+            "an installed version is not replaced"
+        );
+        assert_eq!(names(&root), vec!["dev.tine.demo"]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
