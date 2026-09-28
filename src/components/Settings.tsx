@@ -2233,13 +2233,26 @@ function firstLine(text: string): string {
   return l.trim();
 }
 
-// One diff row (recursive: a modified row shows its aligned children indented).
+// The shown rows in document order with their depth: a hidden unchanged row
+// hides its subtree. Iterative, so a diff at the outline cap renders (I-22).
+function visibleDiffRows(rows: DiffRow[], showUnchanged: boolean): { row: DiffRow; depth: number }[] {
+  const out: { row: DiffRow; depth: number }[] = [];
+  const pending = rows.map((row) => ({ row, depth: 0 })).reverse();
+  while (pending.length) {
+    const item = pending.pop()!;
+    if (!showUnchanged && item.row.kind === "unchanged") continue;
+    out.push(item);
+    for (let i = item.row.children.length - 1; i >= 0; i--) pending.push({ row: item.row.children[i], depth: item.depth + 1 });
+  }
+  return out;
+}
+
+// One diff row; its aligned children follow it as their own, indented rows.
 function DiffRowView(props: {
   row: DiffRow;
   depth: number;
   decisions: Record<string, MergeDecision>;
   setDecision: (id: string, d: MergeDecision) => void;
-  showUnchanged: boolean;
 }): JSX.Element {
   const row = () => props.row;
   const dec = () => decisionOf(props.decisions, row().id);
@@ -2254,53 +2267,40 @@ function DiffRowView(props: {
     </button>
   );
   return (
-    <Show when={props.showUnchanged || row().kind !== "unchanged"}>
-      <div class="sync-merge-row" data-kind={row().kind} style={{ "padding-left": `${props.depth * 16}px` }}>
-        <div class="sync-merge-cols">
-          <div class="sync-merge-cell mine" classList={{ chosen: row().kind !== "removed" && dec() !== "theirs" }}>
-            {row().mine ? firstLine(row().mine!.text) : <span class="sync-merge-absent">—</span>}
-            <Show when={(row().mine?.child_count ?? 0) > 0}>
-              <span class="sync-merge-kids"> +{row().mine!.child_count}</span>
-            </Show>
-          </div>
-          <div class="sync-merge-cell theirs" classList={{ chosen: dec() === "theirs" || dec() === "both" }}>
-            {row().theirs ? firstLine(row().theirs!.text) : <span class="sync-merge-absent">—</span>}
-            <Show when={(row().theirs?.child_count ?? 0) > 0}>
-              <span class="sync-merge-kids"> +{row().theirs!.child_count}</span>
-            </Show>
-          </div>
+    <div class="sync-merge-row" data-kind={row().kind} style={{ "padding-left": `${props.depth * 16}px` }}>
+      <div class="sync-merge-cols">
+        <div class="sync-merge-cell mine" classList={{ chosen: row().kind !== "removed" && dec() !== "theirs" }}>
+          {row().mine ? firstLine(row().mine!.text) : <span class="sync-merge-absent">—</span>}
+          <Show when={(row().mine?.child_count ?? 0) > 0}>
+            <span class="sync-merge-kids"> +{row().mine!.child_count}</span>
+          </Show>
         </div>
-        <div class="sync-merge-controls">
-          <Show when={row().kind === "modified"}>
-            {seg("mine", "Current", "mine")}
-            {seg("theirs", "Copy", "theirs")}
-            {seg("both", "Both", "theirs")}
-          </Show>
-          <Show when={row().kind === "added"}>
-            {seg("mine", "Keep", "mine")}
-            {seg("theirs", "Drop", "theirs")}
-          </Show>
-          <Show when={row().kind === "removed"}>
-            {seg("mine", "Skip", "mine")}
-            {seg("theirs", "Pull in", "theirs")}
-          </Show>
-          <Show when={row().kind === "unchanged"}>
-            <span class="sync-merge-unchanged-tag">unchanged</span>
+        <div class="sync-merge-cell theirs" classList={{ chosen: dec() === "theirs" || dec() === "both" }}>
+          {row().theirs ? firstLine(row().theirs!.text) : <span class="sync-merge-absent">—</span>}
+          <Show when={(row().theirs?.child_count ?? 0) > 0}>
+            <span class="sync-merge-kids"> +{row().theirs!.child_count}</span>
           </Show>
         </div>
       </div>
-      <For each={row().children}>
-        {(child) => (
-          <DiffRowView
-            row={child}
-            depth={props.depth + 1}
-            decisions={props.decisions}
-            setDecision={props.setDecision}
-            showUnchanged={props.showUnchanged}
-          />
-        )}
-      </For>
-    </Show>
+      <div class="sync-merge-controls">
+        <Show when={row().kind === "modified"}>
+          {seg("mine", "Current", "mine")}
+          {seg("theirs", "Copy", "theirs")}
+          {seg("both", "Both", "theirs")}
+        </Show>
+        <Show when={row().kind === "added"}>
+          {seg("mine", "Keep", "mine")}
+          {seg("theirs", "Drop", "theirs")}
+        </Show>
+        <Show when={row().kind === "removed"}>
+          {seg("mine", "Skip", "mine")}
+          {seg("theirs", "Pull in", "theirs")}
+        </Show>
+        <Show when={row().kind === "unchanged"}>
+          <span class="sync-merge-unchanged-tag">unchanged</span>
+        </Show>
+      </div>
+    </div>
   );
 }
 
@@ -2423,15 +2423,9 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
                 <span>Conflict copy</span>
               </div>
               <div class="sync-merge-body">
-                <For each={d().rows}>
-                  {(row) => (
-                    <DiffRowView
-                      row={row}
-                      depth={0}
-                      decisions={decisions()}
-                      setDecision={setDecision}
-                      showUnchanged={showUnchanged()}
-                    />
+                <For each={visibleDiffRows(d().rows, showUnchanged())}>
+                  {(item) => (
+                    <DiffRowView row={item.row} depth={item.depth} decisions={decisions()} setDecision={setDecision} />
                   )}
                 </For>
               </div>
