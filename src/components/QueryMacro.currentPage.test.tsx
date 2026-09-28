@@ -273,6 +273,28 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
     }
   });
 
+  it("hides the previous page's landed rows while the new page's answer is pending", async () => {
+    loadQueryDoc("{{query (and (page <% current page %>) (task TODO))}}");
+    let landB: ((result: QueryResult) => void) | undefined;
+    const runQuery = vi.spyOn(backend(), "queryRun").mockImplementation(async (query: Query) => {
+      if (ranText([query]).includes("Focus A")) return blockRunResult(groupsFor("rowA"));
+      return new Promise<QueryResult>((resolve) => { landB = resolve; });
+    });
+    openPage("Focus A", "page");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("RowA-Presented"));
+      openPage("Focus B", "page");
+      await vi.waitFor(() => expect(runQuery).toHaveBeenCalledTimes(2));
+      expect(root.textContent).not.toContain("RowA-Presented");
+      expect(root.textContent).toContain("Loading query results");
+      landB!(blockRunResult(groupsFor("rowB")));
+      await vi.waitFor(() => expect(root.textContent).toContain("RowB-Presented"));
+    } finally {
+      dispose();
+    }
+  });
+
   it("a stale friendly-search completion cannot overwrite the latest search presentation", async () => {
     loadQueryDoc('{{query (search "<% current page %>")}}\ntine.view:: search');
     const deferred = new Map<string, (result: QueryExecution) => void>();

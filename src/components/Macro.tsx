@@ -12,7 +12,7 @@ import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
 import { quoteEdnString, unquoteEdnString } from "../editor/edn";
-import { queryMacroExtents } from "../editor/queryMacro";
+import { queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import {
   macroPrintDialect,
@@ -176,6 +176,7 @@ function createQueryReading(request: () => ReadingRequest | undefined) {
 }
 
 interface QueryOperation {
+  requestKey: string;
   groups: RefGroup[];
   pages: PageRow[] | null;
   diagnostics: Diagnostic[];
@@ -185,19 +186,24 @@ interface QueryOperation {
   matchedTotal: number | null;
 }
 
-// A {{query …}} / {{tine-query …}} block. The ONE engine (I-12) reads the
-// macro (`query_parse`), runs it (`query_run`) and prints every edit back
-// (`query_print`); this component only presents answers and writes the bytes
-// the engine returned. With `blockId` the builder sentence and sheet edit it.
+/** Present a query macro through the Rust parse/run/print seam. Every mounted,
+ *  expanded block re-runs a graph-wide evaluation on each graph save; identical
+ *  requests share one in-flight run. Collapsed blocks retain their count without
+ *  re-running for unrelated saves. A `(search ...)` source uses bounded graph
+ *  search instead. Saves write the printed macro and any view facts the printer
+ *  cannot carry as `tine.*` properties in one undo unit. A refused print or
+ *  changed source extent leaves the block untouched and shows an error. */
 export function QueryMacro(props: {
   body: string;
   blockId?: string;
+  /** The parsed node's exact raw extent. Every write must still target these bytes. */
+  sourceExtent?: MacroExtent;
+  sourceRaw?: string;
   title?: string;
-  /** Read-only query surfaces can supply page context without a blockId, which
-   * would incorrectly enable editing controls. */
+  /** Owner page context for read-only surfaces such as BEGIN_QUERY. */
   currentPage?: string;
-  /** BEGIN_QUERY must never execute a partially understood query or expose its
-   * authored payload in an error. */
+  /** For advanced sources, hide rows if the report has ignored clauses. The
+   *  run still occurs; pair with `unsupportedLabel` to avoid showing the source. */
   strictAdvanced?: boolean;
   unsupportedLabel?: string;
   // Render nothing when there are no results (the app-inserted journal agenda).
@@ -262,7 +268,9 @@ export function QueryMacro(props: {
   // Master: a typed `:current-page` input binds the focused pane's page; every
   // other query runs bound to the page the query block is on.
   const executionContext = (): ExecutionContext | undefined => {
-    const page = isAdvanced() && declaresCurrentPageInput(form()) ? queryCurrentPage() : props.blockId ? docNode(props.blockId)?.page : undefined;
+    const page = isAdvanced() && declaresCurrentPageInput(form())
+      ? queryCurrentPage()
+      : props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
     return page ? { current_page: page } : undefined;
   };
   // A saved `(search "…")` query presents search hits with their evidence.
@@ -349,6 +357,7 @@ export function QueryMacro(props: {
         grouped.set(key, group);
       }
       return {
+        requestKey: request.key,
         groups: [...grouped.values()], pages: null, diagnostics: [],
         report: null, search: hits.length === landed.value.hits.length ? landed.value : { ...landed.value, hits }, matchedTotal: null,
       };
@@ -361,6 +370,7 @@ export function QueryMacro(props: {
     if (landed.kind === "stale") return undefined;
     const result = landed.value;
     return {
+      requestKey: request.key,
       groups: result.anchor === "block" ? withoutHostBlock(result.groups, props.blockId) : [],
       pages: result.anchor === "page" ? result.pages : null,
       diagnostics: result.diagnostics ?? [],
@@ -371,7 +381,11 @@ export function QueryMacro(props: {
     };
   });
   /** The last coherent answer; an errored run shows its error, not old rows. */
-  const displayed = (): QueryOperation | undefined => (operation.error === undefined ? operation.latest : undefined);
+  const displayed = (): QueryOperation | undefined => {
+    const current = runRequest();
+    const landed = operation.error === undefined ? operation.latest : undefined;
+    return current && landed?.requestKey === current.key ? landed : undefined;
+  };
   const groups = () => displayed()?.groups ?? [];
   const pageRows = () => displayed()?.pages ?? null;
   // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
@@ -402,8 +416,9 @@ export function QueryMacro(props: {
     return groups().reduce((a, g) => a + g.blocks.length, 0);
   };
   const ranEmpty = () =>
-    !!displayed() && !operation.loading && total() === 0 && blockingDiagnostics().length === 0;
-  const emptyMessage = () => (!displayed() && !loadError() ? "Loading query results…" : "No results");
+    !!displayed() && !operation.loading && total() === 0 && blockingDiagnostics().length === 0
+    && displayed()?.report?.supported !== false;
+  const emptyMessage = () => (ranEmpty() ? "No results" : "Loading query results…");
 
   // Why empty? (Q14, N19): which top-level conjunct emptied the query, asked
   // only once the run actually came back empty.
@@ -436,16 +451,17 @@ export function QueryMacro(props: {
   const [printError, setPrintError] = createSignal<string | null>(null);
   // Rewrite just THIS macro inside the owning block, targeted by the extent's
   // own recovered name+argument (a block can hold more than one query).
-  const rewriteMacro = (newMacro: string) => {
+  const targetMacro = (raw: string): MacroExtent | null => {
+    const source = props.sourceExtent;
+    if (!source) return null;
+    const current = queryMacroExtents(raw).find((extent) => extent.start === source.start && extent.end === source.end);
+    if (!current || raw.slice(current.start, current.end) !== props.sourceRaw
+      || current.name !== source.name || current.argument !== source.argument) return null;
+    return current;
+  };
+  const rewriteMacro = (newMacro: string, target: MacroExtent) => {
     if (!props.blockId) return;
     const raw = docNode(props.blockId)?.raw ?? "";
-    const extents = queryMacroExtents(raw);
-    if (!extents.length) return;
-    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-    const mine = norm(props.body);
-    const target = extents.find((e) => norm(`${e.name} ${e.argument}`) === mine)
-      ?? extents.find((e) => norm(raw.slice(e.start + 2, e.end - 2)) === mine)
-      ?? extents[0];
     setRaw(props.blockId, raw.slice(0, target.start) + newMacro + raw.slice(target.end));
   };
   /** OG text re-emits only `(sort-by …)` and `(sample …)`; TQL text keeps no
@@ -506,16 +522,29 @@ export function QueryMacro(props: {
     }
     // A page that turned read-only while the print was in flight refuses the
     // write; report "not saved" so the sheet arms no focus (master 93ff682a3).
-    if (!blockWritable(blockId)) return false;
+    if (!blockWritable(blockId)) {
+      setPrintError("This block is read-only. The query was not changed.");
+      return false;
+    }
+    const target = targetMacro(node.raw);
+    if (!target) {
+      setPrintError(BLOCK_CHANGED);
+      return false;
+    }
     setPrintError(null);
     const argument = printed.value;
     const crossing = name.toLowerCase() !== current.toLowerCase();
     // ONE undo unit for the whole save; the tag is what the notice's Undo
     // recognises, so only a CROSSING save carries the crossing tag.
-    withUndoUnit(crossing ? `query:cross:${blockId}` : `query:save:${blockId}`, [node.page], () => {
-      rewriteMacro(`{{${name} ${argument}}}`);
+    const saved = withUndoUnit(crossing ? `query:cross:${blockId}` : `query:save:${blockId}`, [node.page], () => {
+      rewriteMacro(`{{${name} ${argument}}}`, target);
       materializeView(blockId, next.view, dialect);
+      return true;
     });
+    if (saved !== true) {
+      setPrintError("A graph rewrite is in progress. The query was not changed.");
+      return false;
+    }
     if (crossing) setCrossed(blockId, boundedFeature(argument));
     return true;
   };
@@ -548,9 +577,17 @@ export function QueryMacro(props: {
         setPrintError(BLOCK_CHANGED);
         return;
       }
-      setPrintError(null);
       const node = docNode(blockId);
-      if (node) withUndoUnit(`query:title:${blockId}`, [node.page], () => rewriteMacro(`{{${macroName()} ${printed.value}}}`));
+      const target = node && targetMacro(node.raw);
+      if (!node || !target || !blockWritable(blockId)) {
+        setPrintError(BLOCK_CHANGED);
+        return;
+      }
+      const saved = withUndoUnit(`query:title:${blockId}`, [node.page], () => {
+        rewriteMacro(`{{${macroName()} ${printed.value}}}`, target);
+        return true;
+      });
+      setPrintError(saved === true ? null : "A graph rewrite is in progress. The query was not changed.");
     } catch (error) {
       // I-4: a refused print is never swallowed; nothing is written.
       setPrintError(errorText(error));
@@ -592,8 +629,7 @@ export function QueryMacro(props: {
       autoFocus={!noticeFocused()}
       onFocused={() => setNoticeFocused(true)}
       onUndo={() => {
-        undo();
-        dismissCrossing();
+        if (undo()) dismissCrossing();
       }}
       onKeep={dismissCrossing}
       onDontShowAgain={dismissCrossingNoticeForever}
@@ -695,9 +731,11 @@ export function QueryMacro(props: {
     </Show>
   );
   const empty = () => (
-    <div class="query-empty">
-      {emptyMessage()} {whyEmpty()}
-    </div>
+    <Show when={!loadError() && blockingDiagnostics().length === 0 && (!displayed() || ranEmpty())}>
+      <div class="query-empty">
+        {emptyMessage()} {whyEmpty()}
+      </div>
+    </Show>
   );
 
   return (

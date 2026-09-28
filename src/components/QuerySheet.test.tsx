@@ -9,6 +9,7 @@ import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { encodePropertyLeaf, pageRefFilter, propertyFilter, taskFilter } from "../editor/queryBuilder";
+import { diagnosticFor, PropertyValueCell } from "./querySheetParts";
 import type { Filter, ParsedQuery, RegistrySnapshot } from "../editor/queryIr";
 
 // **The sheet itself** (SPEC §7.2–§7.4): what the resting sentence expands into.
@@ -137,6 +138,66 @@ describe("a typed property leaf reopens as the row that wrote it", () => {
       dispose();
     }
   });
+});
+
+it("adds a numeric between condition with both bounds", async () => {
+  vi.spyOn(backend(), "queryRegistry").mockResolvedValue({
+    rows: [{ normalized_name: "cost", observed_type: "number", cardinality: "one", count_blocks: 3, count_pages: 0, mismatch_count: 0 }],
+    generation: 1,
+  });
+  const builder = mountBuilder({ kind: "and", items: [] });
+  try {
+    const sheet = builder.open();
+    await settle();
+    sheet.querySelector<HTMLButtonElement>(".qs-add")!.click();
+    const cost = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((item) => item.textContent?.trim() === "cost");
+    expect(cost).toBeDefined();
+    cost!.click();
+    const between = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((item) => item.textContent?.includes("between"));
+    expect(between).toBeDefined();
+    between!.click();
+    const from = document.querySelector<HTMLInputElement>('input[aria-label="From"]')!;
+    const to = document.querySelector<HTMLInputElement>('input[aria-label="To"]')!;
+    expect(from).toBeDefined();
+    expect(to).toBeDefined();
+    from.value = "3"; from.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    to.value = "7"; to.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>(".qs-commit")!.click();
+    expect(builder.changes).toHaveLength(1);
+    expect(builder.session().query.filter).toEqual({ kind: "and", items: [encodePropertyLeaf({ id: "between", key: "cost", values: ["3", "7"], type: "number" })] });
+  } finally {
+    builder.dispose();
+  }
+});
+
+it("matches two same-kind raw diagnostics by their distinct spans", () => {
+  const query = session({ kind: "true" }).query;
+  query.diagnostics = [
+    { kind: "syntax", span: { start: 1, end: 2 }, message: "first" },
+    { kind: "syntax", span: { start: 5, end: 6 }, message: "second" },
+  ];
+  expect(diagnosticFor(query, { kind: "raw", text: "b", diagnostic_kind: "syntax", span: { start: 5, end: 6 } })?.message).toBe("second");
+});
+
+it("does not commit a property value when its untouched input blurs", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const onCommit = vi.fn();
+  const dispose = render(() => <PropertyValueCell
+    test={{ id: "is", key: "cost", values: ["3"], throughPage: false }}
+    effective={{ type: "number", cardinality: "one" }}
+    disabled={false}
+    registry={{ rows: () => [], pending: () => false, failure: () => null, unavailable: () => false, request: () => {}, retry: () => {} }}
+    onCommit={onCommit}
+  />, host);
+  try {
+    host.querySelector<HTMLInputElement>("input")!.dispatchEvent(new FocusEvent("blur"));
+    expect(onCommit).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+  }
 });
 
 describe("switching what the query selects re-validates it and says how much it costs", () => {

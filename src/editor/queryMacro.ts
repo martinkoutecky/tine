@@ -13,7 +13,8 @@ export function formFamilyForMacroName(name: string): FormFamily {
   return name.toLowerCase() === "tine-query" ? "tql" : "edn";
 }
 
-/** Whether `name` is one of the query macro names, case-insensitively and as a WHOLE token — `{{query-foo}}` … */
+/** Whether `name` is one of the query macro names, case-insensitively and as a
+*  WHOLE token — `{{query-foo}}` is not a query (§7.9). */
 export function isQueryMacroName(name: string): boolean {
   const lower = name.toLowerCase();
   return QUERY_MACRO_NAMES.some((candidate) => candidate === lower);
@@ -60,7 +61,16 @@ function pageRefEnd(text: string, at: number): number {
   return close === -1 ? text.length : close + 2;
 }
 
-/** **The one scan.** Walk `text` once and report every `{` / `}` that is not inside a protected region, with … */
+/** **The one scan.** Walk `text` once and report every `{` / `}` that is not
+*  inside a protected region, with the depth it produces.
+*
+*  `formDepth` is the depth at which the form text sits: 0 when scanning a macro
+*  ARGUMENT (the splitter), 2 when scanning from inside `{{` (the extent
+*  reader). While the depth is at `formDepth` the `family` decides which literals
+*  protect a brace; deeper than that we are inside an options map and EDN rules
+*  apply. An unterminated literal consumes to end of input rather than
+*  resynchronising — that is what makes an unbalanced `}` inside a literal
+*  invisible to the split. Transcribes `macro_text::scan_braces`. */
 function scanBraces(text: string, family: FormFamily, formDepth: number): Brace[] {
   const out: Brace[] = [];
   let depth = formDepth;
@@ -152,6 +162,14 @@ export function queryMacroExtents(raw: string): MacroExtent[] {
     out.push(found);
   }
   return out;
+}
+
+/** Recover the sole authored macro from an entire-block render. A property
+ *  line or leading whitespace can move its raw offset; refuse ambiguity. */
+export function singleQueryMacroExtent(raw: string, displayed: MacroExtent): MacroExtent | undefined {
+  const extents = queryMacroExtents(raw);
+  const extent = extents.length === 1 ? extents[0] : undefined;
+  return extent?.name === displayed.name && extent.argument === displayed.argument ? extent : undefined;
 }
 
 function queryMacroExtentFrom(raw: string, from: number): MacroExtent | null {

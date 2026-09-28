@@ -23,7 +23,6 @@ import {
 } from "../editor/searchQuery";
 import type { PaneRouter, QueryPresentation, QueryRoute } from "../router";
 import type {
-  AdvancedQueryResult,
   MatchSpan,
   PageDto,
   ResolvedPage,
@@ -31,8 +30,8 @@ import type {
   QueryExecution,
   QueryExplainNode,
   QueryHit,
-  RefGroup,
 } from "../types";
+import type { ParsedQuery, Query, QueryResult, ViewSettings, ExplainEmptyResult } from "../editor/queryIr";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
@@ -43,7 +42,6 @@ import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
-const ADVANCED_QUERY_RE = /^\s*\[:/;
 
 export interface MaterializeQueryInput {
   title: string;
@@ -71,8 +69,9 @@ export type MaterializeQueryResult =
     };
 
 export interface QueryWorkspaceDependencies extends MaterializeQueryDependencies {
-  runQuery(source: string): Promise<RefGroup[]>;
-  runAdvancedQuery(source: string): Promise<AdvancedQueryResult>;
+  parseQuery(source: string, dialect: "macro_query"): Promise<ParsedQuery>;
+  queryRun(query: Query, view: ViewSettings): Promise<QueryResult>;
+  queryExplainEmpty(query: Query, view: ViewSettings): Promise<ExplainEmptyResult>;
 }
 
 export interface QueryWorkspaceProps {
@@ -198,47 +197,45 @@ function defaultDependencies(): QueryWorkspaceDependencies {
     },
     runGraphSearch: (source, pageLimit, blockLimit, lane, explain) =>
       api.runGraphSearch(source, pageLimit, blockLimit, lane, explain),
-    runQuery: (source) => api.runQuery(source),
-    runAdvancedQuery: (source) => api.runAdvancedQuery(source),
+    parseQuery: (source, dialect) => api.parseQuery(source, dialect),
+    queryRun: (query, view) => api.queryRun(query, view),
+    queryExplainEmpty: (query, view) => api.queryExplainEmpty(query, view),
   };
 }
 
-function diagnosticsFromAdvanced(result: AdvancedQueryResult): QueryDiagnostic[] {
-  const diagnostics = result.ignored.map((clause) => ({
-    code: "unsupported_clause",
-    message: `This query clause is not supported yet: ${clause}`,
-  }));
-  if (!result.supported && !diagnostics.length) {
-    diagnostics.push({
-      code: "unsupported_query",
-      message: "This advanced query has no supported clauses yet.",
-    });
-  }
-  return diagnostics;
-}
-
-function groupsToExecution(
-  groups: RefGroup[],
-  explain: boolean,
-  diagnostics: QueryDiagnostic[] = []
-): QueryExecution {
-  const hits: QueryHit[] = groups.flatMap((group) => group.blocks.map((block) => ({
+function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): QueryExecution {
+  const hits: QueryHit[] = result.anchor === "page"
+    ? result.pages.map((page) => ({
+      entity: "page" as const,
+      page: { name: page.name, kind: page.kind, path: page.path, date_key: null },
+      display_text: page.name,
+      evidence: [],
+      score: 0,
+    }))
+    : result.groups.flatMap((group) => group.blocks.map((block) => ({
     entity: "block" as const,
     page: group.page,
     kind: group.kind,
+    path: group.path,
     block,
     display_text: block.raw,
     evidence: [],
   })));
+  const diagnostics: QueryDiagnostic[] = (result.diagnostics ?? [])
+    .filter((item) => !item.disabled)
+    .map((item) => ({ code: item.kind, message: item.message }));
+  for (const clause of result.report.ignored ?? []) diagnostics.push({
+    code: "unsupported_clause", message: `This query clause is not supported yet: ${clause}`,
+  });
   return {
     hits,
     diagnostics,
     cancelled: false,
     explanation: {
-      branches: explain ? [{
-        description: `Query DSL selected ${hits.length} block${hits.length === 1 ? "" : "s"} on ${groups.length} page${groups.length === 1 ? "" : "s"}.`,
+      branches: explanation?.rows.map((row) => ({
+        description: `${row.conjunct}: ${row.alone} alone${row.without === null || row.without === undefined ? "" : `, ${row.without} without it`}`,
         children: [],
-      }] : [],
+      })) ?? [],
     },
   };
 }
@@ -665,11 +662,12 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           request.explain
         );
       }
-      if (ADVANCED_QUERY_RE.test(request.source)) {
-        const result = await deps().runAdvancedQuery(request.source);
-        return groupsToExecution(result.groups, request.explain, diagnosticsFromAdvanced(result));
-      }
-      return groupsToExecution(await deps().runQuery(request.source), request.explain);
+      const parsed = await deps().parseQuery(request.source, "macro_query");
+      const result = await deps().queryRun(parsed.query, parsed.view);
+      const explanation = request.explain && result.total === 0 && !(result.diagnostics ?? []).some((item) => !item.disabled)
+        ? await deps().queryExplainEmpty(parsed.query, parsed.view)
+        : undefined;
+      return irToExecution(result, explanation);
     }
   );
 

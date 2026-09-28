@@ -43,7 +43,6 @@ describe("query clipboard/export hydration budget", () => {
     };
     const native = vi.spyOn(backend(), "exportQuerySubtrees").mockResolvedValue(batch);
     const getPage = vi.spyOn(backend(), "getPage");
-    const runQuery = vi.spyOn(backend(), "runQuery");
     const nodes: ExportNode[] = [{
       raw: "{{query (task TODO)}} and {{query (task DONE)}}",
       format: "md",
@@ -59,7 +58,6 @@ describe("query clipboard/export hydration budget", () => {
       { key: batch.results[1].key, query: "(task DONE)", advanced: false },
     ]);
     expect(getPage).not.toHaveBeenCalled();
-    expect(runQuery).not.toHaveBeenCalled();
     expect(warmed.get(batch.results[0].key)?.truncation).toContain(
       "showing first 1 of 20000 results; 17 descendant blocks omitted",
     );

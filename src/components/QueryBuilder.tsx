@@ -53,7 +53,10 @@ export type QueryBuilderChange =
   | ((next: BuilderSession) => void)
   | ((next: BuilderSession) => Promise<boolean>);
 
-/** One landed registry read, tagged with the graph scope and declaration revision it answers — and carrying … */
+/** One landed registry read, tagged with the graph scope and declaration
+*  revision it answers — and carrying either the snapshot or the terminal
+*  failure that replaced it. Both are scoped, so neither can be published for a
+*  graph or a revision that has since been replaced. */
 interface RegistryRead {
   scope: string;
   key: string;
@@ -130,7 +133,17 @@ function QueryTextPane(props: {
     props.handle?.(null);
   });
 
-  /** **The gate BOTH landing paths go through (I-20).** One number answers all three questions the dossier … */
+  /** **The gate BOTH landing paths go through (I-20).**
+  *
+  *  One number answers all three questions the dossier separates, because all
+  *  three bump it: an input bumps it, a session replacement bumps it (the reset
+  *  effect below), and disposal bumps it. So "is this the answer to what is on
+  *  screen right now, in a pane that still exists" is `mine === revision()`
+  *  with `disposed` as the belt.
+  *
+  *  Note the difference from what this replaced. The old test was `mine >
+  *  settled` — newer than the last response we ACCEPTED — which lets revision 1
+  *  land while revision 2 is still in flight. */
   const accepts = (mine: number) => !disposed && mine === revision();
 
   // The session's own text is PRINTED BY RUST.
@@ -292,7 +305,8 @@ function QueryTextPane(props: {
           Save query text
         </button>
       </div>
-      {/* The structured half of §4.3.2: the kind, the span, the parser's own alternatives, and whether the … */}
+      {/* The structured half of §4.3.2: the kind, the span, the parser's own
+          alternatives, and whether the diagnostic is inside an `off` subtree. */}
       <Show when={diagnostics()?.items.length}>
         <ul class="query-text-pane-diagnostics">
           <For each={diagnostics()!.items}>
@@ -341,7 +355,8 @@ function QueryTextPane(props: {
                     </For>
                   </span>
                 </Show>
-                {/* A syntax error the parser had no alternative for still gets a route: the vocabulary above and the Guide's … */}
+                {/* A syntax error the parser had no alternative for still gets a
+                    route: the vocabulary above and the Guide's TQL reference. */}
                 <Show when={diagnostic.kind === "syntax" && !diagnostic.suggestions?.length}>
                   <span class="query-text-pane-diagnostic-alts">
                     The fields and properties this graph has are in the picker above; the
@@ -420,19 +435,27 @@ export function createQueryRegistryAccess(active: () => boolean): RegistryAccess
     const landed = registrySnapshot.error === undefined ? registrySnapshot.latest : undefined;
     return landed && landed.scope === registryScope() && landed.key === registryKey() ? landed : undefined;
   };
-  const registryRows = () => registryRead()?.snapshot?.rows;
+  let lastRows: { scope: string; rows: RegistryRow[] } | undefined;
+  const registryRows = () => {
+    const scope = registryScope();
+    const current = registryRead()?.snapshot?.rows;
+    if (current) lastRows = { scope, rows: current };
+    return current ?? (lastRows?.scope === scope ? lastRows.rows : undefined);
+  };
   const registryFailure = () => registryRead()?.failure ?? null;
+  const currentRows = () => registryRead()?.snapshot?.rows;
   return {
     rows: registryRows,
-    pending: () => registryKey() !== undefined && registryRows() === undefined && registryFailure() === null,
+    pending: () => registryKey() !== undefined && currentRows() === undefined && registryFailure() === null,
     failure: registryFailure,
-    unavailable: () => registryKey() !== undefined && registryRows() === undefined,
+    unavailable: () => registryKey() !== undefined && currentRows() === undefined,
     request: requestQueryRegistryRefresh,
     retry: requestQueryRegistryRefresh,
   };
 }
 
-/** Deepest-and-rightmost first, so removing several leaves in one pass never invalidates a `loc` that has not … */
+/** Deepest-and-rightmost first, so removing several leaves in one pass never
+*  invalidates a `loc` that has not been used yet. */
 function compareLocsDescending(a: number[], b: number[]): number {
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     const left = a[i] ?? -1;
@@ -555,7 +578,16 @@ export function QueryBuilder(props: {
     props.onChange({ query, view: current.view });
   };
 
-  /** **Switching the anchor re-validates through the ENGINE (§7.4, §3.5, D-14).** The frontend has no "does … */
+  /**
+  * **Switching the anchor re-validates through the ENGINE (§7.4, §3.5, D-14).**
+  *
+  * The frontend has no "does this leaf apply to this row" oracle and must not
+  * grow one — that is the twin this campaign removed. So the preview is the
+  * engine answering: print the query under the new anchor, parse it back, and
+  * read the `not_applicable` diagnostics the lowering raised. The leaves that
+  * do not apply come back RETAINED (`Raw(NotApplicable)`, P3's Rust half), so
+  * "keep anyway" keeps the author's condition rather than a memory of it.
+  */
   const switchAnchor = async (anchor: Anchor) => {
     const current = session();
     invalidateAnchorPreview();
@@ -670,7 +702,10 @@ export function QueryBuilder(props: {
   const footer = () => (
     <>
       {/* Q4b seam: the Display control renders here, above the text pane. */}
-      {/* **Visible and editable, always, inside an open sheet (§7.5).** It was a collapsed `<details>`, which meant … */}
+      {/* **Visible and editable, always, inside an open sheet (§7.5).** It was a
+          collapsed `<details>`, which meant the one control that can express
+          everything the rows cannot was the one control a user had to know to
+          look for. The sheet gates the cost: a resting sentence mounts no pane. */}
       <QueryTextPane
         session={props.session}
         dialect={props.paneDialect ?? "tql"}

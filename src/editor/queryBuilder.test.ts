@@ -30,6 +30,7 @@ import {
   groupSelected,
   groupWithPrevious,
   isDisabledAt,
+  isEmptyFilter,
   journalFilter,
   moveSibling,
   namespaceFilter,
@@ -61,6 +62,11 @@ import {
   wrapAt,
   type PropertyOperatorId,
 } from "./queryBuilder";
+
+it("treats an empty or as false, matching the engine", () => {
+  expect(isEmptyFilter({ kind: "or", items: [] })).toBe(false);
+  expect(isEmptyFilter({ kind: "and", items: [] })).toBe(true);
+});
 import {
   forEachFilter,
   type Cardinality,

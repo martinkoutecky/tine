@@ -2,10 +2,28 @@ import { For, Show, createEffect, createMemo, createSignal, type JSX } from "sol
 
 // **The ONE listbox keyboard/ARIA controller the query sheet uses (§7.7, D-14).** It was a private `Listbox` …
 
-/** Stops a click inside the builder from bubbling to the block's `onClick`, which would drop the block into … */
+/** Stops a click inside the builder from bubbling to the block's `onClick`,
+*  which would drop the block into raw-text edit mode and replace the builder. */
 export const stop = (e: MouseEvent) => e.stopPropagation();
 
-/** **A row's key → the tail of its DOM id (§7.5, I-22).** The keys are the user's own vocabulary: a property … */
+/**
+* **A row's key → the tail of its DOM id (§7.5, I-22).**
+*
+* The keys are the user's own vocabulary: a property key can be `due date`, it
+* can carry `"`, `#` or `.`, it can be `ünïcode ключ`, and nothing stops a
+* malformed file from producing a LONE surrogate. `aria-activedescendant` takes
+* an IDREF — exactly ONE id — so a key with a space produced an attribute the
+* platform reads as two references and resolves as neither: the reader is told
+* about a row that does not exist.
+*
+* So the key is not interpolated, it is ENCODED: four hex digits per UTF-16
+* code unit. That is total (every code unit has a code, lone surrogates
+* included, because `charCodeAt` is defined on them), injective (fixed width,
+* so no two distinct keys share an encoding), and produces `[0-9a-f]*` — no
+* whitespace, nothing a selector or an IDREF can misread. Stable identity is
+* still the KEY: the same row keeps the same id however the list is filtered,
+* scrolled or windowed, which an index-derived id cannot promise.
+*/
 export function encodeOptionKey(key: string): string {
   let out = "";
   for (let i = 0; i < key.length; i += 1) {
@@ -42,7 +60,10 @@ export interface ListboxBody {
 
 const selectable = (options: ListboxOption[]) => options.filter((option) => !option.header);
 
-/** One `role="listbox"` with `aria-activedescendant`, arrow keys and scroll-follow — the pattern … */
+/** One `role="listbox"` with `aria-activedescendant`, arrow keys and
+*  scroll-follow — the pattern `QuickSwitcher.tsx` already implements, reused
+*  rather than re-rolled (D-14). The trigger passes its own `id` so
+*  `aria-controls`/`aria-activedescendant` point at real elements. */
 export function Listbox(props: {
   id: string;
   label: string;
@@ -57,7 +78,9 @@ export function Listbox(props: {
   rootRef?: (element: HTMLDivElement) => void;
   /** An extra class on the popover root, for a caller whose list needs a different width. */
   class?: string;
-  /** Drawn between the filter and the list: a compact line about the LIST itself (the vocabulary picker's "the … */
+  /** Drawn between the filter and the list: a compact line about the LIST
+  *  itself (the vocabulary picker's "the registry has not landed yet"). Not a
+  *  row, so it is never focusable and never picked. */
   status?: JSX.Element;
   /** Draw the rows some other way (virtualized). The keyboard stays here. */
   body?: (context: ListboxBody) => JSX.Element;

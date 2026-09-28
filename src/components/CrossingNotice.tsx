@@ -1,21 +1,53 @@
 import { Show, createSignal, createUniqueId, onMount, type JSX } from "solid-js";
 
-/** **The user half of the persisted-form crossing (SPEC §4.3 "Notice", §7.5).** The mechanical half already … */
+/** **The user half of the persisted-form crossing (SPEC §4.3 "Notice", §7.5).**
+*
+*  The mechanical half already shipped: an edit the OG DSL cannot express turns
+*  a `{{query …}}` block into `{{tine-query …}}` on save. That is the right
+*  behaviour — the alternative is dropping the user's edit — but it changes what
+*  the block looks like *in Logseq*, silently, as a side effect of an ordinary
+*  edit. So it is said out loud, with the way back attached.
+*
+*  Three deliberate shapes:
+*
+*  1. **Not a toast.** P4 hosts this same component inside the query pane it
+*     builds, so it is an inline region that takes its position from its host.
+*     A toast would also be gone before a reader who looked away came back.
+*  2. **The feature is NOT named in P2.** The engine's answer here is a bare
+*     `og_expressible` bool, and the OG printer's refusal says only "this
+*     filter" / "this view". Re-deriving OG-expressibility over the TypeScript
+*     IR mirror to produce a name would be a second producer of a question Rust
+*     owns (D-14) — the exact class of twin this campaign deleted. `feature` is
+*     the seam P4 fills from the pane's diagnostics without the text moving.
+*  3. **Undo is the ordinary undo**, gated on the ordinary undo actually being
+*     this change (`canUndo`). There is no targeted-inverse mechanism: an undo
+*     that reached past a later edit to reverse an older one would be a new and
+*     much more dangerous kind of undo.
+*/
 export function CrossingNotice(props: {
   /** Whether the change this notice offers to take back is still the change the ordinary Undo would take back. */
   canUndo: boolean;
   /** The §4.3 seam for NAMING the unsupported feature. */
   feature?: string;
-  /** **A bounded excerpt of the text the engine just printed (P4).** Not the same claim as `feature`, which is … */
+  /** **A bounded excerpt of the text the engine just printed (P4).**
+  *
+  *  Not the same claim as `feature`, which is why it is not the same prop and
+  *  not the same sentence: this says "here is what the block now says", which
+  *  is evidence the save path already has, rather than "here is the feature
+  *  that crossed", which nothing today can honestly answer. */
   changed?: string;
   onUndo: () => void;
   onKeep: () => void;
   /** Called at most once, on close, when "Don't show this again" is ticked. */
   onDontShowAgain: () => void;
-  /** **The checkbox, optionally lifted (P4, N3).** P4 moves this one notice between two hosts — inline under … */
+  /** **The checkbox, optionally lifted (P4, N3).** P4 moves this one notice
+  *  between two hosts — inline under the block, and inside the query text pane
+  *  while the sheet is open — and a re-parented component is a re-created one.
+  *  A host that owns the tick passes it down so the move cannot silently
+  *  untick it; a host that does not keeps the local state P2 had. */
   dontShow?: boolean;
   onDontShowChange?: (value: boolean) => void;
-  /** Whether to take focus on mount. */
+    /** Takes focus on mount unless explicitly false. */
   autoFocus?: boolean;
   onFocused?: () => void;
 }): JSX.Element {

@@ -1020,10 +1020,18 @@ function taggedCount(groups: readonly RefGroup[] | undefined): number {
   return groups?.reduce((sum, group) => sum + group.blocks.length, 0) ?? 0;
 }
 
+async function tagTableGroups(pageName: string): Promise<RefGroup[]> {
+  const reading = await backend().parseQuery(tagQuery(pageName), "macro_query");
+  const answer = await backend().queryRun(reading.query, reading.view);
+  const diagnostic = (answer.diagnostics ?? []).find((item) => !item.disabled);
+  if (diagnostic) throw new Error(diagnostic.message);
+  return answer.anchor === "block" ? answer.groups : [];
+}
+
 export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
   const [groups] = createResource(
     () => (props.page.kind === "page" ? `${props.page.name}\0${dataRev()}` : null),
-    () => backend().runQuery(tagQuery(props.page.name))
+    () => tagTableGroups(props.page.name)
   );
   const enabled = () => tagTableEnabled(props.page.name);
   const visible = () => props.page.kind === "page" && (enabled() || taggedCount(groups()) > 0);
@@ -1044,7 +1052,7 @@ export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
 export function TagPageTable(props: { pageName: string }): JSX.Element {
   const [groups] = createResource(
     () => `${props.pageName}\0${dataRev()}`,
-    () => backend().runQuery(tagQuery(props.pageName))
+    () => tagTableGroups(props.pageName)
   );
   const addRow = async () => {
     const ok = await appendToTodayJournal(`${tagRef(props.pageName)} `);

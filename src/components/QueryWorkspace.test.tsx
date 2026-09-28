@@ -260,8 +260,12 @@ function workspaceDeps(): QueryWorkspaceDependencies {
       pageLimit === 0 && blockLimit === 0
         ? { hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false }
         : executionFixture(explain)),
-    runQuery: vi.fn(async () => []),
-    runAdvancedQuery: vi.fn(async () => ({ groups: [], ran: [], ignored: [], supported: true })),
+    parseQuery: vi.fn((source: string) => backend().parseQuery(source, "macro_query")),
+    queryRun: vi.fn(async () => ({
+      anchor: "block" as const, groups: [], diagnostics: [],
+      report: { ran: [], ignored: [], supported: true }, total: 0, exceeded: false,
+    })),
+    queryExplainEmpty: vi.fn(async () => ({ rows: [], diagnostics: [], report: { ran: [], ignored: [], supported: true } })),
   };
 }
 
@@ -343,7 +347,7 @@ describe("QueryWorkspace", () => {
     expect(root.querySelector(".query-workspace-status")?.textContent).toContain("Enter a search to begin.");
     expect(root.querySelector(".query-workspace-status")?.textContent).not.toContain("0 results");
     expect(root.querySelector(".query-workspace")?.getAttribute("data-query-route-id")).toBe("query-empty");
-    expect(deps.runGraphSearch).not.toHaveBeenCalled(); expect(deps.runQuery).not.toHaveBeenCalled(); expect(deps.runAdvancedQuery).not.toHaveBeenCalled();
+    expect(deps.runGraphSearch).not.toHaveBeenCalled(); expect(deps.parseQuery).not.toHaveBeenCalled(); expect(deps.queryRun).not.toHaveBeenCalled();
     dispose();
   });
   it("uses the correct empty DSL prompt and focuses on pane activation or a route transition without stealing same-route control focus", async () => {

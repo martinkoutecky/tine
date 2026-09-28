@@ -328,4 +328,28 @@ describe("QueryBuilder registry failure handling (RET2-UI)", () => {
       second.dispose();
     }
   });
+
+  it("keeps the last registry choices visible during a save-triggered re-read", async () => {
+    let finish: ((value: RegistrySnapshot) => void) | undefined;
+    vi.spyOn(backend(), "queryRegistry")
+      .mockResolvedValueOnce(snapshot([["cost", 12]]))
+      .mockImplementationOnce(() => new Promise<RegistrySnapshot>((resolve) => { finish = resolve; }));
+    const builder = mountBuilder();
+    try {
+      const sheet = builder.open();
+      openChooser(sheet);
+      await settle();
+      const choices = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) => item.textContent?.trim());
+      expect(choices()).toContain("cost");
+      setDataRev(1);
+      await settle();
+      expect(finish).toBeDefined();
+      expect(choices()).toContain("cost");
+      finish!(snapshot([["cost", 13], ["owner", 2]]));
+      await settle();
+      expect(choices()).toContain("owner");
+    } finally {
+      builder.dispose();
+    }
+  });
 });

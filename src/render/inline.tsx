@@ -38,7 +38,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { resolveBlockBatched } from "../resolveBatch";
 import { setRaw, formatForPage, formatForBlock, blockRef, node as docNode } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
-import { isQueryMacroName, queryMacroExtentAtSpan } from "../editor/queryMacro";
+import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
@@ -61,9 +61,9 @@ import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 // The query arm prefers the RAW source slice (`rawMacro`): mldoc splits macro
 // arguments on commas and stops before the first `}`, so the AST body loses an
 // options map's closing brace and a literal comma.
-function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: { name: string; argument: string }): JSX.Element {
+function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent): JSX.Element {
   const body = raw.trimStart();
-  if (rawMacro) return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} blockId={blockId} />;
+  if (rawMacro) return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} blockId={blockId} sourceExtent={rawMacro} sourceRaw={blockId ? docNode(blockId)?.raw.slice(rawMacro.start, rawMacro.end) : undefined} />;
   if (isQueryMacroName(/^\S*/.exec(body)![0].replace(/}+$/, ""))) return <QueryMacro body={body} blockId={blockId} />;
   if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} />;
   if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
@@ -230,12 +230,12 @@ function macroBody(s: MacroInline): string {
 /** A query macro's raw source slice, anchored by the node's source offset, or
  *  undefined (no span, no owning block, or no exact extent there): the caller
  *  then falls back to the reconstructed body. Ported from master inline.tsx. */
-function rawQueryMacro(s: MacroInline, blockId?: string): { name: string; argument: string } | undefined {
+function rawQueryMacro(s: MacroInline, blockId?: string): MacroExtent | undefined {
   if (!isQueryMacroName(s.name) || !blockId || s.span === undefined) return undefined;
   const raw = docNode(blockId)?.raw;
   if (raw === undefined) return undefined;
   const extent = queryMacroExtentAtSpan(raw, s.span);
-  return extent ? { name: extent.name, argument: extent.argument } : undefined;
+  return extent ?? undefined;
 }
 
 const PEEK_OPEN_MS = 350;

@@ -364,6 +364,10 @@ function applyEntry(e: UndoEntry): UndoEntry {
   return inverse;
 }
 
+/** Run a synchronous edit as one undo step over `pages`, O(their blocks) to
+ *  snapshot. Nested units fold into the outer unit. An exception restores the
+ *  snapshot and stacks, then rethrows. A frozen rewrite or loaded read-only page
+ *  skips `fn` and returns undefined; success-reporting callers must check it. */
 export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
   if (graphRewriteFrozen()) return undefined as T;
   if (pages.some((page) => pageByName(page) && !pageWritable(page))) return undefined as T;
@@ -402,10 +406,13 @@ function transferOrder(entry: UndoEntry, inverse: UndoEntry): TransferEdge[] {
   return transfers;
 }
 
-export function undo() {
-  if (graphRewriteFrozen()) return;
+/** Undo the selected global or page-scoped entry, restore its UI context and
+ *  schedule affected pages for save. O(blocks of those pages). Returns false if
+ *  empty or a graph rewrite is frozen. */
+export function undo(): boolean {
+  if (graphRewriteFrozen()) return false;
   const entry = popHistoryEntry(undoStack);
-  if (!entry) return;
+  if (!entry) return false;
   const inverse = applyEntry(entry);
   if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
   redoStack.push(inverse);
@@ -414,8 +421,12 @@ export function undo() {
   endEdit("undo");
   scheduleSave();
   restoreEntryContext(entry.context);
+  return true;
 }
 
+/** Redo the selected entry unless empty or frozen. If it would recreate an id
+ *  now present elsewhere, show an error and clear the redo stack. Otherwise
+ *  restore its pages and UI context and schedule a save. */
 export function redo() {
   if (graphRewriteFrozen()) return;
   const entry = popHistoryEntry(redoStack);

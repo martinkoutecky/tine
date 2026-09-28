@@ -99,7 +99,8 @@ export interface Diagnostic {
   span?: Span;
   message: string;
   suggestions?: string[];
-  /** Set for a diagnostic inside an `off` subtree: the row renders greyed with its message but does NOT … */
+  /** Set for a diagnostic inside an `off` subtree: the row renders greyed with
+  *  its message but does NOT invalidate the query (§3.5). */
   disabled?: boolean;
   kind: DiagnosticKind;
 }
@@ -257,7 +258,8 @@ export interface ExecutionContext {
   current_page?: string;
 }
 
-/** One row of `query_explain_empty` (Q14, N19): a top-level conjunct, the anchor rows matching it ALONE, and … */
+/** One row of `query_explain_empty` (Q14, N19): a top-level conjunct, the anchor
+*  rows matching it ALONE, and the rows matching all the OTHERS without it. */
 export interface EmptyExplanation {
   conjunct: string;
   alone: number;
@@ -403,7 +405,9 @@ export type QueryTextDialect = "og" | "tql" | "advanced" | "macro_query" | "macr
 /** The printed form a `query_print` caller wants (§4.3). */
 export type QueryPrintDialect = "og" | "tql" | "tql_macro" | "advanced_macro";
 
-/** The parse dialect for a macro of this name (§7.1): `{{query …}}` carries OG or advanced text, … */
+/** The parse dialect for a macro of this name (§7.1): `{{query …}}` carries OG
+*  or advanced text, `{{tine-query …}}` carries TQL. The ONE mapping, so a
+*  caller cannot pick a dialect that contradicts the name it is about to write. */
 export function macroTextDialect(macroName: string): QueryTextDialect {
   return macroName.toLowerCase() === "tine-query" ? "macro_tql" : "macro_query";
 }

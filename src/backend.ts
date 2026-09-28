@@ -15,7 +15,6 @@ import type {
   ViewSettings,
 } from "./editor/queryIr";
 import type {
-  AdvancedQueryResult,
   BacklinkFilterContext,
   BacklinkFilterTarget,
   AssetInfo,
@@ -288,22 +287,34 @@ export interface Backend {
    *  sidebar) for the print-to-PDF export, with the dialog's options. Rejects if
    *  the page doesn't exist. */
   pagePrintHtml(name: string, opts: PrintOpts): Promise<string>;
-  runQuery(query: string): Promise<RefGroup[]>;
   /** Resolve all Copy / Export query macros under one cumulative native budget. */
   exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch>;
-  /** Advanced (datalog-subset) query: maps the supported clauses onto the engine
-   *  and reports what ran vs was ignored. */
-  runAdvancedQuery(query: string): Promise<AdvancedQueryResult>;
-  /** ONE engine, in Rust (I-12): the six query commands. `parseQuery` resolves a
-   *  syntax error with diagnostics inside the IR; it rejects only for an
-   *  over-limit source or no loaded graph. */
+  /** Parse text and host `tine.*` properties through the Rust query engine.
+   *  Syntax errors resolve as raw nodes with diagnostics. Cost: waits for graph
+   *  load; first registry use is O(pages + blocks), then O(text). Rejects an
+   *  over-64-KiB UTF-8 source, excessive nesting, or a missing/stale/failed graph. */
   parseQuery(text: string, dialect: QueryTextDialect, blockProperties?: [string, string][]): Promise<ParsedQuery>;
-  /** Rejects with {@link QueryPrintRefusedError}; `og` refuses a non-OG-expressible IR. */
+  /** Print a macro argument (`og`, `tql_macro`, `advanced_macro`) or TQL pane text.
+   *  Pure. `preserveForm` keeps authored text/options, but refuses builder or
+   *  wrong-dialect sources. OG prints one sort and sample; other view fields
+   *  need `tine.*` properties. TQL ignores view. Rejects with
+   *  {@link QueryPrintRefusedError} for inexpressible or macro-unsafe text. */
   printQuery(query: Query, view: ViewSettings, dialect: QueryPrintDialect, preserveForm?: boolean): Promise<string>;
+  /** Precondition for OG printing, not a guarantee: macro safety can still
+   *  refuse. Pure O(IR); rejects on transport failure. */
   queryOgExpressible(query: Query, view: ViewSettings): Promise<boolean>;
+  /** One row per normalized property key, at most eight top values. Built once
+   *  per generation, O(pages + blocks); waits for graph load. Rejects a missing,
+   *  stale, closed or failed graph. */
   queryRegistry(): Promise<RegistrySnapshot>;
-  /** Rejects on an over-bound answer (`result-too-large`); an invalid query resolves with `diagnostics`. */
+  /** Evaluate in memory, O(pages + blocks) cold, memoized per snapshot. Invalid
+   *  input resolves with diagnostics and zero rows. An answer over 20,000 rows
+   *  or 32 MiB, or over the statistics budget, rejects; no truncated answer is
+   *  returned. Context binds only advanced `:current-page`; OG/TQL ignore it. */
   queryRun(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<QueryResult>;
+  /** On-demand empty explanation: roughly two full evaluations per conjunct,
+   *  O(conjuncts × (pages + blocks)), without result rows or memoization. Ignores
+   *  view; no `result-too-large` refusal. Waits for graph load. */
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<ExplainEmptyResult>;
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
@@ -848,14 +859,8 @@ class TauriBackend implements Backend {
   pagePrintHtml(name: string, opts: PrintOpts) {
     return this.call<string>("page_print_html", { name, opts });
   }
-  runQuery(query: string) {
-    return this.call<RefGroup[]>("run_query", { query });
-  }
   exportQuerySubtrees(specs: QueryExportSpec[]) {
     return this.call<QueryExportBatch>("export_query_subtrees", { specs });
-  }
-  runAdvancedQuery(query: string) {
-    return this.call<AdvancedQueryResult>("run_advanced_query", { query });
   }
   parseQuery(text: string, dialect: QueryTextDialect, blockProperties?: [string, string][]) {
     return this.call<ParsedQuery>("query_parse", { text, dialect, blockProperties });

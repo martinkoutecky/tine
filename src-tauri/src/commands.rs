@@ -1053,19 +1053,6 @@ pub(crate) async fn page_print_html(
     .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
-pub(crate) async fn run_query(
-    query: String,
-    state: GraphContext<'_>,
-) -> Result<Arc<Vec<RefGroup>>, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_query(&slot.store, &query).map_err(feature_search_error)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
 /// Resolve every query macro in one Copy / Export session under one cumulative
 /// construction budget. Unlike `get_page`, this returns only selected subtrees;
 /// unrelated page content is never cloned across IPC or retained by the WebView.
@@ -1123,20 +1110,6 @@ pub(crate) async fn run_graph_search(
             scope,
         )
         .map_err(feature_search_error)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-pub(crate) async fn run_advanced_query(
-    query: String,
-    state: GraphContext<'_>,
-) -> Result<tine_core::query::AdvancedResult, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_advanced_query(&slot.store, &query)
-            .map_err(feature_search_error)
     })
     .await
     .map_err(|error| error.to_string())?

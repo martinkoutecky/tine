@@ -4,7 +4,8 @@ import { beginRowReorderDrag } from "./rowReorder";
 
 /** The live drop position: which list, which sibling, and which side of it. */
 export interface QuerySheetDropTarget {
-  /** `data-qs-parent` of the list — a drop indicator in one list must never be drawn by an item that happens to … */
+  /** `data-qs-parent` of the list — a drop indicator in one list must never be
+  *  drawn by an item that happens to share an index in another. */
   parent: string;
   index: number;
   before: boolean;

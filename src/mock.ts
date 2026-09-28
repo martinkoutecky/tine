@@ -630,7 +630,13 @@ function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): B
   };
 }
 /** Demo/test backend with mutable mock state. savePages is a no-op; writeHighlights replaces its list without three-way merge or production failures. */
-export function mockBackend(): Backend {
+// Copy/Export's browser fixture retains local approximations. These are not
+// Backend operations and have no native command; only this mock calls them.
+type MockBackend = Backend & {
+  runQuery(query: string): Promise<RefGroup[]>;
+  runAdvancedQuery(query: string): Promise<{ groups: RefGroup[]; ran: string[]; ignored: string[]; supported: boolean }>;
+};
+export function mockBackend(): MockBackend {
   const all = [...PAGES, ...NAMED];
   const find = (name: string) =>
     all.find((p) => p.name.toLowerCase() === name.toLowerCase()) ?? null;

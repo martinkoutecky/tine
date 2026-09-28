@@ -663,7 +663,10 @@ describe("tag-page table", () => {
         ],
       },
     ];
-    vi.spyOn(backend(), "runQuery").mockResolvedValue(groups);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue({
+      anchor: "block", groups, diagnostics: [],
+      report: { ran: ["tag"], ignored: [], supported: true }, total: 1, exceeded: false,
+    });
     vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev1"] });
 
     const tagPage = pageByName("Tag")!;

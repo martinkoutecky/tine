@@ -107,7 +107,7 @@ import {
   caretOffsetOnLastRow,
 } from "../editor/caretRows";
 import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
-import { QUERY_MACRO_SCAFFOLD, queryMacroExtents } from "../editor/queryMacro";
+import { QUERY_MACRO_SCAFFOLD, queryMacroExtents, singleQueryMacroExtent, type MacroExtent } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
 import { caretOnOpeningFence } from "../editor/fences";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
@@ -157,11 +157,11 @@ export function applySheetViewSlashAction(id: string, view: SheetSlashView): str
 }
 
 // Detect a block whose entire body is a single {{query}}/{{tine-query}}/{{embed}} macro.
-function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
+function detectMacro(raw: string): { kind: "query" | "embed"; inner: string; sourceExtent?: MacroExtent } | null {
   // The visible body: property lines stripped so `{{query}}\nid:: …` still matches.
   const text = raw.split("\n").filter((l) => !isPropertyLine(l)).join("\n").trim();
   const [q, ...rest] = queryMacroExtents(text); // shared reader: a second macro or a `}}` in a string never merges
-  if (q && !rest.length && q.start === 0 && q.end === text.length) return { kind: "query", inner: `${q.name} ${q.argument}` };
+  if (q && !rest.length && q.start === 0 && q.end === text.length) return { kind: "query", inner: `${q.name} ${q.argument}`, sourceExtent: singleQueryMacroExtent(raw, q) };
   const m = /^\{\{(embed)\b([\s\S]*)\}\}$/.exec(text);
   return m ? { kind: "embed", inner: `${m[1]}${m[2]}` } : null;
 }
@@ -725,7 +725,7 @@ function Rendered(props: {
         <div class="block-content macro-host" onMouseDown={onMouseDown}>
           <Switch>
             <Match when={macro()!.kind === "query"}>
-              <QueryMacro body={macro()!.inner} blockId={props.id} />
+              <QueryMacro body={macro()!.inner} blockId={props.id} sourceExtent={macro()!.sourceExtent} sourceRaw={macro()!.sourceExtent && node().raw.slice(macro()!.sourceExtent!.start, macro()!.sourceExtent!.end)} />
             </Match>
             <Match when={macro()!.kind === "embed"}>
               <EmbedMacro body={macro()!.inner} blockId={props.id} />

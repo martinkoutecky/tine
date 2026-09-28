@@ -168,7 +168,16 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
   };
   onMount(() => document.addEventListener("focusin", handleFocusChange, true));
 
-  /** **A loc is a path into a ROOT REVISION, not a node's identity.** The moment the tree on screen is replaced … */
+  /** **A loc is a path into a ROOT REVISION, not a node's identity.**
+  *
+  *  The moment the tree on screen is replaced — by this sheet's own edit, by a
+  *  save in the text pane, by an anchor switch, by the block being re-read
+  *  after an external file change or a graph transition — every index a
+  *  selection or a drag is holding addresses a position that may now mean
+  *  something else. There is no remapping that could be right, so both are
+  *  dropped and an in-flight drag is cancelled without applying. This is also
+  *  what clears the selection after a successful group: the edit lands, the
+  *  root changes, the boxes empty. */
   createEffect(() => {
     props.root();
     props.anchor();
@@ -361,7 +370,8 @@ function NodeList(props: {
   isRoot?: boolean;
   sheet: QuerySheetProps;
   controls: SheetControls;
-  /** Where this group sits among its own siblings; absent at the root, which is the sheet's implicit list and … */
+  /** Where this group sits among its own siblings; absent at the root, which
+  *  is the sheet's implicit list and has no controls of its own. */
   pos?: SiblingPos;
   adding?: Accessor<boolean>;
   setAdding?: (open: boolean) => void;
@@ -392,7 +402,8 @@ function NodeList(props: {
                         <SheetItem node={child} sheet={props.sheet} controls={props.controls} pos={pos()} />
                       }
                     >
-                      {/* The group's own item in THIS list: it is what a drop lands on when the pointer is anywhere inside it, … */}
+                      {/* This group's item is the drop target for its own list;
+                          nested rows cannot become targets in a grandparent list. */}
                       <div
                         class="qs-listitem"
                         role="listitem"
@@ -516,7 +527,8 @@ function GroupHeader(props: {
           )}
         </Popover>
       </span>
-      {/* A group is disabled the same way a row is — one `Off` around the node the header names — so it is the SAME … */}
+      {/* A group is disabled like a row: one `Off` around the node
+          named by the header, using the same control and helper. */}
       <EnabledSwitch
         loc={props.group.loc}
         disabled={props.group.disabled}
@@ -625,7 +637,8 @@ function AdvancedChip(props: {
   );
 }
 
-/** The folded subtree's ⋮: the move and group entries every sibling has, and nothing that would edit a … */
+/** The folded subtree's ⋮: the move and group entries every sibling has, and
+*  nothing that would edit a payload this row cannot read. */
 function AdvancedMenu(props: {
   node: Extract<SheetNode, { kind: "advanced" }>;
   sheet: QuerySheetProps;
@@ -713,9 +726,16 @@ function QueryRow(props: {
     const leaf = raw();
     return leaf ? diagnosticFor(props.sheet.query(), leaf) : undefined;
   };
-  /** **A property row's edits wait for a HEALTHY registry.** Its operator menu and its value encoding are both … */
+  /** **A property row's edits wait for a HEALTHY registry.** Its operator menu
+  *  and its value encoding are both `effectiveTypeOf` answers, and the fallback
+  *  when there is no row is the untyped `text` family — so editing while the
+  *  read is in flight, or after it failed, would silently retype a `number`
+  *  key, or a key whose declaration was written a moment ago, as text. Nothing
+  *  here is a NEW state: the row keeps its own draft and reads exactly as it
+  *  did (§6.3, I-20). */
   const propertyPending = () => !!property() && props.sheet.registry.unavailable();
-  /** Why the row is waiting, in the control's own tooltip: an indexing read ends by itself, a failure does not, … */
+  /** Why the row is waiting, in the control's own tooltip: an indexing read
+  *  ends by itself, a failure does not, and the two must not read alike. */
   const propertyWaitReason = () =>
     props.sheet.registry.failure()?.message ?? "Reading this graph's properties…";
 
@@ -732,7 +752,8 @@ function QueryRow(props: {
   const opMenuId = `qs-op-${createUniqueId()}`;
   const rowMenuId = `qs-rowmenu-${createUniqueId()}`;
 
-  /** Replace this row's whole node — the wrappers included, because the negative operator IS a `not` wrapper … */
+  /** Replace this row's whole node — the wrappers included, because the negative
+  *  operator IS a `not` wrapper (§7.4). */
   const replaceRow = (filter: Filter) =>
     props.sheet.apply(replaceAt(root(), props.node.loc, filter));
 
@@ -765,7 +786,8 @@ function QueryRow(props: {
     if (next) replaceRow(next);
   };
 
-  /** What this row currently tests, in the vocabulary picker's terms, so the list can mark the row the user is … */
+  /** What this row currently tests, in the vocabulary picker's terms, so the
+  *  list can mark the row the user is already on. */
   const currentChoice = (): VocabularyChoice | null => {
     const test = property();
     if (test) return { kind: "property", key: test.key, throughPage: test.throughPage };
@@ -842,7 +864,8 @@ function QueryRow(props: {
                 ?
               </span>
             </Show>
-            {/* A retained leaf is exactly the row the sheet cannot edit in place, so it is the row that most needs the … */}
+            {/* A retained leaf cannot be edited in place, so it offers
+                the text editor as the way out. */}
             <Show when={props.sheet.onEditText}>
               <button
                 type="button"
@@ -1104,4 +1127,3 @@ function QueryRow(props: {
 
 /** The bounded phrase for a filter — exported so the host's sentence and the sheet's chip cannot drift apart. */
 export { filterPhrase };
-

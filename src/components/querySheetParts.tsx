@@ -181,17 +181,21 @@ export function QueryFieldPicker(props: {
   );
 }
 
-/** **The property registry, read once per opened sheet (§6.4, I-13, N4).** The registry is a graph-level table. */
+/** The property registry for the current graph. An open sheet shares one read
+ *  per graph, data revision and declaration revision. Rows stay visible during
+ *  a re-read; `pending()` tells callers they may be stale. Type-dependent edits
+ *  wait for the current read, and a failed read exposes an explicit retry. */
 export interface RegistryAccess {
   rows: Accessor<RegistryRow[] | undefined>;
-  /** The read for the current graph/declaration revision is in flight — the index is indexing, recovering or … */
+  /** The current revision's read is in flight; it ends without user action. */
   pending: Accessor<boolean>;
   /** The read for the current graph/declaration revision FAILED terminally. */
   failure: Accessor<Error | null>;
   /** There is no healthy registry for the current graph/revision — `pending()` or `failure()`. */
   unavailable: Accessor<boolean>;
+  /** Bump the shared declaration revision and re-read in every open builder. */
   request: () => void;
-  /** Re-read after a terminal failure. */
+  /** Re-read after a terminal failure; affects every open builder. */
   retry: () => void;
 }
 
@@ -200,7 +204,13 @@ export const locKey = (l: number[]) => l.join(".");
 /** `openMenu`'s key for the add-condition chooser. */
 export const ADD_MENU_KEY = "add";
 
-/** Every popover in the sheet — anchor menu, field chooser, operator menu, value editors, and the … */
+/** Every popover in the sheet — anchor menu, field chooser, operator menu, value
+*  editors, and the sort/summarize pickers in the footer — registers here, so
+*  all of them answer Escape/Back AND "the user pressed somewhere else" the same
+*  way. GH #472 is what happens when they do not: two of the four had
+*  hand-rolled the outside-press effect and two had not, so a menu stayed open
+*  while the user clicked into and edited a different block. The trigger is
+*  passed as inside-the-popover so its own click can toggle. */
 export function registerVisiblePopover(open: () => boolean, layer: TransientLayer) {
   createEffect(() => {
     if (!open()) return;
@@ -216,7 +226,8 @@ export function registerVisiblePopover(open: () => boolean, layer: TransientLaye
 
 // The resting sentence (§7.2)
 
-/** A single condition rather than a group — the unit that renders as ONE row, and the unit a `not`/`off` … */
+/** A single condition rather than a group — the unit that renders as ONE row,
+*  and the unit a `not`/`off` wrapper decorates without costing a level. */
 export function isLeafLike(filter: Filter): boolean {
   return (
     filter.kind === "leaf" ||
@@ -230,7 +241,8 @@ export function isLeafLike(filter: Filter): boolean {
 export interface RawLeafSite {
   leaf: Filter & { kind: "raw" };
   loc: number[];
-  /** Derived from the CURRENT tree, never stored on the node (§4.3.2): a diagnostic inside an `Off` subtree … */
+  /** Derived from the CURRENT tree, never stored on the node (§4.3.2): a
+  *  diagnostic inside an `Off` subtree does not invalidate the query. */
   disabled: boolean;
 }
 
@@ -251,12 +263,22 @@ export function countConditions(filter: Filter): number {
   return children.reduce((total, child) => total + countConditions(child), 0);
 }
 
-/** The diagnostic that explains a retained leaf, matched by kind. */
+/** Match a retained leaf to its source diagnostic by kind and exact span.
+ *  With no spans, only an unambiguous single diagnostic of that kind is shown. */
 export function diagnosticFor(query: Query | undefined, leaf: Filter & { kind: "raw" }): Diagnostic | undefined {
-  return (query?.diagnostics ?? []).find((d) => d.kind === leaf.diagnostic_kind);
+  const candidates = (query?.diagnostics ?? []).filter((d) => d.kind === leaf.diagnostic_kind);
+  if (leaf.span) return candidates.find((d) => d.span?.start === leaf.span?.start && d.span?.end === leaf.span?.end);
+  return candidates.length === 1 && !candidates[0].span ? candidates[0] : undefined;
 }
 
-/** **The resting state: one sentence, the count, and a ⚙ (§7.2, design §2.1).** Nothing here is a control … */
+/**
+* **The resting state: one sentence, the count, and a ⚙ (§7.2, design §2.1).**
+*
+* Nothing here is a control except the ⚙ and the sentence itself. The sentence
+* IS the affordance — clicking it, or pressing Enter or Space on it, opens the
+* sheet — which is why it carries a button role and a visible focus ring rather
+* than looking like text that happens to be clickable.
+*/
 export function QuerySentence(props: {
   query: Query;
   total?: JSX.Element;
@@ -419,7 +441,17 @@ export type SheetNode =
     }
   | { kind: "advanced"; loc: number[]; filter: Filter; disabled: boolean; inherited: boolean };
 
-/** **The tree, as rows and groups (§7.4, design §2.5).** The stored form is rendered HONESTLY: §3.5 forbids … */
+/**
+* **The tree, as rows and groups (§7.4, design §2.5).**
+*
+* The stored form is rendered HONESTLY: §3.5 forbids De Morgan rewriting, so a
+* `not` over an `or` reads "none of" and a `not` over an `and` reads "not all
+* of" — the builder never silently restates the user's query as its dual.
+*
+* A `not`/`off` around a SINGLE condition is not a level: it is the row's
+* negative operator and the row's greyed state. Around a group it is the
+* group's header and the group's greyed state.
+*/
 export function buildNodes(filter: Filter, loc: number[], depth: number, inherited = false): SheetNode {
   if (depth >= MAX_QUERY_BUILDER_DEPTH) {
     return { kind: "advanced", loc, filter, disabled: isDisabledAt(filter, []), inherited };
@@ -484,7 +516,9 @@ export function buildNodes(filter: Filter, loc: number[], depth: number, inherit
 
 // Selecting, disabling and reordering (§7.4 remainder, P6)
 
-/** A node's place among its siblings — everything selection, moving and dropping need, derived from the … */
+/** A node's place among its siblings — everything selection, moving and
+*  dropping need, derived from the node's own `loc` plus how many siblings the
+*  list it lives in has. */
 export interface SiblingPos {
   /** The boolean node whose child list this item is in. */
   parentLoc: number[];
@@ -498,7 +532,13 @@ export const posOf = (loc: number[], count: number): SiblingPos => ({
   count,
 });
 
-/** **What is selected, in ONE rendered boolean list (§7.4).** Selection is sibling-local by construction, not … */
+/** **What is selected, in ONE rendered boolean list (§7.4).**
+*
+*  Selection is sibling-local by construction, not by a check afterwards: it
+*  names one parent and indices inside it, so "select a row in a different
+*  group" cannot express a selection that spans two lists and a group operation
+*  can never move a condition between them. Choosing a sibling elsewhere starts
+*  a new selection rather than extending this one. */
 export interface SheetSelection {
   parentLoc: number[];
   indices: number[];
@@ -528,7 +568,14 @@ export function dropClasses(controls: SheetControls, pos: SiblingPos): Record<st
   };
 }
 
-/** **The drag handle, and the keyboard operation that equals it (§7.4, §7.7).** A drag starts HERE and … */
+/** **The drag handle, and the keyboard operation that equals it (§7.4, §7.7).**
+*
+*  A drag starts HERE and nowhere else, so typing a value, pressing a menu,
+*  scrolling and selecting text are untouched. It is a button rather than a
+*  decorated `<span>` because the keyboard has to reach the same operation: Up
+*  and Down on a focused handle move the item exactly as a drop would, through
+*  the same `moveSibling`, and focus stays on the handle that moved so a second
+*  press continues rather than starting over. */
 export function DragHandle(props: { pos: SiblingPos; label: string; controls: SheetControls }): JSX.Element {
   const loc = () => [...props.pos.parentLoc, props.pos.index];
   return (
@@ -553,7 +600,13 @@ export function DragHandle(props: { pos: SiblingPos; label: string; controls: Sh
   );
 }
 
-/** **The selection box — NOT the enabled control (§7.4).** They were one control in the chip bar's … */
+/** **The selection box — NOT the enabled control (§7.4).**
+*
+*  They were one control in the chip bar's descendants and in most filter
+*  builders: a checkbox that both picked the row and switched it off. Two
+*  questions ("which rows am I about to group?" and "which conditions run?")
+*  answered by one box means every grouping gesture silently changes what the
+*  query returns. */
 export function SelectBox(props: { pos: SiblingPos; label: string; controls: SheetControls }): JSX.Element {
   const loc = () => [...props.pos.parentLoc, props.pos.index];
   return (
@@ -569,7 +622,12 @@ export function SelectBox(props: { pos: SiblingPos; label: string; controls: She
   );
 }
 
-/** **The enabled control: this node's own `Off`, told honestly (§3.5, §7.4).** `aria-checked` is the node's … */
+/** **The enabled control: this node's own `Off`, told honestly (§3.5, §7.4).**
+*
+*  `aria-checked` is the node's OWN state, because that is the only state this
+*  switch owns. When an ancestor is disabled the row does not run whatever this
+*  switch says, and the row says so in words beside it rather than letting the
+*  switch imply that one press here would bring the condition back. */
 export function EnabledSwitch(props: {
   loc: number[];
   disabled: boolean;
@@ -607,7 +665,9 @@ export function offLabel(node: { disabled: boolean; inherited: boolean }): strin
   return node.disabled ? "disabled" : null;
 }
 
-/** The move entries every item's ⋮ menu carries, offered only where they mean something: the first item has … */
+/** The move entries every item's ⋮ menu carries, offered only where they mean
+*  something: the first item has nothing above it and the last has nothing
+*  below. They move the SAME siblings the drag does, through the same helper. */
 export function moveOptions(pos: SiblingPos): ListboxOption[] {
   const options: ListboxOption[] = [];
   if (pos.index > 0) options.push({ key: "move-up", label: "Move up" });
@@ -808,7 +868,9 @@ export const BETWEEN_FIELD_LABEL: Record<BetweenField, string> = {
   any: "Any date",
 };
 
-/** Date-range editor: which date, one-click relative presets, and two bound inputs that accept keywords … */
+/** Date-range editor: which date, one-click relative presets, and two bound
+*  inputs that accept keywords (`today`), relative offsets (`-30d`), ISO dates
+*  or a journal-page title — each with a live resolved-date preview. */
 export function BetweenPick(props: {
   onCommit: (field: BetweenField, start: string, end: string) => void;
 }): JSX.Element {
@@ -940,7 +1002,8 @@ export interface QuerySheetProps {
   query: () => Query | undefined;
   apply: (next: Filter) => void | Promise<boolean>;
   registry: RegistryAccess;
-  /** Open and focus the query text pane — the route the `⟨advanced⟩` control takes, and the route a row that … */
+  /** Open and focus the query text pane — the route the `⟨advanced⟩` control
+  *  takes, and the route a row that cannot be edited here always has (§7.4). */
   onEditText?: () => void;
   /** The four most frequent property keys, for the empty state's "Try:" line. */
   suggestions: () => string[];
@@ -1067,7 +1130,14 @@ export function AnchorPromptPanel(props: { prompt: AnchorPrompt }): JSX.Element 
 
 // Rows and groups
 
-/** **"Group selected ▾", and what is selected right now (§7.4).** One bar for the whole sheet rather than a … */
+/** **"Group selected ▾", and what is selected right now (§7.4).**
+*
+*  One bar for the whole sheet rather than a control per list: the selection is
+*  already one list's, and a phone-width row has no space for a sixth control.
+*  It states the count, because a non-contiguous selection two groups down is
+*  otherwise invisible, and it offers the same three headers a group can carry.
+*  Grouping needs two; with one selected the action is offered but refused, so
+*  the rule is visible rather than mysterious. */
 export function SelectionBar(props: {
   selection: SheetSelection;
   sheet: QuerySheetProps;
@@ -1141,7 +1211,10 @@ export function effectiveFor(
   return row ? effectiveTypeOf(row) : { type: "text", cardinality: "one" };
 }
 
-/** A property row's value cell: the key's type surface, and one or two inputs filled in with the values the … */
+/** A property row's key and zero to two plain text inputs. Values come from the
+ *  current leaf; `effective` and `registry` are reserved for Q4b's type badge.
+ *  Enter or blur commits only a changed value, avoiding a reprint and undo step
+ *  when focus leaves an untouched input. */
 export function PropertyValueCell(props: {
   test: PropertyLeafTest;
   effective: { type: ObservedType; cardinality: Cardinality };
@@ -1156,7 +1229,11 @@ export function PropertyValueCell(props: {
     setLow(props.test.values[0] ?? "");
     setHigh(props.test.values[1] ?? "");
   });
-  const commit = () => props.onCommit(arity() === 2 ? [low(), high()] : [low()]);
+  const commit = () => {
+    const values = arity() === 2 ? [low(), high()] : arity() === 1 ? [low()] : [];
+    if (values.length === props.test.values.length && values.every((value, i) => value === props.test.values[i])) return;
+    props.onCommit(values);
+  };
   return (
     <span class="qs-property-value">
       <span class="qs-property-key">{props.test.key}</span>
@@ -1218,7 +1295,12 @@ export function AddCondition(props: {
     return choice?.kind === "property" ? choice : null;
   };
   const effective = createMemo(() => effectiveFor(props.sheet.registry, property()?.key));
-  /** The chosen key's operators and value encoding are registry answers, so while there is no healthy registry … */
+  /** The chosen key's operators and value encoding are registry answers, so
+  *  while there is no healthy registry the editor keeps the key and the draft
+  *  on screen and refuses to commit — rather than encoding a `number` key, or
+  *  one whose declaration has just been written, as text (§6.3). A terminal
+  *  failure holds the commit exactly as an in-flight read does; what differs
+  *  is what the editor SAYS, and that only `retry()` ends it. */
   const registryFailure = () => props.sheet.registry.failure();
   const registryUnavailable = () => props.sheet.registry.unavailable();
   const commitProperty = () => {
@@ -1317,7 +1399,9 @@ export function AddCondition(props: {
                       <Show
                         when={!registryUnavailable()}
                         fallback={
-                          /* The key and the draft below stay exactly where the user left them; only the choice of comparison waits, … */
+                          /* The key and draft stay where the user left them. The
+                             comparison waits because its options come from the
+                             registry; a failed read offers an explicit retry. */
                           <Show
                             when={registryFailure()}
                             fallback={
@@ -1367,14 +1451,25 @@ export function AddCondition(props: {
                         <input
                           class="qs-input"
                           autofocus
-                          aria-label="Value"
-                          placeholder="Value"
+                          aria-label={propertyOperatorArity(propertyId()) === 2 ? "From" : "Value"}
+                          placeholder={propertyOperatorArity(propertyId()) === 2 ? "From" : "Value"}
                           disabled={registryUnavailable()}
                           value={propertyValues()[0] ?? ""}
-                          onInput={(e) => setPropertyValues([e.currentTarget.value])}
+                          onInput={(e) => setPropertyValues([e.currentTarget.value, propertyValues()[1] ?? ""])}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") commitProperty();
                           }}
+                        />
+                      </Show>
+                      <Show when={propertyOperatorArity(propertyId()) === 2}>
+                        <input
+                          class="qs-input"
+                          aria-label="To"
+                          placeholder="To"
+                          disabled={registryUnavailable()}
+                          value={propertyValues()[1] ?? ""}
+                          onInput={(e) => setPropertyValues([propertyValues()[0] ?? "", e.currentTarget.value])}
+                          onKeyDown={(e) => { if (e.key === "Enter") commitProperty(); }}
                         />
                       </Show>
                       <button
@@ -1396,4 +1491,3 @@ export function AddCondition(props: {
     </div>
   );
 }
-
