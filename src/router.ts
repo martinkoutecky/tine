@@ -11,6 +11,7 @@ import { navigationName } from "./pageIndex";
 import { persistentBlockRef, resolveBlockRef, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
+import { graphOwner, readOwned } from "./owned";
 import { renderedBlocks } from "./lazyObserve";
 import { navReuseTabs } from "./navSettings";
 import { isMobilePlatform } from "./nativeChrome";
@@ -726,7 +727,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   async function closeTab(id: string) {
-    const binding = captureBinding();
+    const owner = graphOwner();
     let list = tabs();
     if (list.length === 1) {
       if (route().kind !== "journals" && lastTabCloseHandler(paneId)) return;
@@ -738,8 +739,11 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // (backend.confirm), NOT window.confirm - the latter silently returns true in
     // this WebKitGTK build, so the tab would close without ever asking. Unpinned
     // tabs skip the await and close synchronously (no behaviour change there).
-    if (t?.pinned && !(await backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`))) return;
-    if (!stillBound(binding)) return;
+    if (t?.pinned) {
+      const confirmation = await readOwned(owner, backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`));
+      if (confirmation.kind === "stale" || !confirmation.value) return;
+    }
+    if (!owner()) return;
     list = tabs();
     if (list.length === 1 || !list.some((current) => current.id === id && current === t)) return;
     intentRevision++;

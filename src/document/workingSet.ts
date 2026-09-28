@@ -6,6 +6,7 @@ import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, stillBound, invalidateBinding } from "../binding";
+import { graphOwner, readOwned } from "../owned";
 import { backend } from "../backend";
 import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
@@ -266,11 +267,11 @@ export function reloadPageIfStillSafe(name: string, dto: PageDto & { id?: string
 export async function reloadHlsIfLoaded(name: string): Promise<void> {
   if (!pageByName(name)) return;
   if (isDirty(name) || isConflicted(name)) return;
-  const binding = captureBinding();
   const generation = pageInstanceGeneration(name);
-  const dto = await backend().getPage(name, "page");
-  if (dto && stillBound(binding) && pageInstanceGeneration(name) === generation)
-    reloadPageIfStillSafe(name, dto);
+  const owner = graphOwner(() => pageInstanceGeneration(name) === generation);
+  const result = await readOwned(owner, backend().getPage(name, "page"));
+  if (result.kind === "current" && result.value)
+    reloadPageIfStillSafe(name, result.value);
 }
 function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;

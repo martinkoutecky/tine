@@ -28,6 +28,22 @@ function harness(overrides: Partial<SafeCloseDeps> = {}) {
 }
 
 describe("GH #161 shared safe-close transaction", () => {
+  it("does not accept a retired close after reset starts a new transaction", async () => {
+    const oldDrain = deferred<boolean>();
+    const flushPdfWork = vi.fn()
+      .mockImplementationOnce(() => oldDrain.promise)
+      .mockResolvedValueOnce(true);
+    const { safeClose } = harness({ flushPdfWork });
+    const oldClose = safeClose.prepare();
+    await vi.waitFor(() => expect(flushPdfWork).toHaveBeenCalledOnce());
+    safeClose.reset();
+    const newClose = safeClose.prepare();
+    await vi.waitFor(() => expect(flushPdfWork).toHaveBeenCalledTimes(2));
+    oldDrain.resolve(true);
+    await expect(oldClose).resolves.toBe("rejected");
+    await expect(newClose).resolves.toBe("accepted");
+  });
+
   it("flushes graph and session once before an accepted Android root exit", async () => {
     const { deps, safeClose, transitions } = harness();
     const exit = vi.fn(async () => {});

@@ -15,6 +15,7 @@ import { createSignal } from "solid-js";
 import Lenis from "lenis";
 import { backend } from "./backend";
 import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { readOwned } from "./owned";
 import { pushToast } from "./toasts";
 
 const [enabled, setEnabled] = createSignal(false);
@@ -70,9 +71,10 @@ export function setSmoothScroll(on: boolean): void {
  * If feed DOM is absent, scroller installation waits for a later apply. */
 export async function initSmoothScroll(): Promise<void> {
   const revision = preferenceRevision(enabled);
+  const owner = () => preferenceReadCurrent(enabled, revision);
   try {
-    const value = await backend().getSmoothScroll();
-    if (preferenceReadCurrent(enabled, revision)) { apply(value); seedPreference(enabled); }
+    const result = await readOwned(owner, backend().getSmoothScroll());
+    if (result.kind === "current") { apply(result.value); seedPreference(enabled); }
   } catch {
     pushToast("Could not load smooth scrolling preference.", "error");
   }

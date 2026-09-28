@@ -42,6 +42,23 @@ function node(id: string, pageName: string): StoreNode {
 }
 
 describe("mobile external link delegation", () => {
+  it("does not install a link listener after its view retires during platform lookup", async () => {
+    let finish!: (platform: "android") => void;
+    vi.spyOn(backend(), "appPlatform").mockImplementationOnce(() =>
+      new Promise((resolve) => { finish = resolve; })
+    );
+    const openExternal = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+    let live = true;
+    const pending = installMobileExternalLinkHandler(() => live);
+    live = false;
+    finish("android");
+    const uninstall = await pending;
+    try {
+      expect(click(addAnchor("https://x.test/path")).defaultPrevented).toBe(false);
+      expect(openExternal).not.toHaveBeenCalled();
+    } finally { uninstall(); }
+  });
+
   it("opens external links through the OS browser on Android", async () => {
     vi.spyOn(backend(), "appPlatform").mockResolvedValue("android");
     const openExternal = vi.spyOn(backend(), "openExternal").mockResolvedValue();

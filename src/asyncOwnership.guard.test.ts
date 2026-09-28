@@ -22,19 +22,19 @@ describe("async ownership guard", () => {
     check("src/components/Block.tsx", "function beginDrag(", "export interface CaptureApi", [/captureBinding\(\)/, /stillBound\(binding\) && dragMoved/]);
     check("src/components/PageProps.tsx", "function Field(", "  return (\n    <div class=\"pp-field\">", [/stillBound\(props\.binding\)/]);
     check("src/components/WorkspaceSwitcher.tsx", "  const remove = async", "  return (", [/captureBinding\(\)/, /if \(!stillBound\(binding\)\) return/]);
-    check("src/workspaces.ts", "function enqueue<", "function cloneSession(", [/captureBinding\(\)/, /assert\(\)/, /await promise/]);
-    check("src/guide.ts", "function markGuideAnnounced(", "export function maybeShowGuideAnnouncement", [/if \(!stillBound\(binding\)\) return/]);
-    check("src/graph.ts", "async function injectCustomCss(", "/** Pick a folder", [/captureBinding\(\)/, /if \(!stillBound\(binding\)\) return/]);
+    check("src/workspaces.ts", "function enqueue<", "function cloneSession(", [/graphOwner\(\)/, /assert\(\)/, /serializeOwned\(operationQueue, owner, run\)/]);
+    check("src/guide.ts", "function markGuideAnnounced(", "export function maybeShowGuideAnnouncement", [/if \(!owner\(\)\) return/, /readOwned\(owner, backend\(\)\.setGuideAnnounced/]);
+    check("src/graph.ts", "async function injectCustomCss(", "/** Pick a folder", [/graphOwner\(\)/, /readOwned\(owner, backend\(\)\.readCustomCss\(\)\)/, /if \(!owner\(\)\) return/]);
     check("src/components/Page.tsx", "function PageSection(", "  return (\n    <div class=\"page-section\">", [/routeIntentRevision\(\)/, /backendGeneration/, /router\.activeId\(\)/]);
     check("src/inpageFind.ts", "export async function revealInPageFindMatch(", "interface TextPart", [/captureBinding\(\)/, /sameRoute\(paneRouter\(paneId\)\.route\(\), route\)/, /if \(!current\(\)\) return false/]);
     check("src/focusFullscreen.ts", "export function setFocusFullscreen(", "  return task;", [/request !== generation/, /ownsFullscreen/, /tail\.then/]);
     check("src/ui.ts", "export async function enterFocusMode(", "export function toggleTheme", [/setFocusFullscreen\(true\)/, /setFocusFullscreen\(false\)/]);
     check("src/mediaEditorSettings.ts", "export async function detectMediaEditorCommand", "export async function initMediaEditorSettings", [/latestOwner\(commandProbes, ed\.settingKey, revisionOwner\(key, currentRevision\(key\)\)\)/, /readOwned\(owner, backend\(\)\.detectMediaEditor/, /result\.kind === "stale"/, /command: mediaEditorCommand\(ed\.settingKey\), applied: false/]);
     const restore = readFileSync("src/backupRestore.ts", "utf8");
-    expect(restore, `${RULE}: backup restore must retain its graph owner across confirmation and writes`).toMatch(/captureBinding\(\)[\s\S]*backend\(\)\.confirm[\s\S]*if \(!stillBound\(binding\)\) return;[\s\S]*restoreBackup/);
+    expect(restore, `${RULE}: backup restore must retain its graph owner across confirmation and writes`).toMatch(/graphOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.confirm[\s\S]*confirmed\.kind === "stale"[\s\S]*readOwned\(owner, backend\(\)\.restoreBackup/);
     expect(restore, `${RULE}: an old restore must not release a newer graph transition`).toMatch(/if \(ownsTransition\(\)\) setGraphTransitioning\(false\)/);
     const session = readFileSync("src/session.ts", "utf8");
-    expect(session, `${RULE}: session restore must discard a stale graph read`).toMatch(/export async function restoreSession[\s\S]*captureBinding\(\)[\s\S]*loadSession[\s\S]*stillBound\(binding\)/);
+    expect(session, `${RULE}: session restore must discard a stale graph read`).toMatch(/export async function restoreSession[\s\S]*graphOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.loadSession[\s\S]*result\.kind === "stale"/);
   });
 
 });

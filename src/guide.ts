@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { captureBinding, stillBound, type Binding } from "./binding";
+import { graphOwner, readOwned, type Owner } from "./owned";
 import { openPage, openPageInNewTab } from "./router";
 import { loadGuidePages, pageByName } from "./document";
 import { bumpPageInventoryRev, graphMeta, setGraphMeta } from "./graphSession";
@@ -11,6 +11,7 @@ export const GUIDE_COPY_PREFIX = "tine-guide/";
 export const GUIDE_INDEX_TITLE = "Tine Guide";
 
 let guideLoad: Promise<GuidePage[]> | null = null;
+let guideLoadOwner: Owner | null = null;
 const guideTitles = new Map<string, string>();
 const announcementShownForRoot = new Set<string>();
 
@@ -37,12 +38,15 @@ export function guideTargetForLink(target: string, sourcePage?: string): string 
 }
 
 export async function ensureGuidePagesLoaded(force = false): Promise<GuidePage[]> {
-  if (!force && guideLoad) return guideLoad;
-  const binding = captureBinding();
-  guideLoad = backend()
-    .guidePages()
-    .then((pages) => {
-      if (!stillBound(binding)) return pages;
+  if (!force && guideLoad && guideLoadOwner?.()) return guideLoad;
+  const owner = graphOwner();
+  const pending = readOwned(owner, backend().guidePages())
+    .then((result) => {
+      if (result.kind === "stale") {
+        if (guideLoad === pending) { guideLoad = null; guideLoadOwner = null; }
+        return [];
+      }
+      const pages = result.value;
       guideTitles.clear();
       loadGuidePages(
         pages.map((g) => {
@@ -58,27 +62,30 @@ export async function ensureGuidePagesLoaded(force = false): Promise<GuidePage[]
       );
       return pages;
     });
-  return guideLoad;
+  guideLoad = pending;
+  guideLoadOwner = owner;
+  return pending;
 }
 
 export async function openGuide(): Promise<void> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   try {
     await ensureGuidePagesLoaded(true);
-    if (!stillBound(binding)) return;
+    if (!owner()) return;
     openPageInNewTab(guidePageName(GUIDE_INDEX_TITLE), "page", undefined, true);
   } catch (e) {
-    if (stillBound(binding)) pushToast(`Couldn't open the Guide. (${String(e)})`, "error");
+    if (owner()) pushToast(`Couldn't open the Guide. (${String(e)})`, "error");
   }
 }
 
 export async function copyGuideIntoGraph(pageName: string): Promise<void> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   const page = pageByName(pageName);
   const title = guideTitleFromName(page?.name ?? pageName);
   try {
-    const result = await backend().copyGuideIntoGraph(title, "replace-page");
-    if (!stillBound(binding)) return;
+    const copied = await readOwned(owner, backend().copyGuideIntoGraph(title, "replace-page"));
+    if (copied.kind === "stale") return;
+    const result = copied.value;
     if ((result.created_pages?.length ?? 0) > 0) bumpPageInventoryRev();
     pushToast(
       result.created
@@ -88,18 +95,17 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
     );
     openPage(result.name, "page");
   } catch (e) {
-    if (stillBound(binding)) pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
+    if (owner()) pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
   }
 }
 
-function markGuideAnnounced(binding: Binding) {
-  if (!stillBound(binding)) return;
+function markGuideAnnounced(owner: Owner) {
+  if (!owner()) return;
   const meta = graphMeta();
   if (meta && !meta.guide_announced) {
     setGraphMeta({ ...meta, guide_announced: true });
   }
-  void backend().setGuideAnnounced(true).catch(() => {
-    if (!stillBound(binding)) return;
+  void readOwned(owner, backend().setGuideAnnounced(true)).catch(() => {
     const current = graphMeta();
     if (current && current.root === meta?.root && current.guide_announced) {
       setGraphMeta({ ...current, guide_announced: false });
@@ -115,13 +121,13 @@ export function maybeShowGuideAnnouncement() {
   const meta = graphMeta();
   if (!meta || meta.guide_announced || announcementShownForRoot.has(meta.root)) return;
   announcementShownForRoot.add(meta.root);
-  const binding = captureBinding();
+  const owner = graphOwner();
   pushToast("New: in-app Guide \u2014 learn Sheets, formulas & queries.", "info", {
     sticky: true,
     action: {
       label: "Open Guide",
       run: () => void openGuide(),
     },
-    onDismiss: () => markGuideAnnounced(binding),
+    onDismiss: () => markGuideAnnounced(owner),
   });
 }

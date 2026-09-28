@@ -1,6 +1,7 @@
 import { type Format, type PageKind } from "../../types";
 import { doc, formatForBlock, pageByName, setDoc } from "../model";
 import { captureBinding, stillBound } from "../../binding";
+import { graphOwner, readOwned } from "../../owned";
 import { blockWritable } from "./properties";
 import { markDirty, flushPage } from "../save/engine";
 import { backend } from "../../backend";
@@ -226,14 +227,14 @@ export async function persistBlockRefTarget(
   kind: PageKind,
   path?: string,
 ): Promise<void> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
   if (!resolveBlockRef(ref)) {
-    const dto = path
-      ? await backend().getPageByPath(path)
-      : await backend().getPage(page, kind);
-    if (!stillBound(binding)) return;
-    if (dto) ensurePageLoaded(dto);
+    const result = await readOwned(owner, path
+      ? backend().getPageByPath(path)
+      : backend().getPage(page, kind));
+    if (result.kind === "stale") return;
+    if (result.value) ensurePageLoaded(result.value);
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new

@@ -12,7 +12,8 @@ import { parseDelimitedText, type DelimitedKind } from "./sheet/tsv";
 import { formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibleOrder, withUndoUnit, node as docNode } from "./document";
 import { pushToast } from "./toasts";
 import { reportStaleAsset } from "./assetLanding";
-import { captureBinding, stillBound } from "./binding";
+import { captureBinding } from "./binding";
+import { graphOwner, readOwned } from "./owned";
 import { graphMeta } from "./graphSession";
 import type { OutlineNode } from "./editor/outline";
 
@@ -69,6 +70,7 @@ export async function installFileDrop(): Promise<() => void> {
     const binding = captureBinding();
     const dropRoot = graphMeta()?.root;
     const dropPage = docNode(afterId).page;
+    const owner = graphOwner(() => graphMeta()?.root === dropRoot && docNode(afterId)?.page === dropPage);
     const pagePath = pageByName(dropPage)?.id;
     const format = formatForBlock(afterId);
 
@@ -78,9 +80,9 @@ export async function installFileDrop(): Promise<() => void> {
       for (const path of paths) {
         const kind = delimitedKind(path);
         if (kind) {
-          const text = await backend().readTextFile(path);
-          if (!stillBound(binding)) return;
-          const matrix = parseDelimitedText(text, kind);
+          const result = await readOwned(owner, backend().readTextFile(path));
+          if (result.kind === "stale") return;
+          const matrix = parseDelimitedText(result.value, kind);
           const cells = delimitedCellCount(matrix);
           if (cells > MAX_DROPPED_CELLS) {
             pushToast(`"${basename(path)}" has ${cells} cells; CSV/TSV drops are limited to ${MAX_DROPPED_CELLS}.`, "error");
@@ -90,7 +92,9 @@ export async function installFileDrop(): Promise<() => void> {
           continue;
         }
         const orig = basename(path) || undefined;
-        const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig), binding.backendGeneration));
+        const result = await readOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), binding.backendGeneration)));
+        if (result.kind === "stale") { storedAssets++; continue; }
+        const saved = result.value;
         storedAssets++;
         nodes.push({
           raw: assetMarkdown(saved, {
@@ -101,15 +105,15 @@ export async function installFileDrop(): Promise<() => void> {
           children: [],
         });
       }
-      if (!nodes.length) return;
-      if (!stillBound(binding) || graphMeta()?.root !== dropRoot || docNode(afterId)?.page !== dropPage) {
+      if (!nodes.length) { if (storedAssets && !owner()) reportStaleAsset(); return; }
+      if (!owner()) {
         if (storedAssets) reportStaleAsset();
         return;
       }
       withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
       pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
     } catch (e) {
-      if (stillBound(binding)) pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
+      if (owner()) pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
     }
   });
 
