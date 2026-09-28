@@ -1,0 +1,74 @@
+[
+  {
+    "span": {
+      "start": 0,
+      "end": 4
+    },
+    "message": "diagnostic 0",
+    "suggestions": [
+      "prop('status')"
+    ],
+    "disabled": false,
+    "kind": "unknown_head"
+  },
+  {
+    "span": {
+      "start": 1,
+      "end": 5
+    },
+    "message": "diagnostic 1",
+    "suggestions": [
+      "prop('status')"
+    ],
+    "disabled": true,
+    "kind": "syntax"
+  },
+  {
+    "span": {
+      "start": 2,
+      "end": 6
+    },
+    "message": "diagnostic 2",
+    "suggestions": [
+      "prop('status')"
+    ],
+    "disabled": false,
+    "kind": "unknown_ident"
+  },
+  {
+    "span": {
+      "start": 3,
+      "end": 7
+    },
+    "message": "diagnostic 3",
+    "suggestions": [
+      "prop('status')"
+    ],
+    "disabled": true,
+    "kind": "not_applicable"
+  },
+  {
+    "span": {
+      "start": 4,
+      "end": 8
+    },
+    "message": "diagnostic 4",
+    "suggestions": [
+      "prop('status')"
+    ],
+    "disabled": false,
+    "kind": "depth"
+  },
+  {
+    "span": {
+      "start": 5,
+      "end": 9
+    },
+    "message": "diagnostic 5",
+    "suggestions": [
+      "prop('status')"
+    ],
+    "disabled": true,
+    "kind": "size"
+  }
+]

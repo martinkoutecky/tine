@@ -1,0 +1,553 @@
+[
+  {
+    "why": "nothing anywhere says anything about grouping; a Board default may fill this and only this",
+    "properties": [],
+    "resolution": {
+      "kind": "unset"
+    }
+  },
+  {
+    "why": "the new key naming the task marker builtin",
+    "properties": [
+      [
+        "tine.group-field",
+        "state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "state"
+    }
+  },
+  {
+    "why": "the new key naming the ordinary property `state` — the disambiguation the key exists for",
+    "properties": [
+      [
+        "tine.group-field",
+        "prop:state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:state"
+    }
+  },
+  {
+    "why": "a literal property named `prop:state` is `prop:prop:state`; no new escaping rule",
+    "properties": [
+      [
+        "tine.group-field",
+        "prop:prop:state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:prop:state"
+    }
+  },
+  {
+    "why": "every sheet builtin is accepted verbatim",
+    "properties": [
+      [
+        "tine.group-field",
+        "scheduled"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "scheduled"
+    }
+  },
+  {
+    "why": "tags: the multi-membership builtin",
+    "properties": [
+      [
+        "tine.group-field",
+        "tags"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "tags"
+    }
+  },
+  {
+    "why": "a formula field",
+    "properties": [
+      [
+        "tine.group-field",
+        "formula:effort"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "formula:effort"
+    }
+  },
+  {
+    "why": "the new key is trimmed before it is read",
+    "properties": [
+      [
+        "tine.group-field",
+        "  prop:cost  "
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:cost"
+    }
+  },
+  {
+    "why": "a PRESENT but empty new key is an explicit no-grouping and blocks the legacy key behind it",
+    "properties": [
+      [
+        "tine.group-field",
+        ""
+      ],
+      [
+        "tine.group-by",
+        "state"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "whitespace only is the same explicit statement",
+    "properties": [
+      [
+        "tine.group-field",
+        "   "
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "a bare name is NOT canonical: the new key takes FieldIds only, so this is an explicit clear",
+    "properties": [
+      [
+        "tine.group-field",
+        "status"
+      ],
+      [
+        "tine.group-by",
+        "status"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "an empty prop: suffix is not a field",
+    "properties": [
+      [
+        "tine.group-field",
+        "prop:"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "an empty formula: suffix is not a field",
+    "properties": [
+      [
+        "tine.group-field",
+        "formula:"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "a line break could not read back, so the value is not a field",
+    "properties": [
+      [
+        "tine.group-field",
+        "prop:a\nb"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "a carriage return could not read back either",
+    "properties": [
+      [
+        "tine.group-field",
+        "prop:a\rb"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "nor could a NUL",
+    "properties": [
+      [
+        "tine.group-field",
+        "prop:a\u0000b"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "the new key wins over the DSL directive too",
+    "properties": [
+      [
+        "tine.group-field",
+        "prop:cost"
+      ]
+    ],
+    "parsed": {
+      "group_by": "status"
+    },
+    "resolution": {
+      "kind": "field",
+      "field": "prop:cost"
+    }
+  },
+  {
+    "why": "property keys are matched normalized, and the first occurrence wins",
+    "properties": [
+      [
+        "Tine.Group-Field",
+        "tags"
+      ],
+      [
+        "tine.group-field",
+        "state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "tags"
+    }
+  },
+  {
+    "why": "legacy on a BOARD: a bare builtin is still the task marker (ADR 0030 preserved)",
+    "properties": [
+      [
+        "tine.view",
+        "board"
+      ],
+      [
+        "tine.group-by",
+        "state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "state"
+    }
+  },
+  {
+    "why": "legacy on a BOARD: `status` used to fall through isFieldId and silently become the task marker; it is an ordinary property",
+    "properties": [
+      [
+        "tine.view",
+        "board"
+      ],
+      [
+        "tine.group-by",
+        "status"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:status"
+    }
+  },
+  {
+    "why": "legacy on a BOARD: an explicit prop: identity is kept as written",
+    "properties": [
+      [
+        "tine.view",
+        "board"
+      ],
+      [
+        "tine.group-by",
+        "prop:state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:state"
+    }
+  },
+  {
+    "why": "legacy on a BOARD: the app's alternate `formula.<name>` spelling normalizes to formula:",
+    "properties": [
+      [
+        "tine.view",
+        "board"
+      ],
+      [
+        "tine.group-by",
+        "formula.effort"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "formula:effort"
+    }
+  },
+  {
+    "why": "legacy on a BOARD: a canonical formula: identity is kept",
+    "properties": [
+      [
+        "tine.view",
+        "board"
+      ],
+      [
+        "tine.group-by",
+        "formula:effort"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "formula:effort"
+    }
+  },
+  {
+    "why": "legacy on a TABLE reads the same as a board — both are sheet faces",
+    "properties": [
+      [
+        "tine.view",
+        "table"
+      ],
+      [
+        "tine.group-by",
+        "priority"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "priority"
+    }
+  },
+  {
+    "why": "legacy on a board: an empty prop: suffix is not a sheet field, so it is an ordinary property name",
+    "properties": [
+      [
+        "tine.view",
+        "board"
+      ],
+      [
+        "tine.group-by",
+        "prop:"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:prop:"
+    }
+  },
+  {
+    "why": "legacy on a LIST: `state` is the ordinary property the list grouper has always read",
+    "properties": [
+      [
+        "tine.group-by",
+        "state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:state"
+    }
+  },
+  {
+    "why": "legacy on a LIST: `page` is the source page",
+    "properties": [
+      [
+        "tine.group-by",
+        "page"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "page"
+    }
+  },
+  {
+    "why": "legacy on a LIST: a literal `prop:` prefix is part of the property KEY, preserving the old list meaning",
+    "properties": [
+      [
+        "tine.group-by",
+        "prop:state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:prop:state"
+    }
+  },
+  {
+    "why": "legacy on a SEARCH view reads like a list",
+    "properties": [
+      [
+        "tine.view",
+        "search"
+      ],
+      [
+        "tine.group-by",
+        "status"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:status"
+    }
+  },
+  {
+    "why": "an unreadable tine.view falls back to the parsed view for the legacy reading",
+    "properties": [
+      [
+        "tine.view",
+        "kanban"
+      ],
+      [
+        "tine.group-by",
+        "state"
+      ]
+    ],
+    "parsed": {
+      "view": "board"
+    },
+    "resolution": {
+      "kind": "field",
+      "field": "state"
+    }
+  },
+  {
+    "why": "with no tine.view at all the parsed view decides the legacy reading",
+    "properties": [
+      [
+        "tine.group-by",
+        "state"
+      ]
+    ],
+    "parsed": {
+      "view": "board"
+    },
+    "resolution": {
+      "kind": "field",
+      "field": "state"
+    }
+  },
+  {
+    "why": "no persisted and no parsed view means the default list",
+    "properties": [
+      [
+        "tine.group-by",
+        "state"
+      ]
+    ],
+    "resolution": {
+      "kind": "field",
+      "field": "prop:state"
+    }
+  },
+  {
+    "why": "an empty legacy value is not a statement: it falls through to the DSL directive",
+    "properties": [
+      [
+        "tine.group-by",
+        "   "
+      ]
+    ],
+    "parsed": {
+      "group_by": "status"
+    },
+    "resolution": {
+      "kind": "field",
+      "field": "prop:status"
+    }
+  },
+  {
+    "why": "an unreadable legacy value falls through as if absent",
+    "properties": [
+      [
+        "tine.group-by",
+        "a\rb"
+      ]
+    ],
+    "resolution": {
+      "kind": "unset"
+    }
+  },
+  {
+    "why": "the DSL directive is read under the same rules — list view means a property key",
+    "properties": [],
+    "parsed": {
+      "group_by": "status"
+    },
+    "resolution": {
+      "kind": "field",
+      "field": "prop:status"
+    }
+  },
+  {
+    "why": "the DSL directive under a persisted board view means the task marker",
+    "properties": [
+      [
+        "tine.view",
+        "board"
+      ]
+    ],
+    "parsed": {
+      "group_by": "state"
+    },
+    "resolution": {
+      "kind": "field",
+      "field": "state"
+    }
+  },
+  {
+    "why": "the DSL directive `(group-by page)` is the source page in both readings",
+    "properties": [],
+    "parsed": {
+      "group_by": "page"
+    },
+    "resolution": {
+      "kind": "field",
+      "field": "page"
+    }
+  },
+  {
+    "why": "the legacy key wins over the DSL directive",
+    "properties": [
+      [
+        "tine.group-by",
+        "cost"
+      ]
+    ],
+    "parsed": {
+      "group_by": "status"
+    },
+    "resolution": {
+      "kind": "field",
+      "field": "prop:cost"
+    }
+  },
+  {
+    "why": "an empty DSL group is nothing at all",
+    "properties": [],
+    "parsed": {
+      "group_by": ""
+    },
+    "resolution": {
+      "kind": "unset"
+    }
+  }
+]

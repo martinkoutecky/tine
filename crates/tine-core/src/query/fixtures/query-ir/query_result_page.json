@@ -1,0 +1,144 @@
+{
+  "anchor": "page",
+  "pages": [
+    {
+      "path": "pages/home.md",
+      "name": "Home",
+      "kind": "page",
+      "properties": [
+        [
+          "status",
+          "active"
+        ]
+      ]
+    },
+    {
+      "path": "journals/2026_07_29.md",
+      "name": "Jul 29th, 2026",
+      "kind": "journal",
+      "journal_day": 20260729,
+      "properties": []
+    }
+  ],
+  "diagnostics": [
+    {
+      "message": "`(all-page-tags)` takes no arguments",
+      "suggestions": [],
+      "disabled": false,
+      "kind": "syntax"
+    }
+  ],
+  "report": {
+    "ran": [
+      "page-tags"
+    ],
+    "ignored": [
+      "sample"
+    ],
+    "supported": true
+  },
+  "total": 2,
+  "matched_total": 7,
+  "statistics": {
+    "count": 2,
+    "aggregates": [
+      [
+        "cost",
+        "sum"
+      ],
+      [
+        "cost",
+        "sum"
+      ],
+      [
+        "cost",
+        "sum"
+      ],
+      [
+        "cost",
+        "sum"
+      ],
+      [
+        "cost",
+        "sum"
+      ],
+      [
+        "cost",
+        "sum"
+      ]
+    ],
+    "group_by": "prop:group",
+    "overall": [
+      {
+        "kind": "number",
+        "value": 3.125,
+        "skipped": 1
+      },
+      {
+        "kind": "number",
+        "value": 0.0,
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "non_finite",
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "division_by_zero",
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "empty_group",
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "non_numeric",
+        "skipped": 2
+      }
+    ],
+    "groups": [
+      {
+        "key": null,
+        "count": 2,
+        "cells": [
+          {
+            "kind": "number",
+            "value": 3.125,
+            "skipped": 1
+          },
+          {
+            "kind": "number",
+            "value": 0.0,
+            "skipped": 0
+          },
+          {
+            "kind": "marker",
+            "reason": "non_finite",
+            "skipped": 0
+          },
+          {
+            "kind": "marker",
+            "reason": "division_by_zero",
+            "skipped": 0
+          },
+          {
+            "kind": "marker",
+            "reason": "empty_group",
+            "skipped": 0
+          },
+          {
+            "kind": "marker",
+            "reason": "non_numeric",
+            "skipped": 2
+          }
+        ]
+      }
+    ],
+    "grouping_status": "exact"
+  },
+  "exceeded": true
+}
