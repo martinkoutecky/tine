@@ -85,7 +85,8 @@
     "scripts/e2e-journal-format.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "Custom journal filename and title formats load and render the corresponding journal feed entries.", "blocking": true },
-        { "class": "exact-safety-interoperability", "userOutcome": "A title-named journal file is never renamed by opening the graph; Backups & recovery lists the exact rename, declining the native confirmation changes nothing, and accepting renames it with identical bytes after a snapshot that keeps the original name.", "blocking": true, "authority": "og batch 11 journal filename proposals (master e6f9b6e1ceae: open proposes, never renames)" }
+        { "class": "exact-safety-interoperability", "userOutcome": "A title-named journal file is never renamed by opening the graph; Backups & recovery lists the exact rename, declining the native confirmation changes nothing, and accepting renames it with identical bytes after a snapshot that keeps the original name.", "blocking": true, "authority": "og batch 11 journal filename proposals (master e6f9b6e1ceae: open proposes, never renames)" },
+        { "class": "stateful-ux", "userOutcome": "Opening the app on a graph shows no journal-feed failure when nothing failed: a feed read the window makes before its graph is bound is not reported as an error.", "blocking": true, "authority": "og 12e P2 (false startup toast; master shows none)" }
       ],
       "acceptableVariations": ["Locale rendering and feed layout may vary while configured dates remain discoverable."],
       "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot directory naming beyond the pre-journal-rename tag."],
@@ -313,7 +314,7 @@
     "scripts/e2e-journal-rollover.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "When the local day changes during editing, the new day appears at the top of the Journals feed while the open editor keeps its textarea, unsaved text, selection and focus, and the text saves to the day it was typed in.", "blocking": true }],
       "acceptableVariations": ["The new day may appear a moment after midnight (timer margin), before or after the older day's save."],
-      "nonRequirements": ["Whether the new day's journal file is created at rollover.", "Exact scroll position of the feed."],
+      "nonRequirements": ["Whether the new day's journal file is created at rollover.", "Exact scroll position of the feed.", "Startup error toasts other than a journal-feed load failure."],
       "stability": "burn-in"
     }
   }

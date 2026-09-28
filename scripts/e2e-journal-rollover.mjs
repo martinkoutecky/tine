@@ -14,6 +14,7 @@ import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
+import { FEED_LOAD_FAILURE, watchErrorToasts } from "./lib/e2e-toasts.mjs";
 
 // Every Date below is UTC; re-exec with TZ set before the first Date is built.
 if (process.env.TZ !== "UTC") {
@@ -27,7 +28,9 @@ async function main() {
   const FAKETIME_LIB = [process.env.E2E_LIBFAKETIME, "/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1",
     "/aux/koutecky/logseq/.codex-deps/faketime/src/src/libfaketime.so.1"].find((file) => file && fs.existsSync(file));
   if (!FAKETIME_LIB) {
-    console.error("FAIL: libfaketime.so.1 not found (set E2E_LIBFAKETIME); this journey cannot move the app's clock without it");
+    console.error("FAIL: libfaketime.so.1 not found, so this journey cannot move the app's clock to midnight."
+      + " Remedy: install it (Debian/Ubuntu: `sudo apt-get install faketime`, which provides"
+      + " /usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1) or set E2E_LIBFAKETIME to a libfaketime.so.1 path.");
     process.exit(1);
   }
   const TMP = process.env.E2E_TMP_DIR || `/tmp/tine-journal-rollover-e2e-${process.pid}`;
@@ -103,6 +106,10 @@ async function main() {
       hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     });
+    step = "startup error toasts";
+    const startupErrors = await watchErrorToasts(browser);
+    if (startupErrors.some((text) => text.includes(FEED_LOAD_FAILURE)))
+      throw new Error(`startup reported a journal feed failure: ${JSON.stringify(startupErrors)}`);
     step = "feed before midnight";
     await browser.waitUntil(async () => (await feedState()).titles[0] === title(dayD), {
       timeout: 30_000, interval: 200, timeoutMsg: `the feed never led with ${title(dayD)}`,

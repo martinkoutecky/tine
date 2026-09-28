@@ -15,6 +15,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { answerNativeDialog } from "./lib/e2e-native-dialog.mjs";
+import { FEED_LOAD_FAILURE, watchErrorToasts } from "./lib/e2e-toasts.mjs";
 
 const TMP = process.env.E2E_TMP_DIR || `/tmp/tine-journal-format-e2e-${process.pid}`;
 const ARTIFACTS = process.env.E2E_ARTIFACT_DIR || TMP;
@@ -95,6 +96,10 @@ try {
     connectionRetryCount: 1,
     connectionRetryTimeout: 60000,
   });
+  mark("startup error toasts");
+  const startupErrors = await watchErrorToasts(browser);
+  if (startupErrors.some((text) => text.includes(FEED_LOAD_FAILURE)))
+    throw new Error(`startup reported a journal feed failure: ${JSON.stringify(startupErrors)}`);
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20000 });
 
   mark("custom-format feed");
