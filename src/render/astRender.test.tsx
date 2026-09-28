@@ -45,6 +45,11 @@ function mountedIframeWrap(raw: string): { wrap: HTMLElement; dispose: () => voi
 }
 
 describe("renderInlines", () => {
+  it.each(["javascript:alert(1)", "java\nscript:alert(1)", "vbscript:alert(1)", "data:text/html,<script>alert(1)</script>"])("does not place an executable graph link in href: %s", (dest) => {
+    const h = inl([{ k: "link", url: { type: "file", v: dest }, full: `[run](${dest})`, label: [{ k: "plain", text: "run" }] }]);
+    expect(h).not.toContain("href=");
+    expect(h).toContain("run");
+  });
   it("plain + emphasis", () => {
     const h = inl([
       { k: "plain", text: "a " },

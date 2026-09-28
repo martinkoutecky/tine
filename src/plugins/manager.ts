@@ -266,7 +266,9 @@ export class PluginManager {
     );
     setInstalledPlugins(remaining);
     if (!remaining.some((item) => item.storageId === target.storageId)) {
-      await backend().setAppString(this.settingsStorageKey(target.storageId), "{}");
+      await this.enqueuePersistence(this.settingsStorageKey(target.storageId), () =>
+        backend().setAppString(this.settingsStorageKey(target.storageId), "{}")
+      );
     }
   }
 
@@ -277,8 +279,7 @@ export class PluginManager {
     if (!plugin) throw new Error("plugin version is not installed");
     const definition = plugin.manifest.settings?.find((item) => item.key === key);
     if (!definition || !settingAccepts(definition, value)) throw new Error("plugin setting value is invalid");
-    const settings = { ...plugin.settings, [key]: value };
-    await this.storeSettings(plugin.manifest, settings, [key], true);
+    await this.storeSettings(plugin.manifest, (settings) => ({ ...settings, [key]: value }), [key], true);
   }
 
   async resetSetting(id: string, version: string, key: string): Promise<void> {
@@ -288,7 +289,7 @@ export class PluginManager {
     if (!plugin) throw new Error("plugin version is not installed");
     const definition = plugin.manifest.settings?.find((item) => item.key === key);
     if (!definition) throw new Error("plugin setting does not exist");
-    await this.storeSettings(plugin.manifest, { ...plugin.settings, [key]: definition.default }, [key], true);
+    await this.storeSettings(plugin.manifest, (settings) => ({ ...settings, [key]: definition.default }), [key], true);
   }
 
   async resetSettings(id: string, version: string): Promise<void> {
@@ -296,8 +297,7 @@ export class PluginManager {
       (item) => item.manifest.id === id && item.manifest.version === version
     );
     if (!plugin) throw new Error("plugin version is not installed");
-    const settings = defaultPluginSettings(plugin.manifest.settings);
-    await this.storeSettings(plugin.manifest, settings, (plugin.manifest.settings ?? []).map((item) => item.key), true);
+    await this.storeSettings(plugin.manifest, () => defaultPluginSettings(plugin.manifest.settings), (plugin.manifest.settings ?? []).map((item) => item.key), true);
   }
 
   commands(): ManagedCommand[] {
@@ -736,12 +736,9 @@ export class PluginManager {
         if (!manifest.capabilities.includes("settings.write")) return false;
         const definition = manifest.settings?.find((item) => item.key === effect.key);
         if (!definition) return false;
-        const current = installedPlugins().find(
-          (item) => item.manifest.id === manifest.id && item.manifest.version === manifest.version
-        );
         const value = effect.value === null ? definition.default : effect.value;
         if (!settingAccepts(definition, value)) return false;
-        await this.storeSettings(manifest, { ...(current?.settings ?? defaultPluginSettings(manifest.settings)), [effect.key]: value }, [effect.key], false);
+        await this.storeSettings(manifest, (settings) => ({ ...settings, [effect.key]: value }), [effect.key], false);
         return true;
       }
     }
@@ -790,13 +787,19 @@ export class PluginManager {
 
   private async storeSettings(
     manifest: PluginManifest,
-    candidate: PluginSettings,
+    update: (current: PluginSettings) => PluginSettings,
     changedKeys: string[],
     notifyRunning: boolean
   ) {
-    const settings = validatePluginSettings(manifest.settings, candidate);
-    await backend().setAppString(this.settingsStorageKey(manifest.id), JSON.stringify(settings));
-    this.patchSettings(manifest.id, settings);
+    const settings = await this.enqueuePersistence(this.settingsStorageKey(manifest.id), async () => {
+      const current = installedPlugins().find((item) =>
+        item.manifest.id === manifest.id && item.manifest.version === manifest.version
+      )?.settings ?? defaultPluginSettings(manifest.settings);
+      const next = validatePluginSettings(manifest.settings, update(current));
+      await backend().setAppString(this.settingsStorageKey(manifest.id), JSON.stringify(next));
+      this.patchSettings(manifest.id, next);
+      return next;
+    });
     const active = this.active.get(manifest.id);
     if (notifyRunning && active?.manifest.version === manifest.version && manifest.capabilities.includes("settings.read")) {
       await this.invokeAndApply({ plugin: active, phase: "active" }, {

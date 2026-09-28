@@ -437,13 +437,14 @@ function renderLink(
     if (k === "video" || k === "audio")
       return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
   }
+  const unsafeHref = /^(?:javascript|vbscript|data):/i.test(dest.replace(/[\u0000-\u0020]/g, ""));
   return (
     <span class="link-copy-wrap">
       <a
         class="external-link"
-        href={dest}
+        href={unsafeHref ? undefined : dest}
         {...(spanAttrs ?? {})}
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(dest); }}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!unsafeHref) void backend().openExternal(dest); }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>
