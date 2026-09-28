@@ -10,32 +10,53 @@ const POPUP_MARGIN = 8;
 const POPUP_OFFSET = 6;
 const POPUP_FALLBACK_WIDTH = 600;
 const POPUP_FALLBACK_HEIGHT = 320;
+const MAX_PEEK_BLOCK_DEPTH = 64;
+const MAX_PEEK_BLOCKS = 100;
+const MAX_PEEK_COUNT = 2_000;
 
-function countBlocks(blocks: BlockDto[]): number {
+function countBlocks(blocks: readonly BlockDto[]): number {
   let count = 0;
-  for (const block of blocks) count += 1 + countBlocks(block.children);
+  const stack = [{ source: blocks, index: 0 }];
+  while (stack.length) {
+    const frame = stack[stack.length - 1];
+    if (frame.index >= frame.source.length) { stack.pop(); continue; }
+    const block = frame.source[frame.index++];
+    if (++count > MAX_PEEK_COUNT) return MAX_PEEK_COUNT + 1;
+    if (block.children.length) stack.push({ source: block.children, index: 0 });
+  }
   return count;
 }
 
+/** Return at most 100 blocks across 64 levels. `truncated` is exact through 2000;
+ * 2001 means at least 2001 more, so callers display "2000+". Visits at most
+ * 2101 blocks and never recurses, including when the source tree is deeper. */
 export function capBlockTree(blocks: BlockDto[], maxBlocks: number): { blocks: BlockDto[]; truncated: number } {
   if (maxBlocks <= 0) return { blocks: [], truncated: countBlocks(blocks) };
+  const limit = Math.min(maxBlocks, MAX_PEEK_BLOCKS);
 
   let emitted = 0;
   let truncated = 0;
-  const copy = (source: BlockDto[]): BlockDto[] => {
-    const out: BlockDto[] = [];
-    for (const block of source) {
-      if (emitted >= maxBlocks) {
-        truncated += countBlocks([block]);
-        continue;
-      }
-      emitted++;
-      out.push({ ...block, children: copy(block.children) });
+  const out: BlockDto[] = [];
+  const stack: Array<{ source: readonly BlockDto[]; index: number; target: BlockDto[]; depth: number }> =
+    [{ source: blocks, index: 0, target: out, depth: 1 }];
+  while (stack.length) {
+    const frame = stack[stack.length - 1];
+    if (frame.index >= frame.source.length) {
+      stack.pop();
+      continue;
     }
-    return out;
-  };
-
-  return { blocks: copy(blocks), truncated };
+    const block = frame.source[frame.index++];
+    if (emitted >= limit || frame.depth > MAX_PEEK_BLOCK_DEPTH) {
+      truncated += countBlocks([block]);
+      if (truncated > MAX_PEEK_COUNT) return { blocks: out, truncated: MAX_PEEK_COUNT + 1 };
+      continue;
+    }
+    emitted++;
+    const children: BlockDto[] = [];
+    frame.target.push({ ...block, children });
+    if (block.children.length) stack.push({ source: block.children, index: 0, target: children, depth: frame.depth + 1 });
+  }
+  return { blocks: out, truncated };
 }
 
 export function PeekPopup(props: {
@@ -128,7 +149,8 @@ export function PeekPopup(props: {
           <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} />
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
-          <div class="peek-popup-more">{props.truncatedCount!()} more blocks</div>
+          <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT
+            ? `${MAX_PEEK_COUNT}+ more blocks` : `${props.truncatedCount!()} more blocks`}</div>
         </Show>
       </div>
     </Portal>

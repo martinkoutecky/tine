@@ -61,8 +61,11 @@ export function serializeCalcExitCommit(text: string, previousRaw?: string): str
 // (/aux/koutecky/logseq/og/src/main/frontend/extensions/calc.cljc:41-117).
 const TEN = 10n;
 const DIVISION_PLACES = 20;
+const MAX_CALC_DIGITS = 10_000;
+const MAX_CALC_LINE_CHARS = 16_000;
 
 function pow10(places: number): bigint {
+  if (!Number.isSafeInteger(places) || places < 0 || places > MAX_CALC_DIGITS) throw new Error("calc result too large");
   return TEN ** BigInt(places);
 }
 
@@ -79,6 +82,8 @@ class Decimal {
 
   static finite(sign: number, coefficient: bigint, scale = 0): Decimal {
     if (coefficient === 0n) return new Decimal(0, 0n, 0);
+    if (!Number.isSafeInteger(scale) || Math.abs(scale) > MAX_CALC_DIGITS) throw new Error("calc result too large");
+    if (coefficient.toString().length > MAX_CALC_DIGITS) throw new Error("calc result too large");
     let normalized = coefficient < 0n ? -coefficient : coefficient;
     let normalizedScale = scale;
     while (normalizedScale > 0 && normalized % TEN === 0n) {
@@ -167,6 +172,9 @@ class Decimal {
   multipliedBy(other: Decimal): Decimal {
     const special = this.specialBinary(other, "multiply");
     if (special) return special;
+    if (this.coefficient.toString().length + other.coefficient.toString().length > MAX_CALC_DIGITS + 1) {
+      throw new Error("calc result too large");
+    }
     return Decimal.finite(this.sign * other.sign, this.coefficient * other.coefficient, this.scale + other.scale);
   }
 
@@ -219,6 +227,9 @@ class Decimal {
     const exponent = other.integerValue();
     if (exponent === null || !this.isFinite()) return Decimal.fromNumber(Math.pow(this.toNumber(), other.toNumber()));
     if (exponent === 0n) return Decimal.finite(1, 1n);
+    if (exponent > BigInt(MAX_CALC_DIGITS) || exponent < -BigInt(MAX_CALC_DIGITS)) {
+      throw new Error("calc exponent too large");
+    }
     const negativeExponent = exponent < 0n;
     let remaining = negativeExponent ? -exponent : exponent;
     let base: Decimal = this;
@@ -747,13 +758,15 @@ function formatValue(env: CalcEnvironment, value: Decimal): string {
   return formatNormal(env, value);
 }
 
-/** Evaluate a multi-line calc source; returns one entry per input line. */
+/** Evaluate a multi-line calc source; returns one entry per input line. Lines
+ * beyond 16k characters or results beyond 10k digits become error rows. */
 export function evalCalc(src: string): CalcLine[] {
   const env: CalcEnvironment = { values: new Map() };
   return src.split("\n").map((line) => {
     const noComment = line.split("#")[0];
     if (!noComment.trim()) return { input: line, output: null };
     try {
+      if (line.length > MAX_CALC_LINE_CHARS) throw new Error("calc line too long");
       let value: CalcValue | undefined;
       if (noComment.trimStart().startsWith(":")) {
         const directive = parseDirective(noComment);

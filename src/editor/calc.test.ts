@@ -11,6 +11,12 @@ beforeAll(async () => {
 const out = (src: string) => evalCalc(src).map((l) => l.output);
 
 describe("calc evaluator (Logseq parity)", () => {
+  it("rejects expensive imported powers while retaining ordinary large calculations", () => {
+    expect(out("2 ^ 1000")[0]).toBe("1.07150860718626732095e+301");
+    expect(evalCalc("1e100000\n2 ^ 100000\n3").map((line) => [line.output, !!line.error]),
+      "I-22: calc rejects imported powers and scientific exponents above the digit budget")
+      .toEqual([[null, true], [null, true], ["3", false]]);
+  });
   it("basic arithmetic + precedence", () => {
     expect(out("1 + 2 * 3")).toEqual(["7"]);
     expect(out("(1 + 2) * 3")).toEqual(["9"]);

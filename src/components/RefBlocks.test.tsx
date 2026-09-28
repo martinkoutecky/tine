@@ -51,6 +51,21 @@ const dto = (over: Partial<BlockDto>): BlockDto => ({
 });
 
 describe("RefBlocks priority chip", () => {
+  it("renders the backend's maximum 512-level DTO without overflowing", () => {
+    let block = dto({ id: "leaf", raw: "leaf" });
+    for (let depth = 1; depth < 512; depth++) block = dto({ id: `level-${depth}`, raw: `level ${depth}`, children: [block] });
+    const out = html(() => RefBlocks({ blocks: [block] }));
+    expect(out.text, "I-22: RefBlocks truncates a backend-valid 512-level tree before Solid overflows")
+      .toContain("More nested blocks are available on the page");
+    expect(out.text).toContain("level 448");
+  });
+  it("keeps a 64-level reference tree fully visible", () => {
+    let block = dto({ id: "leaf", raw: "leaf" });
+    for (let depth = 1; depth < 64; depth++) block = dto({ id: `level-${depth}`, raw: `level ${depth}`, children: [block] });
+    const out = html(() => RefBlocks({ blocks: [block] }));
+    expect(out.text).toContain("leaf");
+    expect(out.text).not.toContain("More nested blocks are available on the page");
+  });
   it("renders the [#A] chip from the DTO facet (parity with <Block>)", () => {
     const out = html(() => RefBlocks({ blocks: [dto({ marker: "TODO", priority: "A" })] }));
     expect(out.html).toContain("block-priority");

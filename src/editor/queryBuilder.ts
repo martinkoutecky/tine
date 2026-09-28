@@ -710,17 +710,18 @@ function collapseAnyBetween(children: Clause[]): Clause | null {
   return { kind: "between", field: "any", start: first.start, end: first.end };
 }
 
-function parseAdvancedChildren(toks: AdvancedTok[], cur: AdvancedCur): Clause[] | null {
+function parseAdvancedChildren(toks: AdvancedTok[], cur: AdvancedCur, depth: number): Clause[] | null {
   const children: Clause[] = [];
   while (toks[cur.pos] && toks[cur.pos].t !== ")") {
-    const child = parseAdvancedExpr(toks, cur);
+    const child = parseAdvancedExpr(toks, cur, depth);
     if (!child) return null;
     children.push(child);
   }
   return children.length ? children : null;
 }
 
-function parseAdvancedExpr(toks: AdvancedTok[], cur: AdvancedCur): Clause | null {
+function parseAdvancedExpr(toks: AdvancedTok[], cur: AdvancedCur, depth = 0): Clause | null {
+  if (depth > MAX_QUERY_DEPTH) return null;
   if (!takeAdvancedSym(toks, cur, "(")) return null;
   const head = takeAdvancedWord(toks, cur);
   if (!head) return null;
@@ -728,13 +729,13 @@ function parseAdvancedExpr(toks: AdvancedTok[], cur: AdvancedCur): Clause | null
   switch (head) {
     case "and":
     case "or": {
-      const children = parseAdvancedChildren(toks, cur);
+      const children = parseAdvancedChildren(toks, cur, depth + 1);
       if (!children || !takeAdvancedSym(toks, cur, ")")) return null;
       if (head === "or") return collapseAnyBetween(children) ?? { kind: "op", op: "or", children };
       return { kind: "op", op: "and", children };
     }
     case "not": {
-      const child = parseAdvancedExpr(toks, cur);
+      const child = parseAdvancedExpr(toks, cur, depth + 1);
       if (!child || !takeAdvancedSym(toks, cur, ")")) return null;
       return { kind: "op", op: "not", children: [child] };
     }
@@ -853,7 +854,9 @@ function parseAdvancedFind(toks: AdvancedTok[], cur: AdvancedCur): boolean {
   );
 }
 
+/** Convert only supported Datalog forms; oversized or over-nested input stays raw. */
 export function advancedToClause(datalog: string): Clause | null {
+  if (datalog.length > 64 * 1024) return null;
   const toks = tokenizeAdvanced(datalog.trim());
   if (!toks) return null;
   const cur: AdvancedCur = { pos: 0 };

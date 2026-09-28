@@ -3171,19 +3171,13 @@ export function Editor(props: { id: string }): JSX.Element {
       insertPastedOutline([sheetGridNode], "sheet-outline-paste", true);
       return;
     }
-    // Preserve only structure explicitly represented by the clipboard HTML.
-    // Shift-paste above remains the literal/plain escape hatch, and editor
-    // surfaces whose contents are syntax-sensitive retain their native text
-    // insertion semantics.
+    // Preserve explicit clipboard HTML structure on ordinary editor surfaces.
     const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text, pageFmt());
     if (htmlNodes) {
       e.preventDefault();
       insertPastedOutline(htmlNodes, "structured-paste");
       return;
     }
-    // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:168-177 parses only
-    // block-looking text, segments blank-line-separated prose, and otherwise
-    // replaces the selection literally inside the current block.
     if (text.includes("\n")) {
       e.preventDefault();
       if (syntaxSensitive) {
@@ -3267,10 +3261,16 @@ export function Editor(props: { id: string }): JSX.Element {
       await insertAssetBytes(editorToken, bytes);
     })();
   };
-
   function insertPastedOutline(nodes: OutlineNode[], tag: string, asChildren = false) {
     const current = docNode(props.id);
     if (!current) return;
+    const availableDepth = 128 - depthOf(props.id) - (asChildren ? 1 : 0);
+    const pending = nodes.map((node) => ({ node, depth: 1 }));
+    while (pending.length) {
+      const { node, depth } = pending.pop()!;
+      if (depth > availableDepth) { pushToast("Pasted outline is too deep", "error"); return; }
+      for (const child of node.children) pending.push({ node: child, depth: depth + 1 });
+    }
     const rawAtPaste = ref.value;
     const pageAtPaste = current.page;
     const insert = (prepared: OutlineNode[] | null) => {
