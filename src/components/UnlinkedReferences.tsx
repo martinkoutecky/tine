@@ -1,5 +1,6 @@
-import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage } from "../router";
 import { ReferenceExcerptBlocks } from "./ReferenceEvidence";
 import type { RefGroup } from "../types";
@@ -40,17 +41,22 @@ function classifyReferenceLoadError(error: unknown): ReferenceLoadError {
 
 // "Unlinked References" — plain-text mentions of the page, collapsed by default.
 export function UnlinkedReferences(props: { name: string }): JSX.Element {
+  const readScope = {};
+  let alive = true;
+  onCleanup(() => { alive = false; });
   const [open, setOpen] = createSignal(false);
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
   const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
   const [groups] = createResource(
     () => props.name,
     async (n) => {
+      const owner = latestOwner(readScope, "unlinked", graphOwner(() => alive && props.name === n));
       setLoadError(null);
       try {
-        return await backend().getUnlinkedRefs(n);
+        const result = await readOwned(owner, backend().getUnlinkedRefs(n));
+        return result.kind === "current" ? result.value : [];
       } catch (error) {
-        setLoadError(classifyReferenceLoadError(error));
+        if (owner()) setLoadError(classifyReferenceLoadError(error));
         return [];
       }
     }

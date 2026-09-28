@@ -4,6 +4,7 @@ import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
+import { graphOwner, latestOwner, readOwned, serializeOwned, type Owner } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { writeClipboardText } from "../clipboard";
 import { closePdf, activePane, requestBlockReferences, type PdfTarget } from "../ui";
@@ -364,10 +365,12 @@ export function PdfViewer(props: {
     });
   }
 
-  // Failed additions remain visible and marked unsaved. The viewer participant
-  // retries them on graph switch, and close waits for that same drain.
+  // Failed additions stay visible/unsaved; the viewer participant retries them on graph switch and close waits for that drain.
   const [unsavedHighlights, setUnsavedHighlights] = createSignal(false);
-  const persistOwned = async (): Promise<boolean> => {
+  const highlightQueue = {};
+  const highlightIntents = {};
+  const highlightGraphOwner = graphOwner(() => isPdfOwnershipCurrent(owner));
+  const persistOwned = async (landingOwner: Owner): Promise<boolean> => {
     const hlsName = hlsPageName(props.filename);
     // If the notes (hls__) page is open with unsaved edits, get them onto disk
     // FIRST so the backend merges against them. Otherwise this write reads a disk
@@ -375,37 +378,45 @@ export function PdfViewer(props: {
     // clobber) if the notes page can't be flushed.
     if (isDirty(hlsName) || isConflicted(hlsName)) {
       if (!(await flushPage(hlsName))) {
-        pushToast("Couldn't save notes — highlight not written. Resolve the conflict and retry.", "error");
+        if (landingOwner()) pushToast("Couldn't save notes — highlight not written. Resolve the conflict and retry.", "error");
         return false;
       }
+      if (!highlightGraphOwner()) return false;
     }
     try {
-      // Current Logseq sidecars store x1/y1/x2/y2 plus the coordinate-space page
-      // dimensions. Enrich old Tine rectangles lazily on the first real edit so
-      // merely opening a graph never rewrites it.
+      // Logseq sidecars store x1/y1/x2/y2 plus page dimensions. Enrich old Tine
+      // rectangles on the first real edit; opening a graph never rewrites them.
       const persisted = await highlightsForWrite(highlights());
-      const merged = await trackAssetWrite(
+      if (!highlightGraphOwner()) return false;
+      const result = await readOwned(highlightGraphOwner, trackAssetWrite(
         backend().writeHighlights(props.filename, props.label, persisted, baseHighlights, "replace-page", binding.backendGeneration)
-      );
-      setHighlights(merged);
-      baseHighlights = merged;
-      setUnsavedHighlights(false);
+      ));
+      if (result.kind === "stale") return false;
+      baseHighlights = result.value;
+      if (landingOwner()) {
+        setHighlights(result.value);
+        setUnsavedHighlights(false);
+      }
     } catch (e) {
-      pushToast(`Couldn't save highlight — it remains unsaved in the PDF. (${String(e)})`, "error");
+      if (landingOwner()) pushToast(`Couldn't save highlight — it remains unsaved in the PDF. (${String(e)})`, "error");
       return false;
     }
     // Refresh the loaded notes page (content + save baseline) to include the change.
     try {
-      await reloadHlsIfLoaded(hlsName);
+      const reloaded = await readOwned(highlightGraphOwner, reloadHlsIfLoaded(hlsName));
+      if (reloaded.kind === "stale") return false;
     } catch (error) {
-      pushToast(`Highlight saved, but notes couldn't reload. (${String(error)})`, "error");
+      if (landingOwner()) pushToast(`Highlight saved, but notes couldn't reload. (${String(error)})`, "error");
     }
     return true;
   };
 
-  const persist = async (): Promise<boolean> => {
+  const persist = async (landingOwner = latestOwner(highlightIntents, "highlights", highlightGraphOwner)): Promise<boolean> => {
     try {
-      return await trackPdfMutation(owner, persistOwned);
+      const result = await trackPdfMutation(owner, () =>
+        serializeOwned(highlightQueue, highlightGraphOwner, () => persistOwned(landingOwner))
+      );
+      return result.kind === "current" && result.value;
     } catch {
       // A retired owner is an expected cancellation path.  The graph switch
       // already drained before retirement; never retry against a later binding.
@@ -439,14 +450,16 @@ export function PdfViewer(props: {
   const deleteHighlight = async (id: string) => {
     const prev = highlights();
     setHighlights(highlights().filter((h) => h.id !== id));
+    const intent = latestOwner(highlightIntents, "highlights", highlightGraphOwner);
     closeHighlightMenu();
-    if (!(await persist())) setHighlights(prev); // restore — it's still on disk
+    if (!(await persist(intent)) && intent()) setHighlights(prev); // restore — it's still on disk
   };
   const recolorHighlight = async (id: string, color: string) => {
     const prev = highlights();
     setHighlights(highlights().map((h) => (h.id === id ? { ...h, color } : h)));
+    const intent = latestOwner(highlightIntents, "highlights", highlightGraphOwner);
     closeHighlightMenu();
-    if (!(await persist())) setHighlights(prev); // restore the previous color
+    if (!(await persist(intent)) && intent()) setHighlights(prev); // restore the previous color
   };
 
   function closeHighlightMenu() {
@@ -970,25 +983,32 @@ export function PdfViewer(props: {
   let unregisterPdfParticipant = () => {};
 
   onMount(async () => {
+    const loadOwner = graphOwner(() => !disposed && isPdfOwnershipCurrent(owner));
     setLoadError(null);
     let restoredPage: number | null = null;
     let restoredScale: number | null = null;
     try {
-      const state = await backend().openPdf(props.filename, props.label, "create-page", binding.backendGeneration);
-      if (disposed) return;
+      const result = await readOwned(loadOwner,
+        backend().openPdf(props.filename, props.label, "create-page", binding.backendGeneration));
+      if (result.kind === "stale") return;
+      const state = result.value;
       setHighlights(state.highlights);
       restoredPage = state.page;
       restoredScale = state.scale;
     } catch (error) {
-      setHighlights([]);
-      pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
+      if (loadOwner()) {
+        setHighlights([]);
+        pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
+      }
     }
     baseHighlights = highlights();
     let bytes: Uint8Array;
     try {
-      bytes = await backend().readAsset(props.filename, MAX_PDF_BYTES);
-      if (disposed) return;
+      const result = await readOwned(loadOwner, backend().readAsset(props.filename, MAX_PDF_BYTES));
+      if (result.kind === "stale") return;
+      bytes = result.value;
     } catch (err) {
+      if (!loadOwner()) return;
       if (errorFamily(err) === "asset-too-large")
         failPdf("This PDF is larger than 256 MiB and can't be opened safely.");
       else failPdf(errorMessage("Couldn't read this PDF asset", err));
@@ -1387,13 +1407,17 @@ export function PdfViewer(props: {
     const prev = highlights(), wasUnsaved = unsavedHighlights();
     setHighlights([...prev, h]);
     setUnsavedHighlights(true);
-    if (!(await persistOwned())) {
-      setHighlights(prev); setUnsavedHighlights(wasUnsaved);
-      try { await trackAssetWrite(backend().rollbackPdfAreaImage(props.filename, page, id, stamp, binding.backendGeneration)); }
-      catch (e) { pushToast(`Couldn't move the unused area image to trash. (${String(e)})`, "error"); }
+    const intent = latestOwner(highlightIntents, "highlights", highlightGraphOwner);
+    const save = await serializeOwned(highlightQueue, highlightGraphOwner, () => persistOwned(intent));
+    if (save.kind === "stale" || !save.value) {
+      if (intent()) {
+        setHighlights(prev); setUnsavedHighlights(wasUnsaved);
+        try { await trackAssetWrite(backend().rollbackPdfAreaImage(props.filename, page, id, stamp, binding.backendGeneration)); }
+        catch (e) { pushToast(`Couldn't move the unused area image to trash. (${String(e)})`, "error"); }
+      }
       return false;
     }
-    await copyCreatedHighlightRef(h.id);
+    if (intent()) await copyCreatedHighlightRef(h.id);
     return true;
   };
 

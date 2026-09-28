@@ -8,6 +8,7 @@
 // drop most of a long page. The core-rendered document is complete and unstyled by
 // the app chrome, so the PDF is the page, nothing else.
 import { backend } from "./backend";
+import { graphOwner, readOwned } from "./owned";
 import { pushToast } from "./toasts";
 import type { PrintOpts } from "./types";
 
@@ -103,10 +104,15 @@ export async function preparePrintHtml(html: string): Promise<string> {
 
 /** Export a page to PDF via the OS print dialog. Safe to call repeatedly. */
 export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRINT_OPTS): Promise<void> {
+  const owner = graphOwner();
   let html: string;
   try {
-    html = await preparePrintHtml(await backend().pagePrintHtml(name, opts));
+    const result = await readOwned(owner, backend().pagePrintHtml(name, opts));
+    if (result.kind === "stale") return;
+    html = await preparePrintHtml(result.value);
+    if (!owner()) return;
   } catch (e) {
+    if (!owner()) return;
     // `no-page` (deleted mid-action) or any core error — never leave a dangling frame.
     pushToast(`Couldn't prepare “${name}” for PDF`, "error");
     console.error("pagePrintHtml failed");
@@ -145,6 +151,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
       const fonts = iframe.contentDocument?.fonts;
       if (fonts?.ready) await fonts.ready;
       await new Promise((r) => setTimeout(r, 400));
+      if (!owner()) { cleanup(); return; }
       win.addEventListener("afterprint", cleanup, { once: true });
       win.focus();
       win.print();

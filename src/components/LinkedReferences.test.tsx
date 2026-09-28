@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import type { BacklinkFilterContext, BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
@@ -35,6 +36,27 @@ afterEach(() => {
 });
 
 describe("Linked References filters", () => {
+  it("ignores an old page's failed read after the reference target changes", async () => {
+    let rejectOld!: (error: Error) => void;
+    vi.spyOn(backend(), "getBacklinks")
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectOld = reject; }))
+      .mockResolvedValueOnce([]);
+    const [name, setName] = createSignal("Old");
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name={name()} />, root);
+    try {
+      await tick();
+      setName("New");
+      await tick();
+      rejectOld(new Error("old read failed"));
+      await tick();
+      expect(root.querySelector('[role="alert"]'), "I-20: a retired reference read cannot report an error on the new target").toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("stays unmounted while loading and defaults a threshold-sized result to an unmounted body", async () => {
     let resolve!: (groups: RefGroup[]) => void;
     vi.spyOn(backend(), "getBacklinks").mockImplementation(

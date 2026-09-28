@@ -13,6 +13,7 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { latestOwner, readOwned } from "./owned";
 import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
 import { pushToast } from "./toasts";
 
@@ -22,6 +23,7 @@ const KEY_LANGS = "spellcheck_languages";
 const [enabled, setEnabledSig] = createSignal(true);
 const [languages, setLanguagesSig] = createSignal("");
 const [dictionaries, setDictionaries] = createSignal<string[]>([]);
+const dictionaryScope = {};
 
 /** Reactive: locale codes of the spell-check dictionaries installed on this
  *  machine (from the backend), so the UI can offer a pick-list. */
@@ -89,10 +91,15 @@ export function languageDisplayName(code: string): string {
 /** (Re)load the installed dictionaries from the backend. Cheap; call on startup
  *  and from a "Rescan" button (the user may install a dictionary mid-session). */
 export async function loadDictionaries(): Promise<void> {
+  const owner = latestOwner(dictionaryScope, "dictionaries");
   try {
-    setDictionaries(await backend().listSpellcheckDictionaries());
+    const result = await readOwned(owner, backend().listSpellcheckDictionaries());
+    if (result.kind === "current") setDictionaries(result.value);
   } catch {
-    setDictionaries([]);
+    if (owner()) {
+      setDictionaries([]);
+      pushToast("Could not load spellcheck dictionaries.", "error");
+    }
   }
 }
 

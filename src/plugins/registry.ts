@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend, type LegacyPluginRegistryCache, type PluginRegistryCacheLoad } from "../backend";
+import { readOwned } from "../owned";
 import {
   PLUGIN_API_VERSION,
   PLUGIN_CAPABILITIES,
@@ -510,10 +511,12 @@ async function applyLiveSnapshot(
     try {
       // Atomic publication remains in the accepted-generation queue. A stale
       // response writes nothing; a failed write leaves the previous envelope.
-      await backend().storePluginRegistryCache(cache.indexJson, cache.signature);
-      setRegistryPersistenceError(null);
+      const result = await readOwned(() => generation === latestVerifiedGeneration,
+        backend().storePluginRegistryCache(cache.indexJson, cache.signature));
+      if (result.kind === "current") setRegistryPersistenceError(null);
     } catch (error) {
-      setRegistryPersistenceError(`The verified live registry is active but was not saved for restart: ${error instanceof Error ? error.message : String(error)}`);
+      if (generation === latestVerifiedGeneration)
+        setRegistryPersistenceError(`The verified live registry is active but was not saved for restart: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
   await liveApplyChain;

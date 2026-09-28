@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
+import { graphOwner, latestOwner, readOwned } from "./owned";
 import { dataRev, graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
 import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
@@ -34,6 +35,7 @@ const [held, setHeld] = createSignal<Held | null>(null);
 // request issued before it is dropped.
 let generation = 0;
 let queued = false;
+const refreshScope = {};
 
 function build(inventory: PageInventory, rev: bigint): Held {
   const pages = new Map<string, PageInventoryEntry>();
@@ -57,14 +59,15 @@ function build(inventory: PageInventory, rev: bigint): Held {
  *  the graph was rebound meanwhile. */
 export async function refreshPageIndex(): Promise<void> {
   const requested = generation;
-  const epoch = graphEpoch();
+  const owner = latestOwner(refreshScope, "inventory", graphOwner(() => requested === generation));
   let inventory: PageInventory;
   try {
-    inventory = await backend().pageInventory();
+    const result = await readOwned(owner, backend().pageInventory());
+    if (result.kind === "stale") return;
+    inventory = result.value;
   } catch {
     return;
   }
-  if (requested !== generation || epoch !== graphEpoch()) return;
   const rev = BigInt(inventory.rev);
   const current = held();
   if (current && current.generation === generation && rev < current.rev) return;

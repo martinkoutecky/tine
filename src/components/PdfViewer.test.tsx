@@ -609,6 +609,50 @@ describe("PdfViewer OG state and reference behavior", () => {
     Reflect.deleteProperty(document, "elementFromPoint");
   });
 
+  it("serializes highlight edits and keeps the newest response as the next save baseline", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    let finishFirst!: (value: typeof loaded[]) => void;
+    const secondResponse = Promise.resolve([{ ...loaded, color: "blue" }]);
+    const write = vi.spyOn(backend(), "writeHighlights")
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+      .mockImplementationOnce(() => secondResponse)
+      .mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    const recolor = async (swatch: number) => {
+      (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
+      await flush();
+      (host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[swatch]).dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+      );
+      await flush();
+    };
+    try {
+      await flush();
+      TestIntersectionObserver.instances[0].show(host.querySelector(".pdf-page")!);
+      await flush();
+      await recolor(1); // green waits in native write
+      await recolor(2); // blue's response is already ready, but its write cannot start yet
+      await secondResponse;
+      expect(write).toHaveBeenCalledTimes(1);
+      finishFirst([{ ...loaded, color: "green" }]);
+      await flush();
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(write.mock.calls[1][2][0].color).toBe("blue");
+      await recolor(3); // red must build on the completed blue write
+      expect(write.mock.calls[2][3][0].color).toBe("blue");
+    } finally {
+      dispose();
+    }
+  });
+
   it("restores OG page and scale then debounces changed view state", async () => {
     const openPdf = vi.spyOn(backend() as any, "openPdf").mockResolvedValue({
       highlights: [],

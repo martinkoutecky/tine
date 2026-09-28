@@ -1,5 +1,6 @@
 import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
@@ -103,15 +104,20 @@ function fallbackFilterEntry(block: BlockDto): SearchableFilterEntry {
 const OG_REFERENCE_COLLAPSE_THRESHOLD = 100;
 
 export function LinkedReferences(props: { name: string }): JSX.Element {
+  const readScope = {};
+  let alive = true;
+  onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
   const [groups] = createResource(
     () => props.name,
     async (n) => {
+      const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
       setLoadError(null);
       try {
-        return await backend().getBacklinks(n);
+        const result = await readOwned(owner, backend().getBacklinks(n));
+        return result.kind === "current" ? result.value : [];
       } catch (error) {
-        setLoadError(classifyReferenceLoadError(error));
+        if (owner()) setLoadError(classifyReferenceLoadError(error));
         return [];
       }
     }

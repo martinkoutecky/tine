@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import type { RefGroup } from "../types";
 import { resetStore } from "../document";
@@ -18,6 +19,28 @@ afterEach(() => {
 });
 
 describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
+  it("ignores an old target's failed read after the target changes", async () => {
+    let rejectOld!: (error: Error) => void;
+    vi.spyOn(backend(), "getUnlinkedRefs")
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectOld = reject; }))
+      .mockResolvedValueOnce([]);
+    const [name, setName] = createSignal("Old");
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <UnlinkedReferences name={name()} />, root);
+    try {
+      await tick();
+      (root.querySelector(".references-header") as HTMLElement).click();
+      setName("New");
+      await tick();
+      rejectOld(new Error("old read failed"));
+      await tick();
+      expect(root.querySelector('[role="alert"]'), "I-20: a retired unlinked read cannot report an error on the new target").toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("routes authored DTO identities and focuses their loaded runtime owner", async () => {
     const runtimeId = "runtime-unlinked";
     const authoredId = "authored-unlinked";

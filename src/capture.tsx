@@ -18,6 +18,7 @@ import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
+import { latestOwner, readOwned } from "./owned";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
 import { createCaptureBlurGate, resettleIfVisible } from "./captureVisibility";
@@ -309,8 +310,12 @@ function Capture() {
     }
   };
 
+  const submitScope = {};
+  let submitAlive = true;
+  onCleanup(() => { submitAlive = false; });
   const submit = () => {
     if (pendingCapture) return;
+    const submitOwner = latestOwner(submitScope, "capture", () => submitAlive);
     const md = roots().map((r) => blockSubtreeMarkdown(r)).join("\n").trim();
     const pageTitle = title().trim();
     void (async () => {
@@ -325,11 +330,15 @@ function Capture() {
       const id = createQuickCaptureRequestId();
       let target: string;
       try {
-        target = await backend().captureTarget();
+        const result = await readOwned(submitOwner, backend().captureTarget());
+        if (result.kind === "stale") return;
+        target = result.value;
       } catch {
-        setCaptureStatus("error");
-        setCaptureMessage("No graph window is ready — text kept");
-        scheduleFit();
+        if (submitOwner()) {
+          setCaptureStatus("error");
+          setCaptureMessage("No graph window is ready — text kept");
+          scheduleFit();
+        }
         return;
       }
       const pending: PendingCapture = {

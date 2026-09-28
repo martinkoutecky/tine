@@ -5,6 +5,7 @@ import { PaneContext, focusedRouter } from "../panes";
 import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding } from "../binding";
+import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
 import { isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
@@ -38,6 +39,7 @@ let publishedFeedEpoch: number | null = null;
 let publishedFeedNames: readonly string[] | null = null;
 let feedDone = false;
 let pendingFeedRestart = false;
+const feedOwners = {};
 
 /** A feed response belongs to one graph and one or more concrete Journals
  * surfaces.  App's watcher supplies a captured owner too, so a response begun
@@ -94,6 +96,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean)
   // must not steal the generation from a live request that is about to land.
   if (!ownerIsLive(owner)) return;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
+  const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
   if (feedHasActiveEdit()) {
     pendingFeedRestart = true;
     return;
@@ -101,8 +104,10 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean)
   const browserDay = localDayKey();
   loadingGeneration = generation;
   try {
-    const response = await backend().journalFeedPage(FEED_PAGE, null);
-    if (generation !== feedGeneration || !ownerIsLive(owner) || !responseMatches(browserDay, response)) {
+    const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, null));
+    if (result.kind === "stale") return;
+    const response = result.value;
+    if (!responseMatches(browserDay, response)) {
       if (generation === feedGeneration && ownerIsLive(owner) && !retried && !feedHasActiveEdit()) {
         return restartJournalFeed(owner, true);
       }
@@ -197,6 +202,7 @@ export function PageView(): JSX.Element {
     const revision = router.routeIntentRevision();
     const owned = () => surfaceAlive && epoch === graphEpoch()
       && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), r);
+    const routeOwner = graphOwner(owned);
     setReady(false);
     setLoadError(null);
     // Surface keys are STATIC per pane (matching PaneLeaf's frozen provider
@@ -251,10 +257,11 @@ export function PageView(): JSX.Element {
           // A path-pinned route (#21) loads that SPECIFIC file — the way to reach a
           // duplicate-day stray that shares a (kind,name) with the canonical day;
           // everything else resolves by name as before.
-          const dto = r.path
-            ? await backend().getPageByPath(r.path)
-            : await backend().getPage(r.name, r.pageKind);
-          if (!owned()) return;
+          const result = await readOwned(routeOwner, r.path
+            ? backend().getPageByPath(r.path)
+            : backend().getPage(r.name, r.pageKind));
+          if (result.kind === "stale") return;
+          const dto = result.value;
           if (r.path && (!dto || dto.id !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
             throw new Error("The selected physical page is no longer available at that path.");
           }
@@ -302,11 +309,14 @@ export function PageView(): JSX.Element {
     }
     if (loadingGeneration !== null || feedDone || nextBeforeDay === null) return;
     const generation = feedGeneration;
+    const requestOwner: Owner = graphOwner(() => generation === feedGeneration && ownerIsLive(owner));
     const asOfDay = journalAsOfDay;
     const cursor = nextBeforeDay;
     loadingGeneration = generation;
     try {
-      const response = await backend().journalFeedPage(FEED_PAGE, cursor);
+      const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor));
+      if (result.kind === "stale") return;
+      const response = result.value;
       if (
         generation !== feedGeneration || !ownerIsLive(owner) || asOfDay === null ||
         cursor !== nextBeforeDay || response.as_of_day !== asOfDay || !responseMatches(asOfDay, response)

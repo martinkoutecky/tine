@@ -1,4 +1,5 @@
 import { backend } from "../backend";
+import { graphOwner, readOwned } from "../owned";
 import { ensurePageLoaded, pageByName } from "../document";
 import type { RefGroup } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
@@ -313,10 +314,11 @@ export async function hydrateVisibleQueryPages(
       if (!sameGraph(root, epoch)) return;
       const occupied = pageByName(group.page);
       if (occupied && occupied.kind === group.kind && (!group.path || occupied.id === group.path)) return;
-      const dto = group.path
-        ? await backend().getPageByPath(group.path)
-        : await backend().getPage(group.page, group.kind);
-      if (!sameGraph(root, epoch)) return;
+      const result = await readOwned(graphOwner(() => sameGraph(root, epoch)), group.path
+        ? backend().getPageByPath(group.path)
+        : backend().getPage(group.page, group.kind));
+      if (result.kind === "stale") return;
+      const dto = result.value;
       // Recheck occupancy after the await: another surface may have loaded a
       // same-name twin meanwhile. Never replace or alias that identity.
       const after = pageByName(group.page);

@@ -1,11 +1,12 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createSignal, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { resetStore } from "../document";
+import { pageByName, resetStore } from "../document";
+import { backend } from "../backend";
 import { loadSingle } from "../document/workingSet";
 import { doc, setDoc } from "../document/model";
-import type { BlockDto, PageDto } from "../types";
+import type { BlockDto, PageDto, PageRead } from "../types";
 import { LiveRefGroup } from "./LiveRefGroup";
 
 beforeAll(async () => {
@@ -13,6 +14,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetStore();
   document.body.innerHTML = "";
 });
@@ -70,6 +72,22 @@ function hierarchy(): { page: PageDto; result: BlockDto; sourceHit: BlockDto } {
 }
 
 describe("LiveRefGroup reference context", () => {
+  it("drops a source page read after its group unmounts", async () => {
+    const { page, result } = hierarchy();
+    let finish!: (value: PageRead) => void;
+    const read = vi.spyOn(backend(), "getPage").mockImplementation(() =>
+      new Promise((resolve) => { finish = resolve; }));
+    const { dispose } = mount(() => (
+      <LiveRefGroup page={page.name} kind={page.kind} blocks={[result]} surface="ref" />
+    ));
+    await expect.poll(() => read.mock.calls.length).toBe(1);
+    dispose();
+    finish({ ...page, id: "pages/source.md" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(pageByName(page.name), "I-20: a retired LiveRefGroup cannot populate the shared page store").toBeUndefined();
+  });
+
   it("bounds a hit breadcrumb to the final three ancestors and marks omitted context", async () => {
     const { page, result } = hierarchy();
     const topLevel: BlockDto = {

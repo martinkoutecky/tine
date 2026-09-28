@@ -8,6 +8,7 @@
 import { For, Show, createEffect, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { audioPlayer, setAudioPlayer } from "../ui";
 import { backend, isTauri } from "../backend";
+import { graphOwner, readOwned } from "../owned";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { registerTransientLayer } from "../transientLayers";
 
@@ -61,6 +62,8 @@ function drawWave(canvas: HTMLCanvasElement | undefined, progress: number): void
 }
 
 export function AudioOverlay(): JSX.Element {
+  let alive = true;
+  onCleanup(() => { alive = false; });
   // Resolve to a range-aware native URL for graph assets (same path as the inline
   // embed), or the direct URL for external/http audio.
   const [src] = createResource(
@@ -68,7 +71,9 @@ export function AudioOverlay(): JSX.Element {
     async (u) => {
       if (isExternal(u)) return u;
       const r = relOf(u);
-      return r ? await backend().streamAsset(r) : "";
+      if (!r) return "";
+      const result = await readOwned(graphOwner(() => alive && audioPlayer()?.url === u), backend().streamAsset(r));
+      return result.kind === "current" ? result.value : "";
     }
   );
   const [blobFallback, setBlobFallback] = createSignal("");

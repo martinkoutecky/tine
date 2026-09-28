@@ -5,6 +5,7 @@ import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
 import { backend } from "../backend";
+import { readOwned } from "../owned";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
 import { navigationName } from "../pageIndex";
 import { EmojiText } from "../render/emoji";
@@ -340,6 +341,8 @@ export function GraphSwitcher(props: {
   actions: GraphNavigationActions;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  let alive = true;
+  onCleanup(() => { alive = false; });
   const [knownGraphs, { refetch }] = createResource(() => backend().listKnownGraphs());
   const close = () => setOpen(false);
 
@@ -407,10 +410,9 @@ export function GraphSwitcher(props: {
                   aria-label={`Remove ${graph.name} from this list`}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void backend()
-                      .forgetKnownGraph(graph.path)
-                      .then(() => refetch())
-                      .catch((error) => pushToast(`Couldn't remove graph. (${String(error)})`, "error"));
+                    void readOwned(() => alive, backend().forgetKnownGraph(graph.path))
+                      .then((result) => { if (result.kind === "current") void refetch(); })
+                      .catch((error) => { if (alive) pushToast(`Couldn't remove graph. (${String(error)})`, "error"); });
                   }}
                 >
                   ×

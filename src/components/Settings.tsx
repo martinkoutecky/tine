@@ -79,7 +79,8 @@ import {
   setLauncherRankingEnabled,
 } from "../launcherRanking";
 import { registerTransientLayer } from "../transientLayers";
-import { writePreference, seedPreference } from "../preferenceWrites";
+import { writePreference, loadPreference } from "../preferenceWrites";
+import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
 // `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
@@ -189,11 +190,14 @@ export function Settings(): JSX.Element {
   const [publishMsg, setPublishMsg] = createSignal("");
   const doPublish = async () => {
     setPublishMsg("Exporting…");
+    const owner = graphOwner();
     try {
-      const [dir, n] = await backend().publishHtml();
+      const result = await readOwned(owner, backend().publishHtml());
+      if (result.kind === "stale") return;
+      const [dir, n] = result.value;
       setPublishMsg(`Exported ${n} pages to ${dir}`);
     } catch (e) {
-      setPublishMsg(`Failed: ${String(e)}`);
+      if (owner()) setPublishMsg(`Failed: ${String(e)}`);
     }
   };
 
@@ -505,6 +509,8 @@ function PluginSettingsForm(props: {
 }
 
 function PluginsTab(): JSX.Element {
+  let alive = true;
+  onCleanup(() => { alive = false; });
   let packageInput: HTMLInputElement | undefined;
   const [busy, setBusy] = createSignal<string | null>(null);
   const [view, setView] = createSignal<"browse" | "installed">("browse");
@@ -553,11 +559,12 @@ function PluginsTab(): JSX.Element {
 
   const uninstallPlugin = async (plugin: ReturnType<typeof installedPlugins>[number]) => {
     const { id, name, version } = plugin.manifest;
-    const confirmed = await backend().confirm(
+    const result = await readOwned(ownedWhen(() => alive), backend().confirm(
       `Uninstall ${name} ${version}?\n\nThis removes the plugin from this device. It does not change your graph or notes.`,
       "Uninstall plugin?"
-    );
-    if (!confirmed) return;
+    ));
+    if (result.kind === "stale") return;
+    if (!result.value) return;
     setBusy(`${id}@${version}:uninstall`);
     try {
       await pluginManager.uninstall(id, version);
@@ -1019,6 +1026,8 @@ function ThemeGalleryCard(props: {
 }
 
 function AppearanceTab(props: { search: string }): JSX.Element {
+  let alive = true;
+  onCleanup(() => { alive = false; });
   let themePackageInput: HTMLInputElement | undefined;
   const [themePackageBusy, setThemePackageBusy] = createSignal<string | null>(null);
   const installThemeFile = async (files: FileList | null) => {
@@ -1040,10 +1049,12 @@ function AppearanceTab(props: { search: string }): JSX.Element {
     }
   };
   const uninstallTheme = async (key: string, name: string) => {
-    const confirmed = await backend().confirm(
+    const result = await readOwned(ownedWhen(() => alive), backend().confirm(
       `Uninstall ${name}?\n\nThis removes the theme from this device. It does not change your graph or custom.css.`,
       "Uninstall theme?"
-    );
+    ));
+    if (result.kind === "stale") return;
+    const confirmed = result.value;
     if (!confirmed) return;
     setThemePackageBusy(key);
     try {
@@ -1637,10 +1648,10 @@ function JournalsTab(props: { search: string }): JSX.Element {
   // Quick-capture Enter behaviour (app-level setting, read by the capture window).
   const [captureEnterFiles, setCaptureEnterFiles] = createSignal(false);
   let captureChanged = false;
-  void backend()
-    .getCaptureEnterFiles()
-    .then((value) => { if (!captureChanged) { setCaptureEnterFiles(value); seedPreference(captureEnterFiles); } })
-    .catch(() => pushToast("Could not load capture Enter preference.", "error"));
+  let captureAlive = true;
+  onCleanup(() => { captureAlive = false; });
+  loadPreference(captureEnterFiles, setCaptureEnterFiles, () => backend().getCaptureEnterFiles(),
+    (value) => value, "capture Enter preference", () => captureAlive && !captureChanged);
   const toggleCaptureEnter = () => {
     captureChanged = true;
     const v = !captureEnterFiles();
@@ -1832,6 +1843,9 @@ function GraphTab(props: { publishMsg: string; doPublish: () => void }): JSX.Ele
 }
 
 function BackupsTab(): JSX.Element {
+  let alive = true;
+  onCleanup(() => { alive = false; });
+  const refreshScope = {};
   const [keep, setKeep] = createSignal(12);
   const [list, setList] = createSignal<BackupInfo[]>([]);
   const [busy, setBusy] = createSignal(false);
@@ -1840,20 +1854,25 @@ function BackupsTab(): JSX.Element {
   const ready = () => !loading() && !loadError();
 
   const refresh = async () => {
+    const owner = latestOwner(refreshScope, "backups", graphOwner(() => alive));
     setLoading(true);
     setLoadError(null);
     try {
-      const [nextKeep, nextList] = await Promise.all([
+      const result = await readOwned(owner, Promise.all([
         backend().getBackupKeep(),
         backend().listBackups(),
-      ]);
+      ]));
+      if (result.kind === "stale") return;
+      const [nextKeep, nextList] = result.value;
       setKeep(nextKeep);
       setList(nextList);
     } catch (e) {
-      setList([]);
-      setLoadError(String(e));
+      if (owner()) {
+        setList([]);
+        setLoadError(String(e));
+      }
     } finally {
-      setLoading(false);
+      if (owner()) setLoading(false);
     }
   };
 
@@ -1866,11 +1885,13 @@ function BackupsTab(): JSX.Element {
   const saveKeep = async (n: number) => {
     const v = Math.max(1, Math.min(1000, Math.floor(n) || 12));
     setKeep(v);
+    const owner = graphOwner(() => alive);
     try {
-      await backend().setBackupKeep(v);
+      const result = await readOwned(owner, backend().setBackupKeep(v));
+      if (result.kind === "stale") return;
       void refresh(); // a lower cap prunes immediately on the Rust side
     } catch (e) {
-      pushToast(`Couldn't save: ${String(e)}`, "error");
+      if (owner()) pushToast(`Couldn't save: ${String(e)}`, "error");
     }
   };
 
@@ -2473,10 +2494,10 @@ function FilesTab(props: { search: string }): JSX.Element {
   // File-watch mechanism (device-local). Loaded from the backend on mount.
   const [watchMode, setWatchMode] = createSignal<"inotify" | "poll">("inotify");
   let watchChanged = false;
-  void backend()
-    .getWatchMode()
-    .then((m) => { if (!watchChanged) { setWatchMode(m === "poll" ? "poll" : "inotify"); seedPreference(watchMode); } })
-    .catch(() => pushToast("Could not load file watcher mode.", "error"));
+  let watchAlive = true;
+  onCleanup(() => { watchAlive = false; });
+  loadPreference(watchMode, setWatchMode, () => backend().getWatchMode(),
+    (value) => value === "poll" ? "poll" : "inotify", "file watcher mode", () => watchAlive && !watchChanged);
   const changeWatchMode = (m: "inotify" | "poll") => {
     if (m === watchMode()) return;
     watchChanged = true;

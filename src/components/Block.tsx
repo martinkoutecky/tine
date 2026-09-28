@@ -89,6 +89,7 @@ import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
 import { assetEditorIsCurrent, captureAssetEditor, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
 import { captureBinding, stillBound } from "../binding";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
@@ -1204,7 +1205,9 @@ export function Editor(props: { id: string }): JSX.Element {
     onCleanup(unregister);
   });
 
+  const autocompleteScope = {};
   const updateAutocomplete = async () => {
+    if (!editorMounted || !node()) return;
     const t = detectEditorTrigger();
     if (!t) {
       closeAc();
@@ -1212,6 +1215,7 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     setAc(t);
     setAcIndex(0);
+    const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => sameAcTrigger(ac(), t)));
     if (t.kind === "property-name") {
       const facets = await autocompleteFacets();
       const cur = ac();
@@ -1302,14 +1306,12 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     if (t.kind === "block") {
-      // `((` → full-text search for a block to reference, grouped by page. An
-      // empty query (bare `((`) returns nothing — the popup stays hidden until
-      // the user types. Selecting inserts the target's durable external ID (see selectAc).
-      const groups = await backend().search(t.query, 20, "block-picker");
-      const cur = ac();
-      if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
+      // `((` searches blocks by page; bare `((` stays hidden. Selection inserts
+      // the target's durable external ID (see selectAc).
+      const result = await readOwned(requestOwner, backend().search(t.query, 20, "block-picker"));
+      if (result.kind === "stale") return;
       const items: AcItem[] = [];
-      for (const g of groups) {
+      for (const g of result.value) {
         for (const b of g.blocks) {
           items.push({
             label: blockFirstLine(b.raw) || g.page,
@@ -1328,9 +1330,8 @@ export function Editor(props: { id: string }): JSX.Element {
       setAcItems([]);
       return;
     }
-    const pages = await (cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100));
-    const cur = ac();
-    if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
+    const result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100));
+    if (result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
         ? { label: name, insert: pageInsert(name) }
@@ -1340,7 +1341,7 @@ export function Editor(props: { id: string }): JSX.Element {
         ? { label: `Create "${q}"`, insert: pageInsert(q) }
         : { label: `Create #${q}`, insert: tagInsert(q) };
     setAcItems(orderAcItems(
-      pages.map((page) => ({ name: page.name, item: pageItem(page.name) })),
+      result.value.map((page) => ({ name: page.name, item: pageItem(page.name) })),
       { name: q, item: createItem },
       { query: q, policy: linkAutocompletePolicy() },
     ));
@@ -2238,6 +2239,7 @@ export function Editor(props: { id: string }): JSX.Element {
   });
 
   let acTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(acTimer));
   const refreshAutocompleteAfterInput = () => {
     // Close the popup synchronously when the trigger ends (instant), but debounce
     // the page/template IPC fetch so holding down a key doesn't fire a backend
@@ -2248,13 +2250,10 @@ export function Editor(props: { id: string }): JSX.Element {
       closeAc();
       return;
     }
-    // Keep the replacement span in lockstep with the textarea even while the
-    // candidate fetch is debounced. Otherwise Enter can accept a still-visible
-    // row using the trigger range from an earlier character and leave the newly
-    // typed suffix behind (for example `[[P` -> `[[Parity Tar` becoming
-    // `[[Parity Target]]arity Tar`). Rows may remain visible while a SAME trigger
-    // is refined, but a different trigger family/location or a now-blank page/tag
-    // lifecycle must never expose an accept-able stale row.
+    // Keep replacement span current during debounce: otherwise Enter can accept
+    // an old row/range and leave a new suffix behind (`[[Parity Target]]arity Tar`).
+    // Rows survive refinement of the same trigger, never a new family/location
+    // or a now-blank page/tag lifecycle.
     const previous = ac();
     setAc(next);
     setAcIndex(0);

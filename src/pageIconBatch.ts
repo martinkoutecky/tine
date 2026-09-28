@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { graphOwner, readOwned } from "./owned";
 import { graphEpoch } from "./graphSession";
+import { pushToast } from "./toasts";
 
 // Inline page-icon lookups, made cheap for icon-heavy pages. Every `icon::`
 // requested in the same microtask tick is coalesced into ONE page_icons IPC, each
@@ -33,15 +35,20 @@ function flush() {
   const batch = pending;
   pending = [];
   const batchRev = cacheRev;
-  void backend()
-    .pageIcons(batch)
-    .then((map) => {
-      if (graphEpoch() !== batchRev) return;
+  const owner = graphOwner(() => cacheRev === batchRev);
+  void readOwned(owner, backend().pageIcons(batch))
+    .then((result) => {
+      if (result.kind === "stale") return;
+      const map = result.value;
       // Only re-render if the batch actually found an icon — otherwise the signal
       // (and every reference subscribed to it) stays untouched.
       if (batch.some((n) => map[n])) setIconMap((prev) => ({ ...prev, ...map }));
     })
-    .catch(() => {});
+    .catch(() => {
+      if (!owner()) return;
+      batch.forEach((name) => requested.delete(name));
+      pushToast("Could not load page icons. They will retry when shown again.", "error");
+    });
 }
 
 /** Reactive: the referenced page's `icon::` (emoji/character) or "". Reading it

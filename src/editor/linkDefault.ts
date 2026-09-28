@@ -2,6 +2,7 @@
 // deliberately app UI state (tine-settings.json), not graph configuration.
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
+import { latestOwner, readOwned } from "../owned";
 import type { LinkAutocompletePolicy } from "./autocomplete";
 import { writePreference, seedPreference } from "../preferenceWrites";
 import { pushToast } from "../toasts";
@@ -14,7 +15,7 @@ const [policy, setPolicy] = createSignal<LinkAutocompletePolicy>("adaptive");
 // `initLinkDefault` is called again whenever persistent Quick Capture is shown.
 // Reads can overlap, so only the most recently started refresh may mutate this
 // WebView's shared signal. A direct Settings update also invalidates older reads.
-let refreshGeneration = 0;
+const refreshScope = {};
 
 export const linkAutocompletePolicy = policy;
 
@@ -31,7 +32,7 @@ export function migrateLinkAutocompletePolicy(value: unknown, legacy?: boolean |
 /** Apply now and queue the generic string key only. A failed write rolls back
  * and toasts; return does not confirm persistence. O(1) plus backend write. */
 export function setLinkAutocompletePolicy(next: LinkAutocompletePolicy): void {
-  ++refreshGeneration;
+  latestOwner(refreshScope, "policy");
   writePreference(policy, setPolicy, next, (value) => backend().setAppString(POLICY_KEY, value), "link autocomplete policy");
 }
 
@@ -41,25 +42,29 @@ export function setLinkAutocompletePolicy(next: LinkAutocompletePolicy): void {
  * Only the latest refresh applies. Read errors toast and resolve. O(1) reads
  * plus an optional migration write. */
 export async function initLinkDefault(): Promise<void> {
-  const generation = ++refreshGeneration;
+  const owner = latestOwner(refreshScope, "policy");
   const applyIfCurrent = (next: LinkAutocompletePolicy) => {
-    if (generation === refreshGeneration) { setPolicy(next); seedPreference(policy); }
+    if (owner()) { setPolicy(next); seedPreference(policy); }
   };
   try {
-    const stored = await backend().getAppString(POLICY_KEY, "");
+    const storedResult = await readOwned(owner, backend().getAppString(POLICY_KEY, ""));
+    if (storedResult.kind === "stale") return;
+    const stored = storedResult.value;
     if (validPolicies.has(stored as LinkAutocompletePolicy)) {
       applyIfCurrent(stored as LinkAutocompletePolicy);
       return;
     }
     let legacy: boolean | undefined;
     try {
-      legacy = await backend().getLinkFirstMatch();
+      const result = await readOwned(owner, backend().getLinkFirstMatch());
+      if (result.kind === "stale") return;
+      legacy = result.value;
     } catch {
-      pushToast("Could not load legacy link preference.", "error");
+      if (owner()) pushToast("Could not load legacy link preference.", "error");
     }
     const migrated = migrateLinkAutocompletePolicy(stored, legacy);
     applyIfCurrent(migrated);
-    if (legacy !== undefined && generation === refreshGeneration) {
+    if (legacy !== undefined && owner()) {
       void backend().setAppString(POLICY_KEY, migrated)
         .catch(() => pushToast("Could not save migrated link autocomplete policy.", "error"));
     }

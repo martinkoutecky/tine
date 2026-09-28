@@ -10,12 +10,19 @@
 
 import { createStore } from "solid-js/store";
 import { backend } from "./backend";
+import { advanceRevision, currentRevision, latestOwner, readOwned, revisionOwner } from "./owned";
 import { MEDIA_EDITORS, type MediaEditor } from "./mediaEditors";
 import { writePreference, seedPreference } from "./preferenceWrites";
 import { pushToast } from "./toasts";
 
 const [commands, setCommands] = createStore<Record<string, string>>({});
-const commandRevision = new Map<string, number>();
+const commandKeys = new Map<string, object>();
+const commandProbes = {};
+function commandKey(settingKey: string): object {
+  let key = commandKeys.get(settingKey);
+  if (!key) { key = {}; commandKeys.set(settingKey, key); }
+  return key;
+}
 
 /** Reactive: the configured command template for a registry entry (""=OS opener). */
 export function mediaEditorCommand(settingKey: string): string {
@@ -26,7 +33,7 @@ export function mediaEditorCommand(settingKey: string): string {
  * and write failure rolls back with a toast. */
 export function setMediaEditorCommand(settingKey: string, value: string): void {
   const v = value.trim();
-  commandRevision.set(settingKey, (commandRevision.get(settingKey) ?? 0) + 1);
+  advanceRevision(commandKey(settingKey));
   const read = commandReaders.get(settingKey) ?? (() => mediaEditorCommand(settingKey));
   commandReaders.set(settingKey, read);
   writePreference(read, (next) => setCommands(settingKey, next), v,
@@ -60,11 +67,13 @@ export async function resolveMediaEditorCommand(ed: MediaEditor): Promise<string
  * write whose failure restores the previous command and shows an error. Probe failure rejects. O(1) backend calls
  * plus native probe latency; applied does not promise persistence. */
 export async function detectMediaEditorCommand(ed: MediaEditor): Promise<{ command: string; applied: boolean }> {
-  const revision = commandRevision.get(ed.settingKey) ?? 0;
-  const found = (await backend().detectMediaEditor(ed.id)).trim();
-  if ((commandRevision.get(ed.settingKey) ?? 0) !== revision) {
+  const key = commandKey(ed.settingKey);
+  const owner = latestOwner(commandProbes, ed.settingKey, revisionOwner(key, currentRevision(key)));
+  const result = await readOwned(owner, backend().detectMediaEditor(ed.id));
+  if (result.kind === "stale") {
     return { command: mediaEditorCommand(ed.settingKey), applied: false };
   }
+  const found = result.value.trim();
   if (found) setMediaEditorCommand(ed.settingKey, found);
   return { command: found, applied: true };
 }
@@ -74,10 +83,11 @@ export async function detectMediaEditorCommand(ed: MediaEditor): Promise<{ comma
 export async function initMediaEditorSettings(): Promise<void> {
   await Promise.all(
     MEDIA_EDITORS.map(async (e) => {
-      const revision = commandRevision.get(e.settingKey) ?? 0;
+      const key = commandKey(e.settingKey);
+      const revision = currentRevision(key);
       try {
         const v = await backend().getAppString(e.settingKey, "");
-        if ((commandRevision.get(e.settingKey) ?? 0) === revision) {
+        if (revisionOwner(key, revision)()) {
           setCommands(e.settingKey, v || "");
           const read = commandReaders.get(e.settingKey);
           if (read) seedPreference(read);

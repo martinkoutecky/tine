@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { ensurePageLoaded, formatForPage, pageByName, node as docNode } from "../document";
 import { Block, CollapseSurfaceContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
@@ -43,6 +44,9 @@ export function LiveRefGroup(props: {
 }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   const [near, setNear] = createSignal(false);
+  const readScope = {};
+  let alive = true;
+  onCleanup(() => { alive = false; });
   let el: HTMLDivElement | undefined;
   onMount(() => {
     if (!el) return;
@@ -59,7 +63,11 @@ export function LiveRefGroup(props: {
       if (occupied) return occupied.kind === k && (!path || occupied.id === path);
       const epoch = graphEpoch();
       const root = graphMeta()?.root ?? "";
-      const dto = path ? await backend().getPageByPath(path) : await backend().getPage(p, k);
+      const owner = latestOwner(readScope, "page", graphOwner(() => alive &&
+        graphEpoch() === epoch && (graphMeta()?.root ?? "") === root));
+      const result = await readOwned(owner, path ? backend().getPageByPath(path) : backend().getPage(p, k));
+      if (result.kind === "stale") return false;
+      const dto = result.value;
       // The component may have unmounted while this read was in flight. Never
       // let an old graph's DTO enter the new graph's shared working set.
       if (graphEpoch() !== epoch || (graphMeta()?.root ?? "") !== root) return false;

@@ -29,7 +29,7 @@ describe("async ownership guard", () => {
     check("src/inpageFind.ts", "export async function revealInPageFindMatch(", "interface TextPart", [/captureBinding\(\)/, /sameRoute\(paneRouter\(paneId\)\.route\(\), route\)/, /if \(!current\(\)\) return false/]);
     check("src/focusFullscreen.ts", "export function setFocusFullscreen(", "  return task;", [/request !== generation/, /ownsFullscreen/, /tail\.then/]);
     check("src/ui.ts", "export async function enterFocusMode(", "export function toggleTheme", [/setFocusFullscreen\(true\)/, /setFocusFullscreen\(false\)/]);
-    check("src/mediaEditorSettings.ts", "export async function detectMediaEditorCommand", "export async function initMediaEditorSettings", [/commandRevision\.get/, /command: mediaEditorCommand\(ed\.settingKey\), applied: false/]);
+    check("src/mediaEditorSettings.ts", "export async function detectMediaEditorCommand", "export async function initMediaEditorSettings", [/latestOwner\(commandProbes, ed\.settingKey, revisionOwner\(key, currentRevision\(key\)\)\)/, /readOwned\(owner, backend\(\)\.detectMediaEditor/, /result\.kind === "stale"/, /command: mediaEditorCommand\(ed\.settingKey\), applied: false/]);
     const restore = readFileSync("src/backupRestore.ts", "utf8");
     expect(restore, `${RULE}: backup restore must retain its graph owner across confirmation and writes`).toMatch(/captureBinding\(\)[\s\S]*backend\(\)\.confirm[\s\S]*if \(!stillBound\(binding\)\) return;[\s\S]*restoreBackup/);
     expect(restore, `${RULE}: an old restore must not release a newer graph transition`).toMatch(/if \(ownsTransition\(\)\) setGraphTransitioning\(false\)/);
