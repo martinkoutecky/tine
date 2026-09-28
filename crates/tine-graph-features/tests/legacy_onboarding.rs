@@ -117,6 +117,16 @@ fn bundled_guide_pages_are_read_only_virtual_pages() {
     assert!(plugins.markdown.contains("not Logseq or Obsidian plugins"));
 }
 
+#[test]
+fn pdf_guide_explains_conflict_discard_and_crop_cleanup_retry() {
+    let pdf = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/PDF annotation")
+        .expect("PDF guide is bundled");
+    assert!(pdf.markdown.contains("Discard my changes"));
+    assert!(pdf.markdown.contains("Retry cleanup"));
+}
+
 fn extract_page_links(markdown: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = markdown;

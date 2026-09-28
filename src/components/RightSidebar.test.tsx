@@ -56,7 +56,7 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
-  it("stores a fresh block's durable UUID instead of its transient sidebar key", () => {
+  it("stores a fresh block's durable UUID instead of its transient sidebar key", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
     vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
@@ -65,7 +65,7 @@ describe("right sidebar collection disclosures", () => {
       blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],
     });
 
-    openBlockInSidebar(persistentBlockRef("bfresh-sidebar"));
+    openBlockInSidebar((await persistentBlockRef("bfresh-sidebar"))!);
 
     expect(rightSidebar()[0]).toMatchObject({
       kind: "block",

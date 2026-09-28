@@ -285,7 +285,15 @@ export function QuickSwitcher(): JSX.Element {
     if (sel() >= n) setSel(0);
   });
 
-  const choose = (it: Item) => {
+  const readyBlock = async (it: Extract<Item, { t: "block" }>): Promise<boolean> => {
+    try {
+      if (await persistBlockRefTarget(it.blockId, it.page, it.pageKind, it.path)) return true;
+    } catch { /* Report the failed save below. */ }
+    pushToast("Could not save the block ID. Resolve its page save and try again.", "error");
+    return false;
+  };
+
+  const choose = async (it: Item) => {
     const embryo = switcherEmbryo();
     if (embryo) {
       void chooseEmbryo(it, embryo.paneId);
@@ -304,6 +312,7 @@ export function QuickSwitcher(): JSX.Element {
         it.run();
         return;
       case "block":
+        if (!(await readyBlock(it))) return;
         openPageAtBlock(it.page, it.pageKind, it.blockId, it.path);
         break;
     }
@@ -329,6 +338,7 @@ export function QuickSwitcher(): JSX.Element {
         }
         break;
       case "block":
+        if (!(await readyBlock(it))) return;
         router.openPageAtBlock(it.page, it.pageKind, it.blockId, it.path);
         break;
       case "command":
@@ -355,13 +365,14 @@ export function QuickSwitcher(): JSX.Element {
         it.run();
         break;
       case "block":
+        if (!(await readyBlock(it))) return;
         openRouteInOtherPane({ kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId, path: it.path });
         break;
     }
     closeSwitcher();
   };
 
-  const chooseSidebar = (it: Extract<Item, { t: "page" | "block" }>) => {
+  const chooseSidebar = async (it: Extract<Item, { t: "page" | "block" }>) => {
     recordChoice(it);
     if (it.t === "page") {
       openPageInSidebar(it.name, it.pageKind, it.path);
@@ -369,7 +380,7 @@ export function QuickSwitcher(): JSX.Element {
       // Search results can target a page that is not loaded in the frontend.
       // Stamp its id:: through the guarded ordinary page-save path before the
       // durable sidebar item outlives this search session.
-      void persistBlockRefTarget(it.blockId, it.page, it.pageKind, it.path);
+      if (!(await readyBlock(it))) return;
       openBlockInSidebar({ uuid: it.blockId, page: it.page, pageKind: it.pageKind, path: it.path });
     }
     closeSwitcher();
@@ -379,13 +390,13 @@ export function QuickSwitcher(): JSX.Element {
   // fan several results out without re-searching. A block opens zoomed into
   // itself (self-contained and durable — the tab shows exactly what you found);
   // create/command have no background-tab meaning, so they're ignored.
-  const openInBackground = (it: Item) => {
+  const openInBackground = async (it: Item) => {
     recordChoice(it);
     if (it.t === "page")
       it.path
         ? openInNewTab({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path })
         : openPageInNewTab(it.name, it.pageKind);
-    else if (it.t === "block") openInNewTab({
+    else if (it.t === "block" && await readyBlock(it)) openInNewTab({
       kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId, path: it.path,
     });
   };
@@ -449,9 +460,9 @@ export function QuickSwitcher(): JSX.Element {
       const it = flat()[sel()];
       if (it) {
         const shiftOnly = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
-        if (shiftOnly && !switcherEmbryo() && (it.t === "page" || it.t === "block")) chooseSidebar(it);
+        if (shiftOnly && !switcherEmbryo() && (it.t === "page" || it.t === "block")) void chooseSidebar(it);
         else if (e.altKey && !switcherEmbryo()) void chooseOther(it);
-        else choose(it);
+        else void choose(it);
       }
     } else if (e.key === "Escape") {
       if (e.isComposing || e.keyCode === 229) return;

@@ -23,6 +23,7 @@ import { parseOutline } from "./editor/outline";
 const HOST = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ID1 = "11111111-1111-4111-8111-111111111111";
 const ID2 = "22222222-2222-4222-8222-222222222222";
+const bulkId = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 
 beforeAll(() => initParser());
 
@@ -122,6 +123,32 @@ describe("clipboard payload insertion and identity validation", () => {
     const clean = await sanitizeOutlineIdsForPaste(HOST, nodes);
     expect(clean?.map((node) => node.raw)).toEqual(["duplicate", `new\nid:: ${ID2}`]);
     expect(backend().resolveBlocks).toHaveBeenCalledWith([ID1, ID2]);
+  });
+  it("bounds ordinary paste ID lookup and preserves uncertain IDs only when lookup succeeds", async () => {
+    seed([page("Target", [block(HOST, "host")])]);
+    const nodes = Array.from({ length: 129 }, (_, n) => ({ raw: `item\nid:: ${bulkId(n)}`, children: [] }));
+    const clean = await sanitizeOutlineIdsForPaste(HOST, nodes);
+    expect(clean).toHaveLength(129);
+    expect(vi.mocked(backend().resolveBlocks).mock.calls.map(([ids]) => ids.length)).toEqual([128, 1]);
+  });
+  it("strips all ordinary-paste IDs when a later lookup chunk fails", async () => {
+    seed([page("Target", [block(HOST, "host")])]);
+    const nodes = Array.from({ length: 129 }, (_, n) => ({ raw: `item\nid:: ${bulkId(n)}`, children: [] }));
+    vi.mocked(backend().resolveBlocks).mockImplementationOnce(async (ids) => ids.map(() => null))
+      .mockRejectedValueOnce(new Error("lookup failed"));
+    const clean = await sanitizeOutlineIdsForPaste(HOST, nodes);
+    expect(clean?.every((node) => node.raw === "item")).toBe(true);
+    expect(vi.mocked(backend().resolveBlocks).mock.calls.map(([ids]) => ids.length)).toEqual([128, 1]);
+  });
+
+  it("bounds cut-paste ID lookup before preserving identities", async () => {
+    const blocks = Array.from({ length: 129 }, (_, n) => block(bulkId(n), `item ${n}\nid:: ${bulkId(n)}`));
+    seed([page("Source", blocks), page("Target", [block(HOST, "")])]);
+    await record("cut", "bulk", buildClipboardPayload(blocks.map((item) => item.id))!);
+    blocks.forEach((item) => deleteBlock(item.id));
+    await paste();
+    expect(vi.mocked(backend().resolveBlocks).mock.calls.map(([ids]) => ids.length)).toEqual([128, 1]);
+    expect(roots("Target")).toEqual(blocks.map((item) => item.id));
   });
   it("clears a rejected cut slot without clearing a newer clipboard generation", async () => {
     let rejectFirst!: (error: Error) => void;

@@ -176,16 +176,13 @@ describe("reuse already-open tabs on user navigation", () => {
     expect(tabRoute(activeTab())).toEqual({ kind: "page", name: "Target", pageKind: "page" });
   });
 
-  it("zoom navigation never retargets to another tab", () => {
-    setDoc("byId", "block-zoom", {
-      id: "block-zoom",
-      raw: "Zoom target",
-      collapsed: false,
-      parent: null,
-      page: "Target",
-      children: [],
+  it("zoom navigation never retargets to another tab", async () => {
+    setDoc({
+      byId: { "block-zoom": { id: "block-zoom", raw: "Zoom target\nid:: block-zoom", collapsed: false, parent: null, page: "Target", children: [] } },
+      pages: [{ name: "Target", kind: "page", title: "Target", preBlock: null, roots: ["block-zoom"], format: "md", readOnly: false, guide: false, id: "pages/Target.md" }],
+      feed: ["Target"], loaded: true,
     });
-    const zoomed = { kind: "page" as const, name: "Target", pageKind: "page" as const, block: "block-zoom" };
+    const zoomed = { kind: "page" as const, name: "Target", pageKind: "page" as const, path: "pages/Target.md", block: "block-zoom" };
     openInNewTab(zoomed, true);
     const existingZoomId = activeId();
     setActiveTab(tabs()[0].id);
@@ -196,10 +193,11 @@ describe("reuse already-open tabs on user navigation", () => {
 
     expect(activeId()).toBe(sourceId);
     expect(activeId()).not.toBe(existingZoomId);
-    expect(route()).toEqual(zoomed);
+    await vi.waitFor(() => expect(route()).toEqual(zoomed));
   });
 
-  it("stores a fresh block's durable UUID in the persistent zoom route", () => {
+  it("stores a fresh block's durable UUID in the persistent zoom route", async () => {
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
     setDoc({
@@ -224,13 +222,13 @@ describe("reuse already-open tabs on user navigation", () => {
 
     focusBlock("bfresh-route");
 
-    expect(route()).toEqual({
+    await vi.waitFor(() => expect(route()).toEqual({
       kind: "page",
       name: "Target",
       pageKind: "page",
       path: "pages/Target.md",
       block: uuid,
-    });
+    }));
     expect((route() as { block?: string }).block).not.toBe("bfresh-route");
   });
 
@@ -341,7 +339,8 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     expect((route() as { path?: string }).path).toBe("journals/Friday, 26-06-2026.org");
   });
 
-  it("retains the loaded physical owner while zooming into and back out of a block", () => {
+  it("retains the loaded physical owner while zooming into and back out of a block", async () => {
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     const path = "pages/client-b/Twin.md";
     const id = "11111111-1111-4111-8111-111111111111";
     setDoc({
@@ -358,7 +357,7 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     openFile(path, "Twin", "page");
 
     focusBlock(id);
-    expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: id });
+    await vi.waitFor(() => expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: id }));
 
     focusBlock(null);
     expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path });

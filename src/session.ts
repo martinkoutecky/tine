@@ -280,7 +280,7 @@ function reportSessionSaveFailure(error: unknown): void {
   const priorMessage = sessionSaveFailure?.message;
   if (sessionSaveFailure && priorMessage !== message) dismissToast(sessionSaveFailure.id);
   sessionSaveFailure = {
-    id: pushToastUnique(message, "error", { sticky: true, action: { label: "Retry", run: () => { void flushSession(); } } }),
+    id: pushToastUnique(message, "error", { sticky: true, action: { label: "Retry", run: () => { void flushSession().catch(() => console.error("Session retry failed")); } } }),
     message,
   };
 }
@@ -290,17 +290,19 @@ function clearSessionSaveFailure(): void {
   sessionSaveFailure = null;
 }
 
-/** Cancel a scheduled save and attempt to write the current session.
- * Failure shows a retry toast but this promise still resolves; completion does
- * not certify persistence. Cost follows session bytes and backend latency. */
+/** Cancel a scheduled save and write the current session. A write failure shows
+ * one Retry toast and rejects; stale graph ownership also rejects. Completion
+ * certifies persistence for the current graph. Cost follows session bytes and backend latency. */
 export async function flushSession(): Promise<void> {
   const owner = graphOwner();
   clearTimeout(saveTimer);
   try {
     const result = await writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())));
-    if (result.kind === "current") { clearLegacyRecentSource(); clearSessionSaveFailure(); }
+    if (result.kind !== "current") throw new Error("Graph changed during session save");
+    clearLegacyRecentSource(); clearSessionSaveFailure();
   } catch (error) {
-    reportSessionSaveFailure(error);
+    if (owner()) reportSessionSaveFailure(error);
+    throw error;
   }
 }
 

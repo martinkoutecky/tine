@@ -1812,9 +1812,10 @@ describe("save engine (persistence)", () => {
     load([blk("Fresh target")]);
     const storeKey = doc.pages[0].roots[0];
 
-    const ref = persistentBlockRef(storeKey);
+    const ref = await persistentBlockRef(storeKey);
 
     expect(ref).toMatchObject({ uuid, page: "Test", pageKind: "page" });
+    if (!ref) throw new Error("block reference was not saved");
     expect(ref.uuid).not.toBe(storeKey);
     expect(doc.byId[storeKey].raw).toBe(`Fresh target\nid:: ${uuid}`);
     expect(await ensureBlockId(storeKey)).toBe(uuid);
@@ -1834,9 +1835,10 @@ describe("save engine (persistence)", () => {
       blocks: [target],
     });
 
-    const ref = persistentBlockRef(target.id);
+    const ref = await persistentBlockRef(target.id);
 
     expect(ref).toMatchObject({ uuid, page: "2026-07-22", pageKind: "journal" });
+    if (!ref) throw new Error("block reference was not saved");
     expect(ref.uuid).not.toBe(target.id);
     expect(doc.byId[target.id].raw).toBe(
       `Fresh journal target\nSCHEDULED: <2026-07-22 Wed>\n:PROPERTIES:\n:id: ${uuid}\n:END:`,

@@ -168,6 +168,11 @@ describe("reference authoring", () => {
       }],
       evidence: [],
     }]);
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
+      blocks: [{ id: "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add", raw: properties ? `test\nid:: ${expectedId}` : "test", collapsed: false, children: [] }],
+    });
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     loadSingle(page("((test"));
     startEditing("reference-authoring", 6);
     const { root, dispose } = mount(() => (
@@ -182,6 +187,31 @@ describe("reference authoring", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("does not insert a block reference when the target ID save fails", async () => {
+    const uuid = "f8358fac-56bd-8bb1-ba45-bd7fd1ba2add";
+    vi.spyOn(backend(), "search").mockResolvedValue([{
+      page: "Source", kind: "page", blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }], evidence: [],
+    }]);
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: "pages/Source.md", name: "Source", kind: "page", title: "Source", pre_block: null,
+      blocks: [{ id: uuid, raw: "test", collapsed: false, children: [] }],
+    });
+    vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "conflict", undoFailed: [] } });
+    loadSingle(page("((test"));
+    startEditing("reference-authoring", 6);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "((test", 6);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("test"));
+      accept(textarea);
+      await vi.waitFor(() => expect(backend().savePages).toHaveBeenCalled());
+      expect(doc.byId["reference-authoring"].raw).toBe("((test");
+    } finally { dispose(); }
   });
 
   it("does not let an older same-location page lookup overwrite newer results", async () => {

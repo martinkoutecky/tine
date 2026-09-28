@@ -17,6 +17,7 @@ import { navReuseTabs } from "./navSettings";
 import { isMobilePlatform } from "./nativeChrome";
 import type { PageKind } from "./types";
 import { installRouterBridge } from "./routerBridge";
+import { pushToast } from "./toasts";
 import type { PageTarget, Route, QueryPresentation, QueryRoute } from "./routeTypes";
 export type { PageTarget, Route, QueryPresentation, QueryRoute } from "./routeTypes";
 
@@ -566,8 +567,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       return;
     }
     if (!docNode(id)) return; // block no longer loaded - nothing to zoom into
-    const ref = persistentBlockRef(id);
-    navigate({ kind: "page", ...pageTargetFromBlockRef(ref), block: ref.uuid });
+    const binding = captureBinding();
+    const revision = routeIntentRevision();
+    void persistentBlockRef(id).then((ref) => {
+      if (!stillBound(binding) || routeIntentRevision() !== revision) return;
+      if (ref) navigate({ kind: "page", ...pageTargetFromBlockRef(ref), block: ref.uuid });
+      else pushToast("Could not save the block ID; resolve the page save before opening this block.", "error");
+    }).catch((error) => pushToast(`Could not save the block ID: ${String(error)}`, "error"));
   }
 
   /** Open a page and scroll the given block into view (block search results jump

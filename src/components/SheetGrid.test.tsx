@@ -324,7 +324,7 @@ describe("SheetGrid", () => {
     dispose();
   });
 
-  it("cell menu switches children between outline/grid/table and zooms into the cell", () => {
+  it("cell menu switches children between outline/grid/table and zooms into the cell", async () => {
     loadMdSheetDoc();
     const { root, dispose } = mount(() => (
       <>
@@ -345,7 +345,7 @@ describe("SheetGrid", () => {
 
     contextMenu(cell!);
     ([...document.querySelectorAll(".ctx-item")].find((el) => el.textContent?.includes("Zoom into cell")) as HTMLElement).click();
-    expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" });
+    await vi.waitFor(() => expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" }));
     expect((route() as { block?: string }).block).toBeTruthy();
 
     dispose();
@@ -493,7 +493,7 @@ describe("SheetGrid", () => {
     }
   });
 
-  it("opens a sheet block as a full page from the sheet context menu", () => {
+  it("opens a sheet block as a full page from the sheet context menu", async () => {
     loadMdSheetDoc();
     const { root, dispose } = mount(() => (
       <>
@@ -507,7 +507,7 @@ describe("SheetGrid", () => {
     contextMenu(grid!);
     ([...document.querySelectorAll(".ctx-item")].find((el) => el.textContent?.trim() === "Open as full page") as HTMLElement).click();
 
-    expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" });
+    await vi.waitFor(() => expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" }));
     expect((route() as { block?: string }).block).toBeTruthy();
     dispose();
   });
