@@ -9,7 +9,6 @@
 
 import { openSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, pdfTarget, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
-import { captureBinding, stillBound } from "./binding";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
@@ -26,6 +25,7 @@ import {
 import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
+import { cutBlocks } from "./cut";
 import { openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
@@ -764,15 +764,16 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (mod && e.key.toLowerCase() === "c") {
     const ids = selectedIds();
     const text = selectionMarkdown();
-    void copyBlockOutline("copy", text, buildClipboardPayload(ids));
+    void copyBlockOutline("copy", text, buildClipboardPayload(ids))
+      .catch(() => pushToast("Couldn't copy selection: clipboard write failed.", "error"));
     return true;
   }
   if (mod && e.key.toLowerCase() === "x") {
-    const binding = captureBinding();
     const ids = selectedIds();
     const text = selectionMarkdown();
-    void copyBlockOutline("cut", text, buildClipboardPayload(ids))
-      .then(() => { if (stillBound(binding)) deleteSelection(); })
+    void cutBlocks(ids, text, () =>
+      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
+      () => deleteSelection())
       .catch(() => pushToast("Couldn't cut selection: clipboard write failed.", "error"));
     return true;
   }

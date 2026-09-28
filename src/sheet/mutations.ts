@@ -1,5 +1,6 @@
 import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
 import { copyRich } from "../clipboard";
+import { captureBinding, stillBound } from "../binding";
 import { isSheetCellHidden, joinProps, splitProps } from "../editor/properties";
 import { parseOutline, type OutlineNode } from "../editor/outline";
 import { visibleBody } from "../render/block";
@@ -410,10 +411,21 @@ function sheetSelectionOutlineMarkdown(sel: SheetMutationSelection): string {
   return out.join("\n");
 }
 
+function sheetCellIds(sel: SheetMutationSelection): (string | null)[] {
+  const rect = rectForSheetSelection(sel);
+  const ids: (string | null)[] = [];
+  for (let row = rect.top; row <= rect.bottom; row++) {
+    ids.push(gridRows(sel.gridId)?.[row] ?? null);
+    for (let col = rect.left; col <= rect.right; col++) ids.push(cellIdAt(sel.gridId, row, col));
+  }
+  return ids;
+}
+
 export function copySheetSelection(sel: SheetMutationSelection): Promise<void> {
+  const binding = captureBinding();
   const { text, html } = sheetSelectionText(sel);
-  lastSheetCopy = { fingerprint: text, outlineMd: sheetSelectionOutlineMarkdown(sel) };
-  return copyRich(text, html);
+  const copy = { fingerprint: text, outlineMd: sheetSelectionOutlineMarkdown(sel) };
+  return copyRich(text, html).then(() => { if (stillBound(binding)) lastSheetCopy = copy; });
 }
 
 export function clearSheetSelection(sel: SheetMutationSelection): boolean {
@@ -429,9 +441,19 @@ export function clearSheetSelection(sel: SheetMutationSelection): boolean {
   }) ?? false;
 }
 
-export function cutSheetSelection(sel: SheetMutationSelection): void {
-  void copySheetSelection(sel);
-  clearSheetSelection(sel);
+export async function cutSheetSelection(sel: SheetMutationSelection): Promise<void> {
+  const binding = captureBinding();
+  const ids = sheetCellIds(sel);
+  const before = sheetSelectionOutlineMarkdown(sel);
+  try {
+    await copySheetSelection(sel);
+    if (stillBound(binding)
+      && JSON.stringify(sheetCellIds(sel)) === JSON.stringify(ids)
+      && sheetSelectionOutlineMarkdown(sel) === before
+      && gridRows(sel.gridId)) clearSheetSelection(sel);
+  } catch {
+    pushToast("Couldn't cut cells: clipboard write failed.", "error");
+  }
 }
 
 function compactGridConfigSplit(

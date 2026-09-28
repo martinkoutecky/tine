@@ -2795,8 +2795,9 @@ export function Editor(props: { id: string }): JSX.Element {
       commit(raw);
       void ensureBlockId(props.id).then((uuid) => {
         if (uuid) {
-          void writeClipboardText(`((${uuid}))`);
-          pushToast("Copied block ref", "success");
+          void writeClipboardText(`((${uuid}))`)
+            .then(() => pushToast("Copied block ref", "success"))
+            .catch(() => pushToast("Couldn't copy block ref: clipboard write failed.", "error"));
         } else {
           pushToast("Couldn't save the block id — reference not copied.", "error");
         }

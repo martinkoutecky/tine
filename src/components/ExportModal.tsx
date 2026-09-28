@@ -421,9 +421,10 @@ function Modal(props: { ids: string[] }): JSX.Element {
 
   const copy = () => {
     if (format() === "text" && opts().content === "rendered" && warming()) return;
-    void writeClipboardText(payload());
-    pushToast("Copied to clipboard", "success");
-    closeExportModal();
+    const request = exportModal();
+    void writeClipboardText(payload())
+      .then(() => { pushToast("Copied to clipboard", "success"); if (exportModal() === request) closeExportModal(); })
+      .catch(() => pushToast("Couldn't copy: clipboard write failed.", "error"));
   };
 
   let disposed = false;

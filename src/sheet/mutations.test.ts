@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
 import { blockProperty, blockIsGridView, blockSubtreeMarkdown, resetStore, undo } from "../document";
 import { loadSingle } from "../document/workingSet";
@@ -27,6 +27,7 @@ import {
 import { parseDelimitedText } from "./tsv";
 import { setToasts, toasts } from "../toasts";
 import { observeMatrixDimensions } from "./matrix";
+import { backend } from "../backend";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -102,6 +103,7 @@ beforeEach(() => {
   resetStore();
   setToasts([]);
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe("sheet structural mutations", () => {
   it("inserts an empty row and one undo fully reverts it", () => {
@@ -477,15 +479,37 @@ describe("sheet structural mutations", () => {
     expect(splatStructuralSheetSelection({ kind: "cell", gridId: "dst", row: 0, col: 0 }, text)).toBeUndefined();
   });
 
-  it("cut clears the source and one undo restores it", () => {
+  it("cut clears the source and one undo restores it", async () => {
     const gridId = loadGrid();
     const before = pageToDto("Sheet");
 
-    cutSheetSelection({ kind: "range", gridId, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
+    await cutSheetSelection({ kind: "range", gridId, anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
 
     expect(rowCells(rows(gridId)[0])).toEqual(["", "", "C"]);
     undo();
     expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("keeps sheet cells until the clipboard succeeds and preserves edits made while pending", async () => {
+    const gridId = loadGrid();
+    let finish!: () => void;
+    const write = vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    const sel = { kind: "cell", gridId, row: 0, col: 0 } as const;
+    cutSheetSelection(sel);
+    expect(doc.byId[cellId(gridId, 0, 0)!].raw).toBe("A");
+    setDoc("byId", cellId(gridId, 0, 0)!, "raw", "Edited");
+    finish();
+    await Promise.resolve();
+    expect(write).toHaveBeenCalledOnce();
+    expect(doc.byId[cellId(gridId, 0, 0)!].raw).toBe("Edited");
+    write.mockRestore();
+  });
+
+  it("keeps sheet cells when the clipboard rejects Cut", async () => {
+    const gridId = loadGrid();
+    vi.spyOn(backend(), "writeRich").mockRejectedValue(new Error("clipboard denied"));
+    cutSheetSelection({ kind: "cell", gridId, row: 0, col: 0 });
+    await vi.waitFor(() => expect(doc.byId[cellId(gridId, 0, 0)!].raw).toBe("A"));
   });
 
   it.each(["table", "board"])(

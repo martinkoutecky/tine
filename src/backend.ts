@@ -998,11 +998,7 @@ class TauriBackend implements Backend {
       const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
       await writeText(text);
     } catch {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        // ignore
-      }
+      await navigator.clipboard.writeText(text);
     }
   }
   async writeRich(text: string, html: string): Promise<void> {

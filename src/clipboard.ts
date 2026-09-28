@@ -65,6 +65,11 @@ export function consumeClipboardCutGrant(expectedGeneration: number): ConsumedCu
   return grant;
 }
 
+/** A pending Cut that no longer owns its source becomes an ordinary copy. */
+export function cancelClipboardCutGrant(expectedGeneration: number): void {
+  consumeClipboardCutGrant(expectedGeneration);
+}
+
 /** Native round trips observed by stage B normalize line endings and one final LF. */
 export function normalizeClipboardText(text: string): string {
   const lf = text.replace(/\r\n/g, "\n");
