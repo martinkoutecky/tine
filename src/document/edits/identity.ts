@@ -3,7 +3,7 @@ import { doc, formatForBlock, pageByName, setDoc } from "../model";
 import { captureBinding, stillBound } from "../../binding";
 import { graphOwner, readOwned } from "../../owned";
 import { blockWritable } from "./properties";
-import { markDirty, flushPage } from "../save/engine";
+import { markDirty, flushPage, isConflicted } from "../save/engine";
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
 import { orgBlockDrawerRange } from "../../editor/properties";
@@ -169,7 +169,7 @@ export async function ensureBlockId(id: string): Promise<string | null> {
   // Even a pre-existing id may not be on disk yet (added in-memory, not flushed);
   // flush and only hand back the uuid if the write actually landed.
   const ok = await flushPage(node.page);
-  return ok && stillBound(binding) ? uuid : null;
+  return ok && !isConflicted(node.page) && stillBound(binding) ? uuid : null;
 }
 
 /** A live reference to a loaded block: its durable external UUID plus its exact
@@ -187,52 +187,61 @@ export function blockRef(id: string): LoadedBlockRef {
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Stamp an external UUID in memory without changing the live store key.
- * Existing IDs win; otherwise start a page flush that may fail after return. */
-export function ensureStableBlockId(id: string): string | null {
+/** Stamp an external UUID and wait for its page save. Existing IDs are flushed
+ * too because their in-memory property may not yet be on disk. */
+export async function ensureStableBlockId(id: string): Promise<string | null> {
+  const binding = captureBinding();
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return null;
   const fmt = formatForBlock(id);
   const existing = existingBlockId(node.raw, fmt);
-  if (existing) return existing;
-  const uuid = UUID_RE.test(id) ? id : crypto.randomUUID();
-  setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
-  markDirty(node.page, "save-block");
-  // Persist now, not on the 400ms debounce: the user may quit right after
-  // parking the block, and a pending timer is lost when the webview closes.
-  void flushPage(node.page);
-  return uuid;
+  const uuid = existing ?? (UUID_RE.test(id) ? id : crypto.randomUUID());
+  if (!existing) {
+    setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
+    markDirty(node.page, "save-block");
+  }
+  const ok = await flushPage(node.page);
+  return ok && !isConflicted(node.page) && stillBound(binding) && doc.byId[id]?.page === node.page
+    && existingBlockId(doc.byId[id].raw, fmt) === uuid ? uuid : null;
 }
 
-/** Like `blockRef`, but first stamp an `id::` in memory and start a page flush.
- * The returned ref resolves immediately; save failure is not reported here. */
-export function persistentBlockRef(id: string): LoadedBlockRef {
-  ensureStableBlockId(id);
-  return blockRef(id);
+/** A block ref usable in persisted UI state after its ID has reached disk.
+ * Returns null on a refused save, lost ownership, or missing target; unexpected
+ * save errors reject. Cost is one target page save. */
+export async function persistentBlockRef(id: string): Promise<LoadedBlockRef | null> {
+  const uuid = await ensureStableBlockId(id);
+  return uuid ? blockRef(id) : null;
 }
 
-/** Find a new block-reference target, loading its page if needed, and stamp
- * its ID in memory. Missing or changed targets are no-ops. Its page save is
- * started without awaiting it and can fail after this promise resolves; no
- * durability receipt is returned. Cost includes a page lookup and page save. */
+/** Find a block-reference target by runtime key or authored ID, loading its
+ * page if needed. `externalId` is the ID to verify before a caller publishes
+ * the reference. False means the target changed, is missing, or its save was
+ * refused; backend read errors reject. Cost includes a page lookup and save. */
 export async function persistBlockRefTarget(
   uuid: string,
   page: string,
   kind: PageKind,
   path?: string,
-): Promise<void> {
+  externalId: string = uuid,
+): Promise<boolean> {
   const owner = graphOwner();
   const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
-  if (!resolveBlockRef(ref)) {
+  const runtimeTarget = (): string | null => {
+    const candidate = doc.byId[uuid];
+    const currentOwner = pageByName(page);
+    return candidate && candidate.page === page && currentOwner?.kind === kind
+      && (path === undefined || currentOwner.id === path) ? uuid : null;
+  };
+  if (!runtimeTarget() && !resolveBlockRef(ref)) {
     const result = await readOwned(owner, path
       ? backend().getPageByPath(path)
       : backend().getPage(page, kind));
-    if (result.kind === "stale") return;
+    if (result.kind === "stale") return false;
     if (result.value) ensurePageLoaded(result.value);
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
-  const id = resolveBlockRef(ref);
-  if (id) ensureStableBlockId(id);
+  const id = runtimeTarget() ?? resolveBlockRef(ref);
+  return id ? (await ensureStableBlockId(id)) === externalId : false;
 }

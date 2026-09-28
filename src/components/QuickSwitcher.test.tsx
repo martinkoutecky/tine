@@ -310,10 +310,10 @@ describe("QuickSwitcher search syntax help", () => {
     blockRow.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
 
-    expect(rightSidebar()).toEqual([{
+    await vi.waitFor(() => expect(rightSidebar()).toEqual([{
       kind: "block", uuid: authoredId, page: "Unloaded", pageKind: "page",
       path: exactPath,
-    }]);
+    }]));
     await vi.waitFor(() => expect(getPageByPath).toHaveBeenCalledWith(exactPath));
     expect(getPageByPath).toHaveBeenCalledWith(exactPath);
     expect(getPage).not.toHaveBeenCalled();
@@ -328,6 +328,11 @@ describe("QuickSwitcher search syntax help", () => {
 
   it("retains one noncanonical path through current alternate and background page/block activation", async () => {
     const path = "pages/duplicates/Twin.md";
+    loadSingle({ id: "pages/Current.md", name: "Current", kind: "page", title: "Current", pre_block: null, blocks: [] });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue({
+      id: path, name: "Twin", kind: "page", title: "Twin", pre_block: null,
+      blocks: [{ id: "exact-runtime-block", raw: "owned needle\nid:: exact-authored-block", collapsed: false, children: [] }],
+    });
     vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [
         {
@@ -380,14 +385,18 @@ describe("QuickSwitcher search syntax help", () => {
 
       first.blockRow.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
       first.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-      expect(route()).toMatchObject({ kind: "page", name: "Twin", pageKind: "page", path });
+      await vi.waitFor(() => expect(route()).toMatchObject({ kind: "page", name: "Twin", pageKind: "page", path }));
 
       const alternate = await openResults();
       alternate.blockRow.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
       alternate.input.dispatchEvent(new KeyboardEvent("keydown", {
         key: "Enter", altKey: true, bubbles: true, cancelable: true,
       }));
-      const targetPane = layoutPaneIds().find((id) => id !== "main");
+      const targetPane = await vi.waitFor(() => {
+        const pane = layoutPaneIds().find((id) => id !== "main");
+        expect(pane).toBeDefined();
+        return pane;
+      });
       expect(targetPane).toBeDefined();
       expect(paneRouter(targetPane!).route()).toMatchObject({
         kind: "page", name: "Twin", pageKind: "page", path,
@@ -395,9 +404,9 @@ describe("QuickSwitcher search syntax help", () => {
 
       const background = await openResults();
       background.blockRow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 1 }));
-      expect(tabs().map(tabRoute)).toContainEqual({
+      await vi.waitFor(() => expect(tabs().map(tabRoute)).toContainEqual({
         kind: "page", name: "Twin", pageKind: "page", block: "exact-authored-block", path,
-      });
+      }));
     } finally {
       dispose();
     }

@@ -11,7 +11,8 @@ import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { ensureBlockId, persistentBlockRef, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, renamePageOnDisk, node as docNode } from "../document";
+import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, renamePageOnDisk, node as docNode } from "../document";
+import { openDurableBlock } from "../blockRefActions";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
@@ -1021,7 +1022,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
   const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
   if (blockPageReadOnly(id)) {
     return [
-      { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
+      { label: "Open in sidebar", run: () => { void openDurableBlock(id, "sidebar"); } },
       { label: "Zoom into block", run: () => zoomInto(id) },
       { label: "Copy block", run: () => copyBlock(id) },
       {
@@ -1034,7 +1035,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     ];
   }
   return [
-    { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
+    { label: "Open in sidebar", run: () => { void openDurableBlock(id, "sidebar"); } },
     { label: "Zoom into block", run: () => zoomInto(id) },
     { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
     { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },

@@ -14,6 +14,21 @@ import { backend } from "../../backend";
 import { pushToast } from "../../toasts";
 import type { OutlineNode } from "../../editor/outline";
 
+const ID_LOOKUP_CHUNK_SIZE = 128;
+
+async function resolvePastedIds(owner: () => boolean, ids: readonly string[]) {
+  const lookupOwner = ownedWhen(owner);
+  const matches: Awaited<ReturnType<ReturnType<typeof backend>["resolveBlocks"]>> = [];
+  for (let start = 0; start < ids.length; start += ID_LOOKUP_CHUNK_SIZE) {
+    const chunk = ids.slice(start, start + ID_LOOKUP_CHUNK_SIZE);
+    const result = await readOwned(lookupOwner, backend().resolveBlocks(chunk));
+    if (result.kind === "stale") return null;
+    if (result.value.length !== chunk.length) throw new Error("Incomplete block ID lookup");
+    matches.push(...result.value);
+  }
+  return matches;
+}
+
 type ClipboardProperty = { key: string; value: string };
 
 function clipboardProperties(raw: string, format: Format): ClipboardProperty[] {
@@ -35,9 +50,8 @@ function clipboardIdsForBlock(block: ClipboardBlock): string[] {
     .map((property) => property.value.trim());
 }
 
-/** Check pasted IDs against loaded blocks and a backend resolveBlocks call
- * containing every distinct pasted ID. Request size grows with input IDs and
- * has no fixed cap. No-ID input returns a copy synchronously (or [] for a
+/** Check pasted IDs against loaded blocks and backend resolveBlocks calls of
+ * at most 128 IDs each. Total work grows with pasted IDs. No-ID input returns a copy synchronously (or [] for a
  * missing target). Lookup failure strips all IDs; retired authority returns
  * null. */
 export function sanitizeOutlineIdsForPaste(
@@ -61,9 +75,9 @@ export function sanitizeOutlineIdsForPaste(
     const unique = [...ids];
     const collisions = new Set<string>();
     try {
-      const result = await readOwned(owner, backend().resolveBlocks(unique));
-      if (result.kind === "stale") return null;
-      for (let i = 0; i < unique.length; i++) if (result.value[i] !== null) collisions.add(unique[i]);
+      const matches = await resolvePastedIds(owner, unique);
+      if (matches === null) return null;
+      for (let i = 0; i < unique.length; i++) if (matches[i] !== null) collisions.add(unique[i]);
     } catch {
       // An uncertain ID cannot safely be copied into the graph.
       unique.forEach((id) => collisions.add(id));
@@ -254,9 +268,9 @@ export function pasteClipboardPayload(
     }
     if (preserveIds && normalizedIds.length) {
       try {
-        const result = await readOwned(owner, backend().resolveBlocks(normalizedIds));
-        if (result.kind === "stale") return null;
-        preserveIds = result.value.length === normalizedIds.length && result.value.every((block) => block === null);
+        const matches = await resolvePastedIds(owner, normalizedIds);
+        if (matches === null) return null;
+        preserveIds = matches.every((block) => block === null);
       } catch {
         preserveIds = false;
       }

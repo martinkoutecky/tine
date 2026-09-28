@@ -47,6 +47,15 @@ beforeEach(() => {
 });
 
 describe("named workspace switching", () => {
+  it("does not publish a workspace when the live session save fails", async () => {
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
+    const saveRegistry = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
+    vi.spyOn(backend(), "saveSession").mockRejectedValue(new Error("session disk full"));
+    await initializeWorkspaces();
+    await expect(createWorkspace("Second")).rejects.toThrow("session disk full");
+    expect(saveRegistry).not.toHaveBeenCalled();
+    expect(activeWorkspaceId()).toBe("default");
+  });
   it("reloads a published registry after a post-rename sync failure before the next write", async () => {
     let disk = registryFromCurrent();
     let failOnce = true;

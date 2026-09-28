@@ -28,7 +28,8 @@ import { typoTypeReplace } from "../render/typography";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistentBlockRef, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
+import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
+import { openDurableBlock } from "../blockRefActions";
 import {
   clearFocusSurface,
   editingId,
@@ -83,14 +84,13 @@ import { isMobilePlatform } from "../nativeChrome";
 import { journalTitle } from "../journal";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
 import { graphMeta, dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
 import { assetEditorIsCurrent, captureAssetEditor, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
 import { captureBinding, stillBound } from "../binding";
 import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { openInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
@@ -436,21 +436,14 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             onClick={(e) => {
               e.stopPropagation();
               if (dragMoved) return; // was a drag, not a click
-              if (e.shiftKey) openBlockInSidebar(persistentBlockRef(props.id));
+              if (e.shiftKey) void openDurableBlock(props.id, "sidebar");
               else zoomInto(props.id);
             }}
             onAuxClick={(e) => {
               if (e.button !== 1) return; // middle-click → open the zoom in a new tab
               e.preventDefault();
               e.stopPropagation();
-              const ref = persistentBlockRef(props.id); // writes id:: so the tab survives a restart
-              openInNewTab({
-                kind: "page",
-                name: ref.page,
-                pageKind: ref.pageKind,
-                block: ref.uuid,
-                ...(ref.path ? { path: ref.path } : {}),
-              });
+              void openDurableBlock(props.id, "tab");
             }}
           >
             <Show when={orderMarker()} fallback={<span class="bullet" />}>
@@ -491,7 +484,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                       title="Open block references (shift-click → sidebar)"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (e.shiftKey) openBlockInSidebar(persistentBlockRef(props.id));
+                        if (e.shiftKey) void openDurableBlock(props.id, "sidebar");
                         else setShowRefs((v) => !v);
                       }}
                     >
@@ -1827,8 +1820,14 @@ export function Editor(props: { id: string }): JSX.Element {
       // Insert the target's authored ID (or its runtime fallback), while using the
       // runtime ID to find an id-less target that still needs an `id::` stamped.
       const { uuid, externalId, page, kind } = item.blockRef;
-      replaceTrigger(`((${externalId}))`);
-      void persistBlockRefTarget(uuid, page, kind);
+      const binding = captureBinding();
+      const trigger = ac();
+      const editorValue = ref.value;
+      void persistBlockRefTarget(uuid, page, kind, undefined, externalId).then((saved) => {
+        if (!stillBound(binding) || ac() !== trigger || ref.value !== editorValue) return;
+        if (saved) replaceTrigger(`((${externalId}))`);
+        else pushToast("Could not save the referenced block ID. Try again after resolving the page save.", "error");
+      }).catch((error) => pushToast(`Could not save the referenced block ID: ${String(error)}`, "error"));
       return;
     }
     if (item.plugin) {

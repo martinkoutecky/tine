@@ -20,11 +20,15 @@
  * lives in the matching `edits/*.ts` file. In-memory-only changes (no save, no undo):
  * `revealNode` (expand for find) and the page-header edit begin/finish pair.
  * `sanitizeOutlineIdsForPaste` prepares an ID-bearing ordinary paste by checking
- * loaded blocks and one backend ID lookup. The lookup is O(pages in graph) in
- * memory (plus page reads for IDs it cannot place), paid once per explicit paste
+ * loaded blocks and backend ID lookups in chunks of at most 128 IDs. Each lookup
+ * can scan graph pages in memory and read pages for IDs it cannot place; paid per explicit paste
  * that carries IDs, never per keystroke or save;
  * it returns null when the target graph changes and strips uncertain IDs on a
  * lookup failure. The caller needs no knowledge of which pages are loaded.
+ * `persistentBlockRef` and `persistBlockRefTarget` wait for the target ID's
+ * page save before the reference can enter persisted UI or edited content;
+ * failure returns null or false. Cost is one target page save, plus a page
+ * lookup when the target is not loaded. Callers need no debounce knowledge.
  *
  * Saving. Pages save as whole-page snapshots, never as operations. `markDirty`
  * requires an edit kind and schedules a trailing 400 ms save, capped at 3 s

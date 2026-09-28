@@ -156,6 +156,14 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
+  it("still switches graph when the current session cannot be saved", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    await loadGraphPath(META.root);
+    const { flushSession } = await import("./router");
+    vi.mocked(flushSession).mockRejectedValueOnce(new Error("session disk full"));
+    expect(await loadGraphPath("/tmp/another-graph")).not.toEqual({ kind: "aborted" });
+    expect(api.loadGraph).toHaveBeenCalledTimes(2);
+  });
   it("releases a graph transition invalidated during blur", async () => {
     const { loadGraphPath, api } = await loadHarness(null);
     const { invalidateBinding } = await import("./binding");

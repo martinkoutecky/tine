@@ -29,8 +29,8 @@ describe("persisted split session", () => {
     setToasts([]);
     const save = vi.spyOn(backend(), "saveSession").mockRejectedValue(new Error("permission denied"));
     try {
-      await flushSession();
-      await flushSession();
+      await expect(flushSession()).rejects.toThrow("permission denied");
+      await expect(flushSession()).rejects.toThrow("permission denied");
       expect(toasts().filter((toast) => toast.message.includes("Could not save session"))).toHaveLength(1);
       expect(toasts()[0].action?.label).toBe("Retry");
       expect(toasts()[0].message).toContain("permission denied");

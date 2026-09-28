@@ -107,7 +107,12 @@ export async function loadGraphPath(
     pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
     return { kind: "aborted" };
   }
-  if (hadGraph) await flushSession();
+  if (hadGraph) {
+    // Session layout is best effort across a graph switch: flushSession keeps its
+    // Retry toast, but a full or unwritable app-data dir must not trap the user here.
+    try { await flushSession(); }
+    catch { console.warn("Session not saved before graph switch"); }
+  }
   if (!stillBound(startingBinding)) return { kind: "aborted" };
   if (!(await authorizeGraphAccess(path))) return { kind: "aborted" };
   if (!stillBound(startingBinding)) return { kind: "aborted" };

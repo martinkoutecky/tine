@@ -584,9 +584,7 @@ describe("zoomed block view", () => {
 
     const { root, dispose } = mount(() => <PageView />);
     try {
-      await tick();
-      await tick();
-      expect(root.querySelector(`[data-block-id="${child}"]`)).not.toBeNull();
+      await vi.waitFor(() => expect(root.querySelector(`[data-block-id="${child}"]`)).not.toBeNull());
       expect(doc.byId[parent].collapsed).toBe(true);
     } finally {
       dispose();
@@ -602,6 +600,7 @@ describe("zoomed block view", () => {
       kind: "page" as const,
       title: "Outline",
       pre_block: null,
+      id: "pages/Outline.md",
       blocks: [
         { id: parent, raw: "Root\ncollapsed:: true", collapsed: true, children: [{ id: oldChild, raw: "Old", collapsed: false, children: [] }] },
         { id: outside, raw: "Outside", collapsed: false, children: [] },
@@ -613,14 +612,14 @@ describe("zoomed block view", () => {
         [oldChild]: node(oldChild, "Old", dto.name, parent),
         [outside]: node(outside, "Outside", dto.name),
       },
-      pages: [page(dto.name, "page", [parent, outside])], feed: [], loaded: true,
+      pages: [{ ...page(dto.name, "page", [parent, outside]), id: dto.id }], feed: [], loaded: true,
     });
     vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
     focusBlock(parent);
     const { root, dispose } = mount(() => <PageView />);
     try {
-      await tick();
-      await tick();
+      await vi.waitFor(() => expect(root.querySelector(".zoomed-page")).not.toBeNull());
       startEditing(parent, 0);
       await tick();
       const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
@@ -765,7 +764,7 @@ describe("trailing page block target", () => {
     vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
     focusBlock("zoom");
     const mounted = mount(() => <PageView />);
-    await tick(); await tick();
+    await vi.waitFor(() => expect(mounted.root.querySelector(".page-trailing-block-target")).not.toBeNull());
     (mounted.root.querySelector(".page-trailing-block-target") as HTMLButtonElement).click();
     await tick();
     expect(doc.byId.zoom.children).toHaveLength(1);
@@ -1106,9 +1105,7 @@ describe("page route loading", () => {
 
     const { root, dispose } = mount(() => <PageView />);
     try {
-      await tick();
-      await tick();
-      expect(root.querySelector(".zoomed-page")).not.toBeNull();
+      await vi.waitFor(() => expect(root.querySelector(".zoomed-page")).not.toBeNull());
       expect(root.textContent).toContain(sharedRaw);
 
       // The name-keyed working-set slot is replaced by A. Its copied UUID/raw
