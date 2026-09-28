@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, rewritePageTargetAcrossPanes } from "../panes";
 import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
@@ -17,7 +17,7 @@ import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { SheetTable } from "./SheetTable";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
-import { pageProperties, aliasNames, visibleBody } from "../render/block";
+import { aliasNamesOf, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay } from "../journal";
@@ -694,13 +694,9 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     // keystrokes (GH #62's regression after the GH #86 presentation change).
     return id && editingId() !== id && docNode(id) && isPropertiesOnly(docNode(id).raw) ? id : null;
   };
-  const propertySource = () => {
-    const first = firstPropertiesId();
-    if (first && docNode(first).originatedFromPageHeader) {
-      return docNode(first).raw + (props.page.preBlock ?? "");
-    }
-    return [props.page.preBlock, first ? docNode(first).raw : null].filter(Boolean).join("\n") || null;
-  };
+  // The page header shows the same answerer the properties panel lists; a first
+  // root rendered as an ordinary block (being edited, or not a header) is excluded.
+  const headerProperties = () => pageHeaderProperties(props.page, firstPropertiesId() ? null : props.page.roots[0] ?? null);
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
@@ -840,7 +836,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
               </svg>
             </Show>
             <Show
-              when={pageProperties(propertySource(), props.page.format)
+              when={headerProperties()
                 .find(([k]) => k.toLowerCase() === "icon")?.[1]
                 ?.trim()}
             >
@@ -910,18 +906,18 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           </button>
         </Show>
       </div>
-      <Show when={aliasNames(propertySource(), props.page.format).length}>
+      <Show when={aliasNamesOf(headerProperties()).length}>
         <div class="page-aliases" title="Also known as — other names that link here" onClick={editPageHeader}>
           <span class="page-aliases-label">aka</span>
-          <For each={aliasNames(propertySource(), props.page.format)}>
+          <For each={aliasNamesOf(headerProperties())}>
             {(a) => <span class="alias-chip"><PageRef name={a} alias={a} /></span>}
           </For>
         </div>
       </Show>
-      <Show when={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
+      <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
         <div class="page-properties" onClick={editPageHeader}>
           {/* `alias`/`icon` are surfaced elsewhere (chips / title icon) — see PAGE_PROPS_HIDDEN. */}
-          <For each={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
+          <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">
                 <span class="prop-key">{key}</span>

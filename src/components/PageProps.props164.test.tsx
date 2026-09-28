@@ -73,7 +73,7 @@ describe("properties panel — arbitrary keys (GH #164)", () => {
     }
   });
 
-  it("adds a new (non-ASCII) property from the add-row; the canonical reader reads it back", async () => {
+  it("adds a new property from the add-row; the canonical reader reads it back", async () => {
     loadPage("Notes", "status:: draft");
     openPageProps("Notes", 20, 20);
     const { host, dispose } = mount(() => <PageProps />);
@@ -82,17 +82,17 @@ describe("properties panel — arbitrary keys (GH #164)", () => {
       const keyInput = host.querySelector<HTMLInputElement>("input.pp-add-key");
       const valueInput = host.querySelector<HTMLInputElement>("input.pp-add-value");
       expect(keyInput).not.toBeNull();
-      typeInto(keyInput!, "klíč");
+      typeInto(keyInput!, "reviewer");
       typeInto(valueInput!, "hodnota");
       host.querySelector<HTMLButtonElement>("button.pp-add-commit")!.click();
       await tick();
-      expect(readPageProperty("Notes", "klíč")).toBe("hodnota");
+      expect(readPageProperty("Notes", "reviewer")).toBe("hodnota");
       expect(readPageProperty("Notes", "status")).toBe("draft");
       // It is now a listed row, and removable from the panel.
-      expect(fieldLabels(host)).toContain("klíč");
-      host.querySelector<HTMLButtonElement>('button.pp-remove[title="Remove klíč"]')!.click();
+      expect(fieldLabels(host)).toContain("reviewer");
+      host.querySelector<HTMLButtonElement>('button.pp-remove[title="Remove reviewer"]')!.click();
       await tick();
-      expect(readPageProperty("Notes", "klíč")).toBeNull();
+      expect(readPageProperty("Notes", "reviewer")).toBeNull();
       expect(readPageProperty("Notes", "status")).toBe("draft");
     } finally {
       dispose();
@@ -106,7 +106,7 @@ describe("properties panel — arbitrary keys (GH #164)", () => {
     try {
       await tick();
       const commit = () => host.querySelector<HTMLButtonElement>("button.pp-add-commit")!;
-      for (const bad of ["a b", "a::b", "id", "tine.view", ""]) {
+      for (const bad of ["a b", "a::b", "klíč", "id", "tine.view", ""]) {
         typeInto(host.querySelector<HTMLInputElement>("input.pp-add-key")!, bad);
         await tick();
         expect(commit().disabled, bad).toBe(true);

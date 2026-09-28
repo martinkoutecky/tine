@@ -1,45 +1,44 @@
-import { doc, formatForBlock, pageByName, setDoc, freshId } from "../model";
+import { doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent } from "../save/engine";
-import { PROP_LINE, readPropertyValue, readOrgPageProperty, orgPreBlockWithProperty, isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden } from "../../editor/properties";
+import { PROP_LINE, isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pushToast } from "../../toasts";
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
- * the canonical head (title, planning, contiguous properties) plus the legacy
- * trailing property block, so a `key::` lookalike in body text or a code fence is
- * never touched or reordered. Existing property order is retained. */
+ * the canonical head (title — or, when the first line is itself a property, no
+ * title — planning, contiguous properties) plus the legacy trailing property
+ * block, so a `key::` lookalike in body text or a code fence is never touched or
+ * reordered. Keys match case-insensitively, like blockProperty/facetsOf: the
+ * first head match is replaced in place with the file's spelling, and every
+ * other match (head or trailing, any case) is removed. Existing order is kept. */
 function markdownRawWithProperty(raw: string, key: string, value: string | null): string {
   const lines = raw.split("\n");
-  const first = lines[0] ?? "";
+  const titled = !PROP_LINE.test(lines[0] ?? "");
   const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*</;
-  let i = 1;
-  while (i < lines.length && PLANNING_LINE.test(lines[i])) i++;
+  let i = titled ? 1 : 0;
+  while (titled && i < lines.length && PLANNING_LINE.test(lines[i])) i++;
   const planningEnd = i;
   while (i < lines.length && PROP_LINE.test(lines[i])) i++;
   const propsEnd = i;
   let j = lines.length;
   while (j > propsEnd && PROP_LINE.test(lines[j - 1] ?? "")) j--;
-  const notKey = (l: string) => PROP_LINE.exec(l)?.[1] !== key;
+  const keyOf = (l: string) => PROP_LINE.exec(l)?.[1].toLowerCase();
+  const lower = key.toLowerCase();
   const props = lines.slice(planningEnd, propsEnd);
-  const at = props.findIndex((l) => PROP_LINE.exec(l)?.[1] === key);
-  if (value !== null) {
-    const line = `${key}:: ${value}`;
-    if (at >= 0) props[at] = line;
-    else props.push(line);
-  } else if (at >= 0) {
-    props.splice(at, 1);
-  }
+  const at = props.findIndex((l) => keyOf(l) === lower);
+  const line = value === null ? null : `${at >= 0 ? PROP_LINE.exec(props[at])![1] : key}:: ${value}`;
+  const head = props.flatMap((l, k) => (keyOf(l) !== lower ? [l] : k === at && line !== null ? [line] : []));
+  if (at < 0 && line !== null) head.push(line);
   return [
-    first,
-    ...lines.slice(1, planningEnd),
-    ...props,
+    ...lines.slice(0, planningEnd),
+    ...head,
     ...lines.slice(propsEnd, j),
-    ...lines.slice(j).filter(notKey),
+    ...lines.slice(j).filter((l) => keyOf(l) !== lower),
   ].join("\n");
 }
 
@@ -101,77 +100,85 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
   markDirty(node.page, "save-block");
 }
 
-/** Read the first matching page property from the full pre-block: `#+key: `
- *  for Org, `key::` for Markdown. Markdown falls back to a properties-only
- *  first root when no pre-block match exists. Missing pages/keys return null.
- *  Cost O(loaded pages + pre-block bytes + first-root bytes). */
-export function readPageProperty(pageName: string, key: string): string | null {
-  const p = doc.pages.find((x) => x.name === pageName);
-  if (!p) return null;
-  const fromPreBlock = p.format === "org" ? readOrgPageProperty(p.preBlock, key) : readPropertyValue(p.preBlock, key);
-  if (fromPreBlock !== null) return fromPreBlock;
-  const first = p.format === "md" ? doc.byId[p.roots[0]] : null;
-  return first && isPropertiesOnly(first.raw) ? readPropertyValue(first.raw, key) : null;
+/** Where a page's properties are read from and written to, in file order:
+ *  Org → the pre-block; Markdown → the pre-block (when non-empty, or when there
+ *  is no header root) then a first root that IS the page header (a transient
+ *  header editor, or a properties-only root). A transient header editor is the
+ *  whole source: the pre-block then holds only the post-header remainder.
+ *  `exclude` names a root the caller shows as an ordinary block instead. */
+type PropertyPart = { kind: "preBlock"; text: string } | { kind: "root"; id: string; text: string };
+function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null): PropertyPart[] {
+  const first = page.format === "md" ? doc.byId[page.roots[0]] : undefined;
+  const root = first && first.id !== exclude && (first.originatedFromPageHeader || isPropertiesOnly(first.raw)) ? first : null;
+  const rootPart: PropertyPart[] = root ? [{ kind: "root", id: root.id, text: root.raw }] : [];
+  if (root?.originatedFromPageHeader) return rootPart;
+  return page.preBlock || !root ? [{ kind: "preBlock", text: page.preBlock ?? "" }, ...rootPart] : rootPart;
 }
 
-/** Every page property as `[key, value]`, in file order, read from exactly the
- *  sources and grammar {@link readPageProperty} reads: pre-block (`#+key: ` for
- *  Org, `key::` for Markdown), then a properties-only Markdown first root. The
- *  first spelling of a key (case-insensitive) wins, so each listed key reads
- *  back through readPageProperty. Missing page → []. Cost O(pre-block +
- *  first-root bytes). */
+/** Every page-property line of this loaded page as `[key, value]`, in file
+ *  order with duplicates — exactly what the page header renders (Page.tsx calls
+ *  this with `exclude` = a first root it shows as a block). Grammar:
+ *  editor/properties.ts `pagePropertyEntries`. Unloaded page → []. Reactive
+ *  (reads the store). Cost O(pre-block + first-root bytes). */
+export function pageHeaderProperties(page: ReadonlyFeedPage, exclude: string | null = null): [string, string][] {
+  return pagePropertyParts(page, exclude).flatMap((part) =>
+    pagePropertyEntries(part.text, page.format).map((e): [string, string] => [e.key, e.value]));
+}
+
+/** This page's properties, the ONE answerer the properties panel and
+ *  {@link readPageProperty} use: {@link pageHeaderProperties} with the first
+ *  spelling of each key (case-insensitive) kept. Markdown: the fence-aware
+ *  canonical header of the pre-block, then a properties-only / header-editor
+ *  first root — never prose or fenced `key::` lookalikes. Org: `#+key:`
+ *  directives (space optional) and `:PROPERTIES:` drawer lines, keys lowercased.
+ *  Every listed key is written back to the line it was read from by
+ *  {@link setPageProperty}. Missing/unloaded page → []. Reactive. Cost
+ *  O(pre-block + first-root bytes). */
 export function readPageProperties(pageName: string): [string, string][] {
-  const p = pageByName(pageName);
-  if (!p) return [];
-  const out = new Map<string, [string, string]>();
-  const scan = (text: string | null, org: boolean) => {
-    for (const line of text?.split("\n") ?? []) {
-      const m = org ? /^#\+([^\s:]+): (.*)$/u.exec(line) : PROP_LINE.exec(line);
-      const key = m && (org ? m[1].toLowerCase() : m[1]);
-      if (key && !out.has(key.toLowerCase())) out.set(key.toLowerCase(), [key, m[2].trim()]);
-    }
-  };
-  scan(p.preBlock, p.format === "org");
-  const first = p.format === "md" ? doc.byId[p.roots[0]] : null;
-  if (first && isPropertiesOnly(first.raw)) scan(first.raw, false);
-  return [...out.values()];
+  const page = pageByName(pageName);
+  if (!page) return [];
+  const seen = new Set<string>();
+  return pageHeaderProperties(page).filter(([key]) => !seen.has(key.toLowerCase()) && !!seen.add(key.toLowerCase()));
 }
 
-/** Set/clear a page property in an active Markdown header editor first;
- *  otherwise use a properties-only first root only when pre-block is empty,
- *  and use the format's pre-block in every other case. Missing/read-only pages
- *  are ignored. Records
- *  undo and schedules a guarded page save; the caller need not handle disk
- *  format or save ordering. Cost O(loaded pages + property text) now, then one
- *  page save for a valid DTO. A childed transient header remains intact if its
- *  last key clears; that invalid draft cannot save until its children move out. */
+/** Value of page property `key` (case-insensitive) as {@link readPageProperties}
+ *  lists it, or null. Cost as readPageProperties. */
+export function readPageProperty(pageName: string, key: string): string | null {
+  const lower = key.toLowerCase();
+  return readPageProperties(pageName).find(([k]) => k.toLowerCase() === lower)?.[1] ?? null;
+}
+
+/** Set/clear a page property on the line {@link readPageProperties} lists it
+ *  from (first match replaced in place, case-insensitive duplicates removed); a
+ *  new key is prepended to the first property source (pre-block, or the
+ *  header root when that is the whole source). Missing/read-only pages and
+ *  no-op writes are ignored. Records undo and schedules a guarded page save.
+ *  Cost O(property text) now, then one page save. A childed transient header
+ *  remains intact if its last key clears; that invalid draft cannot save until
+ *  its children move out. */
 export function setPageProperty(pageName: string, key: string, value: string | null) {
   const idx = doc.pages.findIndex((x) => x.name === pageName);
   if (idx < 0 || !pageWritable(pageName)) return;
+  const page = doc.pages[idx];
+  const parts = pagePropertyParts(page, null);
+  const next = pagePartsWithProperty(parts.map((part) => part.text), page.format, key, value);
+  if (next.every((text, i) => text === parts[i].text)) return;
   if (key.toLowerCase() === "title") noteTitleIdentityIntent(pageName);
   pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
-  const page = doc.pages[idx];
-  const first = page.format === "md" ? doc.byId[page.roots[0]] : null;
-  // A properties-only first root is the same editable source as the rendered
-  // header. Do not silently duplicate its property into preBlock; pageToDto or
-  // the native new-header boundary canonicalizes its persisted form.
-  if (first && (first.originatedFromPageHeader || (!page.preBlock && isPropertiesOnly(first.raw)))) {
-    const next = upsertPropertyLine(first.raw, key, value) ?? "";
-    if (first.originatedFromPageHeader && next === "" && first.children.length === 0) {
-      setDoc(produce((s) => {
-        const target = s.pages.find((p) => p.name === pageName);
-        if (target?.roots[0] === first.id) target.roots.shift();
-        delete s.byId[first.id];
-      }));
-    } else {
-      setDoc("byId", first.id, "raw", next);
-    }
-    markDirty(pageName, "save-block");
-    return;
-  }
-  setDoc("pages", idx, "preBlock", page.format === "org"
-    ? orgPreBlockWithProperty(page.preBlock, key, value)
-    : upsertPropertyLine(page.preBlock, key, value));
+  setDoc(produce((s) => {
+    parts.forEach((part, i) => {
+      if (next[i] === part.text) return;
+      if (part.kind === "preBlock") {
+        s.pages[idx].preBlock = next[i].trim() === "" ? null : next[i];
+        return;
+      }
+      const node = s.byId[part.id];
+      if (node.originatedFromPageHeader && next[i] === "" && node.children.length === 0) {
+        if (s.pages[idx].roots[0] === part.id) s.pages[idx].roots.shift();
+        delete s.byId[part.id];
+      } else node.raw = next[i];
+    });
+  }));
   markDirty(pageName, "save-block");
 }
 

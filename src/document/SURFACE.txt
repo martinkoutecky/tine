@@ -84,6 +84,7 @@ orderedListMarker
 outdentBlock
 outdentSelection
 pageByName
+pageHeaderProperties  # why: one answerer for the rendered page header and the properties panel (Rule 3); batch14q5-followup
 pageRoots
 pageVisibleOrder
 pasteClipboardPayload

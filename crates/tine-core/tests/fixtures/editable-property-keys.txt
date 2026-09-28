@@ -1,0 +1,34 @@
+# Property keys the GH #164 properties panel may write (og 14 Q5 follow-up).
+# Shared by src/editor/editablePropertyKeys.test.ts (the TypeScript validator
+# and every TypeScript reader) and crates/tine-core/src/logbook.rs tests (the
+# Rust readers `doc::parse_property_line` and `logbook::is_md_property_line`).
+# `+key` must be accepted and read back by every reader; `-key` must be refused
+# by the panel because at least one Tine reader would not find it again.
+# The rule: ASCII letters, digits, `-` and `_` only.
++status
++Status
++owner
++a1
++1
++_
++-
++my-key
++my_key
++ABC-def_09
++x-y_z
+-
+-klíč
+-日本
+-é
+-a/b
+-a.b
+-logseq.order-list-type
+-a b
+-a:b
+-a::b
+-#tag
+-a'b
+-a+b
+-[[x]]
+- a
+-a 

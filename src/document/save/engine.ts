@@ -7,7 +7,7 @@ import { pageToDto, appendAliasDraft } from "../convert";
 import type { PageDto, PageKind } from "../../types";
 import { backend, saveOnePage, type SavePageEntry } from "../../backend";
 import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath } from "../workingSet";
-import { readPropertyValue, readOrgPageProperty } from "../../editor/properties";
+import { pagePropertyEntries } from "../../editor/properties";
 import { graphOwner, readOwned } from "../../owned";
 import { pushToast } from "../../toasts";
 import { errorFamily } from "../../errorFamily";
@@ -629,9 +629,8 @@ async function settleSavedTitleIdentity(name: string, id: string, dto: PageDto, 
   if (dto.kind !== "page") return;
   const binding = captureBinding();
   const generation = pageInstanceGeneration(name);
-  const title = (dto.format === "org"
-    ? readOrgPageProperty(dto.pre_block, "title")
-    : readPropertyValue(dto.pre_block, "title"))?.trim();
+  const title = pagePropertyEntries(dto.pre_block, dto.format === "org" ? "org" : "md")
+    .find((entry) => entry.key.toLowerCase() === "title")?.value;
   let effective = title;
   if (!effective && titleIdentityIntents.has(name)) {
     try {

@@ -3,7 +3,7 @@
 
 import type { Format } from "./ast";
 import { MARKERS } from "../markers";
-import { parsePageHeaderPropertyLine, splitPagePreamble } from "../editor/properties";
+import { pagePropertyEntries } from "../editor/properties";
 
 export { MARKERS };
 
@@ -49,47 +49,16 @@ export function isPropertyLine(line: string): boolean {
   return key.length > 0 && /^[A-Za-z0-9_./-]+$/.test(key) && PROP_RE.test(line);
 }
 
-/** A page's pre-block properties as `[key, value]` pairs. Markdown reads
- *  `key:: value` lines; org reads `#+KEY: value` file directives plus a top
- *  `:PROPERTIES:` … `:END:` drawer's `:key: value` lines (org keys lowercased,
- *  as OG/mldoc stores them). Order preserved. */
+/** A page-property text's properties as `[key, value]` pairs, in file order,
+ *  duplicates kept. The grammar is editor/properties.ts `pagePropertyEntries`
+ *  (fence-aware Markdown header; Org `#+KEY:` directives and `:PROPERTIES:`
+ *  drawer lines, keys lowercased), the one answerer every page-property reader
+ *  derives from. Cost O(text). */
 export function pageProperties(
   preBlock: string | null | undefined,
   format: Format = "md"
 ): [string, string][] {
-  if (!preBlock) return [];
-  const out: [string, string][] = [];
-  if (format === "org") {
-    let inDrawer = false;
-    for (const line of preBlock.split("\n")) {
-      const t = line.trim();
-      if (/^:PROPERTIES:$/i.test(t)) {
-        inDrawer = true;
-        continue;
-      }
-      if (/^:END:$/i.test(t)) {
-        inDrawer = false;
-        continue;
-      }
-      const dir = /^#\+([A-Za-z0-9_-]+):\s*(.*)$/.exec(t);
-      if (dir) {
-        out.push([dir[1].toLowerCase(), dir[2].trim()]);
-        continue;
-      }
-      if (inDrawer) {
-        const d = /^:([A-Za-z0-9_-]+):\s*(.*)$/.exec(t);
-        if (d) out.push([d[1].toLowerCase(), d[2].trim()]);
-      }
-    }
-  } else {
-    const header = splitPagePreamble(preBlock).properties;
-    if (!header) return out;
-    for (const line of header.split("\n")) {
-      const property = parsePageHeaderPropertyLine(line);
-      if (property) out.push([property.key, property.value.trim()]);
-    }
-  }
-  return out;
+  return pagePropertyEntries(preBlock, format).map((entry) => [entry.key, entry.value]);
 }
 
 /** The alias names declared by a page's pre-block (`alias::` in markdown,
@@ -98,8 +67,13 @@ export function aliasNames(
   preBlock: string | null | undefined,
   format: Format = "md"
 ): string[] {
+  return aliasNamesOf(pageProperties(preBlock, format));
+}
+
+/** {@link aliasNames} over already-read `[key, value]` page properties. */
+export function aliasNamesOf(properties: [string, string][]): string[] {
   const out: string[] = [];
-  for (const [k, v] of pageProperties(preBlock, format)) {
+  for (const [k, v] of properties) {
     const key = propertyKeyNorm(k);
     if (key !== "alias" && key !== "aliases") continue;
     if (isQuotedPagePropertyValue(v)) continue;

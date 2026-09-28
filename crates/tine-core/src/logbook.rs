@@ -502,6 +502,35 @@ fn parse_span_seconds(span: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
+    /// og 14 Q5 follow-up: the TypeScript properties panel writes only keys in
+    /// this shared fixture's accepted list (`src/editor/editablePropertyKeys.test.ts`
+    /// pins the TS side). Both Rust property readers must find every one again,
+    /// and must accept the whole class the TS validator allows (ASCII letters,
+    /// digits, `-`, `_`). Widening the panel means widening these readers first.
+    #[test]
+    fn editable_property_keys_fixture() {
+        let fixture = include_str!("../tests/fixtures/editable-property-keys.txt");
+        let accepted: Vec<&str> = fixture
+            .lines()
+            .filter_map(|line| line.strip_prefix('+'))
+            .collect();
+        assert!(accepted.len() > 5);
+        let class = ('a'..='z')
+            .chain('A'..='Z')
+            .chain('0'..='9')
+            .chain(['-', '_'])
+            .map(|c| format!("a{c}b"));
+        for key in accepted.iter().map(|k| k.to_string()).chain(class) {
+            let line = format!("{key}:: v");
+            assert_eq!(
+                crate::doc::parse_property_line(&line),
+                Some((key.clone(), "v".to_string())),
+                "{key}"
+            );
+            assert!(is_md_property_line(&line), "{key}");
+        }
+    }
+
     fn ts(
         year: i32,
         month: u32,

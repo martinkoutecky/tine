@@ -12,8 +12,8 @@ import {
   isPageHeaderPropertiesOnly,
   parsePageHeaderPropertyLine,
   splitPagePreamble,
-  orgPreBlockWithProperty,
-  readOrgPageProperty,
+  pagePartsWithProperty,
+  pagePropertyEntries,
   hideAll,
   isEditablePropertyKey,
 } from "./properties";
@@ -75,14 +75,12 @@ describe("property line helpers", () => {
   });
 
   it("round-trips Org page directives without changing unrelated preamble text", () => {
-    const old = "#+TITLE: Book\n#+KLÍČ: old\nIntro";
-    const updated = orgPreBlockWithProperty(old, "klíč", "new");
-    expect(updated).toBe("#+TITLE: Book\n#+klíč: new\nIntro");
-    expect(readOrgPageProperty(updated, "klíč")).toBe("new");
-    expect(readOrgPageProperty("#+İ: abc", "İ")).toBe("abc");
-    expect(readOrgPageProperty(orgPreBlockWithProperty("#+İ: old", "İ", "new"), "İ")).toBe("new");
-    expect(orgPreBlockWithProperty(updated, "klíč", null)).toBe("#+TITLE: Book\nIntro");
-    expect(orgPreBlockWithProperty(null, "tags", "x")).toBe("#+tags: x");
+    const old = "#+TITLE: Book\n#+STATUS: old\nIntro";
+    const [updated] = pagePartsWithProperty([old], "org", "status", "new");
+    expect(updated).toBe("#+TITLE: Book\n#+status: new\nIntro");
+    expect(pagePropertyEntries(updated, "org").map((e) => [e.key, e.value])).toEqual([["title", "Book"], ["status", "new"]]);
+    expect(pagePartsWithProperty([updated], "org", "status", null)).toEqual(["#+TITLE: Book\nIntro"]);
+    expect(pagePartsWithProperty([""], "org", "tags", "x")).toEqual(["#+tags: x"]);
   });
   it("reads a value case-insensitively", () => {
     expect(readPropertyValue("alias:: Foo, Bar\npublic:: true", "alias")).toBe("Foo, Bar");
@@ -277,8 +275,8 @@ describe("non-ASCII property keys (GH #164)", () => {
     expect(joinProps(visible, hidden)).toBe(raw);
   });
 
-  it("accepts exactly the keys PROP_LINE can match back", () => {
-    for (const ok of ["status", "klíč", "logseq.order-list-type", "a/b", "日本"]) expect(isEditablePropertyKey(ok), ok).toBe(true);
-    for (const bad of ["", "a b", "a::b", "a:b", "#tag", "k\nv"]) expect(isEditablePropertyKey(bad), bad).toBe(false);
+  it("the panel writes only keys every Tine reader finds again (full list: editablePropertyKeys.test.ts)", () => {
+    for (const ok of ["status", "my-key", "a_1"]) expect(isEditablePropertyKey(ok), ok).toBe(true);
+    for (const bad of ["", "klíč", "日本", "a/b", "a.b", "a b", "a::b", "a:b", "#tag", "k\nv"]) expect(isEditablePropertyKey(bad), bad).toBe(false);
   });
 });
