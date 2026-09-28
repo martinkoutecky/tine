@@ -81,7 +81,7 @@ import { MEDIA_EDITORS } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
-import { journalTitle } from "../journal";
+import { runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
@@ -2071,9 +2071,8 @@ export function Editor(props: { id: string }): JSX.Element {
         return;
       }
       case "today":
-        // GH #220: the link must use the graph's configured journal title
-        // format, or it points at a page that isn't the journal day.
-        replaceTrigger(pageInsert(journalTitle(new Date())));
+      case "thatday":
+        runJournalSlash(item.action, docNode(props.id).page, replaceTrigger);
         return;
       case "upload-asset":
         replaceTrigger(""); // drop the "/upload" trigger text

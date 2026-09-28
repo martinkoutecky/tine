@@ -1,8 +1,10 @@
-// Journal page title formatting. Mirrors the Rust `date::Format` so a title the
-// frontend computes for "today" matches the one the backend derives from the
-// journal file — including a graph's custom `:journal/page-title-format`. The
-// current format is fed in from GraphMeta on graph load (see graph.ts);
-// it defaults to Logseq's "MMM do, yyyy".
+import { createSignal } from "solid-js";
+
+/** Journal dates and title formatting. `journalTitle` and `parseJournalTitle`
+ * read the graph's active display format set by `setJournalTitleFormat`;
+ * `formatJournal` and `parseJournalWith` take an explicit format. All operations
+ * are independent of graph size and write no files. Parsing returns null for
+ * unrecognized/invalid titles; a configured format defaults to "MMM do, yyyy". */
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTHS_FULL = [
@@ -17,6 +19,46 @@ const WD_1 = ["S", "M", "T", "W", "T", "F", "S"];
 
 const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 let titleFormat = DEFAULT_TITLE_FORMAT;
+
+/** Stable local calendar day, also across DST changes. */
+export function localDayKey(now = new Date()): number {
+  return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
+}
+
+/** Inverse for a valid local yyyymmdd key; invalid keys normalize as JS dates do. */
+export function localDateFromDayKey(key: number): Date {
+  return new Date(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100);
+}
+
+/** Milliseconds until the next local midnight plus margin, clamped to at least 1. */
+export function localDayRolloverDelay(now = new Date(), marginMs = 25): number {
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return Math.max(1, next.getTime() - now.getTime() + marginMs);
+}
+
+const [dayKey, setDayKey] = createSignal(localDayKey());
+let dayKeyArmed = false;
+
+/** Test-only override of the reactive day signal until the next clock sync or
+ * rollover timer; the real clock is unchanged. */
+export function setCurrentDayKeyForTest(key: number): void { setDayKey(key); }
+
+/** Reactive local day for controls that stay mounted through midnight; resyncs
+ * on focus/wake. O(1); the browser clock is the source and there is no I/O. */
+export function currentDayKey(): number {
+  if (!dayKeyArmed && typeof window !== "undefined") {
+    dayKeyArmed = true;
+    setDayKey(localDayKey());
+    const arm = () => {
+      window.setTimeout(() => { setDayKey(localDayKey()); arm(); }, localDayRolloverDelay());
+    };
+    arm();
+    const sync = () => setDayKey(localDayKey());
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) sync(); });
+  }
+  return dayKey();
+}
 
 export type JournalDateParts = { y: number; m: number; d: number };
 
@@ -159,4 +201,15 @@ export function isJournalTitle(name: string): boolean {
   const title = name.trim();
   if (!title) return false;
   return [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd", "yyyy_MM_dd"].some((f) => parseJournalWith(title, f) !== null);
+}
+
+/** Parse a journal title as a local Date from the active format, default title
+ * format, ISO or underscore date. Returns null on invalid/unrecognized input.
+ * O(title length), independent of graph size; never reads a page. */
+export function parseJournalTitle(name: string): Date | null {
+  for (const fmt of [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd", "yyyy_MM_dd"]) {
+    const parts = parseJournalWith(name, fmt);
+    if (parts) return new Date(parts.y, parts.m - 1, parts.d);
+  }
+  return null;
 }

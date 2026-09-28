@@ -15,6 +15,11 @@ icon:: ⌨️
 	- 4. What you should see: Tine jumps to the page/block or runs the command without leaving your graph.
 - ## Slash commands — /
 	- Type **/** at the start of a bullet for a menu: tasks, headings, a code block, a `/calc` live calculator, dates (Scheduled / Deadline), callouts, queries, a math block, asset upload, and more. `/Code block` opens a language picker; typing a language after an opening backtick or tilde fence offers the same completion.
+	- On a journal page, **/That day** inserts a link to that journal's date, even when it is an older day. **/Today** inserts today's date. Both use your graph's journal title format.
+- ## Journal days
+	- **g j** opens the Journals feed; **g h** opens its home landing. **g n** and **g p** move to the next or previous calendar day from the journal you are viewing. From another page, they start at today.
+	- A configured default journal template is inserted once for each new day, including when Tine stays open through local midnight. Choose a journal display date format in Settings; the three dotted day-month-year patterns are available there too. The display format does not rename journal files.
+	- The carry buttons under today's journal pull unfinished tasks from earlier days. After midnight, yesterday's button changes to **Carry unfinished tasks → today**.
 - ## Tabs
 	- **Middle-click** any bullet, page, or search result to open it in a background tab. **Double-click** a tab to pin it, **drag** to reorder, **Ctrl+W** to close. Your tabs come back next launch.
 	- When a pane has more tabs than fit, use its tab-overview button to see every full title, activate or pin a tab, close it, or reorder it with the drag handle / **Alt+Up/Down** without guessing from truncated labels.

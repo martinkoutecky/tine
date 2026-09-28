@@ -4,14 +4,14 @@
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { graphOwner, readOwned, writeOwned } from "./owned";
-import { setGraphMeta, bumpGraphEpoch, graphMeta } from "./graphSession";
+import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer } from "./ui";
 import { pushToast } from "./toasts";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler } from "./document";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
-import { journalTitle, setJournalTitleFormat } from "./journal";
+import { journalTitle, localDayKey, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
 import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
@@ -184,7 +184,7 @@ export async function loadGraphPath(
   // A default journal template writes today's journal to disk. Do that before
   // invalidating graph-backed resources so the first Journals refetch observes
   // the populated file instead of caching the synthetic blank page (#73).
-  await ensureJournalTemplate();
+  await ensureJournalTemplateForDay(new Date());
   bumpGraphEpoch();
   void injectCustomCss();
   if (!switching) void pruneSidebarBlocks();
@@ -227,44 +227,82 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
 
 installRenameRefreshHandler(refreshAfterRename);
 
-// If config.edn sets :default-templates {:journals "X"}, create today's journal
-// from that template when it doesn't exist yet (or is empty). No-op when unset,
-// so default behaviour is unchanged.
-async function ensureJournalTemplate(): Promise<void> {
+export type JournalTemplateEnsureResult = "ready" | "deferred" | "stale";
+
+type JournalTemplateOwner = { root: string; epoch: number; day: number; title: string; template: string };
+let journalTemplateFlight: { owner: JournalTemplateOwner; promise: Promise<JournalTemplateEnsureResult> } | null = null;
+
+function templateOwnerCurrent(owner: JournalTemplateOwner): boolean {
+  const meta = graphMeta();
+  return !!meta && meta.root === owner.root && meta.default_journal_template === owner.template
+    && graphEpoch() === owner.epoch && localDayKey() === owner.day;
+}
+
+/** Ensure a configured template is present before the feed reads this local day.
+ * Reads today's page and the backend template inventory; cost is O(templates in
+ * graph + blocks in the chosen template + page save). Concurrent refreshes
+ * share a flight. `ready` means no template, existing content, absent named
+ * template, or a successful guarded write; it does not prove insertion.
+ * `deferred` means `canWrite()` refused the write, an alias conflicted, or a
+ * read/write failed; `stale` means the graph,
+ * configured template or local day changed during the operation. No exception
+ * is exposed to the caller. The write uses the document's edit-kind and
+ * base-revision door. */
+export async function ensureJournalTemplateForDay(
+  date: Date,
+  canWrite: () => boolean = () => true,
+): Promise<JournalTemplateEnsureResult> {
+  const meta = graphMeta();
+  const template = meta?.default_journal_template;
+  if (!meta || !template) return "ready";
+  const owner: JournalTemplateOwner = {
+    root: meta.root, epoch: graphEpoch(), day: localDayKey(date), title: journalTitle(date), template,
+  };
+  if (!templateOwnerCurrent(owner)) return "stale";
+  if (!canWrite()) return "deferred";
+  if (journalTemplateFlight &&
+      journalTemplateFlight.owner.root === owner.root &&
+      journalTemplateFlight.owner.epoch === owner.epoch &&
+      journalTemplateFlight.owner.day === owner.day &&
+      journalTemplateFlight.owner.template === owner.template) return journalTemplateFlight.promise;
+
   const binding = captureBinding();
-  const owner = graphOwner();
-  const tname = graphMeta()?.default_journal_template;
-  if (!tname) return;
-  const title = journalTitle(new Date());
-  try {
-    const page = await readOwned(owner, backend().getPage(title, "journal"));
-    if (page.kind === "stale") return;
-    const existing = page.value;
-    if (existing && journalHasContent(existing.blocks)) return; // already has content
-    const templates = await readOwned(owner, backend().listTemplates());
-    if (templates.kind === "stale") return;
-    const tmpl = templates.value.find((t) => t.name === tname);
-    if (!tmpl) return;
-    await prepareTemplateVars();
-    if (!owner()) return;
-    const resolve = (b: BlockDto): BlockDto => ({
-      id: "",
-      raw: applyTemplateVars(b.raw, title),
-      collapsed: false,
-      children: b.children.map(resolve),
-    });
-    const resolution = existing?.id ? null : await readOwned(owner, backend().resolvePage(title, "journal"));
-    if (resolution?.kind === "stale") return;
-    const resolved = resolution?.value ?? null;
-    if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
-    await createPage(title, journalTemplatePage(title, tmpl.blocks.map(resolve), existing), {
-      id: existing?.id ?? resolved!.id,
-      baseRev: existing?.rev ?? null,
-      bindingGeneration: binding.backendGeneration,
-    });
-  } catch {
-    // Template insertion is best-effort; graph open awaited this attempt.
-  }
+  const promise = (async (): Promise<JournalTemplateEnsureResult> => {
+    try {
+      const page = await readOwned(graphOwner(), backend().getPage(owner.title, "journal"));
+      if (page.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
+      const existing = page.value;
+      if (existing && journalHasContent(existing.blocks)) return "ready";
+      const templates = await readOwned(graphOwner(), backend().listTemplates());
+      if (templates.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
+      const tmpl = templates.value.find((t) => t.name === owner.template);
+      if (!tmpl) return "ready";
+      await prepareTemplateVars();
+      if (!templateOwnerCurrent(owner)) return "stale";
+      if (!canWrite()) return "deferred";
+      const resolve = (b: BlockDto): BlockDto => ({
+        id: "", raw: applyTemplateVars(b.raw, owner.title), collapsed: false,
+        children: b.children.map(resolve),
+      });
+      const resolution = existing?.id ? null : await readOwned(graphOwner(), backend().resolvePage(owner.title, "journal"));
+      if (resolution?.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
+      if (!canWrite()) return "deferred";
+      const resolved = resolution?.value ?? null;
+      if (resolved?.kind === "alias") return "deferred";
+      await createPage(owner.title, journalTemplatePage(owner.title, tmpl.blocks.map(resolve), existing), {
+        id: existing?.id ?? resolved!.id,
+        baseRev: existing?.rev ?? null,
+        bindingGeneration: binding.backendGeneration,
+      });
+      return templateOwnerCurrent(owner) ? "ready" : "stale";
+    } catch {
+      return templateOwnerCurrent(owner) ? "deferred" : "stale";
+    }
+  })();
+  const flight = { owner, promise };
+  journalTemplateFlight = flight;
+  try { return await promise; }
+  finally { if (journalTemplateFlight === flight) journalTemplateFlight = null; }
 }
 
 /** Load the graph's logseq/custom.css into a <style> tag (user theming). */

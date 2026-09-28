@@ -10,7 +10,7 @@ import { isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
-import { switchGraph } from "../graph";
+import { ensureJournalTemplateForDay, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -20,7 +20,7 @@ import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { pageProperties, aliasNames, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle } from "../journal";
+import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { JournalFeedPage, RefGroup } from "../types";
 import { tagRef } from "../tags";
@@ -34,7 +34,7 @@ let journalAsOfDay: number | null = null;
 let nextBeforeDay: number | null = null;
 let feedGeneration = 0;
 let loadingGeneration: number | null = null;
-let latestFeedRestart: Promise<void> | null = null;
+let latestFeedRestart: Promise<unknown | null> | null = null;
 let publishedFeedEpoch: number | null = null;
 let publishedFeedNames: readonly string[] | null = null;
 let feedDone = false;
@@ -49,19 +49,16 @@ export interface JournalsFeedOwner {
   isLive: () => boolean;
 }
 
-function localDayKey(now = new Date()): number {
-  return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
-}
-
 function feedHasActiveEdit(): boolean {
-  const edited = editingId();
   // An editor in a sidebar, a page tab, or another split pane is unrelated to
   // the working set that loadFeed replaces.  Only a block owned by a visible
   // feed page is unsafe here.
-  if (edited && docNode(edited) && feedNames().includes(docNode(edited).page)) return true;
-  return feedNames().some((name) =>
-    isDirty(name) || isSaving(name) || isConflicted(name) || isBlockMoving(name)
-  );
+  return feedNames().some(pageHasActiveEdit);
+}
+
+function pageHasActiveEdit(name: string): boolean {
+  const edited = editingId();
+  return !!(edited && docNode(edited)?.page === name) || isDirty(name) || isSaving(name) || isConflicted(name) || isBlockMoving(name);
 }
 
 function responseMatches(day: number, response: JournalFeedPage): boolean {
@@ -79,8 +76,10 @@ function hasPublishedFeed(epoch: number): boolean {
 /** The single start-over owner for route loads, watcher changes and calendar
  * rollover.  It intentionally keeps the old feed/cursor until a response has
  * passed all ownership checks. */
-function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Promise<void> {
-  if (!ownerIsLive(owner)) return Promise.resolve();
+// Returns the caught backend rejection for the route's initial-error display,
+// or null after success, deferral, or a stale owner. Refresh callers show a toast.
+function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Promise<unknown | null> {
+  if (!ownerIsLive(owner)) return Promise.resolve(null);
   const pending = runJournalFeedRestart(owner, retried);
   latestFeedRestart = pending;
   void pending.then(() => {
@@ -91,21 +90,54 @@ function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Promise<
   return pending;
 }
 
-async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean): Promise<void> {
+let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeedOwner; promise: Promise<unknown | null> } | null = null;
+
+/** Ensure today's configured template before any feed read for that day. */
+async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<unknown | null> {
+  if (!ownerIsLive(owner)) return null;
+  if (!graphMeta()?.default_journal_template) return restartJournalFeed(owner);
+  const date = new Date();
+  const day = localDayKey(date);
+  const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
+  const current = journalRefreshFlight;
+  if (current && current.graphEpoch === owner.graphEpoch && current.day === day && ownerIsLive(current.owner)) {
+    current.owner = owner;
+    return current.promise;
+  }
+  ++feedGeneration;
+  if (!rollover && feedHasActiveEdit()) { pendingFeedRestart = true; return null; }
+  const flight = { graphEpoch: owner.graphEpoch, day, owner, promise: Promise.resolve<unknown | null>(null) };
+  flight.promise = (async () => {
+    const ensured = await ensureJournalTemplateForDay(date, () => ownerIsLive(flight.owner)
+      && !pageHasActiveEdit(journalTitle(date)) && (rollover || !feedHasActiveEdit()));
+    const liveOwner = flight.owner;
+    if (ensured !== "ready" || localDayKey() !== day || !ownerIsLive(liveOwner)) {
+      if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
+      return null;
+    }
+    if (feedHasActiveEdit()) { pendingFeedRestart = true; return null; }
+    return restartJournalFeed(liveOwner);
+  })();
+  journalRefreshFlight = flight;
+  try { return await flight.promise; }
+  finally { if (journalRefreshFlight === flight) journalRefreshFlight = null; }
+}
+
+async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean): Promise<unknown | null> {
   // An already-dead watcher/surface must be entirely inert.  In particular it
   // must not steal the generation from a live request that is about to land.
-  if (!ownerIsLive(owner)) return;
+  if (!ownerIsLive(owner)) return null;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
   const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
   if (feedHasActiveEdit()) {
     pendingFeedRestart = true;
-    return;
+    return null;
   }
   const browserDay = localDayKey();
   loadingGeneration = generation;
   try {
     const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, null));
-    if (result.kind === "stale") return;
+    if (result.kind === "stale") return null;
     const response = result.value;
     if (!responseMatches(browserDay, response)) {
       if (generation === feedGeneration && ownerIsLive(owner) && !retried && !feedHasActiveEdit()) {
@@ -113,7 +145,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean)
       }
       // A stale/disposed owner cannot create deferred work for a later surface.
       if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
-      return;
+      return null;
     }
     // Clear the deferred flag before loadFeed synchronously updates doc.feed;
     // otherwise the intentionally reactive pending-retry effect observes the
@@ -125,13 +157,15 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean)
     journalAsOfDay = response.as_of_day;
     nextBeforeDay = response.next_before_day;
     feedDone = response.done;
-  } catch {
+    return null;
+  } catch (error) {
     // A failed refresh must leave the displayed feed and its cursor usable.
     // Focus, visibility, load-more, or the next calendar check will retry.
     if (generation === feedGeneration && ownerIsLive(owner)) {
       pendingFeedRestart = true;
       pushToast("Could not load journal feed. It will retry when the view refreshes.", "error");
     }
+    return error;
   } finally {
     if (loadingGeneration === generation) loadingGeneration = null;
   }
@@ -153,8 +187,14 @@ function paneContextFromContext() {
 // an empty today page unless the newest journal on disk already is today.
 export { withToday, toLoadablePage } from "../document";
 
+/** Refresh the shared Journals feed from the backend's first page, ensuring a
+ * configured daily template first. Cost follows the journal inventory scan,
+ * returned page blocks, and at most one template write. A dead owner or active
+ * feed edit leaves the visible feed unchanged. A deferred/stale template attempt
+ * postpones the feed read without a toast; a failed feed read keeps the old feed
+ * and shows an error toast. The caller does not receive an error or write directly. */
 export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Promise<void> {
-  await restartJournalFeed(owner);
+  await refreshJournalFeedForCurrentDay(owner);
 }
 
 /** Render the active pane route. Ordinary page routes fetch a file; a missing
@@ -227,24 +267,24 @@ export function PageView(): JSX.Element {
           // restartJournalFeed synchronously reads the working set safety gate.
           // Keep those reads out of this route/epoch loader's dependency set:
           // loadFeed replaces doc.feed, and subscribing here would self-reload.
-          const initialRead = untrack(() => restartJournalFeed(journalOwner(r, epoch, tabId, revision)));
+          const initialRead = untrack(() => refreshJournalFeedForCurrentDay(journalOwner(r, epoch, tabId, revision)));
           const initialGeneration = feedGeneration;
-          await initialRead;
+          let feedError = await initialRead;
           if (!owned()) return;
           // A watcher or second Journals surface can supersede this read while
           // both native calls wait on the initial store publication. The older
           // request is correctly discarded, but its route must await the winner.
           while (!hasPublishedFeed(epoch) && latestFeedRestart && owned()) {
-            await latestFeedRestart;
+            feedError = await latestFeedRestart;
           }
           if (!owned()) return;
           // A superseding owner may have disappeared before publishing. The
           // still-visible route takes one fresh read in that case.
           if (!hasPublishedFeed(epoch) && feedGeneration !== initialGeneration && !pendingFeedRestart) {
-            await restartJournalFeed(journalOwner(r, epoch, tabId, revision));
+            feedError = await refreshJournalFeedForCurrentDay(journalOwner(r, epoch, tabId, revision));
           }
           if (!owned()) return;
-          if (!hasPublishedFeed(epoch)) throw new Error("Journal feed read failed.");
+          if (!hasPublishedFeed(epoch)) throw feedError ?? new Error("Journal feed read failed.");
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);
@@ -304,7 +344,7 @@ export function PageView(): JSX.Element {
     const owner = journalOwner(route);
     if (!ownerIsLive(owner)) return;
     if (pendingFeedRestart || journalAsOfDay !== localDayKey()) {
-      await restartJournalFeed(owner);
+      await refreshJournalFeedForCurrentDay(owner);
       return;
     }
     if (loadingGeneration !== null || feedDone || nextBeforeDay === null) return;
@@ -321,7 +361,7 @@ export function PageView(): JSX.Element {
         generation !== feedGeneration || !ownerIsLive(owner) || asOfDay === null ||
         cursor !== nextBeforeDay || response.as_of_day !== asOfDay || !responseMatches(asOfDay, response)
       ) {
-        if (generation === feedGeneration && ownerIsLive(owner)) await restartJournalFeed(owner);
+        if (generation === feedGeneration && ownerIsLive(owner)) await refreshJournalFeedForCurrentDay(owner);
         return;
       }
       if (response.pages.length) {
@@ -345,16 +385,15 @@ export function PageView(): JSX.Element {
     const owner = journalOwner(route);
     let timer: number | undefined;
     let disposed = false;
-    const restart = () => { void restartJournalFeed(owner); };
+    const restart = () => { void refreshJournalFeedForCurrentDay(owner); };
     const arm = () => {
       if (disposed || !ownerIsLive(owner)) return;
       const now = new Date();
-      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
       timer = window.setTimeout(() => {
         // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
         // trigger, including a deferred/error response, while this owner lives.
-        void restartJournalFeed(owner).finally(() => { if (!disposed && ownerIsLive(owner)) arm(); });
-      }, Math.max(1, next.getTime() - now.getTime() + 25));
+        void refreshJournalFeedForCurrentDay(owner).finally(() => { if (!disposed && ownerIsLive(owner)) arm(); });
+      }, localDayRolloverDelay(now));
     };
     arm();
     const onFocus = () => {
@@ -385,7 +424,7 @@ export function PageView(): JSX.Element {
     if (pendingFeedRestart && !unsafe) {
       // This effect deliberately tracks the edit/conflict/save lifecycle.  Do
       // not untrack it with the initial route loader: it is the pending retry.
-      void restartJournalFeed(journalOwner(route));
+      void refreshJournalFeedForCurrentDay(journalOwner(route));
     }
   });
 
@@ -963,13 +1002,16 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   );
 }
 
-// Discoverable carry-over actions under a journal's title (replaces having to
-// right-click → "Carry…"). Today gets pull-in buttons (from the previous
-// non-empty day, and from the last N days); a past day gets a push-to-today
-// button. Named pages show nothing.
-function CarryActions(props: { page: FeedPage }): JSX.Element {
+/** Journal carry controls. Rendering reads the local reactive day and user
+ * carry-button preference in O(1). Clicks delegate to `carry.ts`: previous-day
+ * reads all content-day keys and chooses the latest earlier one; last-N checks
+ * N calendar days, where N is the saved carry-days preference; both move
+ * unfinished tasks through the document save path and report failures by toast.
+ * Today's journal pulls tasks in, an older journal pushes to today, and named
+ * pages have no controls. */
+export function CarryActions(props: { page: FeedPage }): JSX.Element {
   const isJournal = () => props.page.kind === "journal";
-  const isToday = () => isJournal() && props.page.name === journalTitle(new Date());
+  const isToday = () => isJournal() && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
     <Show when={isJournal() && showCarryButtons()}>
       <div class="page-carry-actions">

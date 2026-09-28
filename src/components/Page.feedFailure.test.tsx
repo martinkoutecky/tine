@@ -16,6 +16,7 @@ it("shows a failed initial journal feed load", async () => {
   document.body.append(root);
   const dispose = render(() => <PageView />, root);
   await vi.waitFor(() => expect(root.textContent).toContain("Couldn't open"));
+  expect(root.textContent).toContain("disk unreadable");
   expect(root.querySelector(".page-loading")).toBeNull();
   dispose();
 });

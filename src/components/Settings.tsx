@@ -79,33 +79,9 @@ import {
   setLauncherRankingEnabled,
 } from "../launcherRanking";
 import { registerTransientLayer } from "../transientLayers";
+import { JOURNAL_TITLE_FORMATS } from "../journalTitleFormats";
 import { writePreference, loadPreference } from "../preferenceWrites";
 import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-
-// Journal display-title formats offered in the date-format dropdown — OG's
-// `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
-// journal file name is governed separately by `:journal/file-name-format`.
-const DATE_FORMATS = [
-  "MMM do, yyyy",
-  "MMMM do, yyyy",
-  "do MMM yyyy",
-  "do MMMM yyyy",
-  "E, dd-MM-yyyy",
-  "EEE, dd-MM-yyyy",
-  "EEEE, dd-MM-yyyy",
-  "EEE, MM/dd/yyyy",
-  "EEEE, MM/dd/yyyy",
-  "EEE, yyyy/MM/dd",
-  "dd-MM-yyyy",
-  "MM/dd/yyyy",
-  "MM-dd-yyyy",
-  "MM_dd_yyyy",
-  "yyyy/MM/dd",
-  "yyyy-MM-dd",
-  "yyyy-MM-dd EEEE",
-  "yyyy_MM_dd",
-  "yyyyMMdd",
-];
 
 type Tab = SettingsTabId;
 const TABS: { id: Tab; label: string }[] = [
@@ -1446,7 +1422,7 @@ function JournalTemplateField(): JSX.Element {
 function DateFormatSelect(): JSX.Element {
   const today = new Date();
   const current = () => graphMeta()?.journal_page_title_format || "MMM do, yyyy";
-  const options = () => (DATE_FORMATS.includes(current()) ? DATE_FORMATS : [current(), ...DATE_FORMATS]);
+  const options = () => (JOURNAL_TITLE_FORMATS.some((format) => format === current()) ? JOURNAL_TITLE_FORMATS : [current(), ...JOURNAL_TITLE_FORMATS]);
   return (
     <select
       class="settings-select"

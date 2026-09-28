@@ -18,7 +18,8 @@ import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../ro
 import { clearConflict } from "../document/save/engine";
 import { markConflict } from "../document/save/engine";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRightSidebar } from "../ui";
-import { graphEpoch } from "../graphSession";
+import { graphEpoch, setGraphMeta } from "../graphSession";
+import type { GraphMeta } from "../types";
 
 beforeAll(async () => {
   await initParser();
@@ -34,6 +35,7 @@ afterEach(() => {
   endEdit("blur");
   closeContextMenu();
   resetStore();
+  setGraphMeta(null);
   document.body.innerHTML = "";
   resetTabsToJournals();
 });
@@ -89,6 +91,34 @@ function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): J
 }
 
 describe("Journals feed generation lifecycle", () => {
+  it("writes a configured template before reading each new local day into the feed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2030, 6, 15, 12));
+    setGraphMeta({
+      root: "/tmp/journal-midnight", default_journal_template: "Daily",
+      journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
+    } as GraphMeta);
+    const order: string[] = [];
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    vi.spyOn(backend(), "listTemplates").mockResolvedValue([{
+      name: "Daily", page: "Templates", kind: "page",
+      blocks: [{ id: "template", raw: "Template body", collapsed: false, children: [] }],
+    }]);
+    vi.spyOn(backend(), "resolvePage").mockImplementation(async () => ({ kind: "absent", id: `journals/${localDay()}.md` }));
+    vi.spyOn(backend(), "savePages").mockImplementation(async () => {
+      order.push(`save:${localDay()}`);
+      return { ok: ["revision"] };
+    });
+    vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => {
+      order.push(`feed:${localDay()}`);
+      return feedResponse([]);
+    });
+    const owner = { graphEpoch: graphEpoch(), isLive: () => true };
+    await reloadJournalsFeedFromStart(owner);
+    vi.setSystemTime(new Date(2030, 6, 16, 0, 0, 1));
+    await reloadJournalsFeedFromStart(owner);
+    expect(order).toEqual(["save:20300715", "feed:20300715", "save:20300716", "feed:20300716"]);
+  });
   it("keeps a startup route pending when its feed read is superseded during publication", async () => {
     vi.stubGlobal("IntersectionObserver", class {
       observe() {}

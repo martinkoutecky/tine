@@ -14,6 +14,7 @@ import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
+  openPage,
   goBack,
   goForward,
   closeActiveTab,
@@ -22,6 +23,7 @@ import {
   activatePrevTab,
   route,
 } from "./router";
+import { journalTitle, parseJournalTitle } from "./journal";
 import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
@@ -58,6 +60,16 @@ import { openGuide } from "./guide";
 import { pluginManager } from "./plugins/manager";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
 
+/** Open the adjacent journal route (+1 next, -1 previous) from the current
+ * journal date, or today's local date on another route. O(1) before navigation;
+ * the page loader owns any read error. No page is written here. */
+export function goAdjacentJournal(dir: 1 | -1): void {
+  const current = route();
+  const anchor = current.kind === "page" && current.pageKind === "journal"
+    ? parseJournalTitle(current.name) ?? new Date()
+    : new Date();
+  openPage(journalTitle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
+}
 function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
   const owner = capturePluginGraphOwner();
   if (!owner) return undefined;
@@ -237,6 +249,9 @@ const COMMANDS: CommandDef[] = [
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: "Toggle developer tools", scope: "global", run: openDevtools, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
+  { id: "go/home", binding: "g h", label: "Go to home page", scope: "global", run: openJournals },
+  { id: "go/journal-next", binding: "g n", label: "Go to next journal day", scope: "global", run: () => goAdjacentJournal(1) },
+  { id: "go/journal-prev", binding: "g p", label: "Go to previous journal day", scope: "global", run: () => goAdjacentJournal(-1) },
   { id: "go/keyboard-shortcuts", binding: "g s", label: "Go to keyboard shortcuts", scope: "global", run: () => openSettings("shortcuts") },
   // Browser-style history nav (per-tab back/forward). Special-cased in the
   // dispatcher so they fire even while editing a block; remappable like any other.
