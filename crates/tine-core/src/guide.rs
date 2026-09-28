@@ -258,4 +258,37 @@ mod query_guide_tests {
         );
         assert!(include_str!("templates/guide.md").contains("[[Features/Queries]]"));
     }
+
+    /// og 14 Q4a: the query block's sentence, sheet, text pane, crossing
+    /// notice and why-empty are documented, and "Not in this build yet" no
+    /// longer lists the text language or the explanation this build ships.
+    #[test]
+    fn query_sheet_is_documented_as_shipped() {
+        let queries = include_str!("templates/queries.md");
+        for control in [
+            "Type `/query` and choose **Query**",
+            "**Find blocks ▾ where …**",
+            "**+ Add condition**",
+            "**Group selected ▾**",
+            "turns it off without removing it",
+            "**Save query text**",
+            "**Show me**",
+            "**Undo that change**",
+            "**why empty?**",
+        ] {
+            assert!(
+                queries.contains(control),
+                "missing query Guide control: {control}"
+            );
+        }
+        let not_yet = &queries[queries
+            .find("## Not in this build yet")
+            .expect("the Not-yet section")..];
+        for shipped in ["tine-query", "explain which part", "visual builder"] {
+            assert!(
+                !not_yet.contains(shipped),
+                "shipped capability still listed as missing: {shipped}"
+            );
+        }
+    }
 }
