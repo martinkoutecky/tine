@@ -1,5 +1,5 @@
 import { backend } from "../backend";
-import { captureBinding, stillBound } from "../binding";
+import { graphOwner, readOwned } from "../owned";
 import type { PageTarget } from "../router";
 import { endEdit } from "../editorController";
 import { flushAll } from "./save/engine";
@@ -24,14 +24,15 @@ export async function renamePageOnDisk(from: string, to: string, target?: PageTa
     document.activeElement.blur();
   const release = tryFreezeGraphRewrite();
   if (!release) return false;
-  const binding = captureBinding();
+  const owner = graphOwner();
   try {
     // Delayed intents now fail pageWritable even if they started before this.
     endEdit("graph-switch");
-    if (!(await flushAll()) || !stillBound(binding)) return false;
-    if (target?.path) await backend().renamePage(from, to, "rename-page", target.path);
-    else await backend().renamePage(from, to, "rename-page");
-    if (!stillBound(binding)) return false;
+    if (!(await flushAll()) || !owner()) return false;
+    const result = await readOwned(owner, target?.path
+      ? backend().renamePage(from, to, "rename-page", target.path)
+      : backend().renamePage(from, to, "rename-page"));
+    if (result.kind === "stale") return false;
     resetStore();
     refreshRenamedNavigation?.(from, to, target);
     return true;

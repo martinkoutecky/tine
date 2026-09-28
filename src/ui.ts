@@ -6,7 +6,8 @@ import type { JournalConflict, SyncConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
-import { captureBinding, stillBound } from "./binding";
+import { captureBinding } from "./binding";
+import { graphOwner, latestOwner, readOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./routerBridge";
 import type { PageTarget } from "./routeTypes";
@@ -208,7 +209,7 @@ export function changePreferredFormat(fmt: "md" | "org") {
  * reopens the graph and may migrate legacy title-named journal files without
  * changing filename format. Failure rolls back and toasts; skipped files are
  * reported. Async work scales with journal files and graph reload. */
-let journalTitleFormatIntent = 0;
+const journalTitleFormatScope = {};
 export function changeJournalTitleFormat(fmt: string) {
   const next = fmt.trim() || "MMM do, yyyy";
   const m = graphMeta();
@@ -216,25 +217,21 @@ export function changeJournalTitleFormat(fmt: string) {
   setGraphMeta({ ...m, journal_page_title_format: next });
   setJournalTitleFormat(next);
   bumpGraphEpoch(); // immediate: re-render open journal titles with the new format
-  const binding = captureBinding();
-  const intent = ++journalTitleFormatIntent;
-  const ownsField = () => intent === journalTitleFormatIntent
-    && graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next;
+  const owner = latestOwner(journalTitleFormatScope, "title", graphOwner(), () => graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next);
   // The backend rewrites config.edn AND reopens the graph (so its journal_format
   // + the title-named-journal migration take effect). Bump again once that's done
   // so the feed reloads against the refreshed backend — otherwise a reload racing
   // the reopen could re-query the old format.
-  void backend()
-    .setJournalTitleFormat(next, ["rename-page"])
-    .then((migration) => {
-      if (!stillBound(binding) || !ownsField()) return;
+  void readOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
+    .then((result) => {
+      if (result.kind === "stale") return;
       bumpGraphEpoch();
-      const message = journalMigrationSkipMessage(migration);
+      const message = journalMigrationSkipMessage(result.value);
       if (message) pushToast(message, "info");
       void refreshJournalConflicts(true); // surface any days the migration couldn't merge
     })
     .catch(() => {
-      if (stillBound(binding) && ownsField()) {
+      if (owner()) {
         setGraphMeta({ ...graphMeta()!, journal_page_title_format: m.journal_page_title_format });
         setJournalTitleFormat(m.journal_page_title_format);
         bumpGraphEpoch();
@@ -256,10 +253,11 @@ export function journalMigrationSkipMessage(result: import("./types").JournalMig
 export const [journalConflicts, setJournalConflicts] = createSignal<JournalConflict[]>([]);
 /** Re-fetch the duplicate-journal-day list; with `notify`, toast if any exist. */
 export async function refreshJournalConflicts(notify = false): Promise<void> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   try {
-    const c = await backend().listJournalConflicts();
-    if (!stillBound(binding)) return;
+    const result = await readOwned(owner, backend().listJournalConflicts());
+    if (result.kind === "stale") return;
+    const c = result.value;
     setJournalConflicts(c);
     if (notify && c.length) {
       pushToast(
@@ -279,10 +277,11 @@ export async function refreshJournalConflicts(notify = false): Promise<void> {
 export const [syncConflicts, setSyncConflicts] = createSignal<SyncConflict[]>([]);
 /** Re-fetch the sync-conflict list; with `notify`, toast if any exist. */
 export async function refreshSyncConflicts(notify = false): Promise<void> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   try {
-    const c = await backend().listSyncConflicts();
-    if (!stillBound(binding)) return;
+    const result = await readOwned(owner, backend().listSyncConflicts());
+    if (result.kind === "stale") return;
+    const c = result.value;
     setSyncConflicts(c);
     if (notify && c.length) {
       pushToast(
@@ -1259,12 +1258,13 @@ export function removeDeletedBlocksFromSidebar(uuids: ReadonlySet<string>) {
 /** Resolve block items in parallel; remove and save only confirmed missing targets.
  * Failed lookups remain and toast; pages are untouched. O(block items) backend calls plus save. */
 export async function pruneSidebarBlocks(): Promise<void> {
-  const binding = captureBinding();
   const root = graphMeta()?.root;
+  const owner = graphOwner(() => graphMeta()?.root === root);
   const blocks = rightSidebar().filter((i): i is SidebarBlock => i.kind === "block");
   if (!blocks.length) return;
-  const resolved = await Promise.allSettled(blocks.map((b) => backend().resolveBlock(b.uuid)));
-  if (!stillBound(binding) || graphMeta()?.root !== root) return;
+  const result = await readOwned(owner, Promise.allSettled(blocks.map((b) => backend().resolveBlock(b.uuid))));
+  if (result.kind === "stale") return;
+  const resolved = result.value;
   const dead = new Set(blocks.filter((_, i) =>
     resolved[i].status === "fulfilled" && !resolved[i].value));
   if (resolved.some((result) => result.status === "rejected")) {

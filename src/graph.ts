@@ -3,6 +3,7 @@
 
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
+import { graphOwner, readOwned } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer } from "./ui";
 import { pushToast } from "./toasts";
@@ -43,17 +44,18 @@ export type LoadGraphPathOutcome =
  * may point `assets` at an external directory, but only after this installation
  * shows the resolved target and receives explicit consent. */
 export async function authorizeGraphAccess(path: string): Promise<boolean> {
-  const binding = captureBinding();
-  const access = await backend().inspectGraphAccess(path);
-  if (!stillBound(binding)) return false;
+  const owner = graphOwner();
+  const inspected = await readOwned(owner, backend().inspectGraphAccess(path));
+  if (inspected.kind === "stale") return false;
+  const access = inspected.value;
   const external = access.external_assets_path;
   if (!external || access.approved) return true;
-  const approved = await backend().confirm(
+  const confirmation = await readOwned(owner, backend().confirm(
     `This graph's assets folder points outside the graph to:\n\n${external}\n\nAllow Tine to read and write assets in this directory? This approval is stored only on this device.`,
     "Allow external assets directory?"
-  );
-  if (!stillBound(binding)) return false;
-  if (!approved) {
+  ));
+  if (confirmation.kind === "stale") return false;
+  if (!confirmation.value) {
     pushToast(
       `Graph not opened: its external assets directory was not approved (${external}).`,
       "error",
@@ -61,8 +63,8 @@ export async function authorizeGraphAccess(path: string): Promise<boolean> {
     );
     return false;
   }
-  await backend().approveExternalAssets(access.graph_root, external);
-  return true;
+  const approved = await readOwned(owner, backend().approveExternalAssets(access.graph_root, external));
+  return approved.kind === "current";
 }
 
 export async function loadGraphPath(
@@ -223,26 +225,30 @@ installRenameRefreshHandler(refreshAfterRename);
 // so default behaviour is unchanged.
 async function ensureJournalTemplate(): Promise<void> {
   const binding = captureBinding();
+  const owner = graphOwner();
   const tname = graphMeta()?.default_journal_template;
   if (!tname) return;
   const title = journalTitle(new Date());
   try {
-    const existing = await backend().getPage(title, "journal");
-    if (!stillBound(binding)) return;
+    const page = await readOwned(owner, backend().getPage(title, "journal"));
+    if (page.kind === "stale") return;
+    const existing = page.value;
     if (existing && journalHasContent(existing.blocks)) return; // already has content
-    const tmpl = (await backend().listTemplates()).find((t) => t.name === tname);
-    if (!stillBound(binding)) return;
+    const templates = await readOwned(owner, backend().listTemplates());
+    if (templates.kind === "stale") return;
+    const tmpl = templates.value.find((t) => t.name === tname);
     if (!tmpl) return;
     await prepareTemplateVars();
-    if (!stillBound(binding)) return;
+    if (!owner()) return;
     const resolve = (b: BlockDto): BlockDto => ({
       id: "",
       raw: applyTemplateVars(b.raw, title),
       collapsed: false,
       children: b.children.map(resolve),
     });
-    const resolved = existing?.id ? null : await backend().resolvePage(title, "journal");
-    if (!stillBound(binding)) return;
+    const resolution = existing?.id ? null : await readOwned(owner, backend().resolvePage(title, "journal"));
+    if (resolution?.kind === "stale") return;
+    const resolved = resolution?.value ?? null;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
     await createPage(title, journalTemplatePage(title, tmpl.blocks.map(resolve), existing), {
       id: existing?.id ?? resolved!.id,
@@ -256,14 +262,16 @@ async function ensureJournalTemplate(): Promise<void> {
 
 /** Load the graph's logseq/custom.css into a <style> tag (user theming). */
 async function injectCustomCss(): Promise<void> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   let css = "";
   try {
-    css = await backend().readCustomCss();
+    const result = await readOwned(owner, backend().readCustomCss());
+    if (result.kind === "stale") return;
+    css = result.value;
   } catch {
     css = "";
   }
-  if (!stillBound(binding)) return;
+  if (!owner()) return;
   ensureLsShimStyle();
   ensureThemeStyle();
   let el = document.getElementById(CUSTOM_CSS_STYLE_ID);
@@ -277,14 +285,15 @@ async function injectCustomCss(): Promise<void> {
 
 /** Pick a folder and open it as the graph. No-op if cancelled. */
 export async function switchGraph(): Promise<LoadGraphPathOutcome> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   const platform = await platformKind();
-  if (!stillBound(binding)) return { kind: "aborted" };
+  if (!owner()) return { kind: "aborted" };
   if (platform === "android") {
     let result;
     try {
-      result = await backend().pickGraphFolder();
-      if (!stillBound(binding)) return { kind: "aborted" };
+      const picked = await readOwned(owner, backend().pickGraphFolder());
+      if (picked.kind === "stale") return { kind: "aborted" };
+      result = picked.value;
     } catch (e) {
       pushToast(`Couldn't open the Android folder picker. (${String(e)})`, "error");
       return { kind: "aborted" };
@@ -314,25 +323,27 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
     );
     return { kind: "aborted" };
   }
-  const path = await backend().pickFolder();
-  if (!stillBound(binding)) return { kind: "aborted" };
-  return path ? loadGraphPath(path) : { kind: "aborted" };
+  const picked = await readOwned(owner, backend().pickFolder());
+  if (picked.kind === "stale") return { kind: "aborted" };
+  return picked.value ? loadGraphPath(picked.value) : { kind: "aborted" };
 }
 
 /** Onboarding "create a new graph": pick where to put it, scaffold a small
  *  narrated demo graph there, open it, and land on the "Welcome to Tine" tour.
  *  No-op if the folder picker is cancelled. */
 export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
-  const choiceBinding = captureBinding();
-  const dir = (await isMobile())
-    ? await backend().defaultGraphParent()
-    : await backend().pickFolder("Choose where to create your new graph");
-  if (!stillBound(choiceBinding)) return { kind: "aborted" };
+  const owner = graphOwner();
+  const dirResult = (await isMobile())
+    ? await readOwned(owner, backend().defaultGraphParent())
+    : await readOwned(owner, backend().pickFolder("Choose where to create your new graph"));
+  if (dirResult.kind === "stale") return { kind: "aborted" };
+  const dir = dirResult.value;
   if (!dir) return { kind: "aborted" };
   let root: string;
   try {
-    root = await backend().createGraph(dir);
-    if (!stillBound(choiceBinding)) return { kind: "aborted" };
+    const created = await readOwned(owner, backend().createGraph(dir));
+    if (created.kind === "stale") return { kind: "aborted" };
+    root = created.value;
   } catch (e) {
     pushToast(`Couldn't create the graph. (${String(e)})`, "error");
     return { kind: "aborted" };
@@ -342,9 +353,9 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     pushToast(`Created the graph at ${root}, but kept the current graph open.`, "info");
     return loaded;
   }
-  const binding = captureBinding();
+  const loadedOwner = graphOwner();
   await seedTodayJournal();
-  if (!stillBound(binding)) return { kind: "aborted" };
+  if (!loadedOwner()) return { kind: "aborted" };
   openPage("Welcome to Tine", "page"); // land on the tour, not the empty journal feed
   return loaded;
 }
@@ -353,13 +364,16 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
  *  Journals view isn't empty on first open. The caller awaits this best-effort seed. */
 async function seedTodayJournal(): Promise<void> {
   const binding = captureBinding();
+  const owner = graphOwner();
   try {
     const title = journalTitle(new Date());
-    const existing = await backend().getPage(title, "journal");
-    if (!stillBound(binding)) return;
+    const page = await readOwned(owner, backend().getPage(title, "journal"));
+    if (page.kind === "stale") return;
+    const existing = page.value;
     if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return;
-    const resolved = existing?.id ? null : await backend().resolvePage(title, "journal");
-    if (!stillBound(binding)) return;
+    const resolution = existing?.id ? null : await readOwned(owner, backend().resolvePage(title, "journal"));
+    if (resolution?.kind === "stale") return;
+    const resolved = resolution?.value ?? null;
     if (resolved?.kind === "alias") throw new Error("conflict: journal alias");
     await createPage(title, demoJournalPage(title), {
       id: existing?.id ?? resolved!.id,

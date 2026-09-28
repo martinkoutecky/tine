@@ -1,7 +1,7 @@
 import { journalTitle } from "../../journal";
 import { parseOutline, type OutlineNode } from "../../editor/outline";
 import { type PageKind } from "../../types";
-import { captureBinding, stillBound } from "../../binding";
+import { graphOwner, readOwned } from "../../owned";
 import { pageByName, freshId, setDoc } from "../model";
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
@@ -41,12 +41,11 @@ export async function captureToPage(title: string, markdown: string): Promise<bo
  *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether it landed. */
 async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNode[]): Promise<boolean> {
   if (!nodes.length) return false;
-  const binding = captureBinding();
+  const owner = graphOwner();
   if (!pageByName(name)) {
-    const dto =
-      (await backend().getPage(name, kind)) ??
-      captureEmptyPage(name, kind);
-    if (!stillBound(binding)) return false;
+    const result = await readOwned(owner, backend().getPage(name, kind));
+    if (result.kind === "stale") return false;
+    const dto = result.value ?? captureEmptyPage(name, kind);
     ensurePageLoaded(dto);
   }
   const page = pageByName(name);
@@ -74,5 +73,5 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
     });
   }
   const saved = await flushPage(name);
-  return stillBound(binding) && saved;
+  return owner() && saved;
 }

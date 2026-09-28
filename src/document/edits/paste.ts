@@ -5,6 +5,7 @@ import { doc, Node, formatForPage, freshId, setDoc, docHasBlockIdentity } from "
 import { graphTransitioning } from "../../ui";
 import { pageInstanceGeneration, markDirty, flushCutSourcePages, cutSourcePagesRetired } from "../save/engine";
 import { graphEpoch, graphMeta } from "../../graphSession";
+import { ownedWhen, readOwned } from "../../owned";
 import { unwrap, produce } from "solid-js/store";
 import { blockWritable } from "./properties";
 import { existingBlockId, UUID_RE } from "./identity";
@@ -53,17 +54,19 @@ export function sanitizeOutlineIdsForPaste(
   if (!ids.size) return [...nodes];
   const authority = captureClipboardPasteAuthority(targetId);
   if (!authority) return Promise.resolve(null);
+  const owner = ownedWhen(() => clipboardPasteAuthorityCurrent(authority));
   return (async () => {
     const unique = [...ids];
     const collisions = new Set<string>();
     try {
-      const resolved = await backend().resolveBlocks(unique);
-      for (let i = 0; i < unique.length; i++) if (resolved[i] !== null) collisions.add(unique[i]);
+      const result = await readOwned(owner, backend().resolveBlocks(unique));
+      if (result.kind === "stale") return null;
+      for (let i = 0; i < unique.length; i++) if (result.value[i] !== null) collisions.add(unique[i]);
     } catch {
       // An uncertain ID cannot safely be copied into the graph.
       unique.forEach((id) => collisions.add(id));
     }
-    if (!clipboardPasteAuthorityCurrent(authority)) return null;
+    if (!owner()) return null;
     unique.filter(docHasBlockIdentity).forEach((id) => collisions.add(id));
     const clean = (node: OutlineNode): OutlineNode => {
       const blockIds = clipboardIdsForBlock({ raw: node.raw, sourceFormat: format, children: [] });
@@ -224,6 +227,7 @@ export function pasteClipboardPayload(
   const authority = captureClipboardPasteAuthority(targetId);
   const grant = slot.op === "cut" ? consumeCutGrant(slot.generation) : null;
   if (!authority) return Promise.resolve(null);
+  const owner = ownedWhen(() => clipboardPasteAuthorityCurrent(authority));
 
   const idLists: string[][] = [];
   const visit = (block: ClipboardBlock) => {
@@ -244,12 +248,13 @@ export function pasteClipboardPayload(
 
     if (preserveIds) {
       preserveIds = await flushCutSourcePages(grant!.sourcePages);
-      if (preserveIds && !clipboardPasteAuthorityCurrent(authority)) return null;
+      if (preserveIds && !owner()) return null;
     }
     if (preserveIds && normalizedIds.length) {
       try {
-        const resolved = await backend().resolveBlocks(normalizedIds);
-        preserveIds = resolved.length === normalizedIds.length && resolved.every((block) => block === null);
+        const result = await readOwned(owner, backend().resolveBlocks(normalizedIds));
+        if (result.kind === "stale") return null;
+        preserveIds = result.value.length === normalizedIds.length && result.value.every((block) => block === null);
       } catch {
         preserveIds = false;
       }
@@ -257,7 +262,7 @@ export function pasteClipboardPayload(
 
     // Final JS-single-thread section: every authority and retirement check is
     // synchronous and insertion follows immediately with no await boundary.
-    if (!clipboardPasteAuthorityCurrent(authority)) return null;
+    if (!owner()) return null;
     if (preserveIds) {
       preserveIds = cutSourcePagesRetired(grant!.sourcePages)
         && normalizedIds.every((id) => !docHasBlockIdentity(id))

@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { captureBinding, stillBound } from "./binding";
+import { graphOwner, readOwned } from "./owned";
 import { isMobilePlatform } from "./nativeChrome";
 import {
   installSessionPersistence,
@@ -273,34 +273,35 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
 }
 
 export async function flushSession(): Promise<void> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   clearTimeout(saveTimer);
   try {
-    await backend().saveSession(JSON.stringify(buildPersistedSession()));
-    if (stillBound(binding)) clearLegacyRecentSource();
+    const result = await readOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())));
+    if (result.kind === "current") clearLegacyRecentSource();
   } catch {
     // best-effort
   }
 }
 
 export function scheduleSessionSave() {
-  const binding = captureBinding();
+  const owner = graphOwner();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    if (!stillBound(binding)) return;
-    void backend().saveSession(JSON.stringify(buildPersistedSession()))
-      .then(() => { if (stillBound(binding)) clearLegacyRecentSource(); })
+    if (!owner()) return;
+    void readOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())))
+      .then((result) => { if (result.kind === "current") clearLegacyRecentSource(); })
       .catch(() => {});
   }, 150);
 }
 
 export async function restoreSession(): Promise<void> {
-  const binding = captureBinding();
+  const owner = graphOwner();
   try {
     let raw: string | null = null;
     try {
-      raw = await backend().loadSession();
-      if (!stillBound(binding)) return;
+      const result = await readOwned(owner, backend().loadSession());
+      if (result.kind === "stale") return;
+      raw = result.value;
     } catch {
       return;
     }
@@ -320,7 +321,7 @@ export async function restoreSession(): Promise<void> {
     // like the existing session restore; a bad registry must not block the app.
     try {
       const { initializeWorkspaces } = await import("./workspaces");
-      if (!stillBound(binding)) return;
+      if (!owner()) return;
       await initializeWorkspaces();
     } catch {
       // unavailable before graph binding, older backend, or invalid registry

@@ -191,11 +191,13 @@ function Capture() {
       // not in Tauri, hidden again, or shutting down
     }
   };
-  let activationGeneration = 0;
+  const captureScope = {};
+  let captureAlive = true;
+  onCleanup(() => { captureAlive = false; });
   const activateWhenEditorReady = () => {
-    const generation = ++activationGeneration;
+    const owner = latestOwner(captureScope, "activation", () => captureAlive);
     const tryActivate = (attempt: number) => {
-      if (generation !== activationGeneration) return;
+      if (!owner()) return;
       const editor = document.querySelector<HTMLTextAreaElement>(".capture-shell textarea");
       if (editor) {
         refit();
@@ -229,11 +231,10 @@ function Capture() {
   // either use adaptive or issue its query without any graph candidates.
   // A later show wins if refreshes overlap while the window is being hidden or
   // re-shown, so stale reads cannot activate an older lifecycle.
-  let policyRefreshGeneration = 0;
   const refreshPolicyThenResettleAndActivate = async () => {
-    const generation = ++policyRefreshGeneration;
-    await Promise.all([initLinkDefault(), backend().bindCaptureGraph()]);
-    if (generation !== policyRefreshGeneration) return;
+    const owner = latestOwner(captureScope, "policy", () => captureAlive);
+    const result = await readOwned(owner, Promise.all([initLinkDefault(), backend().bindCaptureGraph()]));
+    if (result.kind === "stale") return;
     resettleAndActivate();
   };
   const blurGate = createCaptureBlurGate();
@@ -257,7 +258,10 @@ function Capture() {
   };
 
   const loadPref = () => {
-    void backend().getCaptureEnterFiles().then(setEnterFiles).catch(() => {});
+    const owner = latestOwner(captureScope, "enter-files", () => captureAlive);
+    void readOwned(owner, backend().getCaptureEnterFiles())
+      .then((result) => { if (result.kind === "current") setEnterFiles(result.value); })
+      .catch(() => {});
   };
 
   type PendingCapture = {
@@ -285,10 +289,12 @@ function Capture() {
     if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
   };
   const requestTheme = async () => {
+    const owner = latestOwner(captureScope, "theme-request", () => captureAlive);
     try {
       const { emitTo } = await import("@tauri-apps/api/event");
-      const target = await backend().captureTarget();
-      await emitTo(target, "capture-request-theme", { target });
+      const result = await readOwned(owner, backend().captureTarget());
+      if (result.kind === "stale") return;
+      await emitTo(result.value, "capture-request-theme", { target: result.value });
     } catch {
       // not in Tauri
     }
@@ -301,10 +307,12 @@ function Capture() {
   // it, so a remapped shortcut is honored in the capture window too.
   let disposeKeys: () => void = () => {};
   const requestShortcuts = async () => {
+    const owner = latestOwner(captureScope, "shortcuts-request", () => captureAlive);
     try {
       const { emitTo } = await import("@tauri-apps/api/event");
-      const target = await backend().captureTarget();
-      await emitTo(target, "capture-request-shortcuts", { target });
+      const result = await readOwned(owner, backend().captureTarget());
+      if (result.kind === "stale") return;
+      await emitTo(result.value, "capture-request-shortcuts", { target: result.value });
     } catch {
       // not in Tauri
     }

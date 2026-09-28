@@ -31,9 +31,11 @@ function runBounded<T>(operation: Promise<T>, timeoutMs: number, fallback: T): P
  * close succeeds; a failed native close must call reset() before retrying. */
 export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordinator {
   let closing = false;
+  const transaction = {};
   const bounded = deps.runBounded ?? runBounded;
 
   const reset = () => {
+    advanceRevision(transaction);
     closing = false;
     deps.setTransition(false);
   };
@@ -41,19 +43,23 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
   const prepare = async (): Promise<SafeClosePrepareResult> => {
     if (closing) return "in_flight";
     closing = true;
+    const owner = revisionOwner(transaction, advanceRevision(transaction));
     deps.setTransition(true);
     let accepted = false;
     try {
       deps.blurActive();
       deps.endEdit();
       await Promise.resolve();
+      if (!owner()) return "rejected";
 
       let pdfSaved = false;
       try {
         // A pending PDF view-state timer is not visible to the page persistence
         // engine until it fires. Enroll and drain it first while this window's
         // current graph binding still owns every PDF mutation.
-        pdfSaved = await bounded(deps.flushPdfWork(), 4000, false);
+        const result = await readOwned(owner, bounded(deps.flushPdfWork(), 4000, false));
+        if (result.kind === "stale") return "rejected";
+        pdfSaved = result.value;
       } catch {
         pdfSaved = false;
       }
@@ -64,7 +70,9 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
 
       let saved = false;
       try {
-        saved = await bounded(deps.flushAll(), 4000, false);
+        const result = await readOwned(owner, bounded(deps.flushAll(), 4000, false));
+        if (result.kind === "stale") return "rejected";
+        saved = result.value;
       } catch {
         saved = false;
       }
@@ -72,7 +80,9 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
       if (!saved) {
         let discard = false;
         try {
-          discard = await deps.confirmDiscard();
+          const result = await readOwned(owner, deps.confirmDiscard());
+          if (result.kind === "stale") return "rejected";
+          discard = result.value;
         } catch {
           deps.notifyConfirmationFailure();
           return "rejected";
@@ -81,7 +91,8 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
       }
 
       try {
-        await bounded(deps.flushSession(), 1000, undefined);
+        const result = await readOwned(owner, bounded(deps.flushSession(), 1000, undefined));
+        if (result.kind === "stale") return "rejected";
       } catch {
         // Session state is best effort after graph content was saved or the user
         // explicitly accepted discarding it; preserve the established policy.
@@ -89,9 +100,10 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
       accepted = true;
       return "accepted";
     } finally {
-      if (!accepted) reset();
+      if (!accepted && owner()) reset();
     }
   };
 
   return { prepare, reset, inFlight: () => closing };
 }
+import { advanceRevision, readOwned, revisionOwner } from "./owned";

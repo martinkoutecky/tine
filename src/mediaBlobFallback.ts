@@ -1,4 +1,5 @@
 import { backend } from "./backend";
+import { graphOwner, readOwned } from "./owned";
 
 const AUDIO_MAX_BYTES = 64 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 128 * 1024 * 1024;
@@ -35,13 +36,16 @@ export function acquireMediaBlobFallback(
   mime: string,
   signal?: AbortSignal
 ): Promise<MediaBlobLease> {
+  const owner = graphOwner(() => !signal?.aborted);
   return enqueue(async () => {
     if (signal?.aborted) throw abortError();
+    if (!owner()) throw abortError();
     const perFileMax = kind === "audio" ? AUDIO_MAX_BYTES : VIDEO_MAX_BYTES;
     const remaining = TOTAL_MAX_BYTES - retainedBytes;
     if (remaining <= 0) throw new Error("media blob fallback budget exhausted");
-    const bytes = await backend().readAsset(name, Math.min(perFileMax, remaining));
-    if (signal?.aborted) throw abortError();
+    const result = await readOwned(owner, backend().readAsset(name, Math.min(perFileMax, remaining)));
+    if (result.kind === "stale") throw abortError();
+    const bytes = result.value;
 
     const size = bytes.byteLength;
     if (size > remaining) throw new Error("media blob fallback budget exceeded");

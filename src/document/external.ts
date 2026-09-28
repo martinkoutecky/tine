@@ -1,5 +1,6 @@
 import { backend, type GraphChange } from "../backend";
-import { captureBinding, stillBound } from "../binding";
+import { captureBinding } from "../binding";
+import { graphOwner, readOwned } from "../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
 import { feedNames, pageByName } from "./model";
@@ -22,6 +23,7 @@ export function installExternalChangeUiHandler(capture: () => ExternalChangeUi):
 
 export async function applyGraphChange(c: GraphChange): Promise<void> {
   const binding = captureBinding();
+  const owner = graphOwner();
   if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
   // The watcher has already updated the backend graph cache. Invalidate even
   // when this page is outside the bounded frontend working set.
@@ -36,15 +38,19 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
     const id = pageByName(c.name)?.id;
     let revision: string | null | undefined;
     try {
-      const disk = c.removed ? null : id
-        ? await backend().getPageByPath(id)
-        : await backend().getPage(c.name, c.kind);
-      revision = disk?.rev ?? null;
+      if (c.removed) revision = null;
+      else {
+        const result = await readOwned(owner, id
+          ? backend().getPageByPath(id)
+          : backend().getPage(c.name, c.kind));
+        if (result.kind === "stale") return;
+        revision = result.value?.rev ?? null;
+      }
     } catch {
       // Without a fresh observation, the old load revision remains a
       // conservative guard: Keep mine cannot clobber changed bytes.
     }
-    if (stillBound(binding) && pageByName(c.name)?.id === id && reloadDisposition(c.name) === "conflict")
+    if (owner() && pageByName(c.name)?.id === id && reloadDisposition(c.name) === "conflict")
       markConflict(c.name, { kind: "disk-changed" }, revision);
   };
   if (c.removed) {
@@ -67,17 +73,17 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
     return;
   }
   if (ui?.pageOpen(c.name)) {
-    const dto = await backend().getPage(c.name, c.kind);
-    if (!stillBound(binding)) return;
-    if (dto) reloadPageIfStillSafe(c.name, toLoadablePage(dto, c.name));
+    const result = await readOwned(owner, backend().getPage(c.name, c.kind));
+    if (result.kind === "stale") return;
+    if (result.value) reloadPageIfStillSafe(c.name, toLoadablePage(result.value, c.name));
     restartJournalFeed();
     return;
   }
   if (c.kind === "journal" && ui?.journalsOpen) {
     if (pageByName(c.name)) {
-      const dto = await backend().getPage(c.name, c.kind);
-      if (!stillBound(binding)) return;
-      if (dto) reloadPageIfStillSafe(c.name, dto);
+      const result = await readOwned(owner, backend().getPage(c.name, c.kind));
+      if (result.kind === "stale") return;
+      if (result.value) reloadPageIfStillSafe(c.name, result.value);
     }
     // The feed owner gates dirty/save/conflict/move state and records a pending
     // restart when unsafe, so this watcher event is not lost.
@@ -85,8 +91,8 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
     return;
   }
   if (pageByName(c.name) && !feedNames().includes(c.name)) {
-    const dto = await backend().getPage(c.name, c.kind);
-    if (!stillBound(binding)) return;
-    if (dto) reloadPageIfStillSafe(c.name, dto);
+    const result = await readOwned(owner, backend().getPage(c.name, c.kind));
+    if (result.kind === "stale") return;
+    if (result.value) reloadPageIfStillSafe(c.name, result.value);
   }
 }

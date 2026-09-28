@@ -52,6 +52,7 @@ import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "
 import { flushAll, appendToTodayJournal, captureToPage } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
+import { graphOwner, latestOwner, readOwned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -394,8 +395,11 @@ export function PaneEdgeHighlights(): JSX.Element {
   );
 }
 
-export async function installMobileExternalLinkHandler(): Promise<() => void> {
-  if ((await backend().appPlatform()) === "desktop") return () => {};
+/** Install mobile external-link delegation after a current platform read. A
+ * retired owner installs nothing. O(1) per click; platform failures reject. */
+export async function installMobileExternalLinkHandler(owner: Owner = () => true): Promise<() => void> {
+  const platform = await readOwned(owner, backend().appPlatform());
+  if (platform.kind === "stale" || platform.value === "desktop") return () => {};
 
   const onClick = (e: MouseEvent) => {
     const target = e.target;
@@ -530,7 +534,7 @@ export function App(): JSX.Element {
   onMount(() => {
     let uninstall = () => {};
     let disposed = false;
-    void installMobileExternalLinkHandler().then((u) => {
+    void installMobileExternalLinkHandler(() => !disposed).then((u) => {
       if (disposed) u();
       else uninstall = u;
     });
@@ -716,13 +720,16 @@ export function App(): JSX.Element {
   // editor/quick-capture-file (or any editor shortcut) is honored there too — it
   // can't read this window's localStorage overrides on its own.
   let latestShortcuts: Record<string, string> = {};
+  const captureBroadcastScope = {};
   const broadcastShortcuts = () => {
     if (!isTauri()) return;
+    const owner = latestOwner(captureBroadcastScope, "shortcuts", graphOwner());
     void (async () => {
       try {
         const { emitTo } = await import("@tauri-apps/api/event");
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        if ((await backend().captureTarget()) === getCurrentWindow().label) {
+        const target = await readOwned(owner, backend().captureTarget());
+        if (target.kind === "current" && target.value === getCurrentWindow().label) {
           await emitTo("capture", "capture-apply-shortcuts", latestShortcuts);
         }
       } catch {

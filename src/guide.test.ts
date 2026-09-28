@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { copyGuideIntoGraph, maybeShowGuideAnnouncement } from "./guide";
+import { copyGuideIntoGraph, ensureGuidePagesLoaded, maybeShowGuideAnnouncement } from "./guide";
 import { dismissToast, setToasts, toasts } from "./toasts";
 import { graphMeta, pageInventoryRev, setGraphMeta } from "./graphSession";
 import { resetStore } from "./document";
+import type { GuidePage } from "./types";
 
 async function seedMeta(root: string) {
   const meta = await backend().loadGraph("");
@@ -19,6 +20,22 @@ afterEach(() => {
 });
 
 describe("guide announcement", () => {
+  it("starts a fresh Guide read when the old graph's pending read is retired", async () => {
+    let finish!: (pages: GuidePage[]) => void;
+    const read = vi.spyOn(backend(), "guidePages")
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValueOnce([]);
+    await seedMeta("/mock/guide-read-old");
+    const first = ensureGuidePagesLoaded(true);
+    const oldMeta = graphMeta()!;
+    resetStore();
+    setGraphMeta({ ...oldMeta, root: "/mock/guide-read-new" });
+    const second = ensureGuidePagesLoaded();
+    expect(read).toHaveBeenCalledTimes(2);
+    finish([]);
+    await Promise.all([first, second]);
+  });
+
   it("does not announce the new graph when an old graph toast is dismissed", async () => {
     const setFlag = vi.spyOn(backend(), "setGuideAnnounced").mockResolvedValue();
     await seedMeta("/mock/guide-old");

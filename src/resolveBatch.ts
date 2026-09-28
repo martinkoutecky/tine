@@ -1,6 +1,7 @@
 import { backend } from "./backend";
 import { resolveGuideBlockRef } from "./document";
 import { dataRev, graphEpoch } from "./graphSession";
+import { graphOwner, readOwned } from "./owned";
 import type { RefGroup } from "./types";
 
 // Batches inline ((uuid)) reference / embed resolutions: every request made in the
@@ -31,17 +32,22 @@ function flush() {
   const resolvers = pending;
   const batchRev = cacheRev;
   pending = new Map();
-  void backend()
-    .resolveBlocks(batch)
-    .then((results) =>
+  const owner = graphOwner(() => ensureCacheRev() === batchRev);
+  void readOwned(owner, backend().resolveBlocks(batch))
+    .then((result) => {
+      if (result.kind === "stale") {
+        batch.forEach((id) => resolvers.get(id)?.(null));
+        return;
+      }
+      const results = result.value;
       batch.forEach((id, i) => {
         // Backend miss → try the virtual in-app Guide (never on disk). No-op for
         // real graphs, so disk resolutions always win.
         const group = results[i] ?? resolveGuideBlockRef(id);
         if (group && cacheRev === batchRev && ensureCacheRev() === batchRev) resolvedCache.set(id, group);
         resolvers.get(id)?.(group);
-      })
-    )
+      });
+    })
     .catch(() =>
       batch.forEach((id) => resolvers.get(id)?.(resolveGuideBlockRef(id)))
     );
