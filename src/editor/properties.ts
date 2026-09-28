@@ -354,9 +354,14 @@ export function joinProps(visible: string, hidden: string, format: PropFormat = 
   }
   if (lines.length === 0) return [":PROPERTIES:", ...hiddenLines, ":END:"].join("\n");
   const [title, ...rest] = lines;
-  let planEnd = 0;
-  while (planEnd < rest.length && /^\s*(?:SCHEDULED|DEADLINE):\s*</i.test(rest[planEnd])) planEnd++;
-  return [title, ...rest.slice(0, planEnd), ":PROPERTIES:", ...hiddenLines, ":END:", ...rest.slice(planEnd)].join("\n");
+  const isSched = (l: string) => l.startsWith("SCHEDULED");
+  const isDead = (l: string) => l.startsWith("DEADLINE");
+  const scheduled = rest.filter(isSched);
+  const deadline = rest.filter(isDead);
+  const body = rest.filter((l) => !isSched(l) && !isDead(l));
+  return [title, ...scheduled, ...deadline, ":PROPERTIES:", ...hiddenLines, ":END:", ...body].join(
+    "\n"
+  );
 }
 
 /** First value for `key` (case-insensitive) in a property block, or null. */

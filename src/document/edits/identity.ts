@@ -93,9 +93,14 @@ export function rawWithBlockId(raw: string, uuid: string, format: Format): strin
   // No drawer: title, SCHEDULED*, DEADLINE*, :PROPERTIES: drawer, rest-of-body —
   // OG groups planning lines above the drawer (util/property.cljs insert-property).
   const [title, ...rest] = lines;
-  let planEnd = 0;
-  while (planEnd < rest.length && /^\s*(?:SCHEDULED|DEADLINE):\s*</i.test(rest[planEnd])) planEnd++;
-  return [title, ...rest.slice(0, planEnd), ":PROPERTIES:", `:id: ${uuid}`, ":END:", ...rest.slice(planEnd)].join("\n");
+  const isSched = (l: string) => l.startsWith("SCHEDULED");
+  const isDead = (l: string) => l.startsWith("DEADLINE");
+  const scheduled = rest.filter(isSched);
+  const deadline = rest.filter(isDead);
+  const body = rest.filter((l) => !isSched(l) && !isDead(l));
+  return [title, ...scheduled, ...deadline, ":PROPERTIES:", `:id: ${uuid}`, ":END:", ...body].join(
+    "\n"
+  );
 }
 
 /** `raw` with an org drawer property set/updated/removed. Operates ONLY on the
