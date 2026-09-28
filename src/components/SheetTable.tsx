@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode } from "../document";
+import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
-import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
+import { visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { editorOffsetFromRenderedRange } from "../render/spans";
@@ -154,8 +154,7 @@ export function SheetTable(props: {
   });
   const pageFormulas = createMemo<ReadonlyMap<string, string>>(() => {
     if (!props.schemaPage) return new Map();
-    const page = pageByName(props.schemaPage);
-    return page ? formulasOf(pageProperties(page.preBlock, page.format)) : new Map();
+    return formulasOf(readPageProperties(props.schemaPage));
   });
   const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
     const owner = docNode(props.ownerId);
@@ -586,7 +585,7 @@ export function SheetTable(props: {
         format: formatForBlock(row.id),
         recognizedProperties: facetsOf(row.raw, formatForBlock(row.id)).properties,
       })),
-      pageProperties: page ? pageProperties(page.preBlock, page.format) : [],
+      pageProperties: page ? readPageProperties(page.name) : [],
       recognizeProperties: (raw, format) => facetsOf(raw, format).properties,
       oldField: field,
       newName: value,

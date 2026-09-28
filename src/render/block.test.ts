@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { aliasNames, isPropertyLine, pageProperties, visibleBody } from "./block";
+import { aliasNamesOf, isPropertyLine, pageProperties, visibleBody } from "./block";
+import type { Format } from "../types";
+
+const aliasNames = (text: string | null, format?: Format) => aliasNamesOf(pageProperties(text, format));
 
 describe("visibleBody (body text for labels / reference render)", () => {
   it("drops real property lines but keeps a fenced key:: as code content", () => {

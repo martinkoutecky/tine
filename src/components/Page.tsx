@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, rewritePageTargetAcrossPanes } from "../panes";
 import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
@@ -17,7 +17,7 @@ import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { SheetTable } from "./SheetTable";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
-import { pageProperties, aliasNames, visibleBody } from "../render/block";
+import { aliasNamesOf, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay } from "../journal";
@@ -73,6 +73,15 @@ function responseMatches(day: number, response: JournalFeedPage): boolean {
   return response.as_of_day === day && localDayKey() === day;
 }
 
+/** A window that has not yet bound a graph (startup, before `load_graph`
+ *  returns) has no journals to read: the backend refuses every graph read with
+ *  missing-graph-binding. That refusal is not a failed read — the bind bumps
+ *  the graph epoch, which re-runs the Journals route loader. So an unbound
+ *  window issues no feed read and reports nothing (og 12e P2). */
+function windowUnbound(): boolean {
+  return backend().graphBindingGeneration() === 0;
+}
+
 function ownerIsLive(owner: JournalsFeedOwner): boolean {
   return graphEpoch() === owner.graphEpoch && owner.isLive();
 }
@@ -102,7 +111,7 @@ let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeed
 
 /** Ensure today's configured template before any feed read for that day. */
 async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<unknown | null> {
-  if (!ownerIsLive(owner)) return null;
+  if (!ownerIsLive(owner) || windowUnbound()) return null;
   const date = new Date();
   const day = localDayKey(date);
   const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
@@ -141,7 +150,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
 async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean, rollover: boolean): Promise<unknown | null> {
   // An already-dead watcher/surface must be entirely inert.  In particular it
   // must not steal the generation from a live request that is about to land.
-  if (!ownerIsLive(owner)) return null;
+  if (!ownerIsLive(owner) || windowUnbound()) return null;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
   const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
   if (!rollover && feedHasActiveEdit()) {
@@ -288,6 +297,9 @@ export function PageView(): JSX.Element {
           setReady(true);
           return;
         } else if (r.kind === "journals") {
+          // Before the window binds its graph there is nothing to read; stay
+          // loading. The bind's epoch bump re-runs this loader.
+          if (untrack(windowUnbound)) return;
           // restartJournalFeed synchronously reads the working set safety gate.
           // Keep those reads out of this route/epoch loader's dependency set:
           // loadFeed replaces doc.feed, and subscribing here would self-reload.
@@ -694,13 +706,9 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     // keystrokes (GH #62's regression after the GH #86 presentation change).
     return id && editingId() !== id && docNode(id) && isPropertiesOnly(docNode(id).raw) ? id : null;
   };
-  const propertySource = () => {
-    const first = firstPropertiesId();
-    if (first && docNode(first).originatedFromPageHeader) {
-      return docNode(first).raw + (props.page.preBlock ?? "");
-    }
-    return [props.page.preBlock, first ? docNode(first).raw : null].filter(Boolean).join("\n") || null;
-  };
+  // The page header shows the same answerer the properties panel lists; a first
+  // root rendered as an ordinary block (being edited, or not a header) is excluded.
+  const headerProperties = () => pageHeaderProperties(props.page, firstPropertiesId() ? null : props.page.roots[0] ?? null);
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
@@ -755,13 +763,20 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     const root = graphMeta()?.root;
     const tabId = router.activeId();
     const intentRevision = router.routeIntentRevision();
+    // The rename's own refresh (`refreshAfterRename`) removes the renamed page
+    // from every tab's history without a navigation intent, so a tab showing it
+    // falls back to its previous entry — any page, not only the journals. That
+    // move is ours, not the user's: while no navigation intent intervened, a tab
+    // that showed the renamed page still belongs to this rename.
+    const routeShowsRenamed = route.kind === "page" && route.name === target.name
+      && route.pageKind === target.pageKind && (target.path === undefined || route.path === target.path);
     const stillOnRenameTab = () => {
       const current = router.route();
       return router.activeId() === tabId
         && router.routeIntentRevision() === intentRevision
         && binding.backendGeneration === captureBinding().backendGeneration
         && graphMeta()?.root === root
-        && (sameRoute(current, route) || current.kind === "journals"
+        && (routeShowsRenamed || sameRoute(current, route) || current.kind === "journals"
           || (current.kind === "page" && current.name === next && current.pageKind === "page"));
     };
     renameSubmitted = true;
@@ -840,7 +855,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
               </svg>
             </Show>
             <Show
-              when={pageProperties(propertySource(), props.page.format)
+              when={headerProperties()
                 .find(([k]) => k.toLowerCase() === "icon")?.[1]
                 ?.trim()}
             >
@@ -910,18 +925,18 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           </button>
         </Show>
       </div>
-      <Show when={aliasNames(propertySource(), props.page.format).length}>
+      <Show when={aliasNamesOf(headerProperties()).length}>
         <div class="page-aliases" title="Also known as — other names that link here" onClick={editPageHeader}>
           <span class="page-aliases-label">aka</span>
-          <For each={aliasNames(propertySource(), props.page.format)}>
+          <For each={aliasNamesOf(headerProperties())}>
             {(a) => <span class="alias-chip"><PageRef name={a} alias={a} /></span>}
           </For>
         </div>
       </Show>
-      <Show when={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
+      <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
         <div class="page-properties" onClick={editPageHeader}>
           {/* `alias`/`icon` are surfaced elsewhere (chips / title icon) — see PAGE_PROPS_HIDDEN. */}
-          <For each={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
+          <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">
                 <span class="prop-key">{key}</span>

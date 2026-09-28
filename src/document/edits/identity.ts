@@ -115,16 +115,12 @@ export function orgRawWithProperty(raw: string, key: string, value: string | nul
   if (drawer) {
     const [start, end] = drawer;
     // Update in place so an existing drawer key keeps its position (GH #216);
-    // only a new key appends.
-    const inner = lines.slice(start + 1, end);
-    const at = inner.findIndex((l) => keyRe.test(l.trim()));
-    if (value !== null) {
-      const line = `:${key}: ${value}`;
-      if (at >= 0) inner[at] = line;
-      else inner.push(line);
-    } else if (at >= 0) {
-      inner.splice(at, 1);
-    }
+    // only a new key appends. Every other case-insensitive duplicate goes, so
+    // blockProperty (first match) cannot keep answering after a Remove.
+    const all = lines.slice(start + 1, end);
+    const at = all.findIndex((l) => keyRe.test(l.trim()));
+    const inner = all.flatMap((l, k) => (!keyRe.test(l.trim()) ? [l] : k === at && value !== null ? [`:${key}: ${value}`] : []));
+    if (at < 0 && value !== null) inner.push(`:${key}: ${value}`);
     if (inner.length === 0) {
       // Drawer emptied: drop it entirely.
       return [...lines.slice(0, start), ...lines.slice(end + 1)].join("\n");

@@ -6,6 +6,18 @@ import { transitionFence, type FenceState } from "./fences";
 /** Ordinary `key:: value` lines share the page-header key class at column zero. */
 export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
 
+/** Whether the properties panel may write `key` (GH #164): ASCII letters,
+ *  digits, `-` and `_` only — the intersection of every Tine property reader
+ *  (Rust `doc::parse_property_line` and `logbook::is_md_property_line`, TS
+ *  {@link PROP_LINE}, the Org drawer/directive readers and lsdoc), so a written
+ *  key is found again everywhere. Syntactic only: machine-managed keys (`id`,
+ *  `collapsed`, `tine.*`) pass here and callers refuse them separately.
+ *  Pinned by crates/tine-core/tests/fixtures/editable-property-keys.txt, which
+ *  the Rust readers test too. Cost O(key). */
+export function isEditablePropertyKey(key: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(key);
+}
+
 const PAGE_HEADER_KEY = /^[\p{L}\p{M}\p{N}_./-]+$/u;
 
 /** Parse one canonical Markdown page-header property line. This grammar is
@@ -408,33 +420,94 @@ export function upsertPropertyLine(
   return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
 }
 
-/** First case-insensitive `#+key: ` directive in an Org preamble, trimmed, or
- * null. The space after `:` is required. Cost O(preamble bytes). */
-export function readOrgPageProperty(preBlock: string | null, key: string): string | null {
-  const prefix = `#+${key.toLowerCase()}: `;
-  for (const line of preBlock?.split("\n") ?? []) {
-    if (line.toLowerCase().startsWith(prefix)) return line.slice(line.indexOf(": ", 2) + 2).trim();
-  }
-  return null;
+/** One page property line: `key` (Org keys lowercased, as OG/mldoc store
+ *  them), trimmed `value`, and `line`, its 0-based line index in the text. */
+export interface PagePropertyEntry {
+  key: string;
+  value: string;
+  line: number;
 }
 
-/** Set/remove an Org page directive while preserving unrelated preamble lines.
- * The key is lowercased; matches require `#+key: ` case-insensitively, and
- * duplicate matches collapse to one. New keys prepend. Null/blank removes;
- * null is returned when no nonblank preamble remains. Cost O(preamble bytes). */
-export function orgPreBlockWithProperty(preBlock: string | null, key: string, value: string | null): string | null {
-  const prefix = `#+${key.toLowerCase()}: `;
-  const v = value?.trim() || null;
-  const out: string[] = [];
-  let matched = false;
-  for (const line of preBlock?.split("\n") ?? []) {
-    if (line.toLowerCase().startsWith(prefix)) {
-      if (!matched && v) out.push(`${prefix}${v}`);
-      matched = true;
-    } else out.push(line);
+// Org page keys use the Markdown page-header key class (GH #164 / master 0a1d537fa: non-ASCII Org page keys).
+const ORG_DIRECTIVE = /^#\+([\p{L}\p{M}\p{N}_./-]+):\s*(.*)$/u;
+const ORG_DRAWER_LINE = /^:([\p{L}\p{M}\p{N}_./-]+):\s*(.*)$/u;
+
+/** THE page-property grammar (I-12: every page-property reader and writer
+ *  derives from it, including render/block.ts `pageProperties`). Markdown: each
+ *  `key:: value` line of the fence-aware canonical header
+ *  ({@link splitPagePreamble}); prose, later lines and fenced code are never
+ *  properties. Org: every `#+key:` directive (space optional) and every `:key:`
+ *  line inside a `:PROPERTIES:` … `:END:` drawer. File order, duplicates kept.
+ *  Cost O(text). */
+export function pagePropertyEntries(text: string | null | undefined, format: PropFormat): PagePropertyEntry[] {
+  if (!text) return [];
+  const out: PagePropertyEntry[] = [];
+  if (format === "org") {
+    let inDrawer = false;
+    text.split("\n").forEach((line, i) => {
+      const t = line.trim();
+      if (/^:PROPERTIES:$/i.test(t)) inDrawer = true;
+      else if (/^:END:$/i.test(t)) inDrawer = false;
+      else {
+        const m = ORG_DIRECTIVE.exec(t) ?? (inDrawer ? ORG_DRAWER_LINE.exec(t) : null);
+        if (m) out.push({ key: m[1].toLowerCase(), value: m[2].trim(), line: i });
+      }
+    });
+    return out;
   }
-  if (!matched && v) out.unshift(`${prefix}${v}`);
-  return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
+  const header = splitPagePreamble(text).properties;
+  header?.split("\n").forEach((line, i) => {
+    const property = parsePageHeaderPropertyLine(line);
+    if (property) out.push({ key: property.key, value: property.value.trim(), line: i });
+  });
+  return out;
+}
+
+/** Set (or, for a null/blank value, remove) page property `key` across `parts`
+ *  — the texts a page's properties are read from, in file order, each parsed on
+ *  its own by {@link pagePropertyEntries}. The first case-insensitive match is
+ *  replaced in place (Markdown keeps the file's key spelling; Org writes the
+ *  lowercased key), every other match is removed, and a new key is prepended
+ *  to `parts[0]` (Logseq's insert-property order). Unrelated lines keep their
+ *  bytes. A removal that empties an Org drawer drops the drawer; one that
+ *  removes a Markdown header's first line also drops the blank separators that
+ *  would otherwise detach the rest of the header. Returns the new texts, same
+ *  length as `parts`. Cost O(total text). */
+export function pagePartsWithProperty(parts: string[], format: PropFormat, key: string, value: string | null): string[] {
+  const v = value?.trim() || null;
+  const lower = key.toLowerCase();
+  const hits = parts.flatMap((text, part) =>
+    pagePropertyEntries(text, format).filter((e) => e.key.toLowerCase() === lower).map((e) => ({ part, line: e.line })));
+  const lines = parts.map((text) => (text === "" ? [] : text.split("\n")));
+  const dropped = parts.map(() => new Set<number>());
+  hits.forEach(({ part, line }, i) => {
+    if (i > 0 || !v) {
+      dropped[part].add(line);
+      return;
+    }
+    const old = lines[part][line];
+    const indent = old.slice(0, old.length - old.trimStart().length);
+    lines[part][line] = format === "org"
+      ? `${indent}${old.trimStart().startsWith("#+") ? `#+${lower}: ` : `:${lower}: `}${v}`
+      : `${parsePageHeaderPropertyLine(old)!.key}:: ${v}`;
+  });
+  if (!hits.length && v) lines[0].unshift(format === "org" ? `#+${lower}: ${v}` : `${key}:: ${v}`);
+  return lines.map((all, part) => {
+    if (!dropped[part].size) return all.join("\n");
+    const entryLines = new Set(pagePropertyEntries(parts[part], format).map((e) => e.line));
+    let kept = all.map((line, i) => ({ line, i })).filter(({ i }) => !dropped[part].has(i));
+    if (format === "org") {
+      // A drawer is "emptied" only when one of OUR removals lay inside it.
+      const emptied = (open?: { line: string; i: number }, end?: { line: string; i: number }) =>
+        !!open && !!end && /^:PROPERTIES:$/i.test(open.line.trim()) && /^:END:$/i.test(end.line.trim())
+        && [...dropped[part]].some((d) => open.i < d && d < end.i);
+      kept = kept.filter((_, k) => !emptied(kept[k], kept[k + 1]) && !emptied(kept[k - 1], kept[k]));
+    } else if (dropped[part].has(0)) {
+      const first = kept.findIndex(({ line }) => line.trim() !== "");
+      if (first > 0 && entryLines.has(kept[first].i)) kept = kept.slice(first);
+    }
+    return kept.map(({ line }) => line).join("\n");
+  });
 }
 
 /** The page-level properties we surface in the page-properties panel, with a

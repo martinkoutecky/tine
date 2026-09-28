@@ -18,7 +18,8 @@ import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../ro
 import { clearConflict } from "../document/save/engine";
 import { markConflict } from "../document/save/engine";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
-import { graphEpoch, setGraphMeta } from "../graphSession";
+import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
+import { setToasts, toasts } from "../toasts";
 import type { GraphMeta } from "../types";
 
 beforeAll(async () => {
@@ -498,6 +499,31 @@ describe("Journals feed generation lifecycle", () => {
       await flushMicrotasks();
       expect(api).toHaveBeenCalledTimes(1);
       expect(doc.feed).toContain(`released-${gate}`);
+    } finally {
+      mounted.dispose();
+    }
+  });
+
+  it("reports no feed failure before the window binds its graph, then loads (og 12e P2)", async () => {
+    vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+    const binding = vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(0);
+    const api = vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => {
+      if (backend().graphBindingGeneration() === 0) throw new Error("missing-graph-binding");
+      return feedResponse([journalDto("bound-day", "bound content")]);
+    });
+    setToasts([]);
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks(); await tick(); await flushMicrotasks();
+      window.dispatchEvent(new Event("focus"));
+      await flushMicrotasks(); await tick(); await flushMicrotasks();
+      expect(toasts().map((t) => t.message)).not.toContain("Could not load journal feed. It will retry when the view refreshes.");
+      expect(mounted.root.textContent).not.toContain("Journal feed read failed");
+      binding.mockReturnValue(1);
+      bumpGraphEpoch();
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("bound content"));
+      expect(toasts().filter((t) => t.kind === "error")).toEqual([]);
+      expect(api).toHaveBeenCalled();
     } finally {
       mounted.dispose();
     }
@@ -1008,6 +1034,35 @@ describe("page actions entry point", () => {
       await flushMicrotasks();
       if (destination === "journals") expect(mainPaneRouter.route()).toMatchObject({ kind: "journals" });
       else expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: destination });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("lands on the renamed page when the rename was reached from another page (og 12e P1)", async () => {
+    const dto: PageRead = { name: "Reached rename", kind: "page", title: "Reached rename", pre_block: null,
+      id: "pages/Reached rename.md", blocks: [{ id: "reached-root", raw: "Body", collapsed: false, children: [] }] };
+    setDoc({ byId: { "reached-root": node("reached-root", "Body", dto.name) },
+      pages: [{ ...page(dto.name, "page", ["reached-root"]), id: dto.id }], feed: [], loaded: true });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
+    mainPaneRouter.openPage("Previous page", "page", { inPlace: true });
+    mainPaneRouter.openFile(dto.id, dto.name, "page");
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      root.querySelector<HTMLElement>(".page-title")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await tick();
+      const input = root.querySelector<HTMLInputElement>(".page-title-input")!;
+      input.value = "Reached renamed";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      input.dispatchEvent(new FocusEvent("blur"));
+      await vi.waitFor(() => expect(rename).toHaveBeenCalledOnce());
+      await flushMicrotasks();
+      await vi.waitFor(() => expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Reached renamed" }));
     } finally {
       dispose();
     }

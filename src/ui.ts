@@ -453,16 +453,20 @@ export function agendaQuery(): string {
   return `query (and ${window} (not (task DONE CANCELED CANCELLED)))`;
 }
 
-// When a query block is created via the "/Query (visual builder)" command, hold
-// its block id so the freshly-rendered QueryBuilder opens its add-filter picker
-// immediately (the block id, consumed once on mount, then cleared).
+// Block id of a "/Query (visual builder)" block whose QueryBuilder opens its add-filter picker once on mount.
 export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = createSignal<string | null>(null);
 
-// Page-properties panel (alias / public / tags / icon / title), opened from the
-// page-title gear or the "/Page properties" command. Anchored at x,y.
-export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ name: string; x: number; y: number; binding: ReturnType<typeof captureBinding> } | null>(null);
+export type PropsPanelScope = { kind: "page"; name: string } | { kind: "block"; id: string };
+/** The one open properties panel (GH #164) or null; page OR block scope despite the name (`name` = exact store page name, `id` = in-memory
+ *  block id), at viewport x,y. open*Props replaces any open panel. `binding` = graph session at open: a graph switch closes the panel,
+ *  and after a store reset or a reload of its page/block the panel refuses every write visibly and closes (PageProps.tsx writeOne).
+ *  An unknown/unloaded block id or page opens a read-only notice, never an edit row. Nothing here persists; O(1). */
+export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ scope: PropsPanelScope; x: number; y: number; binding: ReturnType<typeof captureBinding> } | null>(null);
 export function openPageProps(name: string, x: number, y: number) {
-  setPagePropsPanel({ name, x, y, binding: captureBinding() });
+  setPagePropsPanel({ scope: { kind: "page", name }, x, y, binding: captureBinding() });
+}
+export function openBlockProps(id: string, x: number, y: number) {
+  setPagePropsPanel({ scope: { kind: "block", id }, x, y, binding: captureBinding() });
 }
 export function closePageProps() {
   setPagePropsPanel(null);

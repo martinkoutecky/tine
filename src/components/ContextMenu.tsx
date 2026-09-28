@@ -1,5 +1,5 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
-import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
+import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { pushToast } from "../toasts";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
@@ -152,13 +152,16 @@ export function ContextMenu(): JSX.Element {
             }}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
-              if (m().kind !== "page" || !menuEl) return;
+              // Read the live signal, not `m()`: an inline field's Enter can
+              // close the menu before this bubbled keydown arrives, and the
+              // disposed <Show> accessor then throws a stale read.
+              if (contextMenu()?.kind !== "page" || !menuEl) return;
               handlePageMenuKeyDown(e, menuEl, () => close());
             }}
           >
             <Switch>
               <Match when={m().kind === "block"}>
-                <BlockMenu id={(m() as { blockId: string }).blockId} close={close} />
+                <BlockMenu id={(m() as { blockId: string }).blockId} x={m().x} y={m().y} close={close} />
               </Match>
               <Match when={m().kind === "blockref"}>
                 <BlockRefMenu
@@ -310,7 +313,7 @@ function ShowChildrenAsSubmenu(props: { id: string; close: () => void }): JSX.El
   );
 }
 
-function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
+function BlockMenu(props: { id: string; x: number; y: number; close: () => void }): JSX.Element {
   const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
   const readOnly = () => blockPageReadOnly(props.id);
   return (
@@ -339,7 +342,7 @@ function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
         <div class="ctx-sep" />
       </Show>
 
-      <For each={blockActions(props.id)}>
+      <For each={blockActions(props.id, props.x, props.y)}>
         {(it) => (
           <div
             class="ctx-item"
@@ -1022,7 +1025,7 @@ function RenamePage(props: {
   );
 }
 
-function blockActions(id: string): { label: string; run: () => void; danger?: boolean }[] {
+function blockActions(id: string, x: number, y: number): { label: string; run: () => void; danger?: boolean }[] {
   const numbered = blockProperty(id, "logseq.order-list-type") === "number";
   // If this block is itself a template (`template:: name`), offer to set it as the
   // new-journal default (or clear it if it already is) — right where templates live.
@@ -1045,6 +1048,8 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
   return [
     { label: "Open in sidebar", run: () => { void openDurableBlock(id, "sidebar"); } },
     { label: "Zoom into block", run: () => zoomInto(id) },
+    // GH #164: in the WRITABLE arm only; the read-only arm returned above.
+    { label: "Properties…", run: () => openBlockProps(id, x, y) },
     { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
     { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
     { label: "Copy block", run: () => copyBlock(id) },

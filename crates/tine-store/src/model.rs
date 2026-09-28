@@ -10724,10 +10724,26 @@ mod tests {
 
         // Give the winner the non-winner's current bytes. A name-keyed revision
         // map incorrectly treats that as already fresh and suppresses its reload.
+        //
+        // This step drives the reconcile directly, so stop the store's live
+        // file watcher first: otherwise its 200 ms-debounced reconcile can
+        // consume this external write before the call below (any stall of
+        // this thread longer than the debounce), leaving the direct call a
+        // correct `Reconciled { entry: None }` no-op and failing the assertion
+        // for a reason unrelated to the revision map. `stop` joins the watcher
+        // thread, so no reconcile is in flight past this line.
+        store.watch.stop();
         fs::write(&logical_winner.path, "- nested saved sentinel\n").unwrap();
         assert!(
             matches!(g.sync_file_internal(&logical_winner.path, None), SyncFileResult::Reconciled { entry: Some(entry), .. } if entry.path == logical_winner.path),
             "one duplicate's revision must not mark the other duplicate fresh"
+        );
+        assert!(
+            g.with_pages(|pages| pages
+                .iter()
+                .any(|(entry, doc)| entry.path == logical_winner.path
+                    && doc.roots[0].raw() == "nested saved sentinel")),
+            "the reconciled winner must serve its new bytes from its own cache slot"
         );
         let _ = fs::remove_dir_all(&dir);
     }
