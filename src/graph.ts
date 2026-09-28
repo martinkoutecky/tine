@@ -3,9 +3,9 @@
 
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
-import { graphOwner, readOwned, writeOwned } from "./owned";
+import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
-import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer } from "./ui";
+import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
 import { pushToast } from "./toasts";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk } from "./document";
 import { clearAssetBlobCache } from "./assetCache";
@@ -236,9 +236,14 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *  with no file only has its references repointed. `cancelled`: the user
  *  declined or the graph changed before anything was written. The other
  *  outcomes are `renamePageOnDisk`'s; `renameOutcomeMessage` words them.
- *  Backend errors reject. Cost: one or two name resolutions, a confirm dialog
+ *  `onRefreshed` receives the graph owner captured after the rename's refresh.
+ *  The merge target is not re-resolved after the confirm: the backend re-checks
+ *  it. A `to` reaching several pages is not offered as a merge; the backend
+ *  refuses that rename. Backend errors reject. Cost: one or two name resolutions, a confirm dialog
  *  when merging, plus the rename. */
-export async function renameOrMergePage(from: string, to: string, target?: PageTarget): Promise<RenameOutcome> {
+export async function renameOrMergePage(
+  from: string, to: string, target?: PageTarget, onRefreshed?: (owner: Owner) => void,
+): Promise<RenameOutcome> {
   const owner = graphOwner();
   const found = await readOwned(owner, backend().resolvePage(to, "page"));
   if (found.kind === "stale") return "cancelled";
@@ -254,11 +259,13 @@ export async function renameOrMergePage(from: string, to: string, target?: PageT
     const confirmed = await readOwned(owner, backend().confirm(`Page “${to}” already exists. Merge “${from}” into it?`));
     if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
   }
-  const done = await renamePageOnDisk(from, to, target, into);
+  const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
   return done === "stale" ? "cancelled" : done;
 }
 
-/** The user-facing message for a rename that did not rename, or null. */
+/** The user-facing message for a rename that did not rename, or null (for
+ *  `renamed`, `merged` and `cancelled`). `unchanged` is worded by its cause: a
+ *  case-only name change, or a name no file and no reference uses. */
 export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | null {
   if (typeof outcome === "object") {
     return outcome.mentions
@@ -266,7 +273,9 @@ export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: s
       : `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save. Save or discard them, then rename again. Your pending edits are still here.`;
   }
   switch (outcome) {
-    case "unchanged": return `Nothing renamed: “${to}” is the same page name as “${from}” (page names ignore letter case).`;
+    case "unchanged": return pageIdentityKey(from) === pageIdentityKey(to)
+      ? `Nothing renamed: “${to}” is the same page name as “${from}” (page names ignore letter case).`
+      : `Nothing renamed: no page file or reference uses “${from}” yet.`;
     case "busy": return "Another rename is still rewriting the graph. Try again when it finishes.";
     case "uncertain": return `The graph changed while renaming “${from}”. Check whether “${to}” exists before trying again.`;
     default: return null;

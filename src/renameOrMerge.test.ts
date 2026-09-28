@@ -78,3 +78,17 @@ it("distinguishes a busy rewrite from an unsaved edit and an uncertain commit", 
   expect(renameOutcomeMessage("uncertain", "Old", "New")).toContain("Check whether");
   expect(renameOutcomeMessage("busy", "Old", "New")).not.toContain("pending edits");
 });
+
+// og 12b Rule 2 B2: the backend also writes nothing for a name no file and no
+// reference uses (a never-saved page nobody links to), so the message may not
+// claim a case-only rename there.
+it("words an unchanged rename truthfully whether or not it was case-only", async () => {
+  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Other.md" });
+  vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", touched: [] });
+  const outcome = await renameOrMergePage("Draft", "Other");
+  expect(outcome).toBe("unchanged");
+  const message = renameOutcomeMessage(outcome, "Draft", "Other")!;
+  expect(message).not.toContain("same page name");
+  expect(message).toContain("“Draft”");
+  expect(renameOutcomeMessage("unchanged", "Old", "old")).toContain("same page name");
+});

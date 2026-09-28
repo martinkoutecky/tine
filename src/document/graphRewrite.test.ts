@@ -49,7 +49,7 @@ it("routes both rename controls through the document intent", () => {
     expect(source).not.toContain("backend().renamePage(");
   }
   // The one app-layer rename entry resolves the collision, then uses the intent.
-  expect(readFileSync("src/graph.ts", "utf8")).toContain("renamePageOnDisk(from, to, target, into)");
+  expect(readFileSync("src/graph.ts", "utf8")).toContain("renamePageOnDisk(from, to, target, into, onRefreshed)");
 });
 
 it("reports a durable rename failure after the graph owner retires", async () => {

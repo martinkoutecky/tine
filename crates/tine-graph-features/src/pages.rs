@@ -328,10 +328,14 @@ pub fn rename_page_expected(
 /// step, so a crash never leaves a reference to a name with no live page and a
 /// retry after reopen never duplicates the moved blocks (see `merged_survivor`).
 /// An `old` with no file only repoints its references at the survivor. It
-/// refuses before any write when `merge_into` no longer solely claims the new
-/// name (`NotFound`), the formats differ, an Org file does not round-trip, or a
-/// descendant's target exists. Cost: the rename's, plus O(source + survivor
-/// bytes and blocks).
+/// refuses before any write when, for an `old` with a file, a page other than
+/// `merge_into` claims the new name (`AlreadyExists`); when `merge_into` no
+/// longer claims it (`NotFound`; also for an `old` with no file whose new name
+/// another page claims); when the formats differ (`InvalidInput`); when an Org
+/// file it would change does not round-trip (`PermissionDenied`, or
+/// `InvalidInput` for a moved page whose Org title it rebinds); or when a
+/// descendant's target exists (`AlreadyExists`). Cost: the rename's, plus
+/// O(source + survivor bytes and blocks).
 ///
 /// The report lists every page file the operation moved, trashed or rewrote
 /// (GH #535), so the caller refreshes only those. `unsaved_paths` names the
@@ -339,7 +343,11 @@ pub fn rename_page_expected(
 /// could not save: when the plan would move, trash or rewrite one of them, the
 /// whole operation refuses before any write (`WouldBlock`, naming the page),
 /// because rewriting it would turn those edits into a conflict against bytes
-/// the user never saw. Pages it does not touch need not be saved.
+/// the user never saw. Pages it does not touch need not be saved. `WouldBlock`
+/// also reports giving up after pages kept changing under repeated replans.
+/// Every write is one `tine-store` transaction: all steps are checked before
+/// the first write and a failure rolls back; only a failed rollback or
+/// publication leaves partial state, and its error says to inspect disk.
 pub fn rename_or_merge_page(
     store: &Store,
     old: &str,

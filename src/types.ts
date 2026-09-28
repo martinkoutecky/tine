@@ -79,9 +79,10 @@ export interface PageRead extends PageDto {
   id: string;
 }
 
-/** What the backend rename did; `unchanged`: nothing written (a case-only
- *  rename). `touched` lists every page file it moved, trashed or rewrote, so
- *  the frontend refreshes only those (GH #535). */
+/** What the backend rename did; `unchanged`: nothing written — a case-only
+ *  rename, an empty old name, or a name no file and no reference uses (e.g. a
+ *  never-saved page nobody links to). `touched` lists every page file it moved,
+ *  trashed or rewrote, so the frontend refreshes only those (GH #535). */
 export interface RenameDone {
   outcome: "renamed" | "merged" | "unchanged";
   touched: RenameTouchedPage[];

@@ -1,7 +1,7 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { pushToast } from "../toasts";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -958,12 +958,15 @@ function RenamePage(props: {
     const router = focusedRouter();
     const tabId = router.activeId();
     const intentRevision = router.routeIntentRevision();
-    const current = graphOwner(() => graphMeta()?.root === root && router.activeId() === tabId
-      && router.routeIntentRevision() === intentRevision);
+    const live = () => graphMeta()?.root === root && router.activeId() === tabId
+      && router.routeIntentRevision() === intentRevision;
+    // The rename's refresh retires this owner; it hands back its successor.
+    let current = graphOwner(live);
     props.close(false);
     if (!next || next === from) return;
     try {
-      const renamed = await renameOrMergePage(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) });
+      const target = { name: from, pageKind: kind, ...(path ? { path } : {}) };
+      const renamed = await renameOrMergePage(from, next, target, (refreshed) => { current = ownedWhen(refreshed, live); });
       if (renamed === "cancelled") return;
       const message = renameOutcomeMessage(renamed, from, next);
       if (message) {
