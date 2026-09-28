@@ -35,6 +35,7 @@ export type PersistedLayoutNode =
     } & PaneSnapshot);
 
 export interface PersistedSession extends PaneSnapshot {
+  workspaceId?: string;
   leftSidebar?: boolean;
   rightSidebar?: boolean;
   rightSidebarItems?: SidebarItem[];
@@ -46,6 +47,14 @@ export interface PersistedSession extends PaneSnapshot {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let currentWorkspaceId: string | null = null;
+let restoredWorkspaceId: string | null = null;
+let restoredSessionPresent: boolean | null = null;
+
+export function setSessionWorkspaceId(id: string | null): void { currentWorkspaceId = id; }
+export function restoredSessionWorkspaceId(): string | null { return restoredWorkspaceId; }
+export function wasSessionRestored(): boolean | null { return restoredSessionPresent; }
+export function clearRestoredSessionWorkspaceId(): void { restoredWorkspaceId = null; restoredSessionPresent = null; }
 
 function validRoute(r: unknown): Route | null {
   if (!r || typeof r !== "object") return null;
@@ -184,6 +193,7 @@ export function buildPersistedSession(): PersistedSession {
   const mirror = paneRouter(mirrorId).snapshot();
   return {
     ...mirror,
+    ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
     leftSidebar: sidebarOpen(),
     rightSidebar: rightSidebarOpen(),
     rightSidebarItems: rightSidebar(),
@@ -324,6 +334,11 @@ export function scheduleSessionSave() {
  * are also swallowed. Cost follows session bytes and registry load. */
 export async function restoreSession(): Promise<void> {
   const owner = graphOwner();
+  restoredWorkspaceId = null;
+  restoredSessionPresent = null;
+  const initialSession = JSON.stringify(buildPersistedSession());
+  const mayApply = () => owner() && JSON.stringify(buildPersistedSession()) === initialSession;
+  let initializeRegistry = true;
   try {
     let raw: string | null = null;
     try {
@@ -331,16 +346,22 @@ export async function restoreSession(): Promise<void> {
       if (result.kind === "stale") return;
       raw = result.value;
     } catch {
+      initializeRegistry = false;
       return;
     }
+    if (!mayApply()) { initializeRegistry = false; return; }
     if (!raw) {
+      restoredSessionPresent = false;
       setRecentPages(legacyRecentPages());
       return;
     }
+    restoredSessionPresent = true;
+    try {
+      const id = (JSON.parse(raw) as PersistedSession).workspaceId;
+      restoredWorkspaceId = typeof id === "string" && id.length > 0 && id.length <= 128 ? id : null;
+    } catch { /* invalid session is handled below */ }
     const parsed = parsePersistedSession(raw);
     if (!parsed) return;
-    applySidebarSession(parsed.sidebar);
-    setRecentPages(parsed.recent);
     if (!pristineDefault()) return;
     applyParsedSession(parsed);
   } finally {
@@ -348,6 +369,7 @@ export async function restoreSession(): Promise<void> {
     // the post-bind restore in graph.ts retries it. Keep startup best-effort just
     // like the existing session restore; a bad registry must not block the app.
     try {
+      if (!initializeRegistry) return;
       const { initializeWorkspaces } = await import("./workspaces");
       if (!owner()) return;
       await initializeWorkspaces();

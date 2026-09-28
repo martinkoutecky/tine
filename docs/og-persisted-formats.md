@@ -29,6 +29,12 @@ atomic publication have the same payload as their final name.
 | Desktop launcher | Linux icon and `.desktop` entry | `src-tauri/src/linux_window_identity.rs:80`, `:138`, `:147` |
 | Debug log | optional `tine-debug.log` or `TINE_DEBUG_LOG` | `src-tauri/src/debug.rs:27`, `:36`, `:66` |
 
+The graph session JSON may carry `workspaceId`, the ID of the workspace that
+produced it. On startup, a matching live session is fresher than the registry's
+parked snapshot; if `workspaceId` differs from the registry's `activeId`, the
+registry's active workspace snapshot wins. This resolves a crash after the
+registry switch was published but before its scheduled session save.
+
 There is **no separate retained-draft format** on this og tree. Unsaved editor
 state is not a durable draft capsule; that is inventory family 9, status todo.
 Likewise, restore recovery contains the original file bytes, not a new syntax.

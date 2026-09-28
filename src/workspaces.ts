@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, readOwned, serializeDurable, writeOwned, type Owned, type Owner } from "./owned";
 import { pushToast } from "./toasts";
-import { applyParsedSession, buildPersistedSession, flushSession, parsePersistedSession, scheduleSessionSave, type PersistedSession } from "./session";
+import { applyParsedSession, buildPersistedSession, clearRestoredSessionWorkspaceId, flushSession, parsePersistedSession, restoredSessionWorkspaceId, scheduleSessionSave, setSessionWorkspaceId, wasSessionRestored, type PersistedSession } from "./session";
 
 export interface Workspace {
   id: string;
@@ -138,6 +138,7 @@ async function persist(next: WorkspaceRegistry, scope: WorkspaceOperation): Prom
 function install(next: WorkspaceRegistry) {
   setWorkspaceList(next.workspaces);
   setActiveId(next.activeId);
+  setSessionWorkspaceId(next.activeId);
 }
 
 function applyWorkspace(workspace: Workspace) {
@@ -161,11 +162,20 @@ function workspaceId(): string {
  * cost follows registry and live-session bytes. */
 export function initializeWorkspaces(): Promise<void> {
   return enqueue(async (scope) => {
+    const restoredId = restoredSessionWorkspaceId();
+    const sessionPresent = wasSessionRestored();
     clearWorkspaces();
+    const initialSession = JSON.stringify(buildPersistedSession());
     const loaded = parseRegistry(await scope.after(readOwned(scope.owner, backend().loadWorkspaces())));
     if (!loaded) throw new Error("The named-workspace registry is invalid");
-    // The unchanged live session file is authoritative for the active workspace
-    // on launch. Keep its freshest state in memory without rewriting either file.
+    if (sessionPresent === false || (restoredId && restoredId !== loaded.activeId)) {
+      if (JSON.stringify(buildPersistedSession()) !== initialSession)
+        throw new Error("The session changed while recovering the active workspace");
+      install(loaded);
+      applyWorkspace(loaded.workspaces.find((workspace) => workspace.id === loaded.activeId)!);
+      return;
+    }
+    // A matching live session is newer than the registry's parked snapshot.
     const current = buildPersistedSession();
     loaded.workspaces = loaded.workspaces.map((workspace) =>
       workspace.id === loaded.activeId ? { ...workspace, blob: current } : workspace
@@ -306,6 +316,8 @@ export function workspaceDisplayName(workspace: Pick<Workspace, "name">): string
 export function clearWorkspaces() {
   setWorkspaceList([]);
   setActiveId("");
+  setSessionWorkspaceId(null);
+  clearRestoredSessionWorkspaceId();
 }
 
 export function resetWorkspacesForTest() {

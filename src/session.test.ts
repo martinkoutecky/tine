@@ -52,6 +52,18 @@ describe("persisted split session", () => {
     vi.restoreAllMocks();
   });
 
+  it("does not overwrite live sidebar or recent changes when startup restore finishes late", async () => {
+    let finish!: (raw: string) => void;
+    const old = { ...buildPersistedSession(), recentPages: [{ name: "Saved", kind: "page" as const }], rightSidebar: true };
+    vi.spyOn(backend(), "loadSession").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = restoreSession();
+    setRecentPages([{ name: "Live", kind: "page" }]);
+    finish(JSON.stringify(old));
+    await pending;
+    expect(recentPages()).toEqual([{ name: "Live", kind: "page" }]);
+    vi.restoreAllMocks();
+  });
+
   it("copies only bounded route fields while retaining exact page ownership", () => {
     const path = "pages/client-b/Twin.md";
     const raw = JSON.stringify({
