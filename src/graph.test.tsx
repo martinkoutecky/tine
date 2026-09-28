@@ -106,6 +106,8 @@ async function loadHarness(
   vi.doMock("./document", () => ({
     resetStore: vi.fn(), flushAll: vi.fn(async () => true),
     installRenameRefreshHandler: vi.fn(),
+    favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
+    reloadHlsIfLoaded: vi.fn(),
     createPage: (_name: string, dto: PageDto, options: { id: string; baseRev: string | null; bindingGeneration: number }) =>
       api.savePages([{ id: options.id, page: dto, baseRev: options.baseRev, force: false,
         kinds: [options.baseRev === null ? "create-page" : "replace-page"] }], options.bindingGeneration).then((result) => result.ok[0]),

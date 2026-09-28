@@ -287,8 +287,9 @@ export interface Backend {
   queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
   /** `icon::` property for each named page that has one (page-name → icon). */
   pageIcons(names: string[]): Promise<Record<string, string>>;
-  /** Persist favorited page names to config.edn `:favorites`. */
-  setFavorites(names: string[]): Promise<void>;
+  /** Persist favorited page names to config.edn `:favorites` and, when given,
+   *  the arrangement page to `:tine/favorites-page`, in one config write. */
+  setFavorites(names: string[], page?: string | null): Promise<void>;
   /** Persist the task workflow to config.edn `:preferred-workflow`. */
   setPreferredWorkflow(workflow: "now" | "todo"): Promise<void>;
   /** Persist `:feature/enable-timetracking?` (default on when absent). */
@@ -814,8 +815,8 @@ class TauriBackend implements Backend {
   pageIcons(names: string[]) {
     return this.call<Record<string, string>>("page_icons", { names });
   }
-  setFavorites(names: string[]) {
-    return this.call<void>("set_favorites", { names });
+  setFavorites(names: string[], page: string | null = null) {
+    return this.call<void>("set_favorites", { names, page });
   }
   setPreferredWorkflow(workflow: "now" | "todo") {
     return this.call<void>("set_preferred_workflow", { workflow });

@@ -59,7 +59,7 @@ describe("favorite alias navigation", () => {
     expect(deps.context).toHaveBeenCalledWith(12, 34, "Canonical", "page");
 
     setFavorites([{ name: "Shortcut", kind: "page" }]);
-    expect(isFavorite("Canonical")).toBe(true);
+    expect(isFavorite("Canonical", "page")).toBe(true);
     toggleFavorite("Canonical", "page");
     expect(favorites()).toEqual([]);
 

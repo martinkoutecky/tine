@@ -7,7 +7,8 @@ import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
 import { pushToast } from "./toasts";
-import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk } from "./document";
+import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
+import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
@@ -172,7 +173,7 @@ export async function loadGraphPath(
   bumpGraphEpoch();
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
   setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
-  seedFavorites(meta?.favorites ?? []);
+  seedFavorites(meta?.favorites ?? [], meta?.favorites_page ?? null);
   void refreshJournalConflicts(true); // tell the user if any day has duplicate journal files
   void refreshSyncConflicts(true); // and flag any Syncthing/Dropbox conflict copies
   if (path) {
@@ -231,6 +232,7 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
 }
 
 installRenameRefreshHandler(refreshAfterRename);
+installFavoritesPageDoor({ createPage, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded });
 
 export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled";
 

@@ -10,6 +10,7 @@ import { allPages as allGraphPages, pageListLabel } from "../pages";
 import { navigationName } from "../pageIndex";
 import { EmojiText } from "../render/emoji";
 import { NamespaceTree } from "./Namespace";
+import { SidebarFavorites } from "./SidebarFavorites";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 
@@ -151,36 +152,12 @@ export function Sidebar(props: {
               <span class="nav-section-count">{favorites().length}</span>
             </button>
             <Show when={favoritesSectionExpanded()}>
-              <div id="sidebar-favorites-list">
-                <For each={favorites()}>
-                  {(fav) => {
-                    const target = () => sidebarPageTarget(fav.name, fav.kind);
-                    return (
-                      <div
-                        class="nav-page"
-                        classList={{ active: isActive(target().name) }}
-                        onMouseDown={shiftGuard}
-                        onClick={(e) => openSidebarPageTarget(fav.name, fav.kind, e.shiftKey ? "sidebar" : "normal", { x: 0, y: 0 }, sidebarPageOpenDeps, props.onActiveNavigationComplete)}
-                        onAuxClick={(e) => {
-                          if (e.button === 1) {
-                            e.preventDefault();
-                            openSidebarPageTarget(fav.name, fav.kind, "new-tab");
-                          }
-                        }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          openSidebarPageTarget(fav.name, fav.kind, "context", { x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        {/* ⭐ + name via EmojiText: WebKitGTK's Skia COLRv1 path
-                            crashes painting a raw color-emoji glyph on hardened
-                            libstdc++ (#29); Twemoji <img> never touches the font. */}
-                        <EmojiText text={`⭐ ${fav.name}`} />
-                      </div>
-                    );
-                  }}
-                </For>
-              </div>
+              <SidebarFavorites
+                isActive={(name) => isActive(name)}
+                targetName={(name, kind) => sidebarPageTarget(name, kind).name}
+                open={(name, kind, gesture, point) =>
+                  openSidebarPageTarget(name, kind, gesture, point, sidebarPageOpenDeps, props.onActiveNavigationComplete)}
+              />
             </Show>
           </div>
         </Show>

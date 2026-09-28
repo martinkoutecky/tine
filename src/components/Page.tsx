@@ -894,14 +894,14 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           </button>
           <button
             class="fav-star"
-            classList={{ active: isFavorite(props.page.name) }}
-            title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
+            classList={{ active: isFavorite(props.page.name, props.page.kind) }}
+            title={isFavorite(props.page.name, props.page.kind) ? "Unfavorite" : "Add to favorites"}
             onClick={() => toggleFavorite(props.page.name, props.page.kind)}
           >
             <svg viewBox="0 0 24 24" class="star-icon" aria-hidden="true">
               <path
                 d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z"
-                fill={isFavorite(props.page.name) ? "currentColor" : "none"}
+                fill={isFavorite(props.page.name, props.page.kind) ? "currentColor" : "none"}
                 stroke="currentColor"
                 stroke-width="1.6"
                 stroke-linejoin="round"

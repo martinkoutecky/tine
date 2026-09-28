@@ -13,11 +13,12 @@ import { route, focusBlock, scheduleSessionSave } from "./routerBridge";
 import type { PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
-import { setJournalTitleFormat, isJournalTitle } from "./journal";
+import { setJournalTitleFormat } from "./journal";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { currentPdfOwnership, type PdfOwnership } from "./pdfOwnership";
 import { navigationName } from "./pageIndex";
-import { changeGraphSetting, writeGraphSignal, seedGraphSignal } from "./graphPreferences";
+import { forgetDeletedFavorite, renameFavorite } from "./favorites";
+import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -650,39 +651,10 @@ export function persistPdfPaneWidth() {
   }
 }
 
-// Favorites (starred pages/journals). Persisted PER GRAPH in that graph's
-// config.edn `:favorites` (the single source of truth) — NOT in a global
-// localStorage key, which would leak one graph's favorites into another and
-// leave dead links (clicking them opens an empty page) after a graph switch.
-// The signal starts empty and is (re)seeded from config.edn on every graph open
-// (see seedFavorites), so switching graphs always shows exactly that graph's set.
-export interface FavItem {
-  name: string;
-  kind: PageKind;
-}
-export const [favorites, setFavorites] = createSignal<FavItem[]>([]);
-export function isFavorite(name: string): boolean {
-  const target = navigationName(name);
-  return favorites().some((f) =>
-    f.kind === "page" ? navigationName(f.name) === target : f.name === name
-  );
-}
-function persistFavorites(next: FavItem[]) {
-  writeGraphSignal("favorites", favorites, setFavorites, next,
-    (value) => backend().setFavorites(value.map((f) => f.name)), "favorites");
-}
-export function toggleFavorite(name: string, kind: "page" | "journal" = "page") {
-  const f = favorites();
-  const target = kind === "page" ? navigationName(name) : name;
-  const matches = (item: FavItem) => item.kind === kind &&
-    (kind === "page" ? navigationName(item.name) === target : item.name === name);
-  const next = f.some(matches)
-    ? f.filter((x) => !matches(x))
-    : [...f, { name, kind }];
-  persistFavorites(next);
-}
-/** Remove navigation entries for a deleted target. Favorites currently match
- * name alone, regardless of kind/path; recents and sidebar check kind/path.
+// Favorites live in ./favorites (one arrangement tree, one identity key).
+export { favorites, favoriteKey, isFavorite, seedFavorites, setFavorites, toggleFavorite, type FavItem } from "./favorites";
+/** Remove navigation entries for a deleted target. Favorites match by
+ * favoriteKey (kind + page identity); recents and sidebar check kind/path.
  * Favorite changes queue config write; others schedule session persistence.
  * O(favorites + recents + sidebar items). */
 export function removeDeletedPageFromNavigation(target: PageTarget): void;
@@ -693,10 +665,7 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
     : targetOrName;
   const name = target.name;
   kind = target.pageKind;
-  const nextFavs = favorites().filter((f) => f.name !== name);
-  if (nextFavs.length !== favorites().length) {
-    persistFavorites(nextFavs);
-  }
+  forgetDeletedFavorite(name, kind);
 
   const nextRecents = recentPages().filter((r) => !(
     r.name === name && r.kind === kind && (target.path === undefined || r.path === target.path)
@@ -728,23 +697,7 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
   const to: PageTarget = typeof toOrName === "string"
     ? { name: toOrName, pageKind: from.pageKind }
     : toOrName;
-  const dedupe = (items: FavItem[]): FavItem[] => {
-    const seen = new Set<string>();
-    const out: FavItem[] = [];
-    for (const item of items) {
-      const next = item.kind === from.pageKind && item.name === from.name ? { ...item, name: to.name } : item;
-      const key = `${next.kind}\0${next.name}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(next);
-    }
-    return out;
-  };
-
-  const nextFavorites = dedupe(favorites());
-  if (nextFavorites.some((item, i) => item !== favorites()[i]) || nextFavorites.length !== favorites().length) {
-    persistFavorites(nextFavorites);
-  }
+  renameFavorite(from, to);
 
   const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
     const matches = item.kind === from.pageKind && item.name === from.name
@@ -778,19 +731,6 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
     setRightSidebar(nextSidebar);
   }
 }
-/** Seed favorites from config.edn `:favorites` on graph open. config.edn is the
- *  source of truth, so this ALWAYS replaces the current set — including clearing
- *  it to empty when the newly-opened graph has no favorites — otherwise the
- *  previous graph's favorites would linger and open empty pages. config.edn
- *  stores names only; kind is re-derived so a favorited journal still routes as a
- *  journal (not a would-be-empty page); duplicate/unknown names are retained. */
-export function seedFavorites(names: string[]) {
-  setFavorites(
-    names.map((name): FavItem => ({ name, kind: isJournalTitle(name) ? "journal" : "page" }))
-  );
-  seedGraphSignal("favorites");
-}
-
 // Recently-visited pages (navigation history), newest first. Unlike Favorites,
 // Recent is graph-scoped session state and may retain one exact physical owner.
 const RECENT_KEY = "logseq-claude.recent";
@@ -1445,16 +1385,7 @@ export const [lightbox, setLightbox] = createSignal<string | null>(null);
 export const [audioPlayer, setAudioPlayer] =
   createSignal<{ url: string; name: string } | null>(null);
 
-/** Mirror core `refs::page_key`: trim, Unicode lowercase, remove one boundary
- *  slash at each side, then NFC. Lowercasing is contextual (`ΟΣ` → `ος`). */
-export function pageIdentityKey(name: string): string {
-  const lowered = name.trim().toLowerCase();
-  const withoutLeading = lowered.startsWith("/") ? lowered.slice(1) : lowered;
-  const withoutBoundaries = withoutLeading.endsWith("/")
-    ? withoutLeading.slice(0, -1)
-    : withoutLeading;
-  return withoutBoundaries.normalize("NFC");
-}
+export { pageIdentityKey } from "./pageIdentity";
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<OwnedPluginBlockSnapshot | null>(null);

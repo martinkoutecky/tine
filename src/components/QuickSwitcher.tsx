@@ -154,7 +154,7 @@ export function QuickSwitcher(): JSX.Element {
         path: r.path,
         adaptiveClass: "exact",
         adaptiveIdentity: `page:${r.kind}:${r.path || r.name.toLocaleLowerCase()}`,
-        adaptiveFavorite: isFavorite(r.name),
+        adaptiveFavorite: isFavorite(r.name, r.kind),
       }));
       if (recents.length) out.push({ header: "Recent", items: recents });
       return out;
@@ -172,7 +172,7 @@ export function QuickSwitcher(): JSX.Element {
         spans: hit.evidence.flatMap((evidence) => evidence.spans),
         adaptiveClass: hit.match_class ?? "substring",
         adaptiveIdentity: `page:${hit.page.kind}:${hit.page.path || hit.page.name.toLocaleLowerCase()}`,
-        adaptiveFavorite: isFavorite(hit.page.name),
+        adaptiveFavorite: isFavorite(hit.page.name, hit.page.kind),
       }));
     const rankedPages = rankLauncherItems(
       graphMeta()?.root ?? "",
@@ -216,7 +216,7 @@ export function QuickSwitcher(): JSX.Element {
           spans: hit.evidence.flatMap((evidence) => evidence.spans),
           adaptiveClass: hit.match_class ?? "body_evidence",
           adaptiveIdentity: `block:${hit.kind}:${hit.path || hit.page.toLocaleLowerCase()}:${hit.block.id}`,
-          adaptiveFavorite: isFavorite(hit.page),
+          adaptiveFavorite: isFavorite(hit.page, hit.kind),
         },
         onCur: currentPageOnly() || !!(cur && hit.page === cur),
       });

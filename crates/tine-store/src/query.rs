@@ -744,10 +744,10 @@ fn collect_reference_occurrences_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    let exclude = refs::page_key(self_page);
+    let config = graph.config();
+    let exclude = refs::ReferenceSourceExclusions::new(self_page, config.favorites_page.as_deref());
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
     let candidate_pages = graph.reference_candidate_pages(names_norm, kind);
-    let config = graph.config();
     let groups = {
         let pages = candidate_pages.pages.as_slice();
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
@@ -755,7 +755,7 @@ fn collect_reference_occurrences_bounded(
         let mut sources = pages.iter().collect::<Vec<_>>();
         sources.sort_by(|(a, _), (b, _)| a.path.cmp(&b.path));
         for (entry, doc) in sources {
-            if refs::normalize(&entry.name) == exclude {
+            if exclude.excludes_name(&entry.name) {
                 continue;
             }
             let mut blocks = Vec::new();
