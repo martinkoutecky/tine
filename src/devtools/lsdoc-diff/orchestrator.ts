@@ -72,6 +72,11 @@ interface PairResult {
   mldocProjection?: Projection;
 }
 
+/** Read source files for the whole graph, compare lsdoc and mldoc projections
+ * as requested, and report progress. Cost and memory grow with graph file
+ * count and bytes; parser work and minimization may add more. Returns stale
+ * if ownership retires at an owned result boundary. Backend, parser or progress
+ * callback errors reject. */
 export async function runComparison(
   opts: DiffOptions,
   onProgress: (e: ProgressEvent) => void,

@@ -272,7 +272,9 @@ fn arrival_numeric_budgets() {
                 .any(|prefix| item.starts_with(prefix))
         })
         .count();
-    assert!(operations <= 36, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 36; imitate crates/tine-store/SURFACE.txt");
+    // The 37th operation is Transaction::expect: a read-only guard needed by
+    // dependent asset cleanup without a synthetic sidecar write.
+    assert!(operations <= 37, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 37; imitate crates/tine-store/SURFACE.txt");
     assert!(questions <= 25, "tine-store Rule 4: WholeGraph has {questions} public methods, budget 25; imitate crates/tine-store/SURFACE.txt");
     assert!(
         types <= 55,

@@ -129,6 +129,12 @@ export class PluginManager {
     }
   }
 
+  /** Load installed plugin records and settings for the current platform.
+   * A revoked id/version is persisted disabled. When activationHeld is true,
+   * leave enabled plugins loaded without starting them; otherwise attempt each
+   * enabled plugin independently and record startup failures. A newer initialize
+   * call supersedes older results. Backend/platform errors reject; cost follows
+   * installed plugins and their settings/startup work. */
   async initialize(revoked: RevokedPluginVersions = new Set(), activationHeld = false) {
     const owner = latestOwner(this, "initialize");
     // Seed before the first await. A live refresh may supersede this set while

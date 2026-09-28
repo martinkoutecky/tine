@@ -40,9 +40,11 @@ export type LoadGraphPathOutcome =
   | { kind: "loaded" | "already_current"; root: string }
   | { kind: "focused_existing" | "aborted" };
 
-/** Establish the one exceptional filesystem capability Tine supports: a graph
- * may point `assets` at an external directory, but only after this installation
- * shows the resolved target and receives explicit consent. */
+/** Inspect a graph's external-assets target. Return true immediately when no
+ * external target exists or this device has already approved it. Otherwise
+ * show the resolved target and request consent, persisting approval on this
+ * device. Denial or stale graph ownership returns false; inspection or
+ * approval errors reject. Cost follows path inspection and one approval write. */
 export async function authorizeGraphAccess(path: string): Promise<boolean> {
   const owner = graphOwner();
   const inspected = await readOwned(owner, backend().inspectGraphAccess(path));
@@ -283,7 +285,12 @@ async function injectCustomCss(): Promise<void> {
   document.head.appendChild(el);
 }
 
-/** Pick a folder and open it as the graph. No-op if cancelled. */
+/** Open a graph chosen with the desktop folder picker or Android graph picker.
+ * Android may request all-files access and return aborted until granted. iOS
+ * currently shows an unsupported-action toast and returns aborted. Cancellation,
+ * permission refusal and stale ownership return aborted; a successful pick
+ * delegates to loadGraphPath, which flushes the old graph before switching.
+ * Desktop picker errors reject; graph-load cost follows graph files. */
 export async function switchGraph(): Promise<LoadGraphPathOutcome> {
   const owner = graphOwner();
   const platform = await platformKind();
@@ -328,9 +335,12 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
   return picked.value ? loadGraphPath(picked.value) : { kind: "aborted" };
 }
 
-/** Onboarding "create a new graph": pick where to put it, scaffold a small
- *  narrated demo graph there, open it, and land on the "Welcome to Tine" tour.
- *  No-op if the folder picker is cancelled. */
+/** Create a demo graph under a desktop-picked folder or the mobile default
+ * graph parent, then open it and navigate to Welcome to Tine. Cancellation
+ * returns aborted. A created directory can remain if opening fails; today's
+ * narrated journal seed is best effort and its failure does not change a
+ * loaded outcome. Creation errors toast and return aborted; picker/parent errors
+ * reject. Cost follows graph creation, templates and the graph load. */
 export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   const owner = graphOwner();
   const dirResult = (await isMobile())

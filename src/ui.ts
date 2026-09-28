@@ -205,11 +205,11 @@ export function changePreferredFormat(fmt: "md" | "org") {
   changeGraphSetting("preferred_format", fmt, (next) => backend().setPreferredFormat(next), "preferred page format");
 }
 
-/** Trim and apply the journal title format immediately. Backend persistence
- * reopens the graph and may migrate legacy title-named journal files without
- * changing filename format. Failure rolls back and toasts; skipped files are
- * reported. Async work scales with journal files and graph reload. */
 const journalTitleFormatScope = {};
+/** Apply the title format to UI state immediately, then start a backend
+ * config write, graph reopen and possible journal-file migration. Return does
+ * not confirm persistence. Failure may roll UI back and toasts; skipped files
+ * toast. Cost can grow with graph journals. */
 export function changeJournalTitleFormat(fmt: string) {
   const next = fmt.trim() || "MMM do, yyyy";
   const m = graphMeta();

@@ -35,8 +35,12 @@ function titleWithoutExtension(path: string, kind: DelimitedKind): string {
   return name.slice(0, Math.max(0, name.length - kind.length - 1)) || "Dropped table";
 }
 
-/** Install the OS file-drop handler. Returns an uninstaller. No-op outside the
- *  Tauri shell (browser mock / tests). */
+/** Install Tauri file-drop handling and return cleanup; outside Tauri return
+ * an inert cleanup. A drop onto a block imports ordinary files as assets or
+ * parses CSV/TSV into a grid (up to 5000 cells), then inserts blocks. Work
+ * grows with dropped file bytes and visible blocks. Errors toast; imported
+ * assets from earlier files can remain if a later step fails or the target
+ * retires. Installation errors reject. */
 export async function installFileDrop(): Promise<() => void> {
   let webview: ReturnType<typeof getCurrentWebview>;
   try {

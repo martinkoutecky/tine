@@ -26,9 +26,12 @@ function runBounded<T>(operation: Promise<T>, timeoutMs: number, fallback: T): P
   ]);
 }
 
-/** One persistence transaction shared by desktop window-close and Android root
- * Back.  Accepted transactions deliberately stay in-flight until the native
- * close succeeds; a failed native close must call reset() before retrying. */
+/** Create a close coordinator. prepare blurs/ends editing, waits up to four
+ * seconds each for PDF and page flushes, asks before discarding failed page
+ * saves, then attempts a best-effort one-second session flush. It returns
+ * rejected, accepted or in_flight; accepted stays in flight until native close
+ * succeeds. After native close failure the caller must reset before retrying.
+ * Work follows pending PDF, page and session bytes within those waits. */
 export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordinator {
   let closing = false;
   const transaction = {};

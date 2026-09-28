@@ -117,6 +117,79 @@ fn refused(outcome: TxOutcome) -> (Why, tine_store::Rollback) {
     }
 }
 
+#[test]
+fn read_only_expectation_passes_without_touching_file() {
+    let f = Fixture::with_watch(
+        WatchMode::Notify,
+        &[("assets/sidecar.edn", b"{:highlights []}")],
+    );
+    let sidecar = f.id(Area::Assets, "sidecar.edn");
+    let before = fs::metadata(f.root.join("assets/sidecar.edn"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let mut tx = f.store.transaction(None);
+    tx.expect(&sidecar, f.rev(&sidecar));
+    assert!(matches!(
+        committed(tx.commit()).as_slice(),
+        [StepResult::Unchanged { file, .. }] if file == &sidecar
+    ));
+    assert_eq!(f.bytes("assets/sidecar.edn").unwrap(), b"{:highlights []}");
+    assert_eq!(
+        fs::metadata(f.root.join("assets/sidecar.edn"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        before
+    );
+}
+
+#[test]
+fn missing_read_only_expectation_conflicts() {
+    let f = Fixture::with_watch(
+        WatchMode::Notify,
+        &[("assets/missing.edn", b"former bytes")],
+    );
+    let missing = f.id(Area::Assets, "missing.edn");
+    let expected = f.rev(&missing);
+    fs::remove_file(f.root.join("assets/missing.edn")).unwrap();
+    let mut tx = f.store.transaction(None);
+    tx.expect(&missing, expected);
+    assert!(matches!(
+        tx.commit(),
+        TxOutcome::NotCommitted {
+            step: 0,
+            why: Why::Conflict { file, disk: None },
+            ..
+        } if file == missing
+    ));
+    assert!(f.bytes("assets/missing.edn").is_none());
+}
+
+#[test]
+fn read_only_expectation_conflict_undoes_an_earlier_step() {
+    use tine_store::FaultPoint;
+
+    let f = Fixture::with_watch(WatchMode::Notify, &[("assets/sidecar.edn", b"original")]);
+    let sidecar = f.id(Area::Assets, "sidecar.edn");
+    let created = f.id(Area::Assets, "created.bin");
+    let mut tx = f.store.transaction(None);
+    tx.create(&created, Content::Bytes(b"created".to_vec()))
+        .expect(&sidecar, f.rev(&sidecar));
+    f.store.inject_fault(FaultPoint::Stage2MismatchAt(1));
+    let outcome = tx.commit();
+    assert!(matches!(
+        outcome,
+        TxOutcome::NotCommitted {
+            step: 1,
+            why: Why::Conflict { file, .. },
+            ..
+        } if file == sidecar
+    ));
+    assert!(f.bytes("assets/created.bin").is_none());
+    assert_eq!(f.bytes("assets/sidecar.edn").unwrap(), b"external stage-2");
+}
+
 #[cfg(all(feature = "test-faults", unix))]
 #[test]
 fn move_reports_directory_sync_failure_after_rename() {

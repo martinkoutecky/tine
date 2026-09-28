@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildPersistedSession, parsePersistedSession, restoreSession, type PersistedSession } from "./session";
+import { buildPersistedSession, flushSession, parsePersistedSession, restoreSession, type PersistedSession } from "./session";
+import { setToasts, toasts } from "./toasts";
 import { backend } from "./backend";
 import { resetStore } from "./document";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
@@ -24,6 +25,20 @@ beforeEach(() => {
 });
 
 describe("persisted split session", () => {
+  it("coalesces repeated session write failures and offers retry", async () => {
+    setToasts([]);
+    const save = vi.spyOn(backend(), "saveSession").mockRejectedValue(new Error("permission denied"));
+    try {
+      await flushSession();
+      await flushSession();
+      expect(toasts().filter((toast) => toast.message.includes("Could not save session"))).toHaveLength(1);
+      expect(toasts()[0].action?.label).toBe("Retry");
+      expect(toasts()[0].message).toContain("permission denied");
+      save.mockResolvedValue();
+      toasts()[0].action?.run();
+      await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(3));
+    } finally { setToasts([]); vi.restoreAllMocks(); }
+  });
   it("does not apply a session read from an old graph after rebinding", async () => {
     let finish!: (raw: string) => void;
     const old = { ...buildPersistedSession(), recentPages: [{ name: "Old graph", kind: "page" as const }] };

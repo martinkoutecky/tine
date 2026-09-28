@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 mod io_helpers;
+mod validation;
 use io_helpers::{
     collision, content_refusal, directory_read_error, disk_rev, failed, failed_trash_dir,
     publication_path_error, sync_move_dirs,
@@ -22,6 +23,10 @@ use io_helpers::{
 use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use validation::{
+    rewrite, valid_utf8_file, validate_config_bytes, validate_config_content,
+    validate_page_content, validate_stream,
+};
 
 use tine_core::doc::Document;
 use tine_core::model::PageDto;
@@ -112,8 +117,8 @@ pub enum StepResult {
         /// Revision of its new bytes.
         rev: FileRev,
     },
-    /// Save, replace, or reference rewrite found the same bytes on disk after its
-    /// revision guard matched. A stale base still returns `Why::Conflict`.
+    /// Save, replace, or reference rewrite found the same bytes on disk, or a
+    /// read-only expectation matched. A stale base still returns `Why::Conflict`.
     Unchanged {
         /// Unchanged file.
         file: FileId,
@@ -347,6 +352,10 @@ enum Step {
         expected: FileRev,
         bytes: Vec<u8>,
     },
+    Expect {
+        file: FileId,
+        expected: FileRev,
+    },
     Rewrite {
         id: PageId,
         expected: FileRev,
@@ -379,6 +388,7 @@ enum Expected {
 }
 
 enum UndoKind {
+    Expect,
     Replace,
     Create,
     Move,
@@ -509,6 +519,22 @@ impl<'a> Transaction<'a> {
             file: file.clone(),
             expected,
             bytes,
+        });
+        self
+    }
+
+    /// Queue a read-only revision guard for an existing file. Commit checks
+    /// `expected` during preflight and again at this step under the same
+    /// per-file lock as writes; absence or changed bytes return `Why::Conflict`.
+    /// It writes and publishes nothing, and needs no page edit kind. I/O
+    /// errors return `Why::Failed`; unsafe page input can be refused. An
+    /// external process can still change the file between this final check
+    /// and a later step's write. Cost is two full reads and hashes of this
+    /// file, including parse validation when it is a page.
+    pub fn expect(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
+        self.steps.push(Step::Expect {
+            file: file.clone(),
+            expected,
         });
         self
     }
@@ -750,6 +776,14 @@ impl<'a> Transaction<'a> {
             )));
         }
         match step {
+            Step::Expect { file, expected } => Ok(Prepared {
+                src: file.clone(),
+                dst: None,
+                old: Some(self.stage(file, expected)?),
+                new: None,
+                saved_page: None,
+                opaque_rev: None,
+            }),
             Step::Save { id, base, doc } => {
                 let file = id.file();
                 if doc.guide {
@@ -1070,6 +1104,7 @@ impl<'a> Transaction<'a> {
                 }
                 Step::Create { file, .. }
                 | Step::Replace { file, .. }
+                | Step::Expect { file, .. }
                 | Step::Trash { file, .. } => {
                     names.insert(file.clone());
                 }
@@ -1175,6 +1210,13 @@ impl<'a> Transaction<'a> {
             _ => None,
         };
         match step {
+            Step::Expect { .. } => {
+                self.verify(&plan.src, plan.old.as_deref(), index)?;
+                Ok(StepResult::Unchanged {
+                    file: plan.src.clone(),
+                    rev: FileRev::from_bytes(plan.old.as_deref().expect("guard baseline")),
+                })
+            }
             Step::Save { .. } | Step::Replace { .. } | Step::Rewrite { .. } => {
                 let new = plan.new.as_ref().expect("prepared write");
                 let old = plan.old.as_deref();
@@ -1520,6 +1562,9 @@ impl<'a> Transaction<'a> {
         rollback: &mut Rollback,
         exact_copies: &mut Vec<(PathBuf, &'b Expected)>,
     ) {
+        if matches!(record.kind, UndoKind::Expect) {
+            return;
+        }
         let live = match self.path(&record.src) {
             Ok(path) => path,
             Err(error) => {
@@ -1727,6 +1772,7 @@ impl<'a> Transaction<'a> {
             for step in &self.steps {
                 let touches_page = match step {
                     Step::Save { .. } => false,
+                    Step::Expect { .. } => false,
                     Step::Rewrite { .. } => true,
                     Step::Create { file, .. }
                     | Step::Replace { file, .. }
@@ -1759,6 +1805,7 @@ impl<'a> Transaction<'a> {
                 Step::Save { id, .. } | Step::Rewrite { id, .. } => names.push(id.file()),
                 Step::Create { file, .. }
                 | Step::Replace { file, .. }
+                | Step::Expect { file, .. }
                 | Step::Trash { file, .. } => names.push(file.clone()),
                 Step::Move { file, to, .. } => {
                     names.push(file.clone());
@@ -1773,6 +1820,7 @@ impl<'a> Transaction<'a> {
                 Step::Save { id, .. } | Step::Rewrite { id, .. } => vec![id.file()],
                 Step::Create { file, .. }
                 | Step::Replace { file, .. }
+                | Step::Expect { file, .. }
                 | Step::Trash { file, .. } => vec![file.clone()],
                 Step::Move { file, to, .. } => vec![file.clone(), to.clone()],
                 Step::Unique { .. } => Vec::new(),
@@ -1817,7 +1865,7 @@ impl<'a> Transaction<'a> {
         }
         let mut before = BTreeMap::new();
         for (plan, step) in plans.iter().zip(&self.steps) {
-            if matches!(step, Step::Unique { .. }) {
+            if matches!(step, Step::Unique { .. } | Step::Expect { .. }) {
                 continue;
             }
             before.insert(plan.src.as_str().to_owned(), plan.old.clone());
@@ -1837,6 +1885,7 @@ impl<'a> Transaction<'a> {
                 Step::Save { .. } | Step::Replace { .. } | Step::Rewrite { .. } => {
                     UndoKind::Replace
                 }
+                Step::Expect { .. } => UndoKind::Expect,
                 Step::Create { .. } | Step::Unique { .. } => UndoKind::Create,
                 Step::Move { .. } => UndoKind::Move,
                 Step::Trash { .. } => UndoKind::Trash,
@@ -1863,13 +1912,17 @@ impl<'a> Transaction<'a> {
             ) {
                 Ok(result) => {
                     results.push(result);
-                    done.push(undo);
+                    if !matches!(steps[index], Step::Expect { .. }) {
+                        done.push(undo);
+                    }
                     if fault(self.store, FaultPoint::AbortAfterStep(index)) {
                         std::process::abort();
                     }
                 }
                 Err(why) => {
-                    done.push(undo);
+                    if !matches!(steps[index], Step::Expect { .. }) {
+                        done.push(undo);
+                    }
                     failure = Some((index, why));
                     break;
                 }
@@ -2117,128 +2170,6 @@ impl<'a> Transaction<'a> {
                 steps: results,
                 graph_rev: published_rev,
             },
-        }
-    }
-}
-
-fn rewrite(old: &[u8], path: &Path, map: &RenameMap) -> Result<Vec<u8>, Why> {
-    let text = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
-    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
-    let renames: std::collections::HashMap<String, String> = map
-        .0
-        .iter()
-        .map(|(from, to)| (tine_core::refs::normalize(from), to.clone()))
-        .collect();
-    let rewritten = tine_core::refs::rename_tags_property_multi(
-        &tine_core::refs::rename_refs_multi(text, &renames, is_org),
-        &renames,
-        is_org,
-    );
-    if is_org && rewritten != text && !tine_core::org::org_editable(text) {
-        return Err(Why::Refused(Refusal::ReadOnly(
-            "org file is read-only (does not round-trip)".into(),
-        )));
-    }
-    Ok(rewritten.into_bytes())
-}
-
-fn valid_utf8_file(path: &Path) -> io::Result<bool> {
-    use std::io::Read;
-    let mut file = File::open(path)?;
-    let mut carry = Vec::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            return Ok(carry.is_empty());
-        }
-        carry.extend_from_slice(&buf[..n]);
-        match std::str::from_utf8(&carry) {
-            Ok(_) => carry.clear(),
-            Err(error) if error.error_len().is_none() => {
-                let valid = error.valid_up_to();
-                carry.drain(..valid);
-            }
-            Err(_) => return Ok(false),
-        }
-    }
-}
-
-fn validate_stream(source: &File, max_bytes: u64) -> Result<(), Why> {
-    use std::io::Read;
-    let mut input = source.try_clone().map_err(failed)?;
-    input.seek(SeekFrom::Start(0)).map_err(failed)?;
-    let mut total = 0u64;
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = input.read(&mut buf).map_err(failed)?;
-        if n == 0 {
-            break;
-        }
-        total = total.saturating_add(n as u64);
-        if total > max_bytes {
-            return Err(failed(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("stream exceeds {max_bytes} byte limit"),
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn validate_config_bytes(store: &Store, bytes: &[u8]) -> Result<(), Why> {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        // An undecodable config is recorded as ConfigState::problem. Keep the
-        // existing repair path for callers replacing those raw bytes.
-        return Ok(());
-    };
-    let config = tine_core::config::Config::parse(text);
-    store
-        .graph
-        .validate_config_layout(&config)
-        .map_err(|error| Why::Refused(Refusal::InvalidTarget(error.to_string())))
-}
-
-fn validate_config_content(store: &Store, content: &Content) -> Result<(), Why> {
-    match content {
-        Content::Bytes(bytes) => validate_config_bytes(store, bytes),
-        Content::Stream { source, max_bytes } => {
-            use std::io::Read;
-            let mut input = source.try_clone().map_err(failed)?;
-            input.seek(SeekFrom::Start(0)).map_err(failed)?;
-            let mut bytes = Vec::new();
-            input
-                .take((*max_bytes).min(crate::model::PARSE_INPUT_MAX_BYTES) + 1)
-                .read_to_end(&mut bytes)
-                .map_err(failed)?;
-            validate_config_bytes(store, &bytes)
-        }
-    }
-}
-
-fn validate_page_content(file: &FileId, content: &Content) -> Result<(), Why> {
-    match content {
-        Content::Bytes(bytes) => {
-            crate::model::validate_parse_bytes_for_path(bytes, Path::new(file.as_str()))
-                .map_err(content_refusal)
-        }
-        Content::Stream { source, max_bytes } => {
-            use std::io::Read;
-            let mut input = source.try_clone().map_err(failed)?;
-            input.seek(SeekFrom::Start(0)).map_err(failed)?;
-            let limit = (*max_bytes).min(crate::model::PARSE_INPUT_MAX_BYTES);
-            let mut bytes = Vec::new();
-            input
-                .take(limit + 1)
-                .read_to_end(&mut bytes)
-                .map_err(failed)?;
-            if bytes.len() as u64 > limit {
-                return Err(Why::Refused(Refusal::InvalidTarget(format!(
-                    "page content exceeds {limit} byte limit"
-                ))));
-            }
-            crate::model::validate_parse_bytes_for_path(&bytes, Path::new(file.as_str()))
-                .map_err(content_refusal)
         }
     }
 }

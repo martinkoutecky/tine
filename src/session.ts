@@ -1,6 +1,6 @@
 import { backend } from "./backend";
 import { graphOwner, readOwned, writeOwned } from "./owned";
-import { pushToast } from "./toasts";
+import { dismissToast, pushToastUnique } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
 import {
   installSessionPersistence,
@@ -273,14 +273,34 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
   }
 }
 
+let sessionSaveFailure: { id: number; message: string } | null = null;
+
+function reportSessionSaveFailure(error: unknown): void {
+  const message = `Could not save session: ${String(error)}`;
+  const priorMessage = sessionSaveFailure?.message;
+  if (sessionSaveFailure && priorMessage !== message) dismissToast(sessionSaveFailure.id);
+  sessionSaveFailure = {
+    id: pushToastUnique(message, "error", { sticky: true, action: { label: "Retry", run: () => { void flushSession(); } } }),
+    message,
+  };
+}
+
+function clearSessionSaveFailure(): void {
+  if (sessionSaveFailure) dismissToast(sessionSaveFailure.id);
+  sessionSaveFailure = null;
+}
+
+/** Cancel a scheduled save and attempt to write the current session.
+ * Failure shows a retry toast but this promise still resolves; completion does
+ * not certify persistence. Cost follows session bytes and backend latency. */
 export async function flushSession(): Promise<void> {
   const owner = graphOwner();
   clearTimeout(saveTimer);
   try {
     const result = await writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())));
-    if (result.kind === "current") clearLegacyRecentSource();
+    if (result.kind === "current") { clearLegacyRecentSource(); clearSessionSaveFailure(); }
   } catch (error) {
-    pushToast(`Could not save session: ${String(error)}`, "error");
+    reportSessionSaveFailure(error);
   }
 }
 
@@ -290,11 +310,16 @@ export function scheduleSessionSave() {
   saveTimer = setTimeout(() => {
     if (!owner()) return;
     void writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())))
-      .then((result) => { if (result.kind === "current") clearLegacyRecentSource(); })
-      .catch((error) => pushToast(`Could not save session: ${String(error)}`, "error"));
+      .then((result) => { if (result.kind === "current") { clearLegacyRecentSource(); clearSessionSaveFailure(); } })
+      .catch(reportSessionSaveFailure);
   }, 150);
 }
 
+/** Best-effort load of saved session state. Missing or invalid session data,
+ * and load errors, leave current/default state without rejecting. Sidebar and
+ * recent state may apply even when active tabs are not pristine and stay as
+ * they are. Finally attempt workspace-registry initialization; its errors
+ * are also swallowed. Cost follows session bytes and registry load. */
 export async function restoreSession(): Promise<void> {
   const owner = graphOwner();
   try {

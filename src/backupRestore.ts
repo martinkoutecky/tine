@@ -14,6 +14,13 @@ import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
 import { setGraphTransitioning } from "./ui";
 
+/** Confirm and flush pending pages, then restore the selected snapshot. The
+ * native restore may replace pages, journals, assets and config and can leave
+ * changed files or recovery copies on failure. A successful restore force-
+ * reloads the graph; refresh runs only after that reload succeeds. Refusal or
+ * stale graph ownership returns silently. Most errors toast and resolve, so
+ * completion is not proof of success. Cost follows dirty pages, live/snapshot
+ * files and bytes, and graph reload. */
 export async function restoreBackupFromSettings(
   backup: BackupInfo,
   when: string,

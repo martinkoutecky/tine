@@ -12,6 +12,7 @@ import { type FeedPage, type Node as StoreNode } from "./document/model";
 import { setDoc } from "./document/model";
 import { isConflicted } from "./document";
 import { pageInventoryRev } from "./graphSession";
+import { bumpGraphEpoch } from "./graphSession";
 import { applyGraphChange as handleGraphChange } from "./document";
 
 function addAnchor(href: string): HTMLAnchorElement {
@@ -44,6 +45,24 @@ function node(id: string, pageName: string): StoreNode {
 }
 
 describe("mobile external link delegation", () => {
+  it.each(["onGraphChanged", "onConflictsChanged"] as const)("keeps %s registered when graph B opens before registration returns", async (method) => {
+    let finish!: (unlisten: () => void) => void;
+    const unlisten = vi.fn();
+    vi.spyOn(backend(), method).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <App />, host);
+    try {
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      bumpGraphEpoch();
+      finish(unlisten);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unlisten).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledOnce());
+  });
   it("releases a watcher handle that arrives after App unmounts", async () => {
     let finish!: (unlisten: () => void) => void;
     const unlisten = vi.fn();

@@ -21,6 +21,11 @@ export function installExternalChangeUiHandler(capture: () => ExternalChangeUi):
   captureExternalChangeUi = capture;
 }
 
+/** Apply an already-observed watcher change to frontend graph revisions and
+ * loaded pages. Reload a safe loaded page, mark an edited page conflicted, or
+ * notify route/feed UI about a removal. The watcher/backend has already
+ * updated disk and its cache; this function does not persist the change.
+ * Page reads may reject. Cost follows the affected page and current UI state. */
 export async function applyGraphChange(c: GraphChange): Promise<void> {
   const binding = captureBinding();
   const owner = graphOwner();

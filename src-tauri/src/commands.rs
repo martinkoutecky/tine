@@ -2509,6 +2509,9 @@ pub(crate) fn save_asset(
 }
 
 #[tauri::command]
+/// Read highlights from the bound graph. Missing sidecar returns an empty
+/// vector. I/O or malformed top-level EDN returns a string error; malformed
+/// entries within a valid map are skipped. Cost O(asset entries + sidecar bytes).
 pub(crate) fn read_highlights(
     pdf: String,
     state: GraphContext<'_>,

@@ -109,6 +109,43 @@ const EXEMPT_CALLS: Record<string, string[]> = {
 };
 const OWNERS = new Set(["graphOwner", "ownedWhen", "latestOwner", "revisionOwner"]);
 const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "serializeOwned", "serializeDurable"]);
+// Durable backend operations are classified by interface verb, including names
+// such as rename and paste that a write-prefix expression cannot recognize.
+const DURABLE_BACKEND_METHODS = new Set([
+  "approveExternalAssets", "forgetKnownGraph", "installPlugin", "uninstallPlugin", "setPluginEnabled",
+  "storePluginRegistryCache", "setSystemBarAppearance", "createGraph", "savePages", "copyGuideIntoGraph",
+  "setGuideAnnounced", "deletePage", "renamePage", "publishHtml", "setFavorites",
+  "setPreferredWorkflow", "setTimetrackingEnabled", "setShowBrackets", "setDocModeEnterForNewBlock",
+  "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
+  "setStartOfWeek", "editAssetExternal", "trashAsset", "emptyAssetTrash", "trashJournalFile",
+  "mergePages", "renameFileToPage", "resolveSyncConflict", "trashSyncConflict", "saveAsset",
+  "pasteImage", "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
+  "openPdf", "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
+  "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
+  "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
+  "debugLog",
+]);
+// All remaining Backend methods are reads, resource subscriptions, dialogs,
+// transient OS controls, or graph-binding controls. Adding a method requires
+// an explicit durable/non-durable decision in the census test below.
+const NON_DURABLE_BACKEND_METHODS = new Set([
+  "graphBindingGeneration", "inspectGraphAccess", "loadGraph", "openGraphWindow", "startupGraphPath",
+  "captureTarget", "bindCaptureGraph", "listKnownGraphs", "appPlatform", "listInstalledPlugins",
+  "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "quit",
+  "closeGraphWindow", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
+  "getPage", "resolvePage", "graphSourceFiles", "guidePages", "getBacklinks",
+  "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
+  "pagePrintHtml", "runQuery", "exportQuerySubtrees", "runAdvancedQuery", "queryFacets", "pageIcons",
+  "readCustomCss", "openExternal", "openAsset", "openPageFile", "detectMediaEditor", "listOrphanAssets",
+  "assetTrashStats", "listJournalConflicts", "readJournalFile", "getPageByPath", "listSyncConflicts",
+  "syncConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",
+  "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "streamAsset",
+  "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder",
+  "pickGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
+  "readHighlights", "onGraphChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
+  "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "gpuEnv", "getSmoothScroll",
+  "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
+]);
 // These helpers receive Owner from audited constructor call sites. Arbitrary
 // Owner parameters do not prove provenance to this syntax scan.
 const OWNER_PARAM_HELPERS = new Set([
@@ -135,7 +172,9 @@ function functionName(node: ts.Node): string {
   return names.reverse().join(".") || "<module>";
 }
 
-/** Report backend completions outside the owned-result boundary. */
+/** Report backend completions outside the owned-result boundary. This syntax
+ * guard checks owner provenance; behavior tests must check the caller's stale
+ * result branch separately. */
 export function lateLandingViolations(file: string, source: string): string[] {
   const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true,
     file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -188,9 +227,26 @@ export function lateLandingViolations(file: string, source: string): string[] {
     walk(node);
     return found;
   };
+  const shadowsImport = (call: ts.CallExpression, name: string): boolean => {
+    for (let scope: ts.Node | undefined = call.parent; scope && !ts.isSourceFile(scope); scope = scope.parent) {
+      if (ts.isFunctionLike(scope) && scope.parameters.some((param) =>
+        ts.isIdentifier(param.name) && param.name.text === name)) return true;
+      if (ts.isCatchClause(scope) && scope.variableDeclaration &&
+        ts.isIdentifier(scope.variableDeclaration.name) && scope.variableDeclaration.name.text === name) return true;
+      if (ts.isBlock(scope)) {
+        for (const statement of scope.statements) {
+          if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) return true;
+          if (ts.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) =>
+            ts.isIdentifier(declaration.name) && declaration.name.text === name)) return true;
+        }
+      }
+    }
+    return false;
+  };
   const ownerValid = (arg: ts.Expression | undefined): boolean => {
     if (!arg) return false;
-    if (ts.isCallExpression(arg) && ts.isIdentifier(arg.expression)) return ownedConstructors.has(arg.expression.text);
+    if (ts.isCallExpression(arg) && ts.isIdentifier(arg.expression))
+      return ownedConstructors.has(arg.expression.text) && !shadowsImport(arg, arg.expression.text);
     if (ts.isPropertyAccessExpression(arg) && arg.name.text === "owner")
       return file === "src/workspaces.ts" && ts.isIdentifier(arg.expression) && arg.expression.text === "scope";
     if (ts.isIdentifier(arg)) {
@@ -260,7 +316,7 @@ function durableReadViolations(file: string, source: string): string[] {
       const work = node.arguments[1];
       const walk = (candidate: ts.Node): void => {
         if (ts.isCallExpression(candidate) && ts.isPropertyAccessExpression(candidate.expression) &&
-          /^(set|save|trash|delete|create|import|restore|publish|copyGuide|approveExternal|empty|write|rollback)[A-Z]/.test(candidate.expression.name.text) &&
+          DURABLE_BACKEND_METHODS.has(candidate.expression.name.text) &&
           ts.isCallExpression(candidate.expression.expression) &&
           ts.isIdentifier(candidate.expression.expression.expression) &&
           candidate.expression.expression.expression.text === "backend") {
@@ -300,9 +356,18 @@ describe("I-20 owned backend completion syntax", () => {
     }
   });
   it("keeps durable backend writes out of readOwned", () => {
+    const backendSource = ts.createSourceFile("src/backend.ts", readFileSync("src/backend.ts", "utf8"), ts.ScriptTarget.Latest, true);
+    const api = backendSource.statements.find((statement): statement is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(statement) && statement.name.text === "Backend");
+    const methods = api?.members.filter(ts.isMethodSignature).map((method) => method.name.getText(backendSource)) ?? [];
+    expect([...DURABLE_BACKEND_METHODS, ...NON_DURABLE_BACKEND_METHODS].sort(),
+      "I-9: classify every Backend method as durable or non-durable; exemplar renamePage").toEqual(methods.sort());
     const violations = productionSources("src").flatMap((file) => durableReadViolations(file, readFileSync(file, "utf8")));
     expect(violations, "I-9: durable writes use writeOwned; exemplar Settings BackupsTab.saveKeep").toEqual([]);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().setBackupKeep(3))")).toHaveLength(1);
+    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().renamePage('A', 'B', 'rename-page'))")).toHaveLength(1);
+    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().pasteImage(1))")).toHaveLength(1);
+    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().openPdf('a.pdf', 'A', 'create-page', 1))")).toHaveLength(1);
   });
   it("fails a planted old graph completion", () => {
     expect(() => assertLateLandings("src/planted.ts", "async function stale() { const dto = await backend().getPage('P', 'page'); reloadPage(dto); }")).toThrow(/I-20.*exemplar src\/components\/Page\.tsx/s);
@@ -318,6 +383,7 @@ describe("I-20 owned backend completion syntax", () => {
     expect(lateLandingViolations("src/planted.ts", "await readOwned(() => true, backend().getPage('a', 'page')); ")).not.toHaveLength(0);
     expect(lateLandingViolations("src/planted.ts", "const fake = () => true; await readOwned(fake, backend().getPage('a', 'page')); ")).not.toHaveLength(0);
     expect(lateLandingViolations("src/planted.ts", "function graphOwner() { return () => true; } await readOwned(graphOwner(), backend().getPage('a', 'page')); ")).not.toHaveLength(0);
+    expect(lateLandingViolations("src/planted.ts", "import { graphOwner, readOwned } from './owned'; async function f(graphOwner: () => Owner) { const r = await readOwned(graphOwner(), backend().getPage('P', 'page')); setPage((r as any).value); }")).not.toHaveLength(0);
     expect(lateLandingViolations("src/planted.ts", "async function fake(owner: Owner) { await readOwned(owner, backend().getPage('a', 'page')); }")).not.toHaveLength(0);
   });
   it("does not exempt a new backend method inside an exempt function", () => {

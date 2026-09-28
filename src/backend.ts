@@ -493,7 +493,8 @@ export interface Backend {
    * publication can leave disk uncertain: retain edits and inspect disk.
    * Crop/legacy trash moves after commit are best effort and do not reject.
    * Invalid or stale bindings reject. Cost O(asset entries + sidecar + page +
-   * deleted crop bytes) per retry, plus up to O(P) refresh if the page is absent.
+   * deleted crop bytes + deleted crops × sidecar bytes) per retry, plus up to
+   * O(P) refresh if the page is absent.
    * The mock stores caller values directly without merge, files, or these failures. */
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], kind: "replace-page", bindingGeneration: number): Promise<Highlight[]>;
   /** Update page and scale while preserving other sidecar fields; retry and merge
@@ -506,10 +507,11 @@ export interface Backend {
    *  Rejects payloads over 64 MiB before IPC and Store failures. Each of up to
    *  four attempts reads the existing crop; cost O(existing + input bytes). */
   savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
-  /** Caller must first handle sidecar refusal and confirm no persisted highlight
-   * references this crop; this operation checks neither. Trash the current crop,
-   * reading O(crop bytes) on each of up to four attempts. Invalid/missing crop,
-   * I/O, and exhausted conflicts reject. */
+  /** Trash a crop only when the current primary sidecar does not reference its
+   * ID/stamp. A whitespace-only sidecar rewrite and crop trash share one
+   * revision-guarded transaction.
+   * Cost O(sidecar + crop bytes) per attempt, up to four attempts. Missing or
+   * malformed sidecar, referenced/missing crop, I/O, and conflicts reject. */
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;

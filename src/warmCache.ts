@@ -19,6 +19,11 @@ const defaultDeps: WarmCacheWaitDeps = {
   },
 };
 
+/** Subscribe to warm-cache-done, then probe readiness for this graph epoch.
+ * Return true only when ready in the same epoch. A stale epoch or failed
+ * subscription/probe can return false. If the probe reports false and no event
+ * arrives, the promise has no timeout and may wait indefinitely. Cleanup
+ * removes an installed listener on resolution; setup and event work are O(1). */
 export async function waitForWarmCache(
   epoch = graphEpoch(),
   deps: WarmCacheWaitDeps = defaultDeps

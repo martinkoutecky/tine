@@ -45,11 +45,11 @@ export function unusedPdfCrops(crops: ReadonlyMap<string, Crop>, committed: High
     !visible.some((h) => h.id === id && h.image === crop.stamp));
 }
 
-/** Own one mounted PDF's committed baseline, visible optimistic set, save queue,
- * conflict decisions and area-crop retirement. The caller supplies PDF identity,
- * graph ownership and rectangle enrichment; all writes use the guarded backend
- * path. Failures keep visible edits marked, and an open conflict blocks edits
- * and drain until Keep mine or Use disk version completes. */
+/** Own one mounted PDF's highlights, serialized saves, conflict decisions and
+ * crop cleanup. Construction performs no I/O. persist returns false on failure,
+ * toasts and keeps edits marked. Conflict or failed crop cleanup blocks editing
+ * and drain until a decision, discard, or cleanup retry succeeds. Discard clears
+ * only local state. Cost is O(highlights + pending crops) plus backend writes. */
 export function createPdfHighlightState(options: {
   filename: string;
   label: string;
@@ -61,6 +61,8 @@ export function createPdfHighlightState(options: {
   const [highlights, setHighlights] = createSignal<Highlight[]>([]);
   const [unsaved, setUnsaved] = createSignal(false);
   const [conflict, setConflict] = createSignal(false);
+  const [decisionBusy, setDecisionBusy] = createSignal(false);
+  const [cleanupPending, setCleanupPending] = createSignal(false);
   let committed: Highlight[] = [];
   const pendingCrops = new Map<string, Crop>();
   const queue = {}, intents = {};
@@ -78,13 +80,22 @@ export function createPdfHighlightState(options: {
   };
   const addCrop = (id: string, crop: Crop) => pendingCrops.set(id, crop);
   const editBlocked = () => {
+    if (decisionBusy() || cleanupPending()) {
+      pushToast("Finish the highlight decision or area image cleanup before editing.", "error");
+      return true;
+    }
     if (!conflict()) return false;
     pushToast("Resolve the highlight conflict before editing more highlights.", "error");
     return true;
   };
   const drainBlocked = () => {
+    if (decisionBusy()) return true;
+    if (cleanupPending()) {
+      pushToast(`Cannot close or switch graphs while ${filename} has an area image awaiting cleanup. Choose Retry cleanup.`, "error");
+      return true;
+    }
     if (!conflict()) return false;
-    pushToast(`Cannot close or switch graphs while ${filename} has a highlight conflict. Choose Keep mine or Use disk version.`, "error");
+    pushToast(`Cannot close or switch graphs while ${filename} has a highlight conflict. Choose Keep mine or Use disk version, or Discard my changes.`, "error");
     return true;
   };
   const retireCrop = async (id: string, crop: Crop): Promise<boolean> => {
@@ -96,8 +107,27 @@ export function createPdfHighlightState(options: {
     return true;
   };
 
+  const retryCleanup = async (): Promise<void> => {
+    if (decisionBusy() || !cleanupPending()) return;
+    setDecisionBusy(true);
+    try {
+      for (const [id, crop] of unusedPdfCrops(pendingCrops, committed, highlights())) {
+        try { if (!(await retireCrop(id, crop))) return; }
+        catch (error) {
+          pushToast(`Couldn't retire the unused area image. Retry cleanup. (${String(error)})`, "error");
+          return;
+        }
+      }
+      if (!graphCurrent()) return;
+      setCleanupPending(false);
+      setUnsaved(false);
+    } finally {
+      setDecisionBusy(false);
+    }
+  };
+
   const persistOwned = async (landingOwner: Owner): Promise<boolean> => {
-    if (conflict()) return false;
+    if (conflict() || cleanupPending()) return false;
     const hlsName = hlsPageName(filename);
     if (isDirty(hlsName) || isConflicted(hlsName)) {
       if (!(await flushPage(hlsName))) {
@@ -117,13 +147,18 @@ export function createPdfHighlightState(options: {
       for (const [id, crop] of pendingCrops) {
         if (result.value.some((h) => h.id === id && h.image === crop.stamp)) pendingCrops.delete(id);
       }
+      let cleanupFailed = false;
       for (const [id, crop] of unusedPdfCrops(pendingCrops, result.value, highlights())) {
         try { await retireCrop(id, crop); }
         catch (error) {
+          cleanupFailed = true;
           if (landingOwner()) pushToast(`Highlight saved, but an unused area image couldn't move to trash. (${String(error)})`, "error");
         }
       }
-      if (landingOwner()) load(result.value);
+      if (landingOwner()) {
+        load(result.value);
+        if (cleanupFailed) { setCleanupPending(true); setUnsaved(true); }
+      }
     } catch (e) {
       if (landingOwner()) {
         setUnsaved(true);
@@ -142,7 +177,7 @@ export function createPdfHighlightState(options: {
     } catch (error) {
       if (landingOwner()) pushToast(`Highlight saved, but notes couldn't reload. (${String(error)})`, "error");
     }
-    return true;
+    return !cleanupPending();
   };
 
   const newIntent = () => latestOwner(intents, "highlights", graphCurrent);
@@ -162,6 +197,8 @@ export function createPdfHighlightState(options: {
   };
 
   const useDiskVersion = async () => {
+    if (!conflict() || decisionBusy()) return;
+    setDecisionBusy(true);
     try {
       const result = await readOwned(graphCurrent, backend().readHighlights(filename));
       if (result.kind === "stale") return;
@@ -170,14 +207,18 @@ export function createPdfHighlightState(options: {
         if (!(await retireCrop(id, crop))) return;
       }
       if (!graphCurrent()) return;
+      const latest = await readOwned(graphCurrent, backend().readHighlights(filename));
+      if (latest.kind === "stale") return;
       pendingCrops.clear();
-      load(result.value);
+      load(latest.value);
       pushToast("Using disk highlights; local changes were discarded.", "success");
     } catch (e) {
       pushToast(`Couldn't use disk highlights or retire their area image. (${String(e)})`, "error");
-    }
+    } finally { setDecisionBusy(false); }
   };
   const keepMine = async () => {
+    if (!conflict() || decisionBusy()) return;
+    setDecisionBusy(true);
     try {
       const result = await readOwned(graphCurrent, backend().readHighlights(filename));
       if (result.kind === "stale") return;
@@ -188,9 +229,26 @@ export function createPdfHighlightState(options: {
       await persist();
     } catch (e) {
       pushToast(`Couldn't reload disk highlights for Keep mine. (${String(e)})`, "error");
-    }
+    } finally { setDecisionBusy(false); }
   };
 
-  return { highlights, unsaved, conflict, graphCurrent, load, edit, addCrop,
-    editBlocked, drainBlocked, persist, persistInsideMutation, useDiskVersion, keepMine, newIntent };
+  const discardMine = async () => {
+    if (!conflict() || decisionBusy()) return;
+    setDecisionBusy(true);
+    try {
+      const answer = await readOwned(graphCurrent, backend().confirm(
+        "Discard your local PDF highlight changes? The sidecar will be left untouched. Any unreferenced local crop may remain on disk.",
+        "Discard my changes"
+      ));
+      if (answer.kind === "stale" || !answer.value) return;
+      pendingCrops.clear();
+      load([]);
+      pushToast("Local highlight changes discarded; disk sidecar was left untouched.", "success");
+    } catch (error) {
+      pushToast(`Couldn't confirm highlight discard. (${String(error)})`, "error");
+    } finally { setDecisionBusy(false); }
+  };
+
+  return { highlights, unsaved, conflict, decisionBusy, cleanupPending, graphCurrent, load, edit, addCrop,
+    editBlocked, drainBlocked, persist, persistInsideMutation, useDiskVersion, keepMine, discardMine, retryCleanup, newIntent };
 }

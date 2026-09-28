@@ -1,8 +1,8 @@
 //! PDF sidecars, annotation pages, view state, and cropped images. Guarded
 //! overwrites retry a concurrent external revision change at most four times.
-//! Crop rollback takes the exact crop identity after its caller has established
-//! sidecar refusal; it does not inspect sidecar references. Missing or invalid
-//! crops, I/O failures, and repeated conflicts are returned to the caller.
+//! Crop rollback checks the current sidecar and crop in one guarded transaction.
+//! Missing or invalid sidecars/crops, I/O failures, and repeated conflicts are
+//! returned to the caller.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -207,9 +207,10 @@ pub fn read_highlights(store: &Store, pdf_name: &str) -> Vec<Highlight> {
         .unwrap_or_default()
 }
 
-/// Read the current sidecar for a conflict decision. Missing files mean no
-/// highlights; unreadable or malformed files refuse the decision so local
-/// edits remain available. Cost O(sidecar bytes plus legacy asset listing).
+/// Read the current PDF sidecar, including an active legacy sidecar. Missing
+/// files return an empty set. Unreadable or malformed nonblank top-level EDN
+/// rejects; malformed highlight entries within a valid map are skipped.
+/// Cost O(asset entries plus sidecar bytes). No write is performed.
 pub fn read_highlights_checked(store: &Store, pdf_name: &str) -> io::Result<Vec<Highlight>> {
     let (_, current) = sidecar(store, pdf_name, true)?;
     let Some((raw, _)) = current else {
@@ -357,10 +358,11 @@ pub fn write_pdf_area_image(
     })
 }
 
-/// Trash the named current crop after the caller verifies sidecar refusal and
-/// that no persisted highlight references it. This does not read the sidecar.
-/// Missing/invalid targets and I/O failures return errors; commit conflicts
-/// retry up to four full image reads. Cost O(image bytes) per attempt.
+/// Trash a crop only when the current primary sidecar has no reference to its
+/// ID and stamp. A read-only sidecar revision check runs in the same
+/// transaction as the crop trash. Missing/malformed sidecars and I/O
+/// failures refuse; conflicts retry four full reads. Cost O(sidecar + crop
+/// bytes) per attempt.
 pub fn rollback_pdf_area_image(
     store: &Store,
     pdf_name: &str,
@@ -369,8 +371,58 @@ pub fn rollback_pdf_area_image(
     stamp: i64,
 ) -> io::Result<()> {
     let (file, _) = area_image_target(store, pdf_name, page, id, stamp)?;
+    rollback_pdf_area_file(store, pdf_name, &file, id, stamp)
+}
+
+fn rollback_pdf_area_file(
+    store: &Store,
+    pdf_name: &str,
+    file: &FileId,
+    id: &str,
+    stamp: i64,
+) -> io::Result<()> {
     crate::retry_on_conflict("PDF area image changed repeatedly during rollback", || {
-        crate::trash_current(store, &file, None, "no such PDF area image")
+        let sidecar_id = asset(store, &format!("{}.edn", pdf::asset_key(pdf_name)))?;
+        let (raw, sidecar_rev) = optional(store, &sidecar_id)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "PDF sidecar missing; refusing crop rollback",
+            )
+        })?;
+        valid_edn(&raw)?;
+        let parsed = tine_core::edn::parse_strict(&raw).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "PDF sidecar missing highlights")
+        })?;
+        let entries = parsed
+            .get("highlights")
+            .and_then(tine_core::edn::Edn::as_vec)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "PDF sidecar missing highlights")
+            })?;
+        let highlights = pdf::parse_highlights(&raw);
+        if highlights.len() != entries.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "PDF sidecar has unrecognized highlight entries",
+            ));
+        }
+        if highlights
+            .iter()
+            .any(|highlight| highlight.id == id && highlight.image == Some(stamp))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "PDF sidecar still references area image; refusing crop rollback",
+            ));
+        }
+        let crop_rev = store
+            .read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+            .map_err(store_error)?
+            .1;
+        let mut tx = store.transaction(None);
+        tx.expect(&sidecar_id, sidecar_rev);
+        tx.trash(file, crop_rev);
+        Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })
 }
 
@@ -387,8 +439,9 @@ pub fn rollback_pdf_area_image(
 /// page are one guarded transaction. Failure can leave disk differences if
 /// undo or publication is incomplete; retain local edits and inspect disk.
 /// After commit, crop/legacy trash moves are best effort and do not fail this
-/// call. Cost O(asset entries + sidecar + page + deleted crop bytes) per retry,
-/// plus graph refresh when the annotation page is absent (up to O(P)).
+/// call. Cost O(asset entries + sidecar + page + deleted crop bytes + deleted
+/// crops × sidecar bytes) per retry, plus graph refresh when the annotation
+/// page is absent (up to O(P)).
 pub fn write_highlights(
     store: &Store,
     pdf_name: &str,
@@ -518,6 +571,11 @@ pub fn write_highlights(
         if !crate::commit_retry(tx.commit())? {
             return Ok(None);
         }
+        if let (Some(id), Some((_, rev))) = (legacy_id.as_ref(), old.as_ref()) {
+            let mut cleanup = store.transaction(None);
+            cleanup.trash(id, rev.clone());
+            let _ = cleanup.commit();
+        }
         let source_key = if old.is_some() { &legacy } else { &key };
         let merged_ids: HashSet<&str> = merged.iter().map(|item| item.id.as_str()).collect();
         let active_stamps: HashSet<i64> = merged.iter().filter_map(|item| item.image).collect();
@@ -541,50 +599,13 @@ pub fn write_highlights(
             let Ok(crop) = asset(store, &crop_rel) else {
                 continue;
             };
-            let Ok((_, crop_rev)) = store.read(&crop, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-            else {
-                continue;
-            };
-            let Ok(Some((live, _))) = optional(store, &primary) else {
-                continue;
-            };
-            if live != next {
+            if legacy_id
+                .as_ref()
+                .is_some_and(|id| !matches!(optional(store, id), Ok(None)))
+            {
                 continue;
             }
-            if let (Some(id), Some(expected)) = (legacy_id.as_ref(), old.as_ref()) {
-                if optional(store, id).ok().flatten().as_ref() != Some(expected) {
-                    continue;
-                }
-            }
-            let mut cleanup = store.transaction(None);
-            cleanup.trash(&crop, crop_rev.clone());
-            let Ok(steps) = tx_error(cleanup.commit()) else {
-                continue;
-            };
-            let tine_store::StepResult::Trashed { trashed, .. } = &steps[0] else {
-                continue;
-            };
-            let primary_stable = optional(store, &primary)
-                .ok()
-                .flatten()
-                .is_some_and(|(live, _)| live == next);
-            let source_stable = match (legacy_id.as_ref(), old.as_ref()) {
-                (Some(id), Some(expected)) => {
-                    optional(store, id).ok().flatten().as_ref() == Some(expected)
-                }
-                _ => true,
-            };
-            if !primary_stable || !source_stable {
-                let mut restore = store.transaction(None);
-                restore.move_file(trashed, crop_rev, &crop, None);
-                let _ = restore.commit();
-                break;
-            }
-        }
-        if let (Some(id), Some((_, rev))) = (legacy_id.as_ref(), old) {
-            let mut cleanup = store.transaction(None);
-            cleanup.trash(id, rev);
-            let _ = cleanup.commit();
+            let _ = rollback_pdf_area_file(store, pdf_name, &crop, &item.id, stamp);
         }
         if let (Some(id), Some((_, rev))) = (legacy_page_id, legacy_page) {
             let mut cleanup = store.transaction(Some(tine_store::EditKind::DeletePage));

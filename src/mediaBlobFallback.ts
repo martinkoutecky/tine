@@ -24,12 +24,12 @@ function abortError(): Error {
   return new DOMException("media fallback cancelled", "AbortError");
 }
 
-/**
- * Serialized, process-wide whole-file compatibility fallback for media that a
- * WebKit backend rejects through the range-aware custom protocol. The remaining
- * global allowance is passed to Rust before reading, so retained plus in-flight
- * encoded bytes never exceed the budget. Callers own and must release the lease.
- */
+/** Serialize whole-file fallback reads for media rejected by the range-aware
+ * protocol. Raw file bytes are capped at 64 MiB for audio, 128 MiB for video,
+ * and 128 MiB retained across leases; the remaining raw-byte allowance is
+ * passed to Rust before reading. This does not bound transient IPC/Blob copies.
+ * Abort, stale graph ownership and budget exhaustion reject. Release the URL
+ * lease when done; repeated release is harmless. */
 export function acquireMediaBlobFallback(
   name: string,
   kind: "audio" | "video",
