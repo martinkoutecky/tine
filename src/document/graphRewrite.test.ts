@@ -20,10 +20,11 @@ it("refuses typing, paste, and move while rename IPC is in flight", async () => 
   setDoc({ byId: {
     a: { id: "a", raw: "first", collapsed: false, parent: null, page: "A", children: [] },
     b: { id: "b", raw: "second", collapsed: false, parent: null, page: "A", children: [] },
-  }, pages: [{ name: "A", kind: "page", title: "A", preBlock: null, roots: ["a", "b"], format: "md", readOnly: false, guide: false }], feed: ["A"], loaded: true });
+  }, pages: [{ name: "A", id: "pages/A.md", kind: "page", title: "A", preBlock: null, roots: ["a", "b"], format: "md", readOnly: false, guide: false }], feed: ["A"], loaded: true });
   activatePageInstance("A");
   let finish!: () => void;
-  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve("renamed"); }));
+  // The renamed page moved, so it leaves the working set under its old name.
+  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({ outcome: "renamed", touched: [{ path: "pages/A.md", moved: true }] }); }));
   installRenameRefreshHandler(() => expect(doc.pages).toHaveLength(0));
   const pending = renamePageOnDisk("A", "B");
   await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1));
@@ -48,7 +49,7 @@ it("routes both rename controls through the document intent", () => {
     expect(source).not.toContain("backend().renamePage(");
   }
   // The one app-layer rename entry resolves the collision, then uses the intent.
-  expect(readFileSync("src/graph.ts", "utf8")).toContain("renamePageOnDisk(from, to, target, into)");
+  expect(readFileSync("src/graph.ts", "utf8")).toContain("renamePageOnDisk(from, to, target, into, onRefreshed)");
 });
 
 it("reports a durable rename failure after the graph owner retires", async () => {
@@ -73,7 +74,7 @@ it("refuses a page creation that started before the rename freeze", async () => 
   const creating = createPage("New", { name: "New", kind: "page", title: "New", pre_block: null, blocks: [] });
   await vi.waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
   let finishRename!: () => void;
-  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finishRename = () => done("renamed"); }));
+  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finishRename = () => done({ outcome: "renamed", touched: [] }); }));
   installRenameRefreshHandler(() => {});
   const renaming = renamePageOnDisk("A", "B");
   await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1));

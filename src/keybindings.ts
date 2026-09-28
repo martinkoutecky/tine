@@ -57,6 +57,7 @@ import {
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
+import { goHome } from "./homePage";
 import { pluginManager } from "./plugins/manager";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
 
@@ -249,7 +250,7 @@ const COMMANDS: CommandDef[] = [
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: "Toggle developer tools", scope: "global", run: openDevtools, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
-  { id: "go/home", binding: "g h", label: "Go to home page", scope: "global", run: openJournals },
+  { id: "go/home", binding: "g h", label: "Go to home page", scope: "global", run: goHome },
   { id: "go/journal-next", binding: "g n", label: "Go to next journal day", scope: "global", run: () => goAdjacentJournal(1) },
   { id: "go/journal-prev", binding: "g p", label: "Go to previous journal day", scope: "global", run: () => goAdjacentJournal(-1) },
   { id: "go/keyboard-shortcuts", binding: "g s", label: "Go to keyboard shortcuts", scope: "global", run: () => openSettings("shortcuts") },

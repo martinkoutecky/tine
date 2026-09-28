@@ -990,7 +990,7 @@ describe("page actions entry point", () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     let finish!: () => void;
-    const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve("renamed"); }));
+    const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({ outcome: "renamed", touched: [] }); }));
     mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -1033,8 +1033,8 @@ describe("page actions entry point", () => {
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     let finishFirstRename!: () => void;
     const rename = vi.spyOn(backend(), "renamePage")
-      .mockImplementationOnce(() => new Promise((resolve) => { finishFirstRename = () => resolve("renamed"); }))
-      .mockResolvedValue("renamed");
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirstRename = () => resolve({ outcome: "renamed", touched: [] }); }))
+      .mockResolvedValue({ outcome: "renamed", touched: [] });
     mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -1056,7 +1056,7 @@ describe("page actions entry point", () => {
       blurred.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
       await flushMicrotasks();
       expect(rename).toHaveBeenCalledTimes(1);
-      expect(rename).toHaveBeenLastCalledWith("Rename me", "Blurred name", "rename-page", dto.id);
+      expect(rename).toHaveBeenLastCalledWith("Rename me", "Blurred name", "rename-page", dto.id, undefined, []);
       setRaw("rename-root", "typed during rename", { timetracking: false });
       expect(doc.byId["rename-root"].raw).toBe("Body");
       finishFirstRename();

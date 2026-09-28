@@ -11,6 +11,7 @@ import { clearTransientLayersForTest, dismissTopTransient } from "../transientLa
 import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
 import { setToasts, toasts } from "../toasts";
+import { focusedRouter } from "../panes";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -306,6 +307,54 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     await Promise.resolve();
     expect(document.querySelector('.ctx-menu[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+    dispose();
+  });
+
+  // G3 finding 2 (og 12b follow-up): the rename's own refresh bumps the graph
+  // epoch, which retired the owner the menu captured before the rename, so a
+  // successful rename or merge from the menu neither opened the page nor said so.
+  it.each(["renamed", "merged"] as const)("opens the page and confirms after a menu rename that %s", async (outcome) => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    vi.spyOn(backend(), "resolvePage").mockImplementation(async (name) => name === "Q"
+      ? (outcome === "merged" ? { kind: "existing", id: "pages/Q.md", others: [] } : { kind: "absent", id: "pages/Q.md" })
+      : { kind: "existing", id: "pages/P.md", others: [] });
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome, touched: [{ path: "pages/P.md", moved: true }] });
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
+    await Promise.resolve();
+    const input = document.querySelector<HTMLInputElement>(".ctx-rename-name")!;
+    input.value = "Q";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(toasts().map((toast) => toast.message)).toContain(outcome === "merged" ? "Merged into “Q”" : "Renamed to “Q”"));
+    expect(rename).toHaveBeenCalledOnce();
+    expect(focusedRouter().route()).toMatchObject({ kind: "page", name: "Q" });
+    dispose();
+  });
+
+  it("keeps the route when the user moved on during a menu rename", async () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Q.md" });
+    let finish!: (value: { outcome: "renamed"; touched: [] }) => void;
+    vi.spyOn(backend(), "renamePage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
+    await Promise.resolve();
+    const input = document.querySelector<HTMLInputElement>(".ctx-rename-name")!;
+    input.value = "Q";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    focusedRouter().openPage("Elsewhere", "page");
+    finish({ outcome: "renamed", touched: [] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(focusedRouter().route()).toMatchObject({ kind: "page", name: "Elsewhere" });
+    expect(toasts().map((toast) => toast.message)).not.toContain("Renamed to “Q”");
     dispose();
   });
 

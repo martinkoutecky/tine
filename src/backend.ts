@@ -267,8 +267,10 @@ export interface Backend {
   /** Rename a page and update all [[refs]]/#tags across the graph. `mergeInto`
    *  is the confirmed path of the one page `next` reaches (its file or alias
    *  owner); the backend merges into it in one transaction and refuses if that
-   *  changed. Without it, a `next` another page already has is refused. */
-  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string): Promise<import("./types").RenameDone>;
+   *  changed. Without it, a `next` another page already has is refused.
+   *  `unsavedPaths`: page files whose edits could not be saved; the rename
+   *  refuses, writing nothing, if it would move or rewrite one (GH #535). */
+  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]): Promise<import("./types").RenameDone>;
   publishHtml(): Promise<[string, number]>;
   /** Render one page to a self-contained HTML document (assets inlined, no
    *  sidebar) for the print-to-PDF export, with the dialog's options. Rejects if
@@ -285,8 +287,9 @@ export interface Backend {
   queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
   /** `icon::` property for each named page that has one (page-name → icon). */
   pageIcons(names: string[]): Promise<Record<string, string>>;
-  /** Persist favorited page names to config.edn `:favorites`. */
-  setFavorites(names: string[]): Promise<void>;
+  /** Persist favorited page names to config.edn `:favorites` and, when given,
+   *  the arrangement page to `:tine/favorites-page`, in one config write. */
+  setFavorites(names: string[], page?: string | null): Promise<void>;
   /** Persist the task workflow to config.edn `:preferred-workflow`. */
   setPreferredWorkflow(workflow: "now" | "todo"): Promise<void>;
   /** Persist `:feature/enable-timetracking?` (default on when absent). */
@@ -785,8 +788,8 @@ class TauriBackend implements Backend {
   deletePage(name: string, kind: "journal" | "page", expectedPath?: string) {
     return this.call<void>("delete_page", { name, kind, expectedPath });
   }
-  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string) {
-    return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto });
+  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]) {
+    return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
   }
   publishHtml() {
     return this.call<[string, number]>("publish_html");
@@ -812,8 +815,8 @@ class TauriBackend implements Backend {
   pageIcons(names: string[]) {
     return this.call<Record<string, string>>("page_icons", { names });
   }
-  setFavorites(names: string[]) {
-    return this.call<void>("set_favorites", { names });
+  setFavorites(names: string[], page: string | null = null) {
+    return this.call<void>("set_favorites", { names, page });
   }
   setPreferredWorkflow(workflow: "now" | "todo") {
     return this.call<void>("set_preferred_workflow", { workflow });

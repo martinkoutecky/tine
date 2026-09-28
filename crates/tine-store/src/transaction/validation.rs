@@ -27,8 +27,10 @@ pub(super) fn rewrite(old: &[u8], path: &Path, map: &RenameMap) -> Result<Vec<u8
 }
 
 /// A rename move changes a file's logical identity as well as its path. Keep
-/// the own Markdown title in the same guarded transaction when it still names
-/// the old identity; a custom title remains untouched.
+/// the own preamble title (Markdown `title::`, Org `#+title:` or `:title:`) in
+/// the same guarded transaction when it still names the old identity; a custom
+/// title remains untouched. A non-round-tripping Org file is refused rather
+/// than rewritten.
 pub(super) fn rewrite_move(
     old: &[u8],
     path: &Path,
@@ -36,58 +38,31 @@ pub(super) fn rewrite_move(
     name_format: tine_core::config::FileNameFormat,
 ) -> Result<Vec<u8>, Why> {
     let rewritten = rewrite(old, path, map)?;
-    if !path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
-    {
-        return Ok(rewritten);
-    }
+    let format = tine_core::model::Format::from_path(path);
     let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
         return Ok(rewritten);
     };
     let destination_name = tine_core::model::decode_page_name(stem, name_format);
     let source = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
-    let Some(title) =
-        tine_core::model::page_title_from_preamble(source, tine_core::model::Format::Md)
-    else {
+    let Some(title) = tine_core::model::page_title_from_preamble(source, format) else {
         return Ok(rewritten);
     };
-    let Some((_, new_name)) = map.0.iter().find(|(from, to)| {
+    let Some((from, new_name)) = map.0.iter().find(|(from, to)| {
         tine_core::refs::same_page(from, &title)
             && tine_core::refs::same_page(to, &destination_name)
     }) else {
         return Ok(rewritten);
     };
     let text = std::str::from_utf8(&rewritten).map_err(|_| Why::Refused(Refusal::Undecodable))?;
-    let mut offset = 0;
-    for chunk in text.split_inclusive('\n') {
-        let line = chunk.trim_end_matches(['\r', '\n']);
-        let trimmed = line.trim_start();
-        if trimmed == "-" || trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-            break;
-        }
-        if tine_core::doc::parse_property_line(line)
-            .is_some_and(|(key, _)| key.eq_ignore_ascii_case("title"))
-        {
-            let newline = if chunk.ends_with("\r\n") {
-                "\r\n"
-            } else if chunk.ends_with('\n') {
-                "\n"
-            } else {
-                ""
-            };
-            let mut result = String::with_capacity(text.len() + new_name.len());
-            result.push_str(&text[..offset]);
-            result.push_str("title:: ");
-            result.push_str(new_name);
-            result.push_str(newline);
-            result.push_str(&text[offset + chunk.len()..]);
-            return Ok(result.into_bytes());
-        }
-        offset += chunk.len();
+    let Some(rebound) = tine_core::model::rebind_page_title(text, format, from, new_name) else {
+        return Ok(rewritten);
+    };
+    if format == tine_core::model::Format::Org && !tine_core::org::org_editable(source) {
+        return Err(Why::Refused(Refusal::ReadOnly(
+            "org file is read-only (does not round-trip)".into(),
+        )));
     }
-    Ok(rewritten)
+    Ok(rebound.into_bytes())
 }
 
 pub(super) fn valid_utf8_file(path: &Path) -> io::Result<bool> {

@@ -161,6 +161,8 @@ mod journal_guide_tests {
             "/That day",
             "g n",
             "g p",
+            "**g h** opens the graph's home page",
+            ":default-home {:page",
             "default journal template",
             "Carry unfinished tasks",
             ":hidden [\"archive/private\"]",
@@ -181,6 +183,11 @@ mod rename_guide_tests {
         for control in [
             "offers to **merge** them",
             "the aliases join",
+            // GH #535: when an unsaved page still stops a rename, or a refusal
+            // reads as arbitrary.
+            "stops the rename only if the rename would change that page",
+            "Other pages keep their unsaved edits through the rename",
+            "or in Org by `#+TITLE:`, gets the new name",
             "Opening a graph never renames journal files",
             "**Rename to date names**",
         ] {

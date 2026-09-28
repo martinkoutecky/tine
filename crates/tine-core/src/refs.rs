@@ -32,6 +32,32 @@ pub fn normalize(name: &str) -> String {
     page_key(name)
 }
 
+/// Pages whose text is never a reference source: the target page itself (OG
+/// excludes a page from its own references) and Tine's Favorites arrangement
+/// page (`:tine/favorites-page`), whose `[[links]]` are a sidebar layout, not a
+/// mention. The ONE predicate; a new exclusion belongs here, not at a call site.
+#[derive(Clone, Debug, Default)]
+pub struct ReferenceSourceExclusions {
+    keys: Vec<String>,
+}
+
+impl ReferenceSourceExclusions {
+    pub fn new(self_page: &str, favorites_page: Option<&str>) -> Self {
+        let mut keys = vec![page_key(self_page)];
+        if let Some(key) = favorites_page.map(page_key) {
+            if !key.is_empty() && !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        Self { keys }
+    }
+
+    pub fn excludes_name(&self, page_name: &str) -> bool {
+        let key = page_key(page_name);
+        self.keys.iter().any(|candidate| *candidate == key)
+    }
+}
+
 fn is_tag_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '-' | '_' | '/' | '.')
 }

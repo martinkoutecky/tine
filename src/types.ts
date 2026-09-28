@@ -79,8 +79,23 @@ export interface PageRead extends PageDto {
   id: string;
 }
 
-/** What the backend rename did; `unchanged`: nothing written (a case-only rename). */
-export type RenameDone = "renamed" | "merged" | "unchanged";
+/** What the backend rename did; `unchanged`: nothing written — a case-only
+ *  rename, an empty old name, or a name no file and no reference uses (e.g. a
+ *  never-saved page nobody links to). `touched` lists every page file it moved,
+ *  trashed or rewrote, so the frontend refreshes only those (GH #535). */
+export interface RenameDone {
+  outcome: "renamed" | "merged" | "unchanged";
+  touched: RenameTouchedPage[];
+}
+
+/** One page file a rename or merge wrote. */
+export interface RenameTouchedPage {
+  /** Graph-relative path before the rename: the loaded page's `id`. */
+  path: string;
+  /** The file left this path (moved, or trashed by a merge); otherwise it was
+   *  rewritten in place. */
+  moved: boolean;
+}
 
 export type ResolvedPage =
   | { kind: "existing"; id: string; others: string[] }
@@ -362,7 +377,11 @@ export interface GraphMeta {
   start_of_week: number; // Logseq :start-of-week, 0=Monday … 6=Sunday (default 6)
   block_hidden_properties: string[];
   default_journal_template: string | null;
+  /** config.edn `:default-home {:page "..."}`; absent/null = no home page. */
+  default_home?: string | null;
   favorites: string[];
+  /** `:tine/favorites-page`: the page holding the Favorites arrangement. */
+  favorites_page?: string | null;
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")

@@ -2591,3 +2591,25 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
     std::fs::remove_dir_all(&root).ok();
     std::fs::remove_file(&outside).ok();
 }
+
+#[test]
+fn graph_meta_carries_the_configured_default_home_page() {
+    let root = std::env::temp_dir().join(format!("tine-default-home-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let cfg_path = root.join("logseq").join("config.edn");
+    std::fs::write(&cfg_path, "{:start-of-week 1}\n").unwrap();
+    assert_eq!(Graph::open(&root).meta().default_home, None);
+
+    std::fs::write(
+        &cfg_path,
+        "{;; :default-home {:page \"Commented\"}\n :default-home {:sidebar [\"Contents\"] :page \"Directory\"}}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        Graph::open(&root).meta().default_home.as_deref(),
+        Some("Directory")
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

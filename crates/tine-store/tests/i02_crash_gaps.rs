@@ -226,7 +226,8 @@ fn crash_feature_worker() {
             pages::rename_page_expected(&store, "A", "B", None).unwrap();
         }
         "rename-merge" => {
-            pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md")).unwrap();
+            pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md"), &[])
+                .unwrap();
         }
         "conflict" => {
             let copy = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
@@ -391,6 +392,7 @@ fn feature_journeys_kill_reopen_keep_content() {
                             "New",
                             None,
                             Some("pages/New.md"),
+                            &[],
                         )
                         .unwrap();
                     }

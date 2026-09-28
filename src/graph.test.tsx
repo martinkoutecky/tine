@@ -106,6 +106,8 @@ async function loadHarness(
   vi.doMock("./document", () => ({
     resetStore: vi.fn(), flushAll: vi.fn(async () => true),
     installRenameRefreshHandler: vi.fn(),
+    favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
+    reloadHlsIfLoaded: vi.fn(),
     createPage: (_name: string, dto: PageDto, options: { id: string; baseRev: string | null; bindingGeneration: number }) =>
       api.savePages([{ id: options.id, page: dto, baseRev: options.baseRev, force: false,
         kinds: [options.baseRev === null ? "create-page" : "replace-page"] }], options.bindingGeneration).then((result) => result.ok[0]),
@@ -121,14 +123,19 @@ async function loadHarness(
   vi.doMock("./router", () => ({
     resetTabsToJournals: vi.fn(),
     openPage,
+    openJournals: vi.fn(),
+    route: () => ({ kind: "journals" }),
+    sameRoute: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b),
     restoreSession: vi.fn(async () => {}),
     flushSession: vi.fn(async () => {}),
   }));
-  vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn() }));
+  const focused = { activeId: () => "tab", routeIntentRevision: () => 0, route: () => ({ kind: "journals" }), openPage };
+  vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn(), focusedRouter: () => focused }));
   vi.doMock("./journal", () => ({
     journalTitle: () => "Jul 10th, 2026",
     localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
     setJournalTitleFormat: vi.fn(),
+    isJournalTitle: () => false,
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache }));
@@ -450,5 +457,63 @@ describe("PDF graph ownership", () => {
       `activate-pdf:${META.root}`,
     ]);
     expect(harness.activatePdfOwnership).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("graph home page on open (config.edn :default-home)", () => {
+  const DIRECTORY: PageRead = { id: "pages/Directory.md", name: "Directory", kind: "page", title: "Directory", pre_block: null, blocks: [], read_only: false, guide: false };
+  const withHome = (home: string | null, root = META.root): GraphMeta => ({ ...META, root, default_home: home });
+  const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+  async function harnessWithHome(home: string | null, page: PageRead | null) {
+    const harness = await loadHarness(null);
+    harness.api.loadGraph.mockImplementation(async (path?: string) =>
+      ({ kind: "loaded" as const, meta: withHome(home, path ?? META.root), binding_generation: 1 }) as never);
+    const getPage = harness.api.getPage as unknown as { mockImplementation(fn: (name: string) => Promise<PageRead | null>): void };
+    getPage.mockImplementation(async (name) => (name === home ? page : null));
+    return harness;
+  }
+
+  it("opens the configured home page in place on an ordinary first load", async () => {
+    const harness = await harnessWithHome("Directory", DIRECTORY);
+    await harness.loadGraphPath(META.root);
+    await settle();
+    expect(harness.api.getPage).toHaveBeenCalledWith("Directory", "page");
+    expect(harness.openPage).toHaveBeenCalledWith("Directory", "page", { inPlace: true });
+  });
+
+  it("opens it on a graph switch too", async () => {
+    const harness = await harnessWithHome("Directory", DIRECTORY);
+    await harness.loadGraphPath(META.root);
+    await settle();
+    harness.openPage.mockClear();
+    await harness.loadGraphPath("/tmp/other-graph");
+    await settle();
+    expect(harness.openPage).toHaveBeenCalledWith("Directory", "page", { inPlace: true });
+  });
+
+  it("keeps the ordinary landing when none is configured or the page no longer resolves", async () => {
+    const none = await harnessWithHome(null, DIRECTORY);
+    await none.loadGraphPath(META.root);
+    await settle();
+    expect(none.openPage).not.toHaveBeenCalled();
+
+    const ghost = await harnessWithHome("Ghost", null);
+    await ghost.loadGraphPath(META.root);
+    await settle();
+    expect(ghost.api.getPage).toHaveBeenCalledWith("Ghost", "page");
+    expect(ghost.openPage).not.toHaveBeenCalled();
+    expect(ghost.api.savePages.mock.calls.flatMap(([entries]) => entries.map((entry) => entry.page.name)))
+      .not.toContain("Ghost"); // nothing is created for a missing home page
+  });
+
+  it("does not home-navigate on a same-graph force refresh", async () => {
+    const harness = await harnessWithHome("Directory", DIRECTORY);
+    await harness.loadGraphPath(META.root);
+    await settle();
+    harness.openPage.mockClear();
+    await harness.loadGraphPath(META.root, { forceRefresh: true });
+    await settle();
+    expect(harness.openPage).not.toHaveBeenCalled();
   });
 });

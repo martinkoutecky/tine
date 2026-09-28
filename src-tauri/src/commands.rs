@@ -980,8 +980,9 @@ pub(crate) async fn rename_page(
     new: String,
     expected_path: Option<String>,
     merge_into: Option<String>,
+    unsaved_paths: Option<Vec<String>>,
     state: GraphContext<'_>,
-) -> Result<tine_graph_features::pages::RenameOutcome, String> {
+) -> Result<tine_graph_features::pages::RenameReport, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pages::rename_or_merge_page(
@@ -990,6 +991,7 @@ pub(crate) async fn rename_page(
             &new,
             expected_path.as_deref(),
             merge_into.as_deref(),
+            unsaved_paths.as_deref().unwrap_or_default(),
         )
         .map_err(|e| e.to_string())
     })
@@ -1184,13 +1186,6 @@ fn with_config_store<T>(
 ) -> Result<T, String> {
     let slot = slot_for_context(state)?;
     f(&slot.store)
-}
-
-#[tauri::command]
-pub(crate) fn set_favorites(names: Vec<String>, state: GraphContext<'_>) -> Result<(), String> {
-    with_config_store(&state, |store| {
-        tine_graph_features::config::set_favorites(store, &names).map_err(|e| e.to_string())
-    })
 }
 
 #[tauri::command]

@@ -3,11 +3,12 @@
 
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
-import { graphOwner, readOwned, writeOwned } from "./owned";
+import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
-import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer } from "./ui";
+import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
 import { pushToast } from "./toasts";
-import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk } from "./document";
+import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
+import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
@@ -22,6 +23,7 @@ import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
 import { journalHasContent } from "./journalContent";
 import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwnership";
+import { openConfiguredHomePage } from "./homePage";
 import { clearWorkspaces } from "./workspaces";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -171,7 +173,7 @@ export async function loadGraphPath(
   bumpGraphEpoch();
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
   setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
-  seedFavorites(meta?.favorites ?? []);
+  seedFavorites(meta?.favorites ?? [], meta?.favorites_page ?? null);
   void refreshJournalConflicts(true); // tell the user if any day has duplicate journal files
   void refreshSyncConflicts(true); // and flag any Syncthing/Dropbox conflict copies
   if (path) {
@@ -203,6 +205,10 @@ export async function loadGraphPath(
     // session before the backend knew which graph this webview would own.
     await restoreSession();
   }
+  // A configured home page (config.edn `:default-home`) replaces the landing
+  // on an ordinary open — first bind or switch, never a same-graph refresh —
+  // unless a rebind or navigation lands first.
+  if (result.kind === "loaded" && (switching || !hadGraph)) void openConfiguredHomePage();
   return { kind: result.kind, root: meta.root };
   } finally {
     if (ownsTransition) setGraphTransitioning(false);
@@ -211,7 +217,7 @@ export async function loadGraphPath(
 
 /** Refresh frontend state after a successful page rename. The backend rename
  *  rewrites `[[refs]]` across many files through the self-write guard. The
- *  document intent has already flushed and reset its working set. Refresh the
+ *  document intent refreshes the loaded pages it touched (GH #535). Refresh the
  *  app's navigation and graph-derived views, then navigate to the new name. */
 export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget): void {
   if (exactTarget) {
@@ -226,6 +232,7 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
 }
 
 installRenameRefreshHandler(refreshAfterRename);
+installFavoritesPageDoor({ createPage, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded });
 
 export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled";
 
@@ -236,9 +243,14 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
  *  with no file only has its references repointed. `cancelled`: the user
  *  declined or the graph changed before anything was written. The other
  *  outcomes are `renamePageOnDisk`'s; `renameOutcomeMessage` words them.
- *  Backend errors reject. Cost: one or two name resolutions, a confirm dialog
+ *  `onRefreshed` receives the graph owner captured after the rename's refresh.
+ *  The merge target is not re-resolved after the confirm: the backend re-checks
+ *  it. A `to` reaching several pages is not offered as a merge; the backend
+ *  refuses that rename. Backend errors reject. Cost: one or two name resolutions, a confirm dialog
  *  when merging, plus the rename. */
-export async function renameOrMergePage(from: string, to: string, target?: PageTarget): Promise<RenameOutcome> {
+export async function renameOrMergePage(
+  from: string, to: string, target?: PageTarget, onRefreshed?: (owner: Owner) => void,
+): Promise<RenameOutcome> {
   const owner = graphOwner();
   const found = await readOwned(owner, backend().resolvePage(to, "page"));
   if (found.kind === "stale") return "cancelled";
@@ -254,16 +266,24 @@ export async function renameOrMergePage(from: string, to: string, target?: PageT
     const confirmed = await readOwned(owner, backend().confirm(`Page “${to}” already exists. Merge “${from}” into it?`));
     if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
   }
-  const done = await renamePageOnDisk(from, to, target, into);
+  const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
   return done === "stale" ? "cancelled" : done;
 }
 
-/** The user-facing message for a rename that did not rename, or null. */
+/** The user-facing message for a rename that did not rename, or null (for
+ *  `renamed`, `merged` and `cancelled`). `unchanged` is worded by its cause: a
+ *  case-only name change, or a name no file and no reference uses. */
 export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | null {
+  if (typeof outcome === "object") {
+    return outcome.mentions
+      ? `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save, and they mention “${from}”, so the rename could not update them. Save or discard those changes, then rename again. Your pending edits are still here.`
+      : `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save. Save or discard them, then rename again. Your pending edits are still here.`;
+  }
   switch (outcome) {
-    case "unchanged": return `Nothing renamed: “${to}” is the same page name as “${from}” (page names ignore letter case).`;
+    case "unchanged": return pageIdentityKey(from) === pageIdentityKey(to)
+      ? `Nothing renamed: “${to}” is the same page name as “${from}” (page names ignore letter case).`
+      : `Nothing renamed: no page file or reference uses “${from}” yet.`;
     case "busy": return "Another rename is still rewriting the graph. Try again when it finishes.";
-    case "unflushed": return "Couldn't save pending edits — resolve the conflict before renaming.";
     case "uncertain": return `The graph changed while renaming “${from}”. Check whether “${to}” exists before trying again.`;
     default: return null;
   }
