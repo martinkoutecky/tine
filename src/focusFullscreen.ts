@@ -36,6 +36,6 @@ export function setFocusFullscreen(active: boolean): Promise<void> {
       ownsFullscreen = false;
     }
   });
-  tail = task.catch(() => {});
+  tail = task.then(() => undefined, () => undefined);
   return task;
 }

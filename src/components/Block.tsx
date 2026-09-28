@@ -194,7 +194,6 @@ function beginDrag(id: string, e: MouseEvent) {
   const startY = e.clientY;
   dragMoved = false;
   const onMove = (ev: MouseEvent) => {
-    if (!stillBound(binding)) return;
     if (!dragMoved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
     if (!dragMoved) {
       dragMoved = true;

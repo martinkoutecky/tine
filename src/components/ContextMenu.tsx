@@ -1,6 +1,7 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { pushToast } from "../toasts";
+import { captureBinding, stillBound } from "../binding";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -842,14 +843,16 @@ function PageMenu(props: {
       id: "copy-page-markdown",
       label: "Copy page as Markdown",
       run: () => {
+        const binding = captureBinding();
         const request = props.path
           ? backend().getPageByPath(props.path)
           : backend().getPage(props.name, props.pageKind);
         void request.then((p) => {
+          if (!stillBound(binding)) return;
           if (!p) throw new Error("Page unavailable");
           return writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
-        }).then(() => pushToast("Copied page as Markdown", "success"))
-          .catch(() => pushToast("Couldn't copy page as Markdown.", "error"));
+        }).then(() => { if (stillBound(binding)) pushToast("Copied page as Markdown", "success"); })
+          .catch(() => { if (stillBound(binding)) pushToast("Couldn't copy page as Markdown.", "error"); });
       },
     },
     { id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) },

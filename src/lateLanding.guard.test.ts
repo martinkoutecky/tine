@@ -26,7 +26,7 @@ const ORIGINAL_LATE_KEYS = new Set(`
   src/components/UnlinkedReferences.tsx:53 src/debug.ts:38 src/editor/linkDefault.ts:58 src/filedrop.ts:84 src/graph.ts:269
   src/graph.ts:313 src/graph.ts:53 src/graph.ts:76 src/guide.ts:75 src/launcherRanking.ts:43
   src/mediaEditorSettings.ts:56 src/mediaEditorSettings.ts:67 src/nativeChrome.ts:68 src/nativeChrome.ts:81 src/pageIconBatch.ts:42
-  src/pageIndex.ts:71 src/plugins/manager.ts:267 src/plugins/manager.ts:273 src/plugins/manager.ts:784 src/plugins/registry.ts:455
+  src/pageIndex.ts:71 src/plugins/manager.ts:267 src/plugins/manager.ts:273 src/plugins/manager.ts:781 src/plugins/registry.ts:455
   src/plugins/registry.ts:513 src/print.ts:111 src/render/inline.tsx:1241 src/render/inline.tsx:794 src/router.ts:733
   src/session.ts:286 src/session.ts:302 src/sheet/queryHydration.ts:325 src/spellcheckSettings.ts:88 src/themes/manager.ts:50
   src/ui.ts:241 src/workspaces.ts:96
@@ -59,8 +59,7 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/pageIndex.ts:71": "legacy UI continuation needs a binding audit",
   "src/pageIconBatch.ts:42": "legacy page-icon read result needs a binding audit",
   "src/plugins/manager.ts:267": "legacy plugin completion needs an ownership audit",
-  "src/plugins/manager.ts:273": "legacy plugin completion needs an ownership audit",
-  "src/plugins/manager.ts:784": "legacy plugin completion needs an ownership audit",
+  "src/plugins/manager.ts:781": "legacy plugin completion needs an ownership audit",
   "src/plugins/registry.ts:455": "legacy plugin completion needs an ownership audit",
   "src/plugins/registry.ts:513": "legacy plugin completion needs an ownership audit",
   "src/print.ts:111": "legacy UI continuation needs a binding audit",
