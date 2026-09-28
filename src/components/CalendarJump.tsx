@@ -1,9 +1,10 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle } from "../journal";
-import { dataRev } from "../graphSession";
+import { dataRev, graphEpoch } from "../graphSession";
 import { firstDayOfWeek } from "../ui";
 import { backend } from "../backend";
+import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
 
 const MONTHS = [
@@ -64,10 +65,15 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
   // Journal days that have content, fetched while the popup is open (re-fetched
   // on dataRev so adding content updates the dots). yyyymmdd keys, month 1-based.
   const [contentDays] = createResource(
-    () => (open() ? dataRev() : null),
-    () => backend().journalContentDays()
+    () => (open() ? { rev: dataRev(), epoch: graphEpoch() } : null),
+    async () => {
+      const owner = graphOwner();
+      const epoch = graphEpoch();
+      const result = await readOwned(owner, backend().journalContentDays());
+      return { epoch, days: result.kind === "current" ? result.value : [] };
+    }
   );
-  const haveContent = createMemo(() => new Set(contentDays() ?? []));
+  const haveContent = createMemo(() => new Set(contentDays()?.epoch === graphEpoch() ? contentDays()?.days : []));
   const hasContent = (d: number) =>
     haveContent().has(view().y * 10000 + (view().m + 1) * 100 + d);
 

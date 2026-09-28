@@ -154,6 +154,19 @@ const CLASSIFIED_CONSUMERS: Record<string, string> = {
 };
 
 describe("graph-scoped UI state (I-20)", () => {
+  it("late route, calendar, session and reference continuations retain their owners", () => {
+    const route = readFileSync("src/router.ts", "utf8");
+    expect(route).toMatch(/function openPageAtBlock[\s\S]*?const current = \(\) => stillBound\(binding\)[\s\S]*?routeIntentRevision\(\) === intent/);
+    expect(route).toMatch(/const scroller = mainScroller\(\);[\s\S]*?scroller\?\.querySelector/);
+    const calendar = readFileSync("src/components/CalendarJump.tsx", "utf8");
+    expect(calendar).toMatch(/rev: dataRev\(\), epoch: graphEpoch\(\)/);
+    expect(calendar).toMatch(/readOwned\(owner, backend\(\)\.journalContentDays\(\)\)/);
+    const session = readFileSync("src/session.ts", "utf8");
+    expect(session).toMatch(/const mayApply = \(\) => owner\(\) && JSON\.stringify\(buildPersistedSession\(\)\) === initialSession/);
+    const block = readFileSync("src/components/Block.tsx", "utf8");
+    expect(block).toMatch(/persistBlockRefTarget\([\s\S]*?\(\) => \{\s*if \(!stillBound\(binding\) \|\| ac\(\) !== trigger/);
+  });
+
   it("every module-level signal that can name graph content is graph-scoped or classified", () => {
     const found = graphContentSignals();
     for (const key of found) expect(CLASSIFIED[key], `${RULE}: ${key}`).toBeTruthy();

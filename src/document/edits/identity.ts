@@ -3,7 +3,7 @@ import { doc, formatForBlock, pageByName, setDoc } from "../model";
 import { captureBinding, stillBound } from "../../binding";
 import { graphOwner, readOwned } from "../../owned";
 import { blockWritable } from "./properties";
-import { markDirty, flushPage, isConflicted } from "../save/engine";
+import { markDirty, flushPage, isConflicted, persistTogether } from "../save/engine";
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
 import { orgBlockDrawerRange } from "../../editor/properties";
@@ -209,16 +209,19 @@ export async function persistentBlockRef(id: string): Promise<LoadedBlockRef | n
   return uuid ? blockRef(id) : null;
 }
 
-/** Find a block-reference target by runtime key or authored ID, loading its
- * page if needed. `externalId` is the ID to verify before a caller publishes
- * the reference. False means the target changed, is missing, or its save was
- * refused; backend read errors reject. Cost includes a page lookup and save. */
+/** Find a block-reference target, loading its page if needed. Without
+ * `insertReference`, durably stamp the target ID (used by navigation). With it,
+ * commit the current source intent synchronously after target validation and
+ * group the source reference with the target ID in one save. A failed grouped
+ * save leaves the source edit visible for conflict resolution. Cost includes a
+ * page lookup and one page or grouped save. */
 export async function persistBlockRefTarget(
   uuid: string,
   page: string,
   kind: PageKind,
   path?: string,
   externalId: string = uuid,
+  insertReference?: () => string | null,
 ): Promise<boolean> {
   const owner = graphOwner();
   const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
@@ -239,5 +242,18 @@ export async function persistBlockRefTarget(
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
   const id = runtimeTarget() ?? resolveBlockRef(ref);
-  return id ? (await ensureStableBlockId(id)) === externalId : false;
+  if (!id || !owner() || !blockWritable(id)) return false;
+  if (!insertReference) return (await ensureStableBlockId(id)) === externalId;
+  const target = doc.byId[id];
+  const fmt = formatForBlock(id);
+  const existing = existingBlockId(target.raw, fmt);
+  const stableId = existing ?? (UUID_RE.test(id) ? id : crypto.randomUUID());
+  if (stableId !== externalId) return false;
+  const sourcePage = insertReference();
+  if (!sourcePage || !owner()) return false;
+  if (!existing) setDoc("byId", id, "raw", rawWithBlockId(target.raw, stableId, fmt));
+  const saved = await persistTogether([sourcePage, target.page], "save-block");
+  return saved && !isConflicted(sourcePage) && !isConflicted(target.page)
+    && owner() && doc.byId[id]?.page === target.page
+    && existingBlockId(doc.byId[id].raw, fmt) === stableId;
 }
