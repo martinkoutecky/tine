@@ -259,7 +259,7 @@ pub(crate) fn save_workspaces(
     data: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<crate::settings::WorkspaceSaveOutcome, String> {
     crate::settings::save_workspaces(data, app, state)
 }
 

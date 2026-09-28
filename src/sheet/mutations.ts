@@ -1,5 +1,5 @@
 import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
-import { copyRich } from "../clipboard";
+import { clipboardWriteRevision, copyRich } from "../clipboard";
 import { captureBinding, stillBound } from "../binding";
 import { isSheetCellHidden, joinProps, splitProps } from "../editor/properties";
 import { parseOutline, type OutlineNode } from "../editor/outline";
@@ -421,11 +421,18 @@ function sheetCellIds(sel: SheetMutationSelection): (string | null)[] {
   return ids;
 }
 
+/** Copy the normalized rectangle as text/HTML (TSV/table for a range, holes
+ * empty). After a successful same-graph write, cache its subtree outline for
+ * structural paste. Cells stay unchanged. Preparation may throw synchronously;
+ * clipboard failure rejects without updating the cache. Cost grows with area
+ * and descendant blocks, plus clipboard latency. */
 export function copySheetSelection(sel: SheetMutationSelection): Promise<void> {
   const binding = captureBinding();
   const { text, html } = sheetSelectionText(sel);
   const copy = { fingerprint: text, outlineMd: sheetSelectionOutlineMarkdown(sel) };
-  return copyRich(text, html).then(() => { if (stillBound(binding)) lastSheetCopy = copy; });
+  const write = copyRich(text, html);
+  const ownership = clipboardWriteRevision();
+  return write.then(() => { if (stillBound(binding) && clipboardWriteRevision() === ownership) lastSheetCopy = copy; });
 }
 
 export function clearSheetSelection(sel: SheetMutationSelection): boolean {
@@ -441,13 +448,22 @@ export function clearSheetSelection(sel: SheetMutationSelection): boolean {
   }) ?? false;
 }
 
+/** Copy, then clear visible cell text in one undo unit only while graph,
+ * selected IDs, subtree outline, grid and clipboard write token still match.
+ * Cells, children and hidden properties stay; selection coordinates do not move.
+ * Changed source or read-only page can silently leave a copy. Write/clear errors
+ * toast and resolve; preparation before the try may reject. Cost grows with
+ * selected area and descendants, plus clipboard I/O and document mutation. */
 export async function cutSheetSelection(sel: SheetMutationSelection): Promise<void> {
   const binding = captureBinding();
   const ids = sheetCellIds(sel);
   const before = sheetSelectionOutlineMarkdown(sel);
   try {
-    await copySheetSelection(sel);
+    const copy = copySheetSelection(sel);
+    const ownership = clipboardWriteRevision();
+    await copy;
     if (stillBound(binding)
+      && clipboardWriteRevision() === ownership
       && JSON.stringify(sheetCellIds(sel)) === JSON.stringify(ids)
       && sheetSelectionOutlineMarkdown(sel) === before
       && gridRows(sel.gridId)) clearSheetSelection(sel);

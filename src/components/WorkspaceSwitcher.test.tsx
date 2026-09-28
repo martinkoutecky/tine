@@ -27,7 +27,7 @@ beforeEach(async () => {
     activeId: "default",
     workspaces: [{ id: "default", name: "Alpha", blob: buildPersistedSession() }],
   }));
-  vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+  vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
   vi.spyOn(backend(), "saveSession").mockResolvedValue();
   await initializeWorkspaces();
   await createWorkspace("Beta");

@@ -46,7 +46,12 @@ export async function resolveMediaEditorCommand(ed: MediaEditor): Promise<string
   }
 }
 
-/** Probe on explicit Autodetect or first launch; a newer manual edit wins. */
+/** Run one native probe for ed.id; callers choose when. If this key changes
+ * during the probe, return its current command with applied:false. Otherwise
+ * return the trimmed result with applied:true, even when empty. A nonempty
+ * result updates reactive state and starts an unawaited device-local settings
+ * write whose failure is swallowed. Probe failure rejects. O(1) backend calls
+ * plus native probe latency; applied does not promise persistence. */
 export async function detectMediaEditorCommand(ed: MediaEditor): Promise<{ command: string; applied: boolean }> {
   const revision = commandRevision.get(ed.settingKey) ?? 0;
   const found = (await backend().detectMediaEditor(ed.id)).trim();

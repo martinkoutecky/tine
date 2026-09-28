@@ -524,8 +524,9 @@ export interface Backend {
   saveSession(data: string): Promise<void>;
   /** Load the current graph's device-local named-workspace registry JSON. */
   loadWorkspaces(): Promise<string>;
-  /** Atomically persist the current graph's complete named-workspace registry. */
-  saveWorkspaces(data: string): Promise<void>;
+  /** Replace the registry atomically. A failed post-rename directory sync reports
+   * a visible, unsynced publication. */
+  saveWorkspaces(data: string): Promise<"durable" | "published-unsynced">;
   /** What the backend knows about the rendering path, for the CPU-rendering
    *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
    *  (WebGL renderer); this just supplies why/where context for the message. */
@@ -1099,7 +1100,7 @@ class TauriBackend implements Backend {
     return this.call<string>("load_workspaces");
   }
   saveWorkspaces(data: string) {
-    return this.call<void>("save_workspaces", { data });
+    return this.call<"durable" | "published-unsynced">("save_workspaces", { data });
   }
   gpuEnv() {
     return this.call<GpuEnv>("gpu_env");

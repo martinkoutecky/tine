@@ -1,5 +1,5 @@
 import { captureBinding, stillBound } from "./binding";
-import { cancelClipboardCutGrant, copyBlockOutline, peekClipboardPayload } from "./clipboard";
+import { cancelClipboardCutGrant, clipboardWriteRevision, copyBlockOutline, peekClipboardPayload } from "./clipboard";
 import { buildClipboardPayload, node as docNode } from "./document";
 
 function sourceSnapshot(ids: string[]): string {
@@ -19,7 +19,12 @@ function sourceSnapshot(ids: string[]): string {
   return JSON.stringify(blocks);
 }
 
-/** Copy first; remove only the same source while this Cut still owns the clipboard. */
+/** Write plain text and outline HTML, then remove only if the graph, currentText,
+ * selected subtrees, source-page generations and clipboard write token still match.
+ * The private payload may be absent for empty/invalid or oversized selections;
+ * ownership still applies. A mismatch silently leaves a copy. A failed write
+ * rejects before removal; callback failure rejects, possibly after the copy.
+ * O(selected descendants + raw/text bytes), plus native clipboard latency. */
 export async function cutBlocks(
   ids: string[],
   text: string,
@@ -31,13 +36,15 @@ export async function cutBlocks(
   const snapshot = sourceSnapshot(ids);
   const sourcePages = JSON.stringify(payload?.sourcePages);
   const write = copyBlockOutline("cut", text, payload);
+  const ownership = clipboardWriteRevision();
   const generation = peekClipboardPayload()?.generation;
   await write;
   const sameSource = stillBound(binding)
     && currentText() === text
     && sourceSnapshot(ids) === snapshot
     && JSON.stringify(buildClipboardPayload(ids)?.sourcePages) === sourcePages;
-  const stillOwned = generation === undefined || peekClipboardPayload()?.generation === generation;
+  const stillOwned = clipboardWriteRevision() === ownership
+    && (generation === undefined || peekClipboardPayload()?.generation === generation);
   if (sameSource && stillOwned) {
     remove();
     if (generation !== undefined && ids.some((id) => docNode(id))) cancelClipboardCutGrant(generation);

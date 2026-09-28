@@ -1,7 +1,11 @@
-/** Restore a graph snapshot from Settings. O(dirty pages + snapshot files).
- * A failed flush or native restore reports an error and leaves the current graph
- * usable; a successful restore reloads the graph. Callers need not coordinate
- * graph binding or transition state. */
+/** Confirm, flush dirty pages, then restore backup.stamp; when is display text.
+ * Native restore validates the snapshot, takes a safety snapshot, and may replace
+ * graph pages, asset sidecars and config. A native failure may leave changed files
+ * and recovery copies. A successful restore attempts a forced graph reload;
+ * refresh runs only after that reload succeeds. Refusal or stale binding returns
+ * silently; most errors toast and resolve, so resolution does not imply success.
+ * Busy and transition state are managed here. Cost includes dirty pages, live and
+ * snapshot file counts and bytes, and graph reload. */
 import { backend, type BackupInfo } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { flushAll } from "./document";

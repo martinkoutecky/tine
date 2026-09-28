@@ -28,6 +28,7 @@ import { parseDelimitedText } from "./tsv";
 import { setToasts, toasts } from "../toasts";
 import { observeMatrixDimensions } from "./matrix";
 import { backend } from "../backend";
+import { writeClipboardText } from "../clipboard";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -106,6 +107,17 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("sheet structural mutations", () => {
+  it("keeps a cell when another copy takes the clipboard during Cut", async () => {
+    const gridId = loadGrid();
+    let finish!: () => void;
+    vi.spyOn(backend(), "writeRich").mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    vi.spyOn(backend(), "writeText").mockResolvedValue();
+    const pending = cutSheetSelection({ kind: "cell", gridId, row: 0, col: 0 });
+    await writeClipboardText("other copy");
+    finish();
+    await pending;
+    expect(rowCells(rows(gridId)[0])[0]).toBe("A");
+  });
   it("inserts an empty row and one undo fully reverts it", () => {
     const gridId = loadGrid();
     const inserted = insertRow(gridId, 1);

@@ -150,16 +150,17 @@ export function PageView(): JSX.Element {
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
   const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
-  const journalOwner = (route = currentRoute(), epoch = graphEpoch(), tabId = router.activeId()): JournalsFeedOwner => ({
+  const journalOwner = (route = currentRoute(), epoch = graphEpoch(), tabId = router.activeId(), revision = router.routeIntentRevision()): JournalsFeedOwner => ({
     graphEpoch: epoch,
-    isLive: () => surfaceAlive && router.activeId() === tabId && sameRoute(currentRoute(), route),
+    isLive: () => surfaceAlive && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), route),
   });
   createEffect(() => {
     const r = currentRoute();
     const epoch = graphEpoch(); // reload when the open graph changes
     const tabId = router.activeId();
+    const revision = router.routeIntentRevision();
     const owned = () => surfaceAlive && epoch === graphEpoch()
-      && router.activeId() === tabId && sameRoute(currentRoute(), r);
+      && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), r);
     setReady(false);
     setLoadError(null);
     // Surface keys are STATIC per pane (matching PaneLeaf's frozen provider
@@ -184,7 +185,7 @@ export function PageView(): JSX.Element {
           // restartJournalFeed synchronously reads the working set safety gate.
           // Keep those reads out of this route/epoch loader's dependency set:
           // loadFeed replaces doc.feed, and subscribing here would self-reload.
-          await untrack(() => restartJournalFeed(journalOwner(r, epoch, tabId)));
+          await untrack(() => restartJournalFeed(journalOwner(r, epoch, tabId, revision)));
           if (!owned()) return;
         } else {
           if (isGuidePageName(r.name)) {

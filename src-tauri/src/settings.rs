@@ -422,7 +422,19 @@ fn validate_workspaces_json(data: &str) -> Result<(), String> {
 
 static WORKSPACES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn atomic_write_workspaces(path: &std::path::Path, data: &str) -> Result<(), String> {
+/// Publication is visible after rename even when the following directory sync fails.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum WorkspaceSaveOutcome {
+    Durable,
+    PublishedUnsynced,
+}
+
+fn atomic_write_workspaces_with_sync(
+    path: &std::path::Path,
+    data: &str,
+    sync: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
+) -> Result<WorkspaceSaveOutcome, String> {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -443,13 +455,28 @@ fn atomic_write_workspaces(path: &std::path::Path, data: &str) -> Result<(), Str
         file.sync_all()?;
         drop(file);
         std::fs::rename(&tmp, path)?;
-        tine_store::directory_durability::sync_directory_entry(parent)?;
         Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
-    result.map_err(|e| e.to_string())
+    result.map_err(|e| e.to_string())?;
+    Ok(if sync(parent).is_ok() {
+        WorkspaceSaveOutcome::Durable
+    } else {
+        WorkspaceSaveOutcome::PublishedUnsynced
+    })
+}
+
+fn atomic_write_workspaces(
+    path: &std::path::Path,
+    data: &str,
+) -> Result<WorkspaceSaveOutcome, String> {
+    atomic_write_workspaces_with_sync(
+        path,
+        data,
+        tine_store::directory_durability::sync_directory_entry,
+    )
 }
 
 fn load_workspaces_at(path: &std::path::Path, session: &std::path::Path) -> Result<String, String> {
@@ -471,7 +498,7 @@ fn load_workspaces_at(path: &std::path::Path, session: &std::path::Path) -> Resu
     }
 }
 
-fn save_workspaces_at(path: &std::path::Path, data: &str) -> Result<(), String> {
+fn save_workspaces_at(path: &std::path::Path, data: &str) -> Result<WorkspaceSaveOutcome, String> {
     validate_workspaces_json(data)?;
     let _guard = WORKSPACES_LOCK
         .lock()
@@ -493,7 +520,7 @@ pub(crate) fn save_workspaces(
     data: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<WorkspaceSaveOutcome, String> {
     let slot = slot_for_context(&state)?;
     let path = workspaces_path(&app, &slot.root_key).ok_or("no app-data dir")?;
     save_workspaces_at(&path, &data)
@@ -549,6 +576,26 @@ pub(crate) fn save_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_sync_failure_after_rename_reports_publication_and_allows_next_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workspaces.json");
+        let first =
+            r#"{"version":1,"activeId":"a","workspaces":[{"id":"a","name":"First","blob":{}}]}"#;
+        let outcome = atomic_write_workspaces_with_sync(&path, first, |_| {
+            Err(std::io::Error::other("injected directory sync I/O failure"))
+        })
+        .unwrap();
+        assert_eq!(outcome, WorkspaceSaveOutcome::PublishedUnsynced);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
+        let second = r#"{"version":1,"activeId":"a","workspaces":[{"id":"a","name":"First","blob":{}},{"id":"b","name":"Second","blob":{}}]}"#;
+        assert_eq!(
+            save_workspaces_at(&path, second).unwrap(),
+            WorkspaceSaveOutcome::Durable
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), second);
+    }
 
     #[test]
     fn known_graphs_are_deduplicated_mru_and_removable() {

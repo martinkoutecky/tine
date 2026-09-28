@@ -58,6 +58,22 @@ it("does not close a tab after its confirmation outlives the graph binding", asy
   vi.restoreAllMocks();
 });
 
+it("keeps a tab opened while pinned close confirmation is pending", async () => {
+  openInNewTab({ kind: "page", name: "Pinned", pageKind: "page" }, true);
+  const closingId = activeId();
+  togglePin(closingId);
+  let finish!: (confirmed: boolean) => void;
+  vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pending = closeTab(closingId);
+  openInNewTab({ kind: "page", name: "New", pageKind: "page" }, true);
+  const newId = activeId();
+  finish(true);
+  await pending;
+  expect(tabs().some((tab) => tab.id === newId)).toBe(true);
+  expect(tabs().some((tab) => tab.id === closingId)).toBe(false);
+  vi.restoreAllMocks();
+});
+
 describe("independent empty query workspaces (GH #172)", () => {
   it("keeps same-timestamp empty query routes identity-distinct through edits, presentation, and tab history", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_725_000_000_000);

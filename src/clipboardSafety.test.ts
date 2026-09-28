@@ -25,3 +25,15 @@ it("all Cut entry points use the guarded copy-before-delete path", () => {
     "src/sheet/selection.ts:cutSheetSelection",
   ].sort());
 });
+
+it("all Cut writers keep a token even without a private payload", () => {
+  for (const path of ["src/cut.ts", "src/sheet/mutations.ts"]) {
+    const source = readFileSync(join(process.cwd(), path), "utf8");
+    expect(source, `I-2: ${path} must check clipboardWriteRevision before deletion; src/cut.ts::cutBlocks is the exemplar`).toMatch(/clipboardWriteRevision\(\) === ownership/);
+  }
+  const direct = productionFiles(join(process.cwd(), "src"))
+    .filter((path) => !/\/(?:clipboard|backend|mock)\.ts$/.test(path))
+    .flatMap((path) => [...readFileSync(path, "utf8").matchAll(/backend\(\)\.(?:writeText|writeRich|copyImageToClipboard)\s*\(/g)]
+      .map(() => relative(process.cwd(), path)));
+  expect(direct, "I-2: clipboard replacements must pass through src/clipboard.ts::writeClipboardRich so every Cut token is invalidated").toEqual([]);
+});

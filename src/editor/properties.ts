@@ -187,7 +187,10 @@ function orgDrawerKey(line: string): string | null {
 
 type LineClass = "v" | "h" | "d"; // visible | hidden-payload | dropped(org wrapper)
 
-/** A block drawer belongs immediately after its title and contiguous planning lines. */
+/** Return inclusive [start, end] for a complete :PROPERTIES: drawer at line 0
+ * or after the title and contiguous SCHEDULED:/DEADLINE: lines. A blank/other
+ * line breaks placement; a missing :END: returns null. Reads at most lines.length
+ * lines without mutating them. */
 export function orgBlockDrawerRange(lines: string[]): [number, number] | null {
   if (lines.length === 0) return null;
   let start = lines[0].trim().toUpperCase() === ":PROPERTIES:" ? 0 : 1;

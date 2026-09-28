@@ -83,7 +83,10 @@ export interface AdoptedTab {
 
 export interface PaneRouter {
   paneId: string;
-  /** Advances for user route/tab changes, not page-target rewrites or removals. O(1). */
+  /** O(1) read of this pane's session-local foreground navigation revision.
+   * Foreground routes, history, tab activation and closure advance it. Background
+   * tab creation, page-target rewrites/removals, route replacement, query edits
+   * and session reset do not. It is neither persisted nor shared across windows. */
   routeIntentRevision(): number;
   tabs: Accessor<Tab[]>;
   activeId: Accessor<string>;
@@ -724,7 +727,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   async function closeTab(id: string) {
     const binding = captureBinding();
-    const list = tabs();
+    let list = tabs();
     if (list.length === 1) {
       if (route().kind !== "journals" && lastTabCloseHandler(paneId)) return;
       return; // feed pane keeps its last tab
@@ -737,6 +740,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // tabs skip the await and close synchronously (no behaviour change there).
     if (t?.pinned && !(await backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`))) return;
     if (!stillBound(binding)) return;
+    list = tabs();
+    if (list.length === 1 || !list.some((current) => current.id === id && current === t)) return;
     intentRevision++;
     // Save the current scroll against the (about-to-close) active tab's route, so a
     // later Ctrl+Shift+T reopen lands back where it was. The route object survives
