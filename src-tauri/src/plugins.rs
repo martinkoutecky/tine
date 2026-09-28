@@ -288,6 +288,36 @@ fn unique_install_dir(root: &Path, id: &str, version: &str) -> Result<PathBuf, S
     Err("could not allocate a private plugin install directory".to_string())
 }
 
+/// Reads at most `max` bytes of `path`; a larger file is `Ok(None)` without
+/// reading past the limit (I-22: size check before read).
+fn read_bounded(path: &Path, max: usize) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(max as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    Ok((bytes.len() <= max).then_some(bytes))
+}
+
+fn read_manifest_bounded(path: &Path) -> Option<String> {
+    String::from_utf8(read_bounded(path, MAX_MANIFEST_BYTES).ok()??).ok()
+}
+
+/// Decodes a sideloaded plugin entry, refusing an over-limit payload from its
+/// encoded length before any decode allocation (I-22).
+fn decode_plugin_entry(wasm_b64: &str) -> Result<Vec<u8>, String> {
+    if wasm_b64.len() > MAX_WASM_BYTES.div_ceil(3) * 4 {
+        return Err("plugin entry is too large".to_string());
+    }
+    let wasm = base64::engine::general_purpose::STANDARD
+        .decode(wasm_b64)
+        .map_err(|_| "plugin entry is not valid base64")?;
+    if wasm.len() > MAX_WASM_BYTES {
+        return Err("plugin entry is too large".to_string());
+    }
+    Ok(wasm)
+}
+
 fn manifest_identity(manifest_json: &str) -> Result<(String, String), String> {
     if manifest_json.len() > MAX_MANIFEST_BYTES {
         return Err("plugin manifest is too large".to_string());
@@ -350,8 +380,8 @@ fn validate_uninstall_target(
     if target_meta.file_type().is_symlink() || !target_meta.is_dir() {
         return Err("installed plugin package is unsafe".to_string());
     }
-    let manifest_json = std::fs::read_to_string(target.join("manifest.json"))
-        .map_err(|_| "installed plugin manifest is unreadable".to_string())?;
+    let manifest_json = read_manifest_bounded(&target.join("manifest.json"))
+        .ok_or_else(|| "installed plugin manifest is unreadable".to_string())?;
     if manifest_identity(&manifest_json).ok().as_ref()
         != Some(&(id.to_string(), version.to_string()))
     {
@@ -426,12 +456,7 @@ pub(crate) fn install_plugin(
     app: tauri::AppHandle,
 ) -> Result<InstalledPlugin, String> {
     let (id, version) = manifest_identity(&manifest_json)?;
-    let wasm = base64::engine::general_purpose::STANDARD
-        .decode(wasm_b64)
-        .map_err(|_| "plugin entry is not valid base64")?;
-    if wasm.len() > MAX_WASM_BYTES {
-        return Err("plugin entry is too large".to_string());
-    }
+    let wasm = decode_plugin_entry(&wasm_b64)?;
     if !wasm.starts_with(b"\0asm\x01\0\0\0") {
         return Err("plugin entry is not WebAssembly".to_string());
     }
@@ -439,10 +464,12 @@ pub(crate) fn install_plugin(
     let root = plugins_dir(&app)?;
     let target = package_dir(&root, &id, &version)?;
     if target.exists() {
-        let existing = std::fs::read(target.join("plugin.wasm")).map_err(|e| e.to_string())?;
-        let existing_manifest =
-            std::fs::read_to_string(target.join("manifest.json")).map_err(|e| e.to_string())?;
-        if sha256(&existing) != digest || existing_manifest != manifest_json {
+        let existing =
+            read_bounded(&target.join("plugin.wasm"), MAX_WASM_BYTES).map_err(|e| e.to_string())?;
+        let existing_manifest = read_manifest_bounded(&target.join("manifest.json"));
+        if existing.map(|bytes| sha256(&bytes)) != Some(digest.clone())
+            || existing_manifest.as_deref() != Some(manifest_json.as_str())
+        {
             return Err(
                 "that immutable plugin version is already installed with different bytes"
                     .to_string(),
@@ -509,7 +536,13 @@ pub(crate) fn list_installed_plugins(app: tauri::AppHandle) -> Vec<InstalledPlug
     let Ok(root) = plugins_dir(&app) else {
         return Vec::new();
     };
-    let states = plugin_states(&app);
+    list_installed_plugins_at(&root, &plugin_states(&app))
+}
+
+fn list_installed_plugins_at(
+    root: &Path,
+    states: &std::collections::HashMap<String, PluginState>,
+) -> Vec<InstalledPlugin> {
     let mut installed = Vec::new();
     let Ok(ids) = std::fs::read_dir(root) else {
         return installed;
@@ -531,8 +564,8 @@ pub(crate) fn list_installed_plugins(app: tauri::AppHandle) -> Vec<InstalledPlug
             if !safe_version(&version) {
                 continue;
             }
-            let Ok(manifest_json) =
-                std::fs::read_to_string(version_entry.path().join("manifest.json"))
+            let Some(manifest_json) =
+                read_manifest_bounded(&version_entry.path().join("manifest.json"))
             else {
                 continue;
             };
@@ -541,7 +574,9 @@ pub(crate) fn list_installed_plugins(app: tauri::AppHandle) -> Vec<InstalledPlug
             {
                 continue;
             }
-            let Ok(wasm) = std::fs::read(version_entry.path().join("plugin.wasm")) else {
+            let Ok(Some(wasm)) =
+                read_bounded(&version_entry.path().join("plugin.wasm"), MAX_WASM_BYTES)
+            else {
                 continue;
             };
             let state = states.get(&id);
@@ -567,8 +602,10 @@ pub(crate) fn read_plugin_entry(
     app: tauri::AppHandle,
 ) -> Result<tauri::ipc::Response, String> {
     let path = package_dir(&plugins_dir(&app)?, &id, &version)?.join("plugin.wasm");
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    if bytes.len() > MAX_WASM_BYTES || !bytes.starts_with(b"\0asm\x01\0\0\0") {
+    let bytes = read_bounded(&path, MAX_WASM_BYTES)
+        .map_err(|e| e.to_string())?
+        .ok_or("installed plugin entry is invalid")?;
+    if !bytes.starts_with(b"\0asm\x01\0\0\0") {
         return Err("installed plugin entry is invalid".to_string());
     }
     Ok(tauri::ipc::Response::new(bytes))
@@ -1031,5 +1068,55 @@ mod tests {
 
         assert!(uninstall_package(&root, "dev.tine.example", "0.1.0").is_err());
         assert!(outside.join("dev.tine.example/0.1.0").exists());
+    }
+
+    #[test]
+    fn oversized_plugin_entry_is_refused_before_decoding() {
+        // og 15b K09 (I-22): the encoded length bounds the decode. A payload
+        // past the limit whose bytes are not even base64 must be refused as
+        // too large, proving no decode ran; one at the limit still decodes.
+        let limit_b64 = MAX_WASM_BYTES.div_ceil(3) * 4;
+        assert_eq!(
+            decode_plugin_entry(&"!".repeat(limit_b64 + 4)).unwrap_err(),
+            "plugin entry is too large"
+        );
+        let at_limit = base64::engine::general_purpose::STANDARD.encode(vec![0u8; MAX_WASM_BYTES]);
+        assert_eq!(
+            decode_plugin_entry(&at_limit).unwrap().len(),
+            MAX_WASM_BYTES
+        );
+    }
+
+    #[test]
+    fn installed_package_reads_stop_at_the_size_limit() {
+        // og 15b K09 (I-22): listing and entry reads never read an installed
+        // file past its limit; an oversized plugin.wasm is not listed at all
+        // (it was listed, and hashed whole, before), a package at the limit is.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let big = write_test_package(root, "dev.tine.big", "0.1.0");
+        let mut wasm = b"\0asm\x01\0\0\0".to_vec();
+        wasm.resize(MAX_WASM_BYTES + 1, 0);
+        std::fs::write(big.join("plugin.wasm"), &wasm).unwrap();
+        let ok = write_test_package(root, "dev.tine.ok", "0.1.0");
+        wasm.truncate(MAX_WASM_BYTES);
+        std::fs::write(ok.join("plugin.wasm"), &wasm).unwrap();
+
+        let listed = list_installed_plugins_at(root, &Default::default());
+        let ids: Vec<_> = listed.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["dev.tine.ok"]);
+
+        assert_eq!(
+            read_bounded(&big.join("plugin.wasm"), MAX_WASM_BYTES).unwrap(),
+            None
+        );
+        assert_eq!(
+            read_bounded(&ok.join("plugin.wasm"), MAX_WASM_BYTES)
+                .unwrap()
+                .map(|b| b.len()),
+            Some(MAX_WASM_BYTES)
+        );
+        std::fs::write(ok.join("manifest.json"), "x".repeat(MAX_MANIFEST_BYTES + 1)).unwrap();
+        assert_eq!(read_manifest_bounded(&ok.join("manifest.json")), None);
     }
 }
