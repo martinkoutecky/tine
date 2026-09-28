@@ -12,9 +12,11 @@
 //!
 //! ## Corruption safety
 //! A `.org` page is only ever rewritten by Tine when it is **round-trip safe**:
-//! `serialize_org(parse_org(content)) == content` byte-for-byte (see
-//! [`org_editable`]). Files that fail that check are loaded **read-only** — Tine
-//! never writes org it cannot reproduce exactly. Headline detection is
+//! with lone `\r` line breaks read as `\n` ([`lone_cr_to_lf`]),
+//! `serialize_org_with(parse_org(content), trailing) == that text` byte-for-byte
+//! (see [`org_editable`]); the store writer then restores each lone `\r`
+//! (`line_endings::restore_org`). Files that fail that check are loaded
+//! **read-only** — Tine never writes org it cannot reproduce exactly. Headline detection is
 //! literal-block aware: a `*`-line inside a `#+BEGIN_…`/`#+END_…` block is
 //! content, not a headline (matching org — and, notably, *more* correct than
 //! orgize 0.9, which splits the block at such a line). The self-check is the
@@ -86,10 +88,33 @@ fn trailing_newlines(s: &str) -> usize {
     s.bytes().rev().take_while(|&b| b == b'\n').count()
 }
 
+/// Rewrite each lone `\r` (one not followed by `\n`) to `\n`; a CRLF is left
+/// alone. A lone `\r` ends an Org line (mldoc `eol_chars`; K01a). Borrows when
+/// the text has no `\r` at all; otherwise it copies the text, O(n) (CRLF-only
+/// text is copied too). Pure, infallible. The store's writer puts lone `\r`s
+/// back (`tine-store` `model/line_endings.rs::restore_org`).
+pub fn lone_cr_to_lf(content: &str) -> std::borrow::Cow<'_, str> {
+    if !content.contains('\r') {
+        return content.into();
+    }
+    content
+        .split("\r\n")
+        .map(|part| part.replace('\r', "\n"))
+        .collect::<Vec<_>>()
+        .join("\r\n")
+        .into()
+}
+
 /// Parse org `content` into a [`Document`]: headlines become blocks (nesting =
-/// headline level), the pre-headline region becomes `pre_block`, and each
-/// block's body is kept verbatim in `raw` (leading stars stripped).
+/// headline level; a skipped level nests under the nearest shallower block),
+/// the pre-headline region becomes `pre_block`, and each block's body is kept
+/// verbatim in `raw` (leading stars and one following space stripped). A `*`
+/// line inside a `#+BEGIN_…`/`#+END_…` block is content. A lone `\r` ends a
+/// line and becomes `\n` ([`lone_cr_to_lf`]); a CRLF's `\r` stays in the body
+/// text and round-trips. Does not check nesting depth (the store's reader
+/// does). Pure, infallible, O(n).
 pub fn parse_org(content: &str) -> Document {
+    let content = &*lone_cr_to_lf(content);
     let body = content.trim_end_matches('\n');
     if body.is_empty() {
         return Document::default();
@@ -206,9 +231,16 @@ fn emit_org(block: &DocBlock, level: usize, out: &mut Vec<String>) {
 
 /// Serialize a [`Document`] to org text, reproducing `existing`'s
 /// trailing-newline run (default one newline for a new file). The org analogue
-/// of `doc::serialize_with(&doc, &SerializeOpts::detect(existing))`.
+/// of `doc::serialize_with(&doc, &SerializeOpts::detect(existing))`. Lone `\r`
+/// terminators come out as `\n`; the store writer (`line_endings::restore_org`)
+/// puts them back. A CRLF's `\r` is in the block text and is reproduced.
 pub fn serialize_org_detect(doc: &Document, existing: Option<&str>) -> String {
-    serialize_org_with(doc, existing.map(trailing_newlines).unwrap_or(1))
+    serialize_org_with(
+        doc,
+        existing
+            .map(|e| trailing_newlines(&lone_cr_to_lf(e)))
+            .unwrap_or(1),
+    )
 }
 
 /// Whether `serialize_org(parse_org(content))` reproduces `content`
@@ -218,10 +250,11 @@ pub fn org_round_trips(content: &str) -> bool {
 }
 
 /// Whether Tine may safely **edit and write** this org file — i.e. it
-/// round-trips byte-for-byte through [`parse_org`]/[`serialize_org_with`].
-/// Otherwise the page is loaded read-only and never written.
+/// round-trips byte-for-byte through [`parse_org`]/[`serialize_org_with`] once
+/// lone `\r` line breaks are read as `\n` (the store's writer puts each one
+/// back). Otherwise the page is loaded read-only and never written.
 pub fn org_editable(content: &str) -> bool {
-    org_round_trips(content)
+    org_round_trips(&lone_cr_to_lf(content))
 }
 
 #[cfg(test)]
@@ -273,6 +306,22 @@ mod tests {
             ("multi-space-after-stars", "*  extra space title\n"),
             ("no-headlines", "#+TITLE: Just directives\n#+FILETAGS: :x:\n"),
         ]
+    }
+
+    #[test]
+    fn lone_cr_org_parses_its_lines_and_is_editable() {
+        let lone = "* a\r* b\r** c\r";
+        assert_eq!(parse_org(lone), parse_org(&lone.replace('\r', "\n")));
+        assert!(org_editable(lone), "lone CR is a line break, not content");
+        assert!(org_editable("* a\r\n* b\r** c\r\n"), "mixed CRLF/CR");
+        assert!(
+            !org_editable("* a\r*** c\r"),
+            "a skipped level still is not"
+        );
+        assert_eq!(
+            serialize_org_detect(&parse_org(lone), Some(lone)),
+            lone.replace('\r', "\n")
+        );
     }
 
     #[test]

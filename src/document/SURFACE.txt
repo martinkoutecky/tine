@@ -92,6 +92,7 @@ pageVisibleOrder
 pasteClipboardPayload
 persistBlockRefTarget
 persistentBlockRef
+pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
 prevVisible
 promotePagePreamble
 queryWorkspacePage

@@ -3,6 +3,7 @@ import { doc, setDoc } from "../model";
 import { createSignal, createRoot, createMemo } from "solid-js";
 import { endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
+import { clearOnBindingInvalidated } from "../../binding";
 import { blockWritable, writeCollapsed } from "./properties";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
@@ -14,6 +15,9 @@ import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
 
 installClearOutlineSelection(() => clearSelection());
+// I-20: selected ids name blocks of the bound graph; a same-id block in the next
+// graph must not inherit the selection (Delete would remove it).
+clearOnBindingInvalidated(() => clearSelection());
 
 let activeSelectionScope: OutlineScope | null = null;
 

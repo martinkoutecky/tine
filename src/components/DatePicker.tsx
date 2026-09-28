@@ -4,6 +4,7 @@ import { readSchedule, setSchedule } from "../document";
 import { fieldLabel, readField, writeField, type FieldId } from "../sheet/fields";
 import { parseIsoDateLike } from "../sheet/typed";
 import { registerTransientLayer } from "../transientLayers";
+import { refuseStaleWrite } from "../binding";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -46,6 +47,10 @@ function propDateSelection(bid: string, field: FieldId): { y: number; m: number;
 
 function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: number }): JSX.Element {
   let root: HTMLDivElement | undefined;
+  // I-20: writes go to the graph the picker was opened in; a switch retires it.
+  // (`datePicker()` reads null once its binding is stale; Show is not keyed, so
+  // a reopen for another block keeps this Picker with new props.)
+  const bound = () => datePicker() !== null || (refuseStaleWrite("The date"), false);
   createEffect(() => {
     const unregister = registerTransientLayer({
       id: "date-picker",
@@ -99,6 +104,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
     setView({ y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 });
   };
   const writePickedDate = (y: number, m: number, d: number) => {
+    if (!bound()) return;
     const picked = fieldDate(y, m, d);
     if (isScheduleTarget(props.which)) {
       setSchedule(props.bid, props.which, { y, m, d }, repeater(), time());
@@ -235,6 +241,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
             <button
               class="dp-btn dp-clear"
               onClick={() => {
+                if (!bound()) return closeDatePicker();
                 if (isScheduleTarget(props.which)) writeField(props.bid, props.which, "");
                 else writeField(props.bid, props.which.field, "");
                 closeDatePicker();

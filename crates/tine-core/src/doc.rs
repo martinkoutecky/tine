@@ -861,18 +861,29 @@ fn promote_preamble_collapsed_heading(pre_block: &mut Option<String>, roots: &mu
     *pre_block = (pre_end > 0).then(|| lines[..pre_end].join("\n"));
 }
 
-pub fn parse(content: &str) -> Document {
-    // Normalize CRLF / lone CR to LF so the in-memory model never carries a stray
-    // `\r` (which would otherwise pollute property / `id::` values and break
-    // matching). The file's original line endings are reproduced at the write
-    // boundary (model.rs `write_page`), not here — the model is LF-canonical.
-    let normalized;
-    let content = if content.contains('\r') {
-        normalized = content.replace('\r', "");
-        normalized.as_str()
+/// Rewrite every line terminator to `\n`. Page text ends a line at `\r\n`,
+/// `\n` or a lone `\r`, as mldoc (`eol_chars = ['\r'; '\n']`) and lsdoc's lexer
+/// do. Borrows when the text has no `\r`; otherwise two O(n) copies (CRLF
+/// first, then lone CR, so `\r\r\n` becomes `\n\n`).
+pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
+    if content.contains('\r') {
+        std::borrow::Cow::Owned(content.replace("\r\n", "\n").replace('\r', "\n"))
     } else {
-        content
-    };
+        std::borrow::Cow::Borrowed(content)
+    }
+}
+
+/// Parse Markdown page text into a [`Document`] (pre-block + block forest by
+/// bullet column). Ends a line at `\r\n`, `\n` or a lone `\r`; the model is
+/// LF-canonical, so the file's terminators are not kept here and must be
+/// restored at the write boundary (tine-store `model/line_endings.rs`). Assigns
+/// no block uuids (empty). Does not enforce the nesting ceiling — callers
+/// validate first (`parse_input_depth_within_limit`). Pure, infallible; O(n)
+/// except that each unclosed `#+BEGIN_` line scans ahead to its block's end.
+pub fn parse(content: &str) -> Document {
+    // A stray `\r` in the model would pollute property / `id::` values.
+    let normalized = normalize_line_endings(content);
+    let content: &str = &normalized;
     let body = content.strip_suffix('\n').unwrap_or(content);
     let lines: Vec<&str> = if body.is_empty() {
         Vec::new()
@@ -1038,23 +1049,23 @@ impl Default for SerializeOpts {
 }
 
 impl SerializeOpts {
-    /// Infer the formatting of an existing on-disk file so a save reproduces it.
-    /// `None` (new file) falls back to the default.
+    /// Infer the three formatting knobs (trailing newlines, blank after the
+    /// preamble, indent unit) of an existing file, read in its LF form. Line
+    /// terminators are not detected here; the store writer restores them.
+    /// `None` (new file) gives the default.
     pub fn detect(existing: Option<&str>) -> SerializeOpts {
         match existing {
             None => SerializeOpts::default(),
-            Some(s) => SerializeOpts {
-                // Count trailing `\n` within the trailing run of newline bytes, so
-                // a CRLF file's `\r` doesn't truncate the count (`…\r\n\r\n` ⇒ 2).
-                trailing_newlines: s
-                    .bytes()
-                    .rev()
-                    .take_while(|b| *b == b'\n' || *b == b'\r')
-                    .filter(|b| *b == b'\n')
-                    .count(),
-                blank_after_props: blank_after_props(s),
-                indent: detect_indent(s),
-            },
+            Some(s) => {
+                // Detect on the LF form, so CRLF and lone-CR files count their
+                // trailing line breaks and lines like LF files (`…\r\n\r\n` ⇒ 2).
+                let s = normalize_line_endings(s);
+                SerializeOpts {
+                    trailing_newlines: s.bytes().rev().take_while(|b| *b == b'\n').count(),
+                    blank_after_props: blank_after_props(&s),
+                    indent: detect_indent(&s),
+                }
+            }
         }
     }
 }
@@ -1210,6 +1221,23 @@ mod property_fence_tests {
         );
         assert_eq!(SerializeOpts::detect(Some("- a\r\n")).trailing_newlines, 1);
         assert_eq!(SerializeOpts::detect(Some("- a\n\n")).trailing_newlines, 2);
+    }
+
+    #[test]
+    fn lone_cr_and_mixed_endings_parse_like_lf() {
+        // K01a (og 15a): mldoc and lsdoc end a line at a lone `\r` too.
+        let lf = "title:: x\n\n- a\n\t- b\n  cont\n- c\n\n";
+        for ending in ["\r", "\r\n"] {
+            let other = lf.replace('\n', ending);
+            assert_eq!(parse(&other), parse(lf), "{ending:?}");
+            let opts = SerializeOpts::detect(Some(&other));
+            let lf_opts = SerializeOpts::detect(Some(lf));
+            assert_eq!(opts.trailing_newlines, lf_opts.trailing_newlines);
+            assert_eq!(opts.blank_after_props, lf_opts.blank_after_props);
+            assert_eq!(opts.indent, lf_opts.indent);
+        }
+        let mixed = "title:: x\r\n\r- a\r\n\t- b\r  cont\n- c\r\n\r";
+        assert_eq!(parse(mixed), parse(lf));
     }
 }
 
@@ -1411,19 +1439,17 @@ mod org_container_outline_tests {
     }
 
     #[test]
-    fn lone_cr_org_container_decision_is_a_known_lsdoc_parity_gap() {
+    fn lone_cr_org_container_parses_like_its_lf_twin() {
+        // K01a (og 15a) closed the former lsdoc parity gap: a lone `\r` is a
+        // line break, so the container decision is the LF file's.
         let old_mac = "- #+BEGIN_QUOTE\r  - x\r  #+END_QUOTE";
+        let lf = old_mac.replace('\r', "\n");
         let doc = parse(old_mac);
+        assert_eq!(doc, parse(&lf));
         assert_eq!(
             serialize_with(&doc, &SerializeOpts::detect(Some(old_mac))),
-            "- #+BEGIN_QUOTE  - x  #+END_QUOTE"
+            serialize_with(&parse(&lf), &SerializeOpts::detect(Some(&lf)))
         );
-        assert_ne!(
-            serialize_with(&doc, &SerializeOpts::detect(Some(old_mac))),
-            old_mac
-        );
-        assert_eq!(doc.roots.len(), 1);
-        assert!(doc.roots[0].children.is_empty());
     }
 }
 

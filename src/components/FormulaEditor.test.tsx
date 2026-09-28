@@ -111,6 +111,34 @@ function openValueEditor(expr = '"todo"') {
 }
 
 describe("FormulaEditor", () => {
+  it("K14a/I-20: a graph switch closes the editor and never writes into the new graph", () => {
+    // Runtime ids derive from (graph-relative path, sibling path): today's journal's
+    // first block has the SAME id in every graph (crates/tine-core/src/projection.rs).
+    const sharedId = "journal-root-0";
+    const journal = (): FeedPage => ({ ...page([sharedId]), name: "Sep 28th, 2026", kind: "journal", title: "Sep 28th, 2026" });
+    const load = (raw: string) => setDoc({
+      byId: { [sharedId]: { ...node(sharedId, raw, null), page: "Sep 28th, 2026" } },
+      pages: [journal()], feed: ["Sep 28th, 2026"], loaded: true,
+    });
+    load("A table\ntine.view:: table");
+    const { root, dispose } = mount(() => <FormulaEditor />);
+    openFormulaEditor({ mode: "add", ownerId: sharedId, x: 10, y: 10, expr: "", formulas: [], fields: [] });
+    const name = root.querySelector(".formula-editor-input") as HTMLInputElement;
+    const textarea = root.querySelector(".formula-editor-textarea") as HTMLTextAreaElement;
+    name.value = "total";
+    input(name);
+    textarea.value = "1 + 1";
+    input(textarea);
+    // The switch as loadGraphPath performs it: resetStore, then graph B's pages load.
+    resetStore();
+    load("B private note");
+    const save = [...root.querySelectorAll(".formula-editor-btn")].find((b) => b.textContent?.trim() === "Save") as HTMLButtonElement | undefined;
+    save?.click();
+    expect(doc.byId[sharedId].raw, "no write lands in graph B").toBe("B private note");
+    expect(save, "the editor closes on the graph switch").toBeUndefined();
+    dispose();
+  });
+
   it("shows live parse errors and disables save", () => {
     loadEditorDoc();
     const { root, dispose } = mount(() => <FormulaEditor />);
