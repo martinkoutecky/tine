@@ -3,7 +3,7 @@
 //! runtime UUIDs are deterministic structural locators; persisted `id::`
 //! values remain separate external reference identities.
 
-mod one_block_layout;
+mod layout_retention;
 mod page_icons;
 mod page_identity;
 mod page_parse;
@@ -4435,6 +4435,12 @@ impl Graph {
         }
     }
 
+    /// Bytes a save writes for `page`. Markdown reuses every unchanged block's
+    /// lines (`layout_retention`), else re-serializes in the file's detected
+    /// style (no Syncthing churn); equal parses keep the disk bytes and revision
+    /// (A5); CRLF files stay CRLF (A5 ran first, so no double conversion). The
+    /// bytes re-parse to `page`, except a DTO that cannot round-trip (blocks
+    /// after an unterminated fence): it gets the whole-page serializer's meaning.
     fn prepare_page_content(
         &self,
         page: &PageDto,
@@ -4507,21 +4513,15 @@ impl Graph {
         let path = path.to_path_buf();
         let content = match Format::from_path(&path) {
             Format::Md => {
-                // Reproduce the existing file's layout to avoid Syncthing churn.
                 let opts = doc::SerializeOpts::detect(existing);
                 let mut content = existing
-                    .and_then(|source| one_block_layout::serialize(&doc, source, &opts))
+                    .and_then(|source| layout_retention::serialize(&doc, source, &opts))
                     .unwrap_or_else(|| doc::serialize_with(&doc, &opts));
-                // A5: when only unroundtrippable whitespace trivia differs,
-                // equal parses mean the disk bytes and revision stay authoritative.
                 if let Some(e) = existing {
                     if e != content && doc::parse(e) == doc::parse(&content) {
-                        content = e.to_string();
+                        content = e.to_string(); // A5
                     }
                 }
-                // CRLF preservation (shared with write_highlights). No-op saves
-                // already kept the existing bytes verbatim (A5 above), so this can't
-                // double-convert.
                 preserve_crlf(content, existing)
             }
             Format::Org => {
@@ -10837,10 +10837,26 @@ mod tests {
 
         // Give the winner the non-winner's current bytes. A name-keyed revision
         // map incorrectly treats that as already fresh and suppresses its reload.
+        //
+        // This step drives the reconcile directly, so stop the store's live
+        // file watcher first: otherwise its 200 ms-debounced reconcile can
+        // consume this external write before the call below (any stall of
+        // this thread longer than the debounce), leaving the direct call a
+        // correct `Reconciled { entry: None }` no-op and failing the assertion
+        // for a reason unrelated to the revision map. `stop` joins the watcher
+        // thread, so no reconcile is in flight past this line.
+        store.watch.stop();
         fs::write(&logical_winner.path, "- nested saved sentinel\n").unwrap();
         assert!(
             matches!(g.sync_file_internal(&logical_winner.path, None), SyncFileResult::Reconciled { entry: Some(entry), .. } if entry.path == logical_winner.path),
             "one duplicate's revision must not mark the other duplicate fresh"
+        );
+        assert!(
+            g.with_pages(|pages| pages
+                .iter()
+                .any(|(entry, doc)| entry.path == logical_winner.path
+                    && doc.roots[0].raw() == "nested saved sentinel")),
+            "the reconciled winner must serve its new bytes from its own cache slot"
         );
         let _ = fs::remove_dir_all(&dir);
     }

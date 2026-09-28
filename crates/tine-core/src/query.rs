@@ -1,11 +1,95 @@
-//! Pure query request limits and result data shared with graph clients.
+//! Pure query request limits and result data shared with graph clients, and
+//! the pure query language layer (master 0.6.983+ model, og lane Q1):
+//!
+//! - [`ir`] — the one query IR every dialect lowers to;
+//! - [`parse`] (re-exported here) — the ONE text → IR entry for every input
+//!   shape (`{{query}}` OG DSL, `{{tine-query}}` TQL, advanced datalog) and
+//!   the execution-time binding [`resolve_for_execution`];
+//! - [`print`] — IR → text for either dialect; [`macro_text`] — macro
+//!   argument scanning; [`wire_parse`] — the IPC parse helper;
+//! - [`atom`], [`registry`] — typed property atoms and the observed/declared
+//!   property registry built from caller-supplied rows;
+//! - [`view`], [`sort`], [`statistics`], [`path_refs`], [`text`] — pure
+//!   view, ordering, aggregate and reference helpers.
+//!
+//! Everything here is pure: no graph walk, no store, no SQL. Costs are
+//! O(source length) for parsing/printing and O(rows supplied) for the
+//! registry and statistics folds. Execution lives in `tine-store`.
 #![deny(missing_docs)]
 
 use crate::model::RefGroup;
 
+#[allow(missing_docs)]
+mod advanced_patterns;
+#[allow(missing_docs)]
+pub mod atom;
+#[cfg(test)]
+mod columns_resolution_tests;
+#[cfg(test)]
+mod conformance;
+#[cfg(test)]
+mod grouping_resolution_tests;
+#[allow(missing_docs)]
+pub mod ir;
+#[cfg(test)]
+mod ir_wire_tests;
+#[cfg(test)]
+mod macro_extents_tests;
+#[allow(missing_docs)]
+pub mod macro_text;
+#[allow(missing_docs)]
+pub mod og;
+#[allow(missing_docs)]
+mod parse;
+#[cfg(test)]
+mod parse_tests;
+#[allow(missing_docs)]
+pub mod path_refs;
+#[allow(missing_docs)]
+pub mod print;
+#[allow(missing_docs)]
+pub mod registry;
+#[allow(missing_docs)]
+pub mod sort;
+#[allow(missing_docs)]
+pub mod statistics;
+#[allow(missing_docs)]
+pub mod text;
+#[allow(missing_docs)]
+pub mod tql;
+#[allow(missing_docs)]
+pub mod view;
+#[allow(missing_docs)]
+pub mod wire_parse;
+
+pub use parse::*;
+
+/// Properties that are internal/metadata and are not offered as query
+/// filters or registry keys (mirrors the frontend's hidden-property set).
+const INTERNAL_PROPS: &[&str] = &[
+    "id",
+    "collapsed",
+    "hl-page",
+    "hl-color",
+    "hl-type",
+    "ls-type",
+    "background-color",
+    "logseq.order-list-type",
+    "template",
+    "template-including-parent",
+];
+
+/// The built-in half of the registry's internal-key exclusion (master §6.2
+/// K15): the registry excludes this set, the configured hidden properties and
+/// every `tine.*` key. O(1).
+pub fn internal_property_keys() -> &'static [&'static str] {
+    INTERNAL_PROPS
+}
+
 /// Maximum query source length accepted by evaluators, in UTF-8 bytes.
 pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
-const QUERY_NESTING_MAX: usize = 64;
+/// Maximum parenthesis depth either query parser accepts.
+pub(crate) const QUERY_NESTING_MAX: usize = 64;
 
 /// Reason a query source cannot enter an evaluator or cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,9 +158,16 @@ pub fn query_nesting_within_limit(source: &str) -> bool {
     true
 }
 
-/// Result of an advanced (datalog) query: matched groups + which clause heads
-/// ran vs were ignored, so the UI shows "ran X; ignored Y" rather than a blunt
-/// "unsupported". `supported` is false when no supported clause was recognized.
+/// Result of an advanced (datalog) query run over Tine's recognized clause
+/// subset, so the UI shows "ran X; ignored Y" rather than a blunt "unsupported".
+///
+/// `ran` lists the clause heads that were evaluated; `ignored` lists the ones
+/// that were not understood and were DROPPED from the predicate, so when
+/// `ignored` is non-empty `groups` answers a different query than the one
+/// written (usually a broader one) and must be presented as partial.
+/// `supported` is false, and `groups` empty, when no clause was recognized or
+/// when the source was refused before parsing (`ignored` then holds
+/// `"query-too-large"` or `"query-nesting-too-deep"`).
 #[deny(missing_docs)]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AdvancedResult {
@@ -132,7 +223,14 @@ pub struct QueryExportBatch {
     pub omitted_queries: usize,
 }
 
-/// Whether the source uses advanced datalog syntax.
+/// Coarse lexical test for datalog: true when the substring `:find` or `:where`
+/// occurs ANYWHERE in the source (a leading `[:find` included), even inside an
+/// OG string literal or a `[[page]]` ref. So an OG DSL query that merely
+/// mentions `:where` is classified as datalog: `parse_query_source` (the OG
+/// branch of `parse_query_text`) refuses it as "advanced", and
+/// [`query_nesting_within_limit`] treats `;` in it as a comment. This is not
+/// the §7.1 macro discriminator (`parse::advanced_form`, which skips strings
+/// and refs). No size check. O(source length).
 pub fn is_advanced(query_src: &str) -> bool {
     let s = query_src.trim_start();
     s.starts_with("[:find") || s.contains(":where") || s.contains(":find")
