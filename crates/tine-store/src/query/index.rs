@@ -26,6 +26,32 @@ use tine_core::query::registry::{build_registry, OwnerRow, OwnerType, PageMeta, 
 /// is built from scratch, which costs no more than patching that many pages.
 const SEED_MAX_CHANGED_PATHS: usize = 4096;
 
+/// Re-derived pages a generation carries as a delta over the shared base map
+/// before one compaction folds them in. Per edit, a patch copies the delta
+/// (at most this many entries), never the graph-sized base; the compaction's
+/// O(pages) copy recurs at most once per this many changed pages (I-25).
+const FACTS_DELTA_MAX: usize = 256;
+
+/// The path → facts map of one generation: a base shared (by `Arc`) with
+/// earlier generations plus this generation's bounded delta (`None` = the
+/// page is gone).
+#[derive(Clone, Default)]
+struct FactsMap {
+    base: Arc<HashMap<String, Arc<PageFacts>>>,
+    delta: HashMap<String, Option<Arc<PageFacts>>>,
+}
+
+impl FactsMap {
+    fn get(&self, path: &str) -> Option<&Arc<PageFacts>> {
+        if !self.delta.is_empty() {
+            if let Some(changed) = self.delta.get(path) {
+                return changed.as_ref();
+            }
+        }
+        self.base.get(path)
+    }
+}
+
 /// What one page contributes to query execution beyond its parsed document.
 pub(crate) struct PageFacts {
     /// The page's own properties, in source order and spelling, and its
@@ -45,6 +71,8 @@ pub(crate) struct PageFacts {
 
 impl PageFacts {
     pub(crate) fn of(entry: &PageEntry, doc: &Document) -> PageFacts {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::query_facts_derived();
         let (properties, tags) = super::page_facets(doc);
         let mut hasher = DefaultHasher::new();
         entry.name.hash(&mut hasher);
@@ -102,7 +130,7 @@ pub(crate) fn atom_format(entry: &PageEntry) -> AtomFormat {
 
 /// The query facts of one snapshot generation.
 pub(crate) struct QueryIndex {
-    facts: HashMap<String, Arc<PageFacts>>,
+    facts: FactsMap,
     parse_config: ParseConfig,
     generation: u64,
     registry: OnceLock<Arc<Registry>>,
@@ -115,53 +143,75 @@ impl QueryIndex {
         generation: u64,
     ) -> QueryIndex {
         QueryIndex {
-            facts: pages
-                .iter()
-                .map(|(entry, doc)| {
-                    (
-                        entry.rel_path_str().to_owned(),
-                        Arc::new(PageFacts::of(entry, doc)),
-                    )
-                })
-                .collect(),
+            facts: FactsMap {
+                base: Arc::new(
+                    pages
+                        .iter()
+                        .map(|(entry, doc)| {
+                            (
+                                entry.rel_path_str().to_owned(),
+                                Arc::new(PageFacts::of(entry, doc)),
+                            )
+                        })
+                        .collect(),
+                ),
+                delta: HashMap::new(),
+            },
             parse_config: ParseConfig::from_config(config),
             generation,
             registry: OnceLock::new(),
         }
     }
 
-    /// The seed's index with `changed` re-derived from `pages`. The registry
-    /// is carried when no changed page's registry input moved.
-    pub(crate) fn patched(
+    /// The seed's index with `changed` re-derived; `page` finds a changed
+    /// path's page in the new generation (`None`: removed). Work and bytes are
+    /// O(changed pages + delta), not O(graph): the base map is shared, and a
+    /// compaction copies it only once per [`FACTS_DELTA_MAX`] changed pages.
+    /// The registry is carried when no changed page's registry input moved.
+    pub(crate) fn patched<'p>(
         &self,
-        pages: &[(PageEntry, Arc<Document>)],
+        page: impl Fn(&str) -> Option<&'p (PageEntry, Arc<Document>)>,
         changed: &[String],
         generation: u64,
     ) -> QueryIndex {
-        let mut facts = self.facts.clone();
-        let by_path: HashMap<&str, usize> = if changed.is_empty() {
-            HashMap::new()
-        } else {
-            pages
-                .iter()
-                .enumerate()
-                .map(|(at, (entry, _))| (entry.rel_path_str(), at))
-                .collect()
-        };
+        let mut delta = self.facts.delta.clone();
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::query_facts_copies(delta.len() as u64);
         let mut rows_moved = false;
         for path in changed {
-            let before = facts.get(path).map(|facts| facts.rows_digest);
-            match by_path.get(path.as_str()).map(|&at| &pages[at]) {
+            let before = self.facts.get(path).map(|facts| facts.rows_digest);
+            match page(path) {
                 Some((entry, doc)) => {
                     let current = Arc::new(PageFacts::of(entry, doc));
                     rows_moved |= before != Some(current.rows_digest);
-                    facts.insert(path.clone(), current);
+                    delta.insert(path.clone(), Some(current));
                 }
                 None => {
-                    rows_moved |= facts.remove(path).is_some();
+                    rows_moved |= before.is_some();
+                    delta.insert(path.clone(), None);
                 }
             }
         }
+        let facts = if delta.len() > FACTS_DELTA_MAX {
+            let mut base = (*self.facts.base).clone();
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::query_facts_copies(base.len() as u64);
+            for (path, facts) in delta {
+                match facts {
+                    Some(facts) => base.insert(path, facts),
+                    None => base.remove(&path),
+                };
+            }
+            FactsMap {
+                base: Arc::new(base),
+                delta: HashMap::new(),
+            }
+        } else {
+            FactsMap {
+                base: Arc::clone(&self.facts.base),
+                delta,
+            }
+        };
         let registry = OnceLock::new();
         if !rows_moved {
             if let Some(carried) = self.registry.get() {
@@ -320,9 +370,13 @@ impl QueryIndexSlot {
         }
     }
 
+    /// This generation's index. `positions` maps a relative path to its slot
+    /// in `pages` (the snapshot's own map), so a patch finds each changed page
+    /// without scanning or re-keying the graph.
     pub(crate) fn get(
         &self,
         pages: &[(PageEntry, Arc<Document>)],
+        positions: &HashMap<String, usize>,
         config: &Config,
         generation: u64,
     ) -> Arc<QueryIndex> {
@@ -330,7 +384,13 @@ impl QueryIndexSlot {
             let seed = self.seed.lock().unwrap().take();
             Arc::new(match seed {
                 Some((base, changed)) if base.parse_config == ParseConfig::from_config(config) => {
-                    base.patched(pages, &changed, generation)
+                    let page = |path: &str| {
+                        positions
+                            .get(path)
+                            .and_then(|&at| pages.get(at))
+                            .filter(|(entry, _)| entry.rel_path_str() == path)
+                    };
+                    base.patched(page, &changed, generation)
                 }
                 _ => QueryIndex::build(pages, config, generation),
             })

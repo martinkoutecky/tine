@@ -1219,7 +1219,8 @@ impl GraphRead for ReadSnapshot {
         Arc::clone(&self.list)
     }
     fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
-        (self.query_index).get(&self.pages, &self.config, self.cache_generation)
+        let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
+        (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
     }
     fn referenced_page_names(&self) -> Vec<String> {
         self.referenced_names

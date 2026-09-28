@@ -152,6 +152,16 @@ impl Plan {
         if self.skips(entry, facts) {
             return false;
         }
+        #[cfg(feature = "test-faults")]
+        {
+            fn count(blocks: &[DocBlock]) {
+                for block in blocks {
+                    crate::cost_counters::query_carry_block_probe();
+                    count(&block.children);
+                }
+            }
+            count(&doc.roots);
+        }
         let atoms = EvalCache::default();
         let ctx = self.ctx(entry, doc, facts, config, &atoms);
         match self.anchor {

@@ -16,7 +16,7 @@
 //! Nothing is persisted (Unit cost: none on disk); memory is bounded at 64
 //! entries / 64 MiB, and an answer over 16 MiB is returned but not retained.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 
 use tine_core::date::JournalDate;
@@ -62,15 +62,20 @@ impl Answer {
         }
     }
 
-    fn contains(&self, entry: &PageEntry) -> bool {
+    /// The pages this answer returns rows from, as the keys `contains`
+    /// probes: page-row paths, and `page_key` of every block group's page.
+    /// Built once when the answer is retained, so an edit's carry asks one
+    /// hash lookup per answer instead of re-folding every group (I-25).
+    fn pages(&self) -> HashSet<String> {
         if let Answer::Result(Ok(result)) = self {
             if let QueryRows::Page { pages } = &result.rows {
-                return pages.iter().any(|row| row.path == entry.rel_path_str());
+                return pages.iter().map(|row| row.path.clone()).collect();
             }
         }
         self.groups()
             .iter()
-            .any(|group| tine_core::refs::same_page(&group.page, &entry.name))
+            .map(|group| tine_core::refs::page_key(&group.page))
+            .collect()
     }
 
     fn estimated_bytes(&self) -> usize {
@@ -110,7 +115,16 @@ struct Entry {
     /// unsupported query).
     plan: Option<Arc<Plan>>,
     answer: Answer,
+    /// [`Answer::pages`], shared across carried generations.
+    pages: Arc<HashSet<String>>,
     bytes: usize,
+}
+
+impl Entry {
+    fn contains(&self, entry: &PageEntry) -> bool {
+        self.pages.contains(entry.rel_path_str())
+            || self.pages.contains(&tine_core::refs::page_key(&entry.name))
+    }
 }
 
 #[derive(Clone)]
@@ -169,6 +183,7 @@ impl QueryMemo {
         };
         let entry = Entry {
             plan,
+            pages: Arc::new(answer.pages()),
             answer: answer.clone(),
             bytes,
         };
@@ -211,7 +226,7 @@ impl QueryMemo {
                 let Some(plan) = &cached.plan else {
                     return true;
                 };
-                !(cached.answer.contains(entry)
+                !(cached.contains(entry)
                     || rows_moved && plan.registry().is_some()
                     || plan.touches(entry, before, &old_facts, parse_config)
                     || plan.touches(entry, after, &new_facts, parse_config))
