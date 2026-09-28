@@ -384,11 +384,27 @@ export interface QueryPageRow {
   properties: [string, string][];
 }
 
-/** `query_run`'s answer (tine-core `query::ir::QueryResult`, SPEC §7.1). */
+/** One parse diagnostic (tine-core `query::ir::Diagnostic`). A `disabled`
+ *  one sits inside an `off(…)` subtree and does not invalidate the query. */
+export interface QueryIrDiagnostic {
+  kind: string;
+  message: string;
+  suggestions?: string[];
+  disabled?: boolean;
+  span?: unknown;
+}
+
+/** `query_run`'s answer (tine-core `query::ir::QueryResult`, SPEC §7.1).
+ *  An invalid query arrives as an empty answer with `diagnostics` — check them
+ *  before rendering "no results" (I-9). `matched_total` is the exact pre-sample
+ *  match count; `total` counts the rows admitted after sampling. `exceeded` is
+ *  always false here (`query_run` refuses instead). */
 export type QueryRunResult = (
   | { anchor: "block"; groups: RefGroup[] }
   | { anchor: "page"; pages: QueryPageRow[] }
 ) & {
+  diagnostics?: QueryIrDiagnostic[];
+  statistics?: unknown;
   report: { ran: string[]; ignored: string[]; supported: boolean };
   total: number;
   matched_total?: number;

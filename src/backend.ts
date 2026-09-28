@@ -284,9 +284,23 @@ export interface Backend {
   /** Advanced (datalog-subset) query: maps the supported clauses onto the engine
    *  and reports what ran vs was ignored. */
   runAdvancedQuery(query: string): Promise<AdvancedQueryResult>;
-  /** A `{{query …}}` argument (OG DSL or advanced) parsed to the query IR. */
-  queryParse(text: string, dialect: "macro_query"): Promise<ParsedQueryIr>;
-  /** Run a parsed query; `currentPage` binds OG's `?current-page` (#301). */
+  /** A `{{query …}}` argument (OG DSL or advanced) parsed to the query IR.
+   *  `blockProperties` are the host block's `tine.*` properties; a valid one
+   *  wins per view field (sort, sample, …) over the text's. A syntax error
+   *  RESOLVES (diagnostics inside the IR); rejects only for an over-limit
+   *  source or no loaded graph. The first call per graph generation builds
+   *  the property registry (O(pages + blocks)) and waits for the initial load. */
+  queryParse(
+    text: string,
+    dialect: "macro_query",
+    blockProperties?: [string, string][],
+  ): Promise<ParsedQueryIr>;
+  /** Run a parsed query; `currentPage` (a page name) binds an advanced
+   *  query's typed `:current-page` input (#301). Omitted, that clause is
+   *  dropped and listed in `report.ignored`, so the answer is broader. OG DSL
+   *  and TQL ignore it. Rejects on an over-bound answer, a statistics budget
+   *  overrun, or no loaded graph; an invalid query resolves with
+   *  `diagnostics`. */
   queryRun(parsed: ParsedQueryIr, currentPage?: string): Promise<QueryRunResult>;
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
@@ -812,8 +826,8 @@ class TauriBackend implements Backend {
   runAdvancedQuery(query: string) {
     return this.call<AdvancedQueryResult>("run_advanced_query", { query });
   }
-  queryParse(text: string, dialect: "macro_query") {
-    return this.call<ParsedQueryIr>("query_parse", { text, dialect });
+  queryParse(text: string, dialect: "macro_query", blockProperties?: [string, string][]) {
+    return this.call<ParsedQueryIr>("query_parse", { text, dialect, blockProperties });
   }
   queryRun(parsed: ParsedQueryIr, currentPage?: string) {
     const context = currentPage === undefined ? undefined : { current_page: currentPage };

@@ -29,8 +29,9 @@ import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import type { PageKind, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
+import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
-import type { QueryExecution, QueryHit } from "../types";
+import type { QueryExecution, QueryHit, QueryIrDiagnostic } from "../types";
 import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDepth";
 import { blockDtoExternalId } from "../blockIdentity";
 
@@ -244,6 +245,25 @@ export function QueryMacro(props: {
     null
   );
   const [searchExecution, setSearchExecution] = createSignal<QueryExecution | null>(null);
+  // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
+  // these, so they must render — "No results" alone would report a broken
+  // query as an empty graph.
+  const [diagnostics, setDiagnostics] = createSignal<QueryIrDiagnostic[]>([]);
+  const blockingDiagnostics = () => diagnostics().filter((d) => !d.disabled);
+  // The host block's `tine.*` properties, merged into the view by the engine
+  // (`query_parse`), so `tine.sample::` / `tine.sort::` on the block apply as
+  // in master.
+  const hostProperties = createMemo<[string, string][]>(() => {
+    const id = props.blockId;
+    const node = id ? docNode(id) : undefined;
+    if (!id || !node) return [];
+    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine."));
+  });
+  // Only a query with a typed `:current-page` input depends on navigation; it
+  // binds OG's current page (focused pane's route → default home → today),
+  // never the page this block renders on.
+  const bindsCurrentPage = createMemo(() => isAdvanced() && declaresCurrentPageInput(arg()));
+  const executionPage = () => (bindsCurrentPage() ? queryCurrentPage() : undefined);
   const collapseKey = () => JSON.stringify([
     graphMeta()?.root ?? "",
     props.blockId ?? currentPage() ?? "global",
@@ -264,7 +284,11 @@ export function QueryMacro(props: {
   // expanding it (key flips to include dataRev) refreshes it.
   const queryOwners = {};
   const [groups] = createResource(
-    () => `${graphEpoch()}\0${collapsed() ? `collapsed ${form()}` : `${form()} ${dataRev()}`}`,
+    () => {
+      const host = JSON.stringify(hostProperties());
+      const page = bindsCurrentPage() ? `\0cp:${executionPage()}` : "";
+      return `${graphEpoch()}\0${host}${page}\0${collapsed() ? `collapsed ${form()}` : `${form()} ${dataRev()}`}`;
+    },
     async (requestKey) => {
       const owner = latestOwner(queryOwners, "query", graphOwner());
       const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
@@ -284,6 +308,7 @@ export function QueryMacro(props: {
         ));
         if (result.kind === "stale") return [];
         const execution = result.value;
+        setDiagnostics([]);
         setSearchExecution(execution);
         const grouped = new Map<string, RefGroup>();
         for (const hit of execution.hits) {
@@ -297,17 +322,21 @@ export function QueryMacro(props: {
       }
       setSearchExecution(null);
       // OG DSL and advanced (datalog) sources both run through the one engine:
-      // parse to the IR, run it bound to the page this macro renders on (#301).
-      // An advanced source also reports what ran vs was ignored. A page-level
-      // filter answers pages: each renders as a page group with no blocks.
-      const page = currentPage();
+      // parse to the IR (with the host block's `tine.*` view properties), run
+      // it with OG's current page bound when the query declares
+      // `:current-page` (#301). An advanced source also reports what ran vs
+      // was ignored. A page-level filter answers pages: each renders as a page
+      // group with no blocks.
+      const page = executionPage();
+      const host = hostProperties();
       const result = await readOwned(owner, sharedQueryResult(
         scope,
-        `ir\0${page ?? ""}\0${requestKey}`,
-        async () => backend().queryRun(await backend().queryParse(form(), "macro_query"), page),
+        `ir\0${requestKey}`,
+        async () => backend().queryRun(await backend().queryParse(form(), "macro_query", host), page),
       ));
       if (result.kind === "stale") return [];
       const r = result.value;
+      setDiagnostics(r.diagnostics ?? []);
       setAdvInfo(isAdvanced() ? r.report : null);
       return r.anchor === "page"
         ? r.pages.map((row): RefGroup => ({ page: row.name, kind: row.kind, path: row.path, blocks: [] }))
@@ -444,7 +473,8 @@ export function QueryMacro(props: {
 
   // Hide the whole block when asked and there's nothing to show (advanced
   // queries still render their "unsupported" notice).
-  const hidden = () => props.hideWhenEmpty && !ADVANCED_RE.test(arg()) && total() === 0;
+  const hidden = () =>
+    props.hideWhenEmpty && !ADVANCED_RE.test(arg()) && total() === 0 && blockingDiagnostics().length === 0;
   const unsupportedAdvanced = () => isAdvanced() && advInfo() && (
     !advInfo()!.supported || (props.strictAdvanced === true && advInfo()!.ignored.length > 0)
   );
@@ -566,6 +596,17 @@ export function QueryMacro(props: {
                   {message().lead} {message().message}
                 </div>
               )}
+            </Show>
+            {/* Master's wording: the part below was not understood, so the
+                query returned nothing — not "ignored", which would imply the
+                rest ran and these are its results. */}
+            <Show when={blockingDiagnostics().length > 0}>
+              <div class="query-unsupported query-diagnostics" role="alert">
+                <span class="query-diagnostics-lead">
+                  Tine didn't understand part of this query, so it returned no results:
+                </span>{" "}
+                {blockingDiagnostics().map((d) => d.message).join(" · ")}
+              </div>
             </Show>
             <Show when={!collapsed()}>
               <Show
