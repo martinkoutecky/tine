@@ -197,8 +197,12 @@ async function trial(kind, corpus, index) {
   const trialTimeoutMs = TRIAL_TIMEOUT_OVERRIDE ? Number(TRIAL_TIMEOUT_OVERRIDE) : corpus === "10k" ? 120000 : 60000;
   const dir = path.join(OUT, "trials", `${corpus}-${kind}-${String(index).padStart(2, "0")}`);
   const graph = path.join(dir, "graph");
+  // A reused trial dir keeps the last run's pages and app data (a stale
+  // "Bench Hub Renamed.md" made every og rename refuse); start from the corpus.
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
-  fs.cpSync(path.join(OUT, "corpora", corpus), graph, { recursive: true, force: true });
+  fs.cpSync(path.join(OUT, "corpora", corpus), graph, { recursive: true });
   const xdg = path.join(dir, "xdg");
   for (const name of ["data", "config", "cache"]) fs.mkdirSync(path.join(xdg, name), { recursive: true });
   const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(xdg, "data"), XDG_CONFIG_HOME: path.join(xdg, "config"), XDG_CACHE_HOME: path.join(xdg, "cache"),
@@ -346,6 +350,7 @@ async function trial(kind, corpus, index) {
 async function renameTrial(result, corpus, kind, index) {
   const dir = path.join(OUT, "trials", `${corpus}-${kind}-${String(index).padStart(2, "0")}`, "rename");
   const graph = path.join(dir, "graph");
+  fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   fs.cpSync(path.join(OUT, "corpora", corpus), graph, { recursive: true });
   const xdg = path.join(dir, "xdg");
