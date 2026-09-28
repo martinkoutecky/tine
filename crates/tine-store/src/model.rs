@@ -10,6 +10,7 @@ mod page_parse;
 use page_identity::{effective_page_name, list_graph_pages};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
+    graph_text_watch_relevant,
 };
 use page_parse::{isolate_page_parse, parse_page_content, parse_page_entry_isolated};
 
@@ -4342,8 +4343,8 @@ impl Graph {
         Some(entry)
     }
 
-    /// Drop a file deleted on disk from the cache; returns the entry if it was
-    /// cached (so the UI can react).
+    /// Drop a deleted file from the cache; return its last effective-name entry
+    /// if cached so the UI can react even though its `title::` is now unreadable.
     pub(crate) fn forget_file_internal(&self, path: &Path) -> Option<PageEntry> {
         let own_delete = self
             .recent_writes
@@ -4352,14 +4353,12 @@ impl Graph {
             .remove(path)
             .is_some_and(|rev| rev == "<tx-deleted>");
         let entry = self.entry_for_path(path)?;
-        let was_cached = {
-            let guard = self.cache.read().unwrap();
-            guard
-                .as_ref()
-                .is_some_and(|c| self.cached_page_index_for_path(c, &entry.path).is_some())
-        };
+        let cached_entry = self.cache.read().unwrap().as_ref().and_then(|pages| {
+            self.cached_page_index_for_path(pages, path)
+                .map(|index| pages[index].0.clone())
+        });
         self.cache_remove_path(&entry);
-        (was_cached && !own_delete).then_some(entry)
+        cached_entry.filter(|_| !own_delete)
     }
 
     pub(crate) fn prepare_page_bytes(

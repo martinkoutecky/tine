@@ -143,7 +143,7 @@ fn collect_dir(
                     continue;
                 }
             };
-            if crate::model::graph_text_eligible(root, &path) {
+            if crate::model::graph_text_watch_relevant(root, &path) {
                 if kind.is_file() {
                     if let Some(value) = stamp_metadata(&path) {
                         files.insert(path, value);
@@ -300,7 +300,7 @@ impl Pending {
             self.paths.extend(
                 paths
                     .into_iter()
-                    .filter(|path| crate::model::graph_text_eligible(&dirs[0], path)),
+                    .filter(|path| crate::model::graph_text_watch_relevant(&dirs[0], path)),
             );
         } else if event.paths.is_empty()
             || event

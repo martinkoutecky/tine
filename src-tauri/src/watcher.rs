@@ -184,9 +184,7 @@ mod tests {
         let events = events_after(&slot, || {
             atomic_write(&root, "pages/foo.md", "title:: Bar\n\n- two, longer\n")
         });
-        // v0.6.5 names a page by its file even with `title::` (title identity
-        // arrived in 0.6.90); the adapter must use the store's name, not its own.
-        assert_eq!(events, vec![modified("foo", PageKind::Page)]);
+        assert_eq!(events, vec![modified("Bar", PageKind::Page)]);
 
         let events = events_after(&slot, || {
             atomic_write(&root, "journals/Jul 10th, 2026.md", "- shadow edited\n")
@@ -204,7 +202,7 @@ mod tests {
         assert_eq!(
             events,
             vec![GraphChange {
-                name: "foo".into(),
+                name: "Bar".into(),
                 kind: PageKind::Page,
                 created: false,
                 removed: true,
@@ -259,15 +257,31 @@ mod tests {
                 .unwrap()),
             vec![event(false, true)]
         );
+        atomic_write(&root, "pages/New.md", "title:: New\n\n- winner\n");
+        slot.store.scan_refresh().unwrap();
         slot.store.whole_graph().unwrap();
         let subscription = slot.store.subscribe();
-        atomic_write(&root, "pages/New.sync-conflict-2026.md", "- theirs\n");
+        atomic_write(
+            &root,
+            "pages/New.sync-conflict-2026.md",
+            "title:: New\n\n- theirs\n",
+        );
         slot.store.scan_refresh().unwrap();
         let change = subscription
             .try_recv()
             .unwrap()
             .expect("conflict copy publishes");
         assert_eq!(window_events(&change), (vec![], true));
+        assert!(matches!(
+            slot.store.whole_graph().unwrap().resolve("New", false),
+            tine_store::Resolved::Existing { id, others }
+                if id.as_str() == "pages/New.md" && others.is_empty()
+        ));
+        assert!(
+            tine_graph_features::conflicts::list_sync_conflicts(&slot.store)
+                .iter()
+                .any(|copy| copy.path == "pages/New.sync-conflict-2026.md")
+        );
         drop(slot);
         std::fs::remove_dir_all(root).unwrap();
     }

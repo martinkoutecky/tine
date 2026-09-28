@@ -411,10 +411,9 @@ mod inventory_adapter_tests {
             .collect()
     }
 
-    /// Ported from `inventory_adapters_match_legacy_fixture` (the deleted
-    /// `list_pages` / `page_aliases` / `referenced_page_names` adapters): the
-    /// same fixture, now asserted on the one wire that replaces all three. The
-    /// frontend views over it are pinned in `src/pageIndex.test.ts`.
+    /// The one inventory wire carries effective page names from Markdown and
+    /// Org titles, with physical paths retained as ids. The frontend views
+    /// over it are pinned in `src/pageIndex.test.ts`.
     #[test]
     fn page_inventory_wire_matches_legacy_fixture() {
         let root = temp_root("legacy");
@@ -443,9 +442,10 @@ mod inventory_adapter_tests {
         assert_eq!(
             rows(&wire),
             vec![
-                r#"{"key":"alpha","name":"Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Alpha.md","others":["pages/nested/Alpha.org"]}}"#,
+                r#"{"key":"alpha","name":"Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/nested/Alpha.org","others":[]}}"#,
                 r#"{"key":"another ref","name":"Another Ref","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Another Ref.md"}}"#,
-                r#"{"key":"beta","name":"Beta","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Beta.org","others":[]}}"#,
+                r#"{"key":"display alpha","name":"Display Alpha","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Alpha.md","others":[]}}"#,
+                r#"{"key":"display beta","name":"Display Beta","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Beta.org","others":[]}}"#,
                 r#"{"key":"jun 26th, 2026","name":"Jun 26th, 2026","is_journal":true,"day":20260626,"target":{"kind":"existing","id":"journals/2026_06_26.md","others":["journals/Jun 26th, 2026.org"]}}"#,
                 r#"{"key":"only linked","name":"Only Linked","is_journal":false,"day":null,"target":{"kind":"absent","id":"pages/Only Linked.md"}}"#,
                 r#"{"key":"shared","name":"Shared","is_journal":false,"day":null,"target":{"kind":"alias","owners":["pages/Alpha.md","pages/Beta.org"]}}"#,
