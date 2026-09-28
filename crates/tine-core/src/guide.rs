@@ -161,6 +161,8 @@ mod journal_guide_tests {
             "/That day",
             "g n",
             "g p",
+            "**g h** opens the graph's home page",
+            ":default-home {:page",
             "default journal template",
             "Carry unfinished tasks",
             ":hidden [\"archive/private\"]",

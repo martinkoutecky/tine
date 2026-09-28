@@ -738,6 +738,9 @@ pub struct GraphMeta {
     /// configured); match it exactly against `TemplateDto.name`. The store
     /// does not insert its body on save.
     pub default_journal_template: Option<String>,
+    /// Graph home page name from config.edn `:default-home {:page "..."}`;
+    /// the frontend opens it for `g h` and on graph open when it resolves.
+    pub default_home: Option<String>,
     /// Favorited page names (read from config.edn `:favorites`).
     pub favorites: Vec<String>,
     /// Effective journal title format (`:journal/page-title-format`, default
@@ -844,6 +847,7 @@ impl GraphMeta {
             start_of_week: config.start_of_week,
             block_hidden_properties: config.block_hidden_properties.clone(),
             default_journal_template: config.default_journal_template.clone(),
+            default_home: config.default_home.clone(),
             favorites: config.favorites.clone(),
             journal_page_title_format: journal_format.title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),

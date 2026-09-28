@@ -22,6 +22,7 @@ import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
 import { journalHasContent } from "./journalContent";
 import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwnership";
+import { openConfiguredHomePage } from "./homePage";
 import { clearWorkspaces } from "./workspaces";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -203,6 +204,10 @@ export async function loadGraphPath(
     // session before the backend knew which graph this webview would own.
     await restoreSession();
   }
+  // A configured home page (config.edn `:default-home`) replaces the landing
+  // on an ordinary open — first bind or switch, never a same-graph refresh —
+  // unless a rebind or navigation lands first.
+  if (result.kind === "loaded" && (switching || !hadGraph)) void openConfiguredHomePage();
   return { kind: result.kind, root: meta.root };
   } finally {
     if (ownsTransition) setGraphTransitioning(false);
