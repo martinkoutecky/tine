@@ -364,13 +364,30 @@ export function loadSingle(dto: PageDto & { id?: string }, opts: { endEdit?: boo
   evictIfNeeded();
 }
 
-/** Load the journals feed as the main view. */
-export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean } = {}) {
-  for (const d of dtos) upsertUnlessDirty(d);
-  setDoc("feed", dtos.map((d) => d.name));
+/** Load the journals feed as the main view. Normal refresh replaces safe pages;
+ * a calendar rollover can add the returned days while retaining every existing
+ * feed page and its mounted editor. An optional owner check refuses stale
+ * publication. Returns false only for a stale request. Cost is O(returned page
+ * blocks + loaded pages + feed days + any pages evicted at the working-set cap);
+ * no disk write or failure is exposed here. */
+export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean; preserveExisting?: boolean; isRequestLive?: () => boolean } = {}): boolean {
+  if (opts.isRequestLive?.() === false) return false;
+  for (const d of dtos) {
+    // A calendar rollover adds the new day while keeping every mounted older
+    // feed page, including its editor and any unsaved text, as the same object.
+    if (opts.preserveExisting && doc.feed.includes(d.name)) continue;
+    if (opts.preserveExisting) ensurePageLoaded(d);
+    else upsertUnlessDirty(d);
+  }
+  if (opts.isRequestLive?.() === false) return false;
+  const incoming = dtos.map((d) => d.name);
+  setDoc("feed", opts.preserveExisting
+    ? [...incoming, ...doc.feed.filter((name) => !incoming.includes(name))]
+    : incoming);
   setDoc("loaded", true);
   if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();
+  return true;
 }
 
 /** Append more pages to the journals feed (infinite scroll). */

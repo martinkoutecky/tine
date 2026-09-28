@@ -78,9 +78,9 @@ function hasPublishedFeed(epoch: number): boolean {
  * passed all ownership checks. */
 // Returns the caught backend rejection for the route's initial-error display,
 // or null after success, deferral, or a stale owner. Refresh callers show a toast.
-function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Promise<unknown | null> {
+function restartJournalFeed(owner: JournalsFeedOwner, retried = false, rollover = false): Promise<unknown | null> {
   if (!ownerIsLive(owner)) return Promise.resolve(null);
-  const pending = runJournalFeedRestart(owner, retried);
+  const pending = runJournalFeedRestart(owner, retried, rollover);
   latestFeedRestart = pending;
   void pending.then(() => {
     if (latestFeedRestart === pending) latestFeedRestart = null;
@@ -95,10 +95,10 @@ let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeed
 /** Ensure today's configured template before any feed read for that day. */
 async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<unknown | null> {
   if (!ownerIsLive(owner)) return null;
-  if (!graphMeta()?.default_journal_template) return restartJournalFeed(owner);
   const date = new Date();
   const day = localDayKey(date);
   const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
+  if (!graphMeta()?.default_journal_template) return restartJournalFeed(owner, false, rollover);
   const current = journalRefreshFlight;
   if (current && current.graphEpoch === owner.graphEpoch && current.day === day && ownerIsLive(current.owner)) {
     current.owner = owner;
@@ -115,21 +115,21 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
       if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
       return null;
     }
-    if (feedHasActiveEdit()) { pendingFeedRestart = true; return null; }
-    return restartJournalFeed(liveOwner);
+    if (!rollover && feedHasActiveEdit()) { pendingFeedRestart = true; return null; }
+    return restartJournalFeed(liveOwner, false, rollover);
   })();
   journalRefreshFlight = flight;
   try { return await flight.promise; }
   finally { if (journalRefreshFlight === flight) journalRefreshFlight = null; }
 }
 
-async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean): Promise<unknown | null> {
+async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean, rollover: boolean): Promise<unknown | null> {
   // An already-dead watcher/surface must be entirely inert.  In particular it
   // must not steal the generation from a live request that is about to land.
   if (!ownerIsLive(owner)) return null;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
   const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
-  if (feedHasActiveEdit()) {
+  if (!rollover && feedHasActiveEdit()) {
     pendingFeedRestart = true;
     return null;
   }
@@ -140,8 +140,8 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean)
     if (result.kind === "stale") return null;
     const response = result.value;
     if (!responseMatches(browserDay, response)) {
-      if (generation === feedGeneration && ownerIsLive(owner) && !retried && !feedHasActiveEdit()) {
-        return restartJournalFeed(owner, true);
+      if (generation === feedGeneration && ownerIsLive(owner) && !retried && (rollover || !feedHasActiveEdit())) {
+        return restartJournalFeed(owner, true, rollover);
       }
       // A stale/disposed owner cannot create deferred work for a later surface.
       if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
@@ -150,8 +150,16 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean)
     // Clear the deferred flag before loadFeed synchronously updates doc.feed;
     // otherwise the intentionally reactive pending-retry effect observes the
     // old true value during that store write and starts a duplicate restart.
+    if (generation !== feedGeneration || !ownerIsLive(owner) || (!rollover && feedHasActiveEdit())) {
+      if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+      return null;
+    }
     pendingFeedRestart = false;
-    loadFeed(withToday(response.pages), { endEdit: false });
+    if (!loadFeed(withToday(response.pages), {
+      endEdit: false,
+      preserveExisting: rollover,
+      isRequestLive: () => generation === feedGeneration && ownerIsLive(owner) && responseMatches(browserDay, response),
+    })) return null;
     publishedFeedEpoch = owner.graphEpoch;
     publishedFeedNames = feedNames();
     journalAsOfDay = response.as_of_day;
@@ -512,8 +520,7 @@ export function PageView(): JSX.Element {
         <div class="page">
           <For each={pagesToRender()}>
             {(p, i) => (
-              <>
-                <PageSection page={p} />
+              <PageSection page={p}>
                 {/* Agenda sits at the bottom of today's (the first) day, like OG.
                     Window is configurable (Settings → Journal) and keyed off the
                     item's scheduled/deadline date over the whole graph. */}
@@ -526,7 +533,7 @@ export function PageView(): JSX.Element {
                     />
                   </div>
                 </Show>
-              </>
+              </PageSection>
             )}
           </For>
           <Show when={currentRoute().kind === "journals" && mainPages().length === 0}>
@@ -631,7 +638,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   );
 }
 
-function PageSection(props: { page: FeedPage }): JSX.Element {
+function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
@@ -929,6 +936,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         </Show>
         <For each={rootsToRender()}>{(id) => <Block id={id} />}</For>
       </div>
+      {props.children}
       <Show when={!props.page.readOnly && !props.page.guide}>
         <TrailingBlockTarget onActivate={focusTrailing} />
       </Show>
