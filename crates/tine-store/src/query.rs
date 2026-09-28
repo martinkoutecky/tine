@@ -2196,6 +2196,67 @@ mod tests {
         store.whole_graph().unwrap().test_read_snapshot()
     }
 
+    #[test]
+    fn advanced_content_and_search_follow_real_graph_accent_policy() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-query-accent-off-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:feature/enable-search-remove-accents? false}",
+        )
+        .unwrap();
+        fs::write(dir.join("pages/Accent.md"), "- café body\n- cafe body\n").unwrap();
+        let graph = test_snapshot(&dir);
+        let raw = |query: &str| {
+            run_query(&graph, query)
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.raw))
+                .collect::<Vec<_>>()
+        };
+        for query in ["\"cafe\"", "(search \"cafe\")"] {
+            assert_eq!(raw(query), vec!["cafe body"], "{query}");
+        }
+        assert_eq!(raw("(search \"café\")"), vec!["café body"]);
+        let tql_raw = |source: &str| {
+            use tine_core::query::{parse_query_text, resolve_for_execution, QueryDialect};
+            let (query, view) = parse_query_text(source, QueryDialect::Tql, TODAY);
+            assert!(
+                query.diagnostics.is_empty(),
+                "{source}: {:?}",
+                query.diagnostics
+            );
+            let resolved = resolve_for_execution(
+                &query,
+                &tine_core::query::ir::ExecutionContext::none(),
+                TODAY,
+            );
+            exec::run_block_groups(&graph, &resolved, &view, usize::MAX, usize::MAX)
+                .0
+                .groups
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.raw))
+                .collect::<Vec<_>>()
+        };
+        for source in [
+            "content like '%cafe%'",
+            "content like 'cafe%'",
+            "content = 'cafe body'",
+            "content in ('cafe body')",
+            "content match 'cafe'",
+        ] {
+            assert_eq!(tql_raw(source), vec!["cafe body"], "{source}");
+        }
+        for source in ["content != 'cafe body'", "content not in ('cafe body')"] {
+            assert_eq!(tql_raw(source), vec!["café body"], "{source}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     // Fixed "today" so relative-date tests are deterministic: 2026-06-16.
     const TODAY: JournalDate = JournalDate {
         year: 2026,

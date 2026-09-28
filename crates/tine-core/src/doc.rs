@@ -77,9 +77,11 @@ pub struct BlockProjection {
     /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
     /// recognized as `Properties` blocks (see `visible_minus_properties`).
     pub visible: String,
-    /// `visible`, folded by the shared search normalizer for `search` /
-    /// `(content …)` (hot path, cached without changing the raw body).
+    /// `visible` folded with accent-removing `canonical_fold`, independent of
+    /// graph policy. Accent-sensitive callers use [`Self::visible_folded`].
     pub visible_lower: String,
+    /// Lazy accent-sensitive fold, populated only when that graph policy is used.
+    pub(crate) visible_literal: std::sync::OnceLock<String>,
     /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
     pub refs_norm: Vec<String>,
     /// The SAME page references in lsdoc's original case — for `referenced_page_names`
@@ -119,6 +121,17 @@ pub struct BlockProjection {
 }
 
 impl BlockProjection {
+    /// Visible text folded for the graph's search policy. The accent-sensitive
+    /// form is computed once per block body; both forms reset with the projection.
+    pub fn visible_folded(&self, remove_accents: bool) -> &str {
+        if remove_accents {
+            &self.visible_lower
+        } else {
+            self.visible_literal
+                .get_or_init(|| crate::search_query::literal_fold(&self.visible))
+        }
+    }
+
     /// Whether this block references page `name` under page-name normalization.
     pub fn refs_contains(&self, name: &str) -> bool {
         self.refs_contains_norm(&crate::refs::normalize(name))
@@ -219,6 +232,7 @@ impl DocBlock {
             BlockProjection {
                 visible,
                 visible_lower,
+                visible_literal: std::sync::OnceLock::new(),
                 refs_norm,
                 refs_page,
                 block_refs: proj.refs.block,
@@ -1516,6 +1530,15 @@ mod projection_tests {
         assert_eq!(DocBlock::new("TODO [#A] task").priority(), Some("A"));
         assert_eq!(DocBlock::new("Discuss [#A] tags").priority(), None); // mid-text
         assert_eq!(DocBlock::new("TODO task [#A] later").priority(), None); // not after marker
+    }
+
+    #[test]
+    fn accent_sensitive_projection_cache_rebuilds_after_edit() {
+        let mut block = DocBlock::new("café");
+        assert_eq!(block.projection().visible_folded(true), "cafe");
+        assert_eq!(block.projection().visible_folded(false), "café");
+        block.set_raw("cafe");
+        assert_eq!(block.projection().visible_folded(false), "cafe");
     }
 
     #[test]

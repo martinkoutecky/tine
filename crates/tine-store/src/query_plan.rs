@@ -94,11 +94,13 @@ impl QueryPlan {
     /// Ctrl-K graph providers: fuzzy page names for a single bare term, but
     /// ordinary contains/phrase/regex semantics for block content.  Multi-term
     /// and operator searches use the same boolean grammar on both entity kinds.
+    /// Test-only default-policy shorthand; production passes the graph policy.
     #[cfg(test)]
     pub(crate) fn friendly(query: &str, page_limit: usize, block_limit: usize) -> Self {
         Self::friendly_with_policy(query, page_limit, block_limit, true)
     }
 
+    /// The production constructor; `remove_accents` comes from the graph config.
     pub(crate) fn friendly_with_policy(
         query: &str,
         page_limit: usize,
@@ -161,6 +163,7 @@ impl QueryPlan {
 
     /// Current-page search is a block-only execution profile of the same typed
     /// friendly plan—not a frontend filter over whole-graph results.
+    /// Test-only default-policy shorthand; production passes the graph policy.
     #[cfg(test)]
     pub(crate) fn friendly_for_page(
         query: &str,
@@ -172,6 +175,7 @@ impl QueryPlan {
         plan
     }
 
+    /// Current-page search with the graph's explicit accent policy.
     pub(crate) fn friendly_for_page_with_policy(
         query: &str,
         block_limit: usize,
@@ -186,11 +190,13 @@ impl QueryPlan {
     /// Explicit page-name fuzzy plan for normal-query frontends and tests.  This
     /// constructor makes the opt-in visible in the typed IR; it never changes the
     /// default behavior of existing block queries.
+    /// Test-only default-policy shorthand; production passes the graph policy.
     #[cfg(test)]
     pub(crate) fn page_name_fuzzy(value: impl Into<String>, limit: usize) -> Self {
         Self::page_name_fuzzy_with_policy(value, limit, true)
     }
 
+    /// Page-name search with the graph's explicit accent policy.
     pub(crate) fn page_name_fuzzy_with_policy(
         value: impl Into<String>,
         limit: usize,
@@ -221,11 +227,13 @@ impl QueryPlan {
     }
 
     /// Existing block-search API expressed as one typed branch.
+    /// Test-only default-policy shorthand; production passes the graph policy.
     #[cfg(test)]
     pub(crate) fn block_search(query: &str, limit: usize) -> Self {
         Self::block_search_with_policy(query, limit, true)
     }
 
+    /// Block search with the graph's explicit accent policy.
     pub(crate) fn block_search_with_policy(
         query: &str,
         limit: usize,
@@ -269,14 +277,8 @@ impl QueryPlan {
         }
     }
 
-    /// Literal block autocomplete for the `((` picker. OG rev 6e7afa8eb's
-    /// `search.cljs:block-search`/`fuzzy-search` normalizes the whole query as
-    /// one literal term. Blank input has no candidates.
-    #[cfg(test)]
-    pub(crate) fn block_search_literal(query: &str, limit: usize) -> Self {
-        Self::block_search_literal_with_policy(query, limit, true)
-    }
-
+    /// `((` autocomplete: fold the whole query as one ordered-subsequence fuzzy
+    /// term, without Ctrl-K's Boolean grammar. Blank input has no candidates.
     pub(crate) fn block_search_literal_with_policy(
         query: &str,
         limit: usize,
@@ -315,11 +317,13 @@ impl QueryPlan {
     /// `search.cljs:page-search`/`exact-matched?`; the whole normalized query is
     /// one ordered-subsequence term, not Ctrl-K's AND/OR/negation/regex DSL.
     /// Blank input therefore keeps the established all-pages candidate listing.
+    /// Test-only default-policy shorthand; production passes the graph policy.
     #[cfg(test)]
     pub(crate) fn legacy_page_search(query: &str, limit: usize) -> Self {
         Self::page_name_fuzzy(query, limit)
     }
 
+    /// Page picker with the graph's explicit accent policy.
     pub(crate) fn legacy_page_search_with_policy(
         query: &str,
         limit: usize,
@@ -1286,13 +1290,7 @@ fn execute_blocks(
                 index = index.saturating_add(1);
                 let projection = block.projection();
                 let visible = &projection.visible;
-                let literal_lower;
-                let lower = if plan.remove_accents {
-                    &projection.visible_lower
-                } else {
-                    literal_lower = literal_fold(visible);
-                    &literal_lower
-                };
+                let lower = projection.visible_folded(plan.remove_accents);
                 if let Some(relevance) = block_relevance(plan, &branch.predicate, visible, lower) {
                     has_more |= heap.len() >= branch.limit;
                     let retain = heap.len() < branch.limit
@@ -1336,13 +1334,7 @@ fn execute_blocks(
                 .into_iter()
                 .map(|winner| {
                     let projection = winner.block.projection();
-                    let literal_lower;
-                    let lower = if plan.remove_accents {
-                        &projection.visible_lower
-                    } else {
-                        literal_lower = literal_fold(&projection.visible);
-                        &literal_lower
-                    };
+                    let lower = projection.visible_folded(plan.remove_accents);
                     let matched =
                         eval_ranked_block_expr(plan, &branch.predicate, &projection.visible, lower)
                             .expect("rank and evidence evaluators must agree");

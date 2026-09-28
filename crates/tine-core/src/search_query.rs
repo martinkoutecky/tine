@@ -87,10 +87,13 @@ pub fn canonical_fold(value: &str) -> String {
 /// OG's explicit `:feature/enable-search-remove-accents? false` behavior:
 /// compatibility forms still fold, but accents remain significant.
 pub fn literal_fold(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_ascii_lowercase();
+    }
     value.to_lowercase().nfkc().collect()
 }
 
-/// Narrow page identity comparison, distinct from search membership.
+/// Lowercase plus NFC page identity, without compatibility or accent folding.
 pub fn identity_fold(value: &str) -> String {
     value.to_lowercase().nfc().collect()
 }
@@ -170,7 +173,9 @@ fn fold_with_map(value: &str, remove_accents: bool) -> (String, Vec<Range<usize>
 /// negated (`-term` → must NOT be present).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
-    /// Shared search-fold needle for `visible_lower.contains(..)`.
+    /// Needle folded with the matcher's policy. Compare only with a body folded
+    /// the same way: `canonical_fold` by default, `literal_fold` when accents
+    /// remain significant. `projection().visible_lower` is canonical only.
     pub text: String,
     pub negated: bool,
     /// The term came from a `"quoted phrase"` — an explicit opt-in to the
@@ -245,8 +250,10 @@ impl Matcher {
         }
     }
 
-    /// Does `visible` match? `lower` is the pre-folded comparison body
-    /// (hot path for boolean terms); `orig` is the original body (needed by regex).
+    /// Does the body match? `lower` must use the same policy as the matcher:
+    /// `canonical_fold` for `parse`/policy true, `literal_fold` for policy false.
+    /// A mismatched fold silently misses accent-bearing terms. `orig` is the
+    /// original body for regex; Empty/InvalidRegex match nothing.
     pub fn matches(&self, lower: &str, orig: &str) -> bool {
         match self {
             Matcher::Regex(re) => re.is_match(orig),
