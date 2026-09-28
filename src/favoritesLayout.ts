@@ -44,10 +44,10 @@ export const labelNode = (name: string): FavNode => ({ target: null, raw: name, 
 
 export function layoutFromBlocks(roots: readonly BlockDto[]): FavLayout {
   return roots.flatMap((block): FavNode[] => {
-    const raw = block.raw.trim();
     const children = layoutFromBlocks(block.children);
-    if (!raw) return children;
-    return [{ target: linkOnlyTarget(raw), raw, collapsed: block.collapsed || undefined, children }];
+    if (!block.raw.trim()) return children;
+    // raw stays verbatim: it is written back byte for byte.
+    return [{ target: linkOnlyTarget(block.raw), raw: block.raw, collapsed: block.collapsed || undefined, children }];
   });
 }
 

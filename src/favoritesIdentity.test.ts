@@ -10,18 +10,24 @@ beforeEach(() => setFavorites([]));
 describe("favorite membership identity (DUP-2)", () => {
   it("a page starred under one spelling reads as favorited under another case", () => {
     setFavorites([{ name: "Foo", kind: "page" }]);
-    expect(isFavorite("foo")).toBe(true);
+    expect(isFavorite("foo", "page")).toBe(true);
   });
 
   it("NFC and NFD spellings are one favorite", () => {
     setFavorites([{ name: "Café", kind: "page" }]);
-    expect(isFavorite("Café")).toBe(true);
+    expect(isFavorite("Café", "page")).toBe(true);
   });
 
   it("toggling under another spelling unstars instead of appending a duplicate", () => {
     setFavorites([{ name: "Foo", kind: "page" }]);
     toggleFavorite("foo", "page");
     expect(favorites()).toEqual([]);
+  });
+
+  it("a page and a journal with one title are distinct: only the starred kind reads as favorite", () => {
+    setFavorites([{ name: "Aug 25th, 2026", kind: "journal" }]);
+    expect(isFavorite("Aug 25th, 2026", "journal")).toBe(true);
+    expect(isFavorite("Aug 25th, 2026", "page")).toBe(false);
   });
 
   it("deleting a page does not drop a journal favorite that shares the name", () => {

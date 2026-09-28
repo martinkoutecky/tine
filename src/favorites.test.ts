@@ -140,20 +140,72 @@ describe("favorites arrangement page", () => {
     expect(toasts().some((t) => t.kind === "error")).toBe(true);
   });
 
-  it("kill-and-reopen between the page write and the config write reuses the orphaned page", async () => {
+  it("kill-and-reopen between the page write and the config write: the next edit recovers the orphan instead of overwriting it", async () => {
     toggleFavorite("A");
+    toggleFavorite("B");
     await settle();
     vi.spyOn(backend(), "setFavorites").mockRejectedValueOnce(new Error("killed"));
-    addFavoriteGroup();
+    addFavoriteGroup("Kept"); // page written, then the process dies
     await settle();
-    expect(config).toEqual({ names: ["A"], page: null }); // config never saw the page
+    expect(config).toEqual({ names: ["A", "B"], page: null }); // config never saw the page
+    expect(shape(disk.get("Favorites")!).text).toBe("- [[A]]\n- [[B]]\n- Kept\n");
+    config.names = ["A"]; // meanwhile Logseq unstarred B: config stays authoritative for membership
     seedFavorites(config.names, config.page); // reopen
     await settle();
     expect(md()).toBe("- [[A]]\n");
-    addFavoriteGroup("Work");
+    setToasts([]);
+    addFavoriteGroup("Work"); // a later grouped edit finds the orphan
     await settle();
-    expect(config.page).toBe("Favorites");
+    await settle();
+    expect(toasts().some((t) => t.message.includes("Recovered the Favorites page"))).toBe(true);
+    expect(md()).toBe("- [[A]]\n- Kept\n"); // the orphan's arrangement, config's membership
+    expect(config).toEqual({ names: ["A"], page: "Favorites" });
+    expect(shape(disk.get("Favorites")!).text).toBe("- [[A]]\n- Kept\n");
     expect(disk.has("Favorites 2")).toBe(false);
-    expect(shape(disk.get("Favorites")!).text).toBe("- [[A]]\n- Work\n");
+    addFavoriteGroup("Work"); // repeating the change now lands over the recovered page
+    await settle();
+    expect(shape(disk.get("Favorites")!).text).toBe("- [[A]]\n- Kept\n- Work\n");
+  });
+
+  it("an older page read that lands after a newer one is dropped (I-20)", async () => {
+    toggleFavorite("A");
+    toggleFavorite("B");
+    addFavoriteGroup("G");
+    await settle();
+    const getPage = backend().getPage as unknown as ReturnType<typeof vi.fn>;
+    const real = getPage.getMockImplementation()!;
+    const held: { resolve: () => void }[] = [];
+    getPage.mockImplementation((...args: unknown[]) => {
+      const answer = real(...args); // snapshot the disk as of this read
+      return new Promise((resolve) => held.push({ resolve: () => resolve(answer) }));
+    });
+    const edit = (blocks: BlockDto[]) => {
+      const page = disk.get("Favorites")!;
+      disk.set("Favorites", { ...page, blocks, rev: page.rev + 1 });
+      bumpDataRev();
+    };
+    edit([b("[[A]]"), b("G")]); // outside edit 1: B removed
+    await settle();
+    edit([b("[[A]]"), b("[[B]]"), b("[[C]]"), b("G")]); // outside edit 2: C added
+    await settle();
+    expect(held).toHaveLength(2);
+    held[1].resolve(); // the newer read lands first
+    await settle();
+    held[0].resolve(); // then the older one
+    await settle();
+    getPage.mockImplementation(real);
+    await settle();
+    expect(favorites().map((f) => f.name)).toEqual(["A", "B", "C"]);
+    expect(config.names).toEqual(["A", "B", "C"]);
+  });
+
+  it("keeps a label's raw text verbatim across a later write (I-4)", async () => {
+    disk.set("Favorites", { pre_block: "tine/favorites:: true", blocks: [b("[[A]]"), b("  Work  ")], rev: 1 });
+    config = { names: ["A"], page: "Favorites" };
+    seedFavorites(config.names, config.page);
+    await settle();
+    toggleFavorite("B"); // an unrelated change rewrites the page
+    await settle();
+    expect(disk.get("Favorites")!.blocks.map((x) => x.raw)).toEqual(["[[A]]", "  Work  ", "[[B]]"]);
   });
 });

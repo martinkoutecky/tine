@@ -67,8 +67,10 @@ export function favoriteKey(name: string, kind: PageKind): string {
 const memberKey = (name: string) => favoriteKey(name, itemKind(name));
 const nodeKey = (node: FavNode) => favoriteKey(node.target!, node.kind ?? itemKind(node.target!));
 
-export function isFavorite(name: string): boolean {
-  return favorites().some((f) => favoriteKey(f.name, f.kind) === favoriteKey(name, f.kind));
+/** Is this page (or journal) a favorite? Kind is part of the identity: a
+ *  page and a journal with one title are two favorites. */
+export function isFavorite(name: string, kind: PageKind): boolean {
+  return isFavoriteKey(favoriteKey(name, kind));
 }
 
 /** Replace the arrangement with a flat membership list, without writing. */
@@ -120,9 +122,10 @@ export function seedFavorites(names: string[], page: string | null = null): void
   generation += 1;
   arrangementPage = page?.trim() || null;
   pageBase = null;
+  pendingMode = null;
   setFavorites(names.map((name) => ({ name, kind: itemKind(name) })));
   seedGraphSignal("favorites");
-  if (arrangementPage) void readArrangement(names);
+  if (arrangementPage) void readArrangement({ open: names });
 }
 
 let watching = false;
@@ -134,15 +137,27 @@ function watchArrangement(): void {
   createRoot(() => createEffect(on(dataRev, () => { if (arrangementPage) void readArrangement(null); }, { defer: true })));
 }
 
-/** Read the arrangement page. With `membership` (graph open), fold it into
- *  config's membership and seed; without (a later change), adopt the page as
- *  the user's statement of membership when it differs from what Tine saw. */
-async function readArrangement(membership: string[] | null): Promise<void> {
+/** How a landing read folds the page in. `open`: into config's membership at
+ *  graph open, seeding without a write. `recover`: an arrangement page config
+ *  never recorded (a crash between the two writes) keeps its arrangement, with
+ *  the current membership (config's) authoritative, and is written back. */
+type ReadMode = { open: string[] } | "recover";
+/** The strongest mode a superseded read still owed; the newest read takes it. */
+let pendingMode: ReadMode | null = null;
+/** Only the newest read may land: an older one completing later is stale. */
+let latestRead = 0;
+
+/** Read the arrangement page. With a mode, fold it as that mode says; without
+ *  (a later change), adopt the page as the user's statement of membership when
+ *  it differs from what Tine saw. */
+async function readArrangement(mode: ReadMode | null): Promise<void> {
   watchArrangement();
+  if (mode) pendingMode = mode;
   const page = arrangementPage!;
   const gen = generation;
   const writes = ownWrites;
-  const owner = graphOwner(() => gen === generation && writes === ownWrites);
+  const seq = ++latestRead;
+  const owner = graphOwner(() => gen === generation && writes === ownWrites && seq === latestRead);
   const read = await readOwned(owner, backend().getPage(page, "page")).catch((error: unknown) => {
     pushToast(`Could not read the Favorites page "${page}": ${String(error)}`, "error");
     return null;
@@ -150,9 +165,14 @@ async function readArrangement(membership: string[] | null): Promise<void> {
   if (read?.kind !== "current" || !read.value) return;
   const disk = diskLayout(read.value.blocks);
   const text = layoutToMarkdown(disk);
-  if (membership) {
+  const owed = pendingMode;
+  pendingMode = null;
+  if (owed === "recover") {
     pageBase = text;
-    setLayout(reconcileLayout(disk, membership, memberKey));
+    commit(reconcileLayout(disk, favorites().map((f) => f.name), memberKey));
+  } else if (owed) {
+    pageBase = text;
+    setLayout(reconcileLayout(disk, owed.open, memberKey));
     seedGraphSignal("favorites");
   } else if (text !== pageBase) {
     pageBase = text;
@@ -176,6 +196,17 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
     if (read.kind === "stale") throw new Error("graph changed before the Favorites page write");
     const disk = read.value;
     if (disk && !arrangementPage && !IS_ARRANGEMENT_PAGE.test(disk.pre_block ?? "")) continue;
+    if (disk && !arrangementPage) {
+      // An arrangement page config never recorded: the only copy of an
+      // interrupted edit. Adopt it (this change rolls back) rather than write over it.
+      arrangementPage = name;
+      pageBase = null;
+      // After this change's rollback (a microtask chain), so the fold uses
+      // config's membership, not the change being refused.
+      setTimeout(() => void readArrangement("recover"), 0);
+      pushToast(`Recovered the Favorites page "${name}" from an interrupted save; repeat your last change.`, "info");
+      throw new Error(`recovered the Favorites page "${name}"`);
+    }
     if (disk && arrangementPage && layoutToMarkdown(diskLayout(disk.blocks)) !== pageBase) {
       void readArrangement(null);
       throw new Error(`the Favorites page "${name}" changed on disk; reloaded it`);
