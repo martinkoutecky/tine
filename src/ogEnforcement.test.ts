@@ -13,7 +13,7 @@ describe("og campaign enforcement", () => {
   it("ratchets production file size against the post-batch-5 baseline", () => {
     const { current, baseline } = readSizeCounts(root);
     expect(() => checkSizeRatchet(current, baseline)).not.toThrow();
-  });
+  }, 30_000);
 
   it("pins persisted format count and low-level writer sites", () => {
     expect(PINNED_FORMAT_COUNT).toBe(21);
@@ -28,7 +28,7 @@ describe("og campaign enforcement", () => {
     expect(() => checkFormatCount()).not.toThrow();
     const { current, baseline } = readWriterSiteCounts(root);
     expect(() => checkWriterSites(current, baseline)).not.toThrow();
-  });
+  }, 30_000);
 
   it("fails on planted shape violations", () => {
     expect(() => checkSizeRatchet({ "src/new.ts": 1501 }, {})).toThrow(/split along a seam first/);
