@@ -10,10 +10,10 @@ import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, remov
 import { pushRawUndo, pushUndo } from "../history";
 import { markDirty, noteTitleIdentityIntent } from "../save/engine";
 import { produce } from "solid-js/store";
-import { type OutlineNode } from "../../editor/outline";
+import { OUTLINE_MAX_DEPTH, outlineDepth, type OutlineNode } from "../../editor/outline";
 import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly, readPropertyValue } from "../../editor/properties";
 import { startEditing, editingId, endEdit } from "../../editorController";
-import { indexInSiblings, rootsOf, OutlineScope, prevVisible } from "../tree";
+import { depthOf, indexInSiblings, rootsOf, OutlineScope, prevVisible } from "../tree";
 import { existingBlockId } from "./identity";
 
 // ---------------------------------------------------------------------------
@@ -100,12 +100,19 @@ export function replaceChildOrders(nextByParent: Record<string, readonly string[
   return true;
 }
 
+/** Whether `nodes` fit below a block whose 1-based depth is `hostDepth` without
+ *  exceeding `OUTLINE_MAX_DEPTH`: the one admission check for every outline
+ *  inserter, which also bounds their recursive `create` (I-22). */
+function outlineFits(hostDepth: number, nodes: readonly OutlineNode[]): boolean {
+  return hostDepth + outlineDepth(nodes) <= OUTLINE_MAX_DEPTH;
+}
+
 /** Append parsed outline blocks as children of `parentId`.
  *  Shared by normal editor paste (via parseOutline) and sheet indented paste. */
 export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): string | null {
   if (!nodes.length) return null;
   const parent = doc.byId[parentId];
-  if (!parent || !blockWritable(parentId)) return null;
+  if (!parent || !blockWritable(parentId) || !outlineFits(depthOf(parentId) + 1, nodes)) return null;
   const pageName = parent.page;
   let lastId: string | null = null;
   pushUndo("paste-children", [pageName]);
@@ -344,7 +351,7 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
   // Read-only gate at the choke point — file drops (and any future caller)
   // must not mutate a page the round-trip self-check marked read-only
   // (Phase-6 review finding, validated).
-  if (!blockWritable(afterId)) return afterId;
+  if (!blockWritable(afterId) || !outlineFits(depthOf(afterId), nodes)) return afterId;
   pushUndo("paste", [doc.byId[afterId].page]);
   const parent = doc.byId[afterId].parent;
   const pageName = doc.byId[afterId].page;
@@ -385,6 +392,7 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
 export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): string {
   const current = doc.byId[id];
   if (!nodes.length || !current || current.children.length || !blockWritable(id)) return id;
+  if (!outlineFits(depthOf(id), nodes)) return id;
   const format = formatForBlock(id);
   const incoming = new Set<string>();
   const split = splitProps(current.raw, isBuiltinHidden, format);

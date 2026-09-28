@@ -15,6 +15,27 @@ export interface OutlineNode {
   children: OutlineNode[];
 }
 
+/** The one outline nesting ceiling, 1-based and inclusive: mirrors Rust
+ *  `PARSE_INPUT_MAX_DEPTH` (tine-store model.rs), which admits pages at parse
+ *  and save. Every frontend outline inserter refuses a result deeper than this,
+ *  so recursive consumers never see more (I-22); a page at the cap stays legal. */
+export const OUTLINE_MAX_DEPTH = 512;
+/** Longest outline text parsed (UTF-16 units). A UTF-8 file is never shorter in
+ *  bytes, so this cannot refuse anything the 64 MiB file admission accepts. */
+export const OUTLINE_MAX_SOURCE_CHARS = 64 * 1024 * 1024;
+
+/** Depth of an outline forest (1 for a flat list, 0 for none). Iterative. */
+export function outlineDepth(nodes: readonly OutlineNode[]): number {
+  let max = 0;
+  const pending = nodes.map((node) => ({ node, depth: 1 }));
+  while (pending.length) {
+    const { node, depth } = pending.pop()!;
+    max = Math.max(max, depth);
+    for (const child of node.children) pending.push({ node: child, depth: depth + 1 });
+  }
+  return max;
+}
+
 function leadingWs(line: string): number {
   let i = 0;
   while (i < line.length && (line[i] === " " || line[i] === "\t")) i++;
@@ -56,7 +77,10 @@ interface Frame {
   node: OutlineNode;
 }
 
+/** Returns no nodes for text over `OUTLINE_MAX_SOURCE_CHARS` (callers treat an
+ *  empty outline as nothing to insert). */
 export function parseOutline(text: string): OutlineNode[] {
+  if (text.length > OUTLINE_MAX_SOURCE_CHARS) return [];
   const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   const roots: OutlineNode[] = [];
   const stack: Frame[] = [];

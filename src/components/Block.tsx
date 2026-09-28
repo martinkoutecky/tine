@@ -44,7 +44,7 @@ import {
   takeCaretFor,
   takeHistoryEditorSelectionFor,
 } from "../editorController";
-import { parseOutline, type OutlineNode } from "../editor/outline";
+import { OUTLINE_MAX_DEPTH, OUTLINE_MAX_SOURCE_CHARS, parseOutline, type OutlineNode } from "../editor/outline";
 import { structuredHtmlOutline } from "../editor/htmlPaste";
 import {
   toggleInlineFormat,
@@ -3175,6 +3175,7 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     if (text.includes("\n")) {
       e.preventDefault();
+      if (text.length > OUTLINE_MAX_SOURCE_CHARS) { pushToast("Pasted text is too large", "error"); return; }
       if (syntaxSensitive) {
         pasteLiteralText(text);
         return;
@@ -3261,7 +3262,7 @@ export function Editor(props: { id: string }): JSX.Element {
   function insertPastedOutline(nodes: OutlineNode[], tag: string, asChildren = false) {
     const current = docNode(props.id);
     if (!current) return;
-    const availableDepth = 128 - depthOf(props.id) - (asChildren ? 1 : 0);
+    const availableDepth = OUTLINE_MAX_DEPTH - depthOf(props.id) - (asChildren ? 1 : 0);
     const pending = nodes.map((node) => ({ node, depth: 1 }));
     while (pending.length) {
       const { node, depth } = pending.pop()!;
