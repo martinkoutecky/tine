@@ -192,8 +192,24 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+      # sqlparser → recursive → stacker → psm has a C build script, so the
+      # Android check needs the NDK compiler (same pin as master).
+      - name: Install pinned Android NDK compiler
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;26.3.11579264" >/dev/null
+          NDK="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CC_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
       - name: Android core compiles against Android libc declarations
         run: cargo check -p tine-core -p tine-store --target aarch64-linux-android
+      # The core crates cannot see `#[cfg(target_os = "android")]` code in the
+      # app crate; check it too so an Android-only break fails here, not in
+      # release packaging (master learned this 2026-08-11).
+      - name: Android app crate compiles (Android-only cfg paths)
+        run: cargo check -p tine --target aarch64-linux-android
 
   plugin-launch-e2e:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
