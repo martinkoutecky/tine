@@ -1087,6 +1087,11 @@ mod tests {
             Some("Live")
         );
         assert_eq!(home(r#"{:default-home-x {:page "Prefix"}}"#), None);
+        assert_eq!(
+            home("; graph settings\n  ;; more\n{:default-home {:page \"Directory\"}}").as_deref(),
+            Some("Directory"),
+            "leading EDN comments before the root map"
+        );
     }
 
     #[test]

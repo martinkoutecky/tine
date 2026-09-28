@@ -867,7 +867,7 @@ describe("g h opens the graph home page (config.edn :default-home)", () => {
     dispose();
   });
 
-  it("lets a navigation or graph rebind made during the lookup win (I-20)", async () => {
+  it("lets a navigation (including A→B→A) or a graph rebind made during the lookup win (I-20)", async () => {
     setGraphMeta({ ...pluginGraphMeta, default_home: "Directory" });
     let finish!: (page: unknown) => void;
     vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
@@ -882,9 +882,48 @@ describe("g h opens the graph home page (config.edn :default-home)", () => {
 
     resetPaneLayoutToSingle(pageSnapshot("Source"));
     pressGH(fake);
+    router.openPage("Elsewhere", "page", { inPlace: true });
+    router.openPage("Source", "page", { inPlace: true }); // A→B→A: an equal route, a newer intent
+    finish(homePage);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
     bumpGraphEpoch();
     finish(null);
     await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+    dispose();
+  });
+
+  it("opens a journal-titled home page as that journal", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Aug 1st, 2026" });
+    const journal = { ...homePage, name: "Aug 1st, 2026", title: "Aug 1st, 2026", kind: "journal" as const };
+    vi.spyOn(backend(), "getPage").mockImplementation(async (_name, kind) => (kind === "journal" ? journal : null) as never);
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    pressGH(fake);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Aug 1st, 2026", pageKind: "journal" });
+    dispose();
+  });
+
+  it("does not land in another pane that gains focus during the lookup (I-20)", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Directory" });
+    let finish!: (page: unknown) => void;
+    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const other = splitRootAtEdge("right", "main", { focusNew: false, snapshot: pageSnapshot("Source") })!;
+    focusPane("main");
+    pressGH(fake);
+    focusPane(other); // focus moves to another pane showing an equal route
+    finish(homePage);
+    await settle();
+    expect(paneRouter(other).route()).toMatchObject({ kind: "page", name: "Source" });
     expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
     dispose();
   });

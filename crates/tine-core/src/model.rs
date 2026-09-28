@@ -738,8 +738,9 @@ pub struct GraphMeta {
     /// configured); match it exactly against `TemplateDto.name`. The store
     /// does not insert its body on save.
     pub default_journal_template: Option<String>,
-    /// Graph home page name from config.edn `:default-home {:page "..."}`;
-    /// the frontend opens it for `g h` and on graph open when it resolves.
+    /// Graph home page name from config.edn `:default-home {:page "..."}`,
+    /// untrimmed (blank is `None`); the frontend opens it for `g h` and on
+    /// graph open when it resolves. A snapshot of config at open.
     pub default_home: Option<String>,
     /// Favorited page names (read from config.edn `:favorites`).
     pub favorites: Vec<String>,

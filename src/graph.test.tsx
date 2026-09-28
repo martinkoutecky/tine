@@ -127,11 +127,13 @@ async function loadHarness(
     restoreSession: vi.fn(async () => {}),
     flushSession: vi.fn(async () => {}),
   }));
-  vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn() }));
+  const focused = { activeId: () => "tab", routeIntentRevision: () => 0, route: () => ({ kind: "journals" }), openPage };
+  vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn(), focusedRouter: () => focused }));
   vi.doMock("./journal", () => ({
     journalTitle: () => "Jul 10th, 2026",
     localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
     setJournalTitleFormat: vi.fn(),
+    isJournalTitle: () => false,
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache }));
