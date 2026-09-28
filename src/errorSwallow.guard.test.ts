@@ -18,8 +18,8 @@ const FROZEN_SWALLOW_COUNT = 26;
 const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/assetCache.ts:130 src/assetCache.ts:212 src/assetCache.ts:264 src/assetCache.ts:69
   src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
-  src/components/Block.tsx:3153 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 src/components/Macro.tsx:321 src/components/PdfViewer.tsx:1026
-  src/components/PdfViewer.tsx:1091 src/components/PdfViewer.tsx:522
+  src/components/Block.tsx:3153 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 src/components/Macro.tsx:321 src/components/PdfViewer.tsx:988
+  src/components/PdfViewer.tsx:1053 src/components/PdfViewer.tsx:485
   src/capture.tsx:264 src/capture.tsx:572 src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
   src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 
   
@@ -43,9 +43,9 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/components/HelpShortcuts.tsx:51": "legacy best-effort operation needs an error-family audit",
   "src/components/LinkedReferences.tsx:43": "legacy error-prose branch; replace with fixed error family",
   "src/components/Macro.tsx:321": "legacy error-prose branch; replace with fixed error family",
-  "src/components/PdfViewer.tsx:522": "best-effort viewer resource cleanup",
-  "src/components/PdfViewer.tsx:1026": "best-effort viewer resource cleanup",
-  "src/components/PdfViewer.tsx:1091": "best-effort viewer resource cleanup",
+  "src/components/PdfViewer.tsx:485": "best-effort viewer resource cleanup",
+  "src/components/PdfViewer.tsx:988": "best-effort viewer resource cleanup",
+  "src/components/PdfViewer.tsx:1053": "best-effort viewer resource cleanup",
   "src/components/UnlinkedReferences.tsx:39": "legacy error-prose branch; replace with fixed error family",
   "src/components/WindowChrome.tsx:24": "legacy best-effort operation needs an error-family audit",
   "src/debug.ts:14": "legacy best-effort operation needs an error-family audit",

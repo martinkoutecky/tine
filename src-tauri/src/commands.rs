@@ -23,7 +23,11 @@ fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
 }
 fn feature_pdf_error(error: std::io::Error) -> String {
-    error.to_string()
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        "conflict".to_string()
+    } else {
+        error.to_string()
+    }
 }
 
 #[derive(Serialize)]
@@ -2510,7 +2514,7 @@ pub(crate) fn read_highlights(
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::pdf::Highlight>, String> {
     let slot = slot_for_context(&state)?;
-    Ok(tine_graph_features::pdf::read_highlights(&slot.store, &pdf))
+    tine_graph_features::pdf::read_highlights_checked(&slot.store, &pdf).map_err(feature_pdf_error)
 }
 
 #[tauri::command]
@@ -2527,10 +2531,9 @@ pub(crate) async fn open_pdf(
     .map_err(|error| error.to_string())?
 }
 
-/// Require a current graph binding, then run the guarded PDF highlight merge
-/// on a blocking worker. Dropping the async caller does not cancel a started
-/// write. Converts feature I/O and join errors to strings; the feature's
-/// edit-versus-delete conflict leaves local edits for the caller to retain.
+/// Require a current graph binding; run the guarded merge on a blocking worker.
+/// Dropping the caller does not cancel a started write. WouldBlock returns the
+/// fixed `conflict` token; other I/O and join errors stringify. Retain edits.
 #[tauri::command]
 pub(crate) async fn write_highlights(
     pdf: String,
