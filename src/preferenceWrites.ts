@@ -1,16 +1,15 @@
-/** Device preference writes. `writePreference` updates one signal and serializes
- * writes for it; failure restores the last confirmed value and shows one error.
- * `preferenceRevision` and `preferenceReadCurrent` guard startup reads against
- * later user writes; `seedPreference` records a completed startup read. Each
- * operation is O(1) plus the backend write. Callers observe the signal and toast;
- * they do not manage write ordering or rollback state. */
+/** Device preference tracking is keyed by stable read-callback identity. Reuse
+ * one callback per signal for revisions, seeds and writes; never share it across
+ * signals. Writes apply now and persist sequentially. Failed latest writes roll
+ * back and every failure toasts. O(1) frontend work plus backend write latency. */
 import { pushToast } from "./toasts";
 
 type State<T> = { committed: T; revision: number; pending: number; queue: Promise<void> };
 const states = new WeakMap<Function, State<unknown>>();
 
-/** Apply a device preference immediately, serialize its writes, and restore the
- * last confirmed value if the latest write fails. Each failed write is reported. */
+/** Apply now and queue persistence by read-callback identity. The callback is
+ * invoked only on first write for this key. Latest failure rolls back; every
+ * failure toasts. Return does not confirm persistence. O(1) plus backend write. */
 export function writePreference<T>(
   read: () => T,
   apply: (value: T) => void,
@@ -39,17 +38,21 @@ export function writePreference<T>(
   });
 }
 
-/** Capture before a startup read; apply its result only if no write overtook it. */
+/** Capture a stable callback's revision before a startup read, without calling
+ * it. O(1). */
 export function preferenceRevision<T>(read: () => T): number {
   return (states.get(read) as State<T> | undefined)?.revision ?? 0;
 }
 
+/** True when this callback has the captured revision and no pending writes.
+ * Does not call read. O(1). */
 export function preferenceReadCurrent<T>(read: () => T, revision: number): boolean {
   const state = states.get(read) as State<T> | undefined;
   return (state?.revision ?? 0) === revision && (state?.pending ?? 0) === 0;
 }
 
-/** Call after a startup read replaces the signal's initial value. */
+/** Seed the committed value only for a tracked callback with no pending writes.
+ * Calls read but does not persist. O(1). */
 export function seedPreference<T>(read: () => T): void {
   const state = states.get(read) as State<T> | undefined;
   if (state && state.pending === 0) state.committed = read();

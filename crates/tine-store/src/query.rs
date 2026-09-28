@@ -447,8 +447,8 @@ fn is_properties_only(raw: &str) -> bool {
 /// backlinks don't merge the two pages.
 /// The normalized aliases contributed by one document, using the exact same
 /// page-property rules as [`page_aliases`]. Keeping this extraction shared also
-/// lets cache invalidation compare the old and new semantic alias sets instead
-/// of treating the mere presence of an unchanged `alias::` line as a change.
+/// lets cache invalidation compare sorted, deduplicated normalized alias sets
+/// instead of treating an unchanged `alias::` line as a change.
 pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
     let alias_text: Option<&str> = match &doc.pre_block {
         Some(pre) => Some(pre.as_str()),
@@ -1198,6 +1198,8 @@ pub(crate) fn run_query(graph: &impl GraphRead, query_src: &str) -> Vec<RefGroup
     run_query_bounded(graph, query_src, usize::MAX, usize::MAX).groups
 }
 
+/// Run a simple query over in-memory blocks; output limits do not bound graph traversal.
+/// Refused/malformed input returns empty groups, total 0, exceeded false, like no matches. No disk read.
 pub(crate) fn run_query_bounded(
     graph: &impl GraphRead,
     query_src: &str,
@@ -1398,11 +1400,12 @@ fn run_pred_bounded(
 }
 
 // --- Scoped-invalidation support (#52) --------------------------------------
-// "Could an edit to page (entry, doc) change this derived result?" Each reuses
-// the SAME parse + EvalCtx + eval (or alias resolution) as the real matcher, so
-// the keep/evict decision can never drift from what a full recompute would give.
+// "Could an edit to page (entry, doc) change this derived result?" These use
+// the match predicates; result-level sampling and source admission can differ.
 
-/// Whether page (entry, doc) contributes any block to query `src`.
+/// Test query predicate membership in one in-memory page for memo invalidation.
+/// Result sampling/sorting is not applied: sample 0 may return true although
+/// the final result is empty. Malformed input returns false. O(page blocks).
 pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -> bool {
     let today = JournalDate::today();
     let Some(pred) = Pred::parse(src, today) else {
@@ -1537,9 +1540,10 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
     hit
 }
 
-/// Whether an edited page can contribute to the supported advanced-query
-/// subset. Parsing and evaluation are shared with the real advanced query, so
-/// scoped cache invalidation cannot drift into a second query dialect.
+/// Test supported advanced-query predicate membership in one in-memory page.
+/// Unlike execution, this does not apply the 64 KiB source limit, so oversized
+/// input may match here while execution refuses it. Unsupported forms return
+/// false. O(page blocks).
 pub(crate) fn page_affects_advanced_query(
     query_src: &str,
     entry: &PageEntry,
@@ -1592,6 +1596,8 @@ pub(crate) fn run_advanced_query(graph: &impl GraphRead, query_src: &str) -> Adv
     run_advanced_query_bounded(graph, query_src, usize::MAX, usize::MAX).0
 }
 
+/// Run supported advanced clauses over graph blocks; output limits do not bound traversal.
+/// Return result, exceeded flag, attempted rows. AdvancedResult reports refusal/unsupported forms.
 pub(crate) fn run_advanced_query_bounded(
     graph: &impl GraphRead,
     query_src: &str,
@@ -2132,7 +2138,9 @@ pub(crate) fn search_cancellable_result(
     }
 }
 
-/// Find every `template:: <name>` block and the blocks an insertion produces.
+/// Scan all graph blocks for templates and return insertion DTOs; do not insert.
+/// Include roots unless template-including-parent is false; strip id properties
+/// and included roots' template property. O(graph blocks plus copied subtrees).
 pub(crate) fn templates(graph: &impl GraphRead) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
@@ -2315,6 +2323,10 @@ const OG_AUTOCOMPLETE_HIDDEN_PROPS: &[&str] = &[
     "done",
 ];
 
+/// Collect visible keys and distinct nonempty values from page preblocks and
+/// blocks. Limits charge both keys and values plus estimated bytes. Return sorted
+/// facets and a flag when the next distinct item cannot fit; stop at first
+/// excess. Otherwise may scan all graph blocks. No disk read.
 pub(crate) fn autocomplete_property_facets_bounded(
     graph: &impl GraphRead,
     max_items: usize,

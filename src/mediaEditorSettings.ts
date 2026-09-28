@@ -22,7 +22,8 @@ export function mediaEditorCommand(settingKey: string): string {
   return commands[settingKey] ?? "";
 }
 
-/** Set + persist an editor's command template. */
+/** Trim and optimistically persist the command; unregistered keys are accepted,
+ * and write failure rolls back with a toast. */
 export function setMediaEditorCommand(settingKey: string, value: string): void {
   const v = value.trim();
   commandRevision.set(settingKey, (commandRevision.get(settingKey) ?? 0) + 1);
@@ -68,7 +69,8 @@ export async function detectMediaEditorCommand(ed: MediaEditor): Promise<{ comma
   return { command: found, applied: true };
 }
 
-/** Load all persisted editor commands at startup (default = empty = OS opener). */
+/** Load commands at startup (empty = OS opener). Failed reads toast and resolve;
+ * a manual change supersedes its pending read. */
 export async function initMediaEditorSettings(): Promise<void> {
   await Promise.all(
     MEDIA_EDITORS.map(async (e) => {

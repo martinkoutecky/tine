@@ -33,19 +33,25 @@ export const copyStripCollapsed = stripCollapsed;
  *  in context (Tine default OFF). */
 export const refClickZoom = refZoom;
 
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setRefClickZoom(on: boolean): void {
   writePreference(refZoom, setRefZoomSig, on, (next) => backend().setAppBool(KEY_REF_ZOOM, next), "block reference click behavior");
 }
 
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setCopyIncludeSubtree(on: boolean): void {
   writePreference(includeSubtree, setIncludeSubtreeSig, on, (next) => backend().setAppBool(KEY_SUBTREE, next), "copy subtree preference");
 }
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setCopyStripCollapsed(on: boolean): void {
   writePreference(stripCollapsed, setStripCollapsedSig, on, (next) => backend().setAppBool(KEY_COLLAPSED, next), "copy collapsed preference");
 }
 
-/** Load the persisted preferences at startup. Tine defaults: include-subtree OFF,
- *  strip-collapsed ON (both differ from Logseq; revertible in Settings). */
+/** Load device preferences at startup: include-subtree and ref-click zoom OFF,
+ * strip-collapsed ON. Failed reads toast and resolve. */
 export async function initCopySettings(): Promise<void> {
   const subtreeRevision = preferenceRevision(includeSubtree);
   const collapsedRevision = preferenceRevision(stripCollapsed);

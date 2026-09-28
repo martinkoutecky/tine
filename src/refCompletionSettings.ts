@@ -22,11 +22,13 @@ const [spaceAfter, setSpaceAfterSig] = createSignal(true);
  *  closing brackets, no space). */
 export const spaceAfterRefCompletion = spaceAfter;
 
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setSpaceAfterRefCompletion(on: boolean): void {
   writePreference(spaceAfter, setSpaceAfterSig, on, (next) => backend().setAppBool(KEY, next), "reference completion preference");
 }
 
-/** Load the persisted preference at startup. Tine default: ON (differs from Logseq). */
+/** Load the device preference at startup (default ON); read failure toasts and resolves. */
 export async function initRefCompletionSettings(): Promise<void> {
   const revision = preferenceRevision(spaceAfter);
   try {

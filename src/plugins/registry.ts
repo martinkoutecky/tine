@@ -627,6 +627,11 @@ export function parseSafetyReport(
 
 const safetyReportRequests = new Map<string, Promise<PluginSafetyReport>>();
 
+/** Fetch a bounded (256 KiB, timeout) audit report and verify digest and signed
+ * identity/summary. On failure, accept only a similarly verified cache entry;
+ * reject if neither works. Successful fetches cache best-effort, with write
+ * errors toasted. Requests share an audit digest key. Cost includes network
+ * latency, bounded hashing/parsing and optional device cache I/O. */
 export function loadSafetyReport(plugin: RegistryPlugin, version: RegistryVersion): Promise<PluginSafetyReport> {
   const key = version.audit.sha256;
   const existing = safetyReportRequests.get(key);

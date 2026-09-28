@@ -131,6 +131,10 @@ export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Pro
   await restartJournalFeed(owner);
 }
 
+/** Render the active pane route. Page routes fetch a file; a missing page becomes
+ * an empty editable page, while read failure shows an error. Journal routes
+ * load the feed. Route ownership discards stale loads. O(loaded page or feed
+ * window) plus backend read latency. */
 export function PageView(): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;

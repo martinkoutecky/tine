@@ -29,13 +29,16 @@ const [fmt, setFmtSig] = createSignal(DEFAULT_ASSET_NAME_FORMAT);
 /** Reactive: the asset-filename format template (read at insert time). */
 export const assetNameFormat = fmt;
 
-/** Set + persist the template. Blank reverts to the default. */
+/** Trim and apply this device-local template immediately; whitespace selects
+ * the default. Queue a settings write. Failure restores the last confirmed
+ * value and toasts; return does not confirm persistence. O(1) plus write. */
 export function setAssetNameFormat(s: string): void {
   const v = s.trim() || DEFAULT_ASSET_NAME_FORMAT;
   writePreference(fmt, setFmtSig, v, (next) => backend().setAppString(KEY, next), "asset filename format");
 }
 
-/** Load the persisted template at startup (default = plain original name). */
+/** Load the device template at startup (default = plain name); read failure
+ * toasts and resolves, and a later user write wins. */
 export async function initAssetSettings(): Promise<void> {
   const revision = preferenceRevision(fmt);
   try {

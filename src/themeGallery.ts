@@ -61,12 +61,17 @@ function applyThemeLocally(id: string): void {
   if (el) el.textContent = theme?.css ?? "";
 }
 
+/** Apply bundled or installed non-revoked CSS immediately. Unknown or revoked
+ * IDs clear selection and persist empty ID. Write failure rolls back and toasts.
+ * O(theme lookup and CSS size) plus one backend write. */
 export function applyTheme(id: string): void {
   const theme = id ? galleryThemeById(id) ?? installedThemeByKey(id) : undefined;
   writePreference(selectedId, applyThemeLocally, theme?.id ?? "",
     (next) => backend().setAppString(KEY, next), "gallery theme");
 }
 
+/** Load saved theme; unknown IDs clear selection. Read failure toasts and
+ * resolves, and later user selection wins. O(theme lookup and CSS size). */
 export async function initThemeGallery(): Promise<void> {
   ensureThemeStyle();
   const revision = preferenceRevision(selectedId);

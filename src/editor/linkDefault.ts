@@ -28,14 +28,18 @@ export function migrateLinkAutocompletePolicy(value: unknown, legacy?: boolean |
   return legacy === true ? "existing" : "adaptive";
 }
 
-/** Apply a new setting live and persist only the generic string key. */
+/** Apply now and queue the generic string key only. A failed write rolls back
+ * and toasts; return does not confirm persistence. O(1) plus backend write. */
 export function setLinkAutocompletePolicy(next: LinkAutocompletePolicy): void {
   ++refreshGeneration;
   writePreference(policy, setPolicy, next, (value) => backend().setAppString(POLICY_KEY, value), "link autocomplete policy");
 }
 
-/** Read the string policy in each WebView. Quick Capture is an independent
- * WebView, and calls this again every time its persistent window is shown. */
+/** Refresh this WebView from the device-local string key; Quick Capture refreshes
+ * on each show. Missing or invalid values fall back to the legacy boolean
+ * (true = existing, otherwise adaptive), possibly writing a migrated string.
+ * Only the latest refresh applies. Read errors toast and resolve. O(1) reads
+ * plus an optional migration write. */
 export async function initLinkDefault(): Promise<void> {
   const generation = ++refreshGeneration;
   const applyIfCurrent = (next: LinkAutocompletePolicy) => {
@@ -68,6 +72,8 @@ export async function initLinkDefault(): Promise<void> {
 // Compatibility surface for patch callers and the retained Rust commands. New
 // UI code must use the three-mode API above.
 export const linkFirstMatch = () => policy() === "existing";
+/** Map true to existing, false to adaptive; write generic and legacy keys
+ * independently, with failures toasted. */
 export function setLinkFirstMatch(on: boolean): void {
   setLinkAutocompletePolicy(on ? "existing" : "adaptive");
   void backend().setLinkFirstMatch(on)

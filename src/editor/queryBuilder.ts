@@ -854,7 +854,8 @@ function parseAdvancedFind(toks: AdvancedTok[], cur: AdvancedCur): boolean {
   );
 }
 
-/** Convert only supported Datalog forms; oversized or over-nested input stays raw. */
+/** Convert supported Datalog forms; malformed, >64 KiB or over-nested input
+ * returns null so the source stays raw. */
 export function advancedToClause(datalog: string): Clause | null {
   if (datalog.length > 64 * 1024) return null;
   const toks = tokenizeAdvanced(datalog.trim());

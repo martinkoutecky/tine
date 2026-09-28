@@ -38,6 +38,8 @@ export interface LauncherRankable {
 const [enabled, setEnabledSignal] = createSignal(true);
 export const launcherRankingEnabled = enabled;
 
+/** Load device setting (default ON). Read failure toasts and resolves; a newer
+ * local write wins. O(1) plus backend read. */
 export async function initLauncherRankingSetting(): Promise<void> {
   const revision = preferenceRevision(enabled);
   try {
@@ -49,6 +51,8 @@ export async function initLauncherRankingSetting(): Promise<void> {
   }
 }
 
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setLauncherRankingEnabled(value: boolean): void {
   writePreference(enabled, setEnabledSignal, value, (next) => backend().setAppBool(SETTING_KEY, next), "adaptive launcher ranking");
 }

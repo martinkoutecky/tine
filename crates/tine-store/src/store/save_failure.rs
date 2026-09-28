@@ -1,5 +1,8 @@
 use super::{PageId, SaveOutcome};
 
+/// Return outcome unchanged when undo succeeded. Incomplete rollback returns
+/// Io naming the page and asking the caller to inspect disk before retrying,
+/// regardless of the original refusal. No I/O; O(1).
 pub(super) fn single_page_failure(
     outcome: SaveOutcome,
     undo_failed: &[usize],

@@ -44,11 +44,17 @@ function apply(): void {
     .catch(() => pushToast("Could not apply spellcheck settings.", "error"));
 }
 
+/** Apply immediately; native spellcheck runs without awaiting. Queue a device
+ * write; failure rolls back and toasts. Native failure also toasts. Return
+ * confirms neither asynchronous result. O(1) plus native and settings calls. */
 export function setSpellcheckEnabled(on: boolean): void {
   writePreference(enabled, (next) => { setEnabledSig(next); apply(); }, on,
     (next) => backend().setAppBool(KEY_ENABLED, next), "spellcheck preference");
 }
 
+/** Apply immediately; native spellcheck runs without awaiting. Queue a device
+ * write; failure rolls back and toasts. Native failure also toasts. Return
+ * confirms neither asynchronous result. O(1) plus native and settings calls. */
 export function setSpellcheckLanguages(value: string): void {
   writePreference(languages, (next) => { setLanguagesSig(next); apply(); }, value,
     (next) => backend().setAppString(KEY_LANGS, next), "spellcheck languages");
@@ -90,9 +96,9 @@ export async function loadDictionaries(): Promise<void> {
   }
 }
 
-/** Load persisted prefs at startup and push them onto the webview. The Rust setup
- *  already applied them once from the same file; re-applying is idempotent and
- *  also sets this webview-context's signals (e.g. the separate capture window). */
+/** Read device preferences into this WebView unless superseded by local writes.
+ * Failed reads toast and resolve. Dictionary refresh and native application
+ * run without awaiting; native failures toast. O(1) backend and native calls. */
 export async function initSpellcheckSettings(): Promise<void> {
   const enabledRevision = preferenceRevision(enabled);
   const languageRevision = preferenceRevision(languages);

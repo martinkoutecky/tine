@@ -17,18 +17,18 @@ const LANDING = /\b(?:ensurePageLoaded|reloadPage|markDirty|markConflict|forgetP
 // the list may only shrink as ownership is moved behind the session door.
 const FROZEN_LATE_LANDING_COUNT = 28;
 const ORIGINAL_LATE_KEYS = new Set(`
-  src/assetSettings.ts:41 src/capture.tsx:330 src/components/AudioOverlay.tsx:86 src/components/Block.tsx:1321 src/components/Block.tsx:1669
+  src/assetSettings.ts:44 src/capture.tsx:330 src/components/AudioOverlay.tsx:86 src/components/Block.tsx:1321 src/components/Block.tsx:1669
   src/components/Block.tsx:1695 src/components/Block.tsx:1715 src/components/ContextMenu.tsx:660 src/components/ContextMenu.tsx:762 src/components/ContextMenu.tsx:781
   src/components/LinkedReferences.tsx:114 src/components/LiveRefGroup.tsx:72 src/components/PdfViewer.tsx:1003 src/components/Settings.tsx:1048 src/components/Settings.tsx:1642
   src/components/Settings.tsx:1873 src/components/Settings.tsx:1884 src/components/Settings.tsx:194 src/components/Settings.tsx:2188 src/components/Settings.tsx:2384
   src/components/Settings.tsx:2478 src/components/Settings.tsx:2605 src/components/Settings.tsx:2697 src/components/Settings.tsx:2706 src/components/Settings.tsx:2719
   src/components/Settings.tsx:2728 src/components/Settings.tsx:2748 src/components/Settings.tsx:561 src/components/Sidebar.tsx:344 src/components/Sidebar.tsx:413
-  src/components/UnlinkedReferences.tsx:53 src/debug.ts:38 src/editor/linkDefault.ts:54 src/filedrop.ts:84 src/graph.ts:269
-  src/graph.ts:313 src/graph.ts:53 src/graph.ts:76 src/guide.ts:75 src/launcherRanking.ts:43
-  src/mediaEditorSettings.ts:67 src/mediaEditorSettings.ts:72 src/nativeChrome.ts:68 src/nativeChrome.ts:81 src/pageIconBatch.ts:42
+  src/components/UnlinkedReferences.tsx:53 src/debug.ts:38 src/editor/linkDefault.ts:58 src/filedrop.ts:84 src/graph.ts:269
+  src/graph.ts:313 src/graph.ts:53 src/graph.ts:76 src/guide.ts:75 src/launcherRanking.ts:46
+  src/mediaEditorSettings.ts:68 src/mediaEditorSettings.ts:74 src/nativeChrome.ts:68 src/nativeChrome.ts:81 src/pageIconBatch.ts:42
   src/pageIndex.ts:71 src/plugins/manager.ts:267 src/plugins/manager.ts:273 src/plugins/manager.ts:781 src/plugins/registry.ts:456
   src/plugins/registry.ts:514 src/print.ts:111 src/render/inline.tsx:1241 src/render/inline.tsx:794 src/router.ts:733
-  src/session.ts:286 src/session.ts:302 src/sheet/queryHydration.ts:325 src/spellcheckSettings.ts:89 src/themes/manager.ts:50
+  src/session.ts:286 src/session.ts:302 src/sheet/queryHydration.ts:325 src/spellcheckSettings.ts:95 src/themes/manager.ts:50
   src/ui.ts:228 src/workspaces.ts:96
 `.trim().split(/\s+/));
 const ALLOWED_LATE_LANDINGS: Record<string, string> = {
@@ -48,9 +48,9 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/components/Sidebar.tsx:413": "legacy sidebar navigation needs a binding audit",
   "src/components/UnlinkedReferences.tsx:53": "legacy UI continuation needs a binding audit",
   "src/debug.ts:38": "debug reporting is best effort",
-  "src/editor/linkDefault.ts:54": "failed legacy read toasts; the refresh generation owns the migrated result",
+  "src/editor/linkDefault.ts:58": "failed legacy read toasts; the refresh generation owns the migrated result",
   "src/graph.ts:76": "census #1: graph-session continuation awaits its design batch",
-  "src/mediaEditorSettings.ts:67": "device-local autodetect revision check owns the result",
+  "src/mediaEditorSettings.ts:68": "device-local autodetect revision check owns the result",
   "src/pageIndex.ts:71": "legacy UI continuation needs a binding audit",
   "src/pageIconBatch.ts:42": "legacy page-icon read result needs a binding audit",
   "src/plugins/manager.ts:267": "legacy plugin completion needs an ownership audit",
@@ -58,7 +58,7 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/plugins/registry.ts:514": "legacy plugin completion needs an ownership audit",
   "src/print.ts:111": "legacy UI continuation needs a binding audit",
   "src/sheet/queryHydration.ts:325": "legacy UI continuation needs a binding audit",
-  "src/spellcheckSettings.ts:89": "legacy settings UI result needs a binding audit",
+  "src/spellcheckSettings.ts:95": "legacy settings UI result needs a binding audit",
 };
 
 export function lateLandingViolations(file: string, source: string): string[] {

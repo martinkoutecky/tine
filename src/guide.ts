@@ -108,6 +108,9 @@ function markGuideAnnounced(binding: Binding) {
   });
 }
 
+/** Show a sticky Guide toast once per graph root in this process when metadata
+ * says it is unannounced. Dismissal persists guide_announced; write failure
+ * restores the flag and toasts. O(1) plus deferred backend write. */
 export function maybeShowGuideAnnouncement() {
   const meta = graphMeta();
   if (!meta || meta.guide_announced || announcementShownForRoot.has(meta.root)) return;

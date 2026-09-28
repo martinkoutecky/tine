@@ -1,8 +1,7 @@
-/** Graph config preferences. `changeGraphSetting` and `writeGraphSignal` apply
- * one value for the current graph; `seedGraphSignal` records a completed load.
- * Each call does O(1) frontend work plus one serialized config write. Failure
- * restores the last confirmed value and shows an error; a graph switch cancels
- * a queued write. Callers need no queue or graph-binding state. */
+/** Graph preferences. Writes apply immediately and serialize per key and graph
+ * binding. A graph switch rejects queued writes with a toast; an in-flight
+ * persist may finish. Failed active writes restore the last confirmed value.
+ * Seeding never writes config. O(1) frontend work plus backend writes. */
 import { backend } from "./backend";
 import { graphMeta, setGraphMeta } from "./graphSession";
 import { writePreference, seedPreference } from "./preferenceWrites";
@@ -16,6 +15,8 @@ function currentScope(): string {
   return `${graphMeta()?.root ?? ""}\0${backend().graphBindingGeneration?.() ?? 0}`;
 }
 
+/** Seed an already tracked key in the current graph scope. No config write;
+ * unknown keys and stale scopes do nothing. O(1). */
 export function seedGraphSignal(key: string): void {
   if (currentScope() === scope) {
     const read = readers.get(key);
@@ -23,6 +24,9 @@ export function seedGraphSignal(key: string): void {
   }
 }
 
+/** Apply now and queue a graph-bound write. A graph switch rejects a queued
+ * write with a toast but cannot cancel one in flight; active failures roll back.
+ * Return does not confirm persistence. O(1) plus queued backend work. */
 export function writeGraphSignal<T>(
   key: string, read: () => T, apply: (value: T) => void, value: T,
   persist: (value: T) => Promise<unknown>, label: string,
@@ -39,6 +43,9 @@ export function writeGraphSignal<T>(
     label);
 }
 
+/** Change graph metadata; equal values do nothing. Without loaded metadata,
+ * persist directly without a signal update or queue. Failures toast; return
+ * does not confirm persistence. O(1) plus any backend write. */
 export function changeGraphSetting<K extends keyof GraphMeta>(
   key: K, value: GraphMeta[K], persist: (value: GraphMeta[K]) => Promise<unknown>, label: string,
 ): void {

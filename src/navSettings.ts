@@ -14,11 +14,13 @@ const [reuseTabs, setReuseTabsSig] = createSignal(true);
  *  replacing the active tab / opening a duplicate. */
 export const navReuseTabs = reuseTabs;
 
+/** Apply now and queue a device-local write. Failure rolls back and toasts;
+ * return does not confirm persistence. O(1) plus backend write. */
 export function setNavReuseTabs(on: boolean): void {
   writePreference(reuseTabs, setReuseTabsSig, on, (next) => backend().setAppBool(KEY_REUSE_TABS, next), "tab reuse preference");
 }
 
-/** Load the persisted navigation preference at startup. Default ON. */
+/** Load the device preference at startup (default ON); read failure toasts and resolves. */
 export async function initNavSettings(): Promise<void> {
   const revision = preferenceRevision(reuseTabs);
   try {

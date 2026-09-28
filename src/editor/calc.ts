@@ -758,8 +758,8 @@ function formatValue(env: CalcEnvironment, value: Decimal): string {
   return formatNormal(env, value);
 }
 
-/** Evaluate a multi-line calc source; returns one entry per input line. Parsed
- * expressions beyond 16k characters or results beyond 10k digits become error rows. */
+/** Evaluate lines in order, carrying assignments forward; blank/comment lines
+ * have null output. Invalid/oversized expressions become error rows. */
 export function evalCalc(src: string): CalcLine[] {
   const env: CalcEnvironment = { values: new Map() };
   return src.split("\n").map((line) => {

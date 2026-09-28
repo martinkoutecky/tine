@@ -48,6 +48,10 @@ async function persist(themes: InstalledTheme[]) {
   await backend().setAppString(STORAGE_KEY, JSON.stringify(themes.map((theme) => theme.manifest)));
 }
 
+/** Install revocations before the first await, then read up to 32 manifests
+ * from device settings. Read or whole-list parse failure toasts and leaves an
+ * empty list; bad entries are skipped with a toast. No write. O(manifests and
+ * CSS size) plus one backend read. */
 export async function initThemePackages(initialRevocations: ReadonlySet<string> = new Set()): Promise<void> {
   // Seed before the first await so a selected installed theme can never be
   // restored through an empty startup revocation window.
