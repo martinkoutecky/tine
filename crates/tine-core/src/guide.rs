@@ -196,6 +196,8 @@ mod search_guide_tests {
                 "missing search Guide explanation: {text}"
             );
         }
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("Both respect `:feature/enable-search-remove-accents? false`"));
     }
 }
 
