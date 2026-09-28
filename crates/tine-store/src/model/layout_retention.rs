@@ -21,13 +21,16 @@ use std::collections::{HashMap, VecDeque};
 
 use tine_core::doc::{self, DocBlock, Document, SerializeOpts};
 
+use super::line_endings;
+
 /// Serialize a Markdown `doc` reusing `source`'s physical lines for every block
 /// whose raw text is unchanged (re-indented as a unit only when its new position
-/// requires it). Returns LF text; CRLF sources are handled on their LF form and
-/// the caller restores CRLF. Returns `None` when `source` has a lone `\r`, `doc`
-/// is empty (no pre-block, no roots), `source`'s layout cannot be mapped to
-/// blocks, or the result re-parses neither to `doc` nor as below; the caller then
-/// serializes the whole page. Declines are silent (no log or counter).
+/// requires it). Every reused line keeps its own terminator (`\n`, `\r\n` or a
+/// lone `\r`); a rendered line takes the file's convention
+/// (`line_endings::convention`). Returns `None` when `doc` is empty (no
+/// pre-block, no roots), `source`'s layout cannot be mapped to blocks, or the
+/// result re-parses neither to `doc` nor as below; the caller then serializes
+/// the whole page. Declines are silent (no log or counter).
 ///
 /// `Some` output re-parses to exactly `doc` (pre-block plus each block's raw
 /// text and children), with one exception: when `doc` itself cannot round-trip
@@ -39,33 +42,18 @@ use tine_core::doc::{self, DocBlock, Document, SerializeOpts};
 /// of the pre-order block sequence, O(a·b) with a `u32` table, skipped above
 /// 4,000,000 cells (about 16 MB).
 pub(super) fn serialize(doc: &Document, source: &str, opts: &SerializeOpts) -> Option<String> {
-    let lf;
-    let source = if source.contains('\r') {
-        lf = source.replace("\r\n", "\n");
-        if lf.contains('\r') {
-            return None;
-        }
-        lf.as_str()
-    } else {
-        source
-    };
     if doc.roots.is_empty() && doc.pre_block.is_none() {
         return None;
     }
     let old = doc::parse(source);
-    let body = source.strip_suffix('\n').unwrap_or(source);
-    let lines: Vec<&str> = if body.is_empty() {
-        Vec::new()
-    } else {
-        body.split('\n').collect()
-    };
+    let (lines, ends) = line_endings::split(source);
     let olds = map_old_blocks(&old, &lines)?;
     let mut news = Vec::new();
     flatten(&doc.roots, &mut news);
     let (keep, hint) = match_blocks(&olds, &news);
 
     let region = olds.first().map_or(lines.len(), |o| o.start);
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<(String, Option<usize>)> = Vec::new();
     emit_preamble(&old, doc, &lines, region, opts, &mut out);
     let mut emitter = Emitter {
         lines: &lines,
@@ -78,9 +66,24 @@ pub(super) fn serialize(doc: &Document, source: &str, opts: &SerializeOpts) -> O
     let mut index = 0;
     emitter.place(&doc.roots, None, &mut index);
     let out = emitter.out;
-    let mut result = out.join("\n");
-    if source.ends_with('\n') || out.last().is_some_and(|line| line.is_empty()) {
-        result.push('\n');
+    let convention = line_endings::convention(Some(source));
+    let end = |(_, origin): &(String, Option<usize>)| {
+        origin
+            .map(|i| ends[i])
+            .filter(|end| !end.is_empty())
+            .unwrap_or(convention)
+    };
+    let mut result = String::with_capacity(source.len() + 64);
+    for (k, line) in out.iter().enumerate() {
+        result.push_str(&line.0);
+        if k + 1 < out.len() {
+            result.push_str(end(line));
+        }
+    }
+    if let Some(last) = out.last() {
+        if source.ends_with(['\n', '\r']) || last.0.is_empty() {
+            result.push_str(end(last));
+        }
     }
     // Safety net: the reused lines must re-parse to exactly the DTO, or a
     // neighbour's layout changed its meaning.
@@ -232,19 +235,18 @@ fn emit_preamble(
     lines: &[&str],
     region: usize,
     opts: &SerializeOpts,
-    out: &mut Vec<String>,
+    out: &mut Vec<(String, Option<usize>)>,
 ) {
     let old_pre_len = old
         .pre_block
         .as_ref()
         .map_or(0, |pre| pre.split('\n').count());
-    let gap = lines[old_pre_len..region]
-        .iter()
-        .map(|line| line.to_string());
+    let reused = |range: std::ops::Range<usize>| range.map(|i| (lines[i].to_string(), Some(i)));
+    let gap = reused(old_pre_len..region);
     if old.pre_block == doc.pre_block {
-        out.extend(lines[..old_pre_len].iter().map(|line| line.to_string()));
+        out.extend(reused(0..old_pre_len));
     } else if let Some(pre) = &doc.pre_block {
-        out.extend(pre.split('\n').map(str::to_string));
+        out.extend(pre.split('\n').map(|line| (line.to_string(), None)));
     }
     if doc.pre_block.is_none() {
         // Without a preamble the old region is blank lines only; keep them
@@ -255,7 +257,7 @@ fn emit_preamble(
     } else if old.pre_block.is_some() && region > old_pre_len {
         out.extend(gap);
     } else if !doc.roots.is_empty() && opts.blank_after_props {
-        out.push(String::new());
+        out.push((String::new(), None));
     }
 }
 
@@ -265,7 +267,8 @@ struct Emitter<'a> {
     keep: Vec<Option<usize>>,
     hint: Vec<Option<usize>>,
     unit: &'a str,
-    out: Vec<String>,
+    /// Emitted lines, each with the old line it reuses (for its terminator).
+    out: Vec<(String, Option<usize>)>,
 }
 
 impl Emitter<'_> {
@@ -305,7 +308,7 @@ impl Emitter<'_> {
                 .unwrap_or_else(|| parent.map_or(String::new(), |pp| format!("{pp}{}", self.unit)));
             match self.keep[i] {
                 Some(o) => self.reuse(o, &prefix),
-                None => self.render(block.raw(), &prefix),
+                None => self.render(block.raw(), &prefix, self.hint[i]),
             }
             *index = i + 1;
             self.place(&block.children, Some(&prefix), index);
@@ -321,30 +324,41 @@ impl Emitter<'_> {
         let from = self.old_prefix(old).len();
         let OldBlock { start, len, .. } = self.olds[old];
         let same = self.old_prefix(old) == prefix;
-        for line in &self.lines[start..start + len] {
-            self.out.push(if same || line.is_empty() {
+        for (i, line) in self.lines.iter().enumerate().skip(start).take(len) {
+            let text = if same || line.is_empty() {
                 line.to_string()
             } else {
                 let lead = line.len() - line.trim_start_matches([' ', '\t']).len();
                 format!("{prefix}{}", &line[lead.min(from)..])
-            });
+            };
+            self.out.push((text, Some(i)));
         }
     }
 
-    fn render(&mut self, raw: &str, prefix: &str) {
+    /// Render a new or changed block. A changed block's lines take the
+    /// terminators of the old block it replaces (`hint`), line by line.
+    fn render(&mut self, raw: &str, prefix: &str, hint: Option<usize>) {
+        let origin = |j: usize| {
+            hint.map(|o| &self.olds[o])
+                .filter(|old| j < old.len)
+                .map(|old| old.start + j)
+        };
         let mut lines = raw.split('\n');
         let first = lines.next().unwrap_or("");
-        self.out.push(if first.is_empty() {
+        let first = if first.is_empty() {
             format!("{prefix}-")
         } else {
             format!("{prefix}- {first}")
-        });
-        for line in lines {
-            self.out.push(if line.is_empty() {
+        };
+        let mut emitted = vec![(first, origin(0))];
+        for (j, line) in lines.enumerate() {
+            let line = if line.is_empty() {
                 String::new()
             } else {
                 format!("{prefix}  {line}")
-            });
+            };
+            emitted.push((line, origin(j + 1)));
         }
+        self.out.extend(emitted);
     }
 }

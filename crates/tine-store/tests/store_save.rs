@@ -358,6 +358,7 @@ enum Case {
     OrgReadOnly,
     OrgEditable,
     Crlf,
+    LoneCr,
     Trivia,
     Preamble,
     PinnedJournal,
@@ -500,6 +501,8 @@ fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
         Case::OrgReadOnly => fixture.write("pages/Note.org", "* a\n*** c\n"),
         Case::OrgEditable => fixture.write("pages/Note.org", "* before\n"),
         Case::Crlf => fixture.write("pages/Note.md", b"- before\r\n"),
+        // K01a: lone-CR line breaks separate blocks and survive the edit.
+        Case::LoneCr => fixture.write("pages/Note.md", b"- before\r- keep\r\t- child\r"),
         Case::Trivia => fixture.write("pages/Note.md", "foo:: bar\n\n\n- before\n"),
         Case::Preamble => fixture.write("pages/Note.md", "A:: 1\nB:: 2\n- before\n"),
         Case::PinnedJournal => {
@@ -649,6 +652,7 @@ fn legacy_and_store_saves_match_on_data_safety_matrix() {
         Case::OrgReadOnly,
         Case::OrgEditable,
         Case::Crlf,
+        Case::LoneCr,
         Case::Trivia,
         Case::Preamble,
         Case::PinnedJournal,
@@ -664,6 +668,7 @@ fn legacy_and_store_saves_match_on_data_safety_matrix() {
             Case::Alias => Err("conflict".to_string()),
             Case::Appeared => Err("conflict".to_string()),
             Case::Crlf => Ok("2be7206b0f37adb0".to_string()),
+            Case::LoneCr => Ok("badb812c198da790".to_string()),
             Case::Deleted => Err("conflict".to_string()),
             Case::Guide => Ok("guide-ephemeral".to_string()),
             Case::KeepMine => Ok("eb859457eef7db1b".to_string()),

@@ -90,6 +90,20 @@ fn trailing_newlines(s: &str) -> usize {
 /// headline level), the pre-headline region becomes `pre_block`, and each
 /// block's body is kept verbatim in `raw` (leading stars stripped).
 pub fn parse_org(content: &str) -> Document {
+    // A lone `\r` ends a line (mldoc `eol_chars`; K01a). CRLF keeps its `\r` in
+    // the verbatim bodies, so only lone ones become `\n`; such a file then no
+    // longer round-trips byte-for-byte and `org_editable` serves it read-only.
+    let normalized;
+    let content = if content.contains('\r') {
+        normalized = content
+            .split("\r\n")
+            .map(|part| part.replace('\r', "\n"))
+            .collect::<Vec<_>>()
+            .join("\r\n");
+        normalized.as_str()
+    } else {
+        content
+    };
     let body = content.trim_end_matches('\n');
     if body.is_empty() {
         return Document::default();
@@ -273,6 +287,17 @@ mod tests {
             ("multi-space-after-stars", "*  extra space title\n"),
             ("no-headlines", "#+TITLE: Just directives\n#+FILETAGS: :x:\n"),
         ]
+    }
+
+    #[test]
+    fn lone_cr_org_parses_its_lines_and_is_read_only() {
+        let lone = "* a\r* b\r** c\r";
+        assert_eq!(parse_org(lone), parse_org(&lone.replace('\r', "\n")));
+        assert!(
+            !org_editable(lone),
+            "a lone-CR org file cannot be reproduced"
+        );
+        assert!(org_editable("* a\r\n* b\r\n"), "CRLF still round-trips");
     }
 
     #[test]

@@ -4,6 +4,7 @@
 //! values remain separate external reference identities.
 
 mod layout_retention;
+mod line_endings;
 mod page_icons;
 mod page_identity;
 mod page_parse;
@@ -148,6 +149,7 @@ pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
 /// Counts list/outline columns, closed callouts, quote markers, and matched
 /// inline delimiters; Org headline levels are checked by the path-aware reader.
 pub fn parse_input_depth_within_limit(input: &str) -> bool {
+    let input: &str = &doc::normalize_line_endings(input); // a lone `\r` ends a line (K01a)
     let mut bullet_columns = Vec::new();
     let mut containers = Vec::<String>::new();
     let mut literal: Option<String> = None;
@@ -4350,7 +4352,7 @@ impl Graph {
     /// Bytes a save writes for `page`. Markdown reuses every unchanged block's
     /// lines (`layout_retention`), else re-serializes in the file's detected
     /// style (no Syncthing churn); equal parses keep the disk bytes and revision
-    /// (A5); CRLF files stay CRLF (A5 ran first, so no double conversion). The
+    /// (A5); CRLF and lone-CR files keep their terminators (`line_endings`). The
     /// bytes re-parse to `page`, except a DTO that cannot round-trip (blocks
     /// after an unterminated fence): it gets the whole-page serializer's meaning.
     fn prepare_page_content(
@@ -4434,7 +4436,7 @@ impl Graph {
                         content = e.to_string(); // A5
                     }
                 }
-                preserve_crlf(content, existing)
+                line_endings::restore(content, existing)
             }
             Format::Org => {
                 // Corruption firewall: never write a .org file Tine cannot
@@ -4616,16 +4618,6 @@ fn top_level_asset_name(name: &str) -> io::Result<()> {
         ));
     }
     Ok(())
-}
-
-/// Preserve a file's CRLF line endings on rewrite so an edit produces a
-/// minimal diff instead of flipping every line. New files stay LF.
-fn preserve_crlf(content: String, existing: Option<&str>) -> String {
-    if existing.is_some_and(|e| e.contains("\r\n")) && !content.contains('\r') {
-        content.replace('\n', "\r\n")
-    } else {
-        content
-    }
 }
 
 fn page_cache_worker_count() -> usize {
