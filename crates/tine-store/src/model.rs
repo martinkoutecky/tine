@@ -603,6 +603,10 @@ impl ReadSnapshot {
         )
     }
 
+    /// Capture a read snapshot from an already loaded graph cache; panics if it
+    /// is absent. The initial capture builds page, alias, block and reference
+    /// indexes over the graph; incremental capture reuses old indexes where
+    /// possible but may still scan pages. Reads in-memory state, may spawn scoped workers; no filesystem I/O or Result is returned.
     pub(crate) fn capture(
         graph: &Graph,
         config: Config,
@@ -3079,9 +3083,12 @@ impl Graph {
         pages.get(i).map(|(e, d)| page_dto(e, d))
     }
 
-    /// Load a page by entry. Served from the in-memory cache so block uuids are
-    /// stable and consistent with queries / refs / the sidebar. Falls back to a
-    /// disk parse for a page not yet in the cache (e.g. just created externally).
+    /// Read and validate the current page file on every call, then reconcile a
+    /// warm cache before returning its DTO. A cold cache or miss parses only this
+    /// page and does not warm the whole cache. Missing files are evicted;
+    /// missing, unreadable, oversized or invalid-UTF-8 files return I/O errors.
+    /// Reconciliation may mutate cache state and report a parser error. Cost at
+    /// least O(page bytes), plus cache reconciliation on a warm cache.
     pub(crate) fn load_page(&self, entry: &PageEntry) -> io::Result<PageDto> {
         // Reconcile any external change into the cache FIRST. Otherwise a stale
         // cache (an edit the 3s watcher hasn't folded in yet) would be served as
@@ -4129,6 +4136,12 @@ impl Graph {
         }
     }
 
+    /// Read a regular, contained page path and reconcile its bytes into the
+    /// in-memory cache. Symlinks, nonfiles and escaping paths return Excluded;
+    /// read/parse errors return ReadFailed; an expected revision mismatch
+    /// returns ChangedDuringRead. None skips that comparison. Success returns
+    /// Reconciled and consumes a self-write marker. Does not write the file or
+    /// publish a Store view; cost includes page bytes and cache reconciliation.
     pub(crate) fn sync_file_internal(
         &self,
         path: &Path,

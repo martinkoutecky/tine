@@ -662,6 +662,11 @@ fn log_save_kinds(entries: &[SavePageEntry]) {
     }
 }
 
+/// Require a current graph binding and nonempty edit kinds, then prepare
+/// bases and run one ordered guarded page transaction. A missing/stale
+/// binding or empty kinds returns command Err; preparation and transaction
+/// failures return a Failed wire value. Force reads current UTF-8 bytes for
+/// each affected base. Empty input returns Failed at placeholder index 0.
 #[tauri::command]
 pub(crate) fn save_pages(
     entries: Vec<SavePageEntry>,
@@ -2522,6 +2527,10 @@ pub(crate) async fn open_pdf(
     .map_err(|error| error.to_string())?
 }
 
+/// Require a current graph binding, then run the guarded PDF highlight merge
+/// on a blocking worker. Dropping the async caller does not cancel a started
+/// write. Converts feature I/O and join errors to strings; the feature's
+/// edit-versus-delete conflict leaves local edits for the caller to retain.
 #[tauri::command]
 pub(crate) async fn write_highlights(
     pdf: String,

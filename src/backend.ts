@@ -239,7 +239,12 @@ export interface Backend {
   /** Raw source text of every md/org file in the open graph (+journals when
    *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
   graphSourceFiles(includeJournals: boolean): Promise<GraphSourceFile[]>;
-  /** Save ordered page snapshots as one guarded request. */
+  /** Native backend: require a current graph binding, prepare bases (force
+   * reads current UTF-8 bytes), and save ordered entries in one guarded
+   * transaction. Success strings are file revisions; failure paths are
+   * graph-relative. Transaction refusals resolve as failed; binding/invoke
+   * failures reject. An empty request resolves as failed. The mock returns
+   * "mock-rev" per entry without saving or validating. */
   savePages(entries: SavePageEntry[], bindingGeneration?: number): Promise<SavePagesResult>;
   /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
   guidePages(): Promise<GuidePage[]>;
@@ -473,15 +478,23 @@ export interface Backend {
    * Cost O(asset entries + sidecar + annotation page); a missing page can require
    * a graph refresh. */
   openPdf(pdf: string, label: string, kind: "create-page", bindingGeneration: number): Promise<PdfState>;
-  /** Replace the caller's base highlight set, retaining disk additions absent
-   * from both highlights and baseHighlights. An unchanged local value takes an
-   * external edit; a locally changed value takes the caller's edit. Return the
-   * committed merged set so the caller can advance its baseline.
-   * Commit sidecar and annotation page together;
-   * write OG artifacts, then attempt to move removed crops/legacy files to
-   * recoverable trash.
-   * Malformed data and Store failures reject. Cost O(asset entries + sidecar +
-   * annotation page + deleted crop bytes), plus graph refresh if page is missing. */
+  /** Native backend: merge caller changes by highlight ID against the current
+   * sidecar. Changed color, text and image values win locally; unchanged values
+   * follow disk. Page and position form one geometry value: changing either
+   * locally selects both local values. Unchanged highlights follow disk,
+   * including deletion, and disk-only additions survive. An edit versus an
+   * external deletion, or a deletion versus an external edit, rejects before
+   * either artifact is written.
+   * Return the committed set for the next baseline only on success.
+   * A blank sidecar or valid top-level EDN map is accepted; malformed nonblank
+   * EDN rejects. Malformed highlight entries within a valid map are skipped,
+   * and duplicate IDs are not rejected. Sidecar and annotation
+   * page use one guarded transaction. A failure with incomplete undo or
+   * publication can leave disk uncertain: retain edits and inspect disk.
+   * Crop/legacy trash moves after commit are best effort and do not reject.
+   * Invalid or stale bindings reject. Cost O(asset entries + sidecar + page +
+   * deleted crop bytes) per retry, plus up to O(P) refresh if the page is absent.
+   * The mock stores caller values directly without merge, files, or these failures. */
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], kind: "replace-page", bindingGeneration: number): Promise<Highlight[]>;
   /** Update page and scale while preserving other sidecar fields; retry and merge
    * concurrent changes up to four attempts. Invalid state/sidecar, I/O, or

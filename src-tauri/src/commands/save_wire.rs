@@ -1,6 +1,11 @@
 use super::{SavePagesFailure, SavePagesWire};
 use tine_store::{SaveOutcome, SavePagesOutcome};
 
+/// Encode Saved and Unchanged as file-revision strings. On failure, encode
+/// a fixed family and a disk revision only for Conflict; any publication
+/// errors select the publication-incomplete family. Consumes the outcome,
+/// does no I/O, and costs O(results + path strings). Panics if handed an
+/// impossible constructed Store outcome.
 pub(super) fn save_pages_outcome_to_wire(outcome: SavePagesOutcome) -> SavePagesWire {
     match outcome {
         SavePagesOutcome::Ok(outcomes) => SavePagesWire::Ok {
