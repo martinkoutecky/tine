@@ -1,0 +1,266 @@
+[
+  {
+    "name": "numeric prefixes",
+    "values": [
+      "3 hrs",
+      "2026-09-09",
+      "2e2tail",
+      "1e+",
+      "Infinity",
+      null,
+      ""
+    ],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 7,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": 2230,
+        "skipped": 3
+      },
+      {
+        "kind": "number",
+        "value": 557.5,
+        "skipped": 3
+      }
+    ],
+    "display": [
+      "7",
+      "2230",
+      "557.5"
+    ]
+  },
+  {
+    "name": "empty",
+    "values": [],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 0,
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "empty_group",
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "empty_group",
+        "skipped": 0
+      }
+    ],
+    "display": [
+      "0",
+      "Unavailable (empty group)",
+      "Unavailable (empty group)"
+    ]
+  },
+  {
+    "name": "no contributors",
+    "values": [
+      "junk",
+      "Infinity",
+      ""
+    ],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 3,
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "non_numeric",
+        "skipped": 3
+      },
+      {
+        "kind": "marker",
+        "reason": "non_numeric",
+        "skipped": 3
+      }
+    ],
+    "display": [
+      "3",
+      "Unavailable (non numeric)",
+      "Unavailable (non numeric)"
+    ]
+  },
+  {
+    "name": "ordered cancellation",
+    "values": [
+      "1e16",
+      "1",
+      "-1e16"
+    ],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 3,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": 0,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": 0,
+        "skipped": 0
+      }
+    ],
+    "display": [
+      "3",
+      "0",
+      "0"
+    ]
+  },
+  {
+    "name": "different order",
+    "values": [
+      "1e16",
+      "-1e16",
+      "1"
+    ],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 3,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": 1,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": 0.3333333333333333,
+        "skipped": 0
+      }
+    ],
+    "display": [
+      "3",
+      "1",
+      "0.333"
+    ]
+  },
+  {
+    "name": "overflow",
+    "values": [
+      "1e308",
+      "1e308",
+      "-1e308"
+    ],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 3,
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "non_finite",
+        "skipped": 0
+      },
+      {
+        "kind": "marker",
+        "reason": "non_finite",
+        "skipped": 0
+      }
+    ],
+    "display": [
+      "3",
+      "Unavailable (non finite)",
+      "Unavailable (non finite)"
+    ]
+  },
+  {
+    "name": "large finite formatting",
+    "values": [
+      "1e308"
+    ],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 1,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": 1e+308,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": 1e+308,
+        "skipped": 0
+      }
+    ],
+    "display": [
+      "1",
+      "1e+308",
+      "1e+308"
+    ]
+  },
+  {
+    "name": "negative half",
+    "values": [
+      "-1.2345"
+    ],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 1,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": -1.2345,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": -1.2345,
+        "skipped": 0
+      }
+    ],
+    "display": [
+      "1",
+      "-1.234",
+      "-1.234"
+    ]
+  },
+  {
+    "name": "negative zero display",
+    "values": [
+      "-0.0004"
+    ],
+    "cells": [
+      {
+        "kind": "number",
+        "value": 1,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": -0.0004,
+        "skipped": 0
+      },
+      {
+        "kind": "number",
+        "value": -0.0004,
+        "skipped": 0
+      }
+    ],
+    "display": [
+      "1",
+      "0",
+      "0"
+    ]
+  }
+]

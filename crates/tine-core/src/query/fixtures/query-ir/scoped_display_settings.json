@@ -1,0 +1,163 @@
+[
+  {
+    "name": "missing scoped properties",
+    "properties": [],
+    "expected": {}
+  },
+  {
+    "name": "member properties without a marker do not create a draft",
+    "properties": [
+      ["tine.page-sort", "name desc"],
+      ["tine.page-columns", "name"]
+    ],
+    "expected": {}
+  },
+  {
+    "name": "marked empty is present",
+    "properties": [
+      ["tine.page-display", "1"]
+    ],
+    "expected": {
+      "page_display": {}
+    }
+  },
+  {
+    "name": "both namespaces retain every typed member and unicode fields",
+    "properties": [
+      ["tine.page-view", "table"],
+      ["tine.page-display", "1"],
+      ["tine.page-sort", "名字 asc; due date desc"],
+      ["tine.page-group-field", "prop:状态"],
+      ["tine.page-columns", "标题;prop:负责者"],
+      ["tine.page-col-aggregates", "count;积分=sum;评分=avg"],
+      ["tine.page-sample", "25"],
+      ["tine.block-view", "list"],
+      ["tine.block-display", "1"],
+      ["tine.block-sort", "scheduled desc"],
+      ["tine.block-group-field", "state"],
+      ["tine.block-columns", "page;content"],
+      ["tine.block-col-aggregates", "content=count"],
+      ["tine.block-sample", "7"],
+      ["tine.page-match-scope", "both"]
+    ],
+    "expected": {
+      "page_presentation": "table",
+      "page_display": {
+        "sort": [["名字", "asc"], ["due date", "desc"]],
+        "group_by": "prop:状态",
+        "columns": ["标题", "prop:负责者"],
+        "aggregates": [["", "count"], ["积分", "sum"], ["评分", "avg"]],
+        "sample": 25
+      },
+      "block_presentation": "list",
+      "block_display": {
+        "sort": [["scheduled", "desc"]],
+        "group_by": "state",
+        "columns": ["page", "content"],
+        "aggregates": [["content", "count"]],
+        "sample": 7
+      },
+      "page_match_scope": "both"
+    }
+  },
+  {
+    "name": "explicit empty lists and grouping clear survive",
+    "properties": [
+      ["tine.page-display", "1"],
+      ["tine.page-sort", ""],
+      ["tine.page-group-field", ""],
+      ["tine.page-columns", ""],
+      ["tine.page-col-aggregates", ""]
+    ],
+    "expected": {
+      "page_display": {
+        "sort": [],
+        "group_by": "",
+        "columns": [],
+        "aggregates": []
+      }
+    }
+  },
+  {
+    "name": "malformed page member and scope leave valid block state usable",
+    "properties": [
+      ["tine.page-view", "table"],
+      ["tine.page-display", "1"],
+      ["tine.page-columns", "owner"],
+      ["tine.page-sample", "many"],
+      ["tine.block-view", "board"],
+      ["tine.block-display", "1"],
+      ["tine.block-columns", "task;priority"],
+      ["tine.page-match-scope", "everywhere"]
+    ],
+    "expected": {
+      "page_presentation": "table",
+      "block_presentation": "board",
+      "block_display": {
+        "columns": ["task", "priority"]
+      },
+      "unreadable_settings": [
+        "tine.page-sample",
+        "tine.page-match-scope"
+      ]
+    }
+  },
+  {
+    "name": "unknown aggregate invalidates the whole page draft",
+    "properties": [
+      ["tine.page-display", "1"],
+      ["tine.page-columns", "cost"],
+      ["tine.page-col-aggregates", "cost=sum;estimate=median"]
+    ],
+    "expected": {
+      "unreadable_settings": ["tine.page-col-aggregates"]
+    }
+  },
+  {
+    "name": "malformed block marker does not poison page state",
+    "properties": [
+      ["tine.page-view", "search"],
+      ["tine.page-display", "1"],
+      ["tine.page-columns", "name"],
+      ["tine.block-view", "grid"],
+      ["tine.block-display", " 1"],
+      ["tine.block-columns", "content"]
+    ],
+    "expected": {
+      "page_presentation": "search",
+      "page_display": {
+        "columns": ["name"]
+      },
+      "unreadable_settings": [
+        "tine.block-view",
+        "tine.block-display"
+      ]
+    }
+  },
+  {
+    "name": "first normalized property spelling wins",
+    "properties": [
+      [" TINE.PAGE_DISPLAY ", "1"],
+      ["tine.page-display", "0"],
+      [" TINE.PAGE_SORT ", "name desc"],
+      ["tine.page-sort", "ignored asc"]
+    ],
+    "expected": {
+      "page_display": {
+        "sort": [["name", "desc"]]
+      }
+    }
+  },
+  {
+    "name": "legacy properties are outside the scoped reader",
+    "properties": [
+      ["tine.view", "board"],
+      ["tine.sort", "created desc"],
+      ["tine.group-field", "state"],
+      ["tine.columns", "page;owner"],
+      ["tine.col-aggregates", "count;cost=sum"],
+      ["tine.sample", "12"]
+    ],
+    "expected": {}
+  }
+]

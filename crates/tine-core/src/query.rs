@@ -1,11 +1,95 @@
-//! Pure query request limits and result data shared with graph clients.
+//! Pure query request limits and result data shared with graph clients, and
+//! the pure query language layer (master 0.6.983+ model, og lane Q1):
+//!
+//! - [`ir`] — the one query IR every dialect lowers to;
+//! - [`parse`] (re-exported here) — the ONE text → IR entry for every input
+//!   shape (`{{query}}` OG DSL, `{{tine-query}}` TQL, advanced datalog) and
+//!   the execution-time binding [`resolve_for_execution`];
+//! - [`print`] — IR → text for either dialect; [`macro_text`] — macro
+//!   argument scanning; [`wire_parse`] — the IPC parse helper;
+//! - [`atom`], [`registry`] — typed property atoms and the observed/declared
+//!   property registry built from caller-supplied rows;
+//! - [`view`], [`sort`], [`statistics`], [`path_refs`], [`text`] — pure
+//!   view, ordering, aggregate and reference helpers.
+//!
+//! Everything here is pure: no graph walk, no store, no SQL. Costs are
+//! O(source length) for parsing/printing and O(rows supplied) for the
+//! registry and statistics folds. Execution lives in `tine-store`.
 #![deny(missing_docs)]
 
 use crate::model::RefGroup;
 
+#[allow(missing_docs)]
+mod advanced_patterns;
+#[allow(missing_docs)]
+pub mod atom;
+#[cfg(test)]
+mod columns_resolution_tests;
+#[cfg(test)]
+mod conformance;
+#[cfg(test)]
+mod grouping_resolution_tests;
+#[allow(missing_docs)]
+pub mod ir;
+#[cfg(test)]
+mod ir_wire_tests;
+#[cfg(test)]
+mod macro_extents_tests;
+#[allow(missing_docs)]
+pub mod macro_text;
+#[allow(missing_docs)]
+pub mod og;
+#[allow(missing_docs)]
+mod parse;
+#[cfg(test)]
+mod parse_tests;
+#[allow(missing_docs)]
+pub mod path_refs;
+#[allow(missing_docs)]
+pub mod print;
+#[allow(missing_docs)]
+pub mod registry;
+#[allow(missing_docs)]
+pub mod sort;
+#[allow(missing_docs)]
+pub mod statistics;
+#[allow(missing_docs)]
+pub mod text;
+#[allow(missing_docs)]
+pub mod tql;
+#[allow(missing_docs)]
+pub mod view;
+#[allow(missing_docs)]
+pub mod wire_parse;
+
+pub use parse::*;
+
+/// Properties that are internal/metadata and are not offered as query
+/// filters or registry keys (mirrors the frontend's hidden-property set).
+const INTERNAL_PROPS: &[&str] = &[
+    "id",
+    "collapsed",
+    "hl-page",
+    "hl-color",
+    "hl-type",
+    "ls-type",
+    "background-color",
+    "logseq.order-list-type",
+    "template",
+    "template-including-parent",
+];
+
+/// The built-in half of the registry's internal-key exclusion (master §6.2
+/// K15): the registry excludes this set, the configured hidden properties and
+/// every `tine.*` key. O(1).
+pub fn internal_property_keys() -> &'static [&'static str] {
+    INTERNAL_PROPS
+}
+
 /// Maximum query source length accepted by evaluators, in UTF-8 bytes.
 pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
-const QUERY_NESTING_MAX: usize = 64;
+/// Maximum parenthesis depth either query parser accepts.
+pub(crate) const QUERY_NESTING_MAX: usize = 64;
 
 /// Reason a query source cannot enter an evaluator or cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

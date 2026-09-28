@@ -1,0 +1,260 @@
+[
+  {
+    "why": "no property answers the question: the query text's own columns stand",
+    "properties": [],
+    "resolution": {
+      "kind": "unset"
+    }
+  },
+  {
+    "why": "the ordinary new key: ordered, trimmed, token spelling retained",
+    "properties": [
+      [
+        "tine.columns",
+        "state; cost ;page"
+      ]
+    ],
+    "resolution": {
+      "kind": "named",
+      "columns": [
+        "state",
+        "cost",
+        "page"
+      ]
+    }
+  },
+  {
+    "why": "empty segments are discarded, they do not invalidate the list",
+    "properties": [
+      [
+        "tine.columns",
+        ";a;;b;"
+      ]
+    ],
+    "resolution": {
+      "kind": "named",
+      "columns": [
+        "a",
+        "b"
+      ]
+    }
+  },
+  {
+    "why": "duplicate display names are retained verbatim; deduplication is a renderer's business, not the source's",
+    "properties": [
+      [
+        "tine.columns",
+        "cost;cost"
+      ]
+    ],
+    "resolution": {
+      "kind": "named",
+      "columns": [
+        "cost",
+        "cost"
+      ]
+    }
+  },
+  {
+    "why": "PRESENT and empty is an explicit statement: no custom columns, and NO legacy fallback behind it",
+    "properties": [
+      [
+        "tine.columns",
+        "   "
+      ],
+      [
+        "tine.fields",
+        "a;b"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "one token with '=' invalidates the WHOLE list; still no legacy fallback",
+    "properties": [
+      [
+        "tine.columns",
+        "a;cost=number;b"
+      ],
+      [
+        "tine.fields",
+        "a;b"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "a NUL byte in one token invalidates the whole list",
+    "properties": [
+      [
+        "tine.columns",
+        "a;b\u0000c"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "a CR in one token invalidates the whole list",
+    "properties": [
+      [
+        "tine.columns",
+        "a;b\rc"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "an LF in one token invalidates the whole list",
+    "properties": [
+      [
+        "tine.columns",
+        "a;b\nc"
+      ]
+    ],
+    "resolution": {
+      "kind": "cleared"
+    }
+  },
+  {
+    "why": "a present new key wins over a legacy bare list, even when both are readable",
+    "properties": [
+      [
+        "tine.columns",
+        "page"
+      ],
+      [
+        "tine.fields",
+        "a;b"
+      ]
+    ],
+    "resolution": {
+      "kind": "named",
+      "columns": [
+        "page"
+      ]
+    }
+  },
+  {
+    "why": "legacy: the new key is ABSENT and every nonempty tine.fields token is bare, so it is a column list",
+    "properties": [
+      [
+        "tine.fields",
+        "page; status; cost"
+      ]
+    ],
+    "resolution": {
+      "kind": "named",
+      "columns": [
+        "page",
+        "status",
+        "cost"
+      ]
+    }
+  },
+  {
+    "why": "a typed schema is never columns: '=' anywhere means schema or mixed",
+    "properties": [
+      [
+        "tine.fields",
+        "cost=number;severity=text"
+      ]
+    ],
+    "resolution": {
+      "kind": "unset"
+    }
+  },
+  {
+    "why": "a MIXED tine.fields is schema, not a half-read column list",
+    "properties": [
+      [
+        "tine.fields",
+        "page;cost=number"
+      ]
+    ],
+    "resolution": {
+      "kind": "unset"
+    }
+  },
+  {
+    "why": "an empty tine.fields names no columns and is not a clear: only the new key can state 'no columns'",
+    "properties": [
+      [
+        "tine.fields",
+        "  "
+      ]
+    ],
+    "resolution": {
+      "kind": "unset"
+    }
+  },
+  {
+    "why": "keys are normalized the way every other property reader normalizes them (case, spaces, underscores)",
+    "properties": [
+      [
+        "  TINE.COLUMNS  ",
+        "a;b"
+      ]
+    ],
+    "resolution": {
+      "kind": "named",
+      "columns": [
+        "a",
+        "b"
+      ]
+    }
+  },
+  {
+    "why": "first occurrence of a key wins, as in the current reader",
+    "properties": [
+      [
+        "tine.columns",
+        "a"
+      ],
+      [
+        "tine.columns",
+        "b"
+      ]
+    ],
+    "resolution": {
+      "kind": "named",
+      "columns": [
+        "a"
+      ]
+    }
+  },
+  {
+    "why": "a property outside the tine namespace is not a column list",
+    "properties": [
+      [
+        "columns",
+        "a;b"
+      ]
+    ],
+    "resolution": {
+      "kind": "unset"
+    }
+  },
+  {
+    "why": "no per-name length cap: externally authored notes keep long but well-formed names",
+    "properties": [
+      [
+        "tine.columns",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    ],
+    "resolution": {
+      "kind": "named",
+      "columns": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    }
+  }
+]

@@ -1,0 +1,209 @@
+[
+  {
+    "why": "the ordinary OG macro",
+    "raw": "{{query (task TODO)}}",
+    "extents": [
+      {
+        "text": "{{query (task TODO)}}",
+        "name": "query",
+        "argument": "(task TODO)"
+      }
+    ]
+  },
+  {
+    "why": "§4.3.1: the options map's closing brace belongs to the extent. The AST argument stops before it; the raw reader must not.",
+    "raw": "before {{query (task TODO) {:title \"T\"}}} after",
+    "extents": [
+      {
+        "text": "{{query (task TODO) {:title \"T\"}}}",
+        "name": "query",
+        "argument": "(task TODO) {:title \"T\"}"
+      }
+    ]
+  },
+  {
+    "why": "a `}}` inside an EDN string must not end the macro early",
+    "raw": "{{query (and (task TODO)) {:title \"Sprint }} board\"}}}",
+    "extents": [
+      {
+        "text": "{{query (and (task TODO)) {:title \"Sprint }} board\"}}}",
+        "name": "query",
+        "argument": "(and (task TODO)) {:title \"Sprint }} board\"}"
+      }
+    ]
+  },
+  {
+    "why": "a `}}` inside a [[page ref]] is opaque: refs do not nest, so the first ]] closes",
+    "raw": "{{query (page [[A }} B]]) {:title \"t\"}}}\nid:: x",
+    "extents": [
+      {
+        "text": "{{query (page [[A }} B]]) {:title \"t\"}}}",
+        "name": "query",
+        "argument": "(page [[A }} B]]) {:title \"t\"}"
+      }
+    ]
+  },
+  {
+    "why": "trailing property lines are outside the extent, so a rewrite keeps them",
+    "raw": "{{query (todo) {:title \"A\"}}}\nid:: abc",
+    "extents": [
+      {
+        "text": "{{query (todo) {:title \"A\"}}}",
+        "name": "query",
+        "argument": "(todo) {:title \"A\"}"
+      }
+    ]
+  },
+  {
+    "why": "§7.9: the TQL macro name is recognised too",
+    "raw": "{{tine-query @block and [[a]]}}",
+    "extents": [
+      {
+        "text": "{{tine-query @block and [[a]]}}",
+        "name": "tine-query",
+        "argument": "@block and [[a]]"
+      }
+    ]
+  },
+  {
+    "why": "§4.3.1's literal-comma case: `content = 'a,b'` must survive with no space inserted",
+    "raw": "{{tine-query @block and content = 'a,b'}}",
+    "extents": [
+      {
+        "text": "{{tine-query @block and content = 'a,b'}}",
+        "name": "tine-query",
+        "argument": "@block and content = 'a,b'"
+      }
+    ]
+  },
+  {
+    "why": "a TQL single-quoted string protects braces: `{` inside it is literal, not an options map",
+    "raw": "{{tine-query @block and content = 'a{b'}}",
+    "extents": [
+      {
+        "text": "{{tine-query @block and content = 'a{b'}}",
+        "name": "tine-query",
+        "argument": "@block and content = 'a{b'"
+      }
+    ]
+  },
+  {
+    "why": "SQL doubles a quote rather than backslash-escaping it, so `''` does not end the string",
+    "raw": "{{tine-query @block and content = 'it''s {x}'}}",
+    "extents": [
+      {
+        "text": "{{tine-query @block and content = 'it''s {x}'}}",
+        "name": "tine-query",
+        "argument": "@block and content = 'it''s {x}'"
+      }
+    ]
+  },
+  {
+    "why": "a `}` inside a TQL string does not close the macro",
+    "raw": "{{tine-query content = '}}'}}",
+    "extents": [
+      {
+        "text": "{{tine-query content = '}}'}}",
+        "name": "tine-query",
+        "argument": "content = '}}'"
+      }
+    ]
+  },
+  {
+    "why": "X2: two macros in one block, in source order; a rewrite must target the right one",
+    "raw": "A {{query (task TODO)}} B {{tine-query @block and [[b]]}}",
+    "extents": [
+      {
+        "text": "{{query (task TODO)}}",
+        "name": "query",
+        "argument": "(task TODO)"
+      },
+      {
+        "text": "{{tine-query @block and [[b]]}}",
+        "name": "tine-query",
+        "argument": "@block and [[b]]"
+      }
+    ]
+  },
+  {
+    "why": "§7.9: `{{query-foo}}` is NOT a query macro — the old /\\{\\{query\\b/ regex accepted it because `-` is a JS word boundary",
+    "raw": "{{query-foo bar}}",
+    "extents": []
+  },
+  {
+    "why": "the name is matched case-insensitively",
+    "raw": "{{QUERY (task TODO)}}",
+    "extents": [
+      {
+        "text": "{{QUERY (task TODO)}}",
+        "name": "query",
+        "argument": "(task TODO)"
+      }
+    ]
+  },
+  {
+    "why": "an argument-less macro: the name is immediately followed by the closing braces",
+    "raw": "{{query}}",
+    "extents": [
+      {
+        "text": "{{query}}",
+        "name": "query",
+        "argument": ""
+      }
+    ]
+  },
+  {
+    "why": "§4.3.1: an unmatched `{` inside a PROTECTED string is literal, so the macro still closes",
+    "raw": "{{query (todo \"a{b\")}}",
+    "extents": [
+      {
+        "text": "{{query (todo \"a{b\")}}",
+        "name": "query",
+        "argument": "(todo \"a{b\")"
+      }
+    ]
+  },
+  {
+    "why": "a bare unmatched `{` in the form outside every literal genuinely unbalances the scan: no extent, rather than one running to end of input",
+    "raw": "{{query (todo) {}}",
+    "extents": []
+  },
+  {
+    "why": "a semicolon comment inside the options map protects delimiters",
+    "raw": "{{query (todo) {:title \"a\" ; note }\n}}}",
+    "extents": [
+      {
+        "text": "{{query (todo) {:title \"a\" ; note }\n}}}",
+        "name": "query",
+        "argument": "(todo) {:title \"a\" ; note }\n}"
+      }
+    ]
+  },
+  {
+    "why": "§4.4: a whole advanced `{:query …}` map is the FORM. The extent still covers it exactly.",
+    "raw": "{{query {:query [:find (pull ?b [*]) :where (task ?b \"TODO\")] :inputs [:current-page]}}}",
+    "extents": [
+      {
+        "text": "{{query {:query [:find (pull ?b [*]) :where (task ?b \"TODO\")] :inputs [:current-page]}}}",
+        "name": "query",
+        "argument": "{:query [:find (pull ?b [*]) :where (task ?b \"TODO\")] :inputs [:current-page]}"
+      }
+    ]
+  },
+  {
+    "why": "an unterminated macro yields nothing rather than running to end of input",
+    "raw": "{{query (task TODO)",
+    "extents": []
+  },
+  {
+    "why": "a non-query macro is ignored, and a query macro after it is still found",
+    "raw": "{{embed [[Page]]}} {{query (task TODO)}}",
+    "extents": [
+      {
+        "text": "{{query (task TODO)}}",
+        "name": "query",
+        "argument": "(task TODO)"
+      }
+    ]
+  }
+]

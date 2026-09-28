@@ -1,0 +1,28 @@
+[
+  {
+    "kind": "attr",
+    "attr": "content",
+    "op": "like",
+    "value": {
+      "kind": "text",
+      "text": "%foo%"
+    }
+  },
+  {
+    "kind": "rel",
+    "rel": "refs",
+    "quant": "any",
+    "pred": {
+      "kind": "leaf",
+      "leaf": {
+        "kind": "attr",
+        "attr": "name",
+        "op": "eq",
+        "value": {
+          "kind": "text",
+          "text": "alpha"
+        }
+      }
+    }
+  }
+]
