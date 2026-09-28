@@ -395,3 +395,54 @@ fn resolve_for_execution_binds_advanced_sources_once() {
         .iter()
         .any(|d| d.kind == DiagnosticKind::Syntax && d.message == ADVANCED_UNSUPPORTED_MESSAGE));
 }
+
+/// I-22 benign extreme paired with the TQL size refusal: sources right AT the
+/// 64 KiB ceiling parse cleanly (a long literal, and a wide flat boolean
+/// chain), and one byte more is refused with a size diagnostic.
+#[test]
+fn tql_at_the_source_ceiling_is_accepted_and_one_byte_over_is_refused() {
+    use super::{parse_query_text, QueryDialect};
+
+    let frame = "content like '%%'";
+    let literal = format!(
+        "content like '%{}%'",
+        "y".repeat(QUERY_SOURCE_MAX_BYTES - frame.len())
+    );
+    assert_eq!(literal.len(), QUERY_SOURCE_MAX_BYTES);
+    let (query, _) = parse_query_text(&literal, QueryDialect::Tql, TODAY);
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+    assert!(
+        matches!(
+            &query.filter,
+            Filter::Leaf {
+                leaf: super::ir::Leaf::Attr {
+                    attr: Attr::Content,
+                    ..
+                }
+            }
+        ),
+        "expected one content leaf, got {:?}",
+        query.filter
+    );
+
+    let term = "content like '%alpha%'";
+    let joint = " and ";
+    let count = (QUERY_SOURCE_MAX_BYTES + joint.len()) / (term.len() + joint.len());
+    let chain = vec![term; count].join(joint);
+    assert!(chain.len() <= QUERY_SOURCE_MAX_BYTES);
+    assert!(chain.len() + term.len() + joint.len() > QUERY_SOURCE_MAX_BYTES);
+    let (query, _) = parse_query_text(&chain, QueryDialect::Tql, TODAY);
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics.first());
+    let Filter::And { items } = &query.filter else {
+        panic!("expected a flat conjunction");
+    };
+    assert_eq!(items.len(), count);
+
+    let over = format!("{literal} ");
+    let (query, _) = parse_query_text(&over, QueryDialect::Tql, TODAY);
+    assert!(query.is_invalid());
+    assert!(query
+        .diagnostics
+        .iter()
+        .any(|d| d.kind == DiagnosticKind::Size));
+}
