@@ -124,6 +124,7 @@ const suites = {
     ["outline-guide", "scripts/e2e-outline-guide.mjs", {}],
     ["query-workspace", "scripts/e2e-query-workspace.mjs", {}],
     ["empty-query-workspace", "scripts/e2e-empty-query-workspace.mjs", {}],
+    ["query-sheet", "scripts/e2e-query-sheet.mjs", {}],
     ["scrollbars", "scripts/e2e-scrollbars.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
   ],

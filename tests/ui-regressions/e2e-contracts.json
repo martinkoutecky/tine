@@ -219,6 +219,15 @@
       "nonRequirements": ["Exact row heights, result-card DOM structure, or tab animation."],
       "stability": "stable"
     },
+    "scripts/e2e-query-sheet.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "A query block rests as one sentence and answers with blocks or, for a page-level filter, pages; a query the engine cannot read shows what it did not understand instead of an empty result, and an empty result explains which condition emptied it.", "blocking": true },
+        { "class": "core-operation", "userOutcome": "A query created with /query and saved from the sheet's query text lands in the page file as an ordinary query block without touching the other query blocks, and reopens with the same answers after a restart.", "blocking": true }
+      ],
+      "acceptableVariations": ["The sentence wording, the macro name the engine prints (query or tine-query) and the why-empty table layout may evolve while the query and its answers stay the same."],
+      "nonRequirements": ["Sheet geometry, animation, or the order of rows inside the why-empty table."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-rename.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.", "blocking": true },

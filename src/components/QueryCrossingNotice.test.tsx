@@ -22,7 +22,7 @@ import { Block } from "./Block";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { resetStore, setRaw, toggleUndoRedoMode } from "../document";
+import { flushPage, resetStore, setRaw, toggleUndoRedoMode, undo } from "../document";
 import { historyPageOnlyMode } from "../document/history";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import { resetCrossingNoticeForTests as resetDismissedNoticesForTests } from "./Macro";
@@ -438,6 +438,51 @@ describe("C5: the notice is one instance that changes host with the sheet", () =
       // print dialect on the save path, which the print-dialect pin forbids.
       const dialects = print.mock.calls.map(([, , dialect]) => dialect);
       expect(dialects).not.toContain("og");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+// Kill-and-reopen for the crossing save (batch 14q4a). The crossing is two
+// store edits — `setRaw` (the macro rename) and `setBlockProperty` (the `tine.*`
+// view key the OG text can no longer carry) — in ONE undo unit. On disk it must
+// also be ONE write: a process killed after the save either finds both or
+// neither on reopen, never a `{{tine-query}}` without its sort. The page write
+// itself is temp+fsync+rename (the audited path); this pins that the two edits
+// reach it in the same page payload, and that undo takes both back together.
+describe("the crossing save is one page write", () => {
+  it("persists the renamed macro and its tine.* view key in a single savePages payload", async () => {
+    // The OG text carries the sort; TQL cannot, so the crossing moves it to
+    // `tine.sort` on the same block.
+    load("{{query (task TODO) (sort-by priority desc)}}");
+    arrangeCrossing();
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-2"] });
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (source: string) => ({
+      ...parsedAs(source), view: { sort: [["priority", "desc"]] },
+    }));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const input = await openPane(root);
+      input.value = "-- task DONE";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const button = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save is not enabled yet");
+        return found;
+      });
+      button.click();
+      await vi.waitFor(() => expect(doc.byId.query.raw).toContain("tine.sort:: priority desc"));
+      expect(doc.byId.query.raw.startsWith("{{tine-query -- task DONE}}")).toBe(true);
+
+      expect(await flushPage("Sheet")).toBe(true);
+      expect(save).toHaveBeenCalledTimes(1);
+      const written = JSON.stringify(save.mock.calls[0][0]);
+      expect(written).toContain("{{tine-query -- task DONE}}");
+      expect(written).toContain("tine.sort:: priority desc");
+
+      undo();
+      expect(doc.byId.query.raw).toBe("{{query (task TODO) (sort-by priority desc)}}");
     } finally {
       dispose();
     }
