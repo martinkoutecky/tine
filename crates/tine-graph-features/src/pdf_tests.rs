@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn conflict_read_refuses_malformed_sidecar_instead_of_reporting_empty_disk() {
+    let root = std::env::temp_dir().join(format!("tine-pdf-conflict-read-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    std::fs::write(root.join("assets/paper.edn"), "not edn").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert_eq!(
+        read_highlights_checked(&store, "paper.pdf")
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::InvalidData
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn failed_sidecar_crop_can_be_rolled_back_to_recoverable_trash() {
     let root = std::env::temp_dir().join(format!(
         "tine-pdf-crop-{}-{:?}",

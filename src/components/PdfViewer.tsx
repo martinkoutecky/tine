@@ -4,19 +4,19 @@ import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
-import { graphOwner, latestOwner, readOwned, serializeOwned, type Owner } from "../owned";
+import { graphOwner, latestOwner, readOwned, serializeDurable, writeOwned, type Owner } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { writeClipboardText } from "../clipboard";
 import { closePdf, activePane, requestBlockReferences, type PdfTarget } from "../ui";
 import { pushToast } from "../toasts";
-import { isConflicted } from "../document";
-import { flushPage, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../document";
+import { trackAssetWrite } from "../document";
 import { openPage, openPageAtBlock } from "../router";
 import { areaHighlightPosition, hlsPageName, rectInPageSpace, rectWithSourceSpace, type PdfPageDimensions } from "../pdf";
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
 import { isMac, isMobilePlatform } from "../nativeChrome";
 import { registerTransientLayer } from "../transientLayers";
+import { createPdfHighlightState } from "./pdfHighlightState";
 import {
   isPdfOwnershipCurrent,
   drainPdfWork,
@@ -175,6 +175,14 @@ export function KeyedPdfViewer(props: { target: () => PdfTarget | null }): JSX.E
   );
 }
 
+/** Mount a graph-owned PDF viewer. Opening can create annotation sidecar/page
+ * files, reads at most 256 MiB, and accepts 1–5000 pages. Annotation-open errors
+ * toast while asset/render failures show in the view. Actions write highlights,
+ * crops and view state. Failed saves stay marked; conflicts offer Keep mine or
+ * Use disk version. Close and graph switch drain writes or wait for resolution.
+ * Missing navigation falls back to this PDF/page 1. Cleanup cancels work and
+ * destroys the document. Cost follows PDF bytes and visible pages, not graph size;
+ * callers need no knowledge of save ordering. */
 export function PdfViewer(props: {
   filename: string;
   label: string;
@@ -200,7 +208,6 @@ export function PdfViewer(props: {
   const pageEls: Record<number, HTMLDivElement> = {};
   const textLayers: Record<number, HTMLDivElement> = {};
   const hlLayers: Record<number, HTMLDivElement> = {};
-  const [highlights, setHighlights] = createSignal<Highlight[]>([]);
   // The create-highlight popup (no `id`) OR the edit popup for an existing
   // highlight (`id` set → offers recolor + remove).
   const [menu, setMenu] = createSignal<{ x: number; y: number; id?: string } | null>(null);
@@ -246,8 +253,6 @@ export function PdfViewer(props: {
   let findInputEl: HTMLInputElement | undefined;
   let pending: Pending | null = null;
   let pendingArea: PendingArea | null = null;
-  // Loaded values let the backend distinguish a local edit from an external edit.
-  let baseHighlights: Highlight[] = [];
   let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
   let disposed = false;
   let activeHighlightId: string | undefined;
@@ -364,63 +369,21 @@ export function PdfViewer(props: {
     });
   }
 
-  // Failed additions stay visible/unsaved; the viewer participant retries them on graph switch and close waits for that drain.
-  const [unsavedHighlights, setUnsavedHighlights] = createSignal(false);
-  const highlightQueue = {}, viewStateQueue = {}, highlightIntents = {};
+  const viewStateQueue = {};
+  const highlightState = createPdfHighlightState({
+    filename: props.filename,
+    label: props.label,
+    backendGeneration: binding.backendGeneration,
+    owner,
+    prepare: highlightsForWrite,
+  });
+  const highlights = highlightState.highlights;
+  const unsavedHighlights = highlightState.unsaved;
+  const highlightConflict = highlightState.conflict;
   const highlightGraphOwner = graphOwner(() => isPdfOwnershipCurrent(owner));
-  const persistOwned = async (landingOwner: Owner): Promise<boolean> => {
-    const hlsName = hlsPageName(props.filename);
-    // If the notes (hls__) page is open with unsaved edits, get them onto disk
-    // FIRST so the backend merges against them. Otherwise this write reads a disk
-    // copy that lacks them, and the reload below would drop them. Abort (don't
-    // clobber) if the notes page can't be flushed.
-    if (isDirty(hlsName) || isConflicted(hlsName)) {
-      if (!(await flushPage(hlsName))) {
-        if (landingOwner()) pushToast("Couldn't save notes — highlight not written. Resolve the conflict and retry.", "error");
-        return false;
-      }
-      if (!highlightGraphOwner()) return false;
-    }
-    try {
-      // Logseq sidecars store x1/y1/x2/y2 plus page dimensions. Enrich old Tine
-      // rectangles on the first real edit; opening a graph never rewrites them.
-      const persisted = await highlightsForWrite(highlights());
-      if (!highlightGraphOwner()) return false;
-      const result = await readOwned(highlightGraphOwner, trackAssetWrite(
-        backend().writeHighlights(props.filename, props.label, persisted, baseHighlights, "replace-page", binding.backendGeneration)
-      ));
-      if (result.kind === "stale") return false;
-      baseHighlights = result.value;
-      if (landingOwner()) {
-        setHighlights(result.value);
-        setUnsavedHighlights(false);
-      }
-    } catch (e) {
-      if (landingOwner()) pushToast(`Couldn't save highlight — it remains unsaved in the PDF. (${String(e)})`, "error");
-      return false;
-    }
-    // Refresh the loaded notes page (content + save baseline) to include the change.
-    try {
-      const reloaded = await readOwned(highlightGraphOwner, reloadHlsIfLoaded(hlsName));
-      if (reloaded.kind === "stale") return false;
-    } catch (error) {
-      if (landingOwner()) pushToast(`Highlight saved, but notes couldn't reload. (${String(error)})`, "error");
-    }
-    return true;
-  };
-
-  const persist = async (landingOwner = latestOwner(highlightIntents, "highlights", highlightGraphOwner)): Promise<boolean> => {
-    try {
-      const result = await trackPdfMutation(owner, () =>
-        serializeOwned(highlightQueue, highlightGraphOwner, () => persistOwned(landingOwner))
-      );
-      return result.kind === "current" && result.value;
-    } catch {
-      // A retired owner is an expected cancellation path.  The graph switch
-      // already drained before retirement; never retry against a later binding.
-      return false;
-    }
-  };
+  const persist = highlightState.persist;
+  const useDiskHighlights = highlightState.useDiskVersion;
+  const keepMineHighlights = highlightState.keepMine;
 
   const copyCreatedHighlightRef = async (id: string) => {
     await writeClipboardText(`((${id}))`);
@@ -446,18 +409,18 @@ export function PdfViewer(props: {
   };
   // Remove a highlight (and its annotation block on the hls page).
   const deleteHighlight = async (id: string) => {
-    const prev = highlights();
-    setHighlights(highlights().filter((h) => h.id !== id));
-    const intent = latestOwner(highlightIntents, "highlights", highlightGraphOwner);
+    if (highlightState.editBlocked()) return;
+    highlightState.edit(highlights().filter((h) => h.id !== id));
+    const intent = highlightState.newIntent();
     closeHighlightMenu();
-    if (!(await persist(intent)) && intent()) setHighlights(prev); // restore — it's still on disk
+    await persist(intent);
   };
   const recolorHighlight = async (id: string, color: string) => {
-    const prev = highlights();
-    setHighlights(highlights().map((h) => (h.id === id ? { ...h, color } : h)));
-    const intent = latestOwner(highlightIntents, "highlights", highlightGraphOwner);
+    if (highlightState.editBlocked()) return;
+    highlightState.edit(highlights().map((h) => (h.id === id ? { ...h, color } : h)));
+    const intent = highlightState.newIntent();
     closeHighlightMenu();
-    if (!(await persist(intent)) && intent()) setHighlights(prev); // restore the previous color
+    await persist(intent);
   };
 
   function closeHighlightMenu() {
@@ -479,7 +442,7 @@ export function PdfViewer(props: {
       return true;
     }
     try {
-      const result = await trackPdfMutation(owner, () => serializeOwned(viewStateQueue, highlightGraphOwner,
+      const result = await trackPdfMutation(owner, () => serializeDurable(viewStateQueue, highlightGraphOwner,
         () => trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale, binding.backendGeneration))));
       if (result.kind === "stale") return false;
       viewStateBaseline = next;
@@ -990,16 +953,15 @@ export function PdfViewer(props: {
         backend().openPdf(props.filename, props.label, "create-page", binding.backendGeneration));
       if (result.kind === "stale") return;
       const state = result.value;
-      setHighlights(state.highlights);
+      highlightState.load(state.highlights);
       restoredPage = state.page;
       restoredScale = state.scale;
     } catch (error) {
       if (loadOwner()) {
-        setHighlights([]);
+        highlightState.load([]);
         pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
       }
     }
-    baseHighlights = highlights();
     let bytes: Uint8Array;
     try {
       const result = await readOwned(loadOwner, backend().readAsset(props.filename, MAX_PDF_BYTES));
@@ -1266,6 +1228,7 @@ export function PdfViewer(props: {
 
   const createHighlight = async (color: string) => {
     if (!pending) return;
+    if (highlightState.editBlocked()) return;
     const h: Highlight = {
       id: crypto.randomUUID(),
       page: pending.page,
@@ -1274,9 +1237,7 @@ export function PdfViewer(props: {
       text: pending.text,
       image: null,
     };
-    const prev = highlights();
-    setHighlights([...prev, h]);
-    setUnsavedHighlights(true);
+    highlightState.edit([...highlights(), h]);
     window.getSelection()?.removeAllRanges();
     closeHighlightMenu();
     pending = null;
@@ -1375,6 +1336,7 @@ export function PdfViewer(props: {
   const createAreaHighlightOwned = async (color: string): Promise<boolean> => {
     const area = pendingArea;
     if (!area) return true;
+    if (highlightState.editBlocked()) return false;
     pendingArea = null;
     setMenu(null);
     const { page, wrap, rect } = area;
@@ -1388,7 +1350,7 @@ export function PdfViewer(props: {
     const stamp = Date.now();
     // Save the cropped PNG FIRST so the file exists before the .edn references it.
     try {
-      const image = await readOwned(highlightGraphOwner, trackAssetWrite(
+      const image = await writeOwned(highlightGraphOwner, trackAssetWrite(
         backend().savePdfAreaImage(props.filename, page, id, stamp, bytes, binding.backendGeneration)));
       if (image.kind === "stale") return false;
     } catch (e) {
@@ -1403,19 +1365,10 @@ export function PdfViewer(props: {
       text: null,
       image: stamp,
     };
-    const prev = highlights(), wasUnsaved = unsavedHighlights();
-    setHighlights([...prev, h]);
-    setUnsavedHighlights(true);
-    const intent = latestOwner(highlightIntents, "highlights", highlightGraphOwner);
-    const save = await serializeOwned(highlightQueue, highlightGraphOwner, () => persistOwned(intent));
-    if (save.kind === "stale" || !save.value) {
-      if (intent()) {
-        setHighlights(prev); setUnsavedHighlights(wasUnsaved);
-        try { await readOwned(highlightGraphOwner, trackAssetWrite(backend().rollbackPdfAreaImage(props.filename, page, id, stamp, binding.backendGeneration))); }
-        catch (e) { pushToast(`Couldn't move the unused area image to trash. (${String(e)})`, "error"); }
-      }
-      return false;
-    }
+    highlightState.addCrop(id, { page, stamp });
+    highlightState.edit([...highlights(), h]);
+    const intent = highlightState.newIntent();
+    if (!(await highlightState.persistInsideMutation(intent))) return false;
     if (intent()) await copyCreatedHighlightRef(h.id);
     return true;
   };
@@ -1431,6 +1384,7 @@ export function PdfViewer(props: {
 
   const closeSafely = async () => {
     if (await drainPdfWork()) closePdf();
+    else highlightState.drainBlocked();
   };
 
   // --- page navigation -----------------------------------------------------
@@ -1774,7 +1728,7 @@ export function PdfViewer(props: {
   });
 
   unregisterPdfParticipant = registerPdfParticipant(owner, {
-    flush: async () => (await flushViewState()) && (!unsavedHighlights() || await persist()),
+    flush: async () => !highlightState.drainBlocked() && (await flushViewState()) && (!unsavedHighlights() || await persist()),
     cancel: cancelOwnedWork,
   });
 
@@ -1896,6 +1850,15 @@ export function PdfViewer(props: {
           </button>
         </div>
       </div>
+      <Show when={highlightConflict()}>
+        <div class="conflict-banner pdf-highlight-conflict" role="alert">
+          <span class="conflict-msg">Highlight conflict. Resolve it before editing more highlights.</span>
+          <div class="conflict-actions">
+            <button class="conflict-btn keep" onClick={() => void keepMineHighlights()}>Keep mine</button>
+            <button class="conflict-btn" onClick={() => void useDiskHighlights()}>Use disk version</button>
+          </div>
+        </div>
+      </Show>
       <Show when={settingsOpen()}>
         <div ref={(el) => (settingsRootEl = el)} class="pdf-settings-menu" role="dialog" aria-label="PDF settings">
           <div class="pdf-settings-overflow" aria-label="Reader tools">

@@ -207,6 +207,18 @@ pub fn read_highlights(store: &Store, pdf_name: &str) -> Vec<Highlight> {
         .unwrap_or_default()
 }
 
+/// Read the current sidecar for a conflict decision. Missing files mean no
+/// highlights; unreadable or malformed files refuse the decision so local
+/// edits remain available. Cost O(sidecar bytes plus legacy asset listing).
+pub fn read_highlights_checked(store: &Store, pdf_name: &str) -> io::Result<Vec<Highlight>> {
+    let (_, current) = sidecar(store, pdf_name, true)?;
+    let Some((raw, _)) = current else {
+        return Ok(Vec::new());
+    };
+    valid_edn(&raw)?;
+    Ok(pdf::parse_highlights(&raw))
+}
+
 /// Open persisted PDF state, creating a sidecar/page only when no usable OG or
 /// legacy counterpart exists. Legacy files remain until a highlight write.
 /// Cost O(asset entries + sidecar + annotation page), plus a graph refresh

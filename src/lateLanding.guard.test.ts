@@ -301,12 +301,7 @@ describe("I-20 owned backend completion syntax", () => {
   });
   it("keeps durable backend writes out of readOwned", () => {
     const violations = productionSources("src").flatMap((file) => durableReadViolations(file, readFileSync(file, "utf8")));
-    const pdfOwnedByParallelLane = violations.filter((violation) => violation.startsWith("src/components/PdfViewer.tsx#"));
-    expect(pdfOwnedByParallelLane.map((violation) => violation.match(/durable (\w+) failure/)?.[1]).sort(),
-      "I-9: PDF lane's exact existing write sites are pinned while that lane owns PdfViewer").toEqual(
-      ["writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage"].sort());
-    expect(violations.filter((violation) => !violation.startsWith("src/components/PdfViewer.tsx#")),
-      "I-9: durable writes use writeOwned; exemplar Settings BackupsTab.saveKeep").toEqual([]);
+    expect(violations, "I-9: durable writes use writeOwned; exemplar Settings BackupsTab.saveKeep").toEqual([]);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().setBackupKeep(3))")).toHaveLength(1);
   });
   it("fails a planted old graph completion", () => {

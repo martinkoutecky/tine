@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { Show, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { setToasts, toasts } from "../toasts";
+import type { Highlight } from "../types";
 import { loadFeed, resetStore } from "../document";
 import {
   KeyedPdfViewer as OwnedKeyedPdfViewer,
@@ -430,18 +432,76 @@ describe("PdfViewer OG area-highlight selection", () => {
     }
   });
 
-  it("retires a saved crop when its highlight sidecar is refused", async () => {
+  it("keeps a refused area highlight and retires its crop when disk wins", async () => {
     const id = "44444444-4444-4444-8444-444444444444"; vi.spyOn(crypto, "randomUUID").mockReturnValue(id);
     vi.spyOn(Date, "now").mockReturnValue(5678); vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("paper/1_crop.png");
     vi.spyOn(backend(), "writeHighlights").mockRejectedValue(new Error("sidecar refused"));
-    const rollback = vi.spyOn(backend(), "rollbackPdfAreaImage").mockResolvedValue(undefined);
+    vi.spyOn(backend(), "readHighlights").mockResolvedValue([]);
+    const rollback = vi.spyOn(backend(), "rollbackPdfAreaImage")
+      .mockRejectedValueOnce(new Error("crop trash unavailable"))
+      .mockResolvedValue(undefined);
     const { host, wrap, dispose } = await mountAreaViewer(); try {
       (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
       dragArea(wrap, { x: 45, y: 55 });
       await flush();
       host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-      await flush(); await drainPdfWork();
-      expect(rollback).toHaveBeenCalledWith("paper.pdf", 1, id, 5678, expect.any(Number)); expect(host.querySelector(`[data-highlight-id="${id}"]`)).toBeNull();
+      await flush();
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("true");
+      expect(rollback).not.toHaveBeenCalled();
+      expect(await drainPdfWork()).toBe(false);
+      // A conflict lets the reader explicitly discard the local highlight.
+      vi.mocked(backend().writeHighlights).mockRejectedValueOnce(new Error("conflict"));
+      await drainPdfWork();
+      expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
+      [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
+        .find((button) => button.textContent === "Use disk version")!.click();
+      await flush();
+      expect(rollback).toHaveBeenCalledWith("paper.pdf", 1, id, 5678, expect.any(Number));
+      expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("true");
+      [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
+        .find((button) => button.textContent === "Use disk version")!.click();
+      await flush();
+      expect(rollback).toHaveBeenCalledTimes(2);
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("false");
+    } finally { dispose(); }
+  });
+
+  it.each(["both fail", "second succeeds", "first succeeds"])("keeps two overlapping area crops accounted for: %s", async (outcome) => {
+    const ids = ["44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"] as const;
+    vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(ids[0]).mockReturnValueOnce(ids[1]);
+    vi.spyOn(Date, "now").mockReturnValue(5678);
+    const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("paper/crop.png");
+    const rollback = vi.spyOn(backend(), "rollbackPdfAreaImage").mockResolvedValue(undefined);
+    let failFirst!: (reason: Error) => void;
+    let finishFirst!: (items: Highlight[]) => void;
+    const write = vi.spyOn(backend(), "writeHighlights")
+      .mockImplementationOnce(() => new Promise((resolve, reject) => { finishFirst = resolve; failFirst = reject; }))
+      .mockImplementationOnce(async (_pdf, _label, items) => {
+        if (outcome === "both fail") throw new Error("second save failed");
+        return items;
+      });
+    const { host, wrap, dispose } = await mountAreaViewer();
+    const addArea = async () => {
+      (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
+      dragArea(wrap, { x: 45, y: 55 });
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await flush();
+    };
+    try {
+      await addArea();
+      await addArea();
+      expect(saveArea).toHaveBeenCalledTimes(2);
+      expect(write).toHaveBeenCalledTimes(1);
+      if (outcome === "first succeeds") finishFirst(write.mock.calls[0][2]);
+      else failFirst(new Error("first save failed"));
+      await flush();
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(write.mock.calls[1][2].map((h) => h.id)).toEqual(ids);
+      expect(rollback).not.toHaveBeenCalled();
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved"))
+        .toBe(outcome === "both fail" ? "true" : "false");
     } finally { dispose(); }
   });
 
@@ -651,6 +711,179 @@ describe("PdfViewer OG state and reference behavior", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("keeps overlapping failed recolors marked unsaved until close can retry", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    let failFirst!: (reason: Error) => void;
+    const write = vi.spyOn(backend(), "writeHighlights")
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { failFirst = reject; }))
+      .mockRejectedValueOnce(new Error("second save failed"))
+      .mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    const recolor = async (swatch: number) => {
+      (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[swatch].dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+      );
+      await flush();
+    };
+    try {
+      await flush();
+      TestIntersectionObserver.instances[0].show(host.querySelector(".pdf-page")!);
+      await flush();
+      await recolor(1);
+      await recolor(2);
+      failFirst(new Error("first save failed"));
+      await flush();
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("true");
+      expect(await drainPdfWork()).toBe(true);
+      expect(write.mock.calls[2][3][0].color).toBe("yellow");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("uses the second committed recolor after the first overlapping write fails", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    let failFirst!: (reason: Error) => void;
+    const write = vi.spyOn(backend(), "writeHighlights")
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { failFirst = reject; }))
+      .mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    const recolor = async (swatch: number) => {
+      (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[swatch].dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+      );
+      await flush();
+    };
+    try {
+      await flush();
+      TestIntersectionObserver.instances[0].show(host.querySelector(".pdf-page")!);
+      await flush();
+      await recolor(1);
+      await recolor(2);
+      failFirst(new Error("first save failed"));
+      await flush();
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("false");
+      await recolor(3);
+      expect(write.mock.calls[2][3][0].color).toBe("blue");
+    } finally { dispose(); }
+  });
+
+  it("offers Keep mine after a disk deletion and rebases onto current disk highlights", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    const diskOnly = { ...loaded, id: "22222222-2222-4222-8222-222222222222" };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(backend(), "readHighlights").mockResolvedValue([diskOnly]);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const write = vi.spyOn(backend(), "writeHighlights")
+      .mockRejectedValueOnce(new Error("conflict"))
+      .mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      TestIntersectionObserver.instances[0].show(host.querySelector(".pdf-page")!);
+      await flush();
+      (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await flush();
+      expect(host.querySelector(".pdf-highlight-conflict")?.textContent).toContain("Keep mine");
+      (host.querySelector('button[title="Close PDF"]') as HTMLButtonElement).click();
+      await flush();
+      expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
+      (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
+      await flush();
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[3].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await flush();
+      expect(write).toHaveBeenCalledTimes(1);
+      setToasts([]);
+      expect(await drainPdfWork()).toBe(false);
+      expect(toasts().at(-1)?.message).toContain("paper.pdf");
+      expect(toasts().at(-1)?.message).toContain("Keep mine or Use disk version");
+      vi.mocked(backend().readHighlights).mockRejectedValueOnce(new Error("sidecar unreadable"));
+      [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
+        .find((button) => button.textContent === "Use disk version")!.click();
+      await flush();
+      expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("true");
+      [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
+        .find((button) => button.textContent === "Keep mine")!.click();
+      await flush();
+      expect(write.mock.calls[1][3]).toEqual([diskOnly]);
+      expect(write.mock.calls[1][2]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: diskOnly.id, color: "yellow" }),
+        expect.objectContaining({ id, color: "green" }),
+      ]));
+      expect(host.querySelector(".pdf-highlight-conflict")).toBeNull();
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("false");
+      expect(await drainPdfWork()).toBe(true);
+    } finally { dispose(); }
+  });
+
+  it("keeps a local deletion after a disk recolor only when Keep mine is chosen", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    const loaded = { id, page: 1, position: { page: 1, bounding: rect, rects: [rect] }, color: "yellow", text: "text", image: null };
+    const disk = { ...loaded, color: "green" };
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [loaded], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(backend(), "readHighlights").mockResolvedValue([disk]);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const write = vi.spyOn(backend(), "writeHighlights")
+      .mockRejectedValueOnce(new Error("conflict"))
+      .mockImplementation(async (_pdf, _label, items) => items);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      TestIntersectionObserver.instances[0].show(host.querySelector(".pdf-page")!);
+      await flush();
+      (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
+      await flush();
+      (host.querySelector('button[title="Remove highlight"]') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+      );
+      await flush();
+      expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
+      expect(await drainPdfWork()).toBe(false);
+      [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
+        .find((button) => button.textContent === "Keep mine")!.click();
+      await flush();
+      expect(write.mock.calls[1][3]).toEqual([disk]);
+      expect(write.mock.calls[1][2]).toEqual([]);
+      expect(await drainPdfWork()).toBe(true);
+    } finally { dispose(); }
   });
 
   it("restores OG page and scale then debounces changed view state", async () => {
