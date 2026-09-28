@@ -11,6 +11,7 @@ fn constructions(file: &str, source: &str) -> BTreeMap<String, usize> {
             .strip_prefix("fn ")
             .or_else(|| trimmed.strip_prefix("pub fn "))
             .or_else(|| trimmed.strip_prefix("pub(crate) fn "))
+            .or_else(|| trimmed.strip_prefix("pub(super) fn "))
         {
             function = after.split('(').next().unwrap_or("").to_owned();
         }
@@ -82,8 +83,21 @@ fn assert_table(actual: &BTreeMap<String, usize>, expected: &BTreeMap<String, us
 #[test]
 fn all_production_refusals_have_scenarios() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let transaction =
+    // The whole `transaction` module: a refusal moved into a `transaction/` child
+    // file must stay counted, or splitting the file would silently empty the table.
+    let mut transaction =
         fs::read_to_string(root.join("crates/tine-store/src/transaction.rs")).unwrap();
+    let mut children: Vec<_> = fs::read_dir(root.join("crates/tine-store/src/transaction"))
+        .map(|dir| dir.map(|entry| entry.unwrap().path()).collect())
+        .unwrap_or_default();
+    children.sort();
+    for child in children
+        .iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+    {
+        transaction.push('\n');
+        transaction.push_str(&fs::read_to_string(child).unwrap());
+    }
     let store = fs::read_to_string(root.join("crates/tine-store/src/store.rs")).unwrap();
     let store = store
         .split("    pub fn save(")

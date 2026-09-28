@@ -117,6 +117,43 @@ fn refused(outcome: TxOutcome) -> (Why, tine_store::Rollback) {
     }
 }
 
+#[cfg(all(feature = "test-faults", unix))]
+#[test]
+fn move_reports_directory_sync_failure_after_rename() {
+    use tine_store::FaultPoint;
+
+    let f = Fixture::with_watch(WatchMode::Notify, &[("assets/source.bin", b"source")]);
+    let source = f.id(Area::Assets, "source.bin");
+    let destination = f.id(Area::Assets, "destination.bin");
+    let revision = f.rev(&source);
+    f.store.inject_fault(FaultPoint::DirectorySyncIo);
+    let mut tx = f.store.transaction(None);
+    tx.move_file(&source, revision, &destination, None);
+    let outcome = tx.commit();
+    assert!(
+        matches!(outcome, TxOutcome::NotCommitted { why: Why::Failed(_), .. }),
+        "directory sync failure after rename must be reported by Transaction::commit; exemplar sync_move_dirs: {outcome:?}"
+    );
+}
+
+#[cfg(all(feature = "test-faults", unix))]
+#[test]
+fn create_undoes_publication_when_directory_sync_fails() {
+    use tine_store::FaultPoint;
+
+    let f = Fixture::new();
+    let created = f.id(Area::Assets, "created.bin");
+    f.store.inject_fault(FaultPoint::DirectorySyncIo);
+    let mut tx = f.store.transaction(None);
+    tx.create(&created, Content::Bytes(b"created".to_vec()));
+    let outcome = tx.commit();
+    assert!(
+        matches!(outcome, TxOutcome::NotCommitted { why: Why::Failed(_), .. }),
+        "directory sync failure after create must be reported by Transaction::commit; exemplar atomic_write_new: {outcome:?}"
+    );
+    assert_eq!(f.bytes("assets/created.bin"), None);
+}
+
 #[test]
 fn step_successes_and_noop() {
     let f = Fixture::new();

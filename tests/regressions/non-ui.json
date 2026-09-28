@@ -2,6 +2,31 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "REG-OG-DIRECTORY-DURABILITY-001",
+      "title": "A failed parent-directory sync after a graph write or move is reported instead of acknowledging durable storage",
+      "family": "data-safety",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "linux",
+        "android",
+        "macos",
+        "ios"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-store/tests/transaction.rs",
+          "crates/tine-store/tests/directory_durability_guard.rs"
+        ],
+        "scenario": "filesystem.directory-sync-failure-reported",
+        "failBefore": "proven"
+      }
+    },
+    {
       "id": "REG-QUERY-OG-MEMBERSHIP-BOUNDS-001",
       "title": "Simple query page terms unquoted search and date ranges match OG membership and bounds across presentations",
       "family": "query-correctness",

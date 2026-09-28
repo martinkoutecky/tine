@@ -12,6 +12,7 @@ mod no_replace;
 
 #[path = "../../crates/tine-store/src/atomic_file.rs"]
 mod atomic_file;
+use tine_store::directory_durability;
 
 /// Device source errors remain distinct so the command can preserve its wire text.
 #[derive(Debug)]

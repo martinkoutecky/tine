@@ -434,15 +434,8 @@ fn commit_publish_stage_report(
     graph
         .ensure_write_target(out)
         .map_err(|error| (error, None))?;
-    // cap-std may represent a directory capability with an O_PATH descriptor on
-    // Linux, which cannot itself be fsynced. Every generated file is fsynced;
-    // directory durability remains best-effort, matching the other atomic paths.
-    let _ = stage
-        .dir
-        .try_clone()
-        .map_err(|error| (error, None))?
-        .into_std_file()
-        .sync_all();
+    crate::directory_durability::sync_directory_entry(&stage.path)
+        .map_err(|error| (error, None))?;
     let PublishStage {
         path,
         root,

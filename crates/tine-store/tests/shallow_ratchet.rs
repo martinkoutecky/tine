@@ -407,6 +407,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
     // FileId/PageId. New signatures require a reason even if SURFACE accepts them.
     let allowed = [
         (
+            "directory_durability::sync_directory_entry",
+            "app-data directory outside any graph (settings, backup) handed to the OS for sync",
+        ),
+        (
             "store::Store::create_graph",
             "user-chosen parent input; created root to user",
         ),

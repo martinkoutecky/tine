@@ -443,7 +443,7 @@ fn atomic_write_workspaces(path: &std::path::Path, data: &str) -> Result<(), Str
         file.sync_all()?;
         drop(file);
         std::fs::rename(&tmp, path)?;
-        let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
+        tine_store::directory_durability::sync_directory_entry(parent)?;
         Ok(())
     })();
     if result.is_err() {
