@@ -1,7 +1,8 @@
 use super::{property_key_norm, strip_ref};
 use tine_core::doc::{DocBlock, Document};
 
-/// Page-level properties and `tags::` values parsed from a page's pre-block.
+/// Parse Markdown or Org page-property syntax; skip malformed lines.
+/// O(input text length), without external I/O.
 pub(super) fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
     if !is_org {
         return text
@@ -48,6 +49,8 @@ pub(super) fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, Stri
     props
 }
 
+/// Use the first root's format, or preblock Org markers if there is no root.
+/// O(first root metadata or preblock lines).
 pub(super) fn page_document_is_org(doc: &Document) -> bool {
     doc.roots.first().map(DocBlock::is_org).unwrap_or_else(|| {
         doc.pre_block.as_deref().is_some_and(|pre| {
@@ -59,6 +62,9 @@ pub(super) fn page_document_is_org(doc: &Document) -> bool {
     })
 }
 
+/// Extract property pairs and comma-separated tags only from document preblock.
+/// A properties-only first root is excluded, unlike document_aliases. Malformed
+/// lines are skipped. O(preblock text), without external I/O.
 pub(super) fn page_facets(doc: &Document) -> (Vec<(String, String)>, Vec<String>) {
     let mut props = Vec::new();
     let mut tags = Vec::new();

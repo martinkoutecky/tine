@@ -8,8 +8,8 @@
 // It's a per-machine display preference → persisted in localStorage, NOT in
 // config.edn (that's the graph config shared with OG Logseq over Syncthing).
 //
-// Routing: Ctrl +/-/0 zoom the INTERFACE when the notes pane is focused, and the
-// PDF (its own render scale) when the PDF pane is focused. The split is driven by
+// Routing: Ctrl +/-/0 zoom the interface whenever the PDF pane is not active,
+// and the PDF (its own render scale) when it is. The split is driven by
 // `activePane` (ui.ts) — this handler bails when the PDF pane is active, and
 // PdfViewer.onKeyZoom bails when it isn't.
 import { createSignal } from "solid-js";
@@ -59,6 +59,9 @@ export function applyAndroidInterfaceZoom(scale: number): void {
   document.documentElement.style.zoom = scale === 1 ? "" : String(scale);
 }
 
+/** Apply stored zoom asynchronously on Tauri: CSS zoom on Android, native zoom
+ * elsewhere. Web build does nothing. Platform failures toast; return does not
+ * await the result. O(1) plus platform call latency. */
 export function applyZoom(): void {
   if (!isTauri()) return;
   void platformKind()
@@ -89,8 +92,11 @@ function setZoom(z: number) {
   applyZoom();
 }
 
+/** Increase zoom by 1.1, clamped to 0.5..3; storage/native failure toasts. */
 export const zoomIn = () => setZoom(interfaceZoom() * 1.1);
+/** Decrease zoom by 1.1, clamped to 0.5..3; storage/native failure toasts. */
 export const zoomOut = () => setZoom(interfaceZoom() / 1.1);
+/** Reset zoom to 1; storage/native failure toasts. */
 export const zoomReset = () => setZoom(1);
 
 export function decideWheelZoomGesture(
@@ -119,10 +125,9 @@ export function decideWheelZoomGesture(
   };
 }
 
-/** Ctrl/Cmd +/-/0 → interface zoom, but ONLY when the notes pane is focused; the
- *  PDF pane owns those keys for its own zoom (PdfViewer.onKeyZoom). Capture-phase
- *  so it precedes — and preventDefault suppresses — the webview's built-in page
- *  zoom. Returns an uninstaller. */
+/** Install capture-phase Ctrl/Cmd +/-/0 zoom keys whenever activePane is not
+ * PDF, regardless of actual notes focus. Matching keys prevent default WebView
+ * zoom; the PDF pane owns its keys. Returns an uninstaller. O(1) per event. */
 export function installInterfaceZoomKeys(): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -147,7 +152,8 @@ export function installInterfaceZoomKeys(): () => void {
  *  events are always consumed to suppress the webview's built-in page zoom, but
  *  macOS momentum tails where the modifier appeared mid-gesture do not change our
  *  zoom. Deliberate zoom bursts are coalesced into at most one gentle step per
- *  frame so the whole-UI relayout stays smooth. Returns an uninstaller. */
+ *  frame so the whole-UI relayout stays smooth (per-event work still applies).
+ *  Returns an uninstaller. */
 export function installInterfaceZoomWheel(): () => void {
   let pending = 0;
   let raf = 0;

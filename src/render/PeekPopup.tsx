@@ -29,7 +29,7 @@ function countBlocks(blocks: readonly BlockDto[]): number {
 
 /** Return at most 100 blocks across 64 levels. `truncated` is exact through 2000;
  * 2001 means at least 2001 more, so callers display "2000+". Visits at most
- * 2101 blocks and never recurses, including when the source tree is deeper. */
+ * 2101 blocks and never recurses; emitted nodes are cloned, not mutated. */
 export function capBlockTree(blocks: BlockDto[], maxBlocks: number): { blocks: BlockDto[]; truncated: number } {
   if (maxBlocks <= 0) return { blocks: [], truncated: countBlocks(blocks) };
   const limit = Math.min(maxBlocks, MAX_PEEK_BLOCKS);
@@ -59,6 +59,9 @@ export function capBlockTree(blocks: BlockDto[], maxBlocks: number): { blocks: B
   return { blocks: out, truncated };
 }
 
+/** Render supplied preview blocks in an anchored portal. Caller caps the tree
+ * and provides omitted count. Registers a transient dismissal layer and scroll
+ * and resize listeners, removed on unmount. O(supplied rendered blocks). */
 export function PeekPopup(props: {
   anchor: () => HTMLElement | undefined;
   title?: JSX.Element;

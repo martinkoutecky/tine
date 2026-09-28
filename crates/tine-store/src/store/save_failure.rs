@@ -174,6 +174,9 @@ impl Store {
     }
 }
 
+/// Return outcome unchanged when no undo step or publication failed. Otherwise
+/// return Io naming the page and what is incomplete, asking the caller to inspect
+/// disk before retrying, regardless of the original refusal. No I/O; O(1).
 fn single_page_failure(
     outcome: SaveOutcome,
     undo_failed: &[FileId],

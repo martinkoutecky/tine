@@ -38,11 +38,10 @@ function restoreDisclosureFocus(key: string) {
   });
 }
 
-// Right sidebar: a stack of pages/blocks opened for reference. Each item is a
-// LIVE reference — it loads its page into the shared working set and renders the
-// same editable <Block> the main view uses, so edits here are edits to the one
-// underlying node and propagate everywhere (OG's model, kept lazy). A parked
-// {{query}} also stays live, since it's the real block.
+/** Render open sidebar pages and blocks as live editable surfaces. Opening an
+ * item may load its page into the shared working set; edits change the same
+ * nodes as the main pane. Hidden state renders nothing. O(visible sidebar
+ * blocks) plus page-load latency. */
 export function RightSidebar(): JSX.Element {
   const [actionsOpen, setActionsOpen] = createSignal(false);
   let actionsButton: HTMLButtonElement | undefined;

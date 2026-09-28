@@ -30,7 +30,7 @@ function loadTheme(): "light" | "dark" {
 }
 export const [theme, setTheme] = createSignal<"light" | "dark">(loadTheme());
 
-/** Apply the stored theme to the document (call once at startup). */
+/** Apply stored theme at startup; native system-bar update runs async and toasts on failure. */
 export function applyTheme() {
   document.documentElement.setAttribute("data-theme", theme());
   void backend().setSystemBarAppearance(theme() === "dark")
@@ -39,8 +39,8 @@ export function applyTheme() {
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
-/** Set the workflow and persist it to config.edn (graph-portable, like Logseq).
- *  The signal is the runtime source of truth; the file is re-read on next open. */
+/** Set workflow optimistically and persist to graph config; failure rolls back
+ * and toasts. The file is re-read on next graph open. */
 export function changeWorkflow(wf: "now" | "todo") {
   if (wf === workflow()) return;
   writeGraphSignal("workflow", workflow, setWorkflow, wf,
@@ -192,22 +192,22 @@ export function firstDayOfWeek(): number {
 }
 /** Persist a new first-day-of-week (Logseq index 0=Monday … 6=Sunday) to
  *  config.edn and update graphMeta optimistically so the calendar reflects it
- *  immediately. */
+ *  immediately; invalid indexes clamp to 0..6 and failed writes roll back with a toast. */
 export function changeStartOfWeek(l: number) {
   const n = Math.min(6, Math.max(0, Math.floor(l)));
   changeGraphSetting("start_of_week", n, (next) => backend().setStartOfWeek(next), "start of week");
 }
 
-/** Persist the format new pages/journals are created in (`:preferred-format`)
- *  and update graphMeta optimistically. Existing files keep their own format. */
+/** Persist new-page format and update graphMeta optimistically. Existing files
+ * keep their format; failed writes roll back with a toast. */
 export function changePreferredFormat(fmt: "md" | "org") {
   changeGraphSetting("preferred_format", fmt, (next) => backend().setPreferredFormat(next), "preferred page format");
 }
 
-/** Change the journal display-title format (`:journal/page-title-format`).
- *  Optimistically updates the in-memory formatter + meta and bumps the graph
- *  epoch so open journal titles re-render; persists to config.edn. The configured
- *  file-name format is unchanged; eligible legacy title-named files are migrated. */
+/** Trim and apply the journal title format immediately. Backend persistence
+ * reopens the graph and may migrate legacy title-named journal files without
+ * changing filename format. Failure rolls back and toasts; skipped files are
+ * reported. Async work scales with journal files and graph reload. */
 let journalTitleFormatIntent = 0;
 export function changeJournalTitleFormat(fmt: string) {
   const next = fmt.trim() || "MMM do, yyyy";
@@ -486,6 +486,7 @@ export function toggleFocusMode() {
   if (focusMode()) void exitFocusMode();
   else void enterFocusMode();
 }
+/** Enable focus and request fullscreen. Failure toasts without rollback; resolves after request. O(1) plus native latency. */
 export async function enterFocusMode() {
   if (focusMode()) return;
   // When the setting is on, focus mode owns dim: on while focused, off when
@@ -498,6 +499,7 @@ export async function enterFocusMode() {
     pushToast("Could not enter fullscreen focus mode.", "error");
   }
 }
+/** Disable focus and request fullscreen exit. Failure toasts without rollback; resolves after request. O(1) plus native latency. */
 export async function exitFocusMode() {
   if (!focusMode()) return;
   setFocusMode(false);
@@ -684,6 +686,10 @@ export function toggleFavorite(name: string, kind: "page" | "journal" = "page") 
     : [...f, { name, kind }];
   persistFavorites(next);
 }
+/** Remove navigation entries for a deleted target. Favorites currently match
+ * name alone, regardless of kind/path; recents and sidebar check kind/path.
+ * Favorite changes queue config write; others schedule session persistence.
+ * O(favorites + recents + sidebar items). */
 export function removeDeletedPageFromNavigation(target: PageTarget): void;
 export function removeDeletedPageFromNavigation(name: string, kind: PageKind): void;
 export function removeDeletedPageFromNavigation(targetOrName: PageTarget | string, kind?: PageKind) {
@@ -714,10 +720,10 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
   if (nextSidebar.length !== rightSidebar().length) setRightSidebar(nextSidebar);
 }
 
-/** Re-key sidebar navigation state after the backend has atomically renamed a
- * page. Keep ordering stable, collapse an existing destination duplicate, and
- * persist both stores before the subsequent openPage(next) promotes the one
- * canonical recent entry to the front. */
+/** After backend rename, re-key favorite, recent and sidebar entries in order,
+ * deduplicating destinations even if source is absent. Only changed stores
+ * schedule persistence; writes need not finish before a later openPage. Does
+ * not rename or open a page. O(favorites + recents² + sidebar items). */
 export function renamePageInNavigation(from: PageTarget, to: PageTarget): void;
 export function renamePageInNavigation(from: string, to: string): void;
 export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string) {
@@ -782,7 +788,7 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
  *  it to empty when the newly-opened graph has no favorites — otherwise the
  *  previous graph's favorites would linger and open empty pages. config.edn
  *  stores names only; kind is re-derived so a favorited journal still routes as a
- *  journal (not a would-be-empty page). */
+ *  journal (not a would-be-empty page); duplicate/unknown names are retained. */
 export function seedFavorites(names: string[]) {
   setFavorites(
     names.map((name): FavItem => ({ name, kind: isJournalTitle(name) ? "journal" : "page" }))
@@ -1250,8 +1256,8 @@ export function removeDeletedBlocksFromSidebar(uuids: ReadonlySet<string>) {
   if (next.length !== rightSidebar().length) setRightSidebar(next);
 }
 
-/** Drop restored block items whose block can't be resolved (its in-memory uuid
- *  changed across the restart). Page items are left untouched. */
+/** Resolve block items in parallel; remove and save only confirmed missing targets.
+ * Failed lookups remain and toast; pages are untouched. O(block items) backend calls plus save. */
 export async function pruneSidebarBlocks(): Promise<void> {
   const binding = captureBinding();
   const root = graphMeta()?.root;

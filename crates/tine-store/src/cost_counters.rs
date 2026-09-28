@@ -46,7 +46,8 @@ pub struct Counts {
     pub signature_block_probes: u64,
 }
 
-/// Reset all primitive counters immediately before a measured operation.
+/// Zero process-global counters. Concurrent activity contaminates measurements.
+/// O(number of counters), using relaxed atomic stores.
 pub fn reset() {
     for counter in [
         &READDIR,
@@ -67,7 +68,8 @@ pub fn reset() {
     }
 }
 
-/// Capture the primitive counts.
+/// Read process-global counters without resetting. This is not an atomic
+/// multi-counter snapshot; concurrent activity may mix intervals. O(counters).
 pub fn snapshot() -> Counts {
     Counts {
         readdir: READDIR.load(Ordering::Relaxed),
@@ -111,6 +113,7 @@ pub(crate) fn snapshot_rebuild() {
 pub(crate) fn snapshot_elapsed(duration: std::time::Duration) {
     SNAPSHOT_NANOS.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
 }
+/// Add count to the process-global relaxed-atomic probe total.
 pub(crate) fn memo_page_probes(count: u64) {
     MEMO_PAGE_PROBES.fetch_add(count, Ordering::Relaxed);
 }

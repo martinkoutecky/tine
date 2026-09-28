@@ -59,12 +59,15 @@ function apply(on: boolean): void {
   else destroy();
 }
 
-/** Toggle from the UI: persist the choice, then apply it live. */
+/** Apply live immediately, then queue a device-local write. Failure restores
+ * the last confirmed value and scroller state and toasts. The scroller needs
+ * mounted feed DOM. Return does not confirm persistence. O(1) plus write. */
 export function setSmoothScroll(on: boolean): void {
   writePreference(enabled, apply, on, (next) => backend().setSmoothScroll(next), "smooth scrolling preference");
 }
 
-/** Read the persisted preference at startup and apply it. Default OFF. */
+/** Load the preference at startup (default OFF); read failure toasts and resolves.
+ * If feed DOM is absent, scroller installation waits for a later apply. */
 export async function initSmoothScroll(): Promise<void> {
   const revision = preferenceRevision(enabled);
   try {
