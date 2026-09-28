@@ -1121,7 +1121,11 @@ pub fn serialize_with(doc: &Document, opts: &SerializeOpts) -> String {
         emit_block(block, 0, &opts.indent, &mut out);
     }
     let mut s = out.join("\n");
-    s.push_str(&"\n".repeat(opts.trailing_newlines));
+    // `parse` gives blank EOF lines to the last block's raw, so the body may
+    // already end in them; they then need exactly the one `\n` that `parse`
+    // strips. Appending the detected count again doubled them (2n-1) per save.
+    let tail = s.len() - s.trim_end_matches('\n').len();
+    s.push_str(&"\n".repeat(if tail > 0 { 1 } else { opts.trailing_newlines }));
     s
 }
 

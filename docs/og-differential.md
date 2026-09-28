@@ -30,11 +30,13 @@ It is not a hand-transcribed expectation. The og integration test
 `crates/tine-core/tests/og_differential_pages.rs` invokes og's corresponding
 Rust serializers and compares byte slices, reporting the page path on failure.
 Nine of ten match at this revision. The baseline difference is
-`pages/Whitespace.md`: master preserves its one leading blank line and two
-trailing line endings; og removes the leading blank and emits three trailing
-line endings. The test pins both byte strings and fails on any additional
-difference. This is a serializer difference already present before batch 5b;
-the campaign must classify it when a page-writing feature is ported.
+`pages/Whitespace.md`: master preserves its one leading blank line; og
+removes it. Both keep the two trailing line endings (og emitted three until
+batch 13a fixed EOF blank-line doubling). The test pins both byte strings and
+fails on any additional difference. A save never reaches this whole-page
+serializer for an existing page whose layout it can map: batch 13a's
+per-block retention keeps the file's own lines, so this difference shows
+only on the fallback path.
 
 The second golden, `scripts/fixtures/og-master-rename-golden.json`, comes from
 master's `Graph::rename_page` path on the synthetic

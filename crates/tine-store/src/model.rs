@@ -3,7 +3,7 @@
 //! runtime UUIDs are deterministic structural locators; persisted `id::`
 //! values remain separate external reference identities.
 
-mod one_block_layout;
+mod layout_retention;
 mod page_icons;
 mod page_identity;
 mod page_parse;
@@ -4510,7 +4510,7 @@ impl Graph {
                 // Reproduce the existing file's layout to avoid Syncthing churn.
                 let opts = doc::SerializeOpts::detect(existing);
                 let mut content = existing
-                    .and_then(|source| one_block_layout::serialize(&doc, source, &opts))
+                    .and_then(|source| layout_retention::serialize(&doc, source, &opts))
                     .unwrap_or_else(|| doc::serialize_with(&doc, &opts));
                 // A5: when only unroundtrippable whitespace trivia differs,
                 // equal parses mean the disk bytes and revision stay authoritative.
