@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 mod io_helpers;
+mod preflight;
 mod validation;
 use io_helpers::{
     collision, content_refusal, directory_read_error, disk_rev, failed, failed_trash_dir,
@@ -250,7 +251,10 @@ pub enum TxOutcome {
 }
 
 #[cfg(any(test, feature = "test-faults"))]
-/// Deterministic one-shot failure hooks for tests.
+/// Deterministic one-shot failure hooks for tests. Indexed points use a
+/// zero-based transaction step index; an unreachable point stays armed in this
+/// Store. Multiple distinct points can be armed and each fires once. The two
+/// move-abort points require `test-faults` even in a plain unit-test build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FaultPoint {
     /// Simulate a changed file at the second revision guard.
@@ -285,10 +289,18 @@ pub enum FaultPoint {
     TwinAfterPublish,
     /// Abort the process immediately after the indexed step has reached disk.
     AbortAfterStep(usize),
+    /// Abort the process after a rewritten move has renamed and synced the old
+    /// bytes at the destination, before its trash copy; requires `test-faults`.
+    AbortAfterMoveRename,
+    /// Abort the process after a rewritten move has copied the old bytes to
+    /// trash and published new destination bytes; requires `test-faults`.
+    AbortAfterMoveRewrite,
+    /// Fail a rewritten move after its old-byte trash copy, to exercise rollback.
+    MoveAfterTrashCopyIo,
 }
 
 #[cfg(not(any(test, feature = "test-faults")))]
-#[allow(dead_code)] // The production fault check is a no-op; test builds read these indexes.
+#[allow(dead_code)] // The production fault check is a no-op.
 pub(crate) enum FaultPoint {
     Stage2Mismatch,
     Stage2MismatchAt(usize),
@@ -306,6 +318,9 @@ pub(crate) enum FaultPoint {
     UndoWithdrawalIo,
     TwinAfterPublish,
     AbortAfterStep(usize),
+    AbortAfterMoveRename,
+    AbortAfterMoveRewrite,
+    MoveAfterTrashCopyIo,
 }
 
 #[cfg(any(test, feature = "test-faults"))]
@@ -360,6 +375,7 @@ enum Step {
         id: PageId,
         expected: FileRev,
         renames: RenameMap,
+        rebind_title: bool,
     },
     Move {
         file: FileId,
@@ -558,14 +574,20 @@ impl<'a> Transaction<'a> {
             id: id.clone(),
             expected,
             renames: renames.clone(),
+            rebind_title: false,
         });
         self
     }
 
-    /// Queue a guarded no-replace move. Optional ref rewrites rebind an own
-    /// Markdown `title::` matching the mapped old identity and destination;
-    /// other titles, aliases and namespace children stay untouched. Changed
-    /// bytes move the old source to trash; unchanged bytes rename directly.
+    /// Queue a guarded no-replace move. With a rename map and identical source
+    /// and destination IDs, complete an interrupted move by rewriting the
+    /// file's explicit title and references in place under the same revision
+    /// guard; stale revisions or non-round-tripping Org content refuse it.
+    /// On a normal move, optional ref rewrites rebind an own Markdown `title::`
+    /// matching the mapped old identity and destination; other titles, aliases
+    /// and namespace children stay untouched. Changed bytes leave an old-byte
+    /// copy in trash; unchanged bytes rename directly. An in-place completion
+    /// rewrites the existing file and makes no new trash copy.
     /// `resolve` follows the destination; later referrers need a later query.
     /// Twin claims are refused. A read-only Org source may move without a
     /// rewrite; asking to rewrite its bytes invokes the round-trip check.
@@ -573,7 +595,7 @@ impl<'a> Transaction<'a> {
     /// case-folding filesystem the destination can be seen as the guarded
     /// source itself and return a conflict.
     /// Moves between pages and journals change the file's area identity and
-    /// still require a guarded source and free destination. Moving into graph
+    /// require a guarded source and free destination. Moving into graph
     /// trash is refused; use [`Self::trash`] for that operation. Commit hashes
     /// source bytes and may rewrite/sync the destination, plus O(P) metadata
     /// for publication.
@@ -584,6 +606,17 @@ impl<'a> Transaction<'a> {
         to: &FileId,
         renames: Option<&RenameMap>,
     ) -> &mut Self {
+        if file == to {
+            if let Some(renames) = renames {
+                self.steps.push(Step::Rewrite {
+                    id: PageId::from(file.as_str()),
+                    expected,
+                    renames: renames.clone(),
+                    rebind_title: true,
+                });
+                return self;
+            }
+        }
         self.steps.push(Step::Move {
             file: file.clone(),
             expected,
@@ -751,284 +784,6 @@ impl<'a> Transaction<'a> {
             }),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(Why::Failed(directory_read_error(error, &path).into())),
-        }
-    }
-
-    fn preflight(&self, step: &Step) -> Result<Prepared, Why> {
-        let unsupported_config_step = match step {
-            Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
-            Step::Unique {
-                area, stem, ext, ..
-            } => *area == Area::Meta && stem == "config" && ext == ".edn",
-            Step::Move { file, to, .. } => {
-                file.as_str() == "logseq/config.edn" || to.as_str() == "logseq/config.edn"
-            }
-            _ => false,
-        };
-        if unsupported_config_step {
-            return Err(Why::Refused(Refusal::InvalidTarget(
-                "config.edn requires live config publication".into(),
-            )));
-        }
-        match step {
-            Step::Expect { file, expected } => Ok(Prepared {
-                src: file.clone(),
-                dst: None,
-                old: Some(self.stage(file, expected)?),
-                new: None,
-                saved_page: None,
-                opaque_rev: None,
-            }),
-            Step::Save { id, base, doc } => {
-                let file = id.file();
-                if doc.guide {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "Guide pages are ephemeral".into(),
-                    )));
-                }
-                if !self.page(&file) {
-                    return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-                }
-                if !crate::model::dto_depth_within_limit(doc) {
-                    return Err(Why::Refused(Refusal::InvalidTarget(
-                        "page content nesting exceeds 512 levels".into(),
-                    )));
-                }
-                if matches!(base, SaveBase::CreateNew) {
-                    if let Some(existing) = self.disk_twin(&file)? {
-                        return Err(Why::Refused(Refusal::Twin {
-                            existing: PageId::from(existing.as_str()),
-                        }));
-                    }
-                    self.absent(&file)?;
-                    self.twin(&file, None)?;
-                }
-                let old = match base {
-                    SaveBase::Existing(rev) => Some(self.stage(&file, rev)?),
-                    SaveBase::CreateNew => None,
-                };
-                if let Some(old) = old.as_ref() {
-                    crate::model::validate_parse_bytes_for_path(old, &self.path(&file)?)
-                        .map_err(content_refusal)?;
-                }
-                let path = self.path(&file)?;
-                let text = match old.as_deref() {
-                    Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
-                        content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))
-                    })?),
-                    None => None,
-                };
-                let (new, saved_page) = self
-                    .store
-                    .graph
-                    .prepare_page_bytes(doc, &path, text)
-                    .map_err(|error| {
-                        if error.kind() == io::ErrorKind::PermissionDenied {
-                            Why::Refused(Refusal::ReadOnly(error.to_string()))
-                        } else {
-                            Why::Failed(error.into())
-                        }
-                    })?;
-                crate::model::validate_parse_bytes_for_path(&new, &path)
-                    .map_err(content_refusal)?;
-                Ok(Prepared {
-                    src: file,
-                    dst: None,
-                    old,
-                    new: Some(new),
-                    saved_page: Some(saved_page),
-                    opaque_rev: None,
-                })
-            }
-            Step::Create { file, content } => {
-                if file.as_str().starts_with("logseq/.tine-trash/")
-                    || file.as_str().starts_with("logseq/.tine-")
-                {
-                    return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-                }
-                self.path(file)?;
-                self.absent(file)?;
-                self.twin(file, None)?;
-                if file.as_str() == "logseq/config.edn" {
-                    validate_config_content(self.store, content)?;
-                }
-                if self.page(file) {
-                    validate_page_content(&file, content)?;
-                } else if let Content::Stream { source, max_bytes } = content {
-                    validate_stream(source, *max_bytes)?;
-                }
-                Ok(Prepared {
-                    src: file.clone(),
-                    dst: None,
-                    old: None,
-                    new: None,
-                    saved_page: None,
-                    opaque_rev: None,
-                })
-            }
-            Step::Unique {
-                area,
-                stem,
-                ext,
-                content,
-            } => {
-                let first = format!("{stem}{ext}");
-                if first.is_empty()
-                    || first == "."
-                    || first == ".."
-                    || first.contains('/')
-                    || first.contains('\\')
-                    || (!ext.is_empty() && !ext.starts_with('.'))
-                {
-                    return Err(Why::Refused(Refusal::InvalidTarget(format!("{stem}{ext}"))));
-                }
-                let file = self
-                    .store
-                    .file_id(*area, &first)
-                    .map_err(|_| Why::Refused(Refusal::InvalidTarget(first.clone())))?;
-                if *area == Area::Trash
-                    || (*area == Area::Meta && file.as_str().contains("/.tine-"))
-                {
-                    return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-                }
-                self.path(&file)?;
-                if self.page(&file) {
-                    validate_page_content(&file, content)?;
-                } else if let Content::Stream { source, max_bytes } = content {
-                    validate_stream(source, *max_bytes)?;
-                }
-                for index in 0usize.. {
-                    let rel = if index == 0 {
-                        first.clone()
-                    } else {
-                        format!("{stem}_{index}{ext}")
-                    };
-                    let candidate = self
-                        .store
-                        .file_id(*area, &rel)
-                        .map_err(|_| Why::Refused(Refusal::InvalidTarget(rel)))?;
-                    match self.absent(&candidate) {
-                        Ok(()) => {
-                            self.twin(&candidate, None)?;
-                            if self.fixed_step_names().contains(&candidate) {
-                                return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
-                            }
-                            break;
-                        }
-                        Err(Why::Conflict { .. }) => continue,
-                        Err(error) => return Err(error),
-                    }
-                }
-                Ok(Prepared {
-                    src: file,
-                    dst: None,
-                    old: None,
-                    new: None,
-                    saved_page: None,
-                    opaque_rev: None,
-                })
-            }
-            Step::Replace {
-                file,
-                expected,
-                bytes,
-            } => {
-                if self.page(file) || file.as_str().starts_with("logseq/.tine-") {
-                    return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-                }
-                let old = self.stage(file, expected)?;
-                if file.as_str() == "logseq/config.edn" {
-                    validate_config_bytes(self.store, bytes)?;
-                }
-                Ok(Prepared {
-                    src: file.clone(),
-                    dst: None,
-                    old: Some(old),
-                    new: Some(bytes.clone()),
-                    saved_page: None,
-                    opaque_rev: None,
-                })
-            }
-            Step::Rewrite {
-                id,
-                expected,
-                renames,
-            } => {
-                let file = id.file();
-                if !self.page(&file) {
-                    return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-                }
-                let old = self.stage(&file, expected)?;
-                let new = rewrite(&old, &self.path(&file)?, renames)?;
-                Ok(Prepared {
-                    src: file,
-                    dst: None,
-                    old: Some(old),
-                    new: Some(new),
-                    saved_page: None,
-                    opaque_rev: None,
-                })
-            }
-            Step::Move {
-                file,
-                expected,
-                to,
-                renames,
-            } => {
-                if to.as_str().starts_with("logseq/.tine-") {
-                    return Err(Why::Refused(Refusal::InvalidTarget(to.as_str().into())));
-                }
-                let opaque_rev = if renames.is_none() {
-                    self.oversized_page_rev(file, expected)?
-                } else {
-                    None
-                };
-                let old = if opaque_rev.is_some() {
-                    None
-                } else {
-                    Some(self.stage(file, expected)?)
-                };
-                self.absent(to)?;
-                self.twin(to, Some(file))?;
-                let new = match (&old, renames) {
-                    (Some(old), Some(map)) => Some(rewrite_move(
-                        old,
-                        &self.path(to)?,
-                        map,
-                        self.store.config().file_name_format,
-                    )?),
-                    (Some(old), None) => Some(old.clone()),
-                    (None, None) => None,
-                    (None, Some(_)) => unreachable!(),
-                };
-                Ok(Prepared {
-                    src: file.clone(),
-                    dst: Some(to.clone()),
-                    old,
-                    new,
-                    saved_page: None,
-                    opaque_rev,
-                })
-            }
-            Step::Trash { file, expected } => {
-                if file.as_str().starts_with("logseq/.tine-trash/") {
-                    return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
-                }
-                let opaque_rev = self.oversized_page_rev(file, expected)?;
-                let old = if opaque_rev.is_some() {
-                    None
-                } else {
-                    Some(self.stage(file, expected)?)
-                };
-                Ok(Prepared {
-                    src: file.clone(),
-                    dst: None,
-                    old,
-                    new: None,
-                    saved_page: None,
-                    opaque_rev,
-                })
-            }
         }
     }
 
@@ -1459,19 +1214,66 @@ impl<'a> Transaction<'a> {
                         rev: FileRev::from_bytes(old),
                     });
                 }
+                // Keep one live name through every crash point: rename the old
+                // page to its destination, then replace its bytes through the
+                // same audited atomic save primitive used for other rewrites.
+                // A crash before the replacement leaves the old page at the new
+                // name; after it, the rewritten page is there. Neither state
+                // exposes both source and destination as live pages.
+                undo.kind = UndoKind::Rename;
+                undo.new = Some(Expected::Bytes(old.to_vec()));
+                self.fault_collision(&dst);
                 if self.page(dst_id) {
                     self.store.graph.transaction_note_page(&dst, new);
                 }
-                undo.new = Some(Expected::Bytes(new.clone()));
-                self.fault_collision(&dst);
-                self.arm_directory_sync_fault();
-                if let Err(error) = atomic_write_new(&dst, new) {
-                    if crate::directory_durability::is_directory_sync_failure(&error) {
-                        undo.created = true;
-                    }
-                    return Err(collision(dst_id, error, &dst));
+                if self.page(&plan.src) {
+                    self.store.graph.transaction_note_delete(&src);
                 }
+                move_file_noreplace(&src, &dst).map_err(|error| collision(dst_id, error, &dst))?;
                 undo.created = true;
+                sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
+                #[cfg(feature = "test-faults")]
+                if fault(self.store, FaultPoint::AbortAfterMoveRename) {
+                    std::process::abort();
+                }
+                self.fault_mid_step(index)?;
+
+                let trash_id = self.trash_id(&plan.src);
+                let trash = self.path(&trash_id)?;
+                if let Some(parent) = trash.parent() {
+                    fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
+                }
+                // Preserve the original bytes for the same recovery affordance
+                // as the old destination-first move. This copy is outside the
+                // live page area and uses the audited no-replace publication.
+                atomic_write_new(&trash, old).map_err(failed)?;
+                undo.trash = Some(trash_id);
+                if fault(self.store, FaultPoint::MoveAfterTrashCopyIo) {
+                    return Err(failed(io::Error::other(
+                        "injected failure after move trash copy",
+                    )));
+                }
+                self.arm_directory_sync_fault();
+                if let Err(error) = atomic_write_with_check(&dst, new, || {
+                    if fs::read(&dst)? == old {
+                        Ok(())
+                    } else {
+                        Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "moved page changed before rewrite",
+                        ))
+                    }
+                }) {
+                    if crate::directory_durability::is_directory_sync_failure(&error) {
+                        undo.new = Some(Expected::Bytes(new.clone()));
+                    }
+                    return Err(failed(error));
+                }
+                undo.new = Some(Expected::Bytes(new.clone()));
+                #[cfg(feature = "test-faults")]
+                if fault(self.store, FaultPoint::AbortAfterMoveRewrite) {
+                    std::process::abort();
+                }
                 self.fault_mid_step(index)?;
                 self.fault_twin(dst_id);
                 if let Some(twin) = self.disk_twin(dst_id)? {
@@ -1480,19 +1282,6 @@ impl<'a> Transaction<'a> {
                         disk: disk_rev(&self.path(&twin)?),
                     });
                 }
-                let trash_id = self.trash_id(&plan.src);
-                let trash = self.path(&trash_id)?;
-                if let Some(parent) = trash.parent() {
-                    fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
-                }
-                undo.trash = Some(trash_id.clone());
-                if self.page(&plan.src) {
-                    self.store.graph.transaction_note_delete(&src);
-                }
-                move_file_noreplace(&src, &trash).map_err(|e| collision(&plan.src, e, &src))?;
-                undo.moved = true;
-                sync_move_dirs(self.store, &src, &trash).map_err(failed)?;
-                self.fault_mid_step(index)?;
                 if fs::read(&trash).map_err(failed)? != old {
                     return Err(Why::Conflict {
                         file: plan.src.clone(),
@@ -1933,6 +1722,38 @@ impl<'a> Transaction<'a> {
         if failure.is_some() {
             for undo in done.iter().rev() {
                 self.undo(undo, &mut rollback, &mut exact_copies);
+            }
+            // A rewritten move copies the old bytes to trash before replacing
+            // the destination. Withdraw that copy only after undo has restored
+            // the source; leave it recoverable if restoration was incomplete.
+            for record in &done {
+                if !matches!(record.kind, UndoKind::Rename) || record.moved {
+                    continue;
+                }
+                let (Some(trash_id), Some(old)) = (&record.trash, &record.old) else {
+                    continue;
+                };
+                let result = (|| -> io::Result<()> {
+                    let live = self
+                        .path(&record.src)
+                        .map_err(|error| io::Error::other(format!("{error:?}")))?;
+                    let trash = self
+                        .path(trash_id)
+                        .map_err(|error| io::Error::other(format!("{error:?}")))?;
+                    if fs::read(&live)? != *old || fs::read(&trash)? != *old {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "move bytes changed during undo",
+                        ));
+                    }
+                    fs::remove_file(&trash)?;
+                    crate::directory_durability::sync_directory_entry(
+                        trash.parent().expect("trash parent"),
+                    )
+                })();
+                if let Err(error) = result {
+                    rollback.undo_failed.push((trash_id.clone(), error.into()));
+                }
             }
         }
         for undo in &done {

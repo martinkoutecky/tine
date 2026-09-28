@@ -399,6 +399,7 @@ fn rename_page_after_inventory(
         let prefix = format!("{old_key}/");
         let mut pairs = Vec::new();
         let mut moves = HashMap::<PageId, FileId>::new();
+        let mut moved_titles_to_rebind = HashSet::<PageId>::new();
         let mut destinations = HashSet::new();
         let mut identities = HashSet::new();
         let mut primary_is_file = false;
@@ -473,7 +474,12 @@ fn rename_page_after_inventory(
                 ));
             }
             if to == id.file() {
-                return Err(error(io::ErrorKind::AlreadyExists, "target page exists"));
+                // A crash after the physical rename can leave Old's explicit
+                // title in New's file. Finish that rewrite in place on retry.
+                moved_titles_to_rebind.insert(id.clone());
+                pairs.push((entry.name.clone(), new_name));
+                primary_is_file |= primary;
+                continue;
             }
             if primary {
                 primary_is_file = true;
@@ -518,6 +524,7 @@ fn rename_page_after_inventory(
         let olds: Vec<String> = map.0.iter().map(|(from, _)| from.clone()).collect();
         let mut candidates: Vec<PageId> = graph.explicit_referrers(&olds);
         candidates.extend(moves.keys().cloned());
+        candidates.extend(moved_titles_to_rebind.iter().cloned());
         candidates.retain(|id| {
             merge
                 .as_ref()
@@ -550,7 +557,8 @@ fn rename_page_after_inventory(
                     ),
                 ));
             }
-            if moves.contains_key(&id) || updated != content {
+            if moves.contains_key(&id) || moved_titles_to_rebind.contains(&id) || updated != content
+            {
                 edits.push((id, rev));
             }
         }
@@ -647,7 +655,11 @@ fn rename_page_after_inventory(
             .into_iter()
             .partition(|(id, _)| moves.contains_key(id));
         for (id, rev) in rewritten {
-            tx.rewrite_refs(&id, rev, &map);
+            if moved_titles_to_rebind.contains(&id) {
+                tx.move_file(&id.file(), rev, &id.file(), Some(&map));
+            } else {
+                tx.rewrite_refs(&id, rev, &map);
+            }
         }
         for (id, rev) in moved {
             tx.move_file(&id.file(), rev, &moves[&id], Some(&map));

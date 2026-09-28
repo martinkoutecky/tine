@@ -1416,10 +1416,7 @@ export function Editor(props: { id: string }): JSX.Element {
       caret === undefined
         ? withRefCompletionSpace(r.raw, r.caret, text, spaceAfterRefCompletion())
         : r;
-    // The Calculator slash command can turn an already-mounted plain editor into
-    // a whole ```calc fence. Keep calc mode sticky once entered (an in-progress
-    // malformed fence must still commit as calc), but allow this explicit
-    // completion transition without requiring blur + re-entry (GH #57).
+    // Let a calculator completion enter calc mode in the mounted editor (GH #57).
     const enteredCalc = !editingCalc() ? calcSource(spaced.raw) : null;
     commit(spaced.raw);
     if (enteredCalc !== null) setEditingCalc(true);
@@ -1813,17 +1810,22 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     if (item.blockRef) {
-      // Insert the target's authored ID (or its runtime fallback), while using the
-      // runtime ID to find an id-less target that still needs an `id::` stamped.
       const { uuid, externalId, page, kind } = item.blockRef;
       const binding = captureBinding();
       const trigger = ac();
       const editorValue = ref.value;
-      void persistBlockRefTarget(uuid, page, kind, undefined, externalId).then((saved) => {
-        if (!stillBound(binding) || ac() !== trigger || ref.value !== editorValue) return;
-        if (saved) replaceTrigger(`((${externalId}))`);
-        else pushToast("Could not save the referenced block ID. Try again after resolving the page save.", "error");
-      }).catch((error) => pushToast(`Could not save the referenced block ID: ${String(error)}`, "error"));
+      let inserted = false;
+      void persistBlockRefTarget(uuid, page, kind, undefined, externalId, () => {
+        if (!stillBound(binding) || ac() !== trigger || ref.value !== editorValue) return null;
+        const sourcePage = docNode(props.id)?.page;
+        if (!sourcePage) return null;
+        replaceTrigger(`((${externalId}))`);
+        inserted = true;
+        return sourcePage;
+      }).then((saved) => {
+        if (!saved && stillBound(binding) && (inserted || ac() === trigger))
+          pushToast("Could not save the block reference. Resolve the page save and try again.", "error");
+      }).catch((error) => { if (stillBound(binding)) pushToast(`Could not save the block reference: ${String(error)}`, "error"); });
       return;
     }
     if (item.plugin) {

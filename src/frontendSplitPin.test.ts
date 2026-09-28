@@ -217,6 +217,26 @@ describe("small document intents retain visible and saved outcomes", () => {
     await persistBlockRefTarget(uuid, "Target", "page");
     expect(pageToDto("Target")!.blocks[0].raw.match(/id::/g)).toHaveLength(1);
   });
+  it.each(["A source", "Z source"])("publishes the target ID before the authored reference when %s sorts around it", async (sourceName) => {
+    const uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
+    const source = block("draft");
+    loadFeed([page(sourceName, [source], "page"), page("M target", [{ ...block("target"), id: uuid }], "page")]);
+    const disk = new Map([[sourceName, "draft"], ["M target", "target"]]);
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
+      // Simulate a process lost immediately after the first store step.
+      const first = entries[0];
+      disk.set(first.page.name, first.page.blocks[0].raw);
+      return { failed: { index: 1, family: "io:Other", undoFailed: [] } };
+    });
+    await persistBlockRefTarget(uuid, "M target", "page", undefined, uuid, () => {
+      setRaw(source.id, `((${uuid}))`);
+      return sourceName;
+    });
+    expect(save).toHaveBeenCalledOnce();
+    expect(save.mock.calls[0][0].map((item) => item.page.name)).toEqual(["M target", sourceName]);
+    expect(disk.get(sourceName)).toBe("draft");
+    expect(disk.get("M target")).toContain(`id:: ${uuid}`);
+  });
   it("does not complete a block-reference stamp until the target page is saved", async () => {
     const uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
     loadSingle(page("Target", [{ ...block("target"), id: uuid }], "page"));
