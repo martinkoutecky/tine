@@ -10,6 +10,7 @@ import { closeContextMenu, closeExportModal, exportModal, openContextMenu, openP
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
+import { setToasts, toasts } from "../toasts";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -35,6 +36,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     closeExportModal();
     clearTransientLayersForTest();
     document.body.innerHTML = "";
+    setToasts([]);
   });
 
   function mount(node: () => JSX.Element): () => void {
@@ -108,6 +110,50 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(doc.byId.parent).toBeDefined();
     expect(peekClipboardPayload()).toBeNull();
+    dispose();
+  });
+
+  it("keeps an edited block and its children when Cut resolves after the edit", async () => {
+    load();
+    let finish!: () => void;
+    vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "parent");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((el) => el.textContent?.trim() === "Cut block")!.click();
+    setDoc("byId", "child", "raw", "Edited during clipboard write");
+    finish();
+    await vi.waitFor(() => expect(peekClipboardPayload()?.op).toBe("copy"));
+    expect(doc.byId.parent).toBeDefined();
+    expect(doc.byId.child.raw).toBe("Edited during clipboard write");
+    dispose();
+  });
+
+  it("reports block Copy only after a successful clipboard write", async () => {
+    load();
+    let reject!: (error: Error) => void;
+    vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((_, fail) => { reject = fail; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "parent");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((el) => el.textContent?.trim() === "Copy block")!.click();
+    expect(toasts().some((toast) => toast.message === "Copied block")).toBe(false);
+    reject(new Error("clipboard denied"));
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
+    expect(toasts().some((toast) => toast.message === "Copied block")).toBe(false);
+    dispose();
+  });
+
+  it("reports page Markdown Copy failure when the page read returns nothing", async () => {
+    load();
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const write = vi.spyOn(backend(), "writeText");
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page");
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-page-markdown"]')!.click();
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
+    expect(write).not.toHaveBeenCalled();
+    expect(toasts().some((toast) => toast.message === "Copied page as Markdown")).toBe(false);
     dispose();
   });
 

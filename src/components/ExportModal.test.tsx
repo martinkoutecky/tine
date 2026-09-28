@@ -8,6 +8,7 @@ import { type Node as StoreNode } from "../document/model";
 import { setDoc } from "../document/model";
 import { closeExportModal, openExportModal } from "../ui";
 import { clearTransientLayersForTest } from "../transientLayers";
+import { setToasts, toasts } from "../toasts";
 
 beforeAll(async () => {
   await initParser();
@@ -37,6 +38,7 @@ describe("ExportModal formats", () => {
     resetStore();
     document.body.innerHTML = "";
     vi.restoreAllMocks();
+    setToasts([]);
   });
 
   it("shows Text/OPML/HTML without PNG, scopes options, and copies the selected payload", async () => {
@@ -73,6 +75,7 @@ describe("ExportModal formats", () => {
     expect(preview).not.toContain("property");
     byText("Copy")!.click();
     expect(writeText).toHaveBeenCalledWith(preview);
+    await Promise.resolve();
 
     openExportModal(["root"]);
     await Promise.resolve();
@@ -87,6 +90,25 @@ describe("ExportModal formats", () => {
     expect(htmlPreview).not.toContain("property");
     byText("Copy")!.click();
     expect(writeText).toHaveBeenLastCalledWith(htmlPreview);
+    dispose();
+  });
+
+  it("waits for the clipboard before reporting Copy success", async () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <ExportModal />, root);
+    let reject!: (error: Error) => void;
+    vi.spyOn(backend(), "writeText").mockReturnValue(new Promise<void>((_, fail) => { reject = fail; }));
+    openExportModal(["root"]);
+    await Promise.resolve();
+    const byText = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === label);
+    byText("OPML")!.click();
+    await Promise.resolve();
+    byText("Copy")!.click();
+    expect(toasts().some((toast) => toast.message === "Copied to clipboard")).toBe(false);
+    reject(new Error("clipboard denied"));
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
     dispose();
   });
 });

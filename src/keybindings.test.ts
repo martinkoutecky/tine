@@ -206,6 +206,24 @@ describe("mouse side-button navigation (#156)", () => {
   });
 });
 
+it("keyboard Cut keeps a selected block edited while the clipboard write is pending", async () => {
+  loadSingle({
+    name: "Cut", kind: "page", title: "Cut", pre_block: null,
+    blocks: [{ id: "cut-me", raw: "Original", collapsed: false, children: [] }],
+  });
+  selectBlock("cut-me");
+  let finish!: () => void;
+  vi.spyOn(backend(), "writeRich").mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+  const fake = installFakeWindow();
+  const dispose = installKeybindings();
+  fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "x", code: "KeyX", ctrlKey: true }).event);
+  setDoc("byId", "cut-me", "raw", "Edited");
+  finish();
+  await vi.waitFor(() => expect(peekClipboardPayload()?.op).toBe("copy"));
+  expect(doc.byId["cut-me"].raw).toBe("Edited");
+  dispose();
+});
+
 describe("plugin command context", () => {
   it("registers plugin default bindings in the same remappable dispatcher", async () => {
     setGraphMeta(pluginGraphMeta);

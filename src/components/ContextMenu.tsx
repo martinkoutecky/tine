@@ -1,7 +1,6 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { pushToast } from "../toasts";
-import { captureBinding, stillBound } from "../binding";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -20,6 +19,7 @@ import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type Fie
 import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyBlockOutline, writeClipboardText } from "../clipboard";
+import { cutBlocks } from "../cut";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 
@@ -27,13 +27,32 @@ import { registerTransientLayer } from "../transientLayers";
 // disk. ensureBlockId returns null if the save couldn't land (conflict/error), in
 // which case we must NOT copy a ref that would dangle after a restart.
 async function copyBlockRef(id: string, fmt: (uuid: string) => string, okMsg: string) {
-  const uuid = await ensureBlockId(id);
+  let uuid: string | null;
+  try {
+    uuid = await ensureBlockId(id);
+  } catch {
+    uuid = null;
+  }
   if (!uuid) {
     pushToast("Couldn't save the block id — reference not copied (resolve the conflict first).", "error");
     return;
   }
-  await writeClipboardText(fmt(uuid));
-  pushToast(okMsg, "success");
+  try {
+    await writeClipboardText(fmt(uuid));
+    pushToast(okMsg, "success");
+  } catch {
+    pushToast("Couldn't copy: clipboard write failed.", "error");
+  }
+}
+
+function reportCopy(write: Promise<void>, okMsg: string): void {
+  void write.then(() => pushToast(okMsg, "success"))
+    .catch(() => pushToast("Couldn't copy: clipboard write failed.", "error"));
+}
+
+function copyBlock(id: string): void {
+  const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
+  reportCopy(copyBlockOutline("copy", text, buildClipboardPayload([id])), "Copied block");
 }
 
 // Right-click context menu. Universal over its target: a block (full editing
@@ -621,11 +640,11 @@ function BlockRefMenu(props: {
     { label: "Go to block", run: () => openPageAtBlock({ name: props.page, pageKind: props.pageKind, block: props.uuid, path: props.path }) },
     {
       label: "Copy block ref",
-      run: () => { void writeClipboardText(`((${props.uuid}))`); pushToast("Copied block ref", "success"); },
+      run: () => reportCopy(writeClipboardText(`((${props.uuid}))`), "Copied block ref"),
     },
     {
       label: "Copy block embed",
-      run: () => { void writeClipboardText(`{{embed ((${props.uuid}))}}`); pushToast("Copied block embed", "success"); },
+      run: () => reportCopy(writeClipboardText(`{{embed ((${props.uuid}))}}`), "Copied block embed"),
     },
   ];
   return (
@@ -795,7 +814,7 @@ function PageMenu(props: {
     { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(target()) },
     { id: "open-new-tab", label: "Open in new tab", run: () => openPageTargetInNewTab(target()) },
     { id: "favorite-toggle", label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
-    { id: "copy-page-ref", label: "Copy page ref", run: () => { void writeClipboardText(`[[${props.name}]]`); pushToast("Copied page ref", "success"); } },
+    { id: "copy-page-ref", label: "Copy page ref", run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), "Copied page ref") },
     {
       id: "copy-export",
       label: "Copy / export as…",
@@ -818,11 +837,11 @@ function PageMenu(props: {
         const request = props.path
           ? backend().getPageByPath(props.path)
           : backend().getPage(props.name, props.pageKind);
-        void request
-          .then((p) => {
-            if (p) void writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
-            pushToast("Copied page as Markdown", "success");
-          });
+        void request.then((p) => {
+          if (!p) throw new Error("Page unavailable");
+          return writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
+        }).then(() => pushToast("Copied page as Markdown", "success"))
+          .catch(() => pushToast("Couldn't copy page as Markdown.", "error"));
       },
     },
     { id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) },
@@ -983,7 +1002,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     return [
       { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
       { label: "Zoom into block", run: () => zoomInto(id) },
-      { label: "Copy block", run: () => { const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()); void copyBlockOutline("copy", text, buildClipboardPayload([id])); pushToast("Copied block", "success"); } },
+      { label: "Copy block", run: () => copyBlock(id) },
       {
         label: "Copy / export as…",
         run: () => {
@@ -998,7 +1017,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     { label: "Zoom into block", run: () => zoomInto(id) },
     { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
     { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
-    { label: "Copy block", run: () => { const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()); void copyBlockOutline("copy", text, buildClipboardPayload([id])); pushToast("Copied block", "success"); } },
+    { label: "Copy block", run: () => copyBlock(id) },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.
     {
@@ -1014,10 +1033,8 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     {
       label: "Cut block",
       run: () => {
-        const binding = captureBinding();
         const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
-        void copyBlockOutline("cut", text, buildClipboardPayload([id]))
-          .then(() => { if (stillBound(binding)) deleteBlock(id); })
+        void cutBlocks([id], text, () => blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()), () => deleteBlock(id))
           .catch(() => pushToast("Couldn't cut block: clipboard write failed.", "error"));
       },
     },
