@@ -1,8 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { blockPageReadOnly, formatForBlock, formatForPage, pageByName, readPageProperty, node as docNode } from "../document";
+import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
-import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
+import { visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
 import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
@@ -135,8 +135,7 @@ export function SheetBoard(props: {
   });
   const pageFormulas = createMemo<ReadonlyMap<string, string>>(() => {
     if (!props.schemaPage) return new Map();
-    const page = pageByName(props.schemaPage);
-    return page ? formulasOf(pageProperties(page.preBlock, page.format)) : new Map();
+    return formulasOf(readPageProperties(props.schemaPage));
   });
   const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
     const owner = docNode(props.ownerId);

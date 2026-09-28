@@ -61,16 +61,10 @@ export function pageProperties(
   return pagePropertyEntries(preBlock, format).map((entry) => [entry.key, entry.value]);
 }
 
-/** The alias names declared by a page's pre-block (`alias::` in markdown,
- *  `#+ALIAS:` / `:alias:` in org), comma-separated. Empty if none. */
-export function aliasNames(
-  preBlock: string | null | undefined,
-  format: Format = "md"
-): string[] {
-  return aliasNamesOf(pageProperties(preBlock, format));
-}
-
-/** {@link aliasNames} over already-read `[key, value]` page properties. */
+/** The alias names declared in already-read `[key, value]` page properties
+ *  (`alias::` in markdown, `#+ALIAS:` / `:alias:` in org), comma-separated.
+ *  Empty if none. Read the properties through the one answerer
+ *  (`pageHeaderProperties` for a loaded page). */
 export function aliasNamesOf(properties: [string, string][]): string[] {
   const out: string[] = [];
   for (const [k, v] of properties) {
