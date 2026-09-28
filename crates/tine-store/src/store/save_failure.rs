@@ -10,10 +10,9 @@ impl Store {
     /// caller-constructible identity, reads current disk bytes, and uses
     /// temporary-file replacement; the temp file is synced before rename and
     /// a create uses a no-clobber rename. An existing-page replacement uses
-    /// an ordinary rename after its final revision guard. The
-    /// directory sync is best effort. A power loss after return can therefore
-    /// still lose the new directory entry on a filesystem that did not sync
-    /// the directory. A stale
+    /// an ordinary rename after its final revision guard, then syncs the
+    /// directory. A directory-sync failure after the rename is returned as an
+    /// error although the new bytes are already visible. A stale
     /// base returns `Conflict` even if the proposed bytes equal current disk
     /// bytes. With a matching base, equal bytes return `Unchanged` without a
     /// publication. A changed save publishes
