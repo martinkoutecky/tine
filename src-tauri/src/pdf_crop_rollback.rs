@@ -1,10 +1,11 @@
-//! Forward a crop rollback after the caller confirms sidecar refusal and no
-//! persisted highlight reference. One bound
-//! graph lookup plus O(crop bytes) per Store attempt; binding or Store refusal
-//! returns an error string. The command does not inspect the sidecar.
+//! PDF crop rollback command.
 
 use crate::state::{slot_for_context, GraphContext};
 
+/// After the caller confirms sidecar refusal and no persisted highlight reference,
+/// trash the current crop in the window's bound graph. This does not inspect the
+/// sidecar. Cost O(crop bytes) per attempt, up to four attempts; binding, target,
+/// I/O, and exhausted conflict failures return error strings.
 #[tauri::command]
 pub(crate) fn rollback_pdf_area_image(
     pdf: String,

@@ -89,9 +89,10 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }) {
   evictIfNeeded();
 }
 
-/** Admit a page fetched for a routed graph pane. Unlike a satellite/scratch
- * load, this also arms the save engine when it is the first page loaded after
- * startup. O(blocks of this page); an unsafe replacement keeps the live copy. */
+/** Admit a routed DTO when safe, retaining the live copy if replacement is unsafe.
+ * Marks the document loaded so later dirty pages can save; it neither dirties this
+ * page nor starts a save. Cost O(loaded pages + page blocks + cached sheet
+ * dimensions), plus evicted page blocks if the working set exceeds its cap. */
 export function loadRoutedPage(dto: PageDto & { id?: string }): void {
   ensurePageLoaded(dto);
   setDoc("loaded", true);

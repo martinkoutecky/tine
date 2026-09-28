@@ -1,6 +1,3 @@
-/** Start the ordinary guarded save when a graph WebView may be reclaimed.
- * Costs O(dirty pages); failures remain in the save engine for normal retry.
- * This listener cannot hold a native WebView open while the promise settles. */
 export interface BackgroundFlushDeps {
   endEdit(): void;
   flushAll(): Promise<boolean>;
@@ -12,6 +9,11 @@ export interface BackgroundFlushDeps {
 
 const triggers = ["visibilitychange", "pagehide", "freeze"] as const;
 
+/** On visibilitychange, pagehide, or freeze, end the edit and start one flushAll
+ * when hidden and no flush or close is in flight. Cost O(dirty pages).
+ * endEdit/flushAll startup errors and rejections are logged and swallowed; listener setup
+ * can throw. Dispose removes all three listeners. This cannot keep a native
+ * WebView alive until the flush settles. */
 export function installBackgroundFlush(deps: BackgroundFlushDeps): () => void {
   const add = deps.addEventListener ?? document.addEventListener.bind(document);
   const remove = deps.removeEventListener ?? document.removeEventListener.bind(document);

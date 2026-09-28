@@ -306,24 +306,35 @@ export interface Backend {
   readCustomCss(): Promise<string>;
   /** Open an http(s)/mailto URL in the OS default app. */
   openExternal(url: string): Promise<void>;
-  /** Open a graph asset (by its `assets/`-relative name) in the OS default app —
-   *  e.g. a video/audio file in the system player. */
+  // Graph binding: every asset/PDF method that takes `bindingGeneration` needs
+  // a positive safe-integer generation for this window's current graph. Missing
+  // or invalid ones reject with missing-graph-binding; stale ones with
+  // stale-graph-binding. Pre-IPC null and size-limit paths may return first.
+  /** Open an existing regular assets-relative file in the desktop OS default app.
+   * In-area symlinks may resolve; invalid/escaped paths, missing files, I/O, and
+   * unsupported mobile handoff reject. Cost O(path components). */
   openAsset(name: string, bindingGeneration: number): Promise<void>;
   openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean): Promise<void>;
-  /** Open a graph asset in a SPECIFIC external editor (drawio/Excalidraw/…) so a
-   *  diagram can be edited in place. `command` is that editor's configured command
-   *  template (empty = OS opener). See GH #38 / mediaEditors.ts. */
+  /** Launch a desktop editor for an existing assets-relative file. Blank command
+   * uses the OS opener; otherwise argv is parsed without a shell, replacing `{}`
+   * with the path or appending it. Resolves on spawn, before editing completes.
+   * Invalid/missing assets, command, spawn, or platform errors reject.
+   * Cost O(path components + command bytes). */
   editAssetExternal(name: string, command: string, bindingGeneration: number): Promise<void>;
   /** Best-effort autodetect of an installed editor's launch command (probes disk,
    *  never executes). Returns a command template or "" if not found. */
   detectMediaEditor(id: string): Promise<string>;
   /** Top-level `assets/` files no block references (orphans), for cleanup. */
   listOrphanAssets(): Promise<AssetInfo[]>;
-  /** Move an orphaned asset to the recoverable trash. */
+  /** Trash one top-level asset, whether referenced or not. Reads the whole file
+   * per attempt and retries revision conflicts up to four times. Missing assets
+   * and exhausted conflicts reject. Cost O(file bytes) per attempt. */
   trashAsset(name: string, bindingGeneration: number): Promise<void>;
   /** Count + total bytes of the recoverable asset trash (logseq/.tine-trash). */
   assetTrashStats(): Promise<TrashStats>;
-  /** Permanently delete everything in the asset trash; returns files removed. */
+  /** Permanently purge asset trash and return completed entry count. A failure
+   * can follow partial deletion; its error reports entries and bytes removed.
+   * Cost O(asset trash entries + bytes removed). */
   emptyAssetTrash(bindingGeneration: number): Promise<number>;
   /** Journal days that resolve to >1 file (date-stem + title-named, or md/org
    *  twin) — for the user to reconcile. */
@@ -393,19 +404,27 @@ export interface Backend {
    *  user opted into via Settings). Rejects when the opt-in is off or the path
    *  isn't a permitted image. */
   readLocalImage(path: string): Promise<Uint8Array>;
+  /** Save up to 64 MiB under a unique top-level asset name, without overwriting.
+   * Return the chosen assets-relative name. Invalid names and writes reject.
+   * Cost O(bytes + collision candidates). */
   saveAsset(name: string, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
-  /** If the OS clipboard holds an image, save it to assets/ and return the
-   *  filename; otherwise null. */
+  /** Read the OS clipboard image, convert to PNG, and save under a unique name.
+   * Return null if clipboard access/conversion yields no image; save failures
+   * reject. A saved image returns its assets-relative name. */
   pasteImage(bindingGeneration: number): Promise<string | null>;
   /** Decode an image off the OS clipboard to PNG bytes WITHOUT saving (the
    *  caller seeds the render cache + writes to disk in the background, so the
    *  pasted image appears instantly). Null if the clipboard has no image. */
   readClipboardImage(): Promise<Uint8Array | null>;
-  /** Copy a file (by absolute path) into assets/, returning the stored name.
-   *  `name` (optional) is the desired stored filename (timestamped). */
+  /** Stream a device file into assets under a nonempty explicit top-level name,
+   * or its source basename. Collisions choose a unique name; return that name.
+   * No source-byte cap. Bad source/name or write failures reject.
+   * Cost O(source bytes + collision candidates). */
   importAsset(path: string, name: string | undefined, bindingGeneration: number): Promise<string>;
-  /** Stream a bounded native Android voice-memo temp into assets and retire the
-   *  temp only after the graph copy commits. */
+  /** Import an app-cache tine_photo_*.jpg (64 MiB max) or tine_memo_*.m4a
+   * (32 MiB max) capability into a unique asset. Reject empty/invalid sources,
+   * bad names, size limits, and writes. After commit, attempt temp removal;
+   * cleanup failure does not reject. Cost O(source bytes + collision candidates). */
   importNativeCapture(path: string, name: string, bindingGeneration: number): Promise<string>;
   /** Paths explicitly copied in the OS file manager. Empty when the clipboard
    *  has no native file-list flavor or the platform cannot expose one. */
@@ -444,15 +463,34 @@ export interface Backend {
    *  actually populate the clipboard, so paste yielded nothing). */
   copyImageToClipboard(bytes: Uint8Array): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
-  /** Ensure OG's PDF sidecar/annotation page exist and return highlights plus
-   * the persisted last-view page and scale. */
+  /** Open persisted PDF highlights and view state. Create a sidecar or annotation
+   * page only if no usable OG or legacy counterpart exists; legacy files remain
+   * until highlight write.
+   * Malformed sidecars, ambiguous page files, and Store failures reject.
+   * Cost O(asset entries + sidecar + annotation page); a missing page can require
+   * a graph refresh. */
   openPdf(pdf: string, label: string, kind: "create-page", bindingGeneration: number): Promise<PdfState>;
+  /** Replace the caller's base highlight set, retaining disk additions absent
+   * from both highlights and baseIds. Commit sidecar and annotation page together;
+   * write OG artifacts, then attempt to move removed crops/legacy files to
+   * recoverable trash.
+   * Malformed data and Store failures reject. Cost O(asset entries + sidecar +
+   * annotation page + deleted crop bytes), plus graph refresh if page is missing. */
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[], kind: "replace-page", bindingGeneration: number): Promise<void>;
+  /** Update page and scale while preserving other sidecar fields; retry and merge
+   * concurrent changes up to four attempts. Invalid state/sidecar, I/O, or
+   * exhausted conflicts reject. Cost O(asset entries + sidecar) per attempt. */
   writePdfViewState(pdf: string, page: number, scale: number, bindingGeneration: number): Promise<void>;
   /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
    *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
-   *  Returns the assets-relative path. */
+   *  Returns the assets-relative path; a repeated save replaces that crop.
+   *  Rejects payloads over 64 MiB before IPC and Store failures. Each of up to
+   *  four attempts reads the existing crop; cost O(existing + input bytes). */
   savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array, bindingGeneration: number): Promise<string>;
+  /** Caller must first handle sidecar refusal and confirm no persisted highlight
+   * references this crop; this operation checks neither. Trash the current crop,
+   * reading O(crop bytes) on each of up to four attempts. Invalid/missing crop,
+   * I/O, and exhausted conflicts reject. */
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;

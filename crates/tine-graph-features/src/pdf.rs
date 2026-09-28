@@ -172,8 +172,10 @@ pub fn read_highlights(store: &Store, pdf_name: &str) -> Vec<Highlight> {
         .unwrap_or_default()
 }
 
-/// Open persisted PDF state, creating only missing OG artifacts. Legacy files
-/// remain in place until a highlight write. Cost O(sidecar + annotation page).
+/// Open persisted PDF state, creating a sidecar/page only when no usable OG or
+/// legacy counterpart exists. Legacy files remain until a highlight write.
+/// Cost O(asset entries + sidecar + annotation page), plus a graph refresh
+/// when the page is absent.
 pub fn open_pdf(store: &Store, pdf_name: &str, label: &str) -> io::Result<PdfState> {
     let key = pdf::asset_key(pdf_name);
     let (sidecar_id, mut current) = sidecar(store, pdf_name, true)?;
@@ -222,7 +224,8 @@ pub fn open_pdf(store: &Store, pdf_name: &str, label: &str) -> io::Result<PdfSta
 }
 
 /// Save page and scale while retaining all other sidecar fields. Concurrent
-/// external writes are merged on retry, at most four attempts. Cost O(sidecar).
+/// external writes are merged on retry, at most four attempts. Cost O(asset
+/// entries + sidecar) per attempt when legacy lookup is needed.
 pub fn write_pdf_view_state(
     store: &Store,
     pdf_name: &str,
@@ -278,7 +281,7 @@ fn area_image_target(
 
 /// Write a crop under its stable `key/page_id_stamp.png` link. A repeat save
 /// replaces that file in place; concurrent external writes are retried four
-/// times. Cost O(image bytes) per attempt.
+/// times. Each attempt reads the current crop; cost O(existing + input bytes).
 pub fn write_pdf_area_image(
     store: &Store,
     pdf_name: &str,
@@ -325,8 +328,9 @@ pub fn rollback_pdf_area_image(
 }
 
 /// Merge highlights with external additions, then commit the sidecar and hls
-/// page together. Legacy annotations migrate on write; deleted crops and legacy
-/// artifacts go to recoverable trash. Cost O(sidecar + page + deleted crops).
+/// page together. OG artifacts are written before best-effort moves of deleted
+/// crops and legacy artifacts to recoverable trash. Cost O(asset entries + sidecar
+/// + page + deleted crop bytes), plus a graph refresh when the page is absent.
 pub fn write_highlights(
     store: &Store,
     pdf_name: &str,

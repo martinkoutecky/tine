@@ -8,8 +8,8 @@ use tine_core::doc::{self, DocBlock, Document, SerializeOpts};
 
 /// Return a minimal one-block edit when the source and DTO have the same tree
 /// and preamble, and the splice re-parses to the same blocks (see `same_blocks`).
-/// Cost: three parses and two serializations of the page. Falls back to the ordinary serializer for structural edits or
-/// files whose physical lines cannot be mapped safely to the parsed tree.
+/// A successful splice costs three parses and three serializations of the page;
+/// inapplicable cases return early. The caller handles `None` with ordinary serialization.
 pub(super) fn serialize(doc: &Document, source: &str, opts: &SerializeOpts) -> Option<String> {
     if source.contains('\r') {
         return None;
