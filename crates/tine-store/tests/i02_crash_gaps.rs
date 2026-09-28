@@ -138,6 +138,71 @@ fn transaction_kill_reopen_preserves_each_old_or_new_file() {
 }
 
 #[test]
+fn crash_block_reference_worker() {
+    let Ok(root) = std::env::var("TINE_CRASH_REF_ROOT") else {
+        return;
+    };
+    let source_name = std::env::var("TINE_CRASH_REF_SOURCE").unwrap();
+    let store = open(Path::new(&root));
+    let target = PageId::from("pages/M target.md");
+    let source = PageId::from(format!("pages/{source_name}.md"));
+    let target_rev = store.read(&target.file(), None).unwrap().1;
+    let source_rev = store.read(&source.file(), None).unwrap().1;
+    let uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
+    let mut tx = store.transaction(Some(tine_store::EditKind::SaveBlock));
+    tx.save_page(
+        &[tine_store::EditKind::SaveBlock],
+        &target,
+        SaveBase::Existing(target_rev),
+        &page("M target", &format!("target\nid:: {uuid}")),
+    );
+    tx.save_page(
+        &[tine_store::EditKind::SaveBlock],
+        &source,
+        SaveBase::Existing(source_rev),
+        &page(&source_name, &format!("(({uuid}))")),
+    );
+    store.inject_fault(FaultPoint::AbortAfterStep(0));
+    let _ = tx.commit();
+    panic!("block-reference transaction did not abort");
+}
+
+#[test]
+fn block_reference_target_is_durable_at_the_step_boundary_for_both_name_orders() {
+    let uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
+    for source_name in ["A source", "Z source"] {
+        let root = scratch("block-reference");
+        fs::write(root.join(format!("pages/{source_name}.md")), b"- draft\n").unwrap();
+        fs::write(root.join("pages/M target.md"), b"- target\n").unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("crash_block_reference_worker")
+            .env("TINE_CRASH_REF_ROOT", &root)
+            .env("TINE_CRASH_REF_SOURCE", source_name)
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "child must abort at the first save step"
+        );
+        let reopened = open(&root);
+        reopened.whole_graph().unwrap();
+        let source = fs::read_to_string(root.join(format!("pages/{source_name}.md"))).unwrap();
+        let target = fs::read_to_string(root.join("pages/M target.md")).unwrap();
+        assert!(
+            !source.contains(&format!("(({uuid}))")),
+            "source reference reached disk first"
+        );
+        assert!(
+            target.contains(&format!("id:: {uuid}")),
+            "target ID missing after first step"
+        );
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn crash_rewritten_move_worker() {
     let Ok(root) = std::env::var("TINE_CRASH_MOVE_ROOT") else {
         return;
@@ -148,8 +213,9 @@ fn crash_rewritten_move_worker() {
         _ => return,
     };
     let store = open(Path::new(&root));
-    let source = store.file_id(Area::Pages, "Old.md").unwrap();
-    let destination = store.file_id(Area::Pages, "New.md").unwrap();
+    let ext = std::env::var("TINE_CRASH_MOVE_EXT").unwrap_or_else(|_| "md".into());
+    let source = store.file_id(Area::Pages, &format!("Old.{ext}")).unwrap();
+    let destination = store.file_id(Area::Pages, &format!("New.{ext}")).unwrap();
     let rev = store.read(&source, None).unwrap().1;
     let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.move_file(
@@ -192,6 +258,95 @@ fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
         }
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
+    for (ext, old, new_title) in [
+        ("md", "title:: Old\n- [[Old]]\n", "title:: New"),
+        ("org", "#+TITLE: Old\n* [[Old]]\n", "#+TITLE: New"),
+    ] {
+        let root = scratch("move-title-retry");
+        fs::write(root.join(format!("pages/Old.{ext}")), old).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("crash_rewritten_move_worker")
+            .env("TINE_CRASH_MOVE_ROOT", &root)
+            .env("TINE_CRASH_MOVE_EXT", ext)
+            .env("TINE_CRASH_MOVE_POINT", "rename")
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "child must abort after rename");
+        let reopened = open(&root);
+        reopened.whole_graph().unwrap();
+        assert!(!root.join(format!("pages/Old.{ext}")).exists());
+        assert_eq!(
+            fs::read_to_string(root.join(format!("pages/New.{ext}"))).unwrap(),
+            old
+        );
+        pages::rename_page_expected(&reopened, "Old", "New", None).unwrap();
+        let final_bytes = fs::read_to_string(root.join(format!("pages/New.{ext}"))).unwrap();
+        assert!(
+            final_bytes.contains(new_title),
+            "title not rebound: {final_bytes:?}"
+        );
+        assert!(
+            final_bytes.contains("[[New]]"),
+            "self-reference not rebound: {final_bytes:?}"
+        );
+        assert!(!root.join(format!("pages/Old.{ext}")).exists());
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn failed_rewritten_move_removes_its_trash_copy_during_rollback() {
+    let root = scratch("move-trash-rollback");
+    let old = b"title:: Old\n- [[Old]]\n";
+    fs::write(root.join("pages/Old.md"), old).unwrap();
+    let store = open(&root);
+    let source = store.file_id(Area::Pages, "Old.md").unwrap();
+    let destination = store.file_id(Area::Pages, "New.md").unwrap();
+    let rev = store.read(&source, None).unwrap().1;
+    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    tx.move_file(
+        &source,
+        rev,
+        &destination,
+        Some(&RenameMap(vec![("Old".into(), "New".into())])),
+    );
+    store.inject_fault(FaultPoint::MoveAfterTrashCopyIo);
+    assert!(matches!(
+        tx.commit(),
+        tine_store::TxOutcome::NotCommitted { .. }
+    ));
+    assert_eq!(fs::read(root.join("pages/Old.md")).unwrap(), old);
+    assert!(!root.join("pages/New.md").exists());
+    let trash = root.join("logseq/.tine-trash");
+    fn count_files(path: &Path) -> usize {
+        fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| {
+                        if entry.path().is_dir() {
+                            count_files(&entry.path())
+                        } else {
+                            1
+                        }
+                    })
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+    assert_eq!(
+        count_files(&trash),
+        0,
+        "failed move leaked a new trash copy"
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

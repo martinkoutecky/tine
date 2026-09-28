@@ -209,12 +209,16 @@ export async function persistentBlockRef(id: string): Promise<LoadedBlockRef | n
   return uuid ? blockRef(id) : null;
 }
 
-/** Find a block-reference target, loading its page if needed. Without
- * `insertReference`, durably stamp the target ID (used by navigation). With it,
- * commit the current source intent synchronously after target validation and
- * group the source reference with the target ID in one save. A failed grouped
- * save leaves the source edit visible for conflict resolution. Cost includes a
- * page lookup and one page or grouped save. */
+/** Find the runtime-key `uuid` on `page` (exact `path` if given), loading its
+ * page if needed. Backend read errors reject; a missing, stale or unwritable
+ * target resolves false. `externalId` is the ID to persist. Without a callback,
+ * flush the target page and resolve true only when its ID reaches disk.
+ * With `insertReference`, validate the ID first, then call it synchronously to
+ * edit the source and return its page name (null aborts without a write). The
+ * grouped save writes the target ID before the source reference, so a crash
+ * between files leaves at most an unreferenced ID. A failed save resolves false
+ * and leaves both edits visible for conflict resolution. Cost: one page lookup
+ * and one page or grouped save, possibly with other pending edits on the pages. */
 export async function persistBlockRefTarget(
   uuid: string,
   page: string,
@@ -252,7 +256,9 @@ export async function persistBlockRefTarget(
   const sourcePage = insertReference();
   if (!sourcePage || !owner()) return false;
   if (!existing) setDoc("byId", id, "raw", rawWithBlockId(target.raw, stableId, fmt));
-  const saved = await persistTogether([sourcePage, target.page], "save-block");
+  // A reference may reach disk only after its target ID does. orderedMembers
+  // writes the dependency destination first, independent of page name order.
+  const saved = await persistTogether([sourcePage, target.page], "save-block", [[sourcePage, target.page]]);
   return saved && !isConflicted(sourcePage) && !isConflicted(target.page)
     && owner() && doc.byId[id]?.page === target.page
     && existingBlockId(doc.byId[id].raw, fmt) === stableId;
