@@ -21,6 +21,7 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/theme.css";
 import "./lsShimInstall";
 import "./styles/app.css";
+import "./styles/query.css";
 
 applyTheme();
 applyAccent();

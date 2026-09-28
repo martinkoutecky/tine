@@ -7094,23 +7094,6 @@ img.emoji {
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border-color);
 }
-.qb-group {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-}
-.qb-bracket {
-  color: var(--text-muted);
-  font-size: 16px;
-  line-height: 1;
-}
-.qb-op-not {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-}
 .qb-op {
   border: none;
   background: var(--bg-tertiary);
@@ -7125,7 +7108,6 @@ img.emoji {
 .qb-op:hover {
   color: var(--link-color);
 }
-.qb-chip-wrap,
 .qb-add-wrap {
   position: relative;
   display: inline-flex;
@@ -7146,22 +7128,6 @@ img.emoji {
 .qb-chip-raw {
   font-family: var(--ls-font-mono);
   color: var(--text-secondary);
-}
-.qb-add {
-  border: 1px dashed var(--border-color);
-  background: transparent;
-  color: var(--text-muted);
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-}
-.qb-add:hover {
-  color: var(--link-color);
-  border-color: var(--link-color);
 }
 /* Sort control: a labelled pill (NOT the round "+" add button) — auto width so
    "+ sort" / "sort: field ↑" never wraps inside a 20px circle. */
@@ -7195,29 +7161,6 @@ img.emoji {
   color: var(--text-muted);
   border-color: var(--border-color);
 }
-.query-simple-toggle-wrap {
-  display: inline-flex;
-  margin-right: 6px;
-  font-style: normal;
-}
-.query-simple-toggle {
-  margin-right: 0;
-}
-.query-simple-toggle:disabled {
-  pointer-events: none;
-}
-/* Empty-query call-to-action: a labelled pill instead of a bare round "+". */
-.qb-add-prominent {
-  width: auto;
-  height: auto;
-  border-radius: 6px;
-  padding: 3px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--link-color);
-  border-style: solid;
-  border-color: var(--link-color);
-}
 .qb-menu,
 .qb-picker {
   position: absolute;
@@ -7244,11 +7187,6 @@ img.emoji {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-.qb-conn-row {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
 }
 .qb-conn {
   flex: 1;
@@ -7282,12 +7220,6 @@ img.emoji {
 .qb-menu-item:hover {
   background: var(--bg-tertiary);
 }
-.qb-value {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px;
-}
 .qb-input {
   border: 1px solid var(--border-color);
   background: var(--bg-primary);
@@ -7300,14 +7232,6 @@ img.emoji {
 .qb-input:focus {
   outline: none;
   border-color: var(--link-color);
-}
-.qb-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  font-size: 13px;
-  cursor: pointer;
 }
 .qb-commit {
   margin-top: 4px;
@@ -7323,113 +7247,9 @@ img.emoji {
   opacity: 0.5;
   cursor: default;
 }
-
-/* Date-range picker: field selector + relative presets + previewed inputs. */
-.qb-between {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 4px;
-  min-width: 260px;
-}
-.qb-between-field,
-.qb-between-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-/* The field selector's active state means "selected", not "exclude" — use the
-   accent rather than the red NOT colour. */
-.qb-between-field .qb-conn {
-  flex: 1 1 auto;
-}
-.qb-between-field .qb-conn.active {
-  background: var(--link-color);
-  color: #fff;
-  border-color: var(--link-color);
-}
-.qb-preset {
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  border-radius: 999px;
-  padding: 2px 10px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.qb-preset:hover {
-  border-color: var(--link-color);
-  color: var(--text-primary);
-}
-.qb-bound {
-  display: flex;
-  flex-direction: column;
-}
-.qb-bound .qb-input {
-  margin-bottom: 0;
-}
-.qb-bound-preview {
-  min-height: 14px;
-  padding: 0 2px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-/* Sort picker: a grid of one-click presets (the common cases — no typing) over a
-   free-text property fallback for anything else. */
-.qb-sort-picker {
-  min-width: 236px;
-}
-.qb-sort-presets {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  padding: 2px 4px 4px;
-}
-.qb-sort-preset {
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  text-align: center;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.qb-sort-preset:hover {
-  border-color: var(--link-color);
-  background: var(--bg-tertiary);
-}
-.qb-sort-preset.active {
-  background: var(--link-color);
-  color: #fff;
-  border-color: var(--link-color);
-}
-.qb-sort-custom-label {
-  padding: 3px 8px 1px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
 .qb-conn.disabled {
   opacity: 0.45;
   pointer-events: none;
-}
-.qb-sort-clear {
-  margin: 2px 4px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  border-radius: 5px;
-  padding: 4px 0;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.qb-sort-clear:hover {
-  border-color: #b91c1c;
-  color: #b91c1c;
 }
 
 .query-table th {
