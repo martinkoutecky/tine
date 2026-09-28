@@ -21,6 +21,16 @@ function expectAdvancedRoundTrip(dsl: string): void {
 }
 
 describe("advancedToClause", () => {
+  it("rejects excessive imported nesting and accepts realistic nesting", () => {
+    const nested = (depth: number) =>
+      `[:find (pull ?b [*]) :where ${"(not ".repeat(depth)}(task ?b "TODO")${")".repeat(depth)}]`;
+    expect(advancedToClause(nested(64))).not.toBeNull();
+    expect(advancedToClause(nested(200)), "I-22: advancedToClause rejects nesting beyond 128").toBeNull();
+  });
+  it("I-22: refuses an oversized advanced query before tokenizing it", () => {
+    const query = `[:find (pull ?b [*]) :where ${" ".repeat(100_000)}(task ?b "TODO")]`;
+    expect(advancedToClause(query), "I-22: advancedToClause must bound imported query size").toBeNull();
+  });
   it("round-trips every simple clause shape emitted by clauseToAdvanced", () => {
     for (const dsl of [
       "[[Roadmap]]",

@@ -8,9 +8,10 @@ import { doc } from "../document/model";
 import { startEditing } from "../editorController";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { toasts, setToasts } from "../toasts";
 
 beforeAll(() => initParser());
-afterEach(() => { resetStore(); document.body.innerHTML = ""; });
+afterEach(() => { resetStore(); setToasts([]); document.body.innerHTML = ""; });
 
 function mount(node: () => JSX.Element) {
   const root = document.createElement("div");
@@ -37,6 +38,45 @@ function keydown(textarea: HTMLTextAreaElement, init: KeyboardEventInit) {
 }
 
 describe("multiline paste into editor-visible empty blocks", () => {
+  it("I-22: refuses pasted outlines deeper than the UI render limit", () => {
+    const block: BlockDto = { id: "aaaa1111-1111-4111-8111-111111111111", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const outline = Array.from({ length: 513 }, (_, depth) => `${"\t".repeat(depth)}- item ${depth}`).join("\n");
+      const event = paste(root.querySelector("textarea") as HTMLTextAreaElement, outline);
+      expect(event.defaultPrevented).toBe(true);
+      expect(toasts().some((toast) => toast.message.includes("too deep")),
+        "I-22: deep paste must report refusal; exemplar 513-level outline").toBe(true);
+      expect(pageByName("Paste")!.roots, "I-22: deep paste must refuse before insertion; exemplar 513-level outline")
+        .toEqual([block.id]);
+    } finally {
+      dispose();
+    }
+  });
+  it("retains a 128-level pasted outline", () => {
+    const block: BlockDto = { id: "aaaa2222-2222-4222-8222-222222222222", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      paste(root.querySelector("textarea") as HTMLTextAreaElement,
+        Array.from({ length: 128 }, (_, depth) => `${"\t".repeat(depth)}- item ${depth}`).join("\n"));
+      let current = pageByName("Paste")!.roots[0];
+      for (let depth = 0; depth < 128; depth++) {
+        expect(doc.byId[current].raw).toContain(`item ${depth}`);
+        if (depth < 127) current = doc.byId[current].children[0];
+      }
+      expect(toasts().some((toast) => toast.message.includes("too deep"))).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
   it("replaces an id-only host instead of leaving a ghost blank bullet", () => {
     const block: BlockDto = {
       id: "11111111-1111-4111-8111-111111111111",
