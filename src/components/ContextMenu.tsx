@@ -152,7 +152,10 @@ export function ContextMenu(): JSX.Element {
             }}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
-              if (m().kind !== "page" || !menuEl) return;
+              // Read the live signal, not `m()`: an inline field's Enter can
+              // close the menu before this bubbled keydown arrives, and the
+              // disposed <Show> accessor then throws a stale read.
+              if (contextMenu()?.kind !== "page" || !menuEl) return;
               handlePageMenuKeyDown(e, menuEl, () => close());
             }}
           >
