@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { captureBinding, stillBound } from "../binding";
+import { graphOwner, readOwned } from "../owned";
 import { EmojiText } from "../render/emoji";
 import { registerTransientLayer } from "../transientLayers";
 import { pushToast } from "../toasts";
@@ -73,14 +73,14 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   };
 
   const remove = async (workspace: Workspace) => {
-    const binding = captureBinding();
+    const owner = graphOwner();
     const name = workspaceDisplayName(workspace);
-    if (!(await backend().confirm(`Delete workspace “${name}”?`, "Delete workspace"))) return;
-    if (!stillBound(binding)) return;
+    const confirmed = await readOwned(owner, backend().confirm(`Delete workspace “${name}”?`, "Delete workspace"));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
-      await deleteWorkspace(workspace.id);
+      await readOwned(owner, deleteWorkspace(workspace.id));
     } catch (error) {
-      if (stillBound(binding)) pushToast(`Couldn't delete workspace: ${String(error)}`, "error");
+      pushToast(`Couldn't delete workspace: ${String(error)}`, "error");
     }
   };
 

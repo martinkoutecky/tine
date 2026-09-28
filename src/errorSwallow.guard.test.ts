@@ -18,8 +18,8 @@ const FROZEN_SWALLOW_COUNT = 26;
 const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/assetCache.ts:130 src/assetCache.ts:212 src/assetCache.ts:264 src/assetCache.ts:69
   src/capture.tsx:260 src/capture.tsx:564 src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
-  src/components/Block.tsx:3155 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 src/components/Macro.tsx:313 src/components/PdfViewer.tsx:1028
-  src/components/PdfViewer.tsx:1093 src/components/PdfViewer.tsx:524
+  src/components/Block.tsx:3153 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:43 src/components/Macro.tsx:321 src/components/PdfViewer.tsx:1026
+  src/components/PdfViewer.tsx:1091 src/components/PdfViewer.tsx:522
   src/components/UnlinkedReferences.tsx:39 src/components/WindowChrome.tsx:24
   src/debug.ts:14
   src/pageIconBatch.ts:44 src/plugins/manager.ts:121
@@ -36,13 +36,13 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/components/AboutTab.tsx:17": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:117": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:154": "legacy best-effort operation needs an error-family audit",
-  "src/components/Block.tsx:3155": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
+  "src/components/Block.tsx:3153": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
   "src/components/HelpShortcuts.tsx:51": "legacy best-effort operation needs an error-family audit",
   "src/components/LinkedReferences.tsx:43": "legacy error-prose branch; replace with fixed error family",
-  "src/components/Macro.tsx:313": "legacy error-prose branch; replace with fixed error family",
-  "src/components/PdfViewer.tsx:524": "best-effort viewer resource cleanup",
-  "src/components/PdfViewer.tsx:1028": "best-effort viewer resource cleanup",
-  "src/components/PdfViewer.tsx:1093": "best-effort viewer resource cleanup",
+  "src/components/Macro.tsx:321": "legacy error-prose branch; replace with fixed error family",
+  "src/components/PdfViewer.tsx:522": "best-effort viewer resource cleanup",
+  "src/components/PdfViewer.tsx:1026": "best-effort viewer resource cleanup",
+  "src/components/PdfViewer.tsx:1091": "best-effort viewer resource cleanup",
   "src/components/UnlinkedReferences.tsx:39": "legacy error-prose branch; replace with fixed error family",
   "src/components/WindowChrome.tsx:24": "legacy best-effort operation needs an error-family audit",
   "src/debug.ts:14": "legacy best-effort operation needs an error-family audit",

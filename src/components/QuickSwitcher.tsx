@@ -1,6 +1,7 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { captureBinding, stillBound } from "../binding";
+import { captureBinding } from "../binding";
+import { graphOwner, readOwned } from "../owned";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar } from "../ui";
 import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
@@ -391,33 +392,37 @@ export function QuickSwitcher(): JSX.Element {
 
   const createPageFile = async (name: string): Promise<PageTarget | null> => {
     const binding = captureBinding();
+    const owner = graphOwner();
     try {
-      const resolved = await backend().resolvePage(name, "page");
-      if (!stillBound(binding)) return null;
+      const resolution = await readOwned(owner, backend().resolvePage(name, "page"));
+      if (resolution.kind === "stale") return null;
+      const resolved = resolution.value;
       // Create means open-or-create: the Create row can be chosen before search
       // results arrive, so any name that already resolves (a page or an alias)
       // opens its target. Only an absent name writes a file.
       if (resolved.kind !== "absent") {
         const path = resolved.kind === "existing" ? resolved.id : resolved.owners[0];
-        const target = await backend().getPageByPath(path);
-        if (!stillBound(binding)) return null;
+        const targetResult = await readOwned(owner, backend().getPageByPath(path));
+        if (targetResult.kind === "stale") return null;
+        const target = targetResult.value;
         if (!target) throw new Error("resolved page disappeared");
         return { name: target.name, pageKind: target.kind, path: target.id };
       }
-      await saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration });
-      if (!stillBound(binding)) return null;
+      const saved = await readOwned(owner, saveCreatedPage(name, switcherPage(name), { id: resolved.id, bindingGeneration: binding.backendGeneration }));
+      if (saved.kind === "stale") return null;
       return null;
     } catch (error) {
       if (error instanceof CreatePageRefusal && error.reason === "graph-changed") return null;
-      if (stillBound(binding)) pushToast(`Could not create “${name}”. It will be saved on your first edit.`, "error");
+      if (owner()) pushToast(`Could not create “${name}”. It will be saved on your first edit.`, "error");
       return null;
     }
   };
 
   const createPage = async (name: string) => {
-    const binding = captureBinding();
-    const target = await createPageFile(name);
-    if (!stillBound(binding)) return;
+    const owner = graphOwner();
+    const result = await readOwned(owner, createPageFile(name));
+    if (result.kind === "stale") return;
+    const target = result.value;
     if (target) openPageTarget(target);
     else openPage(name, "page");
   };

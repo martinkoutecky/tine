@@ -26,7 +26,8 @@ import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
 import { backend } from "../backend";
-import { captureBinding, stillBound } from "../binding";
+import { captureBinding } from "../binding";
+import { graphOwner, readOwned } from "../owned";
 import { writeClipboardText } from "../clipboard";
 import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
@@ -784,20 +785,21 @@ function AssetImage(props: {
   const onTrashAsset = async (e: MouseEvent) => {
     e.stopPropagation();
     const binding = captureBinding();
+    const owner = graphOwner();
     const name = assetRelPath(props.url);
     if (!name || !props.blockId) return;
-    const ok = await backend().confirm(
+    const confirmed = await readOwned(owner, backend().confirm(
       `Move "${name}" to the trash and remove it from this block? It stays recoverable in logseq/.tine-trash.`,
       "Trash asset",
-    );
-    if (!ok || !stillBound(binding)) return;
+    ));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
     removeMediaToken(props.blockId, props.alt, props.url); // drop the reference first (saves the block)
     try {
-      await backend().trashAsset(name, binding.backendGeneration);
-      if (!stillBound(binding)) return;
+      const result = await readOwned(owner, backend().trashAsset(name, binding.backendGeneration));
+      if (result.kind === "stale") return;
       pushToast("Asset moved to trash", "success");
     } catch (err) {
-      if (stillBound(binding)) pushToast(`Couldn't trash the asset (${String(err)})`, "error");
+      pushToast(`Couldn't trash the asset (${String(err)})`, "error");
     }
   };
 
@@ -810,14 +812,14 @@ function AssetImage(props: {
   const onEditAsset = async (e: MouseEvent) => {
     e.stopPropagation();
     const binding = captureBinding();
+    const owner = graphOwner();
     const name = assetRelPath(props.url);
     const ed = editor();
     if (!name || !ed) return;
-    const cmd = await resolveMediaEditorCommand(ed);
-    if (!stillBound(binding)) return;
-    void backend()
-      .editAssetExternal(name, cmd, binding.backendGeneration)
-      .catch(() => { if (stillBound(binding)) pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"); });
+    const command = await readOwned(owner, resolveMediaEditorCommand(ed));
+    if (command.kind === "stale") return;
+    void readOwned(owner, backend().editAssetExternal(name, command.value, binding.backendGeneration))
+      .catch(() => { pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"); });
     refreshAssetOnReturn(name);
   };
 
@@ -918,8 +920,13 @@ function MediaEmbed(props: {
   const rel = () => assetRelPath(props.url);
   // Graph media uses native range requests; never copy a multi-GB file into a Blob.
   const [blob] = createResource(
-    () => (external ? null : rel()),
-    async (r) => (r ? await backend().streamAsset(r) : "")
+    () => (external ? null : `${graphEpoch()}\0${rel()}`),
+    async () => {
+      const r = rel();
+      if (!r) return "";
+      const result = await readOwned(graphOwner(), backend().streamAsset(r));
+      return result.kind === "current" ? result.value : "";
+    }
   );
   const src = () => blobFallback() || (external ? props.url : blob());
   const label = () =>
@@ -1169,7 +1176,10 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   let anchorEl: HTMLSpanElement | undefined;
   const [grp] = createResource(
     () => `${props.id}\0${graphEpoch()}\0${dataRev()}`,
-    () => resolveBlockBatched(props.id)
+    async () => {
+      const result = await readOwned(graphOwner(), resolveBlockBatched(props.id));
+      return result.kind === "current" ? result.value : null;
+    }
   );
   const peek = createPeekBridge(() => insidePeek);
   // A loaded target shares the editor's reactive node, so references update on
@@ -1198,7 +1208,10 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // that applies the cap before DTO allocation and IPC serialization.
   const [preview] = createResource(
     () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null),
-    () => backend().previewBlock(props.id, PEEK_BLOCK_CAP),
+    async () => {
+      const result = await readOwned(graphOwner(), backend().previewBlock(props.id, PEEK_BLOCK_CAP));
+      return result.kind === "current" ? result.value : null;
+    },
   );
   const capped = createMemo(() => capBlockTree(preview()?.group.blocks ?? [], PEEK_BLOCK_CAP));
   const previewTruncated = () => (preview()?.truncated ?? 0) + capped().truncated;
@@ -1239,16 +1252,16 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           // OG opens a referenced PDF annotation at its source page. Modifier
           // clicks retain Tine's existing pane/sidebar navigation semantics.
           if (ann && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-            const binding = captureBinding();
-            void backend()
-              .getPage(g.page, g.kind)
-              .then((page) => {
-                if (!stillBound(binding)) return;
+            const owner = graphOwner();
+            void readOwned(owner, backend().getPage(g.page, g.kind))
+              .then((result) => {
+                if (result.kind === "stale") return;
+                const page = result.value;
                 const file = pdfFileFromPreBlock(page?.pre_block);
                 if (file) openPdf(file, file, ann.hlPage, props.id);
                 else pushToast("Couldn't find the PDF for this highlight", "error");
               })
-              .catch(() => { if (stillBound(binding)) pushToast("Couldn't open the PDF for this highlight", "error"); });
+              .catch(() => { pushToast("Couldn't open the PDF for this highlight", "error"); });
             return;
           }
           // Shift-click opens the referenced block in the right sidebar. Plain click:

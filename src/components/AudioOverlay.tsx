@@ -8,7 +8,7 @@
 import { For, Show, createEffect, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { audioPlayer, setAudioPlayer } from "../ui";
 import { backend, isTauri } from "../backend";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { registerTransientLayer } from "../transientLayers";
 
@@ -81,9 +81,9 @@ export function AudioOverlay(): JSX.Element {
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;
   let fallbackAbort: AbortController | null = null;
-  let fallbackGeneration = 0;
+  const fallbackScope = {};
   const releaseBlobFallback = () => {
-    fallbackGeneration += 1;
+    latestOwner(fallbackScope, "blob");
     fallbackAbort?.abort();
     fallbackAbort = null;
     blobLease?.release();
@@ -97,7 +97,7 @@ export function AudioOverlay(): JSX.Element {
     const rel = relOf(u);
     if (!rel) return;
     tryingBlobFallback = true;
-    const generation = fallbackGeneration;
+    const owner = latestOwner(fallbackScope, "blob", graphOwner(() => alive && audioPlayer()?.url === u));
     const abort = new AbortController();
     fallbackAbort = abort;
     const ext = rel.split(".").pop()?.toLowerCase();
@@ -108,7 +108,7 @@ export function AudioOverlay(): JSX.Element {
       ext === "opus" ? "audio/opus" :
       ext === "flac" ? "audio/flac" : "application/octet-stream";
     void acquireMediaBlobFallback(rel, "audio", mime, abort.signal).then((lease) => {
-      if (generation !== fallbackGeneration || audioPlayer()?.url !== u) {
+      if (!owner()) {
         lease.release();
         return;
       }

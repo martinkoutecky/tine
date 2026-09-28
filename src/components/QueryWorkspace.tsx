@@ -12,7 +12,8 @@ import {
   type JSX,
 } from "solid-js";
 import { backend, type SavePageEntry, type SavePagesResult } from "../backend";
-import { captureBinding, stillBound } from "../binding";
+import { captureBinding } from "../binding";
+import { graphOwner, readOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
 import {
   friendlySearchToDsl,
@@ -100,6 +101,7 @@ export async function materializeQueryWorkspace(
   deps: MaterializeQueryDependencies
 ): Promise<MaterializeQueryResult> {
   const binding = captureBinding();
+  const owner = graphOwner();
   const name = input.title.trim();
   if (!name) {
     return { ok: false, kind: "invalid-name", message: "Enter a page title before saving." };
@@ -109,8 +111,9 @@ export async function materializeQueryWorkspace(
   }
   if (input.sourceKind === "search") {
     try {
-      const execution = await deps.runGraphSearch(input.source.trim(), 0, 0, `query-workspace:${input.routeId}:materialize`, true);
-      if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+      const search = await readOwned(owner, deps.runGraphSearch(input.source.trim(), 0, 0, `query-workspace:${input.routeId}:materialize`, true));
+      if (search.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+      const execution = search.value;
       if (execution.cancelled) return { ok: false, kind: "invalid-query", message: "Search validation was superseded. Try saving again." };
       if (execution.diagnostics.length) return { ok: false, kind: "invalid-query", message: execution.diagnostics.map((item) => item.message).join(" · ") };
       if (!execution.explanation.branches.length) return { ok: false, kind: "empty-query", message: "Enter a search with at least one included term before saving." };
@@ -121,8 +124,9 @@ export async function materializeQueryWorkspace(
   }
 
   try {
-    const resolved = await deps.resolvePage(name, "page");
-    if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    const resolution = await readOwned(owner, deps.resolvePage(name, "page"));
+    if (resolution.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    const resolved = resolution.value;
     if (resolved.kind === "existing") {
       return {
         ok: false,
@@ -140,15 +144,17 @@ export async function materializeQueryWorkspace(
     }
 
     const page = queryWorkspacePage(name, savedQueryRaw(input));
-    const result = await deps.savePages([{ id: resolved.id, page, baseRev: null, force: false, kinds: ["create-page"] }], binding.backendGeneration);
+    const saved = await readOwned(owner, deps.savePages([{ id: resolved.id, page, baseRev: null, force: false, kinds: ["create-page"] }], binding.backendGeneration));
+    if (saved.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    const result = saved.value;
     if ("failed" in result) throw new Error(result.failed.family);
     const rev = result.ok[0];
-    if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (!owner()) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     bumpPageInventoryRev();
     return { ok: true, name, page, rev };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    if (!stillBound(binding)) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (!owner()) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     if (error instanceof CreatePageRefusal) {
       if (error.reason === "graph-changed" || error.reason === "stale-binding")
         return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };

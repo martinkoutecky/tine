@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { graphOwner, readOwned, type Owner } from "../owned";
 import { exportModal, closeExportModal, typographyMode } from "../ui";
 import { pushToast } from "../toasts";
 import { graphMeta } from "../graphSession";
@@ -261,6 +262,7 @@ async function warmMacro(
   macro: { name: string; args: string[] },
   warmed: Map<string, WarmedMacro>,
   pages: PageReadCache,
+  owner: Owner,
 ): Promise<void> {
   const key = macroKey(macro.name, macro.args);
   const name = macro.name.toLowerCase();
@@ -269,7 +271,9 @@ async function warmMacro(
     if (name === "embed") {
       const uuid = blockRefTarget(arg);
       if (uuid) {
-        const preview = await backend().previewBlock(uuid, EMBED_EXPORT_NODE_LIMIT);
+        const result = await readOwned(owner, backend().previewBlock(uuid, EMBED_EXPORT_NODE_LIMIT));
+        if (result.kind === "stale") return;
+        const preview = result.value;
         if (preview) warmed.set(key, {
           kind: "nodes",
           nodes: refGroupToExportNodes(preview.group),
@@ -281,7 +285,9 @@ async function warmMacro(
       }
       const page = pageRefTarget(arg);
       if (page) {
-        const dto = await cachedPage(pages, page, "page");
+        const result = await readOwned(owner, cachedPage(pages, page, "page"));
+        if (result.kind === "stale") return;
+        const dto = result.value;
         if (dto) warmed.set(key, { kind: "nodes", nodes: pageToExportNodes(dto) });
         return;
       }
@@ -296,6 +302,7 @@ async function warmMacro(
 async function warmQueryMacros(
   macros: { name: string; args: string[] }[],
   warmed: Map<string, WarmedMacro>,
+  owner: Owner,
 ): Promise<void> {
   if (!macros.length) return;
   const specs: QueryExportSpec[] = macros.map((macro) => {
@@ -307,7 +314,9 @@ async function warmQueryMacros(
     };
   });
   try {
-    const batch = await backend().exportQuerySubtrees(specs);
+    const result = await readOwned(owner, backend().exportQuerySubtrees(specs));
+    if (result.kind === "stale") return;
+    const batch = result.value;
     const byKey = new Map(batch.results.map((result) => [result.key, result]));
     for (const spec of specs) {
       const result = byKey.get(spec.key);
@@ -338,15 +347,21 @@ async function warmQueryMacros(
   }
 }
 
-export async function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
+export function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
+  return warmExportResolutionsOwned(nodes, warmed, graphOwner());
+}
+
+async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
   const pages: PageReadCache = new Map();
   collectNodeTargets(nodes, targets);
-  await Promise.all([...targets.refs].map((uuid) => resolveBlockBatched(uuid).catch(() => null)));
+  await Promise.all([...targets.refs].map((uuid) => readOwned(owner, resolveBlockBatched(uuid).catch(() => null))));
+  if (!owner()) return;
   const macros = [...targets.macros.values()];
   await warmQueryMacros(
     macros.filter((macro) => macro.name.toLowerCase() === "query"),
     warmed,
+    owner,
   );
   // Page embeds are intentionally whole-page exports, but run them after the
   // globally bounded query batch so their PageDto cache cannot overlap query
@@ -354,7 +369,7 @@ export async function warmExportResolutions(nodes: ExportNode[], warmed: Map<str
   await Promise.all(
     macros
       .filter((macro) => macro.name.toLowerCase() !== "query")
-      .map((macro) => warmMacro(macro, warmed, pages)),
+      .map((macro) => warmMacro(macro, warmed, pages, owner)),
   );
 }
 
@@ -434,7 +449,7 @@ function Modal(props: { ids: string[] }): JSX.Element {
 
   onMount(() => {
     setWarming(true);
-    void warmExportResolutions(nodes, warmedMacros).finally(() => {
+    void warmExportResolutionsOwned(nodes, warmedMacros, graphOwner(() => !disposed)).finally(() => {
       if (disposed) return;
       setWarmRev(warmRev() + 1);
       setWarming(false);

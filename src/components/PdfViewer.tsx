@@ -241,7 +241,7 @@ export function PdfViewer(props: {
   const pageTextCache: Record<number, string> = {};
   const pageTextLru: number[] = [];
   let pageTextCacheBytes = 0;
-  let findToken = 0;
+  const viewerRequests = {};
   let findDebounce: number | undefined;
   let findInputEl: HTMLInputElement | undefined;
   let pending: Pending | null = null;
@@ -250,7 +250,6 @@ export function PdfViewer(props: {
   let baseHighlights: Highlight[] = [];
   let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
   let disposed = false;
-  let navigationToken = 0;
   let activeHighlightId: string | undefined;
 
   const chooseTheme = (next: PdfTheme) => {
@@ -367,8 +366,7 @@ export function PdfViewer(props: {
 
   // Failed additions stay visible/unsaved; the viewer participant retries them on graph switch and close waits for that drain.
   const [unsavedHighlights, setUnsavedHighlights] = createSignal(false);
-  const highlightQueue = {};
-  const highlightIntents = {};
+  const highlightQueue = {}, viewStateQueue = {}, highlightIntents = {};
   const highlightGraphOwner = graphOwner(() => isPdfOwnershipCurrent(owner));
   const persistOwned = async (landingOwner: Owner): Promise<boolean> => {
     const hlsName = hlsPageName(props.filename);
@@ -481,9 +479,9 @@ export function PdfViewer(props: {
       return true;
     }
     try {
-      await trackPdfMutation(owner, () =>
-        trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale, binding.backendGeneration))
-      );
+      const result = await trackPdfMutation(owner, () => serializeOwned(viewStateQueue, highlightGraphOwner,
+        () => trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale, binding.backendGeneration))));
+      if (result.kind === "stale") return false;
       viewStateBaseline = next;
       if (pendingViewState === next) pendingViewState = null;
       return true;
@@ -729,7 +727,7 @@ export function PdfViewer(props: {
   }
 
   async function navigateToTarget(target: PdfTarget) {
-    const token = ++navigationToken;
+    const current = latestOwner(viewerRequests, "navigation", highlightGraphOwner);
     const highlight = target.highlightId
       ? highlights().find((candidate) => candidate.id === target.highlightId)
       : undefined;
@@ -751,7 +749,7 @@ export function PdfViewer(props: {
     // finder to that exact highlight. Render the destination page first so the
     // overlay exists even when it was outside the lazy viewport.
     await renderPage(page);
-    if (disposed || token !== navigationToken) return;
+    if (!current()) return;
     const layer = hlLayers[page];
     const exact = layer
       ? Array.from(layer.querySelectorAll<HTMLElement>(".pdf-hl"))
@@ -958,8 +956,8 @@ export function PdfViewer(props: {
 
   function cancelOwnedWork() {
     disposed = true;
-    findToken++;
-    navigationToken++;
+    latestOwner(viewerRequests, "find");
+    latestOwner(viewerRequests, "navigation");
     io?.disconnect();
     io = null;
     clearTimeout(zoomTimer);
@@ -1381,6 +1379,7 @@ export function PdfViewer(props: {
     setMenu(null);
     const { page, wrap, rect } = area;
     const bytes = await cropArea(page, wrap, rect);
+    if (!highlightGraphOwner()) return false;
     if (!bytes) {
       pushToast("Couldn't capture that region — try again.", "error");
       return false;
@@ -1389,9 +1388,9 @@ export function PdfViewer(props: {
     const stamp = Date.now();
     // Save the cropped PNG FIRST so the file exists before the .edn references it.
     try {
-      await trackAssetWrite(
-        backend().savePdfAreaImage(props.filename, page, id, stamp, bytes, binding.backendGeneration)
-      );
+      const image = await readOwned(highlightGraphOwner, trackAssetWrite(
+        backend().savePdfAreaImage(props.filename, page, id, stamp, bytes, binding.backendGeneration)));
+      if (image.kind === "stale") return false;
     } catch (e) {
       pushToast(`Couldn't save the area image — try again. (${String(e)})`, "error");
       return false;
@@ -1412,7 +1411,7 @@ export function PdfViewer(props: {
     if (save.kind === "stale" || !save.value) {
       if (intent()) {
         setHighlights(prev); setUnsavedHighlights(wasUnsaved);
-        try { await trackAssetWrite(backend().rollbackPdfAreaImage(props.filename, page, id, stamp, binding.backendGeneration)); }
+        try { await readOwned(highlightGraphOwner, trackAssetWrite(backend().rollbackPdfAreaImage(props.filename, page, id, stamp, binding.backendGeneration))); }
         catch (e) { pushToast(`Couldn't move the unused area image to trash. (${String(e)})`, "error"); }
       }
       return false;
@@ -1512,16 +1511,16 @@ export function PdfViewer(props: {
     pageTextCacheBytes += bytes;
     touchPageText(n);
   }
-  async function pageText(n: number, token: number): Promise<string | null> {
+  async function pageText(n: number, current: Owner): Promise<string | null> {
     if (pageTextCache[n] !== undefined) {
       touchPageText(n);
       return pageTextCache[n];
     }
     if (!pdfDoc) return "";
     const page = await pdfDoc.getPage(n);
-    if (token !== findToken || disposed) return null;
+    if (!current()) return null;
     const tc = await page.getTextContent();
-    if (token !== findToken || disposed) return null;
+    if (!current()) return null;
     let s = "";
     for (const item of tc.items as any[]) {
       const part = typeof item.str === "string" ? item.str : "";
@@ -1540,7 +1539,8 @@ export function PdfViewer(props: {
     findDebounce = window.setTimeout(() => void runFind(q), 180);
   };
   async function runFind(query: string) {
-    const token = ++findToken;
+    const current = latestOwner(viewerRequests, "find", highlightGraphOwner);
+    if (!current()) return;
     const q = query.trim().toLowerCase();
     if (!q || !pdfDoc) {
       findMatches = [];
@@ -1554,10 +1554,10 @@ export function PdfViewer(props: {
     setFindTruncated(false);
     const np = pdfDoc.numPages;
     for (let n = 1; n <= np; n++) {
-      const loadedText = await pageText(n, token);
+      const loadedText = await pageText(n, current);
       if (loadedText === null) return;
       const text = loadedText.toLowerCase();
-      if (token !== findToken) return; // a newer query superseded this run
+      if (!current()) return;
       let i = text.indexOf(q);
       while (i >= 0) {
         acc.push({ page: n });
@@ -1569,7 +1569,7 @@ export function PdfViewer(props: {
       }
       if (acc.length >= PDF_FIND_MATCH_CAP) break;
     }
-    if (token !== findToken) return;
+    if (!current()) return;
     findMatches = acc;
     setFindCount(acc.length);
     if (acc.length) void gotoMatch(0);

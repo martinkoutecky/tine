@@ -971,20 +971,17 @@ let templateCacheEpoch = -1;
 async function getTemplates(): Promise<import("../types").TemplateDto[]> {
   // Re-fetch when the graph has changed since the last fetch,
   // so a template just created (here or externally) shows up without a reload.
-  const rev = dataRev();
-  const epoch = graphEpoch();
+  const rev = dataRev(), epoch = graphEpoch();
   if (templateCache && templateCacheRev === rev && templateCacheEpoch === epoch) return templateCache;
+  const owner = graphOwner(() => dataRev() === rev && graphEpoch() === epoch);
   try {
-    const templates = await backend().listTemplates();
-    if (graphEpoch() !== epoch) return [];
-    templateCache = templates;
+    const templates = await readOwned(owner, backend().listTemplates());
+    if (templates.kind === "stale") return []; templateCache = templates.value;
     templateCacheRev = rev;
     templateCacheEpoch = epoch;
     if (templateCache.length) await prepareTemplateVars();
-  } catch {
-    templateCache = [];
-  }
-  return templateCache;
+  } catch { if (owner()) templateCache = []; }
+  return templateCache ?? [];
 }
 function templateToOutline(
   b: import("../types").BlockDto,
@@ -1461,6 +1458,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // in the background (repointing the link if the backend de-dups the name).
   // Shared by clipboard-image paste and mobile capture (camera / voice memo).
   const insertAssetBytes = async (token: AssetEditorToken, bytes: Uint8Array, origName?: string, captureExt?: string) => {
+    const owner = graphOwner(() => assetEditorCurrent(token));
     const candidate = captureExt !== undefined ? captureAssetFileName(captureExt) : assetFileName(origName);
     // Cache key is the bare filename — assetRelPath() strips the `assets/` prefix
     // before loadAssetBlob() (see render/inline.tsx). Seed it so the asset renders
@@ -1470,15 +1468,10 @@ export function Editor(props: { id: string }): JSX.Element {
     try {
       // Data before reference: a crash may leave an orphan asset, but can never
       // persist a note that points at bytes which existed only in WebView memory.
-      stored = await trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration));
-    } catch {
-      if (stillBound(token.binding)) pushToast(`Couldn’t save to assets/`, "error");
-      return;
-    }
-    if (!assetEditorCurrent(token)) {
-      reportStaleAsset();
-      return;
-    }
+      const result = await readOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
+      if (result.kind === "stale") { reportStaleAsset(); return; }
+      stored = result.value;
+    } catch { pushToast(`Couldn’t save to assets/`, "error"); return; }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
     const page = pageByName(docNode(props.id)?.page ?? "");
     const md = assetMarkdown(stored, {
@@ -1572,24 +1565,24 @@ export function Editor(props: { id: string }): JSX.Element {
    * at most one bounded byte buffer/base64 IPC payload is live at a time. */
   const pasteClipboardFiles = async (eventFiles: File[]) => {
     const editorToken = captureAssetEditorToken();
+    const owner = graphOwner();
     const toastId = pushToast("Pasting files…", "info");
     let skipped = 0;
     let nativeUnavailable = false;
     const stored: { stored: string; label?: string }[] = [];
     let inserted = false;
     try {
-      const native = await backend().clipboardFiles().catch(() => {
+      const nativeResult = await readOwned(() => true, backend().clipboardFiles().catch(() => {
         nativeUnavailable = true;
         return { files: [], skipped: 0, truncated: false };
-      });
+      }));
+      if (nativeResult.kind === "stale") return; const native = nativeResult.value;
       if (native.files.length) {
         skipped += native.skipped;
         for (const file of native.files) {
           try {
-            stored.push({
-              stored: await trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)),
-              label: file.name,
-            });
+            const result = await readOwned(owner, trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
+            if (result.kind === "stale") return; stored.push({ stored: result.value, label: file.name });
           } catch {
             skipped += 1;
           }
@@ -1631,7 +1624,8 @@ export function Editor(props: { id: string }): JSX.Element {
               continue;
             }
             const candidate = assetFileName(file.name || undefined);
-            const saved = await trackAssetWrite(backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration));
+            const result = await readOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, editorToken.binding.backendGeneration)));
+            if (result.kind === "stale") return; const saved = result.value;
             stored.push({ stored: saved, label: file.name || undefined });
             try {
               seedAssetBlob(saved, bytes);
@@ -1755,13 +1749,14 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const uploadAsset = async () => {
     const editorToken = captureAssetEditorToken();
-    const path = await backend().pickFile();
-    if (!path) return;
+    const owner = graphOwner();
+    const picked = await readOwned(() => true, backend().pickFile());
+    if (picked.kind === "stale" || !picked.value) return; const path = picked.value;
     try {
       // Store with a timestamped name (keeps the original + a sortable insert time).
       const orig = path.split(/[\\/]/).pop() || undefined;
-      const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration));
-      insertStoredAssets(editorToken, [{ stored: saved, label: orig }]);
+      const saved = await readOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
+      if (saved.kind === "current") insertStoredAssets(editorToken, [{ stored: saved.value, label: orig }]);
     } catch {
       // ignore failed imports
     }
@@ -1771,6 +1766,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // editor. assetRefresh updates the image when Tine regains focus.
   const createDrawioDiagram = async () => {
     const editorToken = captureAssetEditorToken();
+    const owner = graphOwner(() => assetEditorCurrent(editorToken));
     const ed = MEDIA_EDITORS.find((e) => e.id === "drawio");
     if (!ed?.blank) return;
     try {
@@ -1780,18 +1776,18 @@ export function Editor(props: { id: string }): JSX.Element {
       // colliding `diagram.drawio.svg` would become `diagram.drawio_1.svg` — which
       // no longer ends in `.drawio.svg`, dropping the "Edit in draw.io" affordance
       // (GH #38). A unique stem never collides, so the double extension survives.
-      const saved = await trackAssetWrite(
+      const savedResult = await readOwned(owner, trackAssetWrite(
         backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes, editorToken.binding.backendGeneration)
-      );
+      ));
+      if (savedResult.kind === "stale") return; const saved = savedResult.value;
       insertStoredAssets(editorToken, [{ stored: saved }]);
       const cmd = await resolveMediaEditorCommand(ed);
-      if (!assetEditorCurrent(editorToken)) return;
-      void backend()
-        .editAssetExternal(saved, cmd, editorToken.binding.backendGeneration)
+      if (!owner()) return;
+      void readOwned(owner, backend().editAssetExternal(saved, cmd, editorToken.binding.backendGeneration))
         .catch(() => pushToast("Couldn’t open draw.io", "error"));
       refreshAssetOnReturn(saved);
     } catch {
-      if (stillBound(editorToken.binding)) pushToast("Couldn’t create the diagram", "error");
+      if (owner()) pushToast("Couldn’t create the diagram", "error");
     }
   };
 
@@ -3148,8 +3144,10 @@ export function Editor(props: { id: string }): JSX.Element {
         // Association is intentionally text-only and can replay the user's last
         // private block copy when a foreign clipboard happens to contain equal
         // normalized text. Identity remains separately one-shot and validated.
-        void pasteClipboardPayload(props.id, slot)
-          .then((lastId) => {
+        const owner = graphOwner(() => editorMounted);
+        void readOwned(owner, pasteClipboardPayload(props.id, slot))
+          .then((result) => {
+            if (result.kind === "stale") return; const lastId = result.value;
             if (lastId && docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
           })
           .catch(() => {}); // association failure is a quiet feature miss
@@ -3249,10 +3247,12 @@ export function Editor(props: { id: string }): JSX.Element {
     );
     const toastId = looksImage ? pushToast("Pasting image…", "info") : 0;
     const editorToken = captureAssetEditorToken();
+    const owner = graphOwner(() => assetEditorCurrent(editorToken));
     void (async () => {
       let bytes: Uint8Array | null = null;
       try {
-        bytes = await backend().readClipboardImage();
+        const result = await readOwned(owner, backend().readClipboardImage());
+        if (result.kind === "stale") return; bytes = result.value;
       } finally {
         if (toastId) dismissToast(toastId);
       }

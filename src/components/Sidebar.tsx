@@ -5,7 +5,7 @@ import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
 import { backend } from "../backend";
-import { readOwned } from "../owned";
+import { graphOwner, readOwned } from "../owned";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
 import { navigationName } from "../pageIndex";
 import { EmojiText } from "../render/emoji";
@@ -321,11 +321,14 @@ export function openKnownGraph(
   deps: KnownGraphOpenDeps = {
     switchInPlace: loadGraphPath,
     openNewWindow: async (target) => {
-      if (!(await authorizeGraphAccess(target))) return { kind: "aborted" };
+      const owner = graphOwner();
+      const authorized = await readOwned(owner, authorizeGraphAccess(target));
+      if (authorized.kind === "stale" || !authorized.value) return { kind: "aborted" };
       // A graph opened in a peer window is never an in-place navigation even
       // when the backend had to construct that window, so it must keep the
       // mobile drawer open.
-      await backend().openGraphWindow(target);
+      const opened = await readOwned(owner, backend().openGraphWindow(target));
+      if (opened.kind === "stale") return { kind: "aborted" };
       return { kind: "focused_existing" };
     },
   }

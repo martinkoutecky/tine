@@ -137,6 +137,41 @@ function loadAdvancedQueryDoc(queryRaw: string) {
 }
 
 describe("QueryMacro sheet integration", () => {
+  it("keeps a newer friendly-search result when an older request finishes last", async () => {
+    setDoc({
+      byId: {
+        query: node("query", '{{query (search "alpha")}}\ntine.view:: search', null),
+        old: node("old", "Old result", null),
+        fresh: node("fresh", "Fresh result", null),
+      },
+      pages: [page(["query", "old", "fresh"])], feed: ["Sheet"], loaded: true,
+    });
+    const execution = (id: "old" | "fresh"): QueryExecution => ({
+      hits: [{ entity: "block", page: "Sheet", kind: "page", block: {
+        id, raw: doc.byId[id].raw, collapsed: false, children: [],
+      }, display_text: doc.byId[id].raw, evidence: [] }],
+      diagnostics: [], explanation: { branches: [] }, cancelled: false,
+    });
+    let finishOld!: (value: QueryExecution) => void;
+    const search = vi.spyOn(backend(), "runGraphSearch")
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }))
+      .mockResolvedValue(execution("fresh"));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(1));
+      bumpDataRev();
+      await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(root.textContent).toContain("Fresh result"));
+      finishOld(execution("old"));
+      await settleQuery();
+      expect(root.textContent).toContain("Fresh result");
+      expect(root.textContent).not.toContain("Old result");
+    } finally {
+      finishOld?.(execution("old"));
+      dispose();
+    }
+  });
+
   it("shows bounded ancestor context for list-query hits", async () => {
     setDoc({
       byId: {

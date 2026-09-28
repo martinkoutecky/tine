@@ -685,6 +685,37 @@ describe("PdfViewer OG state and reference behavior", () => {
     }
   });
 
+  it("serializes view-position writes while an earlier save is pending", async () => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    let finishFirst!: () => void;
+    const write = vi.spyOn(backend(), "writePdfViewState")
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve; }))
+      .mockResolvedValue(undefined);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      vi.useFakeTimers();
+      const zoom = host.querySelector<HTMLButtonElement>('button[title="Zoom in"]')!;
+      zoom.click();
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(write).toHaveBeenCalledTimes(1);
+      zoom.click();
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(write).toHaveBeenCalledTimes(1);
+      finishFirst();
+      await flush();
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(write.mock.calls[1][2]).toBe(1.21);
+    } finally {
+      finishFirst?.();
+      dispose();
+    }
+  });
+
   it("flushes same-name graph-A state before remounting graph B and cancels the old debounce", async () => {
     vi.useFakeTimers();
     resetPdfOwnershipForTest();

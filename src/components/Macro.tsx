@@ -3,6 +3,7 @@ import { backend } from "../backend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, pageIdentityKey } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphOwner, latestOwner, readOwned } from "../owned";
 import { blockProperty, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -261,14 +262,16 @@ export function QueryMacro(props: {
   // A COLLAPSED query keys off the form only (no dataRev), so it fetches once for
   // its count and doesn't re-run a whole-graph scan on every save while hidden;
   // expanding it (key flips to include dataRev) refreshes it.
+  const queryOwners = {};
   const [groups] = createResource(
     () => `${graphEpoch()}\0${collapsed() ? `collapsed ${form()}` : `${form()} ${dataRev()}`}`,
     async (requestKey) => {
+      const owner = latestOwner(queryOwners, "query", graphOwner());
       const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
       const searchSource = friendlySearch();
       if (searchSource !== null) {
         setAdvInfo(null);
-        const execution = await sharedQueryResult(
+        const result = await readOwned(owner, sharedQueryResult(
           scope,
           `friendly-search\0${requestKey}`,
           () => backend().runGraphSearch(
@@ -278,7 +281,9 @@ export function QueryMacro(props: {
             `inline-query:${props.blockId ?? currentPage() ?? "global"}`,
             false
           ),
-        );
+        ));
+        if (result.kind === "stale") return [];
+        const execution = result.value;
         setSearchExecution(execution);
         const grouped = new Map<string, RefGroup>();
         for (const hit of execution.hits) {
@@ -294,16 +299,19 @@ export function QueryMacro(props: {
       // Advanced (datalog) queries take a separate path that maps the supported
       // clause subset onto the engine and reports what ran vs was ignored.
       if (isAdvanced()) {
-        const r = await sharedQueryResult(
+        const result = await readOwned(owner, sharedQueryResult(
           scope,
           `advanced\0${requestKey}`,
           () => backend().runAdvancedQuery(form()),
-        );
+        ));
+        if (result.kind === "stale") return [];
+        const r = result.value;
         setAdvInfo({ ran: r.ran, ignored: r.ignored, supported: r.supported });
         return r.groups;
       }
       setAdvInfo(null);
-      return sharedQueryResult(scope, `simple\0${requestKey}`, () => backend().runQuery(form()));
+      const result = await readOwned(owner, sharedQueryResult(scope, `simple\0${requestKey}`, () => backend().runQuery(form())));
+      return result.kind === "current" ? result.value : [];
     }
   );
   const groupsError = () => {
@@ -1098,7 +1106,9 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
     if (pageRef) {
       // Backend miss → the virtual in-app Guide, matched by bare title (the embed
       // carries no source context to remap the name). No-op for real graphs.
-      const p = (await backend().getPage(pageRef[1], "page")) ?? resolveGuidePageDto(pageRef[1]);
+      const result = await readOwned(graphOwner(), backend().getPage(pageRef[1], "page"));
+      if (result.kind === "stale") return null;
+      const p = result.value ?? resolveGuidePageDto(pageRef[1]);
       return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
     }
     return null;

@@ -55,7 +55,7 @@ import { switchGraph } from "../graph";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
-import { captureBinding, stillBound } from "../binding";
+import { captureBinding } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
 import { formatJournal } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
@@ -2083,27 +2083,24 @@ function ConflictFileRow(props: {
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
   const reconcile = async (op: () => Promise<void>, ok: string) => {
-    const binding = captureBinding();
+    const owner = graphOwner();
     try {
-      await op();
-      if (!stillBound(binding)) return;
+      const result = await readOwned(owner, op());
+      if (result.kind === "stale") return;
       pushToast(ok, "success");
       await refreshJournalConflicts(true);
     } catch (e) {
-      if (stillBound(binding)) pushToast(`Couldn’t do that: ${String(e)}`, "error");
+      pushToast(`Couldn’t do that: ${String(e)}`, "error");
     }
   };
   const trashFile = async (name: string) => {
-    const binding = captureBinding();
-    if (
-      !(await backend().confirm(
+    const owner = graphOwner();
+    const confirmed = await readOwned(owner, backend().confirm(
         `Move the journal file “${name}” to the trash?\n\n` +
           `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
-      ))
-    )
-      return;
-    if (!stillBound(binding)) return;
-    await reconcile(() => backend().trashJournalFile(name, "delete-page"), `Moved ${name} to trash`);
+      ));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
+    await readOwned(owner, reconcile(() => backend().trashJournalFile(name, "delete-page"), `Moved ${name} to trash`));
   };
   const openFileRow = (file: JournalFile, title: string) => {
     openFile(file.path, title, "journal");
@@ -2165,25 +2162,24 @@ function JournalConflictsPanel(): JSX.Element {
 // or just discard the copy. Never auto-merged / auto-deleted (ADR 0007).
 function SyncConflictsPanel(): JSX.Element {
   void refreshSyncConflicts(); // refresh when the Backups tab opens
+  let alive = true;
+  onCleanup(() => { alive = false; });
   const [merging, setMerging] = createSignal<SyncConflict | null>(null);
   const discard = async (c: SyncConflict) => {
-    const binding = captureBinding();
+    const owner = graphOwner(() => alive);
     const name = c.path.split("/").pop() ?? c.path;
-    if (
-      !(await backend().confirm(
+    const confirmed = await readOwned(owner, backend().confirm(
         `Discard the conflict copy “${name}”?\n\n` +
           `It moves to logseq/.tine-trash (recoverable). The current “${c.base_name}” is left as-is.`
-      ))
-    )
-      return;
-    if (!stillBound(binding)) return;
+      ));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
-      await backend().trashSyncConflict(c.path, "delete-page");
-      if (!stillBound(binding)) return;
+      const result = await readOwned(owner, backend().trashSyncConflict(c.path, "delete-page"));
+      if (result.kind === "stale") return;
       pushToast(`Discarded ${name}`, "success");
-      await refreshSyncConflicts();
+      await readOwned(owner, refreshSyncConflicts());
     } catch (e) {
-      if (stillBound(binding)) pushToast(`Couldn’t discard it: ${String(e)}`, "error");
+      pushToast(`Couldn’t discard it: ${String(e)}`, "error");
     }
   };
   return (
@@ -2331,6 +2327,8 @@ function DiffRowView(props: {
 // (base_rev-guarded save + stage-before-commit trash).
 function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => void }): JSX.Element {
   let root: HTMLDivElement | undefined;
+  let alive = true;
+  onCleanup(() => { alive = false; });
   createEffect(() => {
     const unregister = registerTransientLayer({ id: `sync-conflict-merge-${props.conflict.path}`, parentId: "settings", root: () => root ?? null, dismiss: () => { props.onClose(); return true; } });
     onCleanup(unregister);
@@ -2364,25 +2362,24 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
     setDecisions(next);
   };
   const merge = async () => {
-    const binding = captureBinding();
+    const owner = graphOwner(() => alive);
     const currentDiff = diff();
     if (!currentDiff || diff.loading) return;
     setBusy(true);
     try {
-      await backend().resolveSyncConflict(
+      const result = await readOwned(owner, backend().resolveSyncConflict(
         winner,
         props.conflict.path,
         decisions(),
         currentDiff.base_rev,
         currentDiff.conflict_rev,
         ["replace-page", "delete-page"], preChoice()
-      );
-      if (!stillBound(binding)) return;
+      ));
+      if (result.kind === "stale") return;
       pushToast(`Merged into “${props.conflict.base_name}”`, "success");
-      await refreshSyncConflicts();
-      props.onClose();
+      const refreshed = await readOwned(owner, refreshSyncConflicts());
+      if (refreshed.kind === "current") props.onClose();
     } catch (e) {
-      if (!stillBound(binding)) return;
       if (errorFamily(e) === "conflict") {
         pushToast("The current page changed on disk — re-reading it, please redo your choices.", "error");
         setDecisions({});
@@ -2391,7 +2388,7 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
         pushToast(`Merge failed: ${String(e)}`, "error");
       }
     } finally {
-      setBusy(false);
+      if (owner()) setBusy(false);
     }
   };
   const counts = createMemo(() => {
@@ -2654,6 +2651,8 @@ function MediaEditorsSection(): JSX.Element {
 }
 
 function AssetsTab(): JSX.Element {
+  let alive = true; onCleanup(() => { alive = false; });
+  const requests = {};
   const [list, setList] = createSignal<AssetInfo[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [scanned, setScanned] = createSignal(false);
@@ -2677,79 +2676,80 @@ function AssetsTab(): JSX.Element {
       .join(", ");
 
   const refreshTrash = async () => {
-    const binding = captureBinding();
+    const owner = latestOwner(requests, "trash-stats", graphOwner(() => alive));
     try {
-      const info = await backend().assetTrashStats();
-      if (stillBound(binding)) setTrashInfo(info);
+      const info = await readOwned(owner, backend().assetTrashStats());
+      if (info.kind === "current") setTrashInfo(info.value);
     } catch {
       /* trash stats are best-effort */
     }
   };
 
   const refresh = async () => {
-    const binding = captureBinding();
+    const owner = latestOwner(requests, "scan", graphOwner(() => alive));
     setBusy(true);
     try {
       // Persist edits first so a just-deleted block's media counts as orphaned
       // (and a just-inserted one counts as referenced).
       if (!(await flushAll())) {
-        if (!stillBound(binding)) return;
+        if (!owner()) return;
         pushToast("Some pages couldn't be saved — resolve conflicts before scanning assets.", "error");
         return;
       }
-      const assets = await backend().listOrphanAssets();
-      if (!stillBound(binding)) return;
-      setList(assets);
+      const assets = await readOwned(owner, backend().listOrphanAssets());
+      if (assets.kind === "stale") return;
+      setList(assets.value);
       setScanned(true);
       await refreshTrash();
     } catch (e) {
-      if (stillBound(binding)) pushToast(`Scan failed: ${String(e)}`, "error");
+      if (owner()) pushToast(`Scan failed: ${String(e)}`, "error");
     } finally {
-      if (stillBound(binding)) setBusy(false);
+      if (owner()) setBusy(false);
     }
   };
 
   const open = async (a: AssetInfo) => {
     const binding = captureBinding();
+    const owner = graphOwner();
     try {
-      await backend().openAsset(a.name, binding.backendGeneration);
+      await readOwned(owner, backend().openAsset(a.name, binding.backendGeneration));
     } catch (e) {
-      if (stillBound(binding)) pushToast(`Couldn’t open ${a.name}: ${String(e)}`, "error");
+      pushToast(`Couldn’t open ${a.name}: ${String(e)}`, "error");
     }
   };
   const trash = async (a: AssetInfo) => {
     const binding = captureBinding();
+    const owner = graphOwner();
     // No confirm: the file only moves to the recoverable logseq/.tine-trash, so
     // trashing a batch stays fast. (Empty-trash, which is permanent, still asks.)
     try {
-      await backend().trashAsset(a.name, binding.backendGeneration);
-      if (!stillBound(binding)) return;
+      const result = await readOwned(owner, backend().trashAsset(a.name, binding.backendGeneration));
+      if (result.kind === "stale") return;
       setList((l) => l.filter((x) => x.name !== a.name));
       pushToast(`Moved ${a.name} to trash`, "success");
       await refreshTrash();
     } catch (e) {
-      if (stillBound(binding)) pushToast(`Couldn’t trash: ${String(e)}`, "error");
+      pushToast(`Couldn’t trash: ${String(e)}`, "error");
     }
   };
   const emptyTrash = async () => {
     const binding = captureBinding();
+    const owner = graphOwner();
     const info = trashInfo();
     if (!info.count) return;
-    if (
-      !(await backend().confirm(
+    const confirmed = await readOwned(owner, backend().confirm(
         `Permanently delete ${info.count} asset file${info.count === 1 ? "" : "s"} (${fmtSize(info.bytes)}) in the trash?\n\n` +
           `This cannot be undone. Page, journal, and conflict recovery files in logseq/.tine-trash will be kept.`
-      ))
-    )
-      return;
-    if (!stillBound(binding)) return;
+      ));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
-      const n = await backend().emptyAssetTrash(binding.backendGeneration);
-      if (!stillBound(binding)) return;
+      const result = await readOwned(owner, backend().emptyAssetTrash(binding.backendGeneration));
+      if (result.kind === "stale") return;
+      const n = result.value;
       setTrashInfo((t) => ({ ...t, count: 0, bytes: 0 }));
       pushToast(`Emptied asset trash (${n} file${n === 1 ? "" : "s"})`, "success");
     } catch (e) {
-      if (stillBound(binding)) pushToast(`Couldn’t empty trash: ${String(e)}`, "error");
+      pushToast(`Couldn’t empty trash: ${String(e)}`, "error");
     }
   };
   return (

@@ -1,7 +1,7 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { pushToast } from "../toasts";
-import { captureBinding, stillBound } from "../binding";
+import { graphOwner, readOwned } from "../owned";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -675,10 +675,10 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
   const submit = async () => {
     const title = name().trim();
     if (!title) return;
-    const binding = captureBinding();
-    const existing = await backend().listTemplates().catch(() => []);
-    if (!stillBound(binding)) return;
-    if (existing.some((t) => t.name.toLowerCase() === title.toLowerCase())) {
+    const owner = graphOwner();
+    const existing = await readOwned(owner, backend().listTemplates().catch(() => []));
+    if (existing.kind === "stale") return;
+    if (existing.value.some((t) => t.name.toLowerCase() === title.toLowerCase())) {
       pushToast(`A template named “${title}” already exists.`, "error");
       return;
     }
@@ -751,7 +751,7 @@ function PageMenu(props: {
     return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;
   };
   const runFileAction = async (reveal: boolean) => {
-    const binding = captureBinding();
+    const owner = graphOwner();
     const name = props.name;
     const kind = props.pageKind;
     const captured = target();
@@ -765,10 +765,10 @@ function PageMenu(props: {
       return;
     }
     if (!page!.readOnly && !(await flushPage(name))) {
-      if (stillBound(binding)) pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
+      if (owner()) pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
       return;
     }
-    if (!stillBound(binding)) return;
+    if (!owner()) return;
     if (isConflicted(name)) {
       pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
       return;
@@ -778,9 +778,8 @@ function PageMenu(props: {
         pushToast("This page target changed; reopen the page actions menu.", "error");
         return;
       }
-      await backend().openPageFile(name, kind, captured.path ?? page!.id, reveal);
+      await readOwned(owner, backend().openPageFile(name, kind, captured.path ?? page!.id, reveal));
     } catch (error) {
-      if (!stillBound(binding)) return;
       const message = page!.id
         ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`
         : "This page has no on-disk file yet. Type something and let Tine save it first.";
@@ -788,7 +787,7 @@ function PageMenu(props: {
     }
   };
   const remove = async () => {
-    const binding = captureBinding();
+    const owner = graphOwner();
     // Snapshot props BEFORE any await/close: the menu's <Show> disposes this
     // component the instant props.close() runs, after which reading props.* warns
     // "stale read from <Show>".
@@ -797,14 +796,15 @@ function PageMenu(props: {
     const captured = target();
     // Native GTK confirm — window.confirm silently returns true here, which would
     // delete the page with no prompt.
-    if (!(await backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.`))) return;
-    if (!stillBound(binding)) return;
+    const confirmed = await readOwned(owner, backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.`));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
-    void deletePage(name, kind, captured.path)
-      .then((ok) => {
-        if (!stillBound(binding)) return;
+    void readOwned(owner, deletePage(name, kind, captured.path))
+      .then((result) => {
+        if (result.kind === "stale") return;
+        const ok = result.value;
         if (!ok) {
           pushToast("Delete failed", "error");
           return;
@@ -816,7 +816,7 @@ function PageMenu(props: {
         if (kind === "journal") restoreTodayJournalInFeed();
         pushToast(`Deleted “${name}”`, "success");
       })
-      .catch(() => { if (stillBound(binding)) pushToast("Delete failed", "error"); });
+      .catch(() => { pushToast("Delete failed", "error"); });
   };
   const items: { id: string; label: string; run: () => void; danger?: boolean }[] = [
     { id: "open", label: "Open", run: () => openPageTarget(target()) },
@@ -843,16 +843,17 @@ function PageMenu(props: {
       id: "copy-page-markdown",
       label: "Copy page as Markdown",
       run: () => {
-        const binding = captureBinding();
+        const owner = graphOwner();
         const request = props.path
           ? backend().getPageByPath(props.path)
           : backend().getPage(props.name, props.pageKind);
-        void request.then((p) => {
-          if (!stillBound(binding)) return;
+        void readOwned(owner, request).then((result) => {
+          if (result.kind === "stale") return;
+          const p = result.value;
           if (!p) throw new Error("Page unavailable");
           return writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
-        }).then(() => { if (stillBound(binding)) pushToast("Copied page as Markdown", "success"); })
-          .catch(() => { if (stillBound(binding)) pushToast("Couldn't copy page as Markdown.", "error"); });
+        }).then(() => { if (owner()) pushToast("Copied page as Markdown", "success"); })
+          .catch(() => { if (owner()) pushToast("Couldn't copy page as Markdown.", "error"); });
       },
     },
     { id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) },
@@ -951,18 +952,18 @@ function RenamePage(props: {
     const kind = props.pageKind;
     const path = props.path;
     const next = value().trim();
-    const binding = captureBinding();
     const root = graphMeta()?.root;
     const router = focusedRouter();
     const tabId = router.activeId();
     const intentRevision = router.routeIntentRevision();
-    const current = () => binding.backendGeneration === captureBinding().backendGeneration
-      && graphMeta()?.root === root && router.activeId() === tabId
-      && router.routeIntentRevision() === intentRevision;
+    const current = graphOwner(() => graphMeta()?.root === root && router.activeId() === tabId
+      && router.routeIntentRevision() === intentRevision);
     props.close(false);
     if (!next || next === from) return;
     try {
-      if (!(await renamePageOnDisk(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) }))) {
+      const renamed = await readOwned(current, renamePageOnDisk(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) }));
+      if (renamed.kind === "stale") return;
+      if (!renamed.value) {
         if (current()) pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
         return;
       }
