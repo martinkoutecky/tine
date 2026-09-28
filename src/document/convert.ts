@@ -49,18 +49,19 @@ export function queryWorkspacePage(name: string, raw: string): PageDto {
   return { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw, collapsed: false, children: [] }] };
 }
 
-/** The Favorites arrangement page (family 22): a marker pre-block plus the
- *  arrangement's bullets, written whole through `createPage`. */
-/** The Favorites arrangement page, whole. Collapse persists as `collapsed::`
- *  in the raw (the save path writes raw only), as for every other block. */
-export function favoritesArrangementPage(name: string, marker: string, blocks: BlockDto[]): PageDto {
+/** The Favorites arrangement page (family 22), written whole through
+ *  `createPage`. `marker` is the verbatim pre-block text (the caller picks
+ *  `tine/favorites:: true` or, in Org, `#+tine/favorites: true`). Collapse
+ *  persists in the raw in the page's own format (`collapsed:: true` / an Org
+ *  `:PROPERTIES:` drawer), since the save path writes raw only. */
+export function favoritesArrangementPage(name: string, marker: string, blocks: BlockDto[], format: Format): PageDto {
   const persist = (nodes: BlockDto[]): BlockDto[] => nodes.map((b) =>
-    ({ ...b, raw: rawWithCollapsed(b.raw, b.collapsed, "md"), children: persist(b.children) }));
+    ({ ...b, raw: rawWithCollapsed(b.raw, b.collapsed, format), children: persist(b.children) }));
   return { name, kind: "page", title: name, pre_block: marker, blocks: persist(blocks) };
 }
-/** Read side: the page's blocks with `collapsed::` left in the flag only. */
-export function favoritesArrangementBlocks(blocks: readonly BlockDto[]): BlockDto[] {
-  return blocks.map((b) => ({ ...b, raw: rawWithCollapsed(b.raw, false, "md"), children: favoritesArrangementBlocks(b.children) }));
+/** Read side: the page's blocks with the collapsed property left in the flag only. */
+export function favoritesArrangementBlocks(blocks: readonly BlockDto[], format: Format): BlockDto[] {
+  return blocks.map((b) => ({ ...b, raw: rawWithCollapsed(b.raw, false, format), children: favoritesArrangementBlocks(b.children, format) }));
 }
 
 export function appendAliasDraft(owner: PageDto, draft: PageDto): PageDto {

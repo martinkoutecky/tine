@@ -14,13 +14,13 @@
 import { createEffect, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
 import type { createPage, favoritesArrangementBlocks, favoritesArrangementPage, reloadHlsIfLoaded } from "./document";
-import { dataRev } from "./graphSession";
+import { dataRev, graphMeta } from "./graphSession";
 import { seedGraphSignal, writeGraphSignal } from "./graphPreferences";
 import { graphOwner, readOwned, writeOwned } from "./owned";
 import { navigationName } from "./pageIndex";
 import { pageIdentityKey } from "./pageIdentity";
 import { pushToast } from "./toasts";
-import type { BlockDto, PageKind } from "./types";
+import type { BlockDto, Format, PageDto, PageKind } from "./types";
 import type { PageTarget } from "./routeTypes";
 import {
   DEFAULT_FAVORITES_PAGE, FAVORITES_PAGE_PROPERTY, type FavItem, type FavLayout, type FavNode,
@@ -43,7 +43,11 @@ let generation = 0;
 /** Counts Tine's own page writes, so a read that began before one is not
  *  mistaken for an outside edit. */
 let ownWrites = 0;
-const MARKER = `${FAVORITES_PAGE_PROPERTY}:: true`;
+/** The marker pre-block in the page's own format: a Markdown page property,
+ *  or an Org `#+` file property (og reads `tine/favorites:: true` in an .org
+ *  file as body text, not a property). */
+const markerFor = (format: Format) =>
+  format === "org" ? `#+${FAVORITES_PAGE_PROPERTY}: true` : `${FAVORITES_PAGE_PROPERTY}:: true`;
 /** The document door's page write, installed by graph.ts: document reaches
  *  this module through ui.ts, so a static import would close a cycle (I-11). */
 export interface FavoritesPageDoor {
@@ -51,13 +55,15 @@ export interface FavoritesPageDoor {
   favoritesArrangementBlocks: typeof favoritesArrangementBlocks; reloadHlsIfLoaded: typeof reloadHlsIfLoaded;
 }
 let door: FavoritesPageDoor | null = null;
+/** Until installed, persisting a change that needs the page throws (rolled back with a toast). */
 export function installFavoritesPageDoor(installed: FavoritesPageDoor): void { door = installed; }
 function pageDoor(): FavoritesPageDoor {
   if (!door) throw new Error("the Favorites page door is not installed");
   return door;
 }
-const diskLayout = (blocks: BlockDto[]) => layoutFromBlocks(pageDoor().favoritesArrangementBlocks(blocks));
-const IS_ARRANGEMENT_PAGE = /^tine\/favorites::\s*true\s*$/m;
+const diskLayout = (page: PageDto) =>
+  layoutFromBlocks(pageDoor().favoritesArrangementBlocks(page.blocks, page.format ?? "md"));
+const IS_ARRANGEMENT_PAGE = /^(?:tine\/favorites::\s*true|#\+tine\/favorites:\s*true)\s*$/im;
 
 /** THE favorites identity: kind, then the alias-resolved name folded like
  *  core `refs::page_key`. Membership, arrangement and deletion all use it. */
@@ -67,8 +73,9 @@ export function favoriteKey(name: string, kind: PageKind): string {
 const memberKey = (name: string) => favoriteKey(name, itemKind(name));
 const nodeKey = (node: FavNode) => favoriteKey(node.target!, node.kind ?? itemKind(node.target!));
 
-/** Is this page (or journal) a favorite? Kind is part of the identity: a
- *  page and a journal with one title are two favorites. */
+/** Is this page (or journal) a favorite? True when a favorite of the same
+ *  kind has the same `favoriteKey` (alias-resolved, folded name). Kind is part
+ *  of the identity: a page and a journal with one title are two favorites. */
 export function isFavorite(name: string, kind: PageKind): boolean {
   return isFavoriteKey(favoriteKey(name, kind));
 }
@@ -85,6 +92,22 @@ function commit(next: FavLayout): void {
 const without = (nodes: FavNode[], key: string): FavNode[] => nodes.flatMap((node) =>
   node.target !== null && nodeKey(node) === key ? without(node.children, key) : [{ ...node, children: without(node.children, key) }]);
 
+/** Every favorites mutator below (toggleFavorite, forgetDeletedFavorite,
+ *  renameFavorite and the arrangement edits) applies to the tree at once and
+ *  returns before anything is saved; saves are queued in order. Persisting
+ *  writes the arrangement page first, only once the tree holds a label or a
+ *  nested row or a page already exists (a new page is "Favorites", else the
+ *  first free "Favorites N", never an unmarked user page; it takes the graph's
+ *  preferred format), then `:favorites` and `:tine/favorites-page` in one
+ *  config write. Any failure rolls the tree back to the last saved one (if no
+ *  newer change was made) and toasts "Could not save favorites.". If the page
+ *  changed on disk since Tine last saw it, the write is refused, the page is
+ *  re-read and adopted, and the change is rolled back. A marked page config
+ *  never recorded (an interrupted save) is recovered instead of overwritten:
+ *  the change is refused with an info toast asking to repeat it. */
+
+/** Add (at the end of the top level) or remove (its children move up) a
+ *  favorite; `kind` defaults to "page", not the name's derived kind. */
 export function toggleFavorite(name: string, kind: PageKind = "page"): void {
   const key = favoriteKey(name, kind);
   if (isFavoriteKey(key)) commit(without(layout(), key));
@@ -99,7 +122,8 @@ export function forgetDeletedFavorite(name: string, kind: PageKind): void {
 const isFavoriteKey = (key: string) => favorites().some((f) => favoriteKey(f.name, f.kind) === key);
 
 /** A page was renamed on disk. Its links in the arrangement page were
- *  rewritten with it, so only membership is written here. */
+ *  rewritten with it, so only membership is written here. Renaming the
+ *  arrangement page itself moves `:tine/favorites-page` to the new name. */
 export function renameFavorite(from: PageTarget, to: PageTarget): void {
   const key = favoriteKey(from.name, from.pageKind);
   let changed = false;
@@ -108,8 +132,14 @@ export function renameFavorite(from: PageTarget, to: PageTarget): void {
     changed ||= hit;
     return { ...(hit ? favoriteNode(to.name, to.pageKind) : node), collapsed: node.collapsed, children: retarget(node.children) };
   });
+  // Renaming the arrangement page itself moves `:tine/favorites-page` with it,
+  // or the renamed page would become a reference source and the next edit
+  // would recreate the old name.
+  const pageRenamed = arrangementPage !== null && from.pageKind === "page"
+    && pageIdentityKey(from.name) === pageIdentityKey(arrangementPage);
+  if (pageRenamed) arrangementPage = to.name;
   const renamed = retarget(layout());
-  if (!changed) return;
+  if (!changed && !pageRenamed) return;
   const next = reconcileLayout(renamed, layoutMembers(renamed).map((f) => f.name), memberKey);
   if (arrangementPage) pageBase = layoutToMarkdown(next);
   commit(next);
@@ -163,7 +193,7 @@ async function readArrangement(mode: ReadMode | null): Promise<void> {
     return null;
   });
   if (read?.kind !== "current" || !read.value) return;
-  const disk = diskLayout(read.value.blocks);
+  const disk = diskLayout(read.value);
   const text = layoutToMarkdown(disk);
   const owed = pendingMode;
   pendingMode = null;
@@ -207,12 +237,15 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
       pushToast(`Recovered the Favorites page "${name}" from an interrupted save; repeat your last change.`, "info");
       throw new Error(`recovered the Favorites page "${name}"`);
     }
-    if (disk && arrangementPage && layoutToMarkdown(diskLayout(disk.blocks)) !== pageBase) {
+    if (disk && arrangementPage && layoutToMarkdown(diskLayout(disk)) !== pageBase) {
       void readArrangement(null);
       throw new Error(`the Favorites page "${name}" changed on disk; reloaded it`);
     }
+    // An existing page keeps its format; a new one takes the graph's preferred
+    // format, which is where the store puts it (pages/<name>.org in an Org graph).
+    const format: Format = disk?.format ?? graphMeta()?.preferred_format ?? "md";
     ownWrites += 1;
-    await createPage(name, favoritesArrangementPage(name, MARKER, toBlocks(next)), { baseRev: disk?.rev ?? null });
+    await createPage(name, favoritesArrangementPage(name, markerFor(format), toBlocks(next), format), { baseRev: disk?.rev ?? null });
     if (!owner()) throw new Error("graph changed during the Favorites page write");
     arrangementPage = name;
     pageBase = text;
@@ -245,6 +278,8 @@ export function moveFavoriteRow(from: number[], parent: number[], index: number)
 export function addFavoriteGroup(desired = "New group"): void {
   commit([...layout(), labelNode(uniqueGroupName(layout(), desired))]);
 }
+/** Trimmed and made unique against the other labels, case-insensitively
+ *  ("Work 2"); a blank name or a non-label path is a no-op. */
 export function renameFavoriteGroup(path: number[], name: string): void {
   const node = nodeAt(layout(), path);
   if (!name.trim() || !node || node.target !== null) return;
@@ -257,6 +292,8 @@ export function deleteFavoriteGroup(path: number[]): void {
   if (nodeAt(layout(), path)?.target !== null) return;
   commit(updateAt(layout(), path, (target) => target.children));
 }
+/** Collapse persists only where an arrangement page exists: collapse alone
+ *  never creates one (see `carriesArrangement`). */
 export function setFavoriteRowCollapsed(path: number[], collapsed: boolean): void {
   commit(updateAt(layout(), path, (target) => [{ ...target, collapsed: collapsed || undefined }]));
 }

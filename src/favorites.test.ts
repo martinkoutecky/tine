@@ -5,16 +5,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./graph"; // installs the Favorites page door, as at app start
 import { backend, type SavePageEntry } from "./backend";
-import { bumpDataRev } from "./graphSession";
+import { bumpDataRev, graphMeta, setGraphMeta } from "./graphSession";
 import {
   addFavoriteGroup, deleteFavoriteGroup, favorites, favoritesLayout, moveFavoriteRow,
   renameFavoriteGroup, seedFavorites, setFavoriteRowCollapsed, toggleFavorite,
 } from "./favorites";
 import { layoutToMarkdown } from "./favoritesLayout";
+import { renamePageInNavigation } from "./ui";
 import { toasts, setToasts } from "./toasts";
-import type { BlockDto, PageRead } from "./types";
+import type { BlockDto, Format, GraphMeta, PageRead } from "./types";
 
-type DiskPage = { pre_block: string | null; blocks: BlockDto[]; rev: number };
+type DiskPage = { pre_block: string | null; blocks: BlockDto[]; rev: number; format?: Format };
 let disk: Map<string, DiskPage>;
 let config: { names: string[]; page: string | null };
 let writes: string[];
@@ -22,7 +23,11 @@ let writes: string[];
 const b = (raw: string, children: BlockDto[] = []): BlockDto => ({ id: "", raw, collapsed: false, children });
 // The real save path writes raw only; a read derives `collapsed` from the raw.
 const toDisk = (bs: BlockDto[]): BlockDto[] => bs.map((x) => ({ ...x, collapsed: false, children: toDisk(x.children) }));
-const fromDisk = (bs: BlockDto[]): BlockDto[] => bs.map((x) => ({ ...x, collapsed: /^collapsed:: true$/m.test(x.raw), children: fromDisk(x.children) }));
+const COLLAPSED: Record<Format, RegExp> = { md: /^collapsed:: true$/m, org: /^:PROPERTIES:\n:collapsed: true\n:END:$/m };
+const fromDisk = (bs: BlockDto[], f: Format = "md"): BlockDto[] =>
+  bs.map((x) => ({ ...x, collapsed: COLLAPSED[f].test(x.raw), children: fromDisk(x.children, f) }));
+// As the store: a new page takes the graph's preferred format (pages/<name>.org in an Org graph).
+const preferred = (): Format => graphMeta()?.preferred_format ?? "md";
 const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
 const md = () => layoutToMarkdown(favoritesLayout());
 const line = (x: BlockDto, d: number): string => `${"\t".repeat(d)}- ${x.raw}\n${x.children.map((c) => line(c, d + 1)).join("")}`;
@@ -35,16 +40,16 @@ beforeEach(() => {
   const api = backend();
   vi.spyOn(api, "getPage").mockImplementation(async (name: string) => {
     const page = disk.get(name);
-    return page ? ({ name, kind: "page", title: name, pre_block: page.pre_block, blocks: fromDisk(page.blocks), rev: String(page.rev), id: `pages/${name}.md` } as PageRead) : null;
+    return page ? ({ name, kind: "page", title: name, pre_block: page.pre_block, blocks: fromDisk(page.blocks, page.format), rev: String(page.rev), format: page.format ?? "md", id: `pages/${name}.${page.format ?? "md"}` } as PageRead) : null;
   });
   vi.spyOn(api, "resolvePage").mockImplementation(async (name: string) =>
-    disk.has(name) ? { kind: "existing", id: `pages/${name}.md`, others: [] } : { kind: "absent", id: `pages/${name}.md` });
+    disk.has(name) ? { kind: "existing", id: `pages/${name}.${disk.get(name)!.format ?? "md"}`, others: [] } : { kind: "absent", id: `pages/${name}.${preferred()}` });
   vi.spyOn(api, "savePages").mockImplementation(async (entries: SavePageEntry[]) => {
     const [entry] = entries;
     const current = disk.get(entry.page.name);
     if (String(current?.rev ?? null) !== String(entry.baseRev)) return { failed: { index: 0, family: "conflict", undoFailed: [] } };
     const rev = (current?.rev ?? 0) + 1;
-    disk.set(entry.page.name, { pre_block: entry.page.pre_block, blocks: toDisk(entry.page.blocks), rev });
+    disk.set(entry.page.name, { pre_block: entry.page.pre_block, blocks: toDisk(entry.page.blocks), rev, format: current?.format ?? preferred() });
     writes.push(`page:${entry.page.name}:${entry.kinds.join(",")}`);
     return { ok: [String(rev)] };
   });
@@ -54,7 +59,7 @@ beforeEach(() => {
   });
   seedFavorites([]);
 });
-afterEach(() => { vi.restoreAllMocks(); setToasts([]); });
+afterEach(() => { vi.restoreAllMocks(); setToasts([]); setGraphMeta(null); });
 
 describe("favorites arrangement page", () => {
   it("a flat list never grows a page; the first label creates it, page first, then config", async () => {
@@ -199,6 +204,22 @@ describe("favorites arrangement page", () => {
     expect(config.names).toEqual(["A", "B", "C"]);
   });
 
+  it("renaming the arrangement page moves :tine/favorites-page with it", async () => {
+    disk.set("Favorites", { pre_block: "tine/favorites:: true", blocks: [b("[[A]]"), b("G")], rev: 1 });
+    config = { names: ["A"], page: "Favorites" };
+    seedFavorites(config.names, config.page);
+    await settle();
+    disk.set("Faves", disk.get("Favorites")!); // the rename moved the file
+    disk.delete("Favorites");
+    renamePageInNavigation("Favorites", "Faves");
+    await settle();
+    expect(config).toEqual({ names: ["A"], page: "Faves" });
+    addFavoriteGroup("H");
+    await settle();
+    expect(disk.has("Favorites")).toBe(false); // not recreated under the old name
+    expect(shape(disk.get("Faves")!).text).toBe("- [[A]]\n- G\n- H\n");
+  });
+
   it("keeps a label's raw text verbatim across a later write (I-4)", async () => {
     disk.set("Favorites", { pre_block: "tine/favorites:: true", blocks: [b("[[A]]"), b("  Work  ")], rev: 1 });
     config = { names: ["A"], page: "Favorites" };
@@ -207,5 +228,25 @@ describe("favorites arrangement page", () => {
     toggleFavorite("B"); // an unrelated change rewrites the page
     await settle();
     expect(disk.get("Favorites")!.blocks.map((x) => x.raw)).toEqual(["[[A]]", "  Work  ", "[[B]]"]);
+  });
+
+  it("in an Org-preferred graph the page is a valid Org page: #+ marker, collapse as a drawer", async () => {
+    setGraphMeta({ preferred_format: "org" } as GraphMeta);
+    toggleFavorite("A");
+    addFavoriteGroup("Work");
+    await settle();
+    setFavoriteRowCollapsed([1], true);
+    await settle();
+    const page = disk.get("Favorites")!;
+    expect(page.format).toBe("org");
+    expect(page.pre_block).toBe("#+tine/favorites: true");
+    expect(page.blocks[1].raw).toBe("Work\n:PROPERTIES:\n:collapsed: true\n:END:");
+    seedFavorites(config.names, config.page); // reopen: the Org page is recognised, collapse came back
+    await settle();
+    expect(favoritesLayout()[1]).toMatchObject({ raw: "Work", collapsed: true });
+    toggleFavorite("B"); // a later write keeps the page Org, the drawer not doubled
+    await settle();
+    expect(disk.get("Favorites")!.blocks.map((x) => x.raw)).toEqual(["[[A]]", "Work\n:PROPERTIES:\n:collapsed: true\n:END:", "[[B]]"]);
+    expect(toasts()).toEqual([]);
   });
 });

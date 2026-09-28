@@ -58,7 +58,8 @@ export function layoutToMarkdown(layout: FavLayout, depth = 0): string {
   return layout.map((node) => `${indent}- ${node.raw}\n${node.collapsed ? `${indent}  collapsed:: true\n` : ""}${layoutToMarkdown(node.children, depth + 1)}`).join("");
 }
 
-/** The arrangement carries something `:favorites` cannot express. */
+/** The arrangement carries something `:favorites` cannot express: labels or
+ *  nesting only; collapse alone does not count. */
 export const carriesArrangement = (layout: FavLayout) =>
   layout.some((node) => node.target === null || node.children.length > 0);
 

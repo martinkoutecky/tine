@@ -43,6 +43,9 @@ function startDrag(from: number, event: PointerEvent) {
     });
 }
 
+/** The favorites tree. `targetName` is used only for the active highlight;
+ *  `open` receives the favorite's stored name. Click opens, shift-click opens
+ *  in the right sidebar, middle-click opens a new tab. */
 export function SidebarFavorites(props: {
   isActive: (name: string) => boolean;
   targetName: (name: string, kind: PageKind) => string;

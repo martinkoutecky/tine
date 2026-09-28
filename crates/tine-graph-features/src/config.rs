@@ -62,41 +62,26 @@ pub fn custom_css(store: &Store) -> String {
 }
 
 /// Persist the favorites list to `:favorites [...]`, replacing the existing
-/// vector or inserting one, preserving the rest of the file. `page`, when
-/// given, is recorded as `:tine/favorites-page "Name"` in the SAME guarded
-/// write, so membership and the arrangement page's name never land apart.
+/// value whatever its shape (vector, `nil`, …) or inserting the key into the
+/// top-level map, preserving the rest of the file. `page`, when given, is
+/// recorded as `:tine/favorites-page "Name"` in the SAME guarded write, so
+/// membership and the arrangement page's name never land apart; `None` leaves
+/// that key untouched (it cannot clear it). Conflicts retry with fresh bytes
+/// up to four times, then `WouldBlock`; a missing config.edn is created. A file
+/// whose value or top-level form cannot be edited safely is refused
+/// (`InvalidData`) rather than written unparsable.
 pub fn set_favorites(store: &Store, names: &[String], page: Option<&str>) -> io::Result<()> {
     update(store, |content| {
         let mut content = content.to_string();
         if let Some(page) = page {
-            set_favorites_page(&mut content, page);
+            set_top_level(&mut content, ":tine/favorites-page", &edn_string(page))?;
         }
-        let vec_str = format!(
-            "[{}]",
-            names
-                .iter()
-                .map(|n| edn_string(n))
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-        if let Some(start) = find_keyword(&content, ":favorites") {
-            // Replace the existing `:favorites [...]` vector. Require its value to
-            // be a vector and find the matching `]` with an EDN-aware scan so a
-            // favorite NAME containing `]` (or a comment in the vector) can't
-            // truncate the replacement and corrupt config.edn.
-            let after = start + ":favorites".len();
-            let j = skip_blank(&content, after); // comment-aware, like the readers
-            if content.as_bytes().get(j) == Some(&b'[') {
-                let end = match_close_bracket(&content, j) + 1;
-                content.replace_range(start..end, &format!(":favorites {vec_str}"));
-            } else {
-                content.insert_str(after, &format!(" {vec_str}"));
-            }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n :favorites {vec_str}\n"));
-        } else {
-            content = format!("{{:favorites {vec_str}}}\n");
-        }
+        let names: Vec<String> = names.iter().map(|n| edn_string(n)).collect();
+        set_top_level(
+            &mut content,
+            ":favorites",
+            &format!("[{}]", names.join(" ")),
+        )?;
         Ok(content)
     })
 }
@@ -105,25 +90,64 @@ fn edn_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// `:tine/favorites-page "Name"`: replace a string value, or insert the key.
-/// Logseq ignores unknown keys, so the file stays Logseq-readable.
-fn set_favorites_page(content: &mut String, page: &str) {
-    const KEY: &str = ":tine/favorites-page";
-    let quoted = edn_string(page);
-    if let Some(start) = find_keyword(content, KEY) {
-        let after = start + KEY.len();
-        let j = skip_blank(content, after);
-        if content.as_bytes().get(j) == Some(&b'"') {
-            let end = edn_str_end(content, j);
-            content.replace_range(start..end, &format!("{KEY} {quoted}"));
-        } else {
-            content.insert_str(after, &format!(" {quoted}"));
+fn refuse(what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("config.edn: {what}; not editing it"),
+    )
+}
+
+/// Set `key` to `value` in config.edn text: replace the key's whole existing
+/// value (string, vector, map, set or scalar such as `nil`) or insert the key
+/// into the top-level map. Never leaves a key without its value.
+fn set_top_level(content: &mut String, key: &str, value: &str) -> io::Result<()> {
+    let Some(start) = find_keyword(content, key) else {
+        return insert_top_level(content, &format!("{key} {value}"));
+    };
+    let after = start + key.len();
+    let j = skip_blank(content, after); // comment-aware, like the readers
+    let b = content.as_bytes();
+    let missing = matches!(b.get(j), None | Some(b'}'));
+    let closed = |close: usize| (close < b.len()).then_some(close + 1);
+    let end = match b.get(j) {
+        None | Some(b'}') => None, // the key has no value: insert one
+        Some(b'"') => Some(edn_str_end(content, j)).filter(|&e| b[e - 1] == b'"' && e > j + 1),
+        Some(b'[') => closed(match_close_bracket(content, j)),
+        Some(b'{') => closed(match_close_brace(content, j)),
+        Some(b'#') if b.get(j + 1) == Some(&b'{') => closed(match_close_brace(content, j + 1)),
+        Some(b'(' | b'#' | b'^' | b'\'' | b'@' | b'`' | b'~' | b']' | b')') => {
+            return Err(refuse(&format!(
+                "{key} has a value shape Tine does not edit"
+            )));
         }
-    } else if let Some(brace) = content.find('{') {
-        content.insert_str(brace + 1, &format!("\n {KEY} {quoted}\n"));
-    } else {
-        *content = format!("{{{KEY} {quoted}}}\n");
+        Some(_) => next_value_span(content, j, content.len()).map(|(_, end, _)| end),
+    };
+    match end {
+        // Key through value, as the legacy writer (byte fixture `client`).
+        Some(end) => content.replace_range(start..end, &format!("{key} {value}")),
+        None if missing => content.insert_str(after, &format!(" {value}")),
+        None => return Err(refuse(&format!("{key} has an unterminated value"))),
     }
+    Ok(())
+}
+
+/// Insert `entry` right after the top-level map's `{`: the first form after
+/// blanks and `;` comments, never a `{` inside a comment or string. A file of
+/// only blanks/comments gets a new map appended; any other first form is
+/// refused rather than guessed at.
+fn insert_top_level(content: &mut String, entry: &str) -> io::Result<()> {
+    let open = skip_blank(content, 0);
+    match content.as_bytes().get(open) {
+        Some(b'{') => content.insert_str(open + 1, &format!("\n {entry}\n")),
+        None => {
+            if !content.is_empty() && !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(&format!("{{{entry}}}\n"));
+        }
+        Some(_) => return Err(refuse("the top-level form is not a map")),
+    }
+    Ok(())
 }
 
 /// Persist the task workflow to `:preferred-workflow :todo`/`:now`, replacing
@@ -147,10 +171,8 @@ pub fn set_preferred_workflow(store: &Store, wf: &str) -> io::Result<()> {
             } else {
                 content.insert_str(after, &format!(" {kw}"));
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
         } else {
-            content = format!("{{:preferred-workflow {kw}}}\n");
+            insert_top_level(&mut content, &format!(":preferred-workflow {kw}"))?;
         }
         Ok(content)
     })
@@ -172,10 +194,8 @@ pub fn set_timetracking_enabled(store: &Store, enabled: bool) -> io::Result<()> 
                 }
                 _ => content.insert_str(after, &format!(" {val}")),
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
         } else {
-            content = format!("{{{key} {val}}}\n");
+            insert_top_level(&mut content, &format!("{key} {val}"))?;
         }
         Ok(content)
     })
@@ -197,10 +217,8 @@ pub fn set_show_brackets(store: &Store, enabled: bool) -> io::Result<()> {
                 }
                 _ => content.insert_str(after, &format!(" {val}")),
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
         } else {
-            content = format!("{{{key} {val}}}\n");
+            insert_top_level(&mut content, &format!("{key} {val}"))?;
         }
         Ok(content)
     })
@@ -233,10 +251,8 @@ fn set_config_bool(store: &Store, key: &str, enabled: bool) -> io::Result<()> {
                 }
                 _ => content.insert_str(after, &format!(" {val}")),
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
         } else {
-            content = format!("{{{key} {val}}}\n");
+            insert_top_level(&mut content, &format!("{key} {val}"))?;
         }
         Ok(content)
     })
@@ -257,10 +273,8 @@ pub fn set_guide_announced(store: &Store, announced: bool) -> io::Result<()> {
                 }
                 _ => content.insert_str(after, &format!(" {val}")),
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
         } else {
-            content = format!("{{{key} {val}}}\n");
+            insert_top_level(&mut content, &format!("{key} {val}"))?;
         }
         Ok(content)
     })
@@ -290,10 +304,8 @@ pub fn set_preferred_format(store: &Store, fmt: tine_core::model::Format) -> io:
                 }
                 _ => content.insert_str(after, &format!(" {val}")),
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
         } else {
-            content = format!("{{{key} {val}}}\n");
+            insert_top_level(&mut content, &format!("{key} {val}"))?;
         }
         Ok(content)
     })
@@ -320,10 +332,8 @@ pub fn set_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<()>
                 }
                 _ => content.insert_str(after, &format!(" {val}")),
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
         } else {
-            content = format!("{{{key} {val}}}\n");
+            insert_top_level(&mut content, &format!("{key} {val}"))?;
         }
         Ok(content)
     })
@@ -372,12 +382,10 @@ pub fn set_default_journal_template(store: &Store, name: Option<&str>) -> io::Re
                         }
                     }
                     None => {
-                        let entry = format!("\n :default-templates {{:journals {v}}}\n");
-                        if let Some(brace) = content.find('{') {
-                            content.insert_str(brace + 1, &entry);
-                        } else {
-                            content = format!("{{:default-templates {{:journals {v}}}}}\n");
-                        }
+                        insert_top_level(
+                            &mut content,
+                            &format!(":default-templates {{:journals {v}}}"),
+                        )?;
                     }
                 }
             }
@@ -425,10 +433,8 @@ pub fn set_start_of_week(store: &Store, n: u32) -> io::Result<()> {
             } else {
                 content.insert_str(after, &format!(" {n}"));
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n :start-of-week {n}\n"));
         } else {
-            content = format!("{{:start-of-week {n}}}\n");
+            insert_top_level(&mut content, &format!(":start-of-week {n}"))?;
         }
         Ok(content)
     })
