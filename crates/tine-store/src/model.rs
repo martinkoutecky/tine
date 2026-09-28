@@ -4435,6 +4435,12 @@ impl Graph {
         }
     }
 
+    /// Bytes a save writes for `page`. Markdown reuses every unchanged block's
+    /// lines (`layout_retention`), else re-serializes in the file's detected
+    /// style (no Syncthing churn); equal parses keep the disk bytes and revision
+    /// (A5); CRLF files stay CRLF (A5 ran first, so no double conversion). The
+    /// bytes re-parse to `page`, except a DTO that cannot round-trip (blocks
+    /// after an unterminated fence): it gets the whole-page serializer's meaning.
     fn prepare_page_content(
         &self,
         page: &PageDto,
@@ -4507,21 +4513,15 @@ impl Graph {
         let path = path.to_path_buf();
         let content = match Format::from_path(&path) {
             Format::Md => {
-                // Reproduce the existing file's layout to avoid Syncthing churn.
                 let opts = doc::SerializeOpts::detect(existing);
                 let mut content = existing
                     .and_then(|source| layout_retention::serialize(&doc, source, &opts))
                     .unwrap_or_else(|| doc::serialize_with(&doc, &opts));
-                // A5: when only unroundtrippable whitespace trivia differs,
-                // equal parses mean the disk bytes and revision stay authoritative.
                 if let Some(e) = existing {
                     if e != content && doc::parse(e) == doc::parse(&content) {
-                        content = e.to_string();
+                        content = e.to_string(); // A5
                     }
                 }
-                // CRLF preservation (shared with write_highlights). No-op saves
-                // already kept the existing bytes verbatim (A5 above), so this can't
-                // double-convert.
                 preserve_crlf(content, existing)
             }
             Format::Org => {

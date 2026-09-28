@@ -186,3 +186,17 @@ fn crlf_pages_keep_untouched_bytes_and_line_endings() {
     });
     assert_eq!(inserted, source.replace("\t- two", "\t- new\r\n\t- two"));
 }
+
+#[test]
+fn first_root_on_a_properties_only_page_gets_one_separator() {
+    for (source, expected) in [
+        ("title:: solo\n\n", "title:: solo\n\n- first\n"),
+        ("title:: solo\n", "title:: solo\n\n- first\n"),
+        ("title:: solo", "title:: solo\n\n- first"),
+    ] {
+        let inserted = saved(source, EditKind::InsertBlocks, |doc| {
+            doc.blocks.push(block("first"));
+        });
+        assert_eq!(inserted, expected, "{source:?}");
+    }
+}

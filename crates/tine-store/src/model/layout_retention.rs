@@ -13,17 +13,31 @@
 //!
 //! Cost: two parses of the page (three, plus a full serialization, when the
 //! DTO itself does not round-trip) and an LCS over the changed middle of the
-//! pre-order block sequence (common prefix and suffix are trimmed first).
+//! pre-order block sequence (common prefix and suffix are trimmed first),
+//! capped at 4,000,000 table cells (about 16 MB); a larger middle skips the
+//! LCS and matches blocks by equal text only.
 
 use std::collections::{HashMap, VecDeque};
 
 use tine_core::doc::{self, DocBlock, Document, SerializeOpts};
 
-/// Serialize `doc` reusing `source`'s physical lines for every unchanged block.
-/// CRLF sources are handled on their LF form (the caller restores CRLF); a
-/// source with lone `\r` returns `None`. `None` also means the layout could not
-/// be mapped or the result did not re-parse to exactly `doc`; the caller then
-/// serializes the whole page.
+/// Serialize a Markdown `doc` reusing `source`'s physical lines for every block
+/// whose raw text is unchanged (re-indented as a unit only when its new position
+/// requires it). Returns LF text; CRLF sources are handled on their LF form and
+/// the caller restores CRLF. Returns `None` when `source` has a lone `\r`, `doc`
+/// is empty (no pre-block, no roots), `source`'s layout cannot be mapped to
+/// blocks, or the result re-parses neither to `doc` nor as below; the caller then
+/// serializes the whole page. Declines are silent (no log or counter).
+///
+/// `Some` output re-parses to exactly `doc` (pre-block plus each block's raw
+/// text and children), with one exception: when `doc` itself cannot round-trip
+/// (e.g. blocks after an unterminated code fence re-parse as fence text), `Some`
+/// means the output re-parses equal to what the whole-page serialization
+/// re-parses to, so it has the meaning the fallback would have written, which
+/// is also not `doc`. Pure. Cost: two parses of the page (three plus a full
+/// serialization when the first check fails) and an LCS over the changed middle
+/// of the pre-order block sequence, O(a·b) with a `u32` table, skipped above
+/// 4,000,000 cells (about 16 MB).
 pub(super) fn serialize(doc: &Document, source: &str, opts: &SerializeOpts) -> Option<String> {
     let lf;
     let source = if source.contains('\r') {
@@ -209,6 +223,9 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
     (keep, hint)
 }
 
+/// Emit the preamble and, once, the separator before the first root: the old
+/// blank lines after the old preamble when there are any, else one blank line
+/// when the file's style uses it.
 fn emit_preamble(
     old: &Document,
     doc: &Document,
@@ -221,26 +238,24 @@ fn emit_preamble(
         .pre_block
         .as_ref()
         .map_or(0, |pre| pre.split('\n').count());
-    let separator = if old.pre_block.is_some() && region > old_pre_len && !old.roots.is_empty() {
-        lines[old_pre_len..region]
-            .iter()
-            .map(|l| l.to_string())
-            .collect()
-    } else if opts.blank_after_props {
-        vec![String::new()]
-    } else {
-        Vec::new()
-    };
+    let gap = lines[old_pre_len..region]
+        .iter()
+        .map(|line| line.to_string());
     if old.pre_block == doc.pre_block {
-        out.extend(lines[..region].iter().map(|line| line.to_string()));
-        if old.roots.is_empty() && !doc.roots.is_empty() && doc.pre_block.is_some() {
-            out.extend(separator);
-        }
+        out.extend(lines[..old_pre_len].iter().map(|line| line.to_string()));
     } else if let Some(pre) = &doc.pre_block {
         out.extend(pre.split('\n').map(str::to_string));
-        if !doc.roots.is_empty() {
-            out.extend(separator);
+    }
+    if doc.pre_block.is_none() {
+        // Without a preamble the old region is blank lines only; keep them
+        // unless a removed preamble owned them.
+        if old.pre_block.is_none() {
+            out.extend(gap);
         }
+    } else if old.pre_block.is_some() && region > old_pre_len {
+        out.extend(gap);
+    } else if !doc.roots.is_empty() && opts.blank_after_props {
+        out.push(String::new());
     }
 }
 
