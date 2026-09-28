@@ -683,7 +683,7 @@ export class PluginManager {
     if (!this.invocationAuthorityCurrent(authority)) return [];
     let effects: PluginEffect[];
     try {
-      effects = (await authority.plugin.runtime.invoke(event)).effects;
+      effects = (await authority.plugin.runtime.invoke(this.guestEvent(authority.plugin.manifest, event))).effects;
     } catch (error) {
       // A genuine timeout/crash has already killed this worker. Retire only the
       // exact still-current active runtime; a starting runtime is owned by start()'s
@@ -701,6 +701,28 @@ export class PluginManager {
       }
     }
     return this.invocationAuthorityCurrent(authority) ? accepted : [];
+  }
+
+  /** What the guest may read. A command or slash command sees the one block the
+   * user invoked it on (the user action is consent to that block). Decorations
+   * see every visible block with no user action, so their `raw` text requires
+   * `graph.read.visible`. The host validates effects against the original event. */
+  private guestEvent(manifest: PluginManifest, event: PluginEvent): PluginEvent {
+    switch (event.kind) {
+      case "decorate-blocks":
+        return manifest.capabilities.includes("graph.read.visible")
+          ? event
+          : { ...event, blocks: event.blocks.map((block) => ({ ...block, raw: "" })) };
+      case "command":
+      case "slash-command":
+      case "activate":
+      case "settings-changed":
+        return event;
+      default: {
+        const unhandled: never = event;
+        return unhandled;
+      }
+    }
   }
 
   private async applyEffect(authority: InvocationAuthority, event: PluginEvent, effect: PluginEffect): Promise<boolean> {

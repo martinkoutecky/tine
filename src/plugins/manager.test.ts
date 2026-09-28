@@ -411,6 +411,38 @@ describe("installed plugin lifecycle", () => {
 });
 
 describe("plugin invocation ownership", () => {
+  // Q1 (Martin, 2026-09-28, option b): an explicit command/slash invocation is
+  // consent to read that one block; passive decorations need graph.read.visible.
+  it.each([
+    ["command", false, true],
+    ["slash-command", false, true],
+    ["decorate-blocks", false, false],
+    ["decorate-blocks", true, true],
+  ] as const)("%s guest (graph.read.visible=%s) receives block text: %s", async (kind, declared, expectText) => {
+    const api = backend();
+    const entry = commandRecord();
+    const value = JSON.parse(entry.manifest_json) as { capabilities: string[] };
+    if (declared) value.capabilities.push("graph.read.visible");
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([{ ...entry, manifest_json: JSON.stringify(value) }]);
+    vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    const runtime = { invoke: vi.fn().mockResolvedValue({ protocolVersion: 2 as const, effects: [] }), dispose: vi.fn() };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(runtime as unknown as PluginRuntime);
+    setGraphMeta(graphMeta("/graph-a"));
+    sharedDoc("private block text");
+    const manager = new PluginManager();
+    await manager.initialize();
+    const focused = bindPluginBlockSnapshot({ id: "shared-id", raw: "private block text", parentId: null, depth: 0 })!;
+    if (kind === "command") await manager.invokeCommand("page.tine.graph-owner", "write", focused);
+    if (kind === "slash-command") await manager.invokeSlashCommand("page.tine.graph-owner", "insert", focused);
+    if (kind === "decorate-blocks") await manager.decorateBlocks("page.tine.graph-owner", "badge", { owner: focused.owner, blocks: [focused.block] });
+    const event = runtime.invoke.mock.calls.at(-1)?.[0] as PluginEvent;
+    expect(event.kind).toBe(kind);
+    expect(JSON.stringify(event).includes("private block text")).toBe(expectText);
+  });
+
   it("drops a delayed graph-A write when graph B has the same UUID and raw bytes", async () => {
     const api = backend();
     vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
