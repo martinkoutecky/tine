@@ -7,7 +7,7 @@ import { graphOwner, readOwned, writeOwned } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer } from "./ui";
 import { pushToast } from "./toasts";
-import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler } from "./document";
+import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk } from "./document";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
@@ -226,6 +226,31 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
 }
 
 installRenameRefreshHandler(refreshAfterRename);
+
+export type RenameOutcome = "renamed" | "merged" | "cancelled" | "failed";
+
+/** Rename a page; when `to` already names another page file, ask to merge into
+ *  it as OG Logseq does (GH #327, `merge-pages!`): the backend appends the
+ *  source's blocks, unites aliases, rewrites references and trashes the source
+ *  in one transaction. `failed` means pending edits could not be flushed;
+ *  backend errors reject. Cost: two name resolutions plus the rename. */
+export async function renameOrMergePage(from: string, to: string, target?: PageTarget): Promise<RenameOutcome> {
+  const owner = graphOwner();
+  const found = await readOwned(owner, backend().resolvePage(to, "page"));
+  if (found.kind === "stale") return "cancelled";
+  let into: string | undefined;
+  if (found.value.kind === "existing" && found.value.others.length === 0) {
+    const source = target?.path ?? await readOwned(owner, backend().resolvePage(from, target?.pageKind ?? "page"))
+      .then((own) => own.kind !== "stale" && own.value.kind === "existing" ? own.value.id : undefined);
+    if (source && source !== found.value.id) into = found.value.id;
+  }
+  if (into) {
+    const confirmed = await readOwned(owner, backend().confirm(`Page “${to}” already exists. Merge “${from}” into it?`));
+    if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
+  }
+  if (!(await renamePageOnDisk(from, to, target, into))) return "failed";
+  return into ? "merged" : "renamed";
+}
 
 export type JournalTemplateEnsureResult = "ready" | "deferred" | "stale" | { kind: "error"; error: unknown };
 

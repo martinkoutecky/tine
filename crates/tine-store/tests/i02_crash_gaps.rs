@@ -225,6 +225,9 @@ fn crash_feature_worker() {
         "rename" => {
             pages::rename_page_expected(&store, "A", "B", None).unwrap();
         }
+        "rename-merge" => {
+            pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md")).unwrap();
+        }
         "conflict" => {
             let copy = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
             let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", copy)
@@ -253,8 +256,9 @@ fn crash_feature_worker() {
 
 #[test]
 fn feature_journeys_kill_reopen_keep_content() {
-    for journey in ["merge", "rename", "conflict"] {
-        for boundary in 0..2 {
+    for journey in ["merge", "rename", "rename-merge", "conflict"] {
+        // rename-merge steps: save survivor, trash source, rewrite Ref.md.
+        for boundary in 0..if journey == "rename-merge" { 3 } else { 2 } {
             let root = scratch(journey);
             match journey {
                 "merge" => {
@@ -264,6 +268,11 @@ fn feature_journeys_kill_reopen_keep_content() {
                 "rename" => {
                     fs::write(root.join("pages/A.md"), b"- original page\n").unwrap();
                     fs::write(root.join("pages/Ref.md"), b"- [[A]] reference\n").unwrap();
+                }
+                "rename-merge" => {
+                    fs::write(root.join("pages/Old.md"), b"- moved source\n").unwrap();
+                    fs::write(root.join("pages/New.md"), b"- kept destination\n").unwrap();
+                    fs::write(root.join("pages/Ref.md"), b"- [[Old]] reference\n").unwrap();
                 }
                 "conflict" => {
                     fs::write(root.join("pages/Foo.md"), b"- mine content\n").unwrap();
@@ -298,6 +307,18 @@ fn feature_journeys_kill_reopen_keep_content() {
                         "I-2: merge must keep both blocks at step {boundary}; exemplar pages::merge_pages");
                     assert!(root.join("pages/src.md").exists() || recovery_has(&root, b"- moved source\n"),
                         "I-2: source must remain live or recoverable at step {boundary}; exemplar pages::merge_pages");
+                }
+                "rename-merge" => {
+                    let merged = fs::read_to_string(root.join("pages/New.md")).unwrap();
+                    assert!(merged.contains("kept destination"),
+                        "I-2: rename-merge must keep the survivor at step {boundary}; exemplar pages::rename_or_merge_page");
+                    let source_live = fs::read(root.join("pages/Old.md")).ok().as_deref()
+                        == Some(b"- moved source\n");
+                    assert!(source_live || (merged.contains("moved source") && recovery_has(&root, b"- moved source\n")),
+                        "I-2: rename-merge source blocks must stay live or be merged and recoverable at step {boundary}; exemplar pages::rename_or_merge_page");
+                    let reference = fs::read_to_string(root.join("pages/Ref.md")).unwrap();
+                    assert!(reference == "- [[Old]] reference\n" || reference == "- [[New]] reference\n",
+                        "I-2: rename-merge reference rewrite must be whole old/new bytes at step {boundary}; exemplar pages::rename_or_merge_page");
                 }
                 "rename" => {
                     let moved = fs::read(root.join("pages/B.md")).ok();

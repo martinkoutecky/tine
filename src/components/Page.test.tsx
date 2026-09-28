@@ -1068,6 +1068,8 @@ describe("page actions entry point", () => {
       entered.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
       await flushMicrotasks();
       expect(rename).toHaveBeenCalledTimes(1);
+      // The rename first asks whether the new name is taken (merge, GH #327).
+      await vi.waitFor(() => expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Entered name" }));
 
       rename.mockClear();
       const escaped = await begin("Cancelled name");

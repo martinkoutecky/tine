@@ -412,6 +412,9 @@ export interface PrintOpts {
   /** Page margin, mm (all four sides). */
   margin_mm: number;
 }
+/** A title-named journal file and the date name it would get (proposed only). */
+export type JournalFilenameMigration = { from: string; to: string };
+
 export type JournalMigrationResult = {
   migrated: number;
   skipped: { file: string; reason: string }[];

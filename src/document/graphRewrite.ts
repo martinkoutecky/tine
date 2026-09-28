@@ -16,12 +16,13 @@ export function installRenameRefreshHandler(handler: (from: string, to: string, 
 }
 
 /** Freeze user edits, flush current pages, then ask the backend to rename a
- * page and rewrite references across the graph. Returns false when already
+ * page and rewrite references across the graph (merging into `mergeInto`, the
+ * confirmed owner of `to`, when given). Returns false when already
  * frozen, flush fails or graph ownership retires; backend errors reject.
  * On success reset the working set and refresh navigation. Cost grows with
  * graph pages and references. A backend failure can require inspecting disk
  * before retrying. */
-export async function renamePageOnDisk(from: string, to: string, target?: PageTarget): Promise<boolean> {
+export async function renamePageOnDisk(from: string, to: string, target?: PageTarget, mergeInto?: string): Promise<boolean> {
   if (graphRewriteFrozen()) return false;
   // Blur is synchronous: commit the current editor buffer before closing the
   // write gate, with no await or input event between the two steps.
@@ -36,9 +37,11 @@ export async function renamePageOnDisk(from: string, to: string, target?: PageTa
     if (!(await flushAll()) || !owner()) return false;
     let result;
     try {
-      result = await writeOwned(owner, target?.path
-        ? backend().renamePage(from, to, "rename-page", target.path)
-        : backend().renamePage(from, to, "rename-page"));
+      result = await writeOwned(owner, mergeInto
+        ? backend().renamePage(from, to, "rename-page", target?.path, mergeInto)
+        : target?.path
+          ? backend().renamePage(from, to, "rename-page", target.path)
+          : backend().renamePage(from, to, "rename-page"));
     } catch (error) {
       if (!owner()) pushToast(`Rename failed: ${String(error)}`, "error");
       throw error;

@@ -1,0 +1,24 @@
+{
+  "removed": [
+    "pages/Old.md",
+    "pages/Old___Child.md"
+  ],
+  "files": [
+    {
+      "path": "journals/2026_06_15.md",
+      "bytes": "- journal ref [[New/Child]]\n"
+    },
+    {
+      "path": "pages/New.md",
+      "bytes": "alias:: Kept\nicon:: star\n\n- new body links [[New]]\n- old body links [[New]] and [[New/Child]]\n\t- nested #New\n"
+    },
+    {
+      "path": "pages/New___Child.md",
+      "bytes": "- child of [[New]]\n"
+    },
+    {
+      "path": "pages/Referrer.md",
+      "bytes": "tags:: New, Other\n\n- see [[New]] and #New and [[Former]]\n"
+    }
+  ]
+}

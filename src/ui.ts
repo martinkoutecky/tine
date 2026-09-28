@@ -207,9 +207,9 @@ export function changePreferredFormat(fmt: "md" | "org") {
 
 const journalTitleFormatScope = {};
 /** Apply the title format to UI state immediately, then start a backend
- * config write, graph reopen and possible journal-file migration. Return does
- * not confirm persistence. Failure may roll UI back and toasts; skipped files
- * toast. Cost can grow with graph journals. */
+ * config write. Journal files are never renamed here (master e6f9b6e1ceae);
+ * Settings proposes renames for title-named files. Return does not confirm
+ * persistence. Failure may roll UI back and toasts. */
 export function changeJournalTitleFormat(fmt: string) {
   const next = fmt.trim() || "MMM do, yyyy";
   const m = graphMeta();
@@ -218,17 +218,13 @@ export function changeJournalTitleFormat(fmt: string) {
   setJournalTitleFormat(next);
   bumpGraphEpoch(); // immediate: re-render open journal titles with the new format
   const owner = latestOwner(journalTitleFormatScope, "title", graphOwner(), () => graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next);
-  // The backend rewrites config.edn AND reopens the graph (so its journal_format
-  // + the title-named-journal migration take effect). Bump again once that's done
-  // so the feed reloads against the refreshed backend — otherwise a reload racing
-  // the reopen could re-query the old format.
+  // Bump again once config.edn is written so the feed and the rename proposals
+  // reload against the new format rather than racing the write.
   void writeOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
     .then((result) => {
       if (result.kind === "stale") return;
       bumpGraphEpoch();
-      const message = journalMigrationSkipMessage(result.value);
-      if (message) pushToast(message, "info");
-      void refreshJournalConflicts(true); // surface any days the migration couldn't merge
+      void refreshJournalConflicts(true); // the new format can reveal same-day twins
     })
     .catch((error) => {
       if (owner()) {

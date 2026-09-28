@@ -321,18 +321,38 @@ pub struct MigrationResult {
     pub skipped: Vec<MigrationSkip>,
 }
 
-/// Whether a top-level title-named journal has an available canonical name.
-/// Unreadable scan entries are skipped. Cost O(J).
-pub fn has_journal_filename_migrations(store: &Store) -> bool {
+/// A title-named journal file and the date name it would get.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct JournalFilenameMigration {
+    pub from: String,
+    pub to: String,
+}
+
+/// The renames [`migrate_journal_filenames`] would perform: top-level
+/// title-named journals whose date name is free. Opening a graph only proposes
+/// them (master e6f9b6e1ceae); the user applies them. Unreadable scan entries
+/// are skipped. Cost O(J).
+pub fn journal_filename_migrations(store: &Store) -> Vec<JournalFilenameMigration> {
     let entries = files(store);
     let existing: HashSet<_> = entries.iter().map(|entry| entry.rel.clone()).collect();
     let fmt = format(store);
     entries
         .iter()
         .filter(|entry| !entry.rel.contains('/'))
-        .any(|entry| {
-            migration_target(entry, &fmt).is_some_and(|target| !existing.contains(&target))
+        .filter_map(|entry| {
+            let to = migration_target(entry, &fmt).filter(|to| !existing.contains(to))?;
+            Some(JournalFilenameMigration {
+                from: entry.rel.clone(),
+                to,
+            })
         })
+        .collect()
+}
+
+/// Whether a top-level title-named journal has an available canonical name.
+/// Cost O(J).
+pub fn has_journal_filename_migrations(store: &Store) -> bool {
+    !journal_filename_migrations(store).is_empty()
 }
 
 /// Best-effort one-file transactions. Occupied targets and same-day twins stay

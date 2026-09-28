@@ -265,7 +265,9 @@ export interface Backend {
   getBlockReferrers(uuid: string): Promise<RefGroup[]>;
   deletePage(name: string, kind: "journal" | "page", expectedPath?: string): Promise<void>;
   /** Rename a page and update all [[refs]]/#tags across the graph. */
-  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string): Promise<void>;
+  /** `mergeInto` is the confirmed path of the page that owns `next`; the
+   *  backend merges into it in one transaction and refuses if it changed. */
+  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string): Promise<void>;
   publishHtml(): Promise<[string, number]>;
   /** Render one page to a self-contained HTML document (assets inlined, no
    *  sidebar) for the print-to-PDF export, with the dialog's options. Rejects if
@@ -300,7 +302,7 @@ export interface Backend {
   /** Persist the journal display-title format to config.edn
    *  `:journal/page-title-format` (e.g. "MMM do, yyyy"). Display-only — does not
    *  rename journal files (`:journal/file-name-format` is separate). */
-  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<import("./types").JournalMigrationResult>;
+  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<void>;
   /** Set (or clear, with null) the new-journal default template in config.edn
    *  `:default-templates {:journals "Name"}`. */
   setDefaultJournalTemplate(name: string | null): Promise<void>;
@@ -348,6 +350,11 @@ export interface Backend {
   listJournalConflicts(): Promise<JournalConflict[]>;
   /** Move one journal file (by exact filename) to the recoverable trash. */
   trashJournalFile(name: string, kind: "delete-page"): Promise<void>;
+  /** Title-named journal files and the date names they would get. Opening a
+   *  graph only proposes these renames (master e6f9b6e1ceae). */
+  listJournalFilenameMigrations(): Promise<import("./types").JournalFilenameMigration[]>;
+  /** Apply the proposed renames after a snapshot of the graph. */
+  applyJournalFilenameMigrations(): Promise<import("./types").JournalMigrationResult>;
   /** Raw contents of one journal file (by exact filename), for inspecting a
    *  duplicate day's files before reconciling. */
   readJournalFile(name: string): Promise<string>;
@@ -776,8 +783,8 @@ class TauriBackend implements Backend {
   deletePage(name: string, kind: "journal" | "page", expectedPath?: string) {
     return this.call<void>("delete_page", { name, kind, expectedPath });
   }
-  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string) {
-    return this.call<void>("rename_page", { old, new: next, expectedPath });
+  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string) {
+    return this.call<void>("rename_page", { old, new: next, expectedPath, mergeInto });
   }
   publishHtml() {
     return this.call<[string, number]>("publish_html");
@@ -825,7 +832,7 @@ class TauriBackend implements Backend {
     return this.call<void>("set_preferred_format", { format });
   }
   setJournalTitleFormat(format: string) {
-    return this.call<import("./types").JournalMigrationResult>("set_journal_title_format", { format });
+    return this.call<void>("set_journal_title_format", { format });
   }
   setDefaultJournalTemplate(name: string | null) {
     return this.call<void>("set_default_journal_template", { name });
@@ -925,6 +932,12 @@ class TauriBackend implements Backend {
   }
   listJournalConflicts() {
     return this.call<JournalConflict[]>("list_journal_conflicts");
+  }
+  listJournalFilenameMigrations() {
+    return this.call<import("./types").JournalFilenameMigration[]>("list_journal_filename_migrations");
+  }
+  applyJournalFilenameMigrations() {
+    return this.call<import("./types").JournalMigrationResult>("apply_journal_filename_migrations");
   }
   trashJournalFile(name: string) {
     return this.call<void>("trash_journal_file", { name });

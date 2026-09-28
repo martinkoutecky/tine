@@ -978,15 +978,17 @@ pub(crate) async fn rename_page(
     old: String,
     new: String,
     expected_path: Option<String>,
+    merge_into: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::rename_page_expected(
+        tine_graph_features::pages::rename_or_merge_page(
             &slot.store,
             &old,
             &new,
             expected_path.as_deref(),
+            merge_into.as_deref(),
         )
         .map_err(|e| e.to_string())
     })
@@ -1290,9 +1292,9 @@ pub(crate) fn set_preferred_format(format: String, state: GraphContext<'_>) -> R
 pub(crate) fn set_journal_title_format(
     format: String,
     state: GraphContext<'_>,
-) -> Result<tine_graph_features::journals::MigrationResult, String> {
+) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::config::set_journal_page_title_format_and_migrate(&slot.store, &format)
+    tine_graph_features::config::set_journal_page_title_format(&slot.store, &format)
         .map_err(|error| error.to_string())
 }
 
@@ -2344,6 +2346,36 @@ pub(crate) async fn list_journal_conflicts(
     })
     .await
     .map_err(|error| error.to_string())
+}
+
+/// Proposed journal date-name renames; opening a graph never performs them.
+#[tauri::command]
+pub(crate) async fn list_journal_filename_migrations(
+    state: GraphContext<'_>,
+) -> Result<Vec<tine_graph_features::journals::JournalFilenameMigration>, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::journals::journal_filename_migrations(&slot.store)
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+/// Apply the proposed journal renames after a recoverable snapshot.
+#[tauri::command]
+pub(crate) async fn apply_journal_filename_migrations(
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<tine_graph_features::journals::MigrationResult, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::backup::snapshot_before_rewrite(&app, &slot, "pre-journal-rename")?;
+        Ok(tine_graph_features::journals::migrate_journal_filenames(
+            &slot.store,
+        ))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the

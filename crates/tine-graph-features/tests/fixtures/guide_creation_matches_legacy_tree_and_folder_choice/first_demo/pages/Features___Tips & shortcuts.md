@@ -19,6 +19,7 @@ icon:: ⌨️
 - ## Journal days
 	- **g j** opens the Journals feed; **g h** opens its home landing. **g n** and **g p** move to the next or previous calendar day from the journal you are viewing. From another page, they start at today.
 	- A configured default journal template is inserted once for each new day, including when Tine stays open through local midnight. Choose a journal display date format in Settings; the three dotted day-month-year patterns are available there too. The display format does not rename journal files.
+	- Opening a graph never renames journal files. If some are named by title instead of by date, their days look empty; **Settings → Backups & recovery** lists them under **Journal files named by title** with a **Rename to date names** button, which takes a snapshot first.
 	- The carry buttons under today's journal pull unfinished tasks from earlier days. After midnight, yesterday's button changes to **Carry unfinished tasks → today**.
 - ## Tabs
 	- **Middle-click** any bullet, page, or search result to open it in a background tab. **Double-click** a tab to pin it, **drag** to reorder, **Ctrl+W** to close. Your tabs come back next launch.
@@ -33,6 +34,7 @@ icon:: ⌨️
 	- **t b** (dim inactive blocks) fades everything except the bullet you're editing — a typewriter-style spotlight. Use it on its own, or let focus mode turn it on for you.
 - ## A few more worth knowing
 	- Use the **…** beside an ordinary page title for its complete actions menu: open the source file, copy/export, inspect properties, rename, carry tasks, or delete. It is the same menu as right-click and works from the keyboard and touch.
+	- Renaming a page to the name of another existing page offers to **merge** them, as Logseq does: the blocks move to the end of the page that remains, the aliases join, links to the old name point to it, and the merged file goes to the graph trash (recoverable).
 	- **Carry unfinished tasks** forward into today (from the command palette) — the last 7 / 30 / 365 days, optionally with their context.
 	- Select several task bullets and press **Ctrl/Cmd+Enter** to advance each one through your workflow in a single Undo step. The selection toolbar can also wrap selected text as a page link or inline code.
 	- **Namespaces**: name a page `Project/Roadmap` and it nests under `Project` in the sidebar. This page lives under `Features`.

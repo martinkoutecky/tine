@@ -110,6 +110,20 @@ pub(crate) fn backup_graph_now(
     do_backup_source(app, store, source, suffix)
 }
 
+/// Snapshot the graph before a rewrite the user asked for, refusing the rewrite
+/// when the snapshot failed so the original files stay recoverable in Backups &
+/// recovery. The tagged snapshot is exempt from the keep-count prune.
+pub(crate) fn snapshot_before_rewrite(
+    app: &tauri::AppHandle,
+    slot: &GraphSlot,
+    suffix: &str,
+) -> Result<(), String> {
+    match backup_graph_now(app, &slot.store, &slot.root_key, suffix).failure {
+        None => Ok(()),
+        Some(_) => Err("could not take a snapshot first; nothing was changed".into()),
+    }
+}
+
 /// Take one snapshot of the current graph now (synchronous). Returns the number
 /// of files copied (0 = nothing to back up). Reads the keep count from the local
 /// app-settings file and prunes old snapshots afterwards. `suffix` tags special
