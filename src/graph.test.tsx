@@ -89,6 +89,8 @@ async function loadHarness(
     graphTransitioning: () => false,
     setGraphTransitioning: vi.fn(),
     closePdf,
+    closePageProps: vi.fn(),
+    setAudioPlayer: vi.fn(),
   }));
   vi.doMock("./graphSession", () => ({
     setGraphMeta: (next: GraphMeta | null) => { meta = next; },
@@ -134,11 +136,12 @@ async function loadHarness(
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
   vi.doMock("./platform", () => ({ isMobile: () => false, platformKind: vi.fn(async () => "desktop") }));
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
+  vi.doMock("./workspaces", () => ({ clearWorkspaces: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { loadGraphPath, createNewGraph, refreshAfterRename } = await import("./graph");
+  const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename } = await import("./graph");
   return {
-    loadGraphPath, createNewGraph, refreshAfterRename, api, events, resetPageIndex, resetAt, waitForWarmCache,
+    loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, api, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
     applyTemplateVars, prepareTemplateVars, openPage,
   };
@@ -153,6 +156,40 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
+  it("does not open an old folder-picker choice after a newer graph binding", async () => {
+    const { switchGraph, api } = await loadHarness(null);
+    let finish!: (path: string) => void;
+    api.pickFolder.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = switchGraph();
+    await vi.waitFor(() => expect(api.pickFolder).toHaveBeenCalled());
+    const { invalidateBinding } = await import("./binding");
+    invalidateBinding();
+    finish("/tmp/old-choice");
+    await pending;
+    expect(api.loadGraph).not.toHaveBeenCalled();
+  });
+
+  it("clears the previous graph's expanded audio player on rebind", async () => {
+    const { loadGraphPath } = await loadHarness(null);
+    const { setAudioPlayer } = await import("./ui");
+    await loadGraphPath(META.root);
+    expect(setAudioPlayer).toHaveBeenCalledWith(null);
+  });
+
+  it("does not inject CSS from a graph whose read completes after rebinding", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    let finish!: (css: string) => void;
+    api.readCustomCss.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await loadGraphPath(META.root);
+    await vi.waitFor(() => expect(api.readCustomCss).toHaveBeenCalledOnce());
+    const { invalidateBinding } = await import("./binding");
+    invalidateBinding();
+    finish("body { color: red; }");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.head.querySelector("#test-css")?.textContent ?? "").not.toContain("red");
+  });
+
   it("drops template insertion when its page read lands after a graph switch (I-20)", async () => {
     const { loadGraphPath, api } = await loadHarness(null);
     let finish!: (page: PageRead | null) => void;

@@ -4,6 +4,8 @@ import { renderedBlockText, type RenderedTextOptions } from "./render/renderedTe
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";
 import { focusedPaneId, layoutPaneIds, paneRouter } from "./panes";
+import { sameRoute } from "./router";
+import { captureBinding, stillBound } from "./binding";
 
 export interface InPageFindMatch {
   blockId: string;
@@ -211,6 +213,7 @@ export function openInPageFind() {
 }
 
 export function closeInPageFind(opts: { restoreFocus?: boolean } = {}) {
+  revealToken++;
   const restoreFocus = opts.restoreFocus !== false;
   const target = restoreFocusEl;
   restoreFocusEl = null;
@@ -237,6 +240,7 @@ export function setInPageFindQuery(query: string) {
   state.setQuery(query);
   const matches = inPageFindMatches();
   if (!matches.length) {
+    revealToken++;
     state.setActiveIndex(-1);
     clearInPageFindHighlights();
     return;
@@ -254,6 +258,7 @@ export function stepInPageFind(delta: 1 | -1) {
 
 export function activateInPageFindIndex(index: number, matches = inPageFindMatches()) {
   if (!matches.length) {
+    revealToken++;
     state.setActiveIndex(-1);
     clearInPageFindHighlights();
     return;
@@ -261,8 +266,15 @@ export function activateInPageFindIndex(index: number, matches = inPageFindMatch
   const next = ((index % matches.length) + matches.length) % matches.length;
   state.setActiveIndex(next);
   const token = ++revealToken;
+  const binding = captureBinding();
+  const paneId = currentFindPaneId();
+  const tabId = paneRouter(paneId).activeId();
+  const route = paneRouter(paneId).route();
   void revealInPageFindMatch(matches[next]).then(() => {
-    if (token === revealToken) refreshInPageFindHighlights();
+    if (token === revealToken && state.open() && stillBound(binding)
+      && currentFindPaneId() === paneId && paneRouter(paneId).activeId() === tabId
+      && sameRoute(paneRouter(paneId).route(), route))
+      refreshInPageFindHighlights();
   });
 }
 
@@ -334,9 +346,18 @@ function animationFrame(): Promise<void> {
 }
 
 export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boolean> {
+  const binding = captureBinding();
+  const token = revealToken;
+  const paneId = currentFindPaneId();
+  const tabId = paneRouter(paneId).activeId();
+  const route = paneRouter(paneId).route();
+  const current = () => state.open() && token === revealToken && stillBound(binding)
+    && currentFindPaneId() === paneId && paneRouter(paneId).activeId() === tabId
+    && sameRoute(paneRouter(paneId).route(), route);
   if (match.surfaceId) {
     for (let i = 0; i < 20; i++) {
       await animationFrame();
+      if (!current()) return false;
       const element = inPageFindSurfaceElement(match.surfaceId);
       if (element) {
         element.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -351,6 +372,7 @@ export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boo
   expandAncestorsForFind(match.blockId);
   for (let i = 0; i < 20; i++) {
     await animationFrame();
+    if (!current()) return false;
     const el = inPageFindBlockElement(match.blockId);
     if (el) {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -569,11 +591,18 @@ async function refreshInPageFindHighlightsChunked(
   query: string,
   activeIdx: number,
 ) {
+  const binding = captureBinding();
+  const paneId = currentFindPaneId();
+  const tabId = paneRouter(paneId).activeId();
+  const route = paneRouter(paneId).route();
+  const current = () => token === highlightToken && state.open() && stillBound(binding)
+    && currentFindPaneId() === paneId && paneRouter(paneId).activeId() === tabId
+    && sameRoute(paneRouter(paneId).route(), route);
   const ranges: Range[] = [];
   let activeRange: Range | null = null;
   for (let i = 0; i < candidates.length; i++) {
     if (i > 0 && i % HIGHLIGHT_BLOCK_CHUNK_SIZE === 0) await animationFrame();
-    if (token !== highlightToken) return;
+    if (!current()) return;
     const block = candidates[i];
     const blockId = blockIdForElement(block);
     if (!blockId) continue;
@@ -595,7 +624,7 @@ async function refreshInPageFindHighlightsChunked(
   }
   for (let i = 0; i < surfaceCandidates.length; i++) {
     if ((candidates.length + i) > 0 && (candidates.length + i) % HIGHLIGHT_BLOCK_CHUNK_SIZE === 0) await animationFrame();
-    if (token !== highlightToken) return;
+    if (!current()) return;
     const surface = surfaceCandidates[i];
     const surfaceId = surface.dataset.inpageFindSurface;
     if (!surfaceId) continue;
@@ -613,6 +642,6 @@ async function refreshInPageFindHighlightsChunked(
       }
     }
   }
-  if (token !== highlightToken) return;
+  if (!current()) return;
   if (!applyCssHighlights(ranges, activeRange)) applyOverlayHighlights(ranges, activeRange);
 }

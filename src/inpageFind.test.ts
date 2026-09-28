@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { initParser } from "./render/parse";
 import {
   clearInPageFindRenderedTextCacheForTests,
@@ -7,6 +7,9 @@ import {
   findTextOccurrences,
   scopedInPageFindMatchesForQuery,
   type InPageFindBlock,
+  openInPageFind,
+  closeInPageFind,
+  setInPageFindQuery,
 } from "./inpageFind";
 import { renderedBlockTextCallCountForTests, resetRenderedBlockTextCallCountForTests } from "./render/renderedText";
 import { focusPane, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
@@ -42,6 +45,28 @@ afterEach(() => {
 });
 
 describe("in-page find model", () => {
+  it("does not scroll a stale result after Find closes during an animation frame", async () => {
+    resetPaneLayoutToSingle(querySnapshot());
+    document.body.innerHTML = '<main data-pane-id="main"><button data-inpage-find-surface="query:page:Alpha">needle</button></main>';
+    const element = document.querySelector<HTMLElement>("[data-inpage-find-surface]")!;
+    const scroll = vi.fn();
+    element.scrollIntoView = scroll;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    try {
+      openInPageFind();
+      setInPageFindQuery("needle");
+      expect(frames.length).toBeGreaterThan(0);
+      closeInPageFind({ restoreFocus: false });
+      frames.shift()!(0);
+      await Promise.resolve();
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      closeInPageFind({ restoreFocus: false });
+    }
+  });
+
   it("counts matches in collapsed descendants because it searches the block model", () => {
     const blocks: InPageFindBlock[] = [
       {

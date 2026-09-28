@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { buildPersistedSession, parsePersistedSession, type PersistedSession } from "./session";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildPersistedSession, parsePersistedSession, restoreSession, type PersistedSession } from "./session";
+import { backend } from "./backend";
+import { resetStore } from "./document";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
 import type { PaneSnapshot } from "./router";
 import { applySidebarSession, favoritesSectionExpanded, recentSectionExpanded, rightSidebar, parseStoredSidebarItems, openBlockInSidebar, openPageInSidebar, recentPages, setRecentPages, setRightSidebar, setFavoritesSectionExpanded, setRecentSectionExpanded } from "./ui";
@@ -22,6 +24,19 @@ beforeEach(() => {
 });
 
 describe("persisted split session", () => {
+  it("does not apply a session read from an old graph after rebinding", async () => {
+    let finish!: (raw: string) => void;
+    const old = { ...buildPersistedSession(), recentPages: [{ name: "Old graph", kind: "page" as const }] };
+    vi.spyOn(backend(), "loadSession").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = restoreSession();
+    resetStore();
+    setRecentPages([{ name: "New graph", kind: "page" }]);
+    finish(JSON.stringify(old));
+    await pending;
+    expect(recentPages()).toEqual([{ name: "New graph", kind: "page" }]);
+    vi.restoreAllMocks();
+  });
+
   it("copies only bounded route fields while retaining exact page ownership", () => {
     const path = "pages/client-b/Twin.md";
     const raw = JSON.stringify({

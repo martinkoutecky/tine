@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { captureBinding, stillBound } from "./binding";
 import { applyParsedSession, buildPersistedSession, flushSession, parsePersistedSession, scheduleSessionSave, type PersistedSession } from "./session";
 
 export interface Workspace {
@@ -20,8 +21,26 @@ export { workspaceList as workspaces, activeId as activeWorkspaceId };
 
 let operationTail: Promise<void> = Promise.resolve();
 
-function enqueue<T>(operation: () => Promise<T>): Promise<T> {
-  const result = operationTail.then(operation, operation);
+interface WorkspaceOperation {
+  assert: () => void;
+  after: <T>(promise: Promise<T>) => Promise<T>;
+}
+
+function enqueue<T>(operation: (scope: WorkspaceOperation) => Promise<T>): Promise<T> {
+  const binding = captureBinding();
+  const assert = () => {
+    if (!stillBound(binding)) throw new Error("The graph changed during the workspace operation");
+  };
+  const scope: WorkspaceOperation = {
+    assert,
+    after: async (promise) => {
+      const value = await promise;
+      assert();
+      return value;
+    },
+  };
+  const run = () => { assert(); return operation(scope); };
+  const result = operationTail.then(run, run);
   operationTail = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -88,8 +107,9 @@ function registry(): WorkspaceRegistry {
   return { version: 1, activeId: current, workspaces: list };
 }
 
-async function persist(next: WorkspaceRegistry): Promise<void> {
-  await backend().saveWorkspaces(JSON.stringify(next));
+async function persist(next: WorkspaceRegistry, scope: WorkspaceOperation): Promise<void> {
+  scope.assert();
+  await scope.after(backend().saveWorkspaces(JSON.stringify(next)));
 }
 
 function install(next: WorkspaceRegistry) {
@@ -112,8 +132,9 @@ function workspaceId(): string {
 }
 
 export function initializeWorkspaces(): Promise<void> {
-  return enqueue(async () => {
-    const loaded = parseRegistry(await backend().loadWorkspaces());
+  return enqueue(async (scope) => {
+    clearWorkspaces();
+    const loaded = parseRegistry(await scope.after(backend().loadWorkspaces()));
     if (!loaded) throw new Error("The named-workspace registry is invalid");
     // The unchanged live session file is authoritative for the active workspace
     // on launch. Keep its freshest state in memory without rewriting either file.
@@ -126,8 +147,8 @@ export function initializeWorkspaces(): Promise<void> {
 }
 
 export function saveActiveWorkspace(): Promise<void> {
-  return enqueue(async () => {
-    await flushSession();
+  return enqueue(async (scope) => {
+    await scope.after(flushSession());
     const current = registry();
     const next: WorkspaceRegistry = {
       ...current,
@@ -137,14 +158,14 @@ export function saveActiveWorkspace(): Promise<void> {
           : workspace
       ),
     };
-    await persist(next);
+    await persist(next, scope);
     install(next);
   });
 }
 
 export function switchWorkspace(targetId: string): Promise<void> {
-  return enqueue(async () => {
-    await flushSession();
+  return enqueue(async (scope) => {
+    await scope.after(flushSession());
     const current = registry();
     const target = current.workspaces.find((workspace) => workspace.id === targetId);
     if (!target) throw new Error("Workspace not found");
@@ -157,7 +178,7 @@ export function switchWorkspace(targetId: string): Promise<void> {
           : workspace
       ),
     };
-    await persist(next);
+    await persist(next, scope);
     install(next);
     if (targetId !== current.activeId) {
       applyWorkspace(next.workspaces.find((workspace) => workspace.id === targetId)!);
@@ -166,8 +187,8 @@ export function switchWorkspace(targetId: string): Promise<void> {
 }
 
 export function createWorkspace(name: string): Promise<string> {
-  return enqueue(async () => {
-    await flushSession();
+  return enqueue(async (scope) => {
+    await scope.after(flushSession());
     const current = registry();
     const id = workspaceId();
     const fresh: Workspace = { id, name: normalizeName(name), blob: defaultWorkspaceSession() };
@@ -183,7 +204,7 @@ export function createWorkspace(name: string): Promise<string> {
         fresh,
       ],
     };
-    await persist(next);
+    await persist(next, scope);
     install(next);
     applyWorkspace(fresh);
     return id;
@@ -191,7 +212,7 @@ export function createWorkspace(name: string): Promise<string> {
 }
 
 export function renameWorkspace(id: string, name: string): Promise<void> {
-  return enqueue(async () => {
+  return enqueue(async (scope) => {
     const current = registry();
     if (!current.workspaces.some((workspace) => workspace.id === id)) throw new Error("Workspace not found");
     const next = {
@@ -200,18 +221,18 @@ export function renameWorkspace(id: string, name: string): Promise<void> {
         workspace.id === id ? { ...workspace, name: normalizeName(name) } : workspace
       ),
     };
-    await persist(next);
+    await persist(next, scope);
     install(next);
   });
 }
 
 export function deleteWorkspace(id: string): Promise<void> {
-  return enqueue(async () => {
+  return enqueue(async (scope) => {
     const current = registry();
     const removed = current.workspaces.find((workspace) => workspace.id === id);
     if (!removed) throw new Error("Workspace not found");
     const deletingActive = id === current.activeId;
-    if (deletingActive) await flushSession();
+    if (deletingActive) await scope.after(flushSession());
     let remaining = current.workspaces.filter((workspace) => workspace.id !== id);
     if (!remaining.length) {
       remaining = [{ id: workspaceId(), name: "", blob: defaultWorkspaceSession() }];
@@ -221,7 +242,7 @@ export function deleteWorkspace(id: string): Promise<void> {
       activeId: deletingActive ? remaining[0].id : current.activeId,
       workspaces: remaining,
     };
-    await persist(next);
+    await persist(next, scope);
     install(next);
     if (deletingActive) applyWorkspace(remaining[0]);
   });
@@ -231,8 +252,12 @@ export function workspaceDisplayName(workspace: Pick<Workspace, "name">): string
   return workspace.name || "Default";
 }
 
-export function resetWorkspacesForTest() {
+export function clearWorkspaces() {
   setWorkspaceList([]);
   setActiveId("");
+}
+
+export function resetWorkspacesForTest() {
+  clearWorkspaces();
   operationTail = Promise.resolve();
 }

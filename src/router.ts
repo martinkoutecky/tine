@@ -10,6 +10,7 @@ import { pushRecent } from "./ui";
 import { navigationName } from "./pageIndex";
 import { persistentBlockRef, resolveBlockRef, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
+import { captureBinding, stillBound } from "./binding";
 import { renderedBlocks } from "./lazyObserve";
 import { navReuseTabs } from "./navSettings";
 import { isMobilePlatform } from "./nativeChrome";
@@ -82,6 +83,8 @@ export interface AdoptedTab {
 
 export interface PaneRouter {
   paneId: string;
+  /** Advances for user route/tab changes, not page-target rewrites or removals. O(1). */
+  routeIntentRevision(): number;
   tabs: Accessor<Tab[]>;
   activeId: Accessor<string>;
   setScrollerElement(el: HTMLElement | null): void;
@@ -235,6 +238,8 @@ export function installNavigationInterceptor(
 
 export function createPaneRouter(paneId = "main"): PaneRouter {
   let counter = 0;
+  let intentRevision = 0;
+  const routeIntentRevision = () => intentRevision;
   const newId = () => `tab-${counter++}`;
 
   // Start on a single journals tab. The saved session (if any) is loaded
@@ -371,6 +376,11 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  left off instead of at the bottom of the default window. */
   function restoreScrollFor(r: Route) {
     if (typeof requestAnimationFrame === "undefined") return; // no-DOM (unit tests)
+    const binding = captureBinding();
+    const tabId = activeId();
+    const intent = intentRevision;
+    const current = () => stillBound(binding) && activeId() === tabId
+      && intentRevision === intent && sameRoute(route(), r);
     const target = scrollByRoute.get(r) ?? 0;
     let tries = 0;
     let extending = false;
@@ -378,6 +388,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // synchronous reset races the content swap (a new page wouldn't actually land
     // at the top). Then for a deep offset keep nudging while the page grows.
     const tick = () => {
+      if (!current()) return;
       const el = mainScroller();
       if (!el) return;
       const max = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -391,6 +402,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
         extending = true;
         void extendFeedForScroll().then((grew) => {
           extending = false;
+          if (!current()) return;
           if (grew ? tries++ < 400 : tries++ < 60) requestAnimationFrame(tick);
         });
         return;
@@ -429,6 +441,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       openInNewTab(r, true);
       return;
     }
+    intentRevision++;
     setTabs(
       tabs().map((t) => {
         if (t.id !== activeId()) return t;
@@ -599,6 +612,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function openInNewTab(r: Route, foreground = false) {
     if (foreground && navigationInterceptor(paneId, r, {})) return;
+    if (foreground) intentRevision++;
     // Open a new tab. Default is *background* (no focus switch) - matches a
     // browser's middle-click. `foreground` is used by the sticky-tab redirect, so
     // a click on a pinned tab lands you on the new tab. New tabs are unpinned, so
@@ -677,12 +691,14 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function goBack() {
     if (!canGoBack()) return;
+    intentRevision++;
     if (requestMobileHistoryBack()) return;
     applyRouterBack();
   }
 
   function goForward() {
     if (!canGoForward()) return;
+    intentRevision++;
     rememberScroll(); // save this entry's scroll before stepping forward
     setTabs(tabs().map((t) => (t.id === activeId() ? { ...t, pos: t.pos + 1 } : t)));
     activateCurrentRoute();
@@ -694,6 +710,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const next = tabs().find((t) => t.id === id);
     if (!next || next.id === activeId()) return;
     if (navigationInterceptor(paneId, tabRoute(next), {})) return;
+    intentRevision++;
     rememberScroll(); // save the outgoing tab's scroll so switching back restores it
     setActiveId(id);
     activateCurrentRoute();
@@ -706,6 +723,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   async function closeTab(id: string) {
+    const binding = captureBinding();
     const list = tabs();
     if (list.length === 1) {
       if (route().kind !== "journals" && lastTabCloseHandler(paneId)) return;
@@ -718,6 +736,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // this WebKitGTK build, so the tab would close without ever asking. Unpinned
     // tabs skip the await and close synchronously (no behaviour change there).
     if (t?.pinned && !(await backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`))) return;
+    if (!stillBound(binding)) return;
+    intentRevision++;
     // Save the current scroll against the (about-to-close) active tab's route, so a
     // later Ctrl+Shift+T reopen lands back where it was. The route object survives
     // in `closedTabs`, so its scrollByRoute entry is still live on reopen.
@@ -744,6 +764,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function reopenClosedTab() {
     const last = closedTabs.pop();
     if (!last || !last.history.length) return;
+    intentRevision++;
     const id = newId();
     const pos = Math.min(Math.max(0, last.pos | 0), last.history.length - 1);
     // New tabs are unpinned, so appending preserves the pinned-left invariant.
@@ -915,6 +936,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   return {
     paneId,
+    routeIntentRevision,
     tabs,
     activeId,
     setScrollerElement,

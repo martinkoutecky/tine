@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { type GraphMeta } from "./types";
 import { backend } from "./backend";
 import { pushToast } from "./toasts";
+import { captureBinding, stillBound } from "./binding";
 
 export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
 
@@ -15,6 +16,7 @@ export const [firstLoadDone, setFirstLoadDone] = createSignal(false);
  *  it to config.edn `:default-templates {:journals "Name"}` and updating the live
  *  meta so the UI reflects it immediately. */
 export function setJournalTemplate(name: string | null) {
+  const binding = captureBinding();
   const m = graphMeta();
   const prev = m?.default_journal_template ?? null;
   if (m) setGraphMeta({ ...m, default_journal_template: name });
@@ -23,6 +25,7 @@ export function setJournalTemplate(name: string | null) {
   void backend()
     .setDefaultJournalTemplate(name)
     .catch((e) => {
+      if (!stillBound(binding)) return;
       const cur = graphMeta();
       if (cur) setGraphMeta({ ...cur, default_journal_template: prev });
       pushToast(`Couldn't save the journal template setting. (${String(e)})`, "error");

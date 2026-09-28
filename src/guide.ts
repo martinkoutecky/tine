@@ -1,4 +1,5 @@
 import { backend } from "./backend";
+import { captureBinding, stillBound, type Binding } from "./binding";
 import { openPage, openPageInNewTab } from "./router";
 import { loadGuidePages, pageByName } from "./document";
 import { bumpPageInventoryRev, graphMeta, setGraphMeta } from "./graphSession";
@@ -37,9 +38,11 @@ export function guideTargetForLink(target: string, sourcePage?: string): string 
 
 export async function ensureGuidePagesLoaded(force = false): Promise<GuidePage[]> {
   if (!force && guideLoad) return guideLoad;
+  const binding = captureBinding();
   guideLoad = backend()
     .guidePages()
     .then((pages) => {
+      if (!stillBound(binding)) return pages;
       guideTitles.clear();
       loadGuidePages(
         pages.map((g) => {
@@ -59,19 +62,23 @@ export async function ensureGuidePagesLoaded(force = false): Promise<GuidePage[]
 }
 
 export async function openGuide(): Promise<void> {
+  const binding = captureBinding();
   try {
     await ensureGuidePagesLoaded(true);
+    if (!stillBound(binding)) return;
     openPageInNewTab(guidePageName(GUIDE_INDEX_TITLE), "page", undefined, true);
   } catch (e) {
-    pushToast(`Couldn't open the Guide. (${String(e)})`, "error");
+    if (stillBound(binding)) pushToast(`Couldn't open the Guide. (${String(e)})`, "error");
   }
 }
 
 export async function copyGuideIntoGraph(pageName: string): Promise<void> {
+  const binding = captureBinding();
   const page = pageByName(pageName);
   const title = guideTitleFromName(page?.name ?? pageName);
   try {
     const result = await backend().copyGuideIntoGraph(title, "replace-page");
+    if (!stillBound(binding)) return;
     if ((result.created_pages?.length ?? 0) > 0) bumpPageInventoryRev();
     pushToast(
       result.created
@@ -81,11 +88,12 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
     );
     openPage(result.name, "page");
   } catch (e) {
-    pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
+    if (stillBound(binding)) pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
   }
 }
 
-function markGuideAnnounced() {
+function markGuideAnnounced(binding: Binding) {
+  if (!stillBound(binding)) return;
   const meta = graphMeta();
   if (meta && !meta.guide_announced) {
     setGraphMeta({ ...meta, guide_announced: true });
@@ -97,12 +105,13 @@ export function maybeShowGuideAnnouncement() {
   const meta = graphMeta();
   if (!meta || meta.guide_announced || announcementShownForRoot.has(meta.root)) return;
   announcementShownForRoot.add(meta.root);
+  const binding = captureBinding();
   pushToast("New: in-app Guide \u2014 learn Sheets, formulas & queries.", "info", {
     sticky: true,
     action: {
       label: "Open Guide",
       run: () => void openGuide(),
     },
-    onDismiss: markGuideAnnounced,
+    onDismiss: () => markGuideAnnounced(binding),
   });
 }

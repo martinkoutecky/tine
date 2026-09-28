@@ -3,6 +3,7 @@ import { pagePropsPanel, closePageProps } from "../ui";
 import { readPageProperty, setPageProperty } from "../document";
 import { PAGE_PROP_SPECS, type PagePropSpec } from "../editor/properties";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
+import { stillBound, type Binding } from "../binding";
 
 // Page-properties panel: labelled fields for the page-level properties that are
 // otherwise only reachable as raw `key:: value` lines (alias, tags, public, …).
@@ -12,12 +13,12 @@ import { dismissTopTransient, registerTransientLayer } from "../transientLayers"
 export function PageProps(): JSX.Element {
   return (
     <Show when={pagePropsPanel()}>
-      {(p) => <Panel name={p().name} x={p().x} y={p().y} />}
+      {(p) => <Panel name={p().name} x={p().x} y={p().y} binding={p().binding} />}
     </Show>
   );
 }
 
-function Panel(props: { name: string; x: number; y: number }): JSX.Element {
+function Panel(props: { name: string; x: number; y: number; binding: Binding }): JSX.Element {
   const w = typeof window !== "undefined" ? window.innerWidth : 1280;
   const h = typeof window !== "undefined" ? window.innerHeight : 800;
   const left = Math.max(8, Math.min(props.x, w - 332));
@@ -43,7 +44,7 @@ function Panel(props: { name: string; x: number; y: number }): JSX.Element {
         <div class="pp-head">
           Page properties <span class="pp-page">{props.name}</span>
         </div>
-        <For each={PAGE_PROP_SPECS}>{(spec) => <Field name={props.name} spec={spec} />}</For>
+        <For each={PAGE_PROP_SPECS}>{(spec) => <Field name={props.name} spec={spec} binding={props.binding} />}</For>
         <div class="pp-foot">
           <button class="pp-done" onClick={closePageProps}>Done</button>
         </div>
@@ -52,7 +53,7 @@ function Panel(props: { name: string; x: number; y: number }): JSX.Element {
   );
 }
 
-function Field(props: { name: string; spec: PagePropSpec }): JSX.Element {
+function Field(props: { name: string; spec: PagePropSpec; binding: Binding }): JSX.Element {
   const initial = readPageProperty(props.name, props.spec.key) ?? "";
 
   if (props.spec.kind === "bool") {
@@ -63,6 +64,7 @@ function Field(props: { name: string; spec: PagePropSpec }): JSX.Element {
           type="checkbox"
           checked={on()}
           onChange={(e) => {
+            if (!stillBound(props.binding)) return;
             setOn(e.currentTarget.checked);
             setPageProperty(props.name, props.spec.key, e.currentTarget.checked ? "true" : null);
           }}
@@ -80,6 +82,7 @@ function Field(props: { name: string; spec: PagePropSpec }): JSX.Element {
   // re-commits the value read when it opened — clobbering a concurrent external
   // edit (OG/Syncthing) that the file-watcher reloaded while the panel was open.
   const commit = () => {
+    if (!stillBound(props.binding)) return;
     if (v() === initial) return;
     setPageProperty(props.name, props.spec.key, v().trim() || null);
   };
