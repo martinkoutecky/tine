@@ -3,6 +3,7 @@ import { closeFormulaEditor, formulaEditor, type FormulaEditorHome, type Formula
 import { blockPageReadOnly, pageByName, setBlockProperty, setPageProperty, node as docNode } from "../document";
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
 import { registerTransientLayer } from "../transientLayers";
+import { refuseStaleWrite } from "../binding";
 
 const STDLIB_CHIPS = [
   "if()",
@@ -267,6 +268,8 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
     });
   };
   const save = () => {
+    // I-20: the target was opened in this graph; a switch retires it.
+    if (formulaEditor() !== props.target) return refuseStaleWrite("The formula");
     if (!canSave()) return;
     const h = home();
     if (!h) return;

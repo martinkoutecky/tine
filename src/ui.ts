@@ -6,7 +6,7 @@ import type { JournalConflict, SyncConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
-import { captureBinding } from "./binding";
+import { captureBinding, graphScopedSignal } from "./binding";
 import { graphOwner, latestOwner, readOwned, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./routerBridge";
@@ -454,7 +454,7 @@ export function agendaQuery(): string {
 }
 
 // Block id of a "/Query (visual builder)" block whose QueryBuilder opens its add-filter picker once on mount.
-export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = createSignal<string | null>(null);
+export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = graphScopedSignal<string>();
 
 export type PropsPanelScope = { kind: "page"; name: string } | { kind: "block"; id: string };
 /** The one open properties panel (GH #164) or null; page OR block scope despite the name (`name` = exact store page name, `id` = in-memory
@@ -474,7 +474,7 @@ export function closePageProps() {
 
 // "Copy / export as" modal — a live-preview text export of a block subtree or a
 // multi-block selection, with indent-style + remove options (mirrors OG Logseq).
-export const [exportModal, setExportModal] = createSignal<{ ids: string[] } | null>(null);
+export const [exportModal, setExportModal] = graphScopedSignal<{ ids: string[] }>();
 export function openExportModal(ids: string[]) {
   if (ids.length) setExportModal({ ids });
 }
@@ -828,9 +828,9 @@ export type DatePickerTarget =
   | "scheduled"
   | "deadline"
   | { field: `prop:${string}`; fieldType: "date" | "datetime" };
-export const [datePicker, setDatePicker] = createSignal<
-  { blockId: string; which: DatePickerTarget; x: number; y: number } | null
->(null);
+export const [datePicker, setDatePicker] = graphScopedSignal<
+  { blockId: string; which: DatePickerTarget; x: number; y: number }
+>();
 export function openDatePicker(blockId: string, which: DatePickerTarget, x: number, y: number) {
   setDatePicker({ blockId, which, x, y });
 }
@@ -854,7 +854,8 @@ export interface FormulaEditorTarget {
   fields: readonly string[];
   home?: FormulaEditorHome | null;
 }
-export const [formulaEditor, setFormulaEditor] = createSignal<FormulaEditorTarget | null>(null);
+/** Graph-scoped (I-20): a graph switch closes the editor; `save` refuses a stale target. */
+export const [formulaEditor, setFormulaEditor] = graphScopedSignal<FormulaEditorTarget>();
 export function openFormulaEditor(target: FormulaEditorTarget) {
   setFormulaEditor(target);
 }
@@ -1255,9 +1256,9 @@ export interface ContextMenuAction {
   danger?: boolean;
   children?: readonly ContextMenuAction[];
 }
-export const [contextMenu, setContextMenu] = createSignal<
-  ({ x: number; y: number } & CtxTarget) | null
->(null);
+export const [contextMenu, setContextMenu] = graphScopedSignal<
+  { x: number; y: number } & CtxTarget
+>();
 export function openContextMenu(x: number, y: number, blockId: string) {
   setContextMenu({ x, y, kind: "block", blockId });
 }
@@ -1335,10 +1336,10 @@ export function closeContextMenu() {
 // open when its target block mounts. The monotonically increasing token makes a
 // repeated request for the same block observable after the user closed it.
 let blockReferencesRequestToken = 0;
-export const [blockReferencesRequest, setBlockReferencesRequest] = createSignal<{
+export const [blockReferencesRequest, setBlockReferencesRequest] = graphScopedSignal<{
   id: string;
   token: number;
-} | null>(null);
+}>();
 export function requestBlockReferences(id: string) {
   setBlockReferencesRequest({ id, token: ++blockReferencesRequestToken });
 }
@@ -1428,7 +1429,7 @@ export function closeSwitcher() {
 // PDF export: the page whose export-options dialog is open (null = closed). Set by
 // the page context menu / the "Export current page to PDF" command; the dialog
 // collects options and calls exportPagePdf.
-export const [pdfExportPage, setPdfExportPage] = createSignal<string | null>(null);
+export const [pdfExportPage, setPdfExportPage] = graphScopedSignal<string>();
 export function openPdfExport(name: string) {
   setPdfExportPage(name);
 }
