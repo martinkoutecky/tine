@@ -20,7 +20,8 @@ describe("async ownership guard", () => {
   it("pins graph-bound component and module continuations", () => {
     check("src/components/ContextMenu.tsx", "function MakeTemplate(", "function PageMenu(", [/graphOwner\(\)/, /readOwned\(owner, backend\(\)\.listTemplates/, /existing\.kind === "stale"\) return/]);
     check("src/components/Block.tsx", "function beginDrag(", "export interface CaptureApi", [/captureBinding\(\)/, /stillBound\(binding\) && dragMoved/]);
-    check("src/components/PageProps.tsx", "function Field(", "  return (\n    <div class=\"pp-field\">", [/stillBound\(props\.binding\)/]);
+    // Every panel write (Field, bool, Remove, AddRow) goes through writeOne: graph session + subject instance.
+    check("src/components/PageProps.tsx", "function writeOne(", "function scopeWritable(", [/stillBound\(binding\)/, /subjectOf\(scope\) !== subject/]);
     check("src/components/WorkspaceSwitcher.tsx", "  const remove = async", "  return (", [/graphOwner\(\)/, /confirmed\.kind === "stale"/, /writeOwned\(owner, deleteWorkspace/]);
     check("src/workspaces.ts", "function enqueue<", "function cloneSession(", [/graphOwner\(\)/, /assert\(\)/, /serializeDurable\(operationQueue, owner, run\)/]);
     check("src/guide.ts", "function markGuideAnnounced(", "export function maybeShowGuideAnnouncement", [/if \(!owner\(\)\) return/, /writeOwned\(owner, backend\(\)\.setGuideAnnounced/]);

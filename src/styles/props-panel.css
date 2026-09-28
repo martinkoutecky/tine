@@ -54,3 +54,6 @@
 .pp-add-commit:hover:not(:disabled) {
   background: var(--bg-tertiary);
 }
+.pp-error {
+  color: var(--danger, #c0392b);
+}

@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps, type PropsPanelScope } from "../ui";
 import {
   blockPageReadOnly, blockProperty, formatForBlock, node, pageByName,
@@ -8,6 +8,7 @@ import { PAGE_PROP_SPECS, isEditablePropertyKey, isSheetCellHidden, type PagePro
 import { facetsOf } from "../render/facets";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { stillBound, type Binding } from "../binding";
+import { pushToast } from "../toasts";
 import "../styles/props-panel.css";
 
 // Properties panel: labelled fields for the properties of a page's pre-block or
@@ -38,18 +39,35 @@ function existingProperties(scope: PropsPanelScope): [string, string][] {
 const readOne = (scope: PropsPanelScope, key: string) =>
   scope.kind === "page" ? readPageProperty(scope.name, key) : blockProperty(scope.id, key);
 
-function writeOne(scope: PropsPanelScope, binding: Binding, key: string, value: string | null): void {
-  if (!stillBound(binding)) return;
+// The loaded page/block object the panel opened on. A genuine reload (external
+// change, delete + recreate, graph reset) replaces it — even under the same page
+// name or block id — so comparing it binds every write to what the user saw.
+const subjectOf = (scope: PropsPanelScope): object | undefined =>
+  scope.kind === "page" ? pageByName(scope.name) : node(scope.id);
+
+/** The one write door of the panel. A write lands only while the graph session
+ *  (`binding`) AND the subject instance captured at open are both current;
+ *  otherwise it is refused visibly and the panel closes, so a typed edit is
+ *  never dropped silently and never overwrites an intervening change. */
+function writeOne(scope: PropsPanelScope, binding: Binding, subject: object | undefined, key: string, value: string | null): boolean {
+  const stale = !stillBound(binding) ? "The graph changed" : !subject || subjectOf(scope) !== subject
+    ? `This ${scope.kind} changed or was reloaded` : null;
+  if (stale) {
+    pushToast(`${stale} while its properties panel was open, so "${key}" was not saved. Reopen the panel to edit it.`, "error");
+    closePageProps();
+    return false;
+  }
   if (scope.kind === "page") setPageProperty(scope.name, key, value);
   else setBlockProperty(scope.id, key, value);
+  return true;
 }
 
-/** Refuses only when the subject is LOADED and positively read-only; an
- *  unloaded subject is unknown, and the writers are already no-ops for it. */
+/** Writable only when the subject is loaded and not read-only. An unknown or
+ *  no-longer-loaded page/block shows the read-only notice, never an edit row. */
 function scopeWritable(scope: PropsPanelScope): boolean {
-  if (scope.kind === "block") return node(scope.id) ? !blockPageReadOnly(scope.id) : true;
+  if (scope.kind === "block") return !!node(scope.id) && !blockPageReadOnly(scope.id);
   const page = pageByName(scope.name);
-  return !page || (!page.readOnly && !page.guide);
+  return !!page && !page.readOnly && !page.guide;
 }
 
 function scopeLabel(scope: PropsPanelScope): { title: string; subject: string } {
@@ -92,6 +110,8 @@ function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: B
   // remount the fields and discard what the user is halfway through typing.
   const rows = createMemo(() => rowsFor(props.scope), undefined, { equals: sameKeys });
   const writable = createMemo(() => scopeWritable(props.scope));
+  const subject = untrack(() => subjectOf(props.scope));
+  const write = (key: string, value: string | null) => writeOne(props.scope, props.binding, subject, key, value);
   const heading = createMemo(() => scopeLabel(props.scope));
   return (
     <div
@@ -108,10 +128,10 @@ function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: B
         </div>
         <Show
           when={writable()}
-          fallback={<div class="pp-hint">This {props.scope.kind} is read-only, so its properties cannot be changed here.</div>}
+          fallback={<div class="pp-hint">This {props.scope.kind} is read-only or no longer loaded, so its properties cannot be changed here.</div>}
         >
-          <For each={rows()}>{(spec) => <Field scope={props.scope} spec={spec} binding={props.binding} />}</For>
-          <AddRow scope={props.scope} binding={props.binding} />
+          <For each={rows()}>{(spec) => <Field scope={props.scope} spec={spec} write={write} />}</For>
+          <AddRow scope={props.scope} write={write} />
         </Show>
         <div class="pp-foot">
           <button class="pp-done" onClick={closePageProps}>Done</button>
@@ -121,21 +141,24 @@ function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: B
   );
 }
 
-function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; binding: Binding }): JSX.Element {
-  const initial = readOne(props.scope, props.spec.key) ?? "";
-  const write = (value: string | null) => writeOne(props.scope, props.binding, props.spec.key, value);
+type Write = (key: string, value: string | null) => boolean;
+
+function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; write: Write }): JSX.Element {
+  // The value last written or read; only a real local edit writes (see commit).
+  let saved = readOne(props.scope, props.spec.key) ?? "";
+  const write = (value: string | null) => props.write(props.spec.key, value);
 
   if (props.spec.kind === "bool") {
-    const [on, setOn] = createSignal(initial.toLowerCase() === "true");
+    const [on, setOn] = createSignal(saved.toLowerCase() === "true");
     return (
       <label class="pp-field pp-bool">
         <input
           type="checkbox"
           checked={on()}
           onChange={(e) => {
-            if (!stillBound(props.binding)) return;
-            setOn(e.currentTarget.checked);
-            write(e.currentTarget.checked ? "true" : null);
+            const checked = e.currentTarget.checked;
+            if (write(checked ? "true" : null)) setOn(checked);
+            else e.currentTarget.checked = on();
           }}
         />
         <span class="pp-text">
@@ -146,16 +169,19 @@ function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; binding: Bin
     );
   }
 
-  const [v, setV] = createSignal(initial);
+  const [v, setV] = createSignal(saved);
   // Only write on an actual local edit. Otherwise blurring/closing the panel
   // re-commits the value read when it opened — clobbering a concurrent external
   // edit (OG/Syncthing) that the file-watcher reloaded while the panel was open.
   const commit = () => {
-    if (v() === initial) return;
-    write(v().trim() || null);
+    if (v() === saved) return;
+    if (write(v().trim() || null)) saved = v();
   };
-  // A key with no preset is removable; presets clear by emptying the field.
+  // A key with no preset is removable; presets clear by emptying the field. A
+  // key outside the editable grammar (e.g. non-ASCII, from the file) is shown
+  // read-only: rewriting it would keep a key some Tine readers cannot see.
   const removable = !PAGE_PROP_SPECS.some((spec) => spec.key === props.spec.key);
+  const editable = isEditablePropertyKey(props.spec.key);
   return (
     <div class="pp-field">
       <div class="pp-row-head">
@@ -166,6 +192,8 @@ function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; binding: Bin
       </div>
       <input
         class="pp-input"
+        disabled={!editable}
+        title={editable ? undefined : "Tine can remove this key but not rewrite it: keys must be ASCII letters, digits, - or _."}
         value={v()}
         placeholder={props.spec.kind === "list" ? "comma, separated" : ""}
         onInput={(e) => setV(e.currentTarget.value)}
@@ -188,17 +216,25 @@ function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; binding: Bin
   );
 }
 
-function AddRow(props: { scope: PropsPanelScope; binding: Binding }): JSX.Element {
+function AddRow(props: { scope: PropsPanelScope; write: Write }): JSX.Element {
   const [key, setKey] = createSignal("");
   const [value, setValue] = createSignal("");
-  // Validated by the matcher that later has to FIND the key, never a local
-  // regex: anything accepted here can be updated and removed. Machine-managed
-  // keys are refused — they have their own surfaces.
+  // isEditablePropertyKey is the grammar every Tine reader finds again, so an
+  // added key can be updated and removed. Machine-managed keys have their own
+  // surfaces; an existing key is edited on its own row (the add-row would
+  // silently replace a value the user can see above).
   const trimmed = () => key().trim();
-  const valid = createMemo(() => isEditablePropertyKey(trimmed()) && !machineManaged(trimmed()));
+  const refusal = createMemo(() => {
+    const k = trimmed();
+    if (!k) return null;
+    if (!isEditablePropertyKey(k)) return "Keys may use only ASCII letters, digits, - and _, so every Tine reader finds them again.";
+    if (machineManaged(k)) return `"${k}" is managed by Tine and cannot be set here.`;
+    if (readOne(props.scope, k) !== null) return `"${k}" already exists; edit its row above.`;
+    return null;
+  });
+  const valid = () => !!trimmed() && !refusal();
   const commit = () => {
-    if (!valid()) return;
-    writeOne(props.scope, props.binding, trimmed(), value().trim() || null);
+    if (!valid() || !props.write(trimmed(), value().trim() || null)) return;
     setKey("");
     setValue("");
   };
@@ -216,7 +252,9 @@ function AddRow(props: { scope: PropsPanelScope; binding: Binding }): JSX.Elemen
         <input class="pp-input pp-add-value" value={value()} placeholder="value" onInput={(e) => setValue(e.currentTarget.value)} onKeyDown={onKeyDown} />
         <button class="pp-add-commit" disabled={!valid()} onClick={commit}>Add</button>
       </div>
-      <div class="pp-hint">Any key you like, written to the file as an ordinary property.</div>
+      <Show when={refusal()} fallback={<div class="pp-hint">Any key you like, written to the file as an ordinary property.</div>}>
+        <div class="pp-hint pp-error">{refusal()}</div>
+      </Show>
     </div>
   );
 }

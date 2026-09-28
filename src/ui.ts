@@ -452,14 +452,14 @@ export function agendaQuery(): string {
   return `query (and ${window} (not (task DONE CANCELED CANCELLED)))`;
 }
 
-// When a query block is created via the "/Query (visual builder)" command, hold
-// its block id so the freshly-rendered QueryBuilder opens its add-filter picker
-// immediately (the block id, consumed once on mount, then cleared).
+// Block id of a "/Query (visual builder)" block whose QueryBuilder opens its add-filter picker once on mount.
 export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = createSignal<string | null>(null);
 
-// Properties panel at x,y, one panel for two scopes (GH #164): a page's pre-block
-// (title gear, "/Page properties", page menu) or one block's (block menu).
 export type PropsPanelScope = { kind: "page"; name: string } | { kind: "block"; id: string };
+/** The one open properties panel (GH #164) or null; page OR block scope despite the name (`name` = exact store page name, `id` = in-memory
+ *  block id), at viewport x,y. open*Props replaces any open panel. `binding` = graph session at open: a graph switch closes the panel,
+ *  and after a store reset or a reload of its page/block the panel refuses every write visibly and closes (PageProps.tsx writeOne).
+ *  An unknown/unloaded block id or page opens a read-only notice, never an edit row. Nothing here persists; O(1). */
 export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ scope: PropsPanelScope; x: number; y: number; binding: ReturnType<typeof captureBinding> } | null>(null);
 export function openPageProps(name: string, x: number, y: number) {
   setPagePropsPanel({ scope: { kind: "page", name }, x, y, binding: captureBinding() });
