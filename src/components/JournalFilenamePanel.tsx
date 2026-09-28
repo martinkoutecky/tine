@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, on, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphOwner, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
@@ -9,7 +9,10 @@ import type { JournalFilenameMigration } from "../types";
 /** Journal files named by title (left by a date-format change or another tool)
  *  can't be placed on their day, so the day looks empty. Renaming them is a real
  *  repair, but it changes files the user owns: opening a graph only proposes it
- *  (master e6f9b6e1ceae), and this button applies it after a snapshot. */
+ *  (master e6f9b6e1ceae), and this button applies it after a snapshot. Apply
+ *  sends exactly the listed (from, to) pairs the user confirmed; the backend
+ *  renames only pairs still valid and reports the rest as skipped. Results and
+ *  failures are shown only while the graph that listed them is still open. */
 export function JournalFilenamePanel(): JSX.Element {
   const [pending, setPending] = createSignal<JournalFilenameMigration[]>([]);
   const [busy, setBusy] = createSignal(false);
@@ -23,10 +26,12 @@ export function JournalFilenamePanel(): JSX.Element {
     }
   };
   // A graph switch or journal-format change moves the epoch and can change the proposals.
-  createEffect(() => { graphEpoch(); void load(); });
+  createEffect(on(graphEpoch, () => void load()));
   const apply = async () => {
     const owner = graphOwner();
-    const count = pending().length;
+    // The confirmation names this exact list; the backend renames only it.
+    const migrations = pending();
+    const count = migrations.length;
     const confirmed = await readOwned(owner, backend().confirm(
       `Rename ${count} journal file${count === 1 ? "" : "s"} to their date names?\n\n` +
         "A snapshot is taken first, so the original names stay in Backups & recovery. " +
@@ -35,7 +40,7 @@ export function JournalFilenamePanel(): JSX.Element {
     if (confirmed.kind === "stale" || !confirmed.value) return;
     setBusy(true);
     try {
-      const result = await writeOwned(owner, backend().applyJournalFilenameMigrations());
+      const result = await writeOwned(owner, backend().applyJournalFilenameMigrations(migrations));
       if (result.kind === "stale") return;
       const { migrated, skipped } = result.value;
       pushToast(`Renamed ${migrated} journal file${migrated === 1 ? "" : "s"}`, "success");
@@ -44,7 +49,8 @@ export function JournalFilenamePanel(): JSX.Element {
       await load();
       await refreshJournalConflicts(true);
     } catch (e) {
-      pushToast(`Couldn’t rename them: ${String(e)}`, "error");
+      // A durable failure from a graph the user already left is not this graph's.
+      if (owner()) pushToast(`Couldn’t rename them: ${String(e)}`, "error");
     } finally {
       setBusy(false);
     }

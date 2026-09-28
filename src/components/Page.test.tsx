@@ -990,7 +990,7 @@ describe("page actions entry point", () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     let finish!: () => void;
-    const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve("renamed"); }));
     mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -1033,8 +1033,8 @@ describe("page actions entry point", () => {
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     let finishFirstRename!: () => void;
     const rename = vi.spyOn(backend(), "renamePage")
-      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstRename = resolve; }))
-      .mockResolvedValue();
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirstRename = () => resolve("renamed"); }))
+      .mockResolvedValue("renamed");
     mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);

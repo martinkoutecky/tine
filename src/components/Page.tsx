@@ -10,7 +10,7 @@ import { isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
-import { ensureJournalTemplateForDay, renameOrMergePage, switchGraph } from "../graph";
+import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -771,9 +771,9 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     try {
       const outcome = await renameOrMergePage(from, next, target);
       if (outcome === "cancelled") return;
-      if (outcome === "failed") {
-        if (stillOnRenameTab())
-          alert("Couldn't save pending edits — resolve the conflict before renaming.");
+      const message = renameOutcomeMessage(outcome, from, next);
+      if (message) {
+        if (stillOnRenameTab()) pushToast(message, outcome === "unchanged" ? "info" : "error");
         return;
       }
       if (stillOnRenameTab()) router.openPage(next, "page");

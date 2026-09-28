@@ -254,3 +254,129 @@ fn plain_merge_never_carries_the_source_title_into_the_survivor_header() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// Rule 2 B1: an alias names its owner's page, so renaming onto it needs the
+/// same confirmation as renaming onto a page file, and merges into the owner.
+#[test]
+fn renaming_onto_an_alias_needs_the_merge_confirmation() {
+    let (root, store) = fixture(
+        "alias-target",
+        &[
+            ("pages/Old.md", "- old body\n"),
+            ("pages/Owner.md", "alias:: New\n\n- owner body\n"),
+            ("pages/Ref.md", "- [[Old]]\n"),
+        ],
+    );
+    let plain = pages::rename_page_expected(&store, "Old", "New", Some("pages/Old.md"));
+    assert_eq!(plain.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(read(&root, "pages/Old.md"), "- old body\n");
+    assert!(!root.join("pages/New.md").exists());
+    let outcome =
+        pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/Owner.md")).unwrap();
+    assert_eq!(outcome, pages::RenameOutcome::Merged);
+    assert_eq!(
+        read(&root, "pages/Owner.md"),
+        "alias:: New\n\n- owner body\n- old body\n"
+    );
+    assert_eq!(read(&root, "pages/Ref.md"), "- [[New]]\n");
+    assert!(!root.join("pages/Old.md").exists());
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Rule 2 B1: a reference-only name renamed onto an existing page repoints its
+/// references there (OG `merge-pages!` of a page with no blocks), so it also
+/// needs the confirmation instead of silently merging.
+#[test]
+fn reference_only_rename_onto_an_existing_page_needs_the_confirmation() {
+    let (root, store) = fixture(
+        "ref-only",
+        &[
+            ("pages/New.md", "- new body\n"),
+            ("pages/Ref.md", "- [[Ghost]] and [[New]]\n"),
+        ],
+    );
+    let plain = pages::rename_page_expected(&store, "Ghost", "New", None);
+    assert_eq!(plain.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(read(&root, "pages/Ref.md"), "- [[Ghost]] and [[New]]\n");
+    let stale = pages::rename_or_merge_page(&store, "Ghost", "New", None, Some("pages/Other.md"));
+    assert_eq!(stale.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    let outcome =
+        pages::rename_or_merge_page(&store, "Ghost", "New", None, Some("pages/New.md")).unwrap();
+    assert_eq!(outcome, pages::RenameOutcome::Merged);
+    assert_eq!(read(&root, "pages/Ref.md"), "- [[New]] and [[New]]\n");
+    assert_eq!(read(&root, "pages/New.md"), "- new body\n");
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Rule 2 B2: a case-only rename writes nothing and says so, instead of
+/// reporting a rename that did not happen.
+#[test]
+fn case_only_rename_reports_unchanged() {
+    let (root, store) = fixture("case-only", &[("pages/Old.md", "- body\n")]);
+    let outcome = pages::rename_or_merge_page(&store, "Old", "old", None, None).unwrap();
+    assert_eq!(outcome, pages::RenameOutcome::Unchanged);
+    assert_eq!(read(&root, "pages/Old.md"), "- body\n");
+    let renamed = pages::rename_or_merge_page(&store, "Old", "Fresh", None, None).unwrap();
+    assert_eq!(renamed, pages::RenameOutcome::Renamed);
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Rule 2 B3: an Org merge keeps the source's pre-headline directives:
+/// `#+ALIAS:` is united, `#+TITLE:` never renames the survivor, and other
+/// directives join the header or move as a block like Markdown properties.
+#[test]
+fn org_merge_keeps_the_source_directives() {
+    let (root, store) = fixture(
+        "org-directives",
+        &[
+            (
+                "pages/Old.org",
+                "#+TITLE: Old\n#+ALIAS: Former\n#+CATEGORY: work\nfree text\n* source block\n",
+            ),
+            (
+                "pages/New.org",
+                "#+ALIAS: Kept\n#+CATEGORY: home\n* survivor block\n",
+            ),
+        ],
+    );
+    pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.org")).unwrap();
+    let merged = read(&root, "pages/New.org");
+    assert_eq!(
+        merged,
+        "#+ALIAS: Kept, Former\n#+CATEGORY: home\n* survivor block\n\
+         * #+TITLE: Old\n#+CATEGORY: work\nfree text\n* source block\n"
+    );
+    let graph = store.whole_graph().unwrap();
+    for name in ["New", "Former", "Kept"] {
+        let owner = match graph.resolve(name, false) {
+            tine_store::Resolved::Existing { id, .. } => id,
+            tine_store::Resolved::Alias { owners } => owners[0].clone(),
+            tine_store::Resolved::Absent { .. } => panic!("{name} lost its page"),
+        };
+        assert_eq!(owner.as_str(), "pages/New.org", "{name}");
+    }
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Rule 2 B4: a plain merge unites aliases exactly as a rename-merge does.
+#[test]
+fn plain_merge_unites_aliases_like_the_rename_merge() {
+    let (root, store) = fixture(
+        "plain-alias",
+        &[
+            ("pages/src.md", "alias:: Former, Shared\n\n- moved\n"),
+            ("pages/dst.md", "alias:: Shared, Kept\n\n- kept\n"),
+        ],
+    );
+    pages::merge_pages(&store, "pages/src.md", "pages/dst.md").unwrap();
+    assert_eq!(
+        read(&root, "pages/dst.md"),
+        "alias:: Shared, Kept, Former\n\n- kept\n- moved\n"
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}

@@ -189,6 +189,14 @@ fn existing(target: Resolved) -> Vec<PageId> {
     }
 }
 
+/// Every page a name reaches: its file claimants, or the owners of the alias.
+fn claimants(target: Resolved) -> Vec<PageId> {
+    match target {
+        Resolved::Alias { owners } => owners,
+        other => existing(other),
+    }
+}
+
 fn physical(target: &Resolved) -> Vec<PageId> {
     match target {
         Resolved::Existing { id, others } => {
@@ -280,13 +288,15 @@ pub fn delete_page_expected(
 /// OG `:block/refs` semantics: `{{query}}` arguments are not references) are
 /// rewritten, including `tags::`, aliases and self-references. Non-UTF-8
 /// candidates are skipped as in v0.6.5; a non-round-tripping Org referrer
-/// refuses the entire rename (H1). A target name another page file already
-/// owns refuses with `AlreadyExists` and writes nothing; [`rename_or_merge_page`]
+/// refuses the entire rename (H1). An `old` with no file still rewrites its
+/// references; journal files never move. A case-only rename writes nothing
+/// ([`RenameOutcome::Unchanged`]). A target another page owns as a file or an
+/// alias refuses with `AlreadyExists` and writes nothing; [`rename_or_merge_page`]
 /// is the confirmed alternative. Planning costs O(P) plus the referrer query
 /// and O(referrer bytes) reads, followed by O(touched bytes) commit. A rename
 /// touching N files takes N+1 sorted path locks for one move; namespace moves
 /// take one additional destination lock per moved file. Conflict retry: four
-/// complete plans maximum.
+/// complete plans maximum, then `WouldBlock`.
 pub fn rename_page_expected(
     store: &Store,
     old: &str,
@@ -302,26 +312,32 @@ pub fn rename_page_expected(
         #[cfg(test)]
         || {},
     )
+    .map(|_| ())
 }
 
 /// [`rename_page_expected`] when `merge_into` is `None`. Otherwise rename onto
-/// the existing page file `merge_into` the user confirmed, as OG `merge-pages!`
-/// (master GH #327): the source's blocks append to that survivor, its property
-/// lines join the survivor's header (`alias::` values are united; the survivor
-/// wins another clash, and the source `title::` and clashing lines move with
-/// the blocks as one ordinary block), the source file goes to graph trash, and
-/// references and namespace descendants are renamed exactly as by
-/// [`rename_page_expected`]. Everything is one guarded transaction. It refuses
-/// before any write when `merge_into` no longer solely owns the new name, the
-/// formats differ, an Org file does not round-trip, or a descendant's target
-/// exists. Cost: the rename's, plus O(source + survivor bytes and blocks).
+/// the existing page `merge_into` the user confirmed, as OG `merge-pages!`
+/// (master GH #327); `merge_into` must be the sole file claiming the new name,
+/// directly or as its alias. The source's blocks append to that survivor, its
+/// header (Markdown `key::` lines, Org pre-headline `#+KEY:` directives) joins
+/// the survivor's: aliases are united, the survivor wins another clash, and the
+/// source title and clashing lines move with the blocks as one ordinary block.
+/// References and namespace descendants are renamed as by
+/// [`rename_page_expected`], and the source goes to graph trash in the last
+/// step, so a crash never leaves a reference to a name with no live page and a
+/// retry after reopen never duplicates the moved blocks (see `merged_survivor`).
+/// An `old` with no file only repoints its references at the survivor. It
+/// refuses before any write when `merge_into` no longer solely claims the new
+/// name (`NotFound`), the formats differ, an Org file does not round-trip, or a
+/// descendant's target exists. Cost: the rename's, plus O(source + survivor
+/// bytes and blocks).
 pub fn rename_or_merge_page(
     store: &Store,
     old: &str,
     new: &str,
     expected_path: Option<&str>,
     merge_into: Option<&str>,
-) -> io::Result<()> {
+) -> io::Result<RenameOutcome> {
     rename_page_after_inventory(
         store,
         old,
@@ -340,14 +356,17 @@ fn rename_page_after_inventory(
     expected_path: Option<&str>,
     merge_into: Option<&str>,
     #[cfg(test)] after_inventory: impl Fn(),
-) -> io::Result<()> {
+) -> io::Result<RenameOutcome> {
     let old = old.trim();
     let new = new.trim();
     if new.is_empty() {
         return Err(error(io::ErrorKind::InvalidInput, "empty name"));
     }
     if old.is_empty() || refs::same_page(old, new) {
-        return Ok(()); // v0.6.5 model.rs 3549: case-only rename is a no-op.
+        // v0.6.5 model.rs 3549: a case-only rename changes nothing. OG renames
+        // the page's display name; here the name is its file, and a case-only
+        // move is refused on case-folding filesystems, so it is reported.
+        return Ok(RenameOutcome::Unchanged);
     }
     crate::retry_on_conflict("page changed repeatedly during rename", || {
         let graph = refreshed_view(store)?;
@@ -396,9 +415,11 @@ fn rename_page_after_inventory(
                 ));
             }
             let id = ids[0].clone();
-            let taken = existing(graph.resolve(&new_name, false));
+            // An alias names its owner's page, so it is taken like a file name.
+            let mut taken = claimants(graph.resolve(&new_name, false));
+            taken.retain(|claimant| *claimant != id);
             if let (true, Some(into), [survivor]) = (primary, merge_into, taken.as_slice()) {
-                if survivor.as_str() == into && *survivor != id {
+                if survivor.as_str() == into {
                     identities.insert(refs::normalize(&new_name));
                     merge = Some((id, survivor.clone()));
                     primary_is_file = true;
@@ -440,15 +461,30 @@ fn rename_page_after_inventory(
             pairs.push((entry.name.clone(), new_name));
             moves.insert(id, to);
         }
-        if merge_into.is_some() && merge.is_none() {
+        // v0.6.5 model.rs 3654: reference-only pages have no move, but refs
+        // change. Onto an existing page that repoints them, which is OG
+        // `merge-pages!` of a page with no blocks, so it needs the confirmation.
+        let mut ref_merge = false;
+        if !primary_is_file {
+            let taken = claimants(graph.resolve(new, false));
+            match (merge_into, taken.as_slice()) {
+                (_, []) => {}
+                (Some(into), [owner]) if owner.as_str() == into => ref_merge = true,
+                (Some(_), _) => {}
+                (None, _) => {
+                    return Err(error(
+                        io::ErrorKind::AlreadyExists,
+                        "target page identity already exists elsewhere in the graph",
+                    ))
+                }
+            }
+            pairs.push((old.to_owned(), new.to_owned()));
+        }
+        if merge_into.is_some() && merge.is_none() && !ref_merge {
             return Err(error(
                 io::ErrorKind::NotFound,
                 "the page to merge into no longer owns that name",
             ));
-        }
-        // v0.6.5 model.rs 3654: reference-only pages have no move, but refs change.
-        if !primary_is_file {
-            pairs.push((old.to_owned(), new.to_owned()));
         }
         let map = RenameMap(pairs);
         let lookup: HashMap<_, _> = map
@@ -499,14 +535,49 @@ fn rename_page_after_inventory(
             }
         }
         let merged = match &merge {
-            Some((src, dst)) => Some(merged_survivor(store, src, dst, Some(&lookup))?),
+            Some((src, dst)) => {
+                // A retry after a crash that already moved a namespace
+                // descendant no longer lists `Old/x` in `map`; the survivor
+                // then holds the source text with `New/x`. Map every
+                // file-backed `New/x` back from `Old/x` for the "already
+                // holds" question only.
+                let new_prefix = format!("{}/", refs::normalize(new));
+                let mut moved_back = lookup.clone();
+                for entry in &inventory.0 {
+                    let key = refs::normalize(&entry.name);
+                    if let (Some(rest), false) = (
+                        key.strip_prefix(&new_prefix),
+                        physical(&entry.target).is_empty(),
+                    ) {
+                        moved_back
+                            .entry(format!("{prefix}{rest}"))
+                            .or_insert_with(|| entry.name.clone());
+                    }
+                }
+                Some(merged_survivor(
+                    store,
+                    src,
+                    dst,
+                    Some(&lookup),
+                    Some(&moved_back),
+                )?)
+            }
             None => None,
         };
+        let outcome = if merge.is_some() || ref_merge {
+            RenameOutcome::Merged
+        } else {
+            RenameOutcome::Renamed
+        };
         if edits.is_empty() && merged.is_none() {
-            return Ok(Some(()));
+            return Ok(Some(RenameOutcome::Unchanged));
         }
+        // Crash order (I-2): survivor, then referrer rewrites, then namespace
+        // descendant moves, then the source trash LAST. Every boundary leaves
+        // `[[Old]]` resolving to the still-live source, and a retry finds the
+        // survivor already holding the source payload (see `merged_survivor`).
         let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-        if let (Some((src, dst)), Some(survivor)) = (&merge, merged) {
+        if let (Some((_, dst)), Some(survivor)) = (&merge, &merged) {
             let kinds = [
                 tine_store::EditKind::RenamePage,
                 tine_store::EditKind::InsertBlocks,
@@ -514,20 +585,38 @@ fn rename_page_after_inventory(
             tx.save_page(
                 &kinds,
                 dst,
-                SaveBase::Existing(survivor.dst_rev),
+                SaveBase::Existing(survivor.dst_rev.clone()),
                 &survivor.doc,
             );
+        }
+        let (moved, rewritten): (Vec<_>, Vec<_>) = edits
+            .into_iter()
+            .partition(|(id, _)| moves.contains_key(id));
+        for (id, rev) in rewritten {
+            tx.rewrite_refs(&id, rev, &map);
+        }
+        for (id, rev) in moved {
+            tx.move_file(&id.file(), rev, &moves[&id], Some(&map));
+        }
+        if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
             tx.trash(&src.file(), survivor.src_rev);
         }
-        for (id, rev) in edits {
-            if let Some(to) = moves.get(&id) {
-                tx.move_file(&id.file(), rev, to, Some(&map));
-            } else {
-                tx.rewrite_refs(&id, rev, &map);
-            }
-        }
-        Ok(crate::commit_retry(tx.commit())?.then_some(()))
+        Ok(crate::commit_retry(tx.commit())?.then_some(outcome))
     })
+}
+
+/// What [`rename_or_merge_page`] did; serialized lowercase for the frontend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RenameOutcome {
+    /// Files moved and/or references rewritten.
+    Renamed,
+    /// Merged into the confirmed page (for a file-less source: its references
+    /// were repointed).
+    Merged,
+    /// Nothing was written: a case-only rename, an empty `old`, or a name
+    /// that no file or reference uses.
+    Unchanged,
 }
 
 /// Rescue a stray page or journal file into a uniquely named normal page.
@@ -567,8 +656,9 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
 }
 
 /// Merge one source into a survivor, as [`rename_or_merge_page`] merges pages
-/// but without renaming anything, then recoverably trash the source in the
-/// same commit. Org pairs must round-trip; formats must match. v0.6.5 never
+/// but without renaming anything (aliases united, Org directives kept, through
+/// the same `merged_survivor`), then recoverably trash the source in the same
+/// commit. Org pairs must round-trip; formats must match. v0.6.5 never
 /// rewrites inbound refs in this operation. Cost O(source + survivor bytes and
 /// blocks) per try; four complete attempts maximum.
 pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()> {
@@ -587,7 +677,7 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
     crate::retry_on_conflict("pages changed repeatedly during merge", || {
-        let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
+        let survivor = merged_survivor(store, &src_id, &dst_id, None, None)?;
         let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
         tx.save_page(
             &[
@@ -614,19 +704,28 @@ struct Survivor {
     dst_rev: FileRev,
 }
 
-/// The survivor page after appending `src`, with `renames` applied to its text.
-/// OG `merge-pages!` moves the source's property block with its blocks; here a
-/// source property the survivor lacks joins its header, `alias::` values are
-/// united, and the rest (a clash, the source `title::`, free text) moves as one
-/// ordinary block, so the source identity never renames the survivor. Source
-/// aliases join the survivor's only on a rename-merge (`renames`), whose
-/// contract is that every old name keeps resolving; a plain merge keeps them
-/// verbatim in the moved block (I-4).
+/// The survivor page after appending `src`, with `renames` applied to both.
+/// OG `merge-pages!` moves the source's property block with its blocks; here
+/// each source header property (Markdown `key::`, Org `#+KEY:`) the survivor
+/// lacks joins its header, alias values are united, a line equal to a survivor
+/// header line (same key, same trimmed value) is already there, and the rest
+/// (a clash, the source title, free text, an Org drawer) moves as one ordinary
+/// block, so the source identity never renames the survivor and every source
+/// alias keeps resolving (I-4, I-12).
+///
+/// Retry after a crash (I-2): the source payload is the moved block, if any,
+/// followed by the source's top-level blocks. The survivor already *holds* it
+/// when that payload is non-empty and equals the survivor's trailing top-level
+/// blocks, compared by `raw` text and child structure recursively (a
+/// byte-identical block sequence; runtime ids are ignored). A held payload is
+/// not appended again; header joins are idempotent by the equal-line rule.
+/// `held_renames` is a second rename map tried only for that question.
 fn merged_survivor(
     store: &Store,
     src: &PageId,
     dst: &PageId,
     renames: Option<&HashMap<String, String>>,
+    held_renames: Option<&HashMap<String, String>>,
 ) -> io::Result<Survivor> {
     let org = src.as_str().ends_with(".org");
     if org != dst.as_str().ends_with(".org") {
@@ -646,8 +745,94 @@ fn merged_survivor(
     }
     let source = store.page(src).map_err(store_error)?.doc;
     let mut doc = store.page(dst).map_err(store_error)?.doc;
-    if let (false, Some(pre)) = (org, source.pre_block.as_deref()) {
-        let mut header: Vec<String> = doc
+    if let Some(renames) = renames {
+        rename_doc(&mut doc, renames, org);
+    }
+    let mut payloads = vec![payload(&doc, &source, renames, org)];
+    if let Some(held) = held_renames {
+        payloads.push(payload(&doc, &source, Some(held), org));
+    }
+    let held = payloads.iter().position(|(_, blocks)| {
+        !blocks.is_empty()
+            && blocks.len() <= doc.blocks.len()
+            && same_blocks(&doc.blocks[doc.blocks.len() - blocks.len()..], blocks)
+    });
+    let (header, blocks) = payloads.swap_remove(held.unwrap_or(0));
+    if let Some(header) = header {
+        doc.pre_block = Some(header);
+    }
+    if held.is_none() {
+        doc.blocks.extend(blocks);
+    }
+    Ok(Survivor {
+        doc,
+        src_rev,
+        dst_rev,
+    })
+}
+
+fn rename_doc(doc: &mut PageDto, renames: &HashMap<String, String>, org: bool) {
+    fn rewrite(raw: &mut String, renames: &HashMap<String, String>, org: bool) {
+        *raw = refs::rename_tags_property_multi(
+            &refs::rename_refs_multi(raw, renames, org),
+            renames,
+            org,
+        );
+    }
+    fn walk(
+        blocks: &mut [tine_core::model::BlockDto],
+        renames: &HashMap<String, String>,
+        org: bool,
+    ) {
+        for block in blocks {
+            rewrite(&mut block.raw, renames, org);
+            walk(&mut block.children, renames, org);
+        }
+    }
+    if let Some(pre) = doc.pre_block.as_mut() {
+        rewrite(pre, renames, org);
+    }
+    walk(&mut doc.blocks, renames, org);
+}
+
+fn same_blocks(a: &[tine_core::model::BlockDto], b: &[tine_core::model::BlockDto]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(x, y)| x.raw == y.raw && same_blocks(&x.children, &y.children))
+}
+
+/// A page-header property line: Markdown `key:: value`, or an Org
+/// `#+KEY: value` directive. Keys compare case-insensitively.
+fn header_property(line: &str, org: bool) -> Option<(String, String)> {
+    if !org {
+        return doc::parse_property_line(line);
+    }
+    let (key, value) = line.strip_prefix("#+")?.split_once(':')?;
+    let key = key.trim();
+    (!key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')))
+    .then(|| (key.to_owned(), value.trim().to_owned()))
+}
+
+/// The survivor's new header (when it changes) and the blocks `source` adds,
+/// with `renames` applied to the source.
+fn payload(
+    survivor: &PageDto,
+    source: &PageDto,
+    renames: Option<&HashMap<String, String>>,
+    org: bool,
+) -> (Option<String>, Vec<tine_core::model::BlockDto>) {
+    let mut source = source.clone();
+    if let Some(renames) = renames {
+        rename_doc(&mut source, renames, org);
+    }
+    let mut new_header = None;
+    let mut blocks = Vec::new();
+    if let Some(pre) = source.pre_block.as_deref() {
+        let mut header: Vec<String> = survivor
             .pre_block
             .as_deref()
             .unwrap_or_default()
@@ -656,19 +841,23 @@ fn merged_survivor(
             .collect();
         let mut moved = Vec::new();
         for line in pre.lines() {
-            let Some((key, value)) = doc::parse_property_line(line) else {
+            let Some((key, value)) = header_property(line, org) else {
                 moved.push(line);
                 continue;
             };
             let key = key.to_ascii_lowercase();
             let clash = header.iter().position(|kept| {
-                doc::parse_property_line(kept).is_some_and(|(k, _)| k.eq_ignore_ascii_case(&key))
+                header_property(kept, org).is_some_and(|(k, _)| k.eq_ignore_ascii_case(&key))
+            });
+            let equal = clash.is_some_and(|at| {
+                header_property(&header[at], org).is_some_and(|(_, v)| v.trim() == value.trim())
             });
             match clash {
+                Some(_) if equal => {}
                 None if key != "title" => header.push(line.to_owned()),
-                Some(at) if key == "alias" && renames.is_some() => {
+                Some(at) if key == "alias" => {
                     let kept = header[at].clone();
-                    let known: HashSet<String> = doc::parse_property_line(&kept)
+                    let known: HashSet<String> = header_property(&kept, org)
                         .map(|(_, v)| v.split(',').map(refs::normalize).collect())
                         .unwrap_or_default();
                     let extra: Vec<&str> = value
@@ -690,44 +879,17 @@ fn merged_survivor(
             }
         }
         if !header.is_empty() {
-            doc.pre_block = Some(lines(header.iter().map(String::as_str)));
+            new_header = Some(lines(header.iter().map(String::as_str)));
         }
         if moved.iter().any(|line| !line.trim().is_empty()) {
-            doc.blocks.push(tine_core::model::BlockDto {
+            blocks.push(tine_core::model::BlockDto {
                 raw: lines(moved.into_iter()),
                 ..Default::default()
             });
         }
     }
-    doc.blocks.extend(source.blocks);
-    if let Some(renames) = renames {
-        fn rewrite(raw: &mut String, renames: &HashMap<String, String>, org: bool) {
-            *raw = refs::rename_tags_property_multi(
-                &refs::rename_refs_multi(raw, renames, org),
-                renames,
-                org,
-            );
-        }
-        fn walk(
-            blocks: &mut [tine_core::model::BlockDto],
-            renames: &HashMap<String, String>,
-            org: bool,
-        ) {
-            for block in blocks {
-                rewrite(&mut block.raw, renames, org);
-                walk(&mut block.children, renames, org);
-            }
-        }
-        if let Some(pre) = doc.pre_block.as_mut() {
-            rewrite(pre, renames, org);
-        }
-        walk(&mut doc.blocks, renames, org);
-    }
-    Ok(Survivor {
-        doc,
-        src_rev,
-        dst_rev,
-    })
+    blocks.extend(source.blocks);
+    (new_header, blocks)
 }
 
 #[cfg(test)]

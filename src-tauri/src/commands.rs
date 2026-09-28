@@ -11,6 +11,7 @@ use tauri::{State, WebviewWindow};
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
+use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 #[cfg(test)]
 use tine_store::{SaveBase, SaveOutcome, SavePagesOutcome};
@@ -980,7 +981,7 @@ pub(crate) async fn rename_page(
     expected_path: Option<String>,
     merge_into: Option<String>,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<tine_graph_features::pages::RenameOutcome, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pages::rename_or_merge_page(
@@ -1285,9 +1286,9 @@ pub(crate) fn set_preferred_format(format: String, state: GraphContext<'_>) -> R
     Ok(())
 }
 
-/// Set the graph's `:journal/page-title-format` (journal display-title format,
-/// e.g. "MMM do, yyyy"). Also migrates eligible legacy title-named files;
-/// the result names any file left in place and explains why.
+/// Set `:journal/page-title-format` (e.g. "MMM do, yyyy") in config.edn,
+/// unvalidated. Renames no files: title-named journals are only proposed and
+/// applied through the journal filename commands (master e6f9b6e1ceae).
 #[tauri::command]
 pub(crate) fn set_journal_title_format(
     format: String,
@@ -2352,27 +2353,25 @@ pub(crate) async fn list_journal_conflicts(
 #[tauri::command]
 pub(crate) async fn list_journal_filename_migrations(
     state: GraphContext<'_>,
-) -> Result<Vec<tine_graph_features::journals::JournalFilenameMigration>, String> {
+) -> Result<Vec<JournalFilenameMigration>, String> {
     let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::journals::journal_filename_migrations(&slot.store)
-    })
-    .await
-    .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || journals::journal_filename_migrations(&slot.store))
+        .await
+        .map_err(|error| error.to_string())
 }
 
-/// Apply the proposed journal renames after a recoverable snapshot.
+/// Snapshot (O(graph bytes)), then rename only still-valid confirmed proposals, one file each.
 #[tauri::command]
 pub(crate) async fn apply_journal_filename_migrations(
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<tine_graph_features::journals::MigrationResult, String> {
+    migrations: Vec<JournalFilenameMigration>,
+) -> Result<journals::MigrationResult, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::backup::snapshot_before_rewrite(&app, &slot, "pre-journal-rename")?;
-        Ok(tine_graph_features::journals::migrate_journal_filenames(
-            &slot.store,
-        ))
+        let result = journals::migrate_journal_filenames(&slot.store, &migrations);
+        Ok(result)
     })
     .await
     .map_err(|error| error.to_string())?

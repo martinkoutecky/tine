@@ -32,7 +32,8 @@ export function mockJournalFiles(): Pick<Backend, JournalFileMethods> {
         : "* Tried out the Org demo graph in Tine today\n* TODO follow up on the [[kitchen-sink]] feature tour\nSCHEDULED: <2026-06-27 Sat>\n* DONE loaded the graph and clicked around\n";
     },
     async listJournalFilenameMigrations() {
-      return demo() ? [{ from: "Friday, 26-06-2026.org", to: "2026_06_26.org" }] : [];
+      // Not the conflicted 26th: the backend never proposes a duplicate day.
+      return demo() ? [{ from: "Thursday, 25-06-2026.org", to: "2026_06_25.org" }] : [];
     },
     async applyJournalFilenameMigrations() {
       return { migrated: 0, skipped: [] };

@@ -983,8 +983,8 @@ export function mockBackend(): Backend {
     async deletePage(): Promise<void> {
       // no-op in mock
     },
-    async renamePage(): Promise<void> {
-      // no-op in mock
+    async renamePage(): Promise<import("./types").RenameDone> {
+      return "unchanged"; // no-op in mock
     },
     async publishHtml(): Promise<[string, number]> {
       return ["/mock/graph/publish", all.length];

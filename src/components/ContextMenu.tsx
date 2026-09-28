@@ -12,7 +12,7 @@ import { carryDay } from "../carry";
 import { journalTitle } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, node as docNode } from "../document";
-import { renameOrMergePage } from "../graph";
+import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
@@ -963,15 +963,19 @@ function RenamePage(props: {
     props.close(false);
     if (!next || next === from) return;
     try {
-      const renamed = await writeOwned(current, renameOrMergePage(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) }));
-      if (renamed.kind === "stale" || renamed.value === "cancelled") return;
-      if (renamed.value === "failed") {
-        if (current()) pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
+      const renamed = await renameOrMergePage(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) });
+      if (renamed === "cancelled") return;
+      const message = renameOutcomeMessage(renamed, from, next);
+      if (message) {
+        // `uncertain` follows a reset that retired `current`; on the same graph
+        // the user must still learn the rename may have happened.
+        const show = renamed === "uncertain" ? graphMeta()?.root === root : current();
+        if (show) pushToast(message, renamed === "unchanged" ? "info" : "error");
         return;
       }
       if (!current()) return;
       openPage(next, kind);
-      pushToast(renamed.value === "merged" ? `Merged into “${next}”` : `Renamed to “${next}”`, "success");
+      pushToast(renamed === "merged" ? `Merged into “${next}”` : `Renamed to “${next}”`, "success");
     } catch (e) {
       pushToast(`Rename failed: ${String(e)}`, "error");
     }

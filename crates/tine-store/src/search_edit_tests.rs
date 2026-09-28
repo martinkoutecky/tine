@@ -1222,7 +1222,8 @@ fn migrate_renames_title_named_journal_files() {
     )
     .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let n = journals::migrate_journal_filenames(&store);
+    let n =
+        journals::migrate_journal_filenames(&store, &journals::journal_filename_migrations(&store));
     assert_eq!(n.migrated, 1);
     assert!(n.skipped.is_empty());
     assert!(

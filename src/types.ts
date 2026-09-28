@@ -79,6 +79,9 @@ export interface PageRead extends PageDto {
   id: string;
 }
 
+/** What the backend rename did; `unchanged`: nothing written (a case-only rename). */
+export type RenameDone = "renamed" | "merged" | "unchanged";
+
 export type ResolvedPage =
   | { kind: "existing"; id: string; others: string[] }
   | { kind: "alias"; owners: string[] }
