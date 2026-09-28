@@ -710,6 +710,57 @@ describe("trailing page block target", () => {
 });
 
 describe("page actions entry point", () => {
+  it("keeps the current tab when an older page read returns a canonical name", async () => {
+    let finish!: (page: PageRead | null) => void;
+    const read = vi.spyOn(backend(), "getPage")
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValue(null);
+    mainPaneRouter.openPage("case variant", "page", { inPlace: true });
+    const { dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledWith("case variant", "page"));
+      mainPaneRouter.openPage("Elsewhere", "page", { inPlace: true });
+      finish({ name: "Case Variant", kind: "page", title: "Case Variant", pre_block: null, blocks: [], id: "pages/Case Variant.md" });
+      await flushMicrotasks();
+      expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Elsewhere" });
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each(["Elsewhere", "journals"])("keeps the current tab when a rename completes after navigating to %s", async (destination) => {
+    const dto: PageRead = { name: "Rename away", kind: "page", title: "Rename away", pre_block: null,
+      id: "pages/Rename away.md", blocks: [{ id: "rename-away-root", raw: "Body", collapsed: false, children: [] }] };
+    setDoc({ byId: { "rename-away-root": node("rename-away-root", "Body", dto.name) },
+      pages: [{ ...page(dto.name, "page", ["rename-away-root"]), id: dto.id }], feed: [], loaded: true });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    let finish!: () => void;
+    const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      root.querySelector<HTMLElement>(".page-title")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await tick();
+      const input = root.querySelector<HTMLInputElement>(".page-title-input")!;
+      input.value = "Renamed away";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      input.dispatchEvent(new FocusEvent("blur"));
+      await vi.waitFor(() => expect(rename).toHaveBeenCalledOnce());
+      if (destination === "journals") mainPaneRouter.openJournals({ inPlace: true });
+      else mainPaneRouter.openPage(destination, "page", { inPlace: true });
+      finish();
+      await flushMicrotasks();
+      if (destination === "journals") expect(mainPaneRouter.route()).toMatchObject({ kind: "journals" });
+      else expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: destination });
+    } finally {
+      dispose();
+    }
+  });
+
   it("commits title rename once from blur or Enter and lets Escape cancel (GH #233)", async () => {
     const dto: PageRead = {
       name: "Rename me",

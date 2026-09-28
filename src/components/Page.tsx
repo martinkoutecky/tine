@@ -3,7 +3,8 @@ import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLo
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
-import { graphEpoch, dataRev } from "../graphSession";
+import { graphEpoch, dataRev, graphMeta } from "../graphSession";
+import { captureBinding } from "../binding";
 import { isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
@@ -149,13 +150,16 @@ export function PageView(): JSX.Element {
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
   const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
-  const journalOwner = (route = currentRoute(), epoch = graphEpoch()): JournalsFeedOwner => ({
+  const journalOwner = (route = currentRoute(), epoch = graphEpoch(), tabId = router.activeId()): JournalsFeedOwner => ({
     graphEpoch: epoch,
-    isLive: () => surfaceAlive && sameRoute(currentRoute(), route),
+    isLive: () => surfaceAlive && router.activeId() === tabId && sameRoute(currentRoute(), route),
   });
   createEffect(() => {
     const r = currentRoute();
     const epoch = graphEpoch(); // reload when the open graph changes
+    const tabId = router.activeId();
+    const owned = () => surfaceAlive && epoch === graphEpoch()
+      && router.activeId() === tabId && sameRoute(currentRoute(), r);
     setReady(false);
     setLoadError(null);
     // Surface keys are STATIC per pane (matching PaneLeaf's frozen provider
@@ -180,12 +184,12 @@ export function PageView(): JSX.Element {
           // restartJournalFeed synchronously reads the working set safety gate.
           // Keep those reads out of this route/epoch loader's dependency set:
           // loadFeed replaces doc.feed, and subscribing here would self-reload.
-          await untrack(() => restartJournalFeed(journalOwner(r, epoch)));
-          if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
+          await untrack(() => restartJournalFeed(journalOwner(r, epoch, tabId)));
+          if (!owned()) return;
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);
-            if (epoch !== graphEpoch() || !sameRoute(currentRoute(), r)) return;
+            if (!owned()) return;
             setLoadedRoute(r);
             setReady(true);
             router.restoreScrollFor(r);
@@ -197,7 +201,7 @@ export function PageView(): JSX.Element {
           const dto = r.path
             ? await backend().getPageByPath(r.path)
             : await backend().getPage(r.name, r.pageKind);
-          if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
+          if (!owned()) return;
           if (r.path && (!dto || dto.id !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
             throw new Error("The selected physical page is no longer available at that path.");
           }
@@ -219,14 +223,14 @@ export function PageView(): JSX.Element {
           if (r.path && pageByName(r.name)?.id !== r.path)
             throw new Error("The selected file cannot replace a page with an active edit or unsaved changes.");
         }
-        if (!sameRoute(currentRoute(), r)) return;
+        if (!owned()) return;
         setLoadedRoute(r);
         setReady(true);
         // Put the scroll back where it was when we last left this entry (back/
         // forward, or returning to this tab). A new page has no saved offset → top.
         router.restoreScrollFor(r);
       } catch (e) {
-        if (epoch !== graphEpoch() || !sameRoute(currentRoute(), r)) return;
+        if (!owned()) return;
         setLoadedRoute(r);
         setLoadError(String(e));
         setReady(true);
@@ -594,18 +598,33 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     const next = newName().trim();
     const from = props.page.name;
     const target = pageTarget();
+    const route = router.route();
+    const binding = captureBinding();
+    const root = graphMeta()?.root;
+    const tabId = router.activeId();
+    const intentRevision = router.routeIntentRevision();
+    const stillOnRenameTab = () => {
+      const current = router.route();
+      return router.activeId() === tabId
+        && router.routeIntentRevision() === intentRevision
+        && binding.backendGeneration === captureBinding().backendGeneration
+        && graphMeta()?.root === root
+        && (sameRoute(current, route) || current.kind === "journals"
+          || (current.kind === "page" && current.name === next && current.pageKind === "page"));
+    };
     renameSubmitted = true;
     setRenaming(false);
     if (!next || next === from) return;
     renameInFlight = true;
     try {
       if (!(await renamePageOnDisk(from, next, target))) {
-        alert("Couldn't save pending edits — resolve the conflict before renaming.");
+        if (stillOnRenameTab())
+          alert("Couldn't save pending edits — resolve the conflict before renaming.");
         return;
       }
-      router.openPage(next, "page");
+      if (stillOnRenameTab()) router.openPage(next, "page");
     } catch (e) {
-      alert(`Rename failed: ${String(e)}`);
+      if (stillOnRenameTab()) alert(`Rename failed: ${String(e)}`);
     } finally {
       renameInFlight = false;
     }

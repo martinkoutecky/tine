@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { resetStore } from "../document";
+import { setToasts, toasts } from "../toasts";
 import { resetPaneLayoutToSingle } from "../panes";
 import { buildPersistedSession } from "../session";
 import {
@@ -40,6 +42,29 @@ afterEach(() => {
 });
 
 describe("WorkspaceSwitcher", () => {
+  it("does not delete the new graph's colliding workspace after an old confirmation", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    setToasts([]);
+    dispose = render(() => <WorkspaceSwitcher />, host);
+    let finish!: (confirmed: boolean) => void;
+    vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    host.querySelector<HTMLButtonElement>(".workspace-switcher-btn")!.click();
+    host.querySelector<HTMLButtonElement>('[aria-label="Delete Alpha"]')!.click();
+    resetStore();
+    resetWorkspacesForTest();
+    await initializeWorkspaces();
+    const save = vi.mocked(backend().saveWorkspaces);
+    save.mockClear();
+    finish(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(activeWorkspaceId()).toBe("default");
+    expect(save).not.toHaveBeenCalled();
+    expect(toasts()).toEqual([]);
+  });
+
   it("renders the collapsed-sidebar fallback as the compact W control without a workspace label", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

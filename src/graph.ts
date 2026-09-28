@@ -4,7 +4,7 @@
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { setGraphMeta, bumpGraphEpoch, graphMeta } from "./graphSession";
-import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf } from "./ui";
+import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer } from "./ui";
 import { pushToast } from "./toasts";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler } from "./document";
 import { clearAssetBlobCache } from "./assetCache";
@@ -21,6 +21,7 @@ import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
 import { journalHasContent } from "./journalContent";
 import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwnership";
+import { clearWorkspaces } from "./workspaces";
 
 const GRAPH_KEY = "tine.graphPath";
 
@@ -42,13 +43,16 @@ export type LoadGraphPathOutcome =
  * may point `assets` at an external directory, but only after this installation
  * shows the resolved target and receives explicit consent. */
 export async function authorizeGraphAccess(path: string): Promise<boolean> {
+  const binding = captureBinding();
   const access = await backend().inspectGraphAccess(path);
+  if (!stillBound(binding)) return false;
   const external = access.external_assets_path;
   if (!external || access.approved) return true;
   const approved = await backend().confirm(
     `This graph's assets folder points outside the graph to:\n\n${external}\n\nAllow Tine to read and write assets in this directory? This approval is stored only on this device.`,
     "Allow external assets directory?"
   );
+  if (!stillBound(binding)) return false;
   if (!approved) {
     pushToast(
       `Graph not opened: its external assets directory was not approved (${external}).`,
@@ -65,6 +69,7 @@ export async function loadGraphPath(
   path: string,
   options: { forceRefresh?: boolean; transitionHeld?: boolean } = {}
 ): Promise<LoadGraphPathOutcome> {
+  const startingBinding = captureBinding();
   const ownsTransition = !options.transitionHeld;
   if (graphTransitioning() && ownsTransition) return { kind: "aborted" };
   if (ownsTransition) {
@@ -74,6 +79,7 @@ export async function loadGraphPath(
     endEdit("graph-switch");
     // Let the textarea blur handler commit its final buffer before we inspect dirty.
     await Promise.resolve();
+    if (!stillBound(startingBinding)) return { kind: "aborted" };
   }
   try {
   // Whether we're switching to a *different* graph than last time. Only then do
@@ -90,12 +96,15 @@ export async function loadGraphPath(
   const hadGraph = !!graphMeta();
   const rebindsPdfOwner = hadGraph && (switching || options.forceRefresh === true);
   const flushed = await flushAll();
+  if (!stillBound(startingBinding)) return { kind: "aborted" };
   if (hadGraph && !flushed) {
     pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
     return { kind: "aborted" };
   }
   if (hadGraph) await flushSession();
+  if (!stillBound(startingBinding)) return { kind: "aborted" };
   if (!(await authorizeGraphAccess(path))) return { kind: "aborted" };
+  if (!stillBound(startingBinding)) return { kind: "aborted" };
   // This is the last await before the backend graph binding can change.  Flush
   // delayed view state plus complete highlight/area mutations under A; only a
   // successful drain permits us to invalidate that authority and unmount it.
@@ -103,6 +112,7 @@ export async function loadGraphPath(
     pushToast("PDF changes couldn't be saved — the current graph is still open.", "error");
     return { kind: "aborted" };
   }
+  if (!stillBound(startingBinding)) return { kind: "aborted" };
   if (rebindsPdfOwner) {
     retirePdfOwnership();
     closePdf();
@@ -128,6 +138,9 @@ export async function loadGraphPath(
   }
   if (!hadGraph || rebindsPdfOwner) activatePdfOwnership(meta.root);
   resetStore();
+  clearWorkspaces();
+  closePageProps();
+  setAudioPlayer(null);
   resetPageIndex();
   clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one
   if (switching) {
@@ -241,12 +254,14 @@ async function ensureJournalTemplate(): Promise<void> {
 
 /** Load the graph's logseq/custom.css into a <style> tag (user theming). */
 async function injectCustomCss(): Promise<void> {
+  const binding = captureBinding();
   let css = "";
   try {
     css = await backend().readCustomCss();
   } catch {
     css = "";
   }
+  if (!stillBound(binding)) return;
   ensureLsShimStyle();
   ensureThemeStyle();
   let el = document.getElementById(CUSTOM_CSS_STYLE_ID);
@@ -260,11 +275,14 @@ async function injectCustomCss(): Promise<void> {
 
 /** Pick a folder and open it as the graph. No-op if cancelled. */
 export async function switchGraph(): Promise<LoadGraphPathOutcome> {
+  const binding = captureBinding();
   const platform = await platformKind();
+  if (!stillBound(binding)) return { kind: "aborted" };
   if (platform === "android") {
     let result;
     try {
       result = await backend().pickGraphFolder();
+      if (!stillBound(binding)) return { kind: "aborted" };
     } catch (e) {
       pushToast(`Couldn't open the Android folder picker. (${String(e)})`, "error");
       return { kind: "aborted" };
@@ -295,6 +313,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
     return { kind: "aborted" };
   }
   const path = await backend().pickFolder();
+  if (!stillBound(binding)) return { kind: "aborted" };
   return path ? loadGraphPath(path) : { kind: "aborted" };
 }
 
@@ -302,13 +321,16 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
  *  narrated demo graph there, open it, and land on the "Welcome to Tine" tour.
  *  No-op if the folder picker is cancelled. */
 export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
+  const choiceBinding = captureBinding();
   const dir = (await isMobile())
     ? await backend().defaultGraphParent()
     : await backend().pickFolder("Choose where to create your new graph");
+  if (!stillBound(choiceBinding)) return { kind: "aborted" };
   if (!dir) return { kind: "aborted" };
   let root: string;
   try {
     root = await backend().createGraph(dir);
+    if (!stillBound(choiceBinding)) return { kind: "aborted" };
   } catch (e) {
     pushToast(`Couldn't create the graph. (${String(e)})`, "error");
     return { kind: "aborted" };

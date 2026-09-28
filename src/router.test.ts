@@ -24,6 +24,8 @@ import {
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
 import { setDoc } from "./document/model";
+import { resetStore } from "./document";
+import { backend } from "./backend";
 
 // The router holds singleton tab state, so reset to a single unpinned journals
 // tab before each test. confirm() is stubbed true so closing pinned tabs (which
@@ -41,6 +43,20 @@ beforeEach(() => {
 });
 
 const pinActive = () => togglePin(activeId());
+
+it("does not close a tab after its confirmation outlives the graph binding", async () => {
+  openInNewTab({ kind: "page", name: "Pinned", pageKind: "page" }, true);
+  const id = activeId();
+  togglePin(id);
+  let finish!: (confirmed: boolean) => void;
+  vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pending = closeTab(id);
+  resetStore();
+  finish(true);
+  await pending;
+  expect(tabs().some((tab) => tab.id === id)).toBe(true);
+  vi.restoreAllMocks();
+});
 
 describe("independent empty query workspaces (GH #172)", () => {
   it("keeps same-timestamp empty query routes identity-distinct through edits, presentation, and tab history", () => {

@@ -61,6 +61,47 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   }
   const menuLabels = () => [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
 
+  it("does not mark a colliding block in the new graph as a template", async () => {
+    load();
+    let finish!: (templates: Awaited<ReturnType<ReturnType<typeof backend>["listTemplates"]>>) => void;
+    vi.spyOn(backend(), "listTemplates").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    const make = [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"));
+    expect(make).toBeDefined();
+    make!.click();
+    const input = document.querySelector<HTMLInputElement>(".ctx-template-name")!;
+    input.value = "Old graph template";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLElement>(".ctx-template-submit")!.click();
+    resetStore();
+    load();
+    finish([]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(blockProperty("leaf", "template")).toBeNull();
+    dispose();
+  });
+
+  it("does not delete a colliding page after an old graph confirmation", async () => {
+    load();
+    let finish!: (confirmed: boolean) => void;
+    vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue(undefined as never);
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+    const action = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((item) => item.textContent?.includes("Delete page"));
+    expect(action).toBeDefined();
+    action!.click();
+    resetStore();
+    load();
+    finish(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(remove).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("context Copy/Cut block each leave a fresh exact private payload", async () => {
     load();
     setDoc("byId", "parent", "raw", "Parent\nid:: 11111111-1111-1111-1111-111111111111");

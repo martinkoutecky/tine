@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import type { PaneSnapshot } from "./router";
 import { buildPersistedSession } from "./session";
+import { resetStore } from "./document";
 import { applySidebarSession, rightSidebar } from "./ui";
 import {
   activeWorkspaceId,
@@ -46,6 +47,36 @@ beforeEach(() => {
 });
 
 describe("named workspace switching", () => {
+  it("does not install an old graph registry after its read finishes on another graph", async () => {
+    let finish!: (raw: string) => void;
+    vi.spyOn(backend(), "loadWorkspaces").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = initializeWorkspaces();
+    await Promise.resolve();
+    resetStore();
+    finish(registryFromCurrent());
+    await expect(pending).rejects.toThrow(/graph/i);
+    expect(workspaces()).toEqual([]);
+  });
+
+  it("clears the old registry when the new graph registry cannot be read", async () => {
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValueOnce(registryFromCurrent()).mockRejectedValueOnce(new Error("unreadable"));
+    await initializeWorkspaces();
+    resetStore();
+    await expect(initializeWorkspaces()).rejects.toThrow("unreadable");
+    expect(workspaces()).toEqual([]);
+    expect(activeWorkspaceId()).toBe("");
+  });
+
+  it("does not persist a workspace switch queued before a graph reset", async () => {
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
+    const save = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue();
+    await initializeWorkspaces();
+    const pending = switchWorkspace("default");
+    resetStore();
+    await expect(pending).rejects.toThrow(/graph/i);
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it("restores the first workspace's routed tabs and split layout after creating and using a second", async () => {
     restorePaneLayout(
       {

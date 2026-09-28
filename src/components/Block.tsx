@@ -88,7 +88,7 @@ import { graphMeta, dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
 import { assetEditorIsCurrent, captureAssetEditor, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
-import { stillBound } from "../binding";
+import { captureBinding, stillBound } from "../binding";
 import { openInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
@@ -190,10 +190,11 @@ function siblingIndex(id: string): number {
 }
 
 function beginDrag(id: string, e: MouseEvent) {
-  const startX = e.clientX;
+  const binding = captureBinding(), startX = e.clientX;
   const startY = e.clientY;
   dragMoved = false;
   const onMove = (ev: MouseEvent) => {
+    if (!stillBound(binding)) return;
     if (!dragMoved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
     if (!dragMoved) {
       dragMoved = true;
@@ -215,7 +216,7 @@ function beginDrag(id: string, e: MouseEvent) {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
     const ind = dropInd();
-    if (dragMoved && ind && docNode(ind.id)) {
+    if (stillBound(binding) && dragMoved && ind && docNode(ind.id)) {
       const tgt = docNode(ind.id);
       // can't drop onto own descendant
       let p: string | null = ind.id;

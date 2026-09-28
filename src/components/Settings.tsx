@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, crea
 import { ImproveTab } from "./ImproveTab";
 import { errorFamily } from "../errorFamily";
 import { AboutTab } from "./AboutTab";
-import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, setGraphTransitioning, theme, toggleTheme, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
+import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, theme, toggleTheme, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { setJournalTemplate, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
@@ -36,8 +36,8 @@ import {
   DEFAULT_ASSET_NAME_FORMAT,
   STAMPED_ASSET_NAME_FORMAT,
 } from "../assetSettings";
-import { MEDIA_EDITORS } from "../mediaEditors";
-import { mediaEditorCommand, setMediaEditorCommand } from "../mediaEditorSettings";
+import { MEDIA_EDITORS, type MediaEditor } from "../mediaEditors";
+import { detectMediaEditorCommand, mediaEditorCommand, setMediaEditorCommand } from "../mediaEditorSettings";
 import { formatAssetName } from "../media";
 import { galleryThemes, selectedGalleryTheme, applyTheme as applyGalleryTheme } from "../themeGallery";
 import type { GalleryTheme } from "../styles/themes";
@@ -51,9 +51,10 @@ import {
 import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
-import { switchGraph, loadGraphPath } from "../graph";
+import { switchGraph } from "../graph";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
+import { restoreBackupFromSettings } from "../backupRestore";
 import { captureBinding, stillBound } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
 import { formatJournal } from "../journal";
@@ -1868,45 +1869,9 @@ function BackupsTab(): JSX.Element {
     }
   };
 
-  const restore = async (b: BackupInfo) => {
+  const restore = (b: BackupInfo) => {
     if (!ready() || busy()) return;
-    const when = fmtStamp(b.stamp);
-    // Native GTK confirm — window.confirm silently returns true here, which would
-    // overwrite the graph with no prompt.
-    if (
-      !(await backend().confirm(
-        `Restore the snapshot from ${when}?\n\n` +
-          `This overwrites journals/ and pages/ with the ${b.files} file(s) in that backup. ` +
-          `Your current state is snapshotted first, so this is reversible.`
-      ))
-    )
-      return;
-    setBusy(true);
-    setGraphTransitioning(true);
-    try {
-      // Persist current edits first so the pre-restore safety snapshot captures
-      // them (and the reload below doesn't write stale edits over the restore).
-      // Abort if a page couldn't be saved rather than discard it.
-      if (!(await flushAll())) {
-        pushToast("Some pages couldn't be saved — resolve conflicts before restoring.", "error");
-        setBusy(false);
-        return;
-      }
-      await backend().restoreBackup(b.stamp, "replace-page");
-      const root = graphMeta()?.root ?? "";
-      const outcome = await loadGraphPath(root, { forceRefresh: true, transitionHeld: true }); // rebuild restored files
-      if (outcome.kind !== "loaded" && outcome.kind !== "already_current") {
-        pushToast("Snapshot restored, but the graph couldn't be reloaded. Reopen it to see the restored files.", "error");
-        return;
-      }
-      pushToast(`Restored snapshot from ${when}`, "success");
-      void refresh();
-    } catch (e) {
-      pushToast(`Restore failed: ${String(e)}`, "error");
-    } finally {
-      setGraphTransitioning(false);
-      setBusy(false);
-    }
+    void restoreBackupFromSettings(b, fmtStamp(b.stamp), setBusy, () => { void refresh(); });
   };
 
   return (
@@ -2088,22 +2053,22 @@ function ConflictFileRow(props: {
   );
 }
 
-// Duplicate journal days: a date that resolves to >1 file (e.g. a date-stem file
-// plus a title-named one, usually from a date-format change). Tine never
-// auto-merges, so list each file with reconcile actions (Open/Merge/Rename/Trash).
+// Duplicate journal days expose per-file reconcile actions.
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
-  // Run a reconcile op, toast the outcome, and refresh the (now-changed) list.
   const reconcile = async (op: () => Promise<void>, ok: string) => {
+    const binding = captureBinding();
     try {
       await op();
+      if (!stillBound(binding)) return;
       pushToast(ok, "success");
       await refreshJournalConflicts(true);
     } catch (e) {
-      pushToast(`Couldn’t do that: ${String(e)}`, "error");
+      if (stillBound(binding)) pushToast(`Couldn’t do that: ${String(e)}`, "error");
     }
   };
   const trashFile = async (name: string) => {
+    const binding = captureBinding();
     if (
       !(await backend().confirm(
         `Move the journal file “${name}” to the trash?\n\n` +
@@ -2111,6 +2076,7 @@ function JournalConflictsPanel(): JSX.Element {
       ))
     )
       return;
+    if (!stillBound(binding)) return;
     await reconcile(() => backend().trashJournalFile(name, "delete-page"), `Moved ${name} to trash`);
   };
   const openFileRow = (file: JournalFile, title: string) => {
@@ -2175,6 +2141,7 @@ function SyncConflictsPanel(): JSX.Element {
   void refreshSyncConflicts(); // refresh when the Backups tab opens
   const [merging, setMerging] = createSignal<SyncConflict | null>(null);
   const discard = async (c: SyncConflict) => {
+    const binding = captureBinding();
     const name = c.path.split("/").pop() ?? c.path;
     if (
       !(await backend().confirm(
@@ -2183,12 +2150,14 @@ function SyncConflictsPanel(): JSX.Element {
       ))
     )
       return;
+    if (!stillBound(binding)) return;
     try {
       await backend().trashSyncConflict(c.path, "delete-page");
+      if (!stillBound(binding)) return;
       pushToast(`Discarded ${name}`, "success");
       await refreshSyncConflicts();
     } catch (e) {
-      pushToast(`Couldn’t discard it: ${String(e)}`, "error");
+      if (stillBound(binding)) pushToast(`Couldn’t discard it: ${String(e)}`, "error");
     }
   };
   return (
@@ -2369,6 +2338,7 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
     setDecisions(next);
   };
   const merge = async () => {
+    const binding = captureBinding();
     const currentDiff = diff();
     if (!currentDiff || diff.loading) return;
     setBusy(true);
@@ -2381,10 +2351,12 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
         currentDiff.conflict_rev,
         ["replace-page", "delete-page"], preChoice()
       );
+      if (!stillBound(binding)) return;
       pushToast(`Merged into “${props.conflict.base_name}”`, "success");
       await refreshSyncConflicts();
       props.onClose();
     } catch (e) {
+      if (!stillBound(binding)) return;
       if (errorFamily(e) === "conflict") {
         pushToast("The current page changed on disk — re-reading it, please redo your choices.", "error");
         setDecisions({});
@@ -2597,13 +2569,13 @@ function FilesTab(props: { search: string }): JSX.Element {
 // offers an autodetect probe.
 function MediaEditorsSection(): JSX.Element {
   const [detecting, setDetecting] = createSignal<string | null>(null);
-  const autodetect = async (id: string, settingKey: string) => {
-    setDetecting(id);
+  const autodetect = async (ed: MediaEditor) => {
+    setDetecting(ed.id);
     try {
-      const cmd = await backend().detectMediaEditor(id);
-      if (cmd) {
-        setMediaEditorCommand(settingKey, cmd);
-        pushToast(`Found: ${cmd}`, "success");
+      const { command, applied } = await detectMediaEditorCommand(ed);
+      if (!applied) return;
+      if (command) {
+        pushToast(`Found: ${command}`, "success");
       } else {
         pushToast("Couldn’t find it — set the command manually.", "error");
       }
@@ -2640,7 +2612,7 @@ function MediaEditorsSection(): JSX.Element {
                 <button
                   class="settings-btn"
                   disabled={detecting() === ed.id}
-                  onClick={() => void autodetect(ed.id, ed.settingKey)}
+                  onClick={() => void autodetect(ed)}
                 >
                   {detecting() === ed.id ? "Detecting…" : "Autodetect"}
                 </button>
@@ -2742,6 +2714,7 @@ function AssetsTab(): JSX.Element {
       ))
     )
       return;
+    if (!stillBound(binding)) return;
     try {
       const n = await backend().emptyAssetTrash(binding.backendGeneration);
       if (!stillBound(binding)) return;

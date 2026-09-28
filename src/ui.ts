@@ -4,7 +4,8 @@ import { pushToast } from "./toasts";
 import { createSignal, useContext } from "solid-js";
 import type { JournalConflict, SyncConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
-import { backend, isTauri } from "./backend";
+import { backend } from "./backend";
+import { setFocusFullscreen } from "./focusFullscreen";
 import { captureBinding, stillBound } from "./binding";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./routerBridge";
@@ -234,6 +235,7 @@ export function changeJournalTitleFormat(fmt: string) {
   void backend()
     .setJournalTitleFormat(next, ["rename-page"])
     .then((migration) => {
+      if (graphMeta()?.root !== m.root || graphMeta()?.journal_page_title_format !== next) return;
       bumpGraphEpoch();
       const message = journalMigrationSkipMessage(migration);
       if (message) pushToast(message, "info");
@@ -463,9 +465,9 @@ export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = createSignal<stri
 
 // Page-properties panel (alias / public / tags / icon / title), opened from the
 // page-title gear or the "/Page properties" command. Anchored at x,y.
-export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ name: string; x: number; y: number } | null>(null);
+export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ name: string; x: number; y: number; binding: ReturnType<typeof captureBinding> } | null>(null);
 export function openPageProps(name: string, x: number, y: number) {
-  setPagePropsPanel({ name, x, y });
+  setPagePropsPanel({ name, x, y, binding: captureBinding() });
 }
 export function closePageProps() {
   setPagePropsPanel(null);
@@ -481,13 +483,6 @@ export function closeExportModal() {
   setExportModal(null);
 }
 
-// Remember the window's pre-focus fullscreen state so exiting focus restores it
-// (rather than always dropping out of fullscreen if the user was already in it).
-let preFocusFullscreen = false;
-async function appWindow() {
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  return getCurrentWindow();
-}
 export function toggleFocusMode() {
   if (focusMode()) void exitFocusMode();
   else void enterFocusMode();
@@ -498,11 +493,8 @@ export async function enterFocusMode() {
   // exited (a transient signal change — it doesn't rewrite the t-b preference).
   if (dimInFocus()) setDimInactiveBlocks(true);
   setFocusMode(true);
-  if (!isTauri()) return;
   try {
-    const w = await appWindow();
-    preFocusFullscreen = await w.isFullscreen();
-    if (!preFocusFullscreen) await w.setFullscreen(true);
+    await setFocusFullscreen(true);
   } catch {
     // ignore (window plugin unavailable)
   }
@@ -511,9 +503,8 @@ export async function exitFocusMode() {
   if (!focusMode()) return;
   setFocusMode(false);
   if (dimInFocus()) setDimInactiveBlocks(false);
-  if (!isTauri()) return;
   try {
-    if (!preFocusFullscreen) (await appWindow()).setFullscreen(false);
+    await setFocusFullscreen(false);
   } catch {
     // ignore
   }

@@ -1,4 +1,5 @@
 import { backend } from "./backend";
+import { captureBinding, stillBound } from "./binding";
 import { isMobilePlatform } from "./nativeChrome";
 import {
   installSessionPersistence,
@@ -272,29 +273,34 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
 }
 
 export async function flushSession(): Promise<void> {
+  const binding = captureBinding();
   clearTimeout(saveTimer);
   try {
     await backend().saveSession(JSON.stringify(buildPersistedSession()));
-    clearLegacyRecentSource();
+    if (stillBound(binding)) clearLegacyRecentSource();
   } catch {
     // best-effort
   }
 }
 
 export function scheduleSessionSave() {
+  const binding = captureBinding();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
+    if (!stillBound(binding)) return;
     void backend().saveSession(JSON.stringify(buildPersistedSession()))
-      .then(clearLegacyRecentSource)
+      .then(() => { if (stillBound(binding)) clearLegacyRecentSource(); })
       .catch(() => {});
   }, 150);
 }
 
 export async function restoreSession(): Promise<void> {
+  const binding = captureBinding();
   try {
     let raw: string | null = null;
     try {
       raw = await backend().loadSession();
+      if (!stillBound(binding)) return;
     } catch {
       return;
     }
@@ -314,6 +320,7 @@ export async function restoreSession(): Promise<void> {
     // like the existing session restore; a bad registry must not block the app.
     try {
       const { initializeWorkspaces } = await import("./workspaces");
+      if (!stillBound(binding)) return;
       await initializeWorkspaces();
     } catch {
       // unavailable before graph binding, older backend, or invalid registry

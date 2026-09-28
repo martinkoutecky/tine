@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { copyGuideIntoGraph, maybeShowGuideAnnouncement } from "./guide";
 import { dismissToast, setToasts, toasts } from "./toasts";
 import { graphMeta, pageInventoryRev, setGraphMeta } from "./graphSession";
+import { resetStore } from "./document";
 
 async function seedMeta(root: string) {
   const meta = await backend().loadGraph("");
@@ -18,6 +19,19 @@ afterEach(() => {
 });
 
 describe("guide announcement", () => {
+  it("does not announce the new graph when an old graph toast is dismissed", async () => {
+    const setFlag = vi.spyOn(backend(), "setGuideAnnounced").mockResolvedValue();
+    await seedMeta("/mock/guide-old");
+    maybeShowGuideAnnouncement();
+    const oldToast = toasts()[0];
+    const oldMeta = graphMeta()!;
+    resetStore();
+    setGraphMeta({ ...oldMeta, root: "/mock/guide-new", guide_announced: false });
+    dismissToast(oldToast.id);
+    expect(graphMeta()?.guide_announced).toBe(false);
+    expect(setFlag).not.toHaveBeenCalled();
+  });
+
   it("shows once when guide_announced is unset and Dismiss persists the flag", async () => {
     const setFlag = vi.spyOn(backend(), "setGuideAnnounced").mockResolvedValue();
     await seedMeta("/mock/guide-dismiss");
@@ -46,6 +60,20 @@ describe("guide announcement", () => {
 });
 
 describe("guide copy inventory", () => {
+  it("does not navigate when a Guide copy from the old graph completes", async () => {
+    let finish!: (value: { name: string; created: boolean; created_pages: string[] }) => void;
+    vi.spyOn(backend(), "copyGuideIntoGraph").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await seedMeta("/mock/guide-copy-old");
+    const pending = copyGuideIntoGraph("Tine-guide/Tine Guide");
+    const oldMeta = graphMeta()!;
+    resetStore();
+    setGraphMeta({ ...oldMeta, root: "/mock/guide-copy-new" });
+    const before = pageInventoryRev();
+    finish({ name: "tine-guide/Tine Guide", created: true, created_pages: ["tine-guide/Tine Guide"] });
+    await pending;
+    expect(pageInventoryRev()).toBe(before);
+  });
+
   it("refreshes canonical page inventory when the backend creates guide pages", async () => {
     const copy = vi.spyOn(backend(), "copyGuideIntoGraph").mockResolvedValue({
       name: "tine-guide/Tine Guide",

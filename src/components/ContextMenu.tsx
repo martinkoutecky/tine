@@ -4,7 +4,7 @@ import { pushToast } from "../toasts";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
-import { removePageTargetAcrossPanes } from "../panes";
+import { focusedRouter, removePageTargetAcrossPanes } from "../panes";
 import "../graph"; // installs the document rename's navigation refresh handler
 import { backend } from "../backend";
 import { carryDay } from "../carry";
@@ -674,7 +674,9 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
   const submit = async () => {
     const title = name().trim();
     if (!title) return;
+    const binding = captureBinding();
     const existing = await backend().listTemplates().catch(() => []);
+    if (!stillBound(binding)) return;
     if (existing.some((t) => t.name.toLowerCase() === title.toLowerCase())) {
       pushToast(`A template named “${title}” already exists.`, "error");
       return;
@@ -748,6 +750,7 @@ function PageMenu(props: {
     return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;
   };
   const runFileAction = async (reveal: boolean) => {
+    const binding = captureBinding();
     const name = props.name;
     const kind = props.pageKind;
     const captured = target();
@@ -761,9 +764,10 @@ function PageMenu(props: {
       return;
     }
     if (!page!.readOnly && !(await flushPage(name))) {
-      pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
+      if (stillBound(binding)) pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
       return;
     }
+    if (!stillBound(binding)) return;
     if (isConflicted(name)) {
       pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
       return;
@@ -775,6 +779,7 @@ function PageMenu(props: {
       }
       await backend().openPageFile(name, kind, captured.path ?? page!.id, reveal);
     } catch (error) {
+      if (!stillBound(binding)) return;
       const message = page!.id
         ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`
         : "This page has no on-disk file yet. Type something and let Tine save it first.";
@@ -782,6 +787,7 @@ function PageMenu(props: {
     }
   };
   const remove = async () => {
+    const binding = captureBinding();
     // Snapshot props BEFORE any await/close: the menu's <Show> disposes this
     // component the instant props.close() runs, after which reading props.* warns
     // "stale read from <Show>".
@@ -791,11 +797,13 @@ function PageMenu(props: {
     // Native GTK confirm — window.confirm silently returns true here, which would
     // delete the page with no prompt.
     if (!(await backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.`))) return;
+    if (!stillBound(binding)) return;
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
     void deletePage(name, kind, captured.path)
       .then((ok) => {
+        if (!stillBound(binding)) return;
         if (!ok) {
           pushToast("Delete failed", "error");
           return;
@@ -807,7 +815,7 @@ function PageMenu(props: {
         if (kind === "journal") restoreTodayJournalInFeed();
         pushToast(`Deleted “${name}”`, "success");
       })
-      .catch(() => pushToast("Delete failed", "error"));
+      .catch(() => { if (stillBound(binding)) pushToast("Delete failed", "error"); });
   };
   const items: { id: string; label: string; run: () => void; danger?: boolean }[] = [
     { id: "open", label: "Open", run: () => openPageTarget(target()) },
@@ -940,17 +948,26 @@ function RenamePage(props: {
     const kind = props.pageKind;
     const path = props.path;
     const next = value().trim();
+    const binding = captureBinding();
+    const root = graphMeta()?.root;
+    const router = focusedRouter();
+    const tabId = router.activeId();
+    const intentRevision = router.routeIntentRevision();
+    const current = () => binding.backendGeneration === captureBinding().backendGeneration
+      && graphMeta()?.root === root && router.activeId() === tabId
+      && router.routeIntentRevision() === intentRevision;
     props.close(false);
     if (!next || next === from) return;
     try {
       if (!(await renamePageOnDisk(from, next, { name: from, pageKind: kind, ...(path ? { path } : {}) }))) {
-        pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
+        if (current()) pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
         return;
       }
+      if (!current()) return;
       openPage(next, kind);
       pushToast(`Renamed to “${next}”`, "success");
     } catch (e) {
-      pushToast(`Rename failed: ${String(e)}`, "error");
+      if (current()) pushToast(`Rename failed: ${String(e)}`, "error");
     }
   };
 
