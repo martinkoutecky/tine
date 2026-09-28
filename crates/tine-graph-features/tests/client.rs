@@ -772,6 +772,53 @@ fn highlight_save_keeps_external_deletion_when_local_value_is_unchanged() {
 }
 
 #[test]
+fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
+    let (root, store) = fixture("hl-edit-after-delete");
+    let loaded = highlight("a");
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded.clone()]).unwrap();
+    let before: Vec<_> = ["assets/paper.edn", "pages/hls__paper.md"]
+        .iter()
+        .map(|rel| fs::read(root.join(rel)).unwrap())
+        .collect();
+    let mut local = loaded.clone();
+    local.color = "red".into();
+    let error =
+        pdf::write_highlights(&store, "paper.pdf", "Paper", &[local], &[loaded]).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    for (rel, expected) in ["assets/paper.edn", "pages/hls__paper.md"]
+        .iter()
+        .zip(before)
+    {
+        assert_eq!(fs::read(root.join(rel)).unwrap(), expected, "{rel}");
+    }
+    assert!(pdf::read_highlights(&store, "paper.pdf").is_empty());
+}
+
+#[test]
+fn highlight_save_conflicts_when_local_deletion_meets_external_edit() {
+    let (root, store) = fixture("hl-delete-after-edit");
+    let loaded = highlight("a");
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
+    let mut external = loaded.clone();
+    external.color = "green".into();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[external], &[loaded.clone()]).unwrap();
+    let before: Vec<_> = ["assets/paper.edn", "pages/hls__paper.md"]
+        .iter()
+        .map(|rel| fs::read(root.join(rel)).unwrap())
+        .collect();
+    let error = pdf::write_highlights(&store, "paper.pdf", "Paper", &[], &[loaded]).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    for (rel, expected) in ["assets/paper.edn", "pages/hls__paper.md"]
+        .iter()
+        .zip(before)
+    {
+        assert_eq!(fs::read(root.join(rel)).unwrap(), expected, "{rel}");
+    }
+    assert_eq!(pdf::read_highlights(&store, "paper.pdf")[0].color, "green");
+}
+
+#[test]
 fn old_vs_new_matrix_on_identical_fixtures() {
     let (a, store) = fixture("matrix-new");
     fs::write(a.join("pages/Refs.md"), "- ![](../assets/referenced.png)\n").unwrap();

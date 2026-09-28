@@ -627,7 +627,7 @@ function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): B
     properties: propertyLines(raw),
   };
 }
-
+/** Demo/test backend with mutable mock state. savePages is a no-op; writeHighlights replaces its list without three-way merge or production failures. */
 export function mockBackend(): Backend {
   const all = [...PAGES, ...NAMED];
   const find = (name: string) =>

@@ -193,6 +193,20 @@ async function waitForActivePageRow(browser, name) {
       && row.querySelector(".switcher-name")?.textContent.trim() === wanted;
   }, name), { timeout: 30000, interval: 50 });
 }
+async function waitForFirstPage(browser, timeoutMs) {
+  const deadline = Date.now() + timeoutMs - 10000;
+  let startupError = "";
+  while (Date.now() < deadline) {
+    const state = await browser.execute(() => ({
+      ready: !!document.querySelector(".ls-block, .page-title"),
+      pageError: document.querySelector(".page-load-error")?.textContent?.trim() || "",
+    }));
+    if (state.ready) return;
+    if (state.pageError) startupError = state.pageError;
+    await sleep(100);
+  }
+  throw new Error(startupError ? `startup page error: ${startupError}` : "first page did not render");
+}
 async function trial(kind, corpus, index) {
   const trialTimeoutMs = TRIAL_TIMEOUT_OVERRIDE ? Number(TRIAL_TIMEOUT_OVERRIDE) : corpus === "10k" ? 120000 : 60000;
   const dir = path.join(OUT, "trials", `${corpus}-${kind}-${String(index).padStart(2, "0")}`);
@@ -219,7 +233,7 @@ async function trial(kind, corpus, index) {
     browser = await remote({ hostname: "127.0.0.1", port: driverPort, path: "/", logLevel: "silent", connectionRetryCount: 1, connectionRetryTimeout: 120000,
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: binaries[kind] } } });
     result.probeMode = await startProbe(browser);
-    await browser.$(".ls-block, .page-title").waitForExist({ timeout: 120000 });
+    await waitForFirstPage(browser, trialTimeoutMs);
     await paint(browser);
     result.metrics.openMs = performance.now() - started;
 
@@ -367,22 +381,28 @@ async function renameTrial(result, corpus, kind, index) {
   const trialTimeoutMs = TRIAL_TIMEOUT_OVERRIDE ? Number(TRIAL_TIMEOUT_OVERRIDE) : corpus === "10k" ? 120000 : 60000;
   await waitForListening(driverPort);
   const run = async () => {
+    result.renameStage = "connect";
     browser = await remote({ hostname: "127.0.0.1", port: driverPort, path: "/", logLevel: "silent", connectionRetryCount: 1, connectionRetryTimeout: 120000,
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: binaries[kind] } } });
-    await browser.$(".ls-block, .page-title").waitForExist({ timeout: 120000 });
+    result.renameStage = "first page";
+    await waitForFirstPage(browser, trialTimeoutMs);
     const mode = await startProbe(browser);
     result.probeMode ??= mode;
+    result.renameStage = "switcher";
     await openSwitcher(browser, "Bench Hub");
     await waitForActivePageRow(browser, "Bench Hub");
     await browser.keys(["Enter"]);
+    result.renameStage = "page route";
     await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Bench Hub", { timeout: 30000 });
     await journey(browser, "rename");
+    result.renameStage = "title edit";
     await browser.execute(() => {
       const title = document.querySelector("h1.page-title");
       title?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
     });
     await browser.$(".page-title-input").waitForExist({ timeout: 10000 });
     const started = performance.now();
+    result.renameStage = "submit";
     await browser.execute((name) => {
       const input = document.querySelector(".page-title-input");
       input.focus();
@@ -390,6 +410,7 @@ async function renameTrial(result, corpus, kind, index) {
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     }, "Bench Hub Renamed");
+    result.renameStage = "disk";
     const renamed = path.join(graph, "pages/Bench Hub Renamed.md");
     const old = path.join(graph, "pages/Bench Hub.md");
     const deadline = Date.now() + 60000;
@@ -413,6 +434,7 @@ async function renameTrial(result, corpus, kind, index) {
     }
     const probe = await probeResults(browser);
     result.longTasks.rename = probe.events.filter((event) => event.journey === "rename").map((event) => event.ms);
+    result.renameStage = "complete";
   };
   try {
     await Promise.race([
@@ -426,7 +448,7 @@ async function renameTrial(result, corpus, kind, index) {
       }),
     ]);
   } catch (error) {
-    result.journeyFailures.rename = String(error).slice(0, 300);
+    result.journeyFailures.rename = `${result.renameStage}: ${String(error)}`.slice(0, 300);
     if (!timedOut) spawnSync("import", ["-window", "root", path.join(dir, "failure.png")], { env, timeout: 5000 });
   } finally {
     clearTimeout(watchdog);
