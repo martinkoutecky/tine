@@ -11,16 +11,18 @@ impl Store {
     /// temporary-file replacement; the temp file is synced before rename and
     /// a create uses a no-clobber rename. An existing-page replacement uses
     /// an ordinary rename after its final revision guard, then syncs the
-    /// directory. A directory-sync failure after the rename is returned as an
-    /// error although the new bytes are already visible. A stale
-    /// base returns `Conflict` even if the proposed bytes equal current disk
+    /// directory. A directory-sync failure after rename returns an error and
+    /// attempts undo: new bytes may have been visible briefly, while a clean
+    /// undo restores the starting bytes. Inspect disk if undo is incomplete.
+    /// A stale base returns `Conflict` even if the proposed bytes equal current disk
     /// bytes. With a matching base, equal bytes return `Unchanged` without a
     /// publication. A changed save publishes
     /// before returning as its own `Origin::Own` change when the initial load
     /// has not failed. A save begun during parsing may wait for the full parse
     /// while capturing its publication view. The bytes have already been
     /// written and synced to the temporary file and renamed into place before
-    /// this wait; directory sync is best effort. It can finish before or after
+    /// this wait; directory-sync errors return after attempted undo instead of
+    /// entering the wait. A successful save can finish before or after
     /// the separate load-completion event. The save's own generation contains
     /// its write, and a later load-completion view contains it too. `Saved`
     /// returns a file revision, not a graph revision; compare the matching
@@ -88,10 +90,15 @@ impl Store {
     }
 
     /// Save page snapshots in input order through one guarded transaction.
-    /// Success returns one file revision per entry. Failure names the failed
-    /// entry and any graph-relative files not restored or fully published;
-    /// inspect those files before retrying. Cost is the sum of changed page
-    /// bytes plus graph publication, including a possible O(P) page-vector copy.
+    /// Preflight checks all entries before writing; duplicate file IDs, an
+    /// empty request, empty edit kinds, and Guide pages refuse. Success returns
+    /// one Saved or Unchanged file revision per entry. A preflight refusal writes
+    /// nothing. An apply failure attempts undo; inspect `undo_failed` and
+    /// `publication_errors` before retrying. If publication fails after all disk
+    /// steps, Failed uses index 0 as a placeholder, not a failed entry, and the
+    /// writes may stand. Cost includes reading/hashing every guarded page,
+    /// writing changed pages, possible undo/final-state reads and writes, and
+    /// graph publication that may copy O(P) page pointers.
     pub fn save_pages(
         &self,
         entries: &[(PageId, SaveBase, PageDto, Vec<crate::EditKind>)],

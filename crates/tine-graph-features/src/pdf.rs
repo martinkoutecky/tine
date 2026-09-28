@@ -362,12 +362,21 @@ pub fn rollback_pdf_area_image(
     })
 }
 
-/// Three-way merge caller edits against loaded highlight values and the current
-/// sidecar. Caller-changed fields win; unchanged fields follow disk, including
-/// external edits and deletions. Returns the committed set for the next baseline.
-/// Commit the sidecar and hls page together. OG artifacts precede best-effort moves of deleted
-/// crops and legacy artifacts to recoverable trash. Cost O(asset entries + sidecar
-/// + page + deleted crop bytes), plus a graph refresh when the page is absent.
+/// Merge caller highlights by ID against the current sidecar. Changed color,
+/// text and image values win locally; unchanged values follow disk. Page and
+/// position form one geometry value: changing either locally selects both local
+/// values. Unchanged highlights follow disk, including deletion; disk-only
+/// additions survive. An edit against a disk deletion, or a deletion against a
+/// disk edit, returns a conflict before either artifact is written; retain the
+/// local edit for resolution. Returns the committed set for the next baseline.
+/// A blank sidecar or valid top-level EDN map is accepted; malformed nonblank
+/// EDN refuses. Malformed highlight entries within a valid map are skipped,
+/// and duplicate IDs are not rejected. Sidecar and annotation
+/// page are one guarded transaction. Failure can leave disk differences if
+/// undo or publication is incomplete; retain local edits and inspect disk.
+/// After commit, crop/legacy trash moves are best effort and do not fail this
+/// call. Cost O(asset entries + sidecar + page + deleted crop bytes) per retry,
+/// plus graph refresh when the annotation page is absent (up to O(P)).
 pub fn write_highlights(
     store: &Store,
     pdf_name: &str,
@@ -406,6 +415,21 @@ pub fn write_highlights(
         let have: HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
         let disk_by_id: HashMap<&str, &Highlight> =
             disk.iter().map(|h| (h.id.as_str(), h)).collect();
+        if highlights.iter().any(|local| {
+            base.get(local.id.as_str()).is_some_and(|loaded| {
+                *loaded != local && !disk_by_id.contains_key(local.id.as_str())
+            })
+        }) || base.iter().any(|(id, loaded)| {
+            !have.contains(id)
+                && disk_by_id
+                    .get(id)
+                    .is_some_and(|current| *current != *loaded)
+        }) {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "highlight edit conflicts with a concurrent deletion or edit; local changes remain unsaved",
+            ));
+        }
         let mut merged: Vec<Highlight> = highlights
             .iter()
             .filter_map(|local| {

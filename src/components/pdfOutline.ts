@@ -1,4 +1,3 @@
-/** Bound untrusted PDF outline metadata before recursive UI rendering. */
 export interface PdfOutlineItem {
   id: string;
   label: string;
@@ -6,6 +5,13 @@ export interface PdfOutlineItem {
   children: PdfOutlineItem[];
 }
 
+/** Convert array-shaped outline input into a UI tree. Emits at most 10,000 nodes
+ * and descends at most 63 levels; malformed entries are skipped, blank titles
+ * become "Untitled", and IDs encode source positions. It does not cap scanned
+ * array slots or title/destination size, and it retains destination arrays by
+ * reference without validating their elements. Cycles terminate at the depth
+ * cap; hostile getters or proxies may throw. No I/O; work is proportional to
+ * scanned input slots plus emitted nodes. */
 export function sanitizeOutlineItems(value: unknown): PdfOutlineItem[] {
   if (!Array.isArray(value)) return [];
   const sanitized: PdfOutlineItem[] = [];

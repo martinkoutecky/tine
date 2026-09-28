@@ -38,6 +38,8 @@ fn store_error(error: StoreError) -> io::Error {
     }
 }
 
+/// Preserve the original transaction refusal and every rollback/publication
+/// failure location so callers can inspect disk before retrying.
 fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
     match outcome {
         TxOutcome::Committed { steps, .. } => Ok(steps),
@@ -46,12 +48,6 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
             <[&str]>::join(&files.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ", ")
         ))),
         TxOutcome::NotCommitted { why, rollback, publication_errors, .. } => {
-            if !publication_errors.is_empty() {
-                return Err(io::Error::other(format!(
-                    "publication-incomplete: transaction refused ({why:?}); final state could not be published for {}; inspect disk before retrying",
-                    <[&str]>::join(&publication_errors.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ", ")
-                )));
-            }
             if !rollback.undo_failed.is_empty() {
                 let failed: Vec<String> = rollback
                     .undo_failed
@@ -68,8 +64,28 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
                     .map(|file| file.as_str())
                     .collect();
                 let recovery = <[&str]>::join(&recovery, ", ");
+                let publication = if publication_errors.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; publication failed for {}",
+                        <[String]>::join(&publication_errors
+                            .iter()
+                            .map(|(file, error)| format!("{} ({:?}: {})", file.as_str(), error.kind, error.message))
+                            .collect::<Vec<_>>(), ", ")
+                    )
+                };
                 return Err(io::Error::other(format!(
-                    "rollback-incomplete: undo failed for {failed}; recovery: {recovery}; original: {why:?}"
+                    "rollback-incomplete: undo failed for {failed}; recovery: {recovery}{publication}; original: {why:?}; inspect disk before retrying"
+                )));
+            }
+            if !publication_errors.is_empty() {
+                return Err(io::Error::other(format!(
+                    "publication-incomplete: transaction refused ({why:?}); final state could not be published for {}; inspect disk before retrying",
+                    <[String]>::join(&publication_errors
+                        .iter()
+                        .map(|(file, error)| format!("{} ({:?}: {})", file.as_str(), error.kind, error.message))
+                        .collect::<Vec<_>>(), ", ")
                 )));
             }
             Err(match why {
