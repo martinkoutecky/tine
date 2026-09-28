@@ -12,6 +12,25 @@ import { inspectBeginQuery } from "./BeginQuery";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { RefBlocks } from "./RefBlocks";
 
+/** The engine's answer for an advanced BEGIN_QUERY (`query_parse` + `query_run`);
+ *  the real parser and evaluator are pinned by the Rust query tests. */
+function stubAdvancedEngine(groups: RefGroup[], report: { ran: string[]; ignored: string[]; supported: boolean }) {
+  vi.spyOn(backend(), "parseQuery").mockImplementation(async (text) => {
+    const options = /\s*(\{:table-view\? true\})\s*$/.exec(text);
+    const original = options ? text.slice(0, options.index) : text;
+    return {
+      query: {
+        anchor: "block",
+        filter: { kind: "raw", text: original, diagnostic_kind: "not_applicable" },
+        source: { kind: "advanced", original, og_options: options?.[1] ?? "" },
+      },
+      view: {},
+    };
+  });
+  const total = groups.reduce((sum, group) => sum + group.blocks.length, 0);
+  return vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "block", groups, report, total, exceeded: false });
+}
+
 const BEGIN_QUERY = `#+BEGIN_QUERY
 {:title "Class pages"
  :query [:find (pull ?p [*])
@@ -74,12 +93,7 @@ function seedQuery(): BlockDto {
     kind: "page",
     blocks: [dto("result", "A matching class page")],
   }];
-  vi.spyOn(backend(), "runAdvancedQuery").mockResolvedValue({
-    groups,
-    ran: ["page-property"],
-    ignored: [],
-    supported: true,
-  });
+  stubAdvancedEngine(groups, { ran: ["page-property"], ignored: [], supported: true });
   return dto("query", BEGIN_QUERY);
 }
 
@@ -116,7 +130,7 @@ describe("terminated whole-block BEGIN_QUERY", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       await expectRenderedQuery(root);
-      expect(backend().runAdvancedQuery).toHaveBeenCalledWith(expect.any(String));
+      expect(backend().queryRun).toHaveBeenCalled();
     } finally {
       dispose();
     }
@@ -146,7 +160,7 @@ describe("terminated whole-block BEGIN_QUERY", () => {
 
   it("fails visibly for a malformed payload without exposing raw delimiters", async () => {
     const malformed = dto("bad-query", "#+BEGIN_QUERY\n{:title \"Broken\" :query nope}\n#+END_QUERY");
-    const runAdvanced = vi.spyOn(backend(), "runAdvancedQuery");
+    const runAdvanced = vi.spyOn(backend(), "queryRun");
     const { root, dispose } = mount(() => <RefBlocks blocks={[malformed]} page="Source" pageKind="page" />);
     try {
       await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain("Unsupported BEGIN_QUERY"));
@@ -163,12 +177,10 @@ describe("terminated whole-block BEGIN_QUERY", () => {
       .replace("Class pages", "Partial pages")
       .replace(":class)", ":partial-class)");
     const query = dto("partial-query", partialSource);
-    vi.spyOn(backend(), "runAdvancedQuery").mockResolvedValue({
-      groups: [{ page: "Source", kind: "page", blocks: [dto("result", "A matching class page")] }],
-      ran: ["page-property"],
-      ignored: ["pattern"],
-      supported: true,
-    });
+    stubAdvancedEngine(
+      [{ page: "Source", kind: "page", blocks: [dto("result", "A matching class page")] }],
+      { ran: ["page-property"], ignored: ["pattern"], supported: true },
+    );
     const { root, dispose } = mount(() => <RefBlocks blocks={[query]} page="Source" pageKind="page" />);
     try {
       await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain("Unsupported BEGIN_QUERY"));

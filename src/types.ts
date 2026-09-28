@@ -368,49 +368,6 @@ export interface AdvancedQueryResult {
   supported: boolean;
 }
 
-/** `query_parse`'s answer (tine-core `query::wire_parse::ParsedQuery`). The IR
- *  and its view are opaque here: they go back to `query_run` unchanged. */
-export interface ParsedQueryIr {
-  query: unknown;
-  view: unknown;
-}
-
-/** One `@page` row of a `query_run` answer (tine-core `query::ir::PageRow`). */
-export interface QueryPageRow {
-  path: string;
-  name: string;
-  kind: PageKind;
-  journal_day?: number;
-  properties: [string, string][];
-}
-
-/** One parse diagnostic (tine-core `query::ir::Diagnostic`). A `disabled`
- *  one sits inside an `off(…)` subtree and does not invalidate the query. */
-export interface QueryIrDiagnostic {
-  kind: string;
-  message: string;
-  suggestions?: string[];
-  disabled?: boolean;
-  span?: unknown;
-}
-
-/** `query_run`'s answer (tine-core `query::ir::QueryResult`, SPEC §7.1).
- *  An invalid query arrives as an empty answer with `diagnostics` — check them
- *  before rendering "no results" (I-9). `matched_total` is the exact pre-sample
- *  match count; `total` counts the rows admitted after sampling. `exceeded` is
- *  always false here (`query_run` refuses instead). */
-export type QueryRunResult = (
-  | { anchor: "block"; groups: RefGroup[] }
-  | { anchor: "page"; pages: QueryPageRow[] }
-) & {
-  diagnostics?: QueryIrDiagnostic[];
-  statistics?: unknown;
-  report: { ran: string[]; ignored: string[]; supported: boolean };
-  total: number;
-  matched_total?: number;
-  exceeded: boolean;
-};
-
 export interface GraphMeta {
   root: string;
   journals_dir: string;

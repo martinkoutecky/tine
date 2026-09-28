@@ -453,7 +453,7 @@ export function agendaQuery(): string {
   return `query (and ${window} (not (task DONE CANCELED CANCELLED)))`;
 }
 
-// Block id of a "/Query (visual builder)" block whose QueryBuilder opens its add-filter picker once on mount.
+// Block id of a "/Query" block whose QueryBuilder opens its add-filter picker once on mount.
 export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = createSignal<string | null>(null);
 
 export type PropsPanelScope = { kind: "page"; name: string } | { kind: "block"; id: string };

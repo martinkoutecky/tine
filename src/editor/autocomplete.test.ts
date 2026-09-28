@@ -400,7 +400,11 @@ describe("filterCommands", () => {
     // snapshot.  Never regenerate it to approve a typed-ranking change.
     expect(slashFixtureManifest.source.baseRevision).toBe("15bbddc0c5596c3fa72e84c4f3ad90c722db81a0");
     expect(fixtureRows).toHaveLength(343);
-    for (const row of fixtureRows) expect(mergedRanking(row.query)).toEqual(row.labels);
+    // §7.3 unified the two query commands into one (master 2617ff194): the
+    // retired label is dropped from the expectation, never regenerated.
+    for (const row of fixtureRows) {
+      expect(mergedRanking(row.query)).toEqual(row.labels.filter((label) => label !== "Query (visual builder)"));
+    }
   });
 
   it("filters by label substring", () => {
@@ -411,8 +415,10 @@ describe("filterCommands", () => {
       "Heading 4",
       "Heading (Auto)",
     ]);
-    // Exact/shorter "Query" ranks ahead of the longer "Query (visual builder)".
-    expect(filterCommands("query").map((c) => c.label)).toEqual(["Query", "Query (visual builder)"]);
+    // §7.3: there is ONE query command, and it opens the block in the builder.
+    expect(filterCommands("query").map((c) => c.label)).toEqual(["Query"]);
+    expect(COMMANDS.find((command) => command.label === "Query")?.action).toBe("query-builder");
+    expect(COMMANDS.filter((command) => command.label.startsWith("Query"))).toHaveLength(1);
     // Action commands surface too.
     expect(filterCommands("scheduled").map((c) => c.label)).toEqual(["Scheduled"]);
     expect(filterCommands("upload").map((c) => c.label)).toEqual(["Upload an asset"]);
@@ -451,7 +457,7 @@ describe("filterCommands", () => {
       "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
       "Priority A", "Priority B", "Priority C", "Grid", "Table", "Board", "Code block", "Calculator", "Quote",
       "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",
-      "Divider", "Query", "Query (visual builder)", "Embed", "Embed Youtube timestamp", "Math block", "Page properties",
+      "Divider", "Query", "Embed", "Embed Youtube timestamp", "Math block", "Page properties",
       "Template var: today", "Template var: yesterday", "Template var: tomorrow", "Template var: current page", "Template var: time", "Template var: date…",
     ]);
   });

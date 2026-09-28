@@ -4,6 +4,7 @@
 import { TEMPLATE_VARS } from "./templateVars";
 import { isBareTagPrefix, tagRef } from "../tags";
 import { propertyKeyNorm } from "../render/block";
+import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
 
 export type TriggerKind =
   | "page"
@@ -450,8 +451,9 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
     caret: `#+BEGIN_${t}\n`.length,
   })),
   { label: "Divider", insert: "---" },
-  { label: "Query", insert: "{{query }}", caret: 8 },
-  { label: "Query (visual builder)", action: "query-builder" },
+  // One query command (master 2617ff194, SPEC §7.3): it inserts the scaffold
+  // AND flags the block, so the sheet opens with the field chooser focused.
+  { label: "Query", insert: QUERY_MACRO_SCAFFOLD, caret: QUERY_MACRO_SCAFFOLD_CARET, action: "query-builder" },
   { label: "Embed", insert: "{{embed }}", caret: 8 },
   // OG's slash entry is named "Embed Youtube timestamp" (og-1.0.0
   // 6e7afa8eb, commands.cljs:294-300).
@@ -476,7 +478,7 @@ const BARE_ORDER = new Map<string, number>([
   "Grid", "Table", "Board",
   "Code block", "Calculator", "Quote",
   "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",
-  "Divider", "Query", "Query (visual builder)", "Embed", "Embed Youtube timestamp", "Math block", "Page properties",
+  "Divider", "Query", "Embed", "Embed Youtube timestamp", "Math block", "Page properties",
 ].map((label, index) => [label, index]));
 
 /** One registry drives rendering, matching, selection and tests. The old

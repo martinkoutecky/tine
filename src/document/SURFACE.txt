@@ -138,6 +138,7 @@ toggleOwnNumberedList
 toggleUndoRedoMode
 trackAssetWrite
 undo
+undoTopTag  # why: the query crossing notice offers Undo only while its own save is still the top undo step; batch14q4a
 visibleOrder
 waitingFor  # why: show unresolved group member; batch03
 waitingOn  # why: show pages blocked by conflict; batch03

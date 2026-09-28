@@ -15,6 +15,7 @@ import {
   type QueryWorkspaceDependencies,
 } from "./QueryWorkspace";
 import { pageInventoryRev } from "../graphSession";
+import { backend } from "../backend";
 import { resetStore } from "../document";
 
 afterEach(() => {
@@ -269,6 +270,7 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  // Ported from master src/components/QueryWorkspace.test.tsx (same title).
   it("peels a QueryBuilder child before its Advanced parent and preserves the draft", async () => {
     const route: QueryRoute = {
       kind: "query",
@@ -277,6 +279,9 @@ describe("QueryWorkspace", () => {
       source: "(and (task TODO))",
       presentation: "list",
     };
+    // The pane shows what the PRINTER returned (I-12); the dev-preview backend
+    // has no printer, so this test says what Rust would answer.
+    vi.spyOn(backend(), "printQuery").mockResolvedValue(route.source);
     const lower = vi.fn(() => true);
     const unregisterLower = registerTransientLayer({ id: "query-workspace-lower", dismiss: lower });
     const root = document.createElement("div");
@@ -289,15 +294,33 @@ describe("QueryWorkspace", () => {
       const dialog = root.querySelector<HTMLElement>(".query-advanced-modal")!;
       expect(dialog).not.toBeNull();
 
-      root.querySelector<HTMLButtonElement>(".qb-chip")!.click();
-      expect(root.querySelector(".qb-menu")).not.toBeNull();
+      // The sheet is over the IR now, so its rows appear once the ENGINE has
+      // read the route's text — there is no frontend parser left to do it
+      // synchronously. In the workspace the sheet is always open and NOT
+      // portalled: it is inside the Advanced modal, so the modal's Tab trap
+      // keeps containing it.
+      // The dev-preview backend has no parser, so this route's text comes back
+      // as ONE retained row — which still has its own ⋮ popover to peel.
+      await waitFor(() => expect(root.querySelector(".qs-row .qs-row-menu")).not.toBeNull());
+      root.querySelector<HTMLButtonElement>(".qs-row .qs-row-menu")!.click();
+      expect(root.querySelector(".qs-menu")).not.toBeNull();
+
+      // Rung one: Escape peels the child popover and leaves the modal standing.
+      expect(dismissTopTransient("escape")).toBe(true);
+      expect(root.querySelector(".qs-menu")).toBeNull();
+      expect(root.querySelector(".query-advanced-modal")).not.toBeNull();
+
+      // Same rung by pointer (GH #472): a press on the modal's own header is an
+      // outside press for the row menu, so the menu closes and only the menu.
+      root.querySelector<HTMLButtonElement>(".qs-row .qs-row-menu")!.click();
+      expect(root.querySelector(".qs-menu")).not.toBeNull();
       dialog.querySelector(".query-advanced-header")!
         .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-
-      expect(dismissTopTransient("escape")).toBe(true);
-      expect(root.querySelector(".qb-menu")).toBeNull();
+      expect(root.querySelector(".qs-menu")).toBeNull();
       expect(root.querySelector(".query-advanced-modal")).not.toBeNull();
-      expect(root.querySelector<HTMLTextAreaElement>(".query-dsl-editor textarea")?.value).toBe(route.source);
+      await waitFor(() =>
+        expect(root.querySelector<HTMLTextAreaElement>(".query-text-pane-input")?.value).toBe(route.source),
+      );
       expect(lower).not.toHaveBeenCalled();
 
       expect(dismissTopTransient("back")).toBe(true);

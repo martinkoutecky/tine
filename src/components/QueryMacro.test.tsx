@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
@@ -10,8 +10,12 @@ import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { openJournals, openPage, route } from "../router";
 import { journalTitle } from "../journal";
-import { clearSimpleForm, getSimpleForm, stashSimpleForm } from "../editor/queryBuilder";
-import type { QueryExecution, QueryRunResult, RefGroup } from "../types";
+import type { QueryExecution, QueryHit, RefGroup } from "../types";
+import { editingId, startEditing } from "../editorController";
+import type { ParsedQuery, QueryResult, QueryTextDialect, Source } from "../editor/queryIr";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
+import { searchFilter } from "../editor/queryBuilder";
+import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { bumpDataRev } from "../graphSession";
 
 beforeAll(async () => {
@@ -20,10 +24,36 @@ beforeAll(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  clearSimpleForm("query");
+  resetSharedQueryResultsForTests();
   resetStore();
   localStorage.clear();
   document.body.innerHTML = "";
+});
+
+/** What the ONE engine reads for a macro argument, stated for these tests (the
+ *  jsdom mock has no parser): an advanced vector/map is `advanced`, a trailing
+ *  `{…}` after an OG form or vector is the opaque options map, and the host's
+ *  `tine.view` reaches the view. The filter is the IR's honest `raw`. */
+function readQuery(text: string, dialect: QueryTextDialect, properties: [string, string][] = []): ParsedQuery {
+  const trimmed = text.trim();
+  const split = /^([\s\S]*?[)\]"])\s*(\{:[\s\S]*\})$/.exec(trimmed);
+  const [original, og_options] = split && !trimmed.startsWith("{") ? [split[1], split[2]] : [trimmed, ""];
+  const kind: Source["kind"] = /^[[{]/.test(trimmed) ? "advanced" : dialect === "macro_tql" ? "tql" : "og";
+  const view = Object.fromEntries(properties.filter(([key]) => key === "tine.view").map(([, value]) => ["view", value]));
+  return {
+    query: { anchor: "block", filter: { kind: "raw", text: original, diagnostic_kind: "not_applicable" }, diagnostics: [], source: { kind, original, og_options } as Source },
+    view,
+  } as ParsedQuery;
+}
+
+/** State what `query_run` answers: these block groups. */
+function mockRun(groups: RefGroup[] | (() => RefGroup[]), report?: Parameters<typeof blockRunResult>[1]) {
+  return vi.spyOn(backend(), "queryRun").mockImplementation(async () =>
+    blockRunResult(typeof groups === "function" ? groups() : groups, report));
+}
+
+beforeEach(() => {
+  vi.spyOn(backend(), "parseQuery").mockImplementation(async (text, dialect, properties) => readQuery(text, dialect, properties));
 });
 
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
@@ -115,27 +145,9 @@ function loadQueryDoc(queryRaw: string) {
     feed: ["Sheet"],
     loaded: true,
   });
-  vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+  mockRun(queryGroups(["todo"]));
 }
 
-function loadAdvancedQueryDoc(queryRaw: string) {
-  setDoc({
-    byId: {
-      query: node("query", queryRaw, null),
-      todo: node("todo", "TODO From query\nowner:: Martin", null),
-    },
-    pages: [page(["query", "todo"])],
-    feed: ["Sheet"],
-    loaded: true,
-  });
-  vi.spyOn(backend(), "runAdvancedQuery").mockResolvedValue({
-    groups: queryGroups(["todo"]),
-    ran: ["task"],
-    ignored: [],
-    supported: true,
-  });
-  vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
-}
 
 describe("QueryMacro sheet integration", () => {
   it("keeps a newer friendly-search result when an older request finishes last", async () => {
@@ -185,7 +197,7 @@ describe("QueryMacro sheet integration", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "runQuery").mockResolvedValue([
+    mockRun([
       {
         page: "Sheet",
         kind: "page",
@@ -225,7 +237,7 @@ describe("QueryMacro sheet integration", () => {
       kind: "page",
       blocks: [{ id: "hit-root", raw: "TODO Query hit", collapsed: false, children: [] }],
     }];
-    const runQuery = vi.spyOn(backend(), "runQuery").mockImplementation(async () => freshResult());
+    const runQuery = mockRun(freshResult);
 
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
@@ -249,6 +261,10 @@ describe("QueryMacro sheet integration", () => {
 
   it("reopens a materialized friendly search without exposing it as raw DSL", async () => {
     loadQueryDoc('{{query (search "alpha beta")}}\ntine.view:: search');
+    vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+      const read = readQuery(text, dialect, properties);
+      return { ...read, query: { ...read.query, filter: searchFilter("alpha beta") } };
+    });
     const execution: QueryExecution = {
       hits: [{
         entity: "block",
@@ -280,8 +296,10 @@ describe("QueryMacro sheet integration", () => {
     await settleQuery();
 
     expect(activeView(root)).toBe("Search");
-    expect(root.querySelector(".qb-chip")?.textContent).toBe("search: alpha beta");
-    expect(root.querySelector(".qb-chip-raw")).toBeNull();
+    // Master's assertion (QueryMacro.test.tsx "reopens a materialized friendly search").
+    expect(root.querySelector(".qs-sentence")?.textContent).toBe("Blocks where search: alpha beta");
+    expect(root.querySelector(".qs-seg-value")?.textContent).toBe("alpha beta");
+    expect(root.querySelector(".qs-seg-advanced")).toBeNull();
     expect([...root.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["alpha", "beta"]);
     expect(graphSearch).toHaveBeenCalledWith("alpha beta", 500, 5_000, "inline-query:query", false);
     root.querySelector<HTMLButtonElement>(".query-search-hit")!.click();
@@ -305,7 +323,7 @@ describe("QueryMacro sheet integration", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(ids));
+    mockRun(queryGroups(ids));
     const graphSearch = vi.spyOn(backend(), "runGraphSearch");
 
     const { root, dispose } = mount(() => <Block id="query" />);
@@ -342,8 +360,8 @@ describe("QueryMacro sheet integration", () => {
     await settleQuery();
 
     expect(root.querySelector(".query-header")).not.toBeNull();
-    expect(root.querySelector(".qb-bar")).not.toBeNull();
-    expect(root.querySelector(".qb-chip")).not.toBeNull();
+    expect(root.querySelector(".qs-sentence")).not.toBeNull();
+    expect(root.querySelector(".qs-seg")).not.toBeNull();
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(1);
     expect(root.querySelectorAll(".query-table")).toHaveLength(0);
     expect(root.textContent).toContain("From query");
@@ -366,7 +384,7 @@ describe("QueryMacro sheet integration", () => {
       feed: ["Sheet"],
       loaded: true,
     });
-    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["low", "high"]));
+    const run = mockRun(queryGroups(["low", "high"]));
 
     const { root, dispose } = mount(() => <Block id="query" />);
     await settleQuery();
@@ -384,7 +402,7 @@ describe("QueryMacro sheet integration", () => {
     ]);
     // View switching must retain the coarse query and the formula refinement.
     expect(blockProperty("query", "tine.filter")).toBe("points > 2");
-    expect(backend().runQuery).toHaveBeenCalledWith('(and (todo TODO) "score")');
+    expect(run.mock.calls.every(([query]) => query.source.kind === "og" && query.source.original === '(and (todo TODO) "score")')).toBe(true);
 
     dispose();
   });
@@ -466,7 +484,7 @@ describe("QueryMacro sheet integration", () => {
     (root.querySelector(".query-collapse") as HTMLElement).click();
 
     expect(root.querySelector(".query-header")).not.toBeNull();
-    expect(root.querySelector(".qb-bar")).not.toBeNull();
+    expect(root.querySelector(".qs-sentence")).not.toBeNull();
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(0);
 
     dispose();
@@ -481,7 +499,7 @@ describe("QueryMacro sheet integration", () => {
       },
       pages: [page(["q1", "q2", "todo"])], feed: ["Sheet"], loaded: true,
     });
-    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+    mockRun(queryGroups(["todo"]));
     const { root, dispose } = mount(() => <><Block id="q1" /><Block id="q2" /></>);
     await settleQuery();
     const toggles = root.querySelectorAll<HTMLElement>(".query-collapse");
@@ -493,7 +511,7 @@ describe("QueryMacro sheet integration", () => {
 
   it("persists an explicit expanded override over source collapsed true", async () => {
     loadQueryDoc("{{query (todo TODO) {:collapsed? true}}}");
-    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+    mockRun(queryGroups(["todo"]));
     const first = mount(() => <Block id="query" />);
     await settleQuery();
     const toggle = first.root.querySelector(".query-collapse") as HTMLElement;
@@ -528,10 +546,13 @@ describe("QueryMacro sheet integration", () => {
     dispose();
   });
 
-  it("shows an enabled Simple toggle for stashed advanced queries and restores the builder", async () => {
-    const simpleDsl = "(and (task TODO) (sort-by priority desc))";
-    stashSimpleForm("query", simpleDsl);
-    loadAdvancedQueryDoc('{{query [:find (pull ?b [*]) :where (task ?b "TODO")]}}');
+  // og's "shows an enabled Simple toggle for stashed advanced queries…" is retired
+  // with the frontend datalog/DSL converters, as on master (§9 P0-ts: the
+  // `⚙ advanced` / `← Simple` pair is gone; Macro.tsx has no stash).
+  // Ported from master QueryMacro.test.tsx.
+  it("renders an advanced query's report without offering the filter builder", async () => {
+    loadQueryDoc('{{query [:find (pull ?b [*]) :where (task ?b "TODO")]}}');
+    mockRun(queryGroups(["todo"]), { ran: ["task"] });
 
     const { root, dispose } = mount(() => (
       <>
@@ -541,56 +562,44 @@ describe("QueryMacro sheet integration", () => {
     ));
     await settleQuery();
 
-    const button = [...root.querySelectorAll("button")].find(
-      (el) => el.textContent?.trim() === "← Simple"
-    ) as HTMLButtonElement | undefined;
-    expect(button).not.toBeUndefined();
-    expect(button!.disabled).toBe(false);
-    expect(root.querySelector(".qb-bar")).toBeNull();
-
-    button!.click();
-    await settleQuery();
-
-    expect(doc.byId.query.raw).toBe(`{{query ${simpleDsl}}}`);
-    expect(getSimpleForm("query")).toBeUndefined();
-    expect(root.querySelector(".qb-bar")).not.toBeNull();
+    await vi.waitFor(() => expect(root.querySelector(".query-adv-note")?.textContent ?? "").toContain("ran: task"));
+    // An advanced (datalog) query has no sentence and no sheet to offer.
+    expect(root.querySelector(".qs-line")).toBeNull();
+    expect(root.querySelector(".qs-sheet")).toBeNull();
+    // …and the count stays in the header, where it has always been.
+    expect(root.querySelector(".query-header .query-count")).not.toBeNull();
+    expect([...root.querySelectorAll("button")].some((el) => el.textContent?.trim() === "← Simple")).toBe(false);
 
     dispose();
   });
 });
 
 describe("QueryMacro through query_parse + query_run", () => {
-  const emptyRun = (extra: Partial<QueryRunResult> = {}): QueryRunResult => ({
-    anchor: "block",
-    groups: [],
-    report: { ran: [], ignored: [], supported: true },
-    total: 0,
-    exceeded: false,
-    ...extra,
-  } as QueryRunResult);
+  const emptyRun = (extra: Partial<QueryResult> = {}): QueryResult => ({ ...blockRunResult([]), ...extra } as QueryResult);
 
   it("renders a page-anchored answer as page rows, sending the host block's tine.* view properties", async () => {
     loadQueryDoc("{{query (page-property type book)}}\ntine.sample:: 5\nowner:: Martin");
-    const parse = vi.spyOn(backend(), "queryParse").mockResolvedValue({ query: "ir", view: {} });
+    const parse = vi.mocked(backend().parseQuery);
     const run = vi.spyOn(backend(), "queryRun").mockResolvedValue({
       anchor: "page",
       pages: [
         { path: "pages/Dune.md", name: "Dune", kind: "page", properties: [["type", "book"]] },
         { path: "pages/Emma.md", name: "Emma", kind: "page", properties: [["type", "book"]] },
       ],
+      diagnostics: [],
       report: { ran: [], ignored: [], supported: true },
       total: 2,
       exceeded: false,
     });
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
-      await vi.waitFor(() => expect(root.querySelectorAll(".query-page").length).toBe(2));
+      await vi.waitFor(() => expect(root.querySelectorAll(".query-page-link").length).toBe(2));
       // Only `tine.*` keys travel; the engine merges them into the view
       // (master semantics: `tine.sample::` on the host block samples).
       expect(parse).toHaveBeenCalledWith("(page-property type book)", "macro_query", [["tine.sample", "5"]]);
-      // An OG DSL query binds no current page.
-      expect(run).toHaveBeenCalledWith({ query: "ir", view: {} }, undefined);
-      expect([...root.querySelectorAll(".query-page")].map((el) => el.textContent)).toEqual(["Dune", "Emma"]);
+      // The run is bound to the page the query block is on (master semantics).
+      expect(run.mock.calls[0][2]).toEqual({ current_page: "Sheet" });
+      expect([...root.querySelectorAll(".query-page-link")].map((el) => el.textContent)).toEqual(["Dune", "Emma"]);
       expect(root.querySelector(".query-count")?.textContent).toBe("2");
     } finally {
       dispose();
@@ -599,11 +608,10 @@ describe("QueryMacro through query_parse + query_run", () => {
 
   it("shows an invalid query's diagnostics instead of a bare \"No results\" (I-9)", async () => {
     loadQueryDoc("{{query (frobnicate x)}}");
-    vi.spyOn(backend(), "queryParse").mockResolvedValue({ query: "ir", view: {} });
     vi.spyOn(backend(), "queryRun").mockResolvedValue(emptyRun({
       diagnostics: [
-        { kind: "unknown_head", message: "unknown query head `frobnicate`" },
-        { kind: "syntax", message: "greyed out", disabled: true },
+        { kind: "unknown_head", message: "unknown query head `frobnicate`", suggestions: [], disabled: false },
+        { kind: "syntax", message: "greyed out", suggestions: [], disabled: true },
       ],
     }));
     const { root, dispose } = mount(() => <Block id="query" />);
@@ -613,6 +621,7 @@ describe("QueryMacro through query_parse + query_run", () => {
       expect(text).toContain("didn't understand part of this query");
       expect(text).toContain("unknown query head `frobnicate`");
       expect(text).not.toContain("greyed out");
+      expect(root.querySelector(".query-why-empty")).toBeNull();
     } finally {
       dispose();
     }
@@ -621,19 +630,134 @@ describe("QueryMacro through query_parse + query_run", () => {
   it("binds :current-page to OG's current page — the focused route, else today — not the rendering page", async () => {
     const source = "{{query {:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p]] :inputs [:current-page]}}}";
     loadQueryDoc(source);
-    vi.spyOn(backend(), "queryParse").mockResolvedValue({ query: "ir", view: {} });
     const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(emptyRun());
     openJournals();
     const { dispose } = mount(() => <Block id="query" />);
     try {
       // No routed page and no configured home: OG falls back to today.
       await vi.waitFor(() => expect(run).toHaveBeenCalled());
-      expect(run.mock.calls.at(-1)![1]).toBe(journalTitle(new Date()));
+      expect(run.mock.calls.at(-1)![2]?.current_page).toBe(journalTitle(new Date()));
       openPage("Elsewhere");
-      await vi.waitFor(() => expect(run.mock.calls.at(-1)![1]).toBe("Elsewhere"));
-      expect(run.mock.calls.map((call) => call[1])).not.toContain("Sheet");
+      await vi.waitFor(() => expect(run.mock.calls.at(-1)![2]?.current_page).toBe("Elsewhere"));
+      expect(run.mock.calls.map((call) => call[2]?.current_page)).not.toContain("Sheet");
     } finally {
       dispose();
     }
   });
+});
+
+// Ported from master QueryMacro.test.tsx.
+// GH #469. `{{query "xyz"}}` matched its own block, because the block's own text
+// contains `xyz` — so the query listed the page it lives on, which renders the
+// query again, which lists the page again. OG removes exactly the host block
+// from every result set for this reason, and says so at
+// frontend/components/query/result.cljs (6e7afa8e): "exclude the current one,
+// otherwise it'll loop forever".
+describe("a query never returns its own block (GH #469)", () => {
+  function loadSelfMatching(queryRaw: string) {
+    setDoc({
+      byId: {
+        query: node("query", queryRaw, null),
+        todo: node("todo", "TODO From query\nowner:: Martin", null),
+      },
+      pages: [page(["query", "todo"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+  }
+
+  it("drops the host block from a simple DSL query's results", async () => {
+    loadSelfMatching('{{query "From query"}}\ntine.view:: list');
+    // The backend answers honestly: the host block's own text matches too.
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(queryGroups(["query", "todo"])));
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+
+    const listed = [...root.querySelectorAll(".query-group [data-block-id]")]
+      .map((el) => el.getAttribute("data-block-id"));
+    expect(listed).toContain("todo");
+    expect(listed).not.toContain("query");
+    // The count the user reads must agree with what is shown.
+    expect(root.querySelector(".query-count")?.textContent).toBe("1");
+    dispose();
+  });
+
+  it("drops the host block from an advanced query's results", async () => {
+    loadSelfMatching('{{query {:query [:find (pull ?b [*]) :where [?b :block/content "x"]]}}}\ntine.view:: list');
+    // A form that is ITSELF one map stays whole: `split_trailing_map` only splits
+    // a map that FOLLOWS a nonempty form (§4.3.1).
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(
+      blockRunResult(queryGroups(["query", "todo"]), { ran: ["content"] }),
+    );
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+
+    const listed = [...root.querySelectorAll(".query-group [data-block-id]")]
+      .map((el) => el.getAttribute("data-block-id"));
+    expect(listed).toContain("todo");
+    expect(listed).not.toContain("query");
+    dispose();
+  });
+
+  it("drops the host block from a full-text search query's hits", async () => {
+    loadSelfMatching('{{query (search "From query")}}\ntine.view:: search');
+    const hit = (id: string, raw: string): QueryHit => ({
+      entity: "block" as const,
+      page: "Sheet",
+      kind: "page" as const,
+      block: { id, raw, collapsed: false, children: [], breadcrumb: [], properties: [] },
+      display_text: raw,
+      evidence: [{ clause_id: 1, field: "visible_content" as const, mode: "contains" as const, spans: [{ start: 0, end: 4 }] }],
+    });
+    const execution: QueryExecution = {
+      hits: [hit("query", '{{query (search "From query")}}'), hit("todo", "TODO From query")],
+      diagnostics: [],
+      explanation: { branches: [] },
+      cancelled: false,
+    };
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue(execution);
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+
+    const hits = [...root.querySelectorAll(".query-search-hit")].map((el) => el.textContent ?? "");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("TODO From query");
+    dispose();
+  });
+});
+
+// Ported from master QueryMacro.test.tsx (the field chooser is og's QueryListbox `.qs-menu`).
+it("choosing the Query slash command opens its sheet and field chooser", async () => {
+  vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+    const read = readQuery(text, dialect, properties);
+    return { ...read, query: { ...read.query, filter: { kind: "and", items: [] } } };
+  });
+  vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
+  setDoc({
+    byId: { query: node("query", "/query", null) },
+    pages: [page(["query"])], feed: ["Sheet"], loaded: true,
+  });
+  startEditing("query", 6);
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    editor.focus();
+    editor.value = "/query";
+    editor.setSelectionRange(6, 6);
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "y" }));
+    const command = await vi.waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLElement>(".autocomplete .ac-item")]
+        .filter(item => item.querySelector(".ac-label")?.textContent === "Query");
+      expect(found).toHaveLength(1);
+      return found[0];
+    });
+    command.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(doc.byId.query.raw.trim()).toBe("{{query }}"));
+    await vi.waitFor(() => expect(document.querySelector(".qs-sheet")).not.toBeNull());
+    await vi.waitFor(() => expect(document.querySelector(".qs-menu")).not.toBeNull());
+    expect(editingId()).toBeNull();
+  } finally { dispose(); }
 });

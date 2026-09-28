@@ -107,7 +107,7 @@ import {
   caretOffsetOnLastRow,
 } from "../editor/caretRows";
 import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
-import { queryMacroExtents } from "../editor/edn";
+import { QUERY_MACRO_SCAFFOLD, queryMacroExtents } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
 import { caretOnOpeningFence } from "../editor/fences";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
@@ -156,14 +156,14 @@ export function applySheetViewSlashAction(id: string, view: SheetSlashView): str
   return seededCellId;
 }
 
-// Detect a block whose entire body is a single {{query}} / {{embed}} macro.
+// Detect a block whose entire body is a single {{query}}/{{tine-query}}/{{embed}} macro.
 function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
-  // The macro is the block's visible body — strip property lines (the shared line
-  // recognizer) so a `{{query}}\nid:: …` block still matches. Cheap: no parse.
+  // The visible body: property lines stripped so `{{query}}\nid:: …` still matches.
   const text = raw.split("\n").filter((l) => !isPropertyLine(l)).join("\n").trim();
-  const m = /^\{\{(query|embed)\b([\s\S]*)\}\}$/.exec(text);
-  if (!m) return null;
-  return { kind: m[1] as "query" | "embed", inner: `${m[1]}${m[2]}` };
+  const [q, ...rest] = queryMacroExtents(text); // shared reader: a second macro or a `}}` in a string never merges
+  if (q && !rest.length && q.start === 0 && q.end === text.length) return { kind: "query", inner: `${q.name} ${q.argument}` };
+  const m = /^\{\{(embed)\b([\s\S]*)\}\}$/.exec(text);
+  return m ? { kind: "embed", inner: `${m[1]}${m[2]}` } : null;
 }
 
 // Any complete {{query …}} macro anywhere in the body. The shared scanner is
@@ -2018,8 +2018,8 @@ export function Editor(props: { id: string }): JSX.Element {
       case "query-builder": {
         // Insert an empty query, commit it, and drop straight to the rendered
         // view so the visual builder appears — then flag this block so the
-        // builder opens its add-filter picker on mount.
-        const r = applyCompletion(ref.value, t.start, t.end, "{{query }}");
+        // builder opens its sheet with the field chooser focused (`/query` is one command).
+        const r = applyCompletion(ref.value, t.start, t.end, QUERY_MACRO_SCAFFOLD);
         commit(r.raw);
         closeAc();
         setQueryBuilderAutoOpen(props.id);

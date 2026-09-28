@@ -33,7 +33,8 @@ import type {
   QueryHit,
   RefGroup,
 } from "../types";
-import { QueryBuilder } from "./QueryBuilder";
+import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
+import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
 import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
@@ -85,7 +86,7 @@ export interface QueryWorkspaceProps {
 function savedQueryRaw(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation">): string {
   const source = input.source.trim();
   const dsl = input.sourceKind === "search" ? friendlySearchToSavedDsl(source) : source;
-  const query = `{{query ${dsl}}}`;
+  const query = `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`;
   return input.presentation === "list" ? query : `${query}\ntine.view:: ${input.presentation}`;
 }
 
@@ -423,6 +424,24 @@ function AdvancedModal(props: {
   const [draftKind, setDraftKind] = createSignal<QueryRoute["sourceKind"]>(props.sourceKind());
   const [dsl, setDsl] = createSignal(props.sourceKind() === "dsl" ? props.source() : "");
   const [error, setError] = createSignal<string | null>(null);
+  // The builder edits the ENGINE's reading of the draft and writes back the OG
+  // text the engine printed (I-12); a workspace materializes an OG `{{query}}`.
+  const [builderSession] = createResource(dsl, async (text): Promise<BuilderSession | undefined> => {
+    const parsed = await readOwned(graphOwner(() => dsl() === text), backend().parseQuery(text, "og"));
+    return parsed.kind === "current" ? { query: parsed.value.query, view: parsed.value.view } : undefined;
+  });
+  const applyBuilderEdit = async (next: BuilderSession) => {
+    try {
+      const printed = await readOwned(graphOwner(), backend().printQuery(next.query, next.view, "og"));
+      if (printed.kind === "stale") return;
+      setDsl(printed.value);
+      setError(null);
+    } catch (failure) {
+      // An edit the OG syntax cannot say has nowhere to go here; the printer's
+      // own message says which part (I-9), and the draft is left as it was.
+      setError(failure instanceof Error ? failure.message : String(failure));
+    }
+  };
   let dialog!: HTMLDivElement;
   let firstField: HTMLElement | undefined;
 
@@ -521,22 +540,12 @@ function AdvancedModal(props: {
         <Show when={draftKind() === "search"} fallback={
           <div class="query-dsl-editor">
             <QueryBuilder
-              dsl={dsl}
-              onChange={(next) => { setDsl(next); setError(null); }}
+              session={() => (builderSession.error === undefined ? builderSession.latest : undefined)}
+              onChange={(next) => void applyBuilderEdit(next)}
+              paneDialect="og"
+              sheetAlwaysOpen
               parentTransientId={props.layerId}
             />
-            <details>
-              <summary>Raw query DSL</summary>
-              <label>
-                Query expression
-                <textarea
-                  rows={6}
-                  value={dsl()}
-                  onInput={(event) => { setDsl(event.currentTarget.value); setError(null); }}
-                  spellcheck={false}
-                />
-              </label>
-            </details>
             <p class="query-advanced-note">Switching back to friendly fields is offered only when it can be lossless.</p>
           </div>
         }>

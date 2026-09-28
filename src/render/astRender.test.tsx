@@ -7,6 +7,7 @@ import { setGraphMeta } from "../graphSession";
 import type { JSX } from "solid-js";
 import type { Block, Inline } from "./ast";
 import { backend } from "../backend";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearAssetBlobCache } from "../assetCache";
 
 // A few render paths reach back into the wasm parser (e.g. a properties block
@@ -697,12 +698,15 @@ describe("user macro helpers", () => {
   });
 
   it("still dispatches a query nested in a configured macro", async () => {
-    vi.spyOn(backend(), "runQuery").mockResolvedValue([]);
+    // master astRender.test: the engine's run carries the parsed source.
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([]));
     setGraphMeta({ root: "/test", macros: { outer: "{{query (task TODO)}}" } } as never);
     const root = document.createElement("div");
     const dispose = render(() => <AstBody raw="{{outer}}" />, root);
     try {
-      await vi.waitFor(() => expect(backend().runQuery).toHaveBeenCalledWith("(task TODO)"));
+      await vi.waitFor(() =>
+        expect(vi.mocked(backend().queryRun).mock.calls[0]?.[0].source).toMatchObject({ original: "(task TODO)" }),
+      );
     } finally {
       dispose();
     }

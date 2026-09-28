@@ -7,6 +7,7 @@ import { loadSingle } from "../document/workingSet";
 import type { BlockDto, PageDto, PageRead, RefGroup } from "../types";
 import { Block } from "./Block";
 import { LinkDepthContext } from "./linkDepth";
+import { blockRunResult } from "../tests/queryReadingsTestkit";
 
 let liveGroupBudget = Number.POSITIVE_INFINITY;
 let observedLiveGroups = 0;
@@ -191,21 +192,35 @@ describe("shared embed/ref render depth (GH #206)", () => {
     }
   });
 
-  it("bounds a query that returns its own block through the same live-render context", async () => {
+  // Ported from master (GH #469 split the GH #206 case in two).
+// A query returning its OWN block is no longer a way to reach this bound: that
+  // exact shape is excluded at the membership boundary now (GH #469), and
+  // QueryMacro.test.tsx pins it. The depth bound is the last resort for every
+  // OTHER route into the same live-render loop, so this drives one of them — the
+  // query returns a different block, which embeds the query.
+  it("bounds a query whose result embeds the query, through the same live-render context", async () => {
     const queryId = "recursive-query-206";
+    const mirrorId = "recursive-mirror-206";
     const queryBlock: BlockDto = {
       id: queryId,
       raw: "{{query (task TODO)}}",
       collapsed: false,
       children: [],
     };
-    const sourcePage = page("Recursive Query", [queryBlock]);
+    const mirror: BlockDto = {
+      id: mirrorId,
+      raw: `{{embed ((${queryId}))}}`,
+      collapsed: false,
+      children: [],
+    };
+    const sourcePage = page("Recursive Query", [queryBlock, mirror]);
     loadSingle(sourcePage);
-    vi.spyOn(backend(), "runQuery").mockResolvedValue([{
+    mockBlockEmbeds(sourcePage, [queryBlock]);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([{
       page: sourcePage.name,
       kind: sourcePage.kind,
-      blocks: [{ ...queryBlock }],
-    }]);
+      blocks: [{ ...mirror }],
+    }]));
     liveGroupBudget = 8;
 
     const { root, dispose } = mountBlock(queryId, 4);
@@ -213,6 +228,35 @@ describe("shared embed/ref render depth (GH #206)", () => {
       await vi.waitFor(() => expect(root.textContent).toContain("Embed depth is too deep"));
       expect(root.querySelectorAll(`[data-block-id="${queryId}"]`).length).toBeLessThanOrEqual(7);
       expect(observedLiveGroups).toBeLessThan(liveGroupBudget);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("stops a query that returns its own block before the depth bound is needed", async () => {
+    const queryId = "self-query-206";
+    const queryBlock: BlockDto = {
+      id: queryId,
+      raw: "{{query (task TODO)}}",
+      collapsed: false,
+      children: [],
+    };
+    const sourcePage = page("Self Query", [queryBlock]);
+    loadSingle(sourcePage);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([{
+      page: sourcePage.name,
+      kind: sourcePage.kind,
+      blocks: [{ ...queryBlock }],
+    }]));
+    liveGroupBudget = 8;
+
+    const { root, dispose } = mountBlock(queryId, 4);
+    try {
+      // One rendering: the host block itself. No nesting, and therefore no
+      // depth notice — the user never sees the wall, because they never hit it.
+      await vi.waitFor(() => expect(root.querySelector(".query-empty")).not.toBeNull());
+      expect(root.querySelectorAll(`[data-block-id="${queryId}"]`)).toHaveLength(1);
+      expect(root.textContent).not.toContain("Embed depth is too deep");
     } finally {
       dispose();
     }

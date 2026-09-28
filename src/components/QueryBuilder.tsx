@@ -7,927 +7,766 @@ import {
   createSignal,
   createUniqueId,
   onCleanup,
+  onMount,
   type JSX,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import { backend } from "../backend";
 import {
-  parseQuery,
-  toDsl,
-  clauseToAdvanced,
-  stashSimpleForm,
-  clauseLabel,
-  addChild,
+  builderRoot,
+  filterLabel,
   removeAt,
-  replaceAt,
-  wrapAt,
-  unwrapAt,
-  setOp,
-  MARKERS,
-  PRIORITIES,
-  BETWEEN_FIELDS,
-  SORT_PRESETS,
-  type Clause,
-  type BetweenField,
-  type SortPreset,
 } from "../editor/queryBuilder";
-import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
-import { pushToast } from "../toasts";
+import type {
+  Anchor,
+  Diagnostic,
+  Filter,
+  ParsedQuery,
+  Query,
+  QueryPrintDialect,
+  RegistrySnapshot,
+  RegistryRow,
+  Span,
+  ViewSettings,
+} from "../editor/queryIr";
+import {
+  QuerySentence,
+  QuerySheet,
+  countConditions,
+  rawLeaves,
+  stop,
+  type AnchorPrompt,
+  type RegistryAccess,
+} from "./QuerySheet";
+import { dismissOnOutsidePointer } from "./querySheetParts";
+import { sharedQueryResult } from "../queryResultCache";
+import { graphOwner, ownedWhen, readOwned } from "../owned";
+import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
-import { registerTransientLayer, type TransientLayer } from "../transientLayers";
+import { registerTransientLayer } from "../transientLayers";
 
-// Interactive query builder: an OG-style chip-bar over a {{query}} DSL string.
-// The DSL text is the single source of truth — we parse it to a tree, apply an
-// immutable edit, and write the new DSL back through `onChange` (which rewrites
-// the owning block). Results then re-run reactively.
-//
-// `stop` keeps clicks inside the bar from bubbling to the block's onClick, which
-// would drop the block into raw-text edit mode and replace the builder.
-const stop = (e: MouseEvent) => e.stopPropagation();
-const locKey = (l: number[]) => l.join(".");
+// **The visual query builder: a resting SENTENCE that expands into a SHEET** (SPEC §7.2–§7.4).
 
-type ClauseKind = Clause["kind"];
+export type { RegistryAccess };
 
-function registerVisiblePopover(open: () => boolean, layer: TransientLayer) {
-  createEffect(() => {
-    if (!open()) return;
-    const unregister = registerTransientLayer(layer);
-    onCleanup(unregister);
-  });
+export type QueryBuilderChange =
+  | ((next: BuilderSession) => void)
+  | ((next: BuilderSession) => Promise<boolean>);
+
+/** One landed registry read, tagged with the graph scope and declaration revision it answers — and carrying … */
+interface RegistryRead {
+  scope: string;
+  key: string;
+  snapshot: RegistrySnapshot | null;
+  failure: Error | null;
 }
 
-// Sort is query-GLOBAL (not a filter chip), so it's handled separately from the
-// clause tree: a single root-level `sortBy` child. These helpers read/replace it.
-function rootChildren(root: Clause): Clause[] {
-  return root.kind === "op" && root.op === "and" ? root.children : [root];
-}
-function currentSort(root: Clause): { field: string; dir: "asc" | "desc" } | null {
-  const s = rootChildren(root).find((c) => c.kind === "sortBy");
-  return s && s.kind === "sortBy" ? { field: s.field, dir: s.dir } : null;
-}
-function withSort(root: Clause, sort: { field: string; dir: "asc" | "desc" } | null): Clause {
-  // Explicit Clause[] — else TS narrows the filtered array to exclude sortBy
-  // (inferred type predicate) and rejects the push below.
-  const kids: Clause[] = rootChildren(root).filter((c) => c.kind !== "sortBy");
-  if (sort && sort.field.trim()) {
-    kids.push({ kind: "sortBy", field: sort.field.trim(), dir: sort.dir });
-  }
-  // Re-wrap as a root `and`; toDsl simplifies a single child back to bare form.
-  return { kind: "op", op: "and", children: kids };
+/** The pair an edit session holds (§4.3.1). */
+export interface BuilderSession {
+  query: Query;
+  view: ViewSettings;
 }
 
-// Aggregation + grouping are result-level directives (like sort), held as
-// root-level `aggregate`/`groupBy` children and edited via the "+ summarize"
-// control below — not as filter chips. These helpers read/replace them.
-type AggState = { agg: "count" | "sum" | "avg"; field: string | null };
-function currentAgg(root: Clause): AggState | null {
-  const a = rootChildren(root).find((c) => c.kind === "aggregate");
-  return a && a.kind === "aggregate" ? { agg: a.agg, field: a.field } : null;
-}
-function currentGroup(root: Clause): string | null {
-  const g = rootChildren(root).find((c) => c.kind === "groupBy");
-  return g && g.kind === "groupBy" ? g.field : null;
-}
-function withAgg(root: Clause, agg: AggState | null): Clause {
-  const kids: Clause[] = rootChildren(root).filter((c) => c.kind !== "aggregate");
-  if (agg) kids.push({ kind: "aggregate", agg: agg.agg, field: agg.field });
-  return { kind: "op", op: "and", children: kids };
-}
-function withGroup(root: Clause, field: string | null): Clause {
-  const kids: Clause[] = rootChildren(root).filter((c) => c.kind !== "groupBy");
-  if (field && field.trim()) kids.push({ kind: "groupBy", field: field.trim() });
-  return { kind: "op", op: "and", children: kids };
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+// **`+ sort` and `+ summarize` are gone** (P5B, Q3).
+
+// The text pane (§4.3.1, §7.1)
+
+/** How long the pane waits after the last keystroke before asking the engine. */
+const PANE_DEBOUNCE_MS = 150;
+
+/** The handle the sheet's `⟨advanced⟩` control and its retained rows use to reach the text. */
+export interface PaneHandle {
+  focus: () => void;
+  /** Put the selection on a span of the CURRENT draft, when there is one that belongs to this exact text. */
+  select: (span: Span, forText: string) => void;
 }
 
-// A small "+ sort" / "sort: field ↑" control in the bar (NOT a filter chip).
-// The popover leads with one-click presets (the common cases — no typing, no
-// syntax to get wrong) and keeps a free-text row for sorting by any other
-// property. `SORT_PRESETS` is the single source of truth (see queryBuilder.ts).
-function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void; parentTransientId?: string }): JSX.Element {
-  const [open, setOpen] = createSignal(false);
-  const cur = () => currentSort(props.tree());
-  // The free-text escape hatch: sort by an arbitrary property name.
-  const [field, setField] = createSignal("");
-  const [dir, setDir] = createSignal<"asc" | "desc">("asc");
-  let wrapEl: HTMLSpanElement | undefined;
-  let triggerEl: HTMLButtonElement | undefined;
-  let pickerEl: HTMLDivElement | undefined;
-  const layerId = `query-sort-${createUniqueId()}`;
-  registerVisiblePopover(open, {
-    id: layerId,
-    parentId: props.parentTransientId,
-    root: () => pickerEl ?? null,
-    trigger: () => triggerEl ?? null,
-    dismiss: () => { setOpen(false); return true; },
-  });
-  // Dismiss the popover when clicking anywhere outside it (another chip, the bar
-  // background, or off the block). Capture phase so it fires regardless of the
-  // bar's stopPropagation; only active while open.
-  createEffect(() => {
-    if (!open()) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapEl && !wrapEl.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown, true);
-    onCleanup(() => document.removeEventListener("mousedown", onDown, true));
-  });
-  const isPreset = (c: { field: string; dir: "asc" | "desc" } | null) =>
-    !!c && SORT_PRESETS.some((p) => p.field === c.field && p.dir === c.dir);
-  const activePreset = (p: SortPreset) => {
-    const c = cur();
-    return !!c && c.field === p.field && c.dir === p.dir;
-  };
-  const openPopover = () => {
-    const c = cur();
-    // Pre-fill the free-text row only for a non-preset (custom-property) sort;
-    // a preset sort is reflected by its highlighted button instead.
-    setField(c && !isPreset(c) ? c.field : "");
-    setDir(c?.dir ?? "asc");
-    setOpen(true);
-  };
-  const applyPreset = (p: SortPreset) => {
-    props.apply(withSort(props.tree(), { field: p.field, dir: p.dir }));
-    setOpen(false);
-  };
-  const applyCustom = () => {
-    if (!field().trim()) return;
-    props.apply(withSort(props.tree(), { field: field().trim(), dir: dir() }));
-    setOpen(false);
-  };
-  const clearSort = () => {
-    props.apply(withSort(props.tree(), null));
-    setOpen(false);
-  };
-  return (
-    <span class="qb-add-wrap" ref={wrapEl}>
-      {/* A stable "+ sort" affordance — it does NOT morph into the current sort
-          value (the active sort shows as its own chip in the bar). It just gains
-          an `active` highlight and opens the popover to change/clear. */}
-      <button
-        ref={triggerEl}
-        class="qb-sort"
-        classList={{ active: !!cur() }}
-        title={cur() ? `Sorted by ${clauseLabel({ kind: "sortBy", field: cur()!.field, dir: cur()!.dir })}. Click to change.` : "Sort results"}
-        onClick={(e) => { stop(e); openPopover(); }}
-      >
-        + sort
-      </button>
-      <Show when={open()}>
-        <div ref={pickerEl} class="qb-picker qb-sort-picker" onClick={stop}>
-          <div class="qb-picker-title">Sort by</div>
-          {/* One click = applied. No typing for the common cases. */}
-          <div class="qb-sort-presets">
-            <For each={SORT_PRESETS}>
-              {(p) => (
-                <button
-                  class="qb-sort-preset"
-                  classList={{ active: activePreset(p) }}
-                  title={p.hint}
-                  onClick={() => applyPreset(p)}
-                >
-                  {p.label}
-                </button>
-              )}
-            </For>
-          </div>
-          <div class="qb-divider" />
-          {/* Escape hatch: sort by any other property (still no required syntax —
-              just the bare property name + a direction). */}
-          <div class="qb-sort-custom-label">Or by a property</div>
-          <input
-            class="qb-input"
-            placeholder="property name (e.g. rating)"
-            value={field()}
-            onInput={(e) => setField(e.currentTarget.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") applyCustom(); }}
-          />
-          <div class="qb-conn-row">
-            <button class="qb-conn" classList={{ active: dir() === "asc" }} onClick={() => setDir("asc")}>Asc ↑</button>
-            <button class="qb-conn" classList={{ active: dir() === "desc" }} onClick={() => setDir("desc")}>Desc ↓</button>
-            <button class="qb-conn" classList={{ disabled: !field().trim() }} onClick={applyCustom}>Apply</button>
-          </div>
-          <Show when={cur()}>
-            <button class="qb-sort-clear" onClick={clearSort}>Clear sort</button>
-          </Show>
-        </div>
-      </Show>
-    </span>
-  );
+/** One diagnostic, with the fields §4.3.2 gives it — not a joined string. */
+interface PaneDiagnostics {
+  /** The revision these belong to. A diagnostic never outlives its draft. */
+  revision: number;
+  /** The exact text they were computed for; a span is only offered while the textarea still holds this. */
+  text: string;
+  items: Diagnostic[];
 }
 
-// A "+ summarize" control: no-code aggregation (count / sum / average of a
-// property) and grouping (by page or a property). Modeled on SortControl — a
-// single pill + popover, dismiss-on-outside-click. Aggregate + group are
-// independent (you can group by page AND count per group). The numbers are
-// computed in the frontend from the returned block list (Macro.tsx); this just
-// edits the DSL directive that rides along.
-function SummarizeControl(props: { tree: () => Clause; apply: (c: Clause) => void; parentTransientId?: string }): JSX.Element {
-  const [open, setOpen] = createSignal(false);
-  // Two-step property choice: null = show the top-level buttons; "sum"/"avg" =
-  // pick a property to aggregate; "group" = pick a property to group by.
-  const [pick, setPick] = createSignal<"sum" | "avg" | "group" | null>(null);
-  const [facets] = createResource(() => backend().queryFacets());
-  const keys = () => (facets() ?? []).map(([k]) => k);
-  const agg = () => currentAgg(props.tree());
-  const group = () => currentGroup(props.tree());
-  const active = () => !!agg() || !!group();
-  let wrapEl: HTMLSpanElement | undefined;
-  let triggerEl: HTMLButtonElement | undefined;
-  let pickerEl: HTMLDivElement | undefined;
-  const layerId = `query-summarize-${createUniqueId()}`;
-  registerVisiblePopover(open, {
-    id: layerId,
-    parentId: props.parentTransientId,
-    root: () => pickerEl ?? null,
-    trigger: () => triggerEl ?? null,
-    dismiss: () => { setOpen(false); return true; },
-  });
-  createEffect(() => {
-    if (!open()) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapEl && !wrapEl.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown, true);
-    onCleanup(() => document.removeEventListener("mousedown", onDown, true));
-  });
-  const openPopover = () => {
-    setPick(null);
-    setOpen(true);
-  };
-  // Each pick applies and closes the popover (like SortControl's presets). To set
-  // BOTH an aggregate and a grouping, reopen — the two are independent, so the DSL
-  // keeps whichever the other pick already set.
-  const setAgg = (a: AggState | null) => {
-    props.apply(withAgg(props.tree(), a));
-    setPick(null);
-    setOpen(false);
-  };
-  const setGroup = (f: string | null) => {
-    props.apply(withGroup(props.tree(), f));
-    setPick(null);
-    setOpen(false);
-  };
-  const label = () => {
-    const parts: string[] = [];
-    const a = agg();
-    if (a) parts.push(a.agg === "count" ? "count" : `${a.agg} of ${a.field ?? "?"}`);
-    const g = group();
-    if (g) parts.push(`by ${g}`);
-    return parts.join(", ");
-  };
-  return (
-    <span class="qb-add-wrap" ref={wrapEl}>
-      <button
-        ref={triggerEl}
-        class="qb-sort"
-        classList={{ active: active() }}
-        title={active() ? `Summary: ${label()}. Click to change.` : "Summarize results (count / sum / average / group)"}
-        onClick={(e) => { stop(e); open() ? setOpen(false) : openPopover(); }}
-      >
-        {active() ? `∑ ${label()}` : "+ summarize"}
-      </button>
-      <Show when={open()}>
-        <div ref={pickerEl} class="qb-picker" onClick={stop}>
-          {/* Step: pick a property for sum / avg / group-by. */}
-          <Show when={pick() != null} fallback={
-            <>
-              <div class="qb-picker-title">Aggregate</div>
-              <button class="qb-menu-item" classList={{ active: agg()?.agg === "count" }} onClick={() => setAgg({ agg: "count", field: null })}>Count</button>
-              <button class="qb-menu-item" classList={{ active: agg()?.agg === "sum" }} onClick={() => setPick("sum")}>Sum of a property…</button>
-              <button class="qb-menu-item" classList={{ active: agg()?.agg === "avg" }} onClick={() => setPick("avg")}>Average of a property…</button>
-              <Show when={agg()}>
-                <button class="qb-sort-clear" onClick={() => setAgg(null)}>Clear aggregate</button>
-              </Show>
-              <div class="qb-divider" />
-              <div class="qb-picker-title">Group by</div>
-              <button class="qb-menu-item" classList={{ active: group() === "page" }} onClick={() => setGroup("page")}>Page</button>
-              <button class="qb-menu-item" classList={{ active: !!group() && group() !== "page" }} onClick={() => setPick("group")}>Property…</button>
-              <Show when={group()}>
-                <button class="qb-sort-clear" onClick={() => setGroup(null)}>Clear grouping</button>
-              </Show>
-            </>
-          }>
-            <div class="qb-picker-title">{pick() === "group" ? "Group by property" : `${pick() === "sum" ? "Sum" : "Average"} of property`}</div>
-            <For each={keys()}>
-              {(k) => (
-                <button class="qb-menu-item" onClick={() => (pick() === "group" ? setGroup(k) : setAgg({ agg: pick() as "sum" | "avg", field: k }))}>
-                  {k}
-                </button>
-              )}
-            </For>
-            <PropNameInput onCommit={(k) => (pick() === "group" ? setGroup(k) : setAgg({ agg: pick() as "sum" | "avg", field: k }))} />
-          </Show>
-        </div>
-      </Show>
-    </span>
-  );
-}
-
-// A free-text property-name input (Enter commits) for the summarize picker, so a
-// property not yet used in the graph (absent from facets) can still be chosen.
-function PropNameInput(props: { onCommit: (key: string) => void }): JSX.Element {
-  const [v, setV] = createSignal("");
-  return (
-    <input
-      class="qb-input"
-      placeholder="or type a property name"
-      value={v()}
-      onInput={(e) => setV(e.currentTarget.value)}
-      onKeyDown={(e) => { if (e.key === "Enter" && v().trim()) props.onCommit(v().trim()); }}
-    />
-  );
-}
-
-// "Switch to advanced" converts the CURRENT builder tree to its single-line
-// Datalog equivalent (clauseToAdvanced) — it must never discard the query and
-// never write a multi-line macro: lsdoc `{{query …}}` macros don't span lines,
-// so the old multi-line skeleton made the block stop parsing as a query at all
-// and silently destroyed the user's simple query (Jul 8 data-mutation bug).
-// The clause cheat-sheet lives in the pill's tooltip instead of the file.
-const ADVANCED_CHEATSHEET =
-  'Convert this query to an advanced (Datalog) [:find …] form. Supported clauses: ' +
-  '(task ?b "TODO" "DOING"), (priority ?b "A"), (page-ref ?b "Page"), (property ?b :key "v"), ' +
-  '(page-property ?b :key), (page-tags ?b "tag"), (scheduled ?b), (deadline ?b), (journal ?b), ' +
-  '(page ?b "Name"), (namespace ?b "Parent"), (between ?b "2026-01-01" "2026-12-31"), ' +
-  'combined with (and …) (or …) (not …). Unsupported clauses are flagged, never guessed. ' +
-  'Keep it on ONE line and avoid #{…} sets — a query macro cannot span lines or contain braces.';
-
-export function QueryBuilder(props: {
-  dsl: () => string;
-  onChange: (dsl: string) => void;
-  blockId?: string;
-  parentTransientId?: string;
+/** The query text pane. */
+function QueryTextPane(props: {
+  session: () => BuilderSession | undefined;
+  dialect: Extract<QueryPrintDialect, "og" | "tql">;
+  /** Whether the pane is on screen at all. */
+  visible: () => boolean;
+  /** A successful parse of the current revision: the new filter/anchor, ready to be shown. */
+  onParsed: (query: Query) => void;
+  /** Commit the last-good parse. Enabled only when the current revision parsed. */
+  onCommit: (query: Query) => void;
+  onStale: (stale: boolean) => void;
+  /** Published while mounted so the sheet above can bring the user here. */
+  handle?: (handle: PaneHandle | null) => void;
+  /** The §7.5 crossing notice, hosted here while the sheet is open (N3). */
+  notice?: () => JSX.Element;
+  /** The registry's keys, for the honest "what vocabulary exists" hint an unknown identifier gets. */
+  vocabulary?: () => string[];
 }): JSX.Element {
-  const tree = createMemo(() => parseQuery(props.dsl()));
-  // Which popover is open, by op/clause loc + purpose. Only one at a time.
-  const [openMenu, setOpenMenu] = createSignal<string | null>(null);
-  // Open the root add-picker immediately when this block was just created via
-  // "/Query (visual builder)" — consume the one-shot flag so only this block does.
-  const autoOpen = !!props.blockId && queryBuilderAutoOpen() === props.blockId;
-  if (autoOpen) setQueryBuilderAutoOpen(null);
-  const [adding, setAdding] = createSignal<string | null>(autoOpen ? "add:" : null);
+  const [draft, setDraft] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [pending, setPending] = createSignal(false);
+  const [good, setGood] = createSignal<Query | null>(null);
+  const [diagnostics, setDiagnostics] = createSignal<PaneDiagnostics | null>(null);
+  // The edit revision, and the revision whose parse currently holds `good`.
+  const [revision, setRevision] = createSignal(0);
+  const [goodRevision, setGoodRevision] = createSignal<number | null>(null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+  let textarea: HTMLTextAreaElement | undefined;
+  onCleanup(() => {
+    clearTimeout(timer);
+    // Disposal invalidates every outstanding response.
+    disposed = true;
+    setRevision((n) => n + 1);
+    props.handle?.(null);
+  });
 
-  const apply = (next: Clause) => {
-    props.onChange(toDsl(next));
-    setOpenMenu(null);
-    setAdding(null);
+  /** **The gate BOTH landing paths go through (I-20).** One number answers all three questions the dossier … */
+  const accepts = (mine: number) => !disposed && mine === revision();
+
+  // The session's own text is PRINTED BY RUST.
+  const [printedResource] = createResource(
+    () => (props.visible() ? props.session() : undefined),
+    async (session) => {
+      const key = { query: session.query, view: session.view };
+      try {
+        const printed = await readOwned(graphOwner(), backend().printQuery(session.query, session.view, props.dialect));
+        if (printed.kind === "stale") return undefined;
+        return { ...key, text: printed.value as string | null, refusal: null as string | null };
+      } catch (error) {
+        return { ...key, text: null as string | null, refusal: errorMessage(error) };
+      }
+    },
+  );
+  /** The printed text is shown only for the pair it was printed FROM. */
+  const printedNow = () => {
+    const landed = printedResource.error === undefined ? printedResource.latest : undefined;
+    const current = props.session();
+    if (!landed || !current) return undefined;
+    return landed.query === current.query && landed.view === current.view ? landed : undefined;
+  };
+
+  // A session arriving from outside the pane (a chip edit, a save landing, a different block) invalidates …
+  createEffect(() => {
+    props.session();
+    setRevision((n) => n + 1);
+    setGoodRevision(null);
+    clearTimeout(timer);
+    setDraft(null);
+    setError(null);
+    setDiagnostics(null);
+    setPending(false);
+    setGood(null);
+    props.onStale(false);
+  });
+
+  const text = () => draft() ?? printedNow()?.text ?? "";
+  const refusal = () => (draft() === null ? printedNow()?.refusal ?? null : null);
+
+  const run = async (source: string, mine: number) => {
+    let parsed: ParsedQuery;
+    try {
+      const landed = await readOwned(graphOwner(() => accepts(mine)), backend().parseQuery(source, props.dialect));
+      if (landed.kind === "stale") return;
+      parsed = landed.value;
+    } catch (error) {
+      // The rejection path takes the SAME gate as the success path.
+      if (!accepts(mine)) return;
+      setPending(false);
+      setError(errorMessage(error));
+      setDiagnostics(null);
+      props.onStale(true);
+      return;
+    }
+    if (!accepts(mine)) return;
+    setPending(false);
+    // A diagnostic inside an `off` subtree carries `disabled` and does not invalidate (§3.5) — a parse with only …
+    const all = parsed.query.diagnostics ?? [];
+    setDiagnostics(all.length ? { revision: mine, text: source, items: all } : null);
+    const blocking = all.filter((d) => !d.disabled);
+    if (blocking.length) {
+      setError(blocking.map((d) => d.message).join(" · "));
+      props.onStale(true);
+      return;
+    }
+    setError(null);
+    setGood(parsed.query);
+    setGoodRevision(mine);
+    props.onStale(false);
+    props.onParsed(parsed.query);
+  };
+
+  const onInput = (next: string) => {
+    setDraft(next);
+    const mine = revision() + 1;
+    setRevision(mine);
+    setGoodRevision(null);
+    setDiagnostics(null);
+    clearTimeout(timer);
+    // The pane is not an options editor (§4.3.1).
+    if (next.trim().endsWith("}")) {
+      setPending(false);
+      setError("The options map (title, collapsed) is edited with the title and Display controls, not here.");
+      props.onStale(true);
+      return;
+    }
+    setPending(true);
+    timer = setTimeout(() => void run(next, mine), PANE_DEBOUNCE_MS);
+  };
+
+  /** Only a good parse OF THE CURRENT REVISION is saveable. */
+  const savable = () =>
+    draft() !== null && !pending() && !error() && good() !== null && goodRevision() === revision();
+
+  // **Spans are already UTF-16 code units** (`queryIr.ts`: converted once, at the Rust boundary, precisely …
+  const spanFor = (diagnostic: Diagnostic): Span | null => {
+    const current = diagnostics();
+    const span = diagnostic.span;
+    if (!current || !span) return null;
+    if (current.revision !== revision() || current.text !== text()) return null;
+    if (span.start < 0 || span.end < span.start || span.end > current.text.length) return null;
+    return span;
+  };
+  const select = (span: Span, forText: string) => {
+    if (!textarea || textarea.value !== forText) return;
+    textarea.focus();
+    textarea.setSelectionRange(span.start, span.end);
+  };
+  onMount(() => props.handle?.({ focus: () => textarea?.focus(), select }));
+
+  /** The registry keys that CONTAIN the token an unknown identifier names. */
+  const vocabularyNear = (diagnostic: Diagnostic): string[] => {
+    if (diagnostic.kind !== "unknown_ident") return [];
+    const span = spanFor(diagnostic);
+    const token = span ? text().slice(span.start, span.end).replace(/["']/g, "").trim() : "";
+    if (token.length < 2) return [];
+    const needle = token.toLowerCase();
+    return (props.vocabulary?.() ?? [])
+      .filter((key) => key.toLowerCase().includes(needle) && key.toLowerCase() !== needle)
+      .slice(0, 4);
   };
 
   return (
-    <div class="qb-bar" onClick={stop}>
-      <Node clause={tree()} loc={[]} isRoot tree={tree} apply={apply}
-        openMenu={openMenu} setOpenMenu={setOpenMenu} adding={adding} setAdding={setAdding}
-        parentTransientId={props.parentTransientId} />
-      <SortControl tree={tree} apply={apply} parentTransientId={props.parentTransientId} />
-      <SummarizeControl tree={tree} apply={apply} parentTransientId={props.parentTransientId} />
-      <button
-        class="qb-sort qb-advanced"
-        title={ADVANCED_CHEATSHEET}
-        onClick={(e) => {
-          stop(e);
-          const conv = clauseToAdvanced(tree());
-          if (!conv.ok) {
-            pushToast(`Can't auto-convert to Datalog: ${conv.unsupported.join(", ")} has no advanced equivalent — write the [:find …] form by hand`);
-            return;
-          }
-          if (props.blockId) stashSimpleForm(props.blockId, props.dsl());
-          props.onChange(conv.dsl);
-          pushToast(
-            conv.dropped.length
-              ? `Converted to an advanced Datalog query (dropped: ${conv.dropped.join(", ")}) — undo restores the simple form`
-              : "Converted to an advanced Datalog query — undo restores the simple form"
-          );
-        }}
-      >
-        ⚙ advanced
-      </button>
-    </div>
-  );
-}
-
-interface NodeCtx {
-  loc: number[];
-  isRoot?: boolean;
-  clause: Clause;
-  tree: () => Clause;
-  apply: (next: Clause) => void;
-  openMenu: () => string | null;
-  setOpenMenu: (k: string | null) => void;
-  adding: () => string | null;
-  setAdding: (k: string | null) => void;
-  parentTransientId?: string;
-}
-
-function Node(props: NodeCtx): JSX.Element {
-  const isOp = () => props.clause.kind === "op";
-  const op = () => props.clause as Clause & { kind: "op" };
-
-  return (
-    <Show when={isOp()} fallback={<Chip {...props} />}>
-      <Show when={op().op === "not"} fallback={<OpGroup {...props} />}>
-        <span class="qb-op-not">
-          <span class="qb-bracket">NOT(</span>
-          <For each={op().children}>
-            {(child, i) => (
-              <Node {...props} clause={child} loc={[...props.loc, i()]} isRoot={false} />
+    <div class="query-text-pane">
+      <label class="query-text-pane-label" for={undefined}>
+        {props.dialect === "tql" ? "Query text" : "Raw query DSL"}
+      </label>
+      <textarea
+        ref={textarea}
+        class="qb-input query-text-pane-input"
+        classList={{ "query-text-pane-invalid": !!error() }}
+        rows={3}
+        spellcheck={false}
+        aria-label={props.dialect === "tql" ? "Query text (TQL)" : "Query expression"}
+        aria-invalid={error() ? "true" : undefined}
+        value={text()}
+        disabled={!!refusal()}
+        onInput={(event) => onInput(event.currentTarget.value)}
+      />
+      <div class="query-text-pane-status">
+        <Show when={refusal()}>
+          {(message) => <span class="query-text-pane-error" role="alert">{message()}</span>}
+        </Show>
+        {/* The parser's OWN message, never a catch-all (I-9). */}
+        <Show when={error() && !diagnostics()?.items.length}>
+          <span class="query-text-pane-error" role="alert">{error()}</span>
+        </Show>
+        <Show when={pending() && !error()}>
+          <span class="query-text-pane-pending">Checking…</span>
+        </Show>
+        <button
+          type="button"
+          class="qb-commit query-text-pane-save"
+          disabled={!savable()}
+          onClick={() => { const q = good(); if (q) props.onCommit(q); }}
+        >
+          Save query text
+        </button>
+      </div>
+      {/* The structured half of §4.3.2: the kind, the span, the parser's own alternatives, and whether the … */}
+      <Show when={diagnostics()?.items.length}>
+        <ul class="query-text-pane-diagnostics">
+          <For each={diagnostics()!.items}>
+            {(diagnostic) => (
+              <li
+                class="query-text-pane-diagnostic"
+                classList={{ "is-disabled": diagnostic.disabled === true }}
+                data-kind={diagnostic.kind}
+              >
+                <span class="query-text-pane-diagnostic-message">{diagnostic.message}</span>
+                <Show when={diagnostic.disabled}>
+                  <span class="query-text-pane-diagnostic-off"> (in a disabled condition — the query still runs)</span>
+                </Show>
+                <Show when={spanFor(diagnostic)}>
+                  {(span) => (
+                    <button
+                      type="button"
+                      class="query-text-pane-locate"
+                      onClick={() => select(span(), diagnostics()!.text)}
+                    >
+                      Show me
+                    </button>
+                  )}
+                </Show>
+                <Show when={diagnostic.suggestions?.length}>
+                  <span class="query-text-pane-diagnostic-alts">
+                    <For each={diagnostic.suggestions!.slice(0, 4)}>
+                      {(alternative, index) => (
+                        <>
+                          <Show when={index() > 0}>, </Show>
+                          <code>{alternative}</code>
+                        </>
+                      )}
+                    </For>
+                  </span>
+                </Show>
+                <Show when={vocabularyNear(diagnostic).length}>
+                  <span class="query-text-pane-diagnostic-alts">
+                    Properties in this graph: <For each={vocabularyNear(diagnostic)}>
+                      {(key, index) => (
+                        <>
+                          <Show when={index() > 0}>, </Show>
+                          <code>{key}</code>
+                        </>
+                      )}
+                    </For>
+                  </span>
+                </Show>
+                {/* A syntax error the parser had no alternative for still gets a route: the vocabulary above and the Guide's … */}
+                <Show when={diagnostic.kind === "syntax" && !diagnostic.suggestions?.length}>
+                  <span class="query-text-pane-diagnostic-alts">
+                    The fields and properties this graph has are in the picker above; the
+                    query language is in the Guide under <em>Find and revisit → Query text (TQL)</em>.
+                  </span>
+                </Show>
+              </li>
             )}
           </For>
-          <AddButton {...props} />
-          <ChipMenu {...props} />
-          <span class="qb-bracket">)</span>
-        </span>
+        </ul>
       </Show>
-    </Show>
-  );
-}
-
-// An and/or operator node: optional bracket + a clickable operator pill that
-// flips and<->or, its children, and a trailing "+".
-function OpGroup(props: NodeCtx): JSX.Element {
-  const op = () => props.clause as Clause & { kind: "op" };
-  const showBracket = () => !props.isRoot;
-  const showOpPill = () => op().children.length > 1 || !props.isRoot;
-  const flip = () => props.apply(setOp(props.tree(), props.loc, op().op === "and" ? "or" : "and"));
-
-  return (
-    <span class="qb-group" classList={{ "qb-root": props.isRoot }}>
-      <Show when={showBracket()}>
-        <span class="qb-bracket">(</span>
-      </Show>
-      <Show when={showOpPill()}>
-        <button
-          class="qb-op"
-          title="Toggle AND / OR"
-          onClick={(e) => {
-            stop(e);
-            flip();
-          }}
-        >
-          {op().op.toUpperCase()}
-        </button>
-      </Show>
-      <For each={op().children}>
-        {(child, i) => (
-          <Node {...props} clause={child} loc={[...props.loc, i()]} isRoot={false} />
-        )}
-      </For>
-      <AddButton {...props} prominent={props.isRoot && op().children.length === 0} />
-      <Show when={!props.isRoot}>
-        <ChipMenu {...props} />
-        <span class="qb-bracket">)</span>
-      </Show>
-    </span>
-  );
-}
-
-// A leaf filter chip. Click opens an action menu (delete / wrap).
-function Chip(props: NodeCtx): JSX.Element {
-  const key = () => `chip:${locKey(props.loc)}`;
-  let triggerEl: HTMLButtonElement | undefined;
-  return (
-    <span class="qb-chip-wrap">
-      <button
-        ref={triggerEl}
-        class="qb-chip"
-        classList={{ "qb-chip-raw": props.clause.kind === "raw" }}
-        title="Click: delete / wrap in AND·OR·NOT (to exclude or nest)"
-        onClick={(e) => {
-          stop(e);
-          props.setOpenMenu(props.openMenu() === key() ? null : key());
-        }}
-      >
-        {clauseLabel(props.clause)}
-      </button>
-      <ChipMenu {...props} trigger={() => triggerEl ?? null} />
-    </span>
-  );
-}
-
-// Per-clause action popover (delete, wrap in AND/OR/NOT, and for op nodes:
-// unwrap). Shown for both leaf chips and operator nodes.
-function ChipMenu(props: NodeCtx & { trigger?: () => HTMLElement | null }): JSX.Element {
-  const isOpKey = () => props.clause.kind === "op";
-  const key = () => `${isOpKey() ? "op" : "chip"}:${locKey(props.loc)}`;
-  const open = () => props.openMenu() === key();
-  const act = (f: () => Clause) => () => props.apply(f());
-  // The root op has no enclosing position to delete/wrap from.
-  const atRoot = () => props.loc.length === 0;
-
-  // Result-level directives (sort / aggregate / group-by) aren't filters: they're
-  // edited via the "+ sort" / "+ summarize" controls, so their chip menu offers
-  // only Delete (no Edit, no wrap-in-AND/OR/NOT — wrapping one would nest it out
-  // of the root and silently disable it).
-  const isSort = () =>
-    props.clause.kind === "sortBy" ||
-    props.clause.kind === "aggregate" ||
-    props.clause.kind === "groupBy";
-
-  const [editing, setEditing] = createSignal(false);
-  let menuEl: HTMLDivElement | undefined;
-  const layerId = `query-clause-menu-${createUniqueId()}`;
-  registerVisiblePopover(open, {
-    id: layerId,
-    parentId: props.parentTransientId,
-    root: () => menuEl ?? null,
-    trigger: props.trigger,
-    dismiss: () => { props.setOpenMenu(null); return true; },
-  });
-  // Nullary clauses (scheduled/deadline/journal), result-level directives, and
-  // raw/op have nothing to edit here.
-  const canEdit = () =>
-    !isOpKey() &&
-    !["raw", "scheduled", "deadline", "journal", "sortBy", "aggregate", "groupBy"].includes(
-      props.clause.kind,
-    );
-  const editKind = () => (props.clause.kind === "raw" ? "page" : (props.clause.kind as ClauseKind));
-
-  return (
-    <Show when={open()}>
-      <div ref={menuEl} class="qb-menu" onClick={stop}>
-        <Show when={editing()} fallback={
-          <>
-            <Show when={canEdit()}>
-              <button class="qb-menu-item" onClick={() => setEditing(true)}>Edit…</button>
-            </Show>
-            <Show when={!atRoot()}>
-              <button class="qb-menu-item" onClick={act(() => removeAt(props.tree(), props.loc))}>Delete</button>
-              <Show when={!isSort()}>
-                <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "and"))}>Wrap in AND</button>
-                <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "or"))}>Wrap in OR</button>
-                <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "not"))}>Wrap in NOT</button>
-              </Show>
-            </Show>
-            <Show when={isOpKey() && !atRoot()}>
-              <button class="qb-menu-item" onClick={act(() => unwrapAt(props.tree(), props.loc))}>Unwrap</button>
-            </Show>
-          </>
-        }>
-          <div class="qb-picker-title">Edit value</div>
-          <ValuePicker kind={editKind()} onCommit={(c) => props.apply(replaceAt(props.tree(), props.loc, c))} />
-        </Show>
-      </div>
-    </Show>
-  );
-}
-
-// "+" button that opens the add-filter picker, scoped to the op at `loc`. When
-// `prominent` (an empty query), render an inviting "➕ Add filter" call-to-action
-// instead of a bare "+", so leaving the bullet reveals an obvious next step.
-function AddButton(props: NodeCtx & { prominent?: boolean }): JSX.Element {
-  const key = () => `add:${locKey(props.loc)}`;
-  const open = () => props.adding() === key();
-  let triggerEl: HTMLButtonElement | undefined;
-  let pickerEl: HTMLDivElement | undefined;
-  const layerId = `query-add-picker-${createUniqueId()}`;
-  registerVisiblePopover(open, {
-    id: layerId,
-    parentId: props.parentTransientId,
-    root: () => pickerEl ?? null,
-    trigger: () => triggerEl ?? null,
-    dismiss: () => { props.setAdding(null); return true; },
-  });
-  return (
-    <span class="qb-add-wrap">
-      <button
-        ref={triggerEl}
-        class="qb-add"
-        classList={{ "qb-add-prominent": props.prominent }}
-        title="Add filter"
-        onClick={(e) => {
-          stop(e);
-          props.setAdding(open() ? null : key());
-        }}
-      >
-        {props.prominent ? "➕ Add filter" : "+"}
-      </button>
-      <Show when={open()}>
-        <AddPicker
-          rootRef={(element) => { pickerEl = element; }}
-          onCommit={(c) => props.apply(addChild(props.tree(), props.loc, c))}
-          onSetOp={(op) => props.apply(setOp(props.tree(), props.loc, op))}
-        />
-      </Show>
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Add-filter picker: choose a clause type, then collect its value(s).
-// ---------------------------------------------------------------------------
-
-const FILTER_TYPES: { kind: ClauseKind; label: string }[] = [
-  { kind: "page", label: "Page / tag reference" },
-  { kind: "task", label: "Task marker" },
-  { kind: "priority", label: "Priority" },
-  { kind: "property", label: "Property" },
-  { kind: "scheduled", label: "Scheduled" },
-  { kind: "deadline", label: "Deadline" },
-  { kind: "journal", label: "On journal page" },
-  { kind: "between", label: "Between dates" },
-  { kind: "content", label: "Full-text search" },
-  { kind: "onPage", label: "On page" },
-  { kind: "namespace", label: "In namespace" },
-  { kind: "pageProperty", label: "Page property" },
-  { kind: "pageTags", label: "Page tags" },
-];
-
-function AddPicker(props: {
-  onCommit: (c: Clause) => void;
-  onSetOp: (op: "and" | "or") => void;
-  rootRef?: (element: HTMLDivElement) => void;
-}): JSX.Element {
-  const [step, setStep] = createSignal<ClauseKind | "type">("type");
-  // When armed, the next filter is added negated (wrapped in NOT).
-  const [negate, setNegate] = createSignal(false);
-
-  const pick = (kind: ClauseKind) => {
-    if (kind === "scheduled" || kind === "deadline" || kind === "journal") return commit({ kind });
-    setStep(kind);
-  };
-  const commit = (c: Clause) => props.onCommit(negate() ? { kind: "op", op: "not", children: [c] } : c);
-
-  return (
-    <div ref={props.rootRef} class="qb-picker" onClick={stop}>
-      <Show when={step() === "type"}>
-        {/* Connectives first (OG-style): AND/OR set how this group joins;
-            NOT arms negation for the filter you pick next. */}
-        <div class="qb-conn-row">
-          <button class="qb-conn" title="Join this group with AND" onClick={() => props.onSetOp("and")}>AND</button>
-          <button class="qb-conn" title="Join this group with OR" onClick={() => props.onSetOp("or")}>OR</button>
-          <button class="qb-conn" classList={{ active: negate() }} title="Exclude the next filter (NOT)" onClick={() => setNegate(!negate())}>NOT</button>
-        </div>
-        <div class="qb-divider" />
-        <div class="qb-picker-title">{negate() ? "Exclude filter…" : "Add filter"}</div>
-        <For each={FILTER_TYPES}>
-          {(t) => (
-            <button class="qb-menu-item" onClick={() => pick(t.kind)}>
-              {t.label}
-            </button>
-          )}
-        </For>
-      </Show>
-      <Show when={step() !== "type"}>
-        <ValuePicker kind={step() as ClauseKind} onCommit={commit} />
-      </Show>
+      {/* §7.5: one notice, hosted here while the sheet is open. */}
+      <Show when={props.notice}>{(render) => render()()}</Show>
     </div>
   );
 }
 
-// Renders the value collector for a given clause kind. Shared by the add-filter
-// picker and the in-place "Edit value" flow.
-function ValuePicker(props: { kind: ClauseKind; onCommit: (c: Clause) => void }): JSX.Element {
-  return (
+// The host
+
+// The one registry read, shared by every open builder (§6.4, I-13, N4)
+
+/** The graph-scoped declaration revision, bumped when a `tine.type` is written. */
+const [declarationBump, setDeclarationBump] = createSignal({ epoch: 0, revision: 0 });
+
+/** Re-read the registry for THIS graph, in every open builder. */
+export function requestQueryRegistryRefresh(): void {
+  const epoch = graphEpoch();
+  setDeclarationBump((prior) =>
+    prior.epoch === epoch ? { epoch, revision: prior.revision + 1 } : { epoch, revision: 1 },
+  );
+}
+
+/** The current graph's declaration revision. */
+function declarationRevision(): number {
+  const bump = declarationBump();
+  return bump.epoch === graphEpoch() ? bump.revision : 0;
+}
+
+/** Tests mount several graphs in one process; the counter is module state. */
+export function resetQueryRegistryRevisionForTests(): void {
+  setDeclarationBump({ epoch: -1, revision: 0 });
+}
+
+/** **One registry read, however many surfaces ask for it** (D-14, I-12): every open builder keys the same
+ * `sharedQueryResult` entry by graph scope, data revision and declaration revision. */
+export function createQueryRegistryAccess(active: () => boolean): RegistryAccess {
+  const registryScope = () => `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
+  const registryKey = () =>
+    active() ? `${dataRev()}\0${declarationRevision()}` : undefined;
+  const [registrySnapshot] = createResource(
+    () => {
+      const key = registryKey();
+      return key === undefined ? undefined : { scope: registryScope(), key };
+    },
+    async (request): Promise<RegistryRead | undefined> => {
+      try {
+        const landed = await readOwned(
+          graphOwner(),
+          sharedQueryResult(request.scope, `query-registry\0${request.key}`, () => backend().queryRegistry()),
+        );
+        if (landed.kind === "stale") return undefined;
+        return { scope: request.scope, key: request.key, snapshot: landed.value, failure: null };
+      } catch (error) {
+        // A failed read is a terminal answer for this key, shown as such (I-9), never as an empty registry.
+        return {
+          scope: request.scope,
+          key: request.key,
+          snapshot: null,
+          failure: error instanceof Error ? error : new Error(errorMessage(error)),
+        };
+      }
+    },
+  );
+  // A type declaration changes operator semantics: an answer is usable only for the current graph AND revision.
+  const registryRead = (): RegistryRead | undefined => {
+    const landed = registrySnapshot.error === undefined ? registrySnapshot.latest : undefined;
+    return landed && landed.scope === registryScope() && landed.key === registryKey() ? landed : undefined;
+  };
+  const registryRows = () => registryRead()?.snapshot?.rows;
+  const registryFailure = () => registryRead()?.failure ?? null;
+  return {
+    rows: registryRows,
+    pending: () => registryKey() !== undefined && registryRows() === undefined && registryFailure() === null,
+    failure: registryFailure,
+    unavailable: () => registryKey() !== undefined && registryRows() === undefined,
+    request: requestQueryRegistryRefresh,
+    retry: requestQueryRegistryRefresh,
+  };
+}
+
+/** Deepest-and-rightmost first, so removing several leaves in one pass never invalidates a `loc` that has not … */
+function compareLocsDescending(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const left = a[i] ?? -1;
+    const right = b[i] ?? -1;
+    if (left !== right) return right - left;
+  }
+  return 0;
+}
+
+/** The four "Try:" suggestions of the empty state (§7.3). */
+export function suggestedKeys(rows: RegistryRow[] | undefined): string[] {
+  if (!rows?.length) return [];
+  return [...rows]
+    .sort((a, b) => {
+      const byCount =
+        b.count_blocks + b.count_pages - (a.count_blocks + a.count_pages);
+      return byCount !== 0 ? byCount : a.normalized_name.localeCompare(b.normalized_name);
+    })
+    .slice(0, 4)
+    .map((row) => row.normalized_name);
+}
+
+export function QueryBuilder(props: {
+  /** The persisted reading of the query. */
+  session: () => BuilderSession | undefined;
+  /** Persist an edit. */
+  onChange: QueryBuilderChange;
+  /** The text pane's language: `tql` for a query block, `og` for the workspace, which materializes OG text. */
+  paneDialect?: Extract<QueryPrintDialect, "og" | "tql">;
+  /** The §7.5 crossing notice, drawn inside the pane while the sheet is open. */
+  notice?: () => JSX.Element;
+  /** Told whether the sheet is open, so the host can take the notice back when it closes. */
+  onOpenChange?: (open: boolean) => void;
+  /** The workspace's permanently expanded sheet (§7.2). */
+  sheetAlwaysOpen?: boolean;
+  /** The live result count, rendered beside the sentence (§7.2). */
+  total?: JSX.Element;
+  /** The pane's text no longer parses, so the rows on screen are the LAST reading that ran. */
+  onStale?: (stale: boolean) => void;
+  blockId?: string;
+  parentTransientId?: string;
+  // Q4b seam: the inline Display panel (`inlineDisplay`, `displayFormulas`, `display`) plugs in here.
+}): JSX.Element {
+  // The pane's last-good parse, not yet saved.
+  const [paneQuery, setPaneQuery] = createSignal<Query | null>(null);
+  const [stale, setStale] = createSignal(false);
+  const [open, setOpen] = createSignal(false);
+  const [openMenu, setOpenMenu] = createSignal<string | null>(null);
+  const [anchorPrompt, setAnchorPrompt] = createSignal<AnchorPrompt | null>(null);
+  const [previewError, setPreviewError] = createSignal<string | null>(null);
+
+  // I-20: anchor previews obey the same current-revision rule as text parses.
+  let anchorRevision = 0;
+  const invalidateAnchorPreview = () => {
+    anchorRevision += 1;
+    setAnchorPrompt(null);
+  };
+  onCleanup(invalidateAnchorPreview);
+
+  createEffect(() => {
+    props.session();
+    setPaneQuery(null);
+    invalidateAnchorPreview();
+    setPreviewError(null);
+  });
+
+  const session = createMemo<BuilderSession | undefined>(() => {
+    const persisted = props.session();
+    if (!persisted) return undefined;
+    const pane = paneQuery();
+    return pane ? { query: pane, view: persisted.view } : persisted;
+  });
+  // The sheet always edits an `and`/`or` root, so "+ add condition" has somewhere to add.
+  const root = createMemo(() => builderRoot(session()?.query.filter ?? { kind: "and", items: [] }));
+
+  const sheetOpen = () => !!props.sheetAlwaysOpen || open();
+  createEffect(() => { if (!sheetOpen()) invalidateAnchorPreview(); });
+  // The host needs to know, because the §7.5 notice lives inline under the block while the sheet is shut and …
+  createEffect(() => props.onOpenChange?.(sheetOpen()));
+
+  // **The ONE graph-level read the builder makes (§6.4, K20, I-13, N4).** It used to make two: …
+  const registry = createQueryRegistryAccess(sheetOpen);
+  const suggestions = createMemo(() => suggestedKeys(registry.rows()));
+  const vocabulary = () => (registry.rows() ?? []).map((row) => row.normalized_name);
+
+  // Open the sheet with the field chooser focused when this block was just created via `/query` — consume the …
+  const autoOpen = !!props.blockId && queryBuilderAutoOpen() === props.blockId;
+  if (autoOpen) {
+    setQueryBuilderAutoOpen(null);
+    setOpen(true);
+  }
+
+  /** A row edit: a new filter over the CURRENT reading, saved immediately. */
+  const apply = (next: Filter) => {
+    const current = session();
+    if (!current) return;
+    invalidateAnchorPreview();
+    const outcome = props.onChange({ query: { ...current.query, filter: next }, view: current.view });
+    setOpenMenu(null);
+    return outcome;
+  };
+  /** §4.3.1 carry-forward: a parse replaces only the filter, the anchor and the diagnostics. */
+  const carryForward = (parsed: Query): Query => {
+    const current = props.session();
+    const options = current && current.query.source.kind !== "builder"
+      ? current.query.source.og_options ?? ""
+      : "";
+    return {
+      anchor: parsed.anchor,
+      filter: parsed.filter,
+      diagnostics: parsed.diagnostics,
+      source: parsed.source.kind === "builder"
+        ? parsed.source
+        : { ...parsed.source, og_options: options },
+    };
+  };
+  const commitQuery = (query: Query) => {
+    const current = session();
+    if (!current) return;
+    props.onChange({ query, view: current.view });
+  };
+
+  /** **Switching the anchor re-validates through the ENGINE (§7.4, §3.5, D-14).** The frontend has no "does … */
+  const switchAnchor = async (anchor: Anchor) => {
+    const current = session();
+    invalidateAnchorPreview();
+    setPreviewError(null);
+    if (!current || current.query.anchor === anchor) return;
+    const mine = anchorRevision;
+    const next: Query = { ...current.query, anchor };
+    let parsed: ParsedQuery;
+    try {
+      const printed = await readOwned(graphOwner(ownedWhen(() => mine === anchorRevision)), backend().printQuery(next, current.view, "tql"));
+      if (printed.kind === "stale") return;
+      const landed = await readOwned(graphOwner(ownedWhen(() => mine === anchorRevision)), backend().parseQuery(printed.value, "tql"));
+      if (landed.kind === "stale") return;
+      parsed = landed.value;
+    } catch (error) {
+      if (mine !== anchorRevision) return;
+      setPreviewError(errorMessage(error));
+      return;
+    }
+    if (mine !== anchorRevision) return;
+    const carried = carryForward(parsed.query);
+    const notApplicable = (carried.diagnostics ?? []).filter((d) => d.kind === "not_applicable");
+    const live = notApplicable.filter((d) => d.disabled !== true);
+    if (live.length === 0) {
+      // Nothing objected: commit the switch itself, not the round trip, so an untouched query keeps the tree it …
+      if (notApplicable.length === 0) return commitQuery(next);
+      // Only DISABLED objections: the grey Off rows were already off, and a prompt about conditions that are not …
+      return commitQuery(carried);
+    }
+    const rootFilter = builderRoot(carried.filter);
+    const sites = rawLeaves(rootFilter).filter(
+      (site) => site.leaf.diagnostic_kind === "not_applicable" && !site.disabled,
+    );
+    setAnchorPrompt({
+      anchor,
+      count: live.length,
+      total: countConditions(rootFilter),
+      names: sites.map((site) => filterLabel(site.leaf)),
+      onRemove: () => {
+        let filter = rootFilter;
+        for (const loc of sites.map((site) => site.loc).sort(compareLocsDescending)) {
+          filter = loc.length === 0 ? { kind: "and", items: [] } : removeAt(filter, loc);
+        }
+        setAnchorPrompt(null);
+        commitQuery({ ...carried, filter });
+      },
+      // The leaves stay as red rows with their message; the query is invalid and returns nothing until they are …
+      onKeep: () => {
+        setAnchorPrompt(null);
+        commitQuery(carried);
+      },
+      onCancel: () => setAnchorPrompt(null),
+    });
+  };
+
+  // -- the sheet's layer and its position ------------------------------------
+
+  // **A ROOT transient layer whose id is unique per MOUNT, not per block.** `transientLayers` keys by id and a …
+  const sheetLayerId = `query-sheet:${props.blockId ?? "workspace"}:${createUniqueId()}`;
+  let sheetEl: HTMLDivElement | undefined;
+  let sentenceEl: HTMLSpanElement | undefined;
+
+  const dismissable = () => open() && !props.sheetAlwaysOpen;
+  createEffect(() => {
+    if (!dismissable()) return;
+    const unregister = registerTransientLayer({
+      id: sheetLayerId,
+      root: () => sheetEl ?? null,
+      trigger: () => sentenceEl ?? null,
+      dismiss: () => {
+        setOpen(false);
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
+  dismissOnOutsidePointer({
+    open: dismissable,
+    // A press while one of the sheet's own popovers is open belongs to that popover's rung: closing the sheet …
+    inside: () =>
+      openMenu() !== null
+      || sheetEl?.querySelector(".qs-menu, .qb-picker, .qb-menu")
+      || document.querySelector(`[data-transient-parent="${sheetLayerId}"]`)
+        ? [document.body]
+        : [sheetEl ?? null, sentenceEl ?? null],
+    dismiss: () => setOpen(false),
+  });
+
+  // The sheet is portalled and positioned from the sentence's rect on wide screens.
+  const [rect, setRect] = createSignal<{ top: number; left: number; width: number } | null>(null);
+  const measure = () => {
+    const element = sentenceEl;
+    if (!element) return;
+    const box = element.getBoundingClientRect();
+    setRect({ top: box.bottom, left: box.left, width: Math.max(box.width, 320) });
+  };
+  createEffect(() => {
+    if (!open() || props.sheetAlwaysOpen) return;
+    measure();
+    if (typeof window === "undefined") return;
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    onCleanup(() => {
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    });
+  });
+
+  // The pane publishes a handle while it is mounted, so the sheet's `⟨advanced⟩` control and its retained rows …
+  const [paneHandle, setPaneHandle] = createSignal<PaneHandle | null>(null);
+
+  const footer = () => (
     <>
-      <Show when={props.kind === "page"}>
-        <PageInput placeholder="Page or tag name" onCommit={(name) => props.onCommit({ kind: "page", name })} />
-      </Show>
-      <Show when={props.kind === "task"}>
-        <MultiPick options={MARKERS} onCommit={(markers) => props.onCommit({ kind: "task", markers })} />
-      </Show>
-      <Show when={props.kind === "priority"}>
-        <MultiPick options={PRIORITIES} onCommit={(levels) => props.onCommit({ kind: "priority", levels })} />
-      </Show>
-      <Show when={props.kind === "property"}>
-        <PropertyPick onCommit={(key, value) => props.onCommit({ kind: "property", key, value })} />
-      </Show>
-      <Show when={props.kind === "between"}>
-        <BetweenPick onCommit={(field, start, end) => props.onCommit({ kind: "between", field, start, end })} />
-      </Show>
-      <Show when={props.kind === "onPage"}>
-        <PageInput placeholder="Page name" onCommit={(name) => props.onCommit({ kind: "onPage", name })} />
-      </Show>
-      <Show when={props.kind === "namespace"}>
-        <PageInput placeholder="Namespace (parent page)" onCommit={(ns) => props.onCommit({ kind: "namespace", ns })} />
-      </Show>
-      <Show when={props.kind === "pageProperty"}>
-        <PropertyPick onCommit={(key, value) => props.onCommit({ kind: "pageProperty", key, value })} />
-      </Show>
-      <Show when={props.kind === "content"}>
-        <TextInput placeholder="Text to search for" onCommit={(text) => props.onCommit({ kind: "content", text })} />
-      </Show>
-      <Show when={props.kind === "search"}>
-        <TextInput placeholder="Search words and operators" onCommit={(source) => props.onCommit({ kind: "search", source })} />
-      </Show>
-      <Show when={props.kind === "pageTags"}>
-        <TextInput placeholder="Tag (one)" onCommit={(t) => props.onCommit({ kind: "pageTags", tags: [t] })} />
-      </Show>
+      {/* Q4b seam: the Display control renders here, above the text pane. */}
+      {/* **Visible and editable, always, inside an open sheet (§7.5).** It was a collapsed `<details>`, which meant … */}
+      <QueryTextPane
+        session={props.session}
+        dialect={props.paneDialect ?? "tql"}
+        visible={sheetOpen}
+        vocabulary={vocabulary}
+        notice={props.notice}
+        handle={setPaneHandle}
+        onParsed={(parsed) => setPaneQuery(carryForward(parsed))}
+        onCommit={(parsed) => {
+          const current = props.session();
+          if (!current) return;
+          props.onChange({ query: carryForward(parsed), view: current.view });
+        }}
+        onStale={(value) => {
+          setStale(value);
+          props.onStale?.(value);
+        }}
+      />
     </>
   );
-}
 
-// Plain free-text input that commits on Enter.
-function TextInput(props: { placeholder: string; onCommit: (text: string) => void }): JSX.Element {
-  const [v, setV] = createSignal("");
-  return (
-    <div class="qb-value">
-      <input
-        class="qb-input"
-        autofocus
-        placeholder={props.placeholder}
-        value={v()}
-        onInput={(e) => setV(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && v().trim()) props.onCommit(v().trim());
-        }}
-      />
-    </div>
+  const sheet = (extraRef?: (element: HTMLDivElement) => void) => (
+    <QuerySheet
+      anchor={() => session()?.query.anchor ?? "block"}
+      onAnchor={(anchor) => void switchAnchor(anchor)}
+      anchorPrompt={anchorPrompt}
+      root={root}
+      query={() => session()?.query}
+      apply={apply}
+      registry={registry}
+      onEditText={() => paneHandle()?.focus()}
+      suggestions={suggestions}
+      openMenu={openMenu}
+      setOpenMenu={setOpenMenu}
+      // In the workspace the sheet is not a layer of its own: its menus parent to the Advanced modal exactly as …
+      layerId={props.sheetAlwaysOpen ? props.parentTransientId : sheetLayerId}
+      autoOpenChooser={autoOpen}
+      footer={footer()}
+      stale={stale()}
+      sheetRef={(element) => {
+        sheetEl = element;
+        extraRef?.(element);
+      }}
+    />
   );
-}
-
-// Page-name input with fuzzy autocomplete from the graph.
-function PageInput(props: { placeholder: string; onCommit: (name: string) => void }): JSX.Element {
-  const [q, setQ] = createSignal("");
-  // Debounce the backend fuzzy-match (quick_switch lists pages from disk) so
-  // holding a key doesn't fire an IPC + dir scan per character.
-  const [dq, setDq] = createSignal("");
-  let dqTimer: ReturnType<typeof setTimeout> | undefined;
-  createEffect(() => {
-    const s = q();
-    clearTimeout(dqTimer);
-    dqTimer = setTimeout(() => setDq(s), 120);
-  });
-  onCleanup(() => clearTimeout(dqTimer));
-  const [matches] = createResource(dq, (s) => backend().quickSwitch(s, 8));
-  return (
-    <div class="qb-value">
-      <input
-        class="qb-input"
-        autofocus
-        placeholder={props.placeholder}
-        value={q()}
-        onInput={(e) => setQ(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && q().trim()) props.onCommit(q().trim());
-        }}
-      />
-      <For each={matches() ?? []}>
-        {(p) => (
-          <button class="qb-menu-item" onClick={() => props.onCommit(p.name)}>
-            {p.name}
-          </button>
-        )}
-      </For>
-    </div>
-  );
-}
-
-// Multi-select (task markers, priorities) with checkboxes + an Add button.
-function MultiPick(props: { options: string[]; onCommit: (picked: string[]) => void }): JSX.Element {
-  const [picked, setPicked] = createSignal<string[]>([]);
-  const toggle = (o: string) =>
-    setPicked(picked().includes(o) ? picked().filter((x) => x !== o) : [...picked(), o]);
-  return (
-    <div class="qb-value">
-      <For each={props.options}>
-        {(o) => (
-          <label class="qb-check">
-            <input type="checkbox" checked={picked().includes(o)} onChange={() => toggle(o)} /> {o}
-          </label>
-        )}
-      </For>
-      <button class="qb-commit" disabled={picked().length === 0} onClick={() => props.onCommit(picked())}>
-        Add
-      </button>
-    </div>
-  );
-}
-
-// Property: choose a key (autocompleted from used properties), then a value
-// (from that key's known values, "any", or free text).
-function PropertyPick(props: { onCommit: (key: string, value: string | null) => void }): JSX.Element {
-  const [facets] = createResource(() => backend().queryFacets());
-  const [key, setKey] = createSignal("");
-  const [chosen, setChosen] = createSignal<string | null>(null);
-  const keys = () => (facets() ?? []).map(([k]) => k);
-  const valuesFor = (k: string) => (facets() ?? []).find(([kk]) => kk === k)?.[1] ?? [];
-  const [val, setVal] = createSignal("");
 
   return (
-    <div class="qb-value">
-      <Show
-        when={chosen() != null}
-        fallback={
-          <>
-            <input
-              class="qb-input"
-              autofocus
-              placeholder="Property key"
-              value={key()}
-              onInput={(e) => setKey(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && key().trim()) setChosen(key().trim());
+    <Show when={session()}>
+      {(current) => (
+        <div class="qs-builder">
+          <Show when={!props.sheetAlwaysOpen}>
+            <QuerySentence
+              query={current().query}
+              total={props.total}
+              open={open()}
+              onOpen={() => setOpen(!open())}
+              sentenceRef={(element) => {
+                sentenceEl = element;
               }}
             />
-            <For each={keys().filter((k) => k.toLowerCase().includes(key().toLowerCase()))}>
-              {(k) => (
-                <button class="qb-menu-item" onClick={() => { setKey(k); setChosen(k); }}>
-                  {k}
-                </button>
-              )}
-            </For>
-          </>
-        }
-      >
-        <div class="qb-picker-title">{chosen()}</div>
-        <button class="qb-menu-item" onClick={() => props.onCommit(chosen()!, null)}>
-          (any value)
-        </button>
-        <For each={valuesFor(chosen()!)}>
-          {(v) => (
-            <button class="qb-menu-item" onClick={() => props.onCommit(chosen()!, v)}>
-              {v}
-            </button>
-          )}
-        </For>
-        <input
-          class="qb-input"
-          placeholder="Custom value"
-          value={val()}
-          onInput={(e) => setVal(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") props.onCommit(chosen()!, val().trim() || null);
-          }}
-        />
-      </Show>
-    </div>
-  );
-}
-
-// Date-range picker. A field selector (which date to test), one-click relative
-// presets, and two bound inputs that accept keywords (`today`), relative offsets
-// (`-30d`), ISO dates, or a journal-page title — each with a live resolved-date
-// preview so the free-text accepts more than its placeholder hints.
-const FIELD_LABEL: Record<BetweenField, string> = {
-  journal: "Journal date",
-  scheduled: "Scheduled",
-  deadline: "Deadline",
-  any: "Any date",
-};
-function BetweenPick(props: { onCommit: (field: BetweenField, start: string, end: string) => void }): JSX.Element {
-  const [field, setField] = createSignal<BetweenField>("journal");
-  const [start, setStart] = createSignal("");
-  const [end, setEnd] = createSignal("");
-  const ready = () => !!start().trim() && !!end().trim();
-  const submit = () => {
-    if (ready()) props.onCommit(field(), start().trim(), end().trim());
-  };
-  return (
-    <div class="qb-between">
-      <div class="qb-between-field">
-        <For each={BETWEEN_FIELDS}>
-          {(f) => (
-            <button class="qb-conn" classList={{ active: field() === f }} onClick={() => setField(f)}>
-              {FIELD_LABEL[f]}
-            </button>
-          )}
-        </For>
-      </div>
-      <div class="qb-between-presets">
-        <For each={DATE_PRESETS}>
-          {(p) => (
-            <button
-              class="qb-preset"
-              title={`${p.start} → ${p.end}`}
-              onClick={() => {
-                setStart(p.start);
-                setEnd(p.end);
-              }}
-            >
-              {p.label}
-            </button>
-          )}
-        </For>
-      </div>
-      <DateBoundInput placeholder="Start — today, -30d, 2026-06-01, or a page" value={start()} onInput={setStart} onEnter={submit} autofocus />
-      <DateBoundInput placeholder="End — today, +7d, 2026-06-30, or a page" value={end()} onInput={setEnd} onEnter={submit} />
-      <button class="qb-commit" disabled={!ready()} onClick={submit}>
-        Add
-      </button>
-    </div>
-  );
-}
-
-// A single date-bound input with a live resolved-date preview underneath.
-function DateBoundInput(props: {
-  placeholder: string;
-  value: string;
-  onInput: (v: string) => void;
-  onEnter: () => void;
-  autofocus?: boolean;
-}): JSX.Element {
-  const preview = createMemo(() => previewDate(props.value));
-  return (
-    <div class="qb-bound">
-      <input
-        class="qb-input"
-        autofocus={props.autofocus}
-        placeholder={props.placeholder}
-        value={props.value}
-        onInput={(e) => props.onInput(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") props.onEnter();
-        }}
-      />
-      <span class="qb-bound-preview">{preview() ? `→ ${preview()}` : " "}</span>
-    </div>
+          </Show>
+          <Show when={previewError()}>
+            {(message) => (
+              <div class="qs-preview-error" role="alert">
+                The anchor wasn't changed: {message()}
+              </div>
+            )}
+          </Show>
+          <Show when={props.sheetAlwaysOpen}>{sheet()}</Show>
+          <Show when={open() && !props.sheetAlwaysOpen}>
+            <Portal>
+              <div
+                class="qs-overlay"
+                onClick={(e) => {
+                  stop(e);
+                  setOpen(false);
+                }}
+              />
+              <div
+                class="qs-sheet-anchor"
+                style={
+                  rect()
+                    ? {
+                        top: `${rect()!.top}px`,
+                        left: `${rect()!.left}px`,
+                        width: `${rect()!.width}px`,
+                      }
+                    : undefined
+                }
+              >
+                {sheet()}
+              </div>
+            </Portal>
+          </Show>
+        </div>
+      )}
+    </Show>
   );
 }

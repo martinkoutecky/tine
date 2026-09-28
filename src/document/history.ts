@@ -4,6 +4,7 @@ import { type Route } from "../routeTypes";
 import { type HistorySidebarContext, captureHistorySidebarContext, restoreHistorySidebarContext } from "../ui";
 import { type HistoryEditorContext, captureHistoryEditorContext, editingId, endEdit, restoreHistoryEditorContext } from "../editorController";
 import { unwrap, produce } from "solid-js/store";
+import { createSignal } from "solid-js";
 import { purgePageNodes } from "./convert";
 import { invalidateAllMatrixDimensions } from "../sheet/matrix";
 import { pageWritable } from "./edits/properties";
@@ -30,6 +31,8 @@ interface SnapEntry {
   context: HistoryContext;
   /** Identity-bearing clipboard paste whose redo must fail on a live conflict. */
   preservedIds?: string[];
+  /** The `pushUndo` tag, so a caller can ask whether Undo would take back ITS change. */
+  tag?: string;
 }
 interface RawEntry {
   kind: "raw";
@@ -45,10 +48,25 @@ interface RawEntry {
   preservedIds?: string[];
 }
 type UndoEntry = SnapEntry | RawEntry;
+const tagOf = (entry: UndoEntry | undefined): string | null => (entry && "tag" in entry ? entry.tag ?? null : null);
 const undoStack: UndoEntry[] = [];
 let redoStack: UndoEntry[] = [];
 let lastUndoTag: string | null = null;
 let undoSuppressionDepth = 0;
+// Bumped on every stack change so `undoTopTag` is reactive (query crossing notice).
+const [historyRev, setHistoryRev] = createSignal(0);
+const bumpHistory = () => setHistoryRev((n) => n + 1);
+
+/** The tag of the entry the ordinary Undo would take back next, or null. */
+export function undoTopTag(): string | null {
+  historyRev();
+  if (!pageOnlyHistoryMode) return tagOf(undoStack[undoStack.length - 1]);
+  const page = activeHistoryPage();
+  for (let i = undoStack.length - 1; i >= 0; i--) {
+    if (!page || entryTouchesPage(undoStack[i], page)) return tagOf(undoStack[i]);
+  }
+  return null;
+}
 
 // Session-scoped and global by default, matching OG's transient app-state flag
 // at `src/main/frontend/state.cljs:304-306` (OG commit 6e7afa8eb).
@@ -107,6 +125,7 @@ export function clearUndoHistory() {
   undoStack.length = 0;
   redoStack = [];
   lastUndoTag = null;
+  bumpHistory();
   undoSuppressionDepth = 0;
 }
 
@@ -161,6 +180,7 @@ export function invalidateUndoForPage(name: string) {
   }
   redoStack = redoStack.filter((e) => !entryTouchesPage(e, name));
   lastUndoTag = null; // don't coalesce a later edit onto a now-dropped entry
+  bumpHistory();
 }
 
 // Hand-rolled clones — Node/FeedPage are flat (primitives + a string[]), so a
@@ -221,10 +241,11 @@ function snapEntry(affected?: string[] | null, preservedIds?: readonly string[])
  *  would miss a page. `tag` resets the typing-coalesce marker. */
 export function pushUndo(tag: string, affected?: string[], preservedIds?: readonly string[]) {
   if (undoSuppressionDepth > 0) return;
-  undoStack.push(snapEntry(affected, preservedIds));
+  undoStack.push({ ...snapEntry(affected, preservedIds), tag });
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
   lastUndoTag = tag;
+  bumpHistory();
 }
 
 /** Record an O(1) inverse patch for a single-block text edit (typing). A typing
@@ -248,6 +269,7 @@ export function pushRawUndo(id: string, prevRaw: string) {
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
   lastUndoTag = tag;
+  bumpHistory();
 }
 
 /** Apply one entry and return its inverse (to push onto the opposite stack). */
@@ -321,8 +343,16 @@ function applyEntry(e: UndoEntry): UndoEntry {
         for (const po of e.pageObjs) {
           const restored = clonePages([po])[0];
           const i = s.pages.findIndex((p) => p.name === po.name);
-          if (i >= 0) s.pages[i] = restored;
-          else s.pages.push(restored);
+          if (i >= 0) {
+            // Page views key their lifetime by this object: restore its complete
+            // snapshot in place so undo/redo never unmounts an open editor or
+            // query sheet (master 7fcd4c98d).
+            const current = s.pages[i];
+            for (const key of Object.keys(current)) {
+              if (!Object.hasOwn(restored, key)) Reflect.deleteProperty(current, key);
+            }
+            Object.assign(current, restored);
+          } else s.pages.push(restored);
         }
       })
     );
@@ -354,6 +384,7 @@ export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
     undoStack.push(...undoBefore);
     redoStack = redoBefore;
     lastUndoTag = tagBefore;
+    bumpHistory();
     throw err;
   } finally {
     if (undoSuppressionDepth > 0) undoSuppressionDepth--;
@@ -379,6 +410,7 @@ export function undo() {
   if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
   redoStack.push(inverse);
   lastUndoTag = null;
+  bumpHistory();
   endEdit("undo");
   scheduleSave();
   restoreEntryContext(entry.context);
@@ -400,6 +432,7 @@ export function redo() {
   if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
   undoStack.push(inverse);
   lastUndoTag = null;
+  bumpHistory();
   endEdit("redo");
   scheduleSave();
   restoreEntryContext(entry.context);

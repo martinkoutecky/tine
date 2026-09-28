@@ -3,23 +3,35 @@ import { backend } from "../backend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, pageIdentityKey } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
-import { graphOwner, latestOwner, readOwned } from "../owned";
-import { blockProperty, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
+import { advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
+import { blockProperty, blockWritable, formatForPage, formatForBlock, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
-import { QueryBuilder } from "./QueryBuilder";
+import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
+import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
+import { quoteEdnString, unquoteEdnString } from "../editor/edn";
+import { queryMacroExtents } from "../editor/queryMacro";
+import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import {
-  advancedToClause,
-  clearSimpleForm,
-  getSimpleForm,
-  parseQuery,
-  toDsl,
-  type Clause,
-} from "../editor/queryBuilder";
-import { foldAggregate, groupRows } from "../editor/queryAggregate";
-import { quoteEdnString, unquoteEdnString, splitTrailingMap, queryMacroExtents } from "../editor/edn";
+  macroPrintDialect,
+  macroTextDialect,
+  sourceOptions,
+  sourceOriginal,
+  sourcePrintDialect,
+  type Diagnostic,
+  type ExecutionContext,
+  type ExplainEmptyResult,
+  type PageRow,
+  type ParsedQuery,
+  type Query,
+  type QueryPrintDialect,
+  type QueryReport,
+  type QueryStatistics,
+  type Source,
+  type ViewSettings,
+} from "../editor/queryIr";
 import { visibleBody } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
@@ -27,16 +39,17 @@ import { InlineText } from "../render/inline";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
-import type { PageKind, RefGroup } from "../types";
+import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
+import type { PageKind, QueryExecution, QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
-import type { QueryExecution, QueryHit, QueryIrDiagnostic } from "../types";
 import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDepth";
 import { blockDtoExternalId } from "../blockIdentity";
+import { QueryPrintRefusedError } from "../backend";
+import { focusedRouter } from "../panes";
+import { pushToast } from "../toasts";
 
-const ADVANCED_RE = /\[\s*:find|:where|:find/;
-type QueryView = "search" | "list" | "table" | "board";
 const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
   search: "Search",
@@ -76,31 +89,106 @@ interface Row {
   props: Record<string, string>;
 }
 
-interface ParsedQuery {
-  form: string; // the query form, without the options map
-  opts: string; // the raw trailing `{…}` options map, or ""
-  title?: string;
-  collapsed?: boolean;
-  tableView?: boolean;
-}
-// Split a trailing front-matter options map off the query DSL and read the
-// display options OG supports (:title / :collapsed? / :table-view?).
-function splitQuery(arg: string): ParsedQuery {
-  const { form, opts } = splitTrailingMap(arg);
-  const tm = /:title\s+"((?:[^"\\]|\\.)*)"/.exec(opts);
-  return {
-    form,
-    opts,
-    title: tm ? unquoteEdnString(tm[1]) : undefined,
-    collapsed: /:collapsed\?\s+true/.test(opts),
-    tableView: /:table-view\?\s+true/.test(opts),
-  };
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const sameJson = <T,>(a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
+const CURRENT_PAGE_RE = /<%\s*current page\s*%>/i;
+const BLOCK_CHANGED = "The block changed while saving. Try this edit again.";
+
+/** A bounded excerpt of the ENGINE-PRINTED text a crossing save wrote (master
+ *  `boundedFeature`, I-22). It is labelled as an excerpt, never as "the
+ *  unsupported feature": nothing in the engine answers that question. */
+export function boundedFeature(message: string): string | null {
+  const single = message.replace(/\s+/g, " ").trim();
+  if (!single) return null;
+  return single.length > 120 ? `${single.slice(0, 119)}…` : single;
 }
 
-// A {{query ...}} block: runs the query and renders matching blocks as a list
-// or a sortable table. When `blockId` is given (the block is a standalone query
-// block, not an inline-in-text macro) an interactive builder bar is shown and
-// edits rewrite the {{query ...}} macro in that block's raw text.
+/** Remove the block a query is written in from that query's own results
+ *  (GH #469; OG `query/result.cljs` "exclude the current one, otherwise it'll
+ *  loop forever"). Only the block goes; its children are ordinary results. */
+export function withoutHostBlock(groups: RefGroup[], hostBlockId: string | undefined): RefGroup[] {
+  if (!hostBlockId) return groups;
+  const hosts = (group: RefGroup) => group.blocks.some((block) => block.id === hostBlockId);
+  if (!groups.some(hosts)) return groups;
+  return groups
+    .map((group) => (hosts(group) ? { ...group, blocks: group.blocks.filter((block) => block.id !== hostBlockId) } : group))
+    .filter((group) => group.blocks.length > 0);
+}
+
+// "Don't show this again" for the §7.5 crossing notice is a DEVICE preference
+// (D-11): one read per process, never per block render (I-13).
+const CROSSING_NOTICE_KEY = "queryCrossingNoticeDismissed";
+const [crossingNoticeDismissed, setCrossingNoticeDismissed] = createSignal<boolean | undefined>(undefined);
+const crossingNoticePreference = {};
+let crossingNoticePrimed = false;
+function primeCrossingNoticePreference(): void {
+  if (crossingNoticePrimed) return;
+  crossingNoticePrimed = true;
+  const revision = advanceRevision(crossingNoticePreference);
+  void readOwned(
+    revisionOwner(crossingNoticePreference, revision),
+    backend().getAppBool(CROSSING_NOTICE_KEY, false),
+  ).then(
+    (read) => { if (read.kind === "current") setCrossingNoticeDismissed(read.value); },
+    // Recovery over refusal: an unreadable preference costs one extra notice.
+    () => setCrossingNoticeDismissed(false),
+  );
+}
+function dismissCrossingNoticeForever(): void {
+  const revision = advanceRevision(crossingNoticePreference);
+  setCrossingNoticeDismissed(true);
+  void writeOwned(
+    revisionOwner(crossingNoticePreference, revision),
+    backend().setAppBool(CROSSING_NOTICE_KEY, true),
+  ).catch((error: unknown) => pushToast(`Couldn't save the notice preference: ${errorText(error)}`, "error"));
+}
+export function resetCrossingNoticeForTests(): void {
+  crossingNoticePrimed = false;
+  advanceRevision(crossingNoticePreference);
+  setCrossingNoticeDismissed(undefined);
+}
+
+/** One parse request: the authored (or `<% current page %>`-substituted)
+ *  argument, the macro name it was written under, and the host block's
+ *  `tine.*` properties the engine merges into the view (§4.1). */
+interface ReadingRequest {
+  argument: string;
+  name: string;
+  properties: [string, string][];
+  epoch: number;
+}
+interface Reading {
+  request: ReadingRequest;
+  reading: ParsedQuery;
+}
+/** The engine's reading of a macro (`query_parse`, I-12), owned by the newest
+ *  request (I-20). */
+function createQueryReading(request: () => ReadingRequest | undefined) {
+  const owners = {};
+  const [resource] = createResource(request, async (req): Promise<Reading | undefined> => {
+    const landed = await readOwned(
+      latestOwner(owners, "parse", graphOwner()),
+      backend().parseQuery(req.argument, macroTextDialect(req.name), req.properties),
+    );
+    return landed.kind === "current" ? { request: req, reading: landed.value } : undefined;
+  });
+  return resource;
+}
+
+interface QueryOperation {
+  groups: RefGroup[];
+  pages: PageRow[] | null;
+  diagnostics: Diagnostic[];
+  report: QueryReport | null;
+  statistics?: QueryStatistics;
+  search: QueryExecution | null;
+  matchedTotal: number | null;
+}
+
+// A {{query …}} / {{tine-query …}} block. The ONE engine (I-12) reads the
+// macro (`query_parse`), runs it (`query_run`) and prints every edit back
+// (`query_print`); this component only presents answers and writes the bytes
+// the engine returned. With `blockId` the builder sentence and sheet edit it.
 export function QueryMacro(props: {
   body: string;
   blockId?: string;
@@ -109,26 +197,80 @@ export function QueryMacro(props: {
    * would incorrectly enable editing controls. */
   currentPage?: string;
   /** BEGIN_QUERY must never execute a partially understood query or expose its
-   * authored payload in an error. The ordinary {{query}} path keeps its existing
-   * partial-query diagnostics unless these read-only options are requested. */
+   * authored payload in an error. */
   strictAdvanced?: boolean;
   unsupportedLabel?: string;
-  // When set, render nothing at all if the query has no results (used for the
-  // app-inserted journal agenda, which should disappear once vacated — unlike a
-  // user-authored {{query}} block, which keeps showing "No results" so it stays
-  // editable).
+  // Render nothing when there are no results (the app-inserted journal agenda).
   hideWhenEmpty?: boolean;
 }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
 
-  const arg = () => props.body.replace(/^query\s*/i, "").trim();
-  // Split a trailing front-matter options map ({:title … :collapsed? … :table-view? …})
-  // off the query form, so builder/engine see only the form and the options drive
-  // display defaults.
-  const parsed = createMemo(() => splitQuery(arg()));
-  const form = () => parsed().form;
-  const friendlySearch = createMemo(() => savedDslToFriendlySearch(form()));
+  // The macro name this query was AUTHORED under (§7.9): `query` or `tine-query`.
+  const macroName = (): string =>
+    QUERY_MACRO_NAMES.find((name) => new RegExp(`^${name}(\\s|$)`, "i").test(props.body.trim()))
+    ?? QUERY_MACRO_NAMES[0];
+  const arg = () => props.body.trim().replace(new RegExp(`^${macroName()}\\s*`, "i"), "").trim();
+  const hostProperties = createMemo<[string, string][]>(() => {
+    const id = props.blockId;
+    const node = id ? docNode(id) : undefined;
+    if (!id || !node) return [];
+    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine."));
+  }, [], { equals: sameJson });
+  const parseRequest = createMemo<ReadingRequest>(
+    () => ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
+    { argument: "", name: "", properties: [], epoch: -1 },
+    { equals: sameJson },
+  );
+  const parsed = createQueryReading(parseRequest);
+  /** The authoring reading. Every display and editing derivation uses it. */
+  const reading = (): ParsedQuery | undefined => (parsed.error === undefined ? parsed.latest?.reading : undefined);
+  const source = (): Source | undefined => reading()?.query.source;
+  const form = () => { const s = source(); return (s ? sourceOriginal(s) : null) ?? ""; };
+  const opts = () => { const s = source(); return s ? sourceOptions(s) : ""; };
+  // `:title` / `:collapsed?` / `:table-view?` are read out of the OPAQUE options
+  // map, which the engine carries verbatim and does not interpret (§4.3, Y2).
+  const titleOption = (): string | undefined => {
+    const m = /:title\s+"((?:[^"\\]|\\.)*)"/.exec(opts());
+    return m ? unquoteEdnString(m[1]) : undefined;
+  };
+  const isAdvanced = () => source()?.kind === "advanced";
+
+  // GH #301: `<% current page %>` binds the FOCUSED pane's route page and re-runs
+  // on navigation. Substitution is execution-only: the builder keeps the dyvar.
+  const executionArg = createMemo<string | null>(() => {
+    if (!CURRENT_PAGE_RE.test(arg())) return null;
+    const route = focusedRouter().route();
+    const pageName = route.kind === "page" ? route.name : undefined;
+    if (!pageName) return null; // no focused page: leave verbatim, like templates
+    return arg().replace(new RegExp(CURRENT_PAGE_RE.source, "gi"), () => `[[${pageName}]]`);
+  });
+  const executionRequest = createMemo<ReadingRequest | undefined>(() => {
+    const argument = executionArg();
+    return argument === null ? undefined : { ...parseRequest(), argument };
+  }, undefined, { equals: sameJson });
+  const executionParsed = createQueryReading(executionRequest);
+  /** The reading the EXECUTION runs — for a substituted argument, only the
+   *  reading of THAT argument, never the previous page's (I-20). */
+  const runnable = (): ParsedQuery | undefined => {
+    if (executionArg() === null) return reading();
+    if (executionParsed.error !== undefined) return undefined;
+    const landed = executionParsed.latest;
+    return landed && landed.request.argument === executionArg() ? landed.reading : undefined;
+  };
+  // A typed advanced `:current-page` input binds OG's current page (#301).
+  // Master: a typed `:current-page` input binds the focused pane's page; every
+  // other query runs bound to the page the query block is on.
+  const executionContext = (): ExecutionContext | undefined => {
+    const page = isAdvanced() && declaresCurrentPageInput(form()) ? queryCurrentPage() : props.blockId ? docNode(props.blockId)?.page : undefined;
+    return page ? { current_page: page } : undefined;
+  };
+  // A saved `(search "…")` query presents search hits with their evidence.
+  const friendlySearch = createMemo(() => {
+    const s = runnable()?.query.source;
+    return s?.kind === "og" ? savedDslToFriendlySearch(s.original) : null;
+  });
+
   const sheet = createMemo(() => {
     if (!props.blockId || !docNode(props.blockId)) return null;
     return sheetConfig(facetsOf(docNode(props.blockId).raw, formatForBlock(props.blockId)).properties);
@@ -139,12 +281,11 @@ export function QueryMacro(props: {
     return view === "search" || view === "table" || view === "board" ? view : "list";
   };
   const sheetFace = () => currentView() === "table" || currentView() === "board";
-  const legacyTable = () => currentView() === "list" && parsed().tableView === true;
+  const legacyTable = () => currentView() === "list" && /:table-view\?\s+true/.test(opts());
   const setQueryView = (next: QueryView) => {
     const blockId = props.blockId;
-    if (!blockId) return;
-    const node = docNode(blockId);
-    if (!node) return;
+    const node = blockId ? docNode(blockId) : undefined;
+    if (!blockId || !node) return;
     const storedView = blockProperty(blockId, "tine.view");
     if ((next === "list" && storedView === null) || (next !== "list" && storedView === next)) return;
     withUndoUnit(`query:view:${next}`, [node.page], () => {
@@ -159,207 +300,93 @@ export function QueryMacro(props: {
     });
   };
 
-  // Rewrite just THIS {{query ...}} macro inside the owning block, preserving the
-  // front-matter options and surrounding property lines (id::/collapsed::). The
-  // extents are found brace/string/page-ref-aware (queryMacroExtents), NOT a lazy
-  // regex. A block can hold more than one query, so target the extent whose
-  // current body matches OURS (props.body) — editing the 2nd query must not
-  // rewrite the 1st. Falls back to the only/first query for the common case.
-  const rewriteMacro = (newMacro: string) => {
-    if (!props.blockId) return;
-    const raw = docNode(props.blockId)?.raw ?? "";
-    const extents = queryMacroExtents(raw);
-    if (!extents.length) return;
-    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-    const mine = norm(props.body);
-    const target = extents.find((e) => norm(raw.slice(e.start + 2, e.end - 2)) === mine) ?? extents[0];
-    setRaw(props.blockId, raw.slice(0, target.start) + newMacro + raw.slice(target.end));
-  };
-  const applyDsl = (dsl: string) => {
-    const opts = parsed().opts ? ` ${parsed().opts}` : "";
-    rewriteMacro(`{{query ${dsl}${opts}}}`);
-  };
-  // Edit the query's display title (:title "…" in the options map). Only offered
-  // for a user-authored standalone query (blockId set, no app-supplied title).
-  const [editingTitle, setEditingTitle] = createSignal(false);
-  const titleText = () => props.title ?? parsed().title ?? "Query";
-  const titleEditable = () => !!props.blockId && props.title === undefined;
-  const setTitle = (t: string) => {
-    if (!props.blockId) return;
-    const inner = parsed().opts.replace(/^\{|\}$/g, "").trim();
-    // Drop any existing :title (escape-aware), keep the other options.
-    const rest = inner.replace(/:title\s+"(?:[^"\\]|\\.)*"\s*/, "").trim();
-    // Strip chars that would break the {{…}} macro / {…} options map; escape the
-    // rest so quotes/backslashes round-trip faithfully through splitQuery.
-    const title = t.trim().replace(/[\r\n{}]/g, "");
-    const parts = [title ? `:title "${quoteEdnString(title)}"` : "", rest].filter(Boolean);
-    const opts = parts.length ? ` {${parts.join(" ")}}` : "";
-    rewriteMacro(`{{query ${form()}${opts}}}`);
-  };
-
-  const isAdvanced = () => ADVANCED_RE.test(arg());
-  const simpleBackDsl = createMemo<string | null>(() => {
-    const blockId = props.blockId;
-    if (!blockId || !isAdvanced()) return null;
-    const stashed = getSimpleForm(blockId);
-    if (stashed !== undefined) return stashed;
-    const c = advancedToClause(form());
-    return c ? toDsl(c) : null;
-  });
-  const simpleBackTitle = () =>
-    simpleBackDsl() !== null
-      ? "Back to the visual query builder"
-      : "This advanced query can't be converted back to the visual builder automatically — edit it as raw text, or rebuild it visually.";
-  const backToSimple = (e: MouseEvent) => {
-    e.stopPropagation();
-    const blockId = props.blockId;
-    if (!blockId) return;
-    const stashed = getSimpleForm(blockId);
-    if (stashed !== undefined) {
-      applyDsl(stashed);
-      clearSimpleForm(blockId);
-      return;
-    }
-    const c = advancedToClause(form());
-    if (c) applyDsl(toDsl(c));
-  };
-  const simpleBackButton = () => (
-    <span
-      class="query-simple-toggle-wrap"
-      title={simpleBackTitle()}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button
-        type="button"
-        class="qb-sort query-simple-toggle"
-        title={simpleBackTitle()}
-        disabled={simpleBackDsl() === null}
-        onClick={backToSimple}
-      >
-        ← Simple
-      </button>
-    </span>
-  );
   const currentPage = () => props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
-  const [advInfo, setAdvInfo] = createSignal<{ ran: string[]; ignored: string[]; supported: boolean } | null>(
-    null
-  );
-  const [searchExecution, setSearchExecution] = createSignal<QueryExecution | null>(null);
-  // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
-  // these, so they must render — "No results" alone would report a broken
-  // query as an empty graph.
-  const [diagnostics, setDiagnostics] = createSignal<QueryIrDiagnostic[]>([]);
-  const blockingDiagnostics = () => diagnostics().filter((d) => !d.disabled);
-  // The host block's `tine.*` properties, merged into the view by the engine
-  // (`query_parse`), so `tine.sample::` / `tine.sort::` on the block apply as
-  // in master.
-  const hostProperties = createMemo<[string, string][]>(() => {
-    const id = props.blockId;
-    const node = id ? docNode(id) : undefined;
-    if (!id || !node) return [];
-    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine."));
-  });
-  // Only a query with a typed `:current-page` input depends on navigation; it
-  // binds OG's current page (focused pane's route → default home → today),
-  // never the page this block renders on.
-  const bindsCurrentPage = createMemo(() => isAdvanced() && declaresCurrentPageInput(arg()));
-  const executionPage = () => (bindsCurrentPage() ? queryCurrentPage() : undefined);
-  const collapseKey = () => JSON.stringify([
-    graphMeta()?.root ?? "",
-    props.blockId ?? currentPage() ?? "global",
-    arg(),
-  ]);
-  const storedCollapse = loadCollapsed(collapseKey());
-  const [collapsed, setCollapsed] = createSignal(storedCollapse ?? parsed().collapsed ?? false);
+  const collapseKey = () => JSON.stringify([graphMeta()?.root ?? "", props.blockId ?? currentPage() ?? "global", arg()]);
+  const [collapseOverride, setCollapseOverride] = createSignal(loadCollapsed(collapseKey()));
+  const collapsed = () => collapseOverride() ?? /:collapsed\?\s+true/.test(opts());
   const toggleCollapsed = () => {
     const v = !collapsed();
-    setCollapsed(v);
+    setCollapseOverride(v);
     saveCollapsed(collapseKey(), v);
   };
-  // Re-run when the query text changes OR after any save lands (dataRev), so
-  // results track edits live — e.g. a task flipped to DONE leaves a (task TODO)
-  // query. createResource keeps the previous value during refetch (no flicker).
-  // A COLLAPSED query keys off the form only (no dataRev), so it fetches once for
-  // its count and doesn't re-run a whole-graph scan on every save while hidden;
-  // expanding it (key flips to include dataRev) refreshes it.
-  const queryOwners = {};
-  const [groups] = createResource(
-    () => {
-      const host = JSON.stringify(hostProperties());
-      const page = bindsCurrentPage() ? `\0cp:${executionPage()}` : "";
-      return `${graphEpoch()}\0${host}${page}\0${collapsed() ? `collapsed ${form()}` : `${form()} ${dataRev()}`}`;
-    },
-    async (requestKey) => {
-      const owner = latestOwner(queryOwners, "query", graphOwner());
-      const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
-      const searchSource = friendlySearch();
-      if (searchSource !== null) {
-        setAdvInfo(null);
-        const result = await readOwned(owner, sharedQueryResult(
-          scope,
-          `friendly-search\0${requestKey}`,
-          () => backend().runGraphSearch(
-            searchSource,
-            500,
-            5_000,
-            `inline-query:${props.blockId ?? currentPage() ?? "global"}`,
-            false
-          ),
-        ));
-        if (result.kind === "stale") return [];
-        const execution = result.value;
-        setDiagnostics([]);
-        setSearchExecution(execution);
-        const grouped = new Map<string, RefGroup>();
-        for (const hit of execution.hits) {
-          if (hit.entity !== "block") continue;
-          const key = `${hit.kind}\0${hit.page}\0${hit.path ?? ""}`;
-          const group = grouped.get(key) ?? { page: hit.page, kind: hit.kind, path: hit.path, blocks: [] };
-          group.blocks.push(hit.block);
-          grouped.set(key, group);
-        }
-        return [...grouped.values()];
-      }
-      setSearchExecution(null);
-      // OG DSL and advanced (datalog) sources both run through the one engine:
-      // parse to the IR (with the host block's `tine.*` view properties), run
-      // it with OG's current page bound when the query declares
-      // `:current-page` (#301). An advanced source also reports what ran vs
-      // was ignored. A page-level filter answers pages: each renders as a page
-      // group with no blocks.
-      const page = executionPage();
-      const host = hostProperties();
-      const result = await readOwned(owner, sharedQueryResult(
+
+  // Re-run when the reading changes OR after any save lands (dataRev). A
+  // COLLAPSED query fetches once for its count and does not re-run a
+  // whole-graph evaluation on every save while hidden.
+  const runRequest = createMemo(() => {
+    const query = runnable();
+    if (!query) return undefined;
+    const context = executionContext();
+    const search = friendlySearch();
+    const key = JSON.stringify([
+      graphEpoch(), query.query, query.view, context ?? null, search, collapsed() ? "collapsed" : dataRev(),
+    ]);
+    return { query, context, search, key };
+  }, undefined, { equals: (a, b) => a?.key === b?.key });
+  const runOwners = {};
+  const [operation] = createResource(runRequest, async (request): Promise<QueryOperation | undefined> => {
+    const owner = latestOwner(runOwners, "run", graphOwner());
+    const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
+    if (request.search !== null) {
+      const searchSource = request.search;
+      const landed = await readOwned(owner, sharedQueryResult(
         scope,
-        `ir\0${requestKey}`,
-        async () => backend().queryRun(await backend().queryParse(form(), "macro_query", host), page),
+        `friendly-search\0${request.key}`,
+        () => backend().runGraphSearch(
+          searchSource, 500, 5_000, `inline-query:${props.blockId ?? currentPage() ?? "global"}`, false,
+        ),
       ));
-      if (result.kind === "stale") return [];
-      const r = result.value;
-      setDiagnostics(r.diagnostics ?? []);
-      setAdvInfo(isAdvanced() ? r.report : null);
-      return r.anchor === "page"
-        ? r.pages.map((row): RefGroup => ({ page: row.name, kind: row.kind, path: row.path, blocks: [] }))
-        : r.groups;
+      if (landed.kind === "stale") return undefined;
+      // The Search presentation renders these hits directly, so the host block
+      // comes out here too — the exclusion `withoutHostBlock` makes (GH #469).
+      const hits = landed.value.hits.filter((hit) => !(hit.entity === "block" && hit.block.id === props.blockId));
+      const grouped = new Map<string, RefGroup>();
+      for (const hit of hits) {
+        if (hit.entity !== "block") continue;
+        const key = `${hit.kind}\0${hit.page}\0${hit.path ?? ""}`;
+        const group = grouped.get(key) ?? { page: hit.page, kind: hit.kind, path: hit.path, blocks: [] };
+        group.blocks.push(hit.block);
+        grouped.set(key, group);
+      }
+      return {
+        groups: [...grouped.values()], pages: null, diagnostics: [],
+        report: null, search: hits.length === landed.value.hits.length ? landed.value : { ...landed.value, hits }, matchedTotal: null,
+      };
     }
-  );
-  const groupsError = () => {
-    const error = groups.error;
-    if (!error) return null;
-    const message = error instanceof Error ? error.message : String(error);
-    const oversized = message.startsWith("result-too-large:");
+    const landed = await readOwned(owner, sharedQueryResult(
+      scope,
+      `ir\0${request.key}`,
+      () => backend().queryRun(request.query.query, request.query.view, request.context),
+    ));
+    if (landed.kind === "stale") return undefined;
+    const result = landed.value;
     return {
-      lead: oversized ? "Query result is too large to display safely:" : "Query couldn't be loaded:",
-      message: message.replace(/^result-too-large:\s*/, ""),
+      groups: result.anchor === "block" ? withoutHostBlock(result.groups, props.blockId) : [],
+      pages: result.anchor === "page" ? result.pages : null,
+      diagnostics: result.diagnostics ?? [],
+      report: result.report,
+      statistics: result.statistics,
+      search: null,
+      matchedTotal: result.matched_total ?? null,
     };
-  };
-  // Presentation never changes membership. Canonical `(search "…")` queries
-  // already carry page/block hits and match evidence from QueryPlan. Ordinary
-  // DSL queries return RefGroups, so adapt those same blocks into evidence-free
-  // search rows instead of making the Search presentation appear empty.
+  });
+  /** The last coherent answer; an errored run shows its error, not old rows. */
+  const displayed = (): QueryOperation | undefined => (operation.error === undefined ? operation.latest : undefined);
+  const groups = () => displayed()?.groups ?? [];
+  const pageRows = () => displayed()?.pages ?? null;
+  // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
+  // these, so they must render — "No results" alone would report a broken query
+  // as an empty graph.
+  const blockingDiagnostics = () => (displayed()?.diagnostics ?? []).filter((d) => !d.disabled);
+  const advInfo = () => (isAdvanced() ? displayed()?.report ?? null : null);
+  const readError = () => parsed.error ?? executionParsed.error;
+  const loadError = () => operation.error ?? readError();
+  // Presentation never changes membership: ordinary DSL results adapt into
+  // evidence-free search rows for the Search presentation.
   const searchPresentationHits = createMemo<QueryHit[]>(() => {
-    if (friendlySearch() !== null) return searchExecution()?.hits ?? [];
-    return (groups() ?? []).flatMap((group) => group.blocks.map((block) => ({
+    const search = displayed()?.search;
+    if (search) return search.hits;
+    return groups().flatMap((group) => group.blocks.map((block) => ({
       entity: "block" as const,
       page: group.page,
       kind: group.kind,
@@ -368,97 +395,247 @@ export function QueryMacro(props: {
       evidence: [],
     })));
   });
-  const total = () => currentView() === "search"
-    ? searchPresentationHits().length
-    : groups()?.reduce((a, g) => a + (g.blocks.length || 1), 0) ?? 0; // a page row has no blocks
-  // A `(sort-by …)` query is sorted GLOBALLY by the engine and returned as one
-  // block per group in that order — so the list view must render flat (a single
-  // ordered sequence with a per-row page breadcrumb), not grouped by page, or the
-  // global order would be lost to page headers.
-  const globalSort = createMemo(() => /\(\s*sort-by\b/i.test(form()));
+  const total = () => {
+    const pages = pageRows();
+    if (pages) return displayed()?.matchedTotal ?? pages.length;
+    if (friendlySearch() !== null || currentView() === "search") return searchPresentationHits().length;
+    return groups().reduce((a, g) => a + g.blocks.length, 0);
+  };
+  const ranEmpty = () =>
+    !!displayed() && !operation.loading && total() === 0 && blockingDiagnostics().length === 0;
+  const emptyMessage = () => (!displayed() && !loadError() ? "Loading query results…" : "No results");
+
+  // Why empty? (Q14, N19): which top-level conjunct emptied the query, asked
+  // only once the run actually came back empty.
+  const [explainOpen, setExplainOpen] = createSignal(false);
+  const explainRequest = createMemo(() => {
+    const request = runRequest();
+    return explainOpen() && request && request.search === null && ranEmpty() ? request : undefined;
+  }, undefined, { equals: (a, b) => a?.key === b?.key });
+  const explainOwners = {};
+  const [explained] = createResource(explainRequest, async (request): Promise<ExplainEmptyResult | undefined> => {
+    const landed = await readOwned(
+      latestOwner(explainOwners, "explain", graphOwner()),
+      backend().queryExplainEmpty(request.query.query, request.query.view, request.context),
+    );
+    return landed.kind === "current" ? landed.value : undefined;
+  });
+  const explanation = () => (explained.error === undefined ? explained() : undefined);
+  const explainNotice = (): string | null => {
+    if (explained.error !== undefined) return errorText(explained.error);
+    const answer = explanation();
+    if (!answer) return null;
+    const blocking = (answer.diagnostics ?? []).filter((d) => !d.disabled);
+    if (blocking.length) return blocking.map((d) => d.message).join(" · ");
+    if (!answer.report.supported) return "This query has no clauses Tine can run, so nothing was evaluated.";
+    if (!answer.rows.length) return "Nothing in this graph matches this query.";
+    return null;
+  };
+
+  // -- editing: every edit is printed by the engine and written back as bytes --
+  const [printError, setPrintError] = createSignal<string | null>(null);
+  // Rewrite just THIS macro inside the owning block, targeted by the extent's
+  // own recovered name+argument (a block can hold more than one query).
+  const rewriteMacro = (newMacro: string) => {
+    if (!props.blockId) return;
+    const raw = docNode(props.blockId)?.raw ?? "";
+    const extents = queryMacroExtents(raw);
+    if (!extents.length) return;
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    const mine = norm(props.body);
+    const target = extents.find((e) => norm(`${e.name} ${e.argument}`) === mine)
+      ?? extents.find((e) => norm(raw.slice(e.start + 2, e.end - 2)) === mine)
+      ?? extents[0];
+    setRaw(props.blockId, raw.slice(0, target.start) + newMacro + raw.slice(target.end));
+  };
+  /** OG text re-emits only `(sort-by …)` and `(sample …)`; TQL text keeps no
+   *  view at all. A save must not drop the view facts its reprint loses, so
+   *  they are written to the block's `tine.*` properties in the same undo unit
+   *  (§4.3 Y2). Only facts the block does not already spell are written. */
+  const materializeView = (blockId: string, view: ViewSettings, dialect: QueryPrintDialect) => {
+    const spelled = new Set(hostProperties().map(([key]) => key.toLowerCase().replace(/^tine\.group-by$/, "tine.group-field")));
+    const textKeeps = dialect === "og";
+    const writes: [string, string | undefined][] = [
+      ["tine.sort", !textKeeps && view.sort?.length ? view.sort.map(([f, d]) => `${f} ${d}`).join("; ") : undefined],
+      ["tine.sample", !textKeeps && view.sample != null ? String(view.sample) : undefined],
+      ["tine.group-field", view.group_by || undefined],
+      ["tine.col-aggregates", view.aggregates?.length
+        ? view.aggregates.map(([f, fn]) => (f ? `${f}=${fn}` : fn)).join(";")
+        : undefined],
+    ];
+    for (const [key, value] of writes) if (value !== undefined && !spelled.has(key)) setBlockProperty(blockId, key, value);
+  };
+  // **The save path (§4.3).** `query_og_expressible` first; an edit OG cannot
+  // express crosses to `{{tine-query}}` (and says so, §7.5). The bytes written
+  // are the engine's; a refused print writes nothing and says why (I-4).
+  const applyEdit = async (next: BuilderSession): Promise<boolean> => {
+    const blockId = props.blockId;
+    if (!blockId || !docNode(blockId)) return false;
+    const rawAtStart = docNode(blockId).raw;
+    const owner = graphOwner(() => docNode(blockId)?.raw === rawAtStart);
+    const current = macroName();
+    let name = current;
+    let dialect = macroPrintDialect(name);
+    let printed: Owned<string>;
+    try {
+      const expressible = await readOwned(owner, backend().queryOgExpressible(next.query, next.view));
+      if (expressible.kind === "stale") {
+        setPrintError(BLOCK_CHANGED);
+        return false;
+      }
+      name = expressible.value ? current : QUERY_MACRO_NAMES[1];
+      dialect = macroPrintDialect(name);
+      try {
+        printed = await readOwned(owner, backend().printQuery(next.query, next.view, dialect));
+      } catch (error) {
+        // `og_expressible` said yes and the printer said no: the entitled answer
+        // is the other dialect, not a refusal shown to the user.
+        if (!(error instanceof QueryPrintRefusedError && error.isNotApplicable && dialect === "og")) throw error;
+        name = QUERY_MACRO_NAMES[1];
+        dialect = macroPrintDialect(name);
+        printed = await readOwned(owner, backend().printQuery(next.query, next.view, dialect));
+      }
+    } catch (error) {
+      setPrintError(errorText(error));
+      return false;
+    }
+    const node = docNode(blockId);
+    if (printed.kind === "stale" || !node) {
+      setPrintError(BLOCK_CHANGED);
+      return false;
+    }
+    // A page that turned read-only while the print was in flight refuses the
+    // write; report "not saved" so the sheet arms no focus (master 93ff682a3).
+    if (!blockWritable(blockId)) return false;
+    setPrintError(null);
+    const argument = printed.value;
+    const crossing = name.toLowerCase() !== current.toLowerCase();
+    // ONE undo unit for the whole save; the tag is what the notice's Undo
+    // recognises, so only a CROSSING save carries the crossing tag.
+    withUndoUnit(crossing ? `query:cross:${blockId}` : `query:save:${blockId}`, [node.page], () => {
+      rewriteMacro(`{{${name} ${argument}}}`);
+      materializeView(blockId, next.view, dialect);
+    });
+    if (crossing) setCrossed(blockId, boundedFeature(argument));
+    return true;
+  };
+
+  // **A title edit is not a filter conversion (§4.3.1).** The new options map
+  // goes back through the printer with `preserveForm`, which re-emits the
+  // authored source verbatim, so renaming a partly understood query cannot
+  // rewrite its filter.
+  const [editingTitle, setEditingTitle] = createSignal(false);
+  const titleText = () => props.title ?? titleOption() ?? "Query";
+  const titleEditable = () => !!props.blockId && props.title === undefined && !!reading();
+  const setTitle = async (t: string) => {
+    const blockId = props.blockId;
+    const current = reading();
+    if (!blockId || !current) return;
+    const inner = opts().replace(/^\{|\}$/g, "").trim();
+    const rest = inner.replace(/:title\s+"(?:[^"\\]|\\.)*"\s*/, "").trim();
+    const title = t.trim().replace(/[\r\n{}]/g, "");
+    const parts = [title ? `:title "${quoteEdnString(title)}"` : "", rest].filter(Boolean);
+    const nextOptions = parts.length ? `{${parts.join(" ")}}` : "";
+    if (nextOptions === opts()) return;
+    const nextQuery: Query = { ...current.query, source: { ...current.query.source, og_options: nextOptions } as Source };
+    const rawAtStart = docNode(blockId)?.raw;
+    try {
+      const printed = await readOwned(
+        graphOwner(() => docNode(blockId)?.raw === rawAtStart),
+        backend().printQuery(nextQuery, current.view, sourcePrintDialect(current.query.source), true),
+      );
+      if (printed.kind === "stale") {
+        setPrintError(BLOCK_CHANGED);
+        return;
+      }
+      setPrintError(null);
+      const node = docNode(blockId);
+      if (node) withUndoUnit(`query:title:${blockId}`, [node.page], () => rewriteMacro(`{{${macroName()} ${printed.value}}}`));
+    } catch (error) {
+      // I-4: a refused print is never swallowed; nothing is written.
+      setPrintError(errorText(error));
+    }
+  };
+
+  // -- the §7.5 crossing notice ----------------------------------------------
+  const [crossedTag, setCrossedTag] = createSignal<string | null>(null);
+  const [crossedText, setCrossedText] = createSignal<string | null>(null);
+  // The notice moves between two hosts; its UI state lives here so a
+  // re-parented notice keeps its checkbox and does not grab focus again (N3).
+  const [noticeDontShow, setNoticeDontShow] = createSignal(false);
+  const [noticeFocused, setNoticeFocused] = createSignal(false);
+  const [sheetOpen, setSheetOpen] = createSignal(false);
+  const setCrossed = (blockId: string, changed: string | null) => {
+    primeCrossingNoticePreference();
+    setCrossedText(changed);
+    setNoticeDontShow(false);
+    setNoticeFocused(false);
+    setCrossedTag(`query:cross:${blockId}`);
+  };
+  const dismissCrossing = () => {
+    if (noticeDontShow()) dismissCrossingNoticeForever();
+    setCrossedTag(null);
+  };
+  // Shown only once this device's answer is KNOWN to be "not dismissed".
+  const showCrossingNotice = () => !!crossedTag() && crossingNoticeDismissed() === false;
+  // Undo is offered only while the entry `undo()` would take back IS the crossing save.
+  const crossingIsStillUndoable = () => {
+    const tag = crossedTag();
+    return !!tag && undoTopTag() === tag;
+  };
+  const crossingNotice = () => (
+    <CrossingNotice
+      canUndo={crossingIsStillUndoable()}
+      changed={crossedText() ?? undefined}
+      dontShow={noticeDontShow()}
+      onDontShowChange={setNoticeDontShow}
+      autoFocus={!noticeFocused()}
+      onFocused={() => setNoticeFocused(true)}
+      onUndo={() => {
+        undo();
+        dismissCrossing();
+      }}
+      onKeep={dismissCrossing}
+      onDontShowAgain={dismissCrossingNoticeForever}
+    />
+  );
+  /** What the builder edits: the AUTHORING reading, never the substituted one. */
+  const builderSession = (): BuilderSession | undefined => {
+    const current = reading();
+    return current ? { query: current.query, view: current.view } : undefined;
+  };
+  const showBuilder = () => !!props.blockId && !isAdvanced() && !!builderSession();
+  const [paneStale, setPaneStale] = createSignal(false);
+
+  const globalSort = createMemo(() => (runnable()?.view.sort ?? []).length > 0);
   const queryGroupKey = (group: RefGroup, flat: boolean) =>
     flat
       ? `${group.kind}\0${group.page}\0${group.path ?? ""}\0${group.blocks.map((block) => block.id).join("\0")}`
       : `${group.kind}\0${group.page}\0${group.path ?? ""}`;
-  const groupedQueryByKey = createMemo(() =>
-    new Map((groups() ?? []).map((group) => [queryGroupKey(group, false), group] as const))
-  );
-  const flatQueryByKey = createMemo(() =>
-    new Map((groups() ?? []).map((group) => [queryGroupKey(group, true), group] as const))
-  );
+  const groupedQueryByKey = createMemo(() => new Map(groups().map((group) => [queryGroupKey(group, false), group] as const)));
+  const flatQueryByKey = createMemo(() => new Map(groups().map((group) => [queryGroupKey(group, true), group] as const)));
   const [sortCol, setSortCol] = createSignal<string>("");
   const [sortDir, setSortDir] = createSignal(1);
-
   const rows = createMemo<Row[]>(() =>
-    (groups() ?? []).flatMap((g) =>
+    groups().flatMap((g) =>
       g.blocks.map((b) => {
-        // Properties come off the DTO (computed once in Rust off the lsdoc parse);
-        // the row's text is the visible body. No re-derivation here.
         const props: Record<string, string> = {};
         for (const [k, val] of b.properties ?? []) props[k] = val;
         return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props };
       })
     )
   );
-
   const cols = createMemo(() => {
     const keys = new Set<string>();
     for (const r of rows()) for (const k of Object.keys(r.props)) keys.add(k);
     return Array.from(keys);
   });
-
-  // Result summarization (1a): the `(aggregate …)` / `(group-by …)` directives ride
-  // in the DSL and are parse-but-ignored by the engine (it returns the full set), so
-  // the math is computed HERE from the returned rows. Only the simple DSL carries
-  // them (datalog aggregation is OG's :result-transform, which we list as ignored).
-  const directives = createMemo<{ agg: Extract<Clause, { kind: "aggregate" }> | null; group: string | null }>(() => {
-    if (isAdvanced()) return { agg: null, group: null };
-    const root = parseQuery(form());
-    const kids = root.kind === "op" && root.op === "and" ? root.children : [root];
-    const agg = kids.find((c) => c.kind === "aggregate");
-    const group = kids.find((c) => c.kind === "groupBy");
-    return {
-      agg: agg?.kind === "aggregate" ? agg : null,
-      group: group?.kind === "groupBy" ? group.field : null,
-    };
-  });
-  const aggLabel = () => {
-    const a = directives().agg;
-    if (!a || a.agg === "count") return "Count";
-    return `${a.agg === "sum" ? "Sum" : "Avg"} of ${a.field}`;
-  };
-  type Summary =
-    | { kind: "single"; text: string; skipped: number }
-    | { kind: "grouped"; field: string; groups: { key: string; text: string; skipped: number }[] };
-  const summary = createMemo<Summary | null>(() => {
-    const d = directives();
-    if (!d.agg && !d.group) return null;
-    if (!d.group) return { kind: "single", ...foldAggregate(rows(), d.agg) };
-    return {
-      kind: "grouped",
-      field: d.group,
-      groups: Array.from(groupRows(rows(), d.group).entries()).map(([key, set]) => ({
-        key,
-        ...foldAggregate(set, d.agg),
-      })),
-    };
-  });
-  const summarySingle = () => {
-    const s = summary();
-    return s && s.kind === "single" ? s : null;
-  };
-  const summaryGrouped = () => {
-    const s = summary();
-    return s && s.kind === "grouped" ? s : null;
-  };
-
   const sorted = createMemo(() => {
     const c = sortCol();
     if (!c) return rows();
     const val = (r: Row) => (c === "page" ? r.page : c === "content" ? r.text : r.props[c] ?? "");
     return [...rows()].sort((a, b) => val(a).localeCompare(val(b)) * sortDir());
   });
-
   const sortBy = (c: string) => {
     if (sortCol() === c) setSortDir(-sortDir());
     else {
@@ -466,26 +643,69 @@ export function QueryMacro(props: {
       setSortDir(1);
     }
   };
-  // Clicks on query controls must not bubble to the block's onClick (which would
-  // start editing the {{query}} block and replace results with raw markdown).
+  // Clicks on query controls must not bubble to the block's onClick.
   const stop = (e: MouseEvent) => e.stopPropagation();
   const arrow = (c: string) => (sortCol() === c ? (sortDir() > 0 ? " ▲" : " ▼") : "");
 
-  // Hide the whole block when asked and there's nothing to show (advanced
-  // queries still render their "unsupported" notice).
   const hidden = () =>
-    props.hideWhenEmpty && !ADVANCED_RE.test(arg()) && total() === 0 && blockingDiagnostics().length === 0;
-  const unsupportedAdvanced = () => isAdvanced() && advInfo() && (
-    !advInfo()!.supported || (props.strictAdvanced === true && advInfo()!.ignored.length > 0)
+    props.hideWhenEmpty && !isAdvanced() && !!displayed() && total() === 0 && blockingDiagnostics().length === 0;
+  const unsupportedAdvanced = () => {
+    const info = advInfo();
+    return isAdvanced() && info && (!info.supported || (props.strictAdvanced === true && (info.ignored ?? []).length > 0));
+  };
+  const simpleView = (): QueryView => (legacyTable() ? "table" : currentView());
+
+  const whyEmpty = () => (
+    <Show when={ranEmpty() && friendlySearch() === null}>
+      <button
+        type="button"
+        class="query-why-empty"
+        onClick={(e) => { e.stopPropagation(); setExplainOpen(!explainOpen()); }}
+      >
+        {explainOpen() ? "hide" : "why empty?"}
+      </button>
+      <Show when={explainOpen()}>
+        <div class="query-why-empty-panel" onClick={stop}>
+          <Show when={explained.loading}>
+            <span class="query-why-empty-pending">Checking…</span>
+          </Show>
+          <Show when={explainNotice()}>
+            {(notice) => <div class="query-why-empty-notice">{notice()}</div>}
+          </Show>
+          <Show when={(explanation()?.rows.length ?? 0) > 0}>
+            <table class="md-table query-why-empty-table">
+              <thead>
+                <tr><th>Condition</th><th>Alone</th><th>Without it</th></tr>
+              </thead>
+              <tbody>
+                <For each={explanation()!.rows}>
+                  {(row) => (
+                    <tr classList={{ "query-why-empty-culprit": row.alone === 0 }}>
+                      <td><code>{row.conjunct}</code></td>
+                      <td>{row.alone}</td>
+                      <td>{row.without ?? "—"}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </Show>
+        </div>
+      </Show>
+    </Show>
+  );
+  const empty = () => (
+    <div class="query-empty">
+      {emptyMessage()} {whyEmpty()}
+    </div>
   );
 
   return (
     <Show when={!hidden()}>
-      <div class="query-block" classList={{ "query-sheet-block": sheetFace() }}>
+      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
             <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
-              <Show when={props.blockId}>{simpleBackButton()}</Show>
               <Show
                 when={props.unsupportedLabel}
                 fallback={<>Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code></>}
@@ -497,10 +717,9 @@ export function QueryMacro(props: {
           <Match when={true}>
             <Show when={isAdvanced() && advInfo()?.supported}>
               <div class="query-adv-note">
-                <Show when={props.blockId}>{simpleBackButton()}</Show>
-                Partial datalog — ran: {advInfo()!.ran.join(", ") || "—"}
-                <Show when={advInfo()!.ignored.length > 0}>
-                  {` · ignored: ${advInfo()!.ignored.join(", ")}`}
+                Partial datalog — ran: {(advInfo()!.ran ?? []).join(", ") || "—"}
+                <Show when={(advInfo()!.ignored ?? []).length > 0}>
+                  {` · ignored: ${advInfo()!.ignored!.join(", ")}`}
                 </Show>
               </div>
             </Show>
@@ -542,13 +761,14 @@ export function QueryMacro(props: {
                     <input
                       class="query-title-input"
                       autofocus
-                      value={parsed().title ?? ""}
+                      value={titleOption() ?? ""}
                       placeholder="Query title"
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => {
                         e.stopPropagation();
                         if (e.key === "Enter") {
-                          setTitle(e.currentTarget.value);
+                          canceled = true;
+                          void setTitle(e.currentTarget.value);
                           setEditingTitle(false);
                         } else if (e.key === "Escape") {
                           canceled = true;
@@ -556,14 +776,18 @@ export function QueryMacro(props: {
                         }
                       }}
                       onBlur={(e) => {
-                        if (!canceled) setTitle(e.currentTarget.value);
+                        if (!canceled) void setTitle(e.currentTarget.value);
                         setEditingTitle(false);
                       }}
                     />
                   );
                 })()}
               </Show>{" "}
-              <span class="query-count">{total()}</span>
+              {/* The builder sentence carries the count beside it; queries with
+                  no builder keep it here so the count never disappears. */}
+              <Show when={!showBuilder()}>
+                <span class="query-count">{total()}</span>
+              </Show>
               <Show when={props.blockId}>
                 <div class="query-view-switcher" role="group" aria-label="Query view" onClick={stop}>
                   <For each={QUERY_VIEWS}>
@@ -583,23 +807,39 @@ export function QueryMacro(props: {
                 </div>
               </Show>
             </div>
-            {/* The visual builder only models the simple DSL. For an advanced
-                (datalog) query, hide the chip bar (its clauses aren't builder-
-                representable) — the block is editable as raw text by clicking it, and
-                the ran/ignored note above shows which clauses took. */}
-            <Show when={props.blockId && !isAdvanced()}>
-              <QueryBuilder dsl={form} onChange={applyDsl} blockId={props.blockId} />
+            {/* The builder edits a FILTER; an authored advanced query keeps its
+                own editing path (raw text) — converting one is out of scope. */}
+            <Show when={showBuilder()}>
+              <QueryBuilder
+                session={builderSession}
+                onChange={applyEdit}
+                paneDialect="tql"
+                blockId={props.blockId}
+                total={<span class="query-count">{total()}</span>}
+                onStale={setPaneStale}
+                onOpenChange={setSheetOpen}
+                notice={showCrossingNotice() && sheetOpen() ? crossingNotice : undefined}
+              />
             </Show>
-            <Show when={groupsError()}>
+            {/* §7.5, N3: one notice, inline while the sheet is shut and inside
+                the text pane while it is open — never both. */}
+            <Show when={showCrossingNotice() && !sheetOpen()}>{crossingNotice()}</Show>
+            <Show when={printError()}>
               {(message) => (
-                <div class="query-unsupported" role="alert">
-                  {message().lead} {message().message}
+                <div class="query-unsupported query-print-refused" role="alert">
+                  The query wasn't changed: {message()}
                 </div>
               )}
             </Show>
-            {/* Master's wording: the part below was not understood, so the
-                query returned nothing — not "ignored", which would imply the
-                rest ran and these are its results. */}
+            <Show when={loadError()}>
+              {(error) => (
+                <div class="query-unsupported" role="alert">
+                  Query couldn't be loaded: {errorText(error())}
+                </div>
+              )}
+            </Show>
+            {/* The part below was not understood, so the query returned nothing
+                — not "ignored", which would imply the rest ran (I-9). */}
             <Show when={blockingDiagnostics().length > 0}>
               <div class="query-unsupported query-diagnostics" role="alert">
                 <span class="query-diagnostics-lead">
@@ -609,193 +849,156 @@ export function QueryMacro(props: {
               </div>
             </Show>
             <Show when={!collapsed()}>
-              <Show
-                when={sheetFace()}
-                fallback={
-                  <>
-                    <Show when={currentView() === "search"}>
-                      <div class="query-search-results" role="list" aria-label="Search results" onClick={stop}>
-                        <Show
-                          when={searchPresentationHits().length > 0}
-                          fallback={<div class="query-empty">No results</div>}
-                        >
-                          <For each={searchPresentationHits()}>
-                            {(hit) => (
-                              <Show
-                                when={hit.entity === "block" ? hit : null}
-                                fallback={hit.entity === "page" ? (
-                                  <button
-                                    type="button"
-                                    class="query-search-page"
-                                    onClick={() => openPageTarget({
-                                      name: hit.page.name,
-                                      pageKind: hit.page.kind,
-                                      ...(hit.page.path ? { path: hit.page.path } : {}),
-                                    })}
-                                  >
-                                    <span class="switcher-kind">{hit.page.kind}</span>
-                                    <span>{hit.display_text}</span>
-                                  </button>
-                                ) : null}
+              <Show when={displayed()?.statistics}>
+                {(statistics) => <QueryStatisticsSummary statistics={statistics()} />}
+              </Show>
+              <Switch>
+                <Match when={pageRows()}>
+                  {(pages) => (
+                    <Show when={pages().length > 0} fallback={empty()}>
+                      <QueryPageRows
+                        rows={pages()}
+                        view={simpleView()}
+                        groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                        columns={runnable()?.view.columns}
+                      />
+                    </Show>
+                  )}
+                </Match>
+                <Match when={sheetFace()}>
+                  <Show when={groups().length > 0} fallback={empty()}>
+                    <Show when={(sheet()?.view === "table" || sheet()?.view === "board") && props.blockId}>
+                      <SheetContainer>
+                        <Switch>
+                          <Match when={sheet()?.view === "table"}>
+                            <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()} />
+                          </Match>
+                          <Match when={sheet()?.view === "board"}>
+                            <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups()} />
+                          </Match>
+                        </Switch>
+                      </SheetContainer>
+                    </Show>
+                  </Show>
+                </Match>
+                <Match when={currentView() === "search"}>
+                  <div class="query-search-results" role="list" aria-label="Search results" onClick={stop}>
+                    <Show when={searchPresentationHits().length > 0} fallback={empty()}>
+                      <For each={searchPresentationHits()}>
+                        {(hit) => (
+                          <Show
+                            when={hit.entity === "block" ? hit : null}
+                            fallback={hit.entity === "page" ? (
+                              <button
+                                type="button"
+                                class="query-search-page"
+                                onClick={() => openPageTarget({
+                                  name: hit.page.name,
+                                  pageKind: hit.page.kind,
+                                  ...(hit.page.path ? { path: hit.page.path } : {}),
+                                })}
                               >
-                                {(blockHit) => (
-                                  <button
-                                    type="button"
-                                    class="query-search-hit switcher-row block-result"
-                                    onClick={() => openPageAtBlock({
-                                      name: blockHit().page,
-                                      pageKind: blockHit().kind,
-                                      block: blockDtoExternalId(blockHit().block),
-                                      ...(blockHit().path ? { path: blockHit().path } : {}),
-                                    })}
-                                  >
-                                    <SearchResultRow
-                                      page={blockHit().page}
-                                      breadcrumb={blockHit().block.breadcrumb ?? []}
-                                      text={blockHit().display_text}
-                                      spans={blockHit().evidence.flatMap((evidence) => evidence.spans)}
-                                    />
-                                  </button>
-                                )}
-                              </Show>
+                                <span class="switcher-kind">{hit.page.kind}</span>
+                                <span>{hit.display_text}</span>
+                              </button>
+                            ) : null}
+                          >
+                            {(blockHit) => (
+                              <button
+                                type="button"
+                                class="query-search-hit switcher-row block-result"
+                                onClick={() => openPageAtBlock({
+                                  name: blockHit().page,
+                                  pageKind: blockHit().kind,
+                                  block: blockDtoExternalId(blockHit().block),
+                                  ...(blockHit().path ? { path: blockHit().path } : {}),
+                                })}
+                              >
+                                <SearchResultRow
+                                  page={blockHit().page}
+                                  breadcrumb={blockHit().block.breadcrumb ?? []}
+                                  text={blockHit().display_text}
+                                  spans={blockHit().evidence.flatMap((evidence) => evidence.spans)}
+                                />
+                              </button>
                             )}
+                          </Show>
+                        )}
+                      </For>
+                    </Show>
+                  </div>
+                </Match>
+                <Match when={true}>
+                  <Show when={groups().length > 0} fallback={empty()}>
+                    <Show
+                      when={legacyTable()}
+                      fallback={
+                        <Show
+                          when={globalSort()}
+                          fallback={
+                            <For each={[...groupedQueryByKey().keys()]}>
+                              {(key) => <QueryGroup group={() => groupedQueryByKey().get(key)} />}
+                            </For>
+                          }
+                        >
+                          {/* Sorted: the engine's flat global order, one group per run of rows. */}
+                          <For each={[...flatQueryByKey().keys()]}>
+                            {(key) => <QueryGroup group={() => flatQueryByKey().get(key)} flat />}
                           </For>
                         </Show>
-                      </div>
-                    </Show>
-                    <Show when={currentView() !== "search"}>
-                    {/* Summary panel (1a): count/sum/avg overall, or a per-group breakdown.
-                        Rendered above the full result list, which stays grouped by page. */}
-                    <Show when={summarySingle()}>
-                      {(s) => (
-                        <div class="query-summary" onClick={stop}>
-                          <span class="qs-label">{aggLabel()}:</span>{" "}
-                          <span class="qs-value">{s().text}</span>
-                          <Show when={s().skipped > 0}>
-                            <span class="qs-skip"> ({s().skipped} non-numeric skipped)</span>
-                          </Show>
-                        </div>
-                      )}
-                    </Show>
-                    <Show when={summaryGrouped()}>
-                      {(s) => (
-                        <table class="md-table query-summary-table" onClick={stop}>
-                          <thead>
-                            <tr>
-                              <th>{s().field}</th>
-                              <th>{aggLabel()}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <For each={s().groups}>
-                              {(row) => (
-                                <tr>
-                                  <td>{row.key}</td>
-                                  <td>
-                                    {row.text}
-                                    <Show when={row.skipped > 0}>
-                                      <span class="qs-skip"> ({row.skipped} skipped)</span>
-                                    </Show>
-                                  </td>
-                                </tr>
-                              )}
-                            </For>
-                          </tbody>
-                        </table>
-                      )}
-                    </Show>
-                    <Show
-                      when={groups() && groups()!.length > 0}
-                      fallback={<div class="query-empty">No results</div>}
+                      }
                     >
-                      <Show
-                        when={legacyTable()}
-                        fallback={
-                          <Show
-                            when={globalSort()}
-                            fallback={
-                              <For each={[...groupedQueryByKey().keys()]}>
-                                {(key) => <QueryGroup group={() => groupedQueryByKey().get(key)} />}
-                              </For>
-                            }
-                          >
-                            {/* Sorted: flat global order (each group holds one block). Iterate the
-                                groups DIRECTLY and pass the group object — re-`find()`ing the group
-                                by page/id for every row was O(groups²) on broad queries (audit #3). */}
-                            <For each={[...flatQueryByKey().keys()]}>
-                              {(key) => <QueryGroup group={() => flatQueryByKey().get(key)} flat />}
+                      <table class="md-table query-table">
+                        <thead>
+                          <tr onClick={stop}>
+                            <th onClick={() => sortBy("content")}>Content{arrow("content")}</th>
+                            <th onClick={() => sortBy("page")}>Page{arrow("page")}</th>
+                            <For each={cols()}>
+                              {(c) => <th onClick={() => sortBy(c)}>{c}{arrow(c)}</th>}
                             </For>
-                          </Show>
-                        }
-                      >
-                        <table class="md-table query-table">
-                          <thead>
-                            <tr onClick={stop}>
-                              <th onClick={() => sortBy("content")}>Content{arrow("content")}</th>
-                              <th onClick={() => sortBy("page")}>Page{arrow("page")}</th>
-                              <For each={cols()}>
-                                {(c) => <th onClick={() => sortBy(c)}>{c}{arrow(c)}</th>}
-                              </For>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <For each={sorted()}>
-                              {(r) => (
-                                <tr>
-                                  <td>
-                                    <InlineText text={r.text} format={formatForPage(r.page)} />
-                                  </td>
-                                  <td
-                                    class="qt-page"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
-                                      if (e.shiftKey) openPageInSidebar(target);
-                                      else openPageTarget(target);
-                                    }}
-                                    onAuxClick={(e) => {
-                                      if (e.button === 1) {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
-                                      }
-                                    }}
-                                    onContextMenu={(e) => {
-                                      if (!shouldOpenTextContextMenu(e.target)) return;
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <For each={sorted()}>
+                            {(r) => (
+                              <tr>
+                                <td>
+                                  <InlineText text={r.text} format={formatForPage(r.page)} />
+                                </td>
+                                <td
+                                  class="qt-page"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
+                                    if (e.shiftKey) openPageInSidebar(target);
+                                    else openPageTarget(target);
+                                  }}
+                                  onAuxClick={(e) => {
+                                    if (e.button === 1) {
                                       e.preventDefault();
                                       e.stopPropagation();
-                                      openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
-                                    }}
-                                  >
-                                    {r.page}
-                                  </td>
-                                  <For each={cols()}>{(c) => <td>{r.props[c] ?? ""}</td>}</For>
-                                </tr>
-                              )}
-                            </For>
-                          </tbody>
-                        </table>
-                      </Show>
+                                      openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
+                                    }
+                                  }}
+                                  onContextMenu={(e) => {
+                                    if (!shouldOpenTextContextMenu(e.target)) return;
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
+                                  }}
+                                >
+                                  {r.page}
+                                </td>
+                                <For each={cols()}>{(c) => <td>{r.props[c] ?? ""}</td>}</For>
+                              </tr>
+                            )}
+                          </For>
+                        </tbody>
+                      </table>
                     </Show>
-                    </Show>
-                  </>
-                }
-              >
-                <Show when={groups() && groups()!.length > 0} fallback={<div class="query-empty">No results</div>}>
-                  <Show when={(sheet()?.view === "table" || sheet()?.view === "board") && props.blockId}>
-                    <SheetContainer>
-                      <Switch>
-                        <Match when={sheet()?.view === "table"}>
-                          <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups() ?? []} />
-                        </Match>
-                        <Match when={sheet()?.view === "board"}>
-                          <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups() ?? []} />
-                        </Match>
-                      </Switch>
-                    </SheetContainer>
                   </Show>
-                </Show>
-              </Show>
+                </Match>
+              </Switch>
             </Show>
           </Match>
         </Switch>

@@ -1,3 +1,5 @@
+import { produce } from "solid-js/store";
+import { doc, setDoc } from "./document/model";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as historyStoreModule from "./document";
 import { pageToDto } from "./document/convert";
@@ -101,6 +103,28 @@ afterEach(() => {
 });
 
 describe("history parity", () => {
+  // master 7fcd4c98d (historyParity "scoped snapshots retain the mounted page…"),
+  // with og's page identity field `id` for master's `path`.
+  it("scoped snapshots retain the mounted page while restoring all optional metadata", () => {
+    store.loadFeed([page("A", [block("a", "original")])]);
+    setDoc(produce((state) => { delete state.pages[0].id; }));
+    setRoute("A");
+    const mountedPage = store.pageByName("A")!;
+    expect(Object.hasOwn(mountedPage, "id")).toBe(false);
+    store.withUndoUnit("query-sheet-edit", ["A"], () => {
+      store.setRaw("a", "edited");
+      setDoc("pages", 0, "id", "pages/A.md");
+    });
+    store.undo();
+    expect(store.pageByName("A")).toBe(mountedPage);
+    expect(doc.byId.a.raw).toBe("original");
+    expect(Object.hasOwn(mountedPage, "id")).toBe(false);
+    store.redo();
+    expect(store.pageByName("A")).toBe(mountedPage);
+    expect(doc.byId.a.raw).toBe("edited");
+    expect(mountedPage.id).toBe("pages/A.md");
+  });
+
   it("page-only undo/redo removes only A's newest interleaved raw/structural entries", () => {
     store.loadFeed([
       page("A", [block("a", "alpha")]),

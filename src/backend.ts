@@ -3,9 +3,19 @@
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
 import type {
+  Diagnostic,
+  ExecutionContext,
+  ExplainEmptyResult,
+  ParsedQuery,
+  Query,
+  QueryPrintDialect,
+  QueryResult,
+  QueryTextDialect,
+  RegistrySnapshot,
+  ViewSettings,
+} from "./editor/queryIr";
+import type {
   AdvancedQueryResult,
-  ParsedQueryIr,
-  QueryRunResult,
   BacklinkFilterContext,
   BacklinkFilterTarget,
   AssetInfo,
@@ -284,24 +294,17 @@ export interface Backend {
   /** Advanced (datalog-subset) query: maps the supported clauses onto the engine
    *  and reports what ran vs was ignored. */
   runAdvancedQuery(query: string): Promise<AdvancedQueryResult>;
-  /** A `{{query …}}` argument (OG DSL or advanced) parsed to the query IR.
-   *  `blockProperties` are the host block's `tine.*` properties; a valid one
-   *  wins per view field (sort, sample, …) over the text's. A syntax error
-   *  RESOLVES (diagnostics inside the IR); rejects only for an over-limit
-   *  source or no loaded graph. The first call per graph generation builds
-   *  the property registry (O(pages + blocks)) and waits for the initial load. */
-  queryParse(
-    text: string,
-    dialect: "macro_query",
-    blockProperties?: [string, string][],
-  ): Promise<ParsedQueryIr>;
-  /** Run a parsed query; `currentPage` (a page name) binds an advanced
-   *  query's typed `:current-page` input (#301). Omitted, that clause is
-   *  dropped and listed in `report.ignored`, so the answer is broader. OG DSL
-   *  and TQL ignore it. Rejects on an over-bound answer, a statistics budget
-   *  overrun, or no loaded graph; an invalid query resolves with
-   *  `diagnostics`. */
-  queryRun(parsed: ParsedQueryIr, currentPage?: string): Promise<QueryRunResult>;
+  /** ONE engine, in Rust (I-12): the six query commands. `parseQuery` resolves a
+   *  syntax error with diagnostics inside the IR; it rejects only for an
+   *  over-limit source or no loaded graph. */
+  parseQuery(text: string, dialect: QueryTextDialect, blockProperties?: [string, string][]): Promise<ParsedQuery>;
+  /** Rejects with {@link QueryPrintRefusedError}; `og` refuses a non-OG-expressible IR. */
+  printQuery(query: Query, view: ViewSettings, dialect: QueryPrintDialect, preserveForm?: boolean): Promise<string>;
+  queryOgExpressible(query: Query, view: ViewSettings): Promise<boolean>;
+  queryRegistry(): Promise<RegistrySnapshot>;
+  /** Rejects on an over-bound answer (`result-too-large`); an invalid query resolves with `diagnostics`. */
+  queryRun(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<QueryResult>;
+  queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<ExplainEmptyResult>;
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
   queryFacets(autocomplete?: boolean): Promise<[string, string[]][]>;
@@ -641,6 +644,34 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/** `query_print` refused this IR in the requested dialect. `isNotApplicable` is
+ *  the expected "OG cannot say this" answer the save path turns into
+ *  `{{tine-query}}`; every other refusal is surfaced, never swallowed (I-9). */
+export class QueryPrintRefusedError extends Error {
+  constructor(readonly reasonCode: string, readonly diagnostic: Diagnostic | null) {
+    super(diagnostic?.message ?? `The query could not be printed (reason code: ${reasonCode}).`);
+    this.name = "QueryPrintRefusedError";
+  }
+  get isNotApplicable(): boolean {
+    return this.reasonCode === "not_applicable";
+  }
+}
+
+/** Decode og's `query-print-refused:<reason>:<diagnostic JSON>` envelope. */
+export function queryPrintRefusal(error: unknown): QueryPrintRefusedError | null {
+  const text = error instanceof Error ? error.message : String(error);
+  const match = /^query-print-refused:([a-z_]+):([\s\S]*)$/.exec(text);
+  if (!match) return null;
+  let diagnostic: Diagnostic | null = null;
+  try {
+    const value = JSON.parse(match[2]) as Record<string, unknown> | null;
+    if (value && typeof value["message"] === "string" && typeof value["kind"] === "string") diagnostic = value as unknown as Diagnostic;
+  } catch {
+    diagnostic = null; // a malformed detail still refuses; the reason code carries it
+  }
+  return new QueryPrintRefusedError(match[1], diagnostic);
+}
+
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   private convertFileSrc!: (path: string, protocol?: string) => string;
@@ -826,12 +857,25 @@ class TauriBackend implements Backend {
   runAdvancedQuery(query: string) {
     return this.call<AdvancedQueryResult>("run_advanced_query", { query });
   }
-  queryParse(text: string, dialect: "macro_query", blockProperties?: [string, string][]) {
-    return this.call<ParsedQueryIr>("query_parse", { text, dialect, blockProperties });
+  parseQuery(text: string, dialect: QueryTextDialect, blockProperties?: [string, string][]) {
+    return this.call<ParsedQuery>("query_parse", { text, dialect, blockProperties });
   }
-  queryRun(parsed: ParsedQueryIr, currentPage?: string) {
-    const context = currentPage === undefined ? undefined : { current_page: currentPage };
-    return this.call<QueryRunResult>("query_run", { query: parsed.query, view: parsed.view, context });
+  printQuery(query: Query, view: ViewSettings, dialect: QueryPrintDialect, preserveForm = false) {
+    return this.call<string>("query_print", { query, view, dialect, preserveForm }).catch((error: unknown) => {
+      throw queryPrintRefusal(error) ?? error;
+    });
+  }
+  queryOgExpressible(query: Query, view: ViewSettings) {
+    return this.call<boolean>("query_og_expressible", { query, view });
+  }
+  queryRegistry() {
+    return this.call<RegistrySnapshot>("query_registry");
+  }
+  queryRun(query: Query, view: ViewSettings, context?: ExecutionContext) {
+    return this.call<QueryResult>("query_run", { query, view, context });
+  }
+  queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext) {
+    return this.call<ExplainEmptyResult>("query_explain_empty", { query, view, context });
   }
   queryFacets(autocomplete = false) {
     return this.call<[string, string[]][]>(
