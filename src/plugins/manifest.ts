@@ -15,6 +15,10 @@ export const PLUGIN_CAPABILITIES = [
   "settings.write",
 ] as const;
 export type PluginCapability = (typeof PLUGIN_CAPABILITIES)[number];
+/** Byte ceilings a plugin package must meet before it is read or compiled.
+ *  Mirrors `MAX_MANIFEST_BYTES` / `MAX_WASM_BYTES` in src-tauri/src/plugins.rs. */
+export const PLUGIN_MANIFEST_MAX_BYTES = 64 * 1024;
+export const PLUGIN_WASM_MAX_BYTES = 8 * 1024 * 1024;
 
 export interface PluginCommandContribution {
   id: string;

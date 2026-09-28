@@ -60,6 +60,7 @@ import { captureBinding } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
 import { formatJournal } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
+import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES } from "../plugins/manifest";
 import {
   COMMUNITY_REGISTRY_ENABLED,
   communityPlugins,
@@ -506,6 +507,10 @@ function PluginsTab(): JSX.Element {
     const wasmFile = selected.find((file) => file.name.endsWith(".wasm"));
     if (!manifestFile || !wasmFile) {
       pushToast("Choose both manifest.json and the plugin's .wasm entry.", "error");
+      return;
+    }
+    if (manifestFile.size > PLUGIN_MANIFEST_MAX_BYTES || wasmFile.size > PLUGIN_WASM_MAX_BYTES) {
+      pushToast("Plugin package is too large (manifest ≤ 64 KiB, .wasm ≤ 8 MiB).", "error");
       return;
     }
     setBusy("install");
