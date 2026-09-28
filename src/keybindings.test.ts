@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal } from "./keybindings";
 import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
-import { setGraphMeta } from "./graphSession";
+import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
@@ -822,6 +822,109 @@ describe("pane-select Esc cascade", () => {
     const tabs = paneRouter(newPane).tabs();
     expect(tabs[0].history[tabs[0].pos]).toMatchObject({ kind: "page", name: "Source" });
     expect(focusedPaneId()).toBe(newPane);
+    dispose();
+  });
+});
+
+describe("g h opens the graph home page (config.edn :default-home)", () => {
+  const homePage = { name: "Directory", kind: "page" as const, title: "Directory", pre_block: null, blocks: [], read_only: false, guide: false };
+  const pressGH = (fake: ReturnType<typeof installFakeWindow>) => {
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "g", code: "KeyG" }).event);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "h", code: "KeyH" }).event);
+  };
+  const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+  it("opens the configured page when it resolves", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Directory" });
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(homePage as never);
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    pressGH(fake);
+    await settle();
+    expect(getPage).toHaveBeenCalledWith("Directory", "page");
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Directory", pageKind: "page" });
+    dispose();
+  });
+
+  it("falls back to the Journals feed when none is configured or the page no longer resolves", async () => {
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    setGraphMeta({ ...pluginGraphMeta, default_home: null });
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    await settle();
+    expect(getPage).not.toHaveBeenCalled();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "journals" });
+
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Deleted" });
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    await settle();
+    expect(getPage).toHaveBeenCalledWith("Deleted", "page");
+    expect(paneRouter("main").route()).toMatchObject({ kind: "journals" });
+    dispose();
+  });
+
+  it("lets a navigation (including A→B→A) or a graph rebind made during the lookup win (I-20)", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Directory" });
+    let finish!: (page: unknown) => void;
+    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    router.openPage("User Chose This", "page", { inPlace: true });
+    finish(homePage);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "User Chose This" });
+
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    router.openPage("Elsewhere", "page", { inPlace: true });
+    router.openPage("Source", "page", { inPlace: true }); // A→B→A: an equal route, a newer intent
+    finish(homePage);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    pressGH(fake);
+    bumpGraphEpoch();
+    finish(null);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+    dispose();
+  });
+
+  it("opens a journal-titled home page as that journal", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Aug 1st, 2026" });
+    const journal = { ...homePage, name: "Aug 1st, 2026", title: "Aug 1st, 2026", kind: "journal" as const };
+    vi.spyOn(backend(), "getPage").mockImplementation(async (_name, kind) => (kind === "journal" ? journal : null) as never);
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    pressGH(fake);
+    await settle();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Aug 1st, 2026", pageKind: "journal" });
+    dispose();
+  });
+
+  it("does not land in another pane that gains focus during the lookup (I-20)", async () => {
+    setGraphMeta({ ...pluginGraphMeta, default_home: "Directory" });
+    let finish!: (page: unknown) => void;
+    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const other = splitRootAtEdge("right", "main", { focusNew: false, snapshot: pageSnapshot("Source") })!;
+    focusPane("main");
+    pressGH(fake);
+    focusPane(other); // focus moves to another pane showing an equal route
+    finish(homePage);
+    await settle();
+    expect(paneRouter(other).route()).toMatchObject({ kind: "page", name: "Source" });
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
     dispose();
   });
 });

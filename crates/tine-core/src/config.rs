@@ -49,6 +49,10 @@ pub struct Config {
     /// `:default-templates {:journals "Name"}` — template applied to a new,
     /// empty journal page.
     pub default_journal_template: Option<String>,
+    /// `:default-home {:page "Name"}` — the graph's home page (OG
+    /// `state/get-default-home`). Only a string `:page` directly inside a
+    /// top-level `:default-home` map counts; blank is `None`.
+    pub default_home: Option<String>,
     /// `:favorites ["Page" …]` — favorited page names (on-disk, graph-portable).
     pub favorites: Vec<String>,
     /// `:journal/file-name-format` — Logseq's journal filename format (cljs-time /
@@ -152,6 +156,7 @@ impl Default for Config {
             property_pages_enabled: true,
             property_pages_excludelist: Vec::new(),
             default_journal_template: None,
+            default_home: None,
             favorites: Vec::new(),
             journal_file_name_format: None,
             journal_page_title_format: None,
@@ -212,6 +217,8 @@ impl Config {
         cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
         cfg.default_journal_template =
             nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
+        cfg.default_home =
+            top_level_nested_string(edn, ":default-home", ":page").filter(|s| !s.trim().is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
         cfg.journal_file_name_format =
             string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
@@ -329,10 +336,23 @@ fn match_close(s: &str, open: usize, openc: u8, closec: u8) -> usize {
 /// requiring a token boundary after it. None if absent. Linear scan (always
 /// advances), so arbitrary `(…)`/`#{…}`/etc. content can't hang or mislead it.
 pub fn find_keyword(s: &str, key: &str) -> Option<usize> {
+    scan_keyword(s, key, false)
+}
+
+/// [`find_keyword`] restricted to nesting depth 0 of `s` — a direct entry of
+/// the map whose body `s` is, never one inside a nested map/vector/list.
+fn find_keyword_at_map_level(s: &str, key: &str) -> Option<usize> {
+    scan_keyword(s, key, true)
+}
+
+fn scan_keyword(s: &str, key: &str, top_level_only: bool) -> Option<usize> {
     let b = s.as_bytes();
     let mut i = 0usize;
+    let mut depth = 0usize;
     while i < b.len() {
         match b[i] {
+            b'{' | b'[' | b'(' => depth += 1,
+            b'}' | b']' | b')' => depth = depth.saturating_sub(1),
             b'"' => {
                 i = edn_str_end(s, i);
                 continue;
@@ -343,7 +363,7 @@ pub fn find_keyword(s: &str, key: &str) -> Option<usize> {
                 }
                 continue;
             }
-            _ if s[i..].starts_with(key) => {
+            _ if (!top_level_only || depth == 0) && s[i..].starts_with(key) => {
                 let after = i + key.len();
                 let boundary = after >= b.len()
                     || matches!(
@@ -690,6 +710,29 @@ fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
     (edn.as_bytes().get(vfrom) == Some(&b'"')).then(|| read_string_at(edn, vfrom))
 }
 
+/// Like [`nested_string`], but depth-aware: `outer` must be a direct entry of
+/// the root map and `inner` a direct entry of its map, so a `:page` nested in
+/// a sibling (`:default-home {:sidebar {:page "x"} :page "Home"}`) or an
+/// `outer` nested elsewhere is never read.
+fn top_level_nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
+    let (root_open, root_close) = balanced_map_at(edn, skip_blank(edn, 0))?;
+    let key = root_open + 1 + find_keyword_at_map_level(&edn[root_open + 1..root_close], outer)?;
+    let (open, close) = balanced_map_at(edn, skip_blank(edn, key + outer.len()))?;
+    let irel = find_keyword_at_map_level(&edn[open + 1..close], inner)?;
+    let vfrom = skip_blank(edn, open + 1 + irel + inner.len());
+    (edn.as_bytes().get(vfrom) == Some(&b'"')).then(|| read_string_at(edn, vfrom))
+}
+
+/// `(open, close)` of the balanced `{…}` map opening at byte `open`; `None`
+/// when there is no `{` there or it never closes.
+fn balanced_map_at(s: &str, open: usize) -> Option<(usize, usize)> {
+    if s.as_bytes().get(open) != Some(&b'{') {
+        return None;
+    }
+    let close = match_close_brace(s, open);
+    (close < s.len()).then_some((open, close))
+}
+
 /// Boolean value for `inner` inside the map following `outer`, e.g.
 /// `:logbook/settings {:with-second-support? false}`.
 fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
@@ -1018,6 +1061,37 @@ mod tests {
             vec!["Inbox".to_string(), "Reading List".to_string()]
         );
         assert!(Config::parse("{}").favorites.is_empty());
+    }
+
+    #[test]
+    fn default_home_reads_only_the_page_inside_the_top_level_map() {
+        let home = |edn: &str| Config::parse(edn).default_home;
+        assert_eq!(
+            home(r#"{:default-home {:page "Directory" :sidebar ["Contents"]}}"#).as_deref(),
+            Some("Directory")
+        );
+        assert_eq!(home(r#"{:default-home "Wrong shape"}"#), None);
+        assert_eq!(home("{}"), None);
+        assert_eq!(home(r#"{:default-home {:page "  "}}"#), None);
+        assert_eq!(
+            home(r#"{:nested {:default-home {:page "Not home"}}}"#),
+            None
+        );
+        assert_eq!(
+            home(r#"{:default-home {:sidebar {:page "Not home"} :page "Actual home"}}"#).as_deref(),
+            Some("Actual home")
+        );
+        assert_eq!(
+            home("{;; :default-home {:page \"Commented\"}\n :default-home {:page \"Live\"}}")
+                .as_deref(),
+            Some("Live")
+        );
+        assert_eq!(home(r#"{:default-home-x {:page "Prefix"}}"#), None);
+        assert_eq!(
+            home("; graph settings\n  ;; more\n{:default-home {:page \"Directory\"}}").as_deref(),
+            Some("Directory"),
+            "leading EDN comments before the root map"
+        );
     }
 
     #[test]

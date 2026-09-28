@@ -377,6 +377,8 @@ export interface GraphMeta {
   start_of_week: number; // Logseq :start-of-week, 0=Monday … 6=Sunday (default 6)
   block_hidden_properties: string[];
   default_journal_template: string | null;
+  /** config.edn `:default-home {:page "..."}`; absent/null = no home page. */
+  default_home?: string | null;
   favorites: string[];
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
