@@ -242,6 +242,9 @@ fn safe_version(value: &str) -> bool {
 /// is then synced), the staging directory is renamed into place, and the
 /// directories that gained an entry are synced. A crash therefore leaves either
 /// no package or a complete one, never a torn manifest or wasm at `target`.
+/// On Windows the files are flushed but no directory entry is
+/// (`sync_directory_entry` is a no-op there), so after a power loss the new
+/// package can be missing even though the install reported success.
 fn publish_package(
     root: &Path,
     target: &Path,
@@ -624,8 +627,9 @@ mod tests {
     fn plugin_install_publishes_a_complete_package_durably() {
         // og 15a K09 (I-2): the install path fsyncs each file and every
         // directory that gains an entry before and after the rename, as
-        // `atomic_file` does. Power loss cannot be simulated, so the fsync
-        // shape is pinned at the source and the result checked behaviourally.
+        // `atomic_file` does (directory syncs are no-ops on Windows). Power
+        // loss cannot be simulated, so the fsync shape is pinned at the source
+        // and the result checked behaviourally.
         let source = include_str!("plugins.rs");
         let production = source.split("#[cfg(test)]").next().unwrap();
         let install = &production[production.find("pub(crate) fn install_plugin(").unwrap()..];
