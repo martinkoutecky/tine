@@ -8,6 +8,7 @@ import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { setDoc } from "../document/model";
 import type { BlockDto, RefGroup } from "../types";
 import { Block } from "./Block";
+import { inspectBeginQuery } from "./BeginQuery";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { RefBlocks } from "./RefBlocks";
 
@@ -92,6 +93,24 @@ async function expectRenderedQuery(root: HTMLElement): Promise<void> {
 }
 
 describe("terminated whole-block BEGIN_QUERY", () => {
+  it("preserves a typed :inputs vector alongside the advanced query", () => {
+    const source = `#+BEGIN_QUERY
+{:title "Current page pins"
+ :query [:find (pull ?b [*])
+         :in $ ?current-page
+         :where
+         [?p :block/name ?current-page]
+         [?b :block/refs ?p]]
+ :inputs [:current-page]}
+#+END_QUERY`;
+
+    expect(inspectBeginQuery(source, "md")).toEqual({
+      kind: "supported",
+      title: "Current page pins",
+      query: expect.stringContaining(":inputs [:current-page]"),
+    });
+  });
+
   it("renders its authored title and table on the main page", async () => {
     seedQuery();
     const { root, dispose } = mount(() => <Block id="query" />);

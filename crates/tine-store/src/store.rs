@@ -2249,6 +2249,43 @@ pub enum QueryDialect {
     /// Advanced query expression.
     Advanced,
 }
+/// One request to [`WholeGraph::query_ir`].
+#[derive(Debug, Clone, Copy)]
+pub enum IrRequest<'a> {
+    /// Evaluate a query (`query_run`).
+    Run {
+        /// The parsed query.
+        query: &'a tine_core::query::ir::Query,
+        /// Its view settings (sort, sample, statistics).
+        view: &'a tine_core::query::ir::ViewSettings,
+        /// The page it renders on, if any.
+        context: &'a tine_core::query::ir::ExecutionContext,
+    },
+    /// Explain an empty answer (`query_explain_empty`).
+    ExplainEmpty {
+        /// The parsed query.
+        query: &'a tine_core::query::ir::Query,
+        /// The page it renders on, if any.
+        context: &'a tine_core::query::ir::ExecutionContext,
+    },
+    /// The observed property registry (`query_registry`).
+    Registry,
+}
+
+/// The answer to one [`IrRequest`], in the same variant.
+#[derive(Debug, Clone)]
+pub enum IrAnswer {
+    /// Rows, totals and statistics.
+    Result(Box<tine_core::query::ir::QueryResult>),
+    /// One explanation row per root conjunct, each with the conjunct's count
+    /// alone and the count without it (one row, with no `without` count, for a
+    /// non-`And` root); no rows for a non-executable query (its diagnostics
+    /// and report say why).
+    ExplainEmpty(tine_core::query::ir::ExplainEmptyResult),
+    /// This generation's registry.
+    Registry(Arc<tine_core::query::registry::Registry>),
+}
+
 /// Answer shape matching the requested query dialect.
 pub enum QueryResult {
     /// Simple query reference groups.
@@ -2864,6 +2901,24 @@ impl WholeGraph {
                 }
             }
         }
+    }
+
+    /// The IR query front door (SPEC §7.1): `Run` binds the query to its
+    /// context and today (§4.4) and evaluates it in memory under the fixed
+    /// construction bounds, returning an over-bound answer with `exceeded` set
+    /// (the command layer refuses it); `ExplainEmpty` counts each probe's rows
+    /// without constructing any (N19); `Registry` is the observed property
+    /// registry (§6.1). Only a statistics fold over its memory budget fails.
+    ///
+    /// Cost: a cold `Run` visits every page its plan cannot rule out
+    /// (O(P + B)) and is memoized per snapshot with scoped invalidation;
+    /// `ExplainEmpty` is O(probes × (P + B)); the registry is built once per
+    /// generation (O(P + B)) when first needed and then shared.
+    pub fn query_ir(
+        &self,
+        request: IrRequest<'_>,
+    ) -> Result<IrAnswer, tine_core::query::statistics::StatisticsResourceLimit> {
+        crate::query::exec::query_ir(&self.graph, request)
     }
 
     /// Graph search, with an optional syntactically checked file scope and

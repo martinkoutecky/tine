@@ -1,0 +1,29 @@
+icon:: 🔎
+
+- # Queries
+	- A **query block** is a live list of every block (or page) in your graph that matches a filter. Write it once with `{{query …}}`; Tine keeps the results current as you edit, and the file stays an ordinary Logseq query block.
+- ## A query in action
+	- Every open task in this graph:
+	- {{query (task TODO DOING)}}
+- ## Create one yourself
+	- 1. Type `/Query` in a block, or write `{{query (task TODO)}}` yourself.
+	- 2. Click the block's filter chips to change the query with the visual builder, or click the block to edit its text.
+	- 3. What you should see: the matching blocks grouped by page, with a count. Switch **Search**, **List**, **Table** or **Board** to change how they are shown; the matches stay the same.
+- ## Simple queries
+	- The simple query language is Logseq's. Combine filters with `(and …)`, `(or …)` and `(not …)`:
+		- `(task TODO DOING)` — blocks with one of these task markers; `(priority A)` — by priority.
+		- `[[Page]]`, `(page-ref Page)`, `#tag` — blocks that reference a page.
+		- `(page "Page")`, `(namespace Project)` — blocks on a page, or under a namespace.
+		- `(property status active)`, `(page-property type book)`, `(page-tags public)`, `(all-page-tags)` — by block or page properties and tags. A page-level filter returns pages, not blocks.
+		- `(between -7d today)` — journal blocks in a date range; `(between scheduled today +7d)` also works on `scheduled` or `deadline`. Dates are `today`, `yesterday`, `tomorrow`, `2026-01-31`, a journal title like `[[Jan 31st, 2026]]`, or an offset like `-7d`, `+2w`, `-1m`, `+1y` (lowercase units, at most 10,000 years).
+		- `(sort-by priority desc)`, `(sample 10)` — order the results (by `priority`, `page`, `scheduled`, `deadline` or any property), or keep only the first N after sorting.
+	- A block property on the query block itself can set the view: `tine.sort:: priority desc` and `tine.sample:: 10` win over the same directive in the query text.
+- ## Advanced (datalog) queries
+	- `{{query {:query [:find (pull ?b [*]) :where …]}}}` and `#+BEGIN_QUERY` blocks run a supported subset of Logseq's datalog: task markers, priority, page references, properties, page, namespace, page tags, scheduled/deadline and journal date ranges.
+	- A note above the results lists which clauses **ran** and which were **ignored**. An ignored clause did not filter the results; a query with no supported clause shows a notice instead of results.
+	- `:inputs [:current-page]` binds the page open in the focused pane, like Logseq: if no page is open it uses your configured home page, then today's journal. It is not the page the query block sits on.
+- ## When a query shows nothing
+	- If Tine cannot read part of a query, the block says so — **Tine didn't understand part of this query, so it returned no results** — followed by what it could not read. An empty list without that message means the query is valid and nothing matches yet.
+	- A query that would return more than 20,000 rows (or 32 MiB) is refused with a message instead of being cut short. Narrow it, or add `(sample N)`.
+- ## Not in this build yet
+	- The engine can read the text query language (`{{tine-query …}}`) and explain which part of a query emptied it, but this build's query block does not offer either yet. A `{{tine-query …}}` block is not run as a query here.

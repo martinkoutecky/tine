@@ -38,6 +38,21 @@ pub struct Config {
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
     pub block_hidden_properties: Vec<String>,
+    /// `:property/separated-by-commas #{:a :b}` — keys added to the built-in
+    /// `alias`/`aliases`/`tags` set. Tine already comma-splits EVERY key's plain
+    /// value (Q21), so this only matters for a value that also contains refs: the
+    /// value's comma-separated plain segments are kept as atoms next to its refs
+    /// instead of being dropped. Keys are stored without the leading `:`; matched
+    /// with `property_key_norm`. Read by `query::atom::ParseConfig` (queries and
+    /// the property registry only).
+    pub separated_by_commas: Vec<String>,
+    /// `:ignored-page-references-keywords #{:a :b}` — keys whose values get no
+    /// reference parsing: `[[x]]`/`#x` stay literal text. The value is still
+    /// comma-split into plain atoms like every other key (Q21); only a
+    /// double-quoted value stays one string. Wins over `separated_by_commas` for a
+    /// key in both. Read by `query::atom::ParseConfig` (queries and the property
+    /// registry only).
+    pub ignored_page_references_keywords: Vec<String>,
     /// `:property-pages/enabled?` — OG creates a page reference from every
     /// eligible property key unless this is explicitly false. Absent defaults to
     /// true (`block.cljs`: `(contains? #{true nil} enabled?)`).
@@ -157,6 +172,8 @@ impl Default for Config {
             all_pages_public: false,
             start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
+            separated_by_commas: Vec::new(),
+            ignored_page_references_keywords: Vec::new(),
             property_pages_enabled: true,
             property_pages_excludelist: Vec::new(),
             default_journal_template: None,
@@ -218,6 +235,9 @@ impl Config {
             }
         }
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
+        cfg.separated_by_commas = parse_keyword_set(edn, ":property/separated-by-commas");
+        cfg.ignored_page_references_keywords =
+            parse_keyword_set(edn, ":ignored-page-references-keywords");
         cfg.property_pages_enabled = bool_value(edn, ":property-pages/enabled?").unwrap_or(true);
         cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
         cfg.default_journal_template =
@@ -1124,6 +1144,24 @@ mod tests {
             cfg.block_hidden_properties,
             vec!["public".to_string(), "icon".to_string()]
         );
+    }
+
+    #[test]
+    fn query_property_value_keys_are_read() {
+        let cfg = Config::parse(
+            "{:property/separated-by-commas #{:authors :Genre}\n :ignored-page-references-keywords #{:note}}",
+        );
+        assert_eq!(
+            cfg.separated_by_commas,
+            vec!["authors".to_string(), "Genre".to_string()]
+        );
+        assert_eq!(
+            cfg.ignored_page_references_keywords,
+            vec!["note".to_string()]
+        );
+        let absent = Config::parse("{}");
+        assert!(absent.separated_by_commas.is_empty());
+        assert!(absent.ignored_page_references_keywords.is_empty());
     }
 
     #[test]

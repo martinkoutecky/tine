@@ -43,10 +43,8 @@ pub fn atom_key(text: &str) -> String {
 }
 
 /// The parse-relevant slice of the graph config the atomizer and registry
-/// read (master `config::ParseConfig`, SPEC §5.8). og's `config.edn` reader
-/// does not yet parse `:property/separated-by-commas` or
-/// `:ignored-page-references-keywords`, so [`ParseConfig::from_config`]
-/// leaves those two lists empty (built-in keys still apply).
+/// read (master `config::ParseConfig`, SPEC §5.8), filled from `config.edn`
+/// by [`ParseConfig::from_config`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseConfig {
     pub separated_by_commas: Vec<String>,
@@ -60,8 +58,8 @@ impl ParseConfig {
     /// The parse-relevant slice of `config`. O(configured keys).
     pub fn from_config(config: &crate::config::Config) -> ParseConfig {
         ParseConfig {
-            separated_by_commas: Vec::new(),
-            ignored_page_references_keywords: Vec::new(),
+            separated_by_commas: config.separated_by_commas.clone(),
+            ignored_page_references_keywords: config.ignored_page_references_keywords.clone(),
             hidden_properties: config.block_hidden_properties.clone(),
             journal_page_title_format: config.journal_page_title_format.clone(),
             journal_file_name_format: config.journal_file_name_format.clone(),

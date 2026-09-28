@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, ParsedQueryIr, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -1016,6 +1016,18 @@ export function mockBackend(): Backend {
         return { groups, ran: ["task"], ignored: [], supported: true };
       }
       return { groups: [], ran: [], ignored: [], supported: false };
+    },
+    // The IR is opaque to the UI, so the mock's "IR" is the source text and a
+    // run delegates to the two legacy evaluators (and to any test spy on them).
+    async queryParse(text: string) {
+      return { query: text, view: null };
+    },
+    async queryRun(parsed: ParsedQueryIr) {
+      const source = String(parsed.query);
+      const advanced = /\[\s*:find|:where|:find/.test(source);
+      const report = advanced ? await this.runAdvancedQuery(source) : { groups: await this.runQuery(source), ran: [], ignored: [], supported: true };
+      const total = report.groups.reduce((sum, group) => sum + group.blocks.length, 0);
+      return { anchor: "block" as const, groups: report.groups, report, total, exceeded: false };
     },
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.

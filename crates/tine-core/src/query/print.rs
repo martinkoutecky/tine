@@ -842,28 +842,11 @@ fn date_bound(value: &Value) -> Option<String> {
     })
 }
 
+/// The [`DateToken`](crate::query::DateToken) grammar's own answer, so the
+/// printer and the resolver cannot drift (Rule 3). A non-date literal is
+/// written as a page title, `[[ ]]`.
 fn is_bare_date_token(text: &str) -> bool {
-    if ["today", "yesterday", "tomorrow", "now"]
-        .iter()
-        .any(|keyword| text.eq_ignore_ascii_case(keyword))
-    {
-        return true;
-    }
-    let bytes = text.as_bytes();
-    if bytes.len() == 10 && bytes[4] == b'-' && bytes[7] == b'-' {
-        return text
-            .split('-')
-            .all(|part| part.bytes().all(|byte| byte.is_ascii_digit()));
-    }
-    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
-    let Some(unit) = digits.chars().last() else {
-        return false;
-    };
-    digits.len() > 1
-        && "dwmy".contains(unit.to_ascii_lowercase())
-        && digits[..digits.len() - 1]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit())
+    crate::query::DateToken::parse(text).is_some_and(|token| token.prints_bare())
 }
 
 /// A DSL double-quoted string with `\` and `"` escaped, so a value containing a

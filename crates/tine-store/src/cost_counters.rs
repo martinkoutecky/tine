@@ -14,6 +14,9 @@ static MEMO_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
 static CACHE_PAGE_COPIES: AtomicU64 = AtomicU64::new(0);
 static ICON_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
 static SIGNATURE_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
+static QUERY_FACTS_COPIES: AtomicU64 = AtomicU64::new(0);
+static QUERY_FACTS_DERIVED: AtomicU64 = AtomicU64::new(0);
+static QUERY_CARRY_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
@@ -44,6 +47,12 @@ pub struct Counts {
     pub icon_page_probes: u64,
     /// Blocks inspected while constructing changed-page reference signatures.
     pub signature_block_probes: u64,
+    /// Query-index facts entries copied when a generation is patched.
+    pub query_facts_copies: u64,
+    /// Pages whose query facts were derived (index build, patch, memo carry).
+    pub query_facts_derived: u64,
+    /// Blocks evaluated while carrying query answers across an edit.
+    pub query_carry_block_probes: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -63,6 +72,9 @@ pub fn reset() {
         &CACHE_PAGE_COPIES,
         &ICON_PAGE_PROBES,
         &SIGNATURE_BLOCK_PROBES,
+        &QUERY_FACTS_COPIES,
+        &QUERY_FACTS_DERIVED,
+        &QUERY_CARRY_BLOCK_PROBES,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -85,6 +97,9 @@ pub fn snapshot() -> Counts {
         cache_page_copies: CACHE_PAGE_COPIES.load(Ordering::Relaxed),
         icon_page_probes: ICON_PAGE_PROBES.load(Ordering::Relaxed),
         signature_block_probes: SIGNATURE_BLOCK_PROBES.load(Ordering::Relaxed),
+        query_facts_copies: QUERY_FACTS_COPIES.load(Ordering::Relaxed),
+        query_facts_derived: QUERY_FACTS_DERIVED.load(Ordering::Relaxed),
+        query_carry_block_probes: QUERY_CARRY_BLOCK_PROBES.load(Ordering::Relaxed),
     }
 }
 
@@ -125,4 +140,13 @@ pub(crate) fn icon_page_probe() {
 }
 pub(crate) fn signature_block_probe() {
     SIGNATURE_BLOCK_PROBES.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn query_facts_copies(count: u64) {
+    QUERY_FACTS_COPIES.fetch_add(count, Ordering::Relaxed);
+}
+pub(crate) fn query_facts_derived() {
+    QUERY_FACTS_DERIVED.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn query_carry_block_probe() {
+    QUERY_CARRY_BLOCK_PROBES.fetch_add(1, Ordering::Relaxed);
 }

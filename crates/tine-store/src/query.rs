@@ -6,6 +6,7 @@
 //! clauses are returned as diagnostics in `AdvancedResult`.
 
 use crate::model::GraphRead;
+#[cfg(test)]
 use tine_core::date::JournalDate;
 use tine_core::doc::{property_key_norm, DocBlock, Document};
 use tine_core::model::{
@@ -14,15 +15,15 @@ use tine_core::model::{
 };
 use tine_core::projection::block_to_shallow_dto;
 use tine_core::query::{
-    admit_source, is_advanced, query_nesting_within_limit, query_source_within_limit,
-    AdvancedResult, QueryExportBatch, QueryExportResult, QueryExportSpec,
+    admit_source, AdvancedResult, QueryExportBatch, QueryExportResult, QueryExportSpec,
 };
 use tine_core::refs;
-use tine_core::search_query::Matcher;
+mod eval;
+pub(crate) mod exec;
+pub(crate) mod index;
+pub(crate) mod memo;
 mod page_properties;
 use page_properties::{page_document_is_org, page_facets, page_property_lines};
-
-const QUERY_NESTING_MAX: usize = 64;
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedGroups {
@@ -67,6 +68,21 @@ impl ConstructionBudget {
         true
     }
 
+    /// A page row costs its raw estimate; `total` counts admitted rows.
+    fn admit_page_estimated(&mut self, estimated_bytes: usize) -> bool {
+        if self.exceeded
+            || self.rows >= self.max_rows
+            || self.bytes.saturating_add(estimated_bytes) > self.max_bytes
+        {
+            self.exceeded = true;
+            return false;
+        }
+        self.rows += 1;
+        self.bytes += estimated_bytes;
+        self.total = self.rows;
+        true
+    }
+
     fn deny_match(&mut self) {
         self.total = self.total.saturating_add(1);
         self.exceeded = true;
@@ -75,11 +91,6 @@ impl ConstructionBudget {
     fn closed(&self) -> bool {
         self.exceeded || self.rows >= self.max_rows
     }
-}
-
-/// Parse a journal-page title (e.g. "Jan 1st, 2022") to a `yyyymmdd` ordinal.
-fn journal_ordinal(title: &str) -> Option<i64> {
-    JournalDate::from_title(title).map(|d| d.ordinal_key())
 }
 
 /// Walk all blocks of a document depth-first, calling `f(block)`.
@@ -98,49 +109,6 @@ fn walk_until<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock) -> bo
         }
     }
     true
-}
-
-type PathRefCounts = std::collections::HashMap<String, usize>;
-
-fn push_path_refs(block: &DocBlock, refs: &mut PathRefCounts) {
-    for reference in &block.projection().refs_norm {
-        *refs.entry(reference.clone()).or_default() += 1;
-    }
-}
-
-fn pop_path_refs(block: &DocBlock, refs: &mut PathRefCounts) {
-    for reference in &block.projection().refs_norm {
-        let remove = if let Some(count) = refs.get_mut(reference) {
-            *count -= 1;
-            *count == 0
-        } else {
-            false
-        };
-        if remove {
-            refs.remove(reference);
-        }
-    }
-}
-
-/// Walk all blocks while maintaining the normalized union of ancestor refs.
-/// This mirrors OG's materialized `:block/path-refs` without adding a second
-/// persistent index or turning deep outlines into an O(nodes * depth) scan.
-fn walk_path_refs<'a>(
-    blocks: &'a [DocBlock],
-    refs: &mut PathRefCounts,
-    track_refs: bool,
-    f: &mut impl FnMut(&'a DocBlock, &PathRefCounts),
-) {
-    for block in blocks {
-        f(block, refs);
-        if track_refs {
-            push_path_refs(block, refs);
-        }
-        walk_path_refs(&block.children, refs, track_refs, f);
-        if track_refs {
-            pop_path_refs(block, refs);
-        }
-    }
 }
 
 /// Collect matches in document order while evaluating every candidate exactly
@@ -178,47 +146,6 @@ fn collect_matching_path<'a, M, T>(
             materialize,
             out,
         );
-        path.pop();
-    }
-}
-
-fn collect_og_query_roots<'a, M, T>(
-    blocks: &'a [DocBlock],
-    path: &mut Vec<&'a DocBlock>,
-    path_refs: &mut PathRefCounts,
-    track_path_refs: bool,
-    parent_matched: bool,
-    classify: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], &PathRefCounts) -> Option<M>,
-    materialize: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], M) -> Option<T>,
-    out: &mut Vec<T>,
-) {
-    for block in blocks {
-        let classification = classify(block, path, path_refs);
-        let matched = classification.is_some();
-        if !parent_matched {
-            if let Some(classification) = classification {
-                if let Some(item) = materialize(block, path, classification) {
-                    out.push(item);
-                }
-            }
-        }
-        path.push(block);
-        if track_path_refs {
-            push_path_refs(block, path_refs);
-        }
-        collect_og_query_roots(
-            &block.children,
-            path,
-            path_refs,
-            track_path_refs,
-            matched,
-            classify,
-            materialize,
-            out,
-        );
-        if track_path_refs {
-            pop_path_refs(block, path_refs);
-        }
         path.pop();
     }
 }
@@ -1198,8 +1125,9 @@ pub(crate) fn run_query(graph: &impl GraphRead, query_src: &str) -> Vec<RefGroup
     run_query_bounded(graph, query_src, usize::MAX, usize::MAX).groups
 }
 
-/// Run a simple query over in-memory blocks; output limits do not bound graph traversal.
-/// Refused/malformed input returns empty groups, total 0, exceeded false, like no matches. No disk read.
+/// Run a simple query over in-memory blocks ([`exec`]); output limits do not
+/// bound graph traversal. Refused/malformed input returns empty groups, total
+/// 0, exceeded false, like no matches. No disk read.
 pub(crate) fn run_query_bounded(
     graph: &impl GraphRead,
     query_src: &str,
@@ -1213,230 +1141,13 @@ pub(crate) fn run_query_bounded(
             exceeded: false,
         };
     }
-    let today = JournalDate::today();
-    let Some(pred) = Pred::parse(query_src, today) else {
-        return BoundedGroups {
-            groups: Vec::new(),
-            total: 0,
-            exceeded: false,
-        };
-    };
-    let mut opts = QueryOpts::default();
-    pred.collect_opts(&mut opts);
-    run_pred_bounded(graph, &pred, &opts, max_rows, max_bytes)
-}
-
-fn run_pred_bounded(
-    graph: &impl GraphRead,
-    pred: &Pred,
-    opts: &QueryOpts,
-    max_rows: usize,
-    max_bytes: usize,
-) -> BoundedGroups {
-    let mut budget = ConstructionBudget::new(max_rows, max_bytes);
-    // An unsorted `(sample N)` semantically needs only the first N matches in
-    // deterministic traversal order. Do not construct or classify the rest as
-    // an over-budget failure. Sorted samples still require global ranking and
-    // therefore retain the ordinary construction ceiling.
-    let sample_admission_cap = opts.sample.filter(|_| opts.sort.is_none());
-    // A recency sort (`(sort-by modified …)`) needs each result page's position on
-    // a single time axis: journal pages by the day they represent, other pages by
-    // file mtime captured with the parsed page table.
-    let want_recency = matches!(&opts.sort, Some((f, _)) if is_recency_field(f));
-    let observed_mtimes = want_recency.then(|| graph.observed_page_mtimes());
-    let (mut groups, recency_by_page) = graph.with_pages(|pages| {
-        let mut groups: Vec<RefGroup> = Vec::new();
-        let mut recency: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-        for (entry, doc) in pages {
-            let (page_props, page_tags) = page_facets(doc);
-            let ctx = EvalCtx {
-                journal: entry.date_key,
-                is_journal: entry.kind == PageKind::Journal,
-                page_name: &entry.name,
-                page_props: &page_props,
-                page_tags: &page_tags,
-            };
-            let mut matched: Vec<BlockDto> = Vec::new();
-            let mut path = Vec::new();
-            let mut path_refs = PathRefCounts::new();
-            let track_path_refs = pred.uses_path_refs();
-            collect_og_query_roots(
-                &doc.roots,
-                &mut path,
-                &mut path_refs,
-                track_path_refs,
-                false,
-                &mut |block, _, ancestor_refs| {
-                    pred.eval_with_path_refs(block, ancestor_refs, &ctx)
-                        .then_some(())
-                },
-                &mut |block, _, ()| {
-                    if sample_admission_cap.is_some_and(|cap| budget.rows >= cap) {
-                        return None;
-                    }
-                    if budget.closed() {
-                        budget.deny_match();
-                        return None;
-                    }
-                    if !budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(block, &[]))
-                    {
-                        return None;
-                    }
-                    Some(result_dto(block))
-                },
-                &mut matched,
-            );
-            if !matched.is_empty() {
-                if want_recency {
-                    recency.insert(
-                        entry.name.clone(),
-                        page_recency_secs(entry, observed_mtimes.as_ref().unwrap()),
-                    );
-                }
-                groups.push(RefGroup {
-                    page: entry.name.clone(),
-                    kind: entry.kind,
-                    blocks: matched,
-                    evidence: Vec::new(),
-                });
-            }
-        }
-        (groups, recency)
-    });
-
-    // `with_pages` inherits filesystem/cache enumeration order. Make the base
-    // order stable before sampling and before it becomes the tie-breaker for an
-    // explicit sort; otherwise identical graph exports can differ by machine.
-    groups.sort_by(|a, b| {
-        a.page.cmp(&b.page).then_with(|| {
-            let rank = |kind| match kind {
-                PageKind::Journal => 0,
-                PageKind::Page => 1,
-            };
-            rank(a.kind).cmp(&rank(b.kind))
-        })
-    });
-
-    // sort-by is GLOBAL (like Logseq): order every matched block across all pages on
-    // one axis, so e.g. priority-A tasks float to the very top regardless of which
-    // page they live on. We flatten to one block per group, sort, then RE-COALESCE
-    // runs of adjacent same-page blocks back under a single page heading — N
-    // consecutive results from one page show ONCE, not N times (a page whose blocks
-    // land at different sort positions, e.g. an A and a C task under a priority sort,
-    // still appears at each of those positions). Non-sorted queries keep their
-    // natural page grouping untouched.
-    if let Some((field, asc)) = &opts.sort {
-        // Decorate each block with its sort key (computed ONCE — an lsdoc parse per
-        // result block, not per comparison) and its original index. The index is a
-        // stable tiebreaker so equal-key blocks keep DOCUMENT order in both
-        // directions: a plain `reverse()` for `desc` would flip a page's blocks
-        // upside-down under its heading.
-        let mut flat: Vec<(SortDecor, usize, RefGroup)> = Vec::new();
-        for g in groups {
-            let RefGroup {
-                page,
-                kind,
-                blocks,
-                evidence: _,
-            } = g;
-            for b in blocks {
-                let key = if is_recency_field(field) {
-                    // Recency is numeric (Unix seconds on one axis): journal pages by
-                    // the day they represent, others by file mtime.
-                    SortDecor::Num(recency_by_page.get(&page).copied().unwrap_or(i64::MIN))
-                } else {
-                    SortDecor::Text(sort_key(&b, &page, field))
-                };
-                let idx = flat.len();
-                flat.push((
-                    key,
-                    idx,
-                    RefGroup {
-                        page: page.clone(),
-                        kind,
-                        blocks: vec![b],
-                        evidence: Vec::new(),
-                    },
-                ));
-            }
-        }
-        flat.sort_by(|a, b| {
-            let ord = a.0.cmp(&b.0);
-            (if *asc { ord } else { ord.reverse() }).then(a.1.cmp(&b.1))
-        });
-        // Merge adjacent one-block groups that share a page (and kind) into a single
-        // group, so consecutive same-page results render under one heading.
-        let mut merged: Vec<RefGroup> = Vec::with_capacity(flat.len());
-        for (_, _, g) in flat {
-            match merged.last_mut() {
-                Some(last) if last.page == g.page && last.kind == g.kind => {
-                    last.blocks.extend(g.blocks)
-                }
-                _ => merged.push(g),
-            }
-        }
-        groups = merged;
-    }
-
-    // sample N: cap total results (deterministic: first N across pages).
-    if let Some(n) = opts.sample {
-        let mut remaining = n;
-        groups.retain_mut(|g| {
-            if remaining == 0 {
-                return false;
-            }
-            if g.blocks.len() > remaining {
-                g.blocks.truncate(remaining);
-            }
-            remaining -= g.blocks.len();
-            true
-        });
-    }
-    BoundedGroups {
-        groups,
-        total: budget.total,
-        exceeded: budget.exceeded,
-    }
+    exec::run_query_bounded(graph, query_src, max_rows, max_bytes).0
 }
 
 // --- Scoped-invalidation support (#52) --------------------------------------
 // "Could an edit to page (entry, doc) change this derived result?" These use
 // the match predicates; result-level sampling and source admission can differ.
 
-/// Test query predicate membership in one in-memory page for memo invalidation.
-/// Result sampling/sorting is not applied: sample 0 may return true although
-/// the final result is empty. Malformed input returns false. O(page blocks).
-pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -> bool {
-    let today = JournalDate::today();
-    let Some(pred) = Pred::parse(src, today) else {
-        return false;
-    };
-    let (page_props, page_tags) = page_facets(doc);
-    let ctx = EvalCtx {
-        journal: entry.date_key,
-        is_journal: entry.kind == PageKind::Journal,
-        page_name: &entry.name,
-        page_props: &page_props,
-        page_tags: &page_tags,
-    };
-    let mut hit = false;
-    let mut path_refs = PathRefCounts::new();
-    walk_path_refs(
-        &doc.roots,
-        &mut path_refs,
-        pred.uses_path_refs(),
-        &mut |block, ancestor_refs| {
-            if !hit && pred.eval_with_path_refs(block, ancestor_refs, &ctx) {
-                hit = true;
-            }
-        },
-    );
-    hit
-}
-
-/// Whether page `doc` references `target` or any of its aliases — i.e. could be
-/// in `backlinks(target)`. Mirrors `backlinks`'s alias resolution; takes the
-/// resolved alias map so the caller needn't hold the graph lock.
 pub(crate) fn page_affects_backlinks(
     real_pages: &RealPageNames,
     aliases: &[(String, String)],
@@ -1540,42 +1251,6 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
     hit
 }
 
-/// Test supported advanced-query predicate membership in one in-memory page.
-/// Unlike execution, this does not apply the 64 KiB source limit, so oversized
-/// input may match here while execution refuses it. Unsupported forms return
-/// false. O(page blocks).
-pub(crate) fn page_affects_advanced_query(
-    query_src: &str,
-    entry: &PageEntry,
-    doc: &Document,
-) -> bool {
-    let today = JournalDate::today();
-    let (Some(pred), _, _) = advanced_pred(query_src, today) else {
-        return false;
-    };
-    let (page_props, page_tags) = page_facets(doc);
-    let ctx = EvalCtx {
-        journal: entry.date_key,
-        is_journal: entry.kind == PageKind::Journal,
-        page_name: &entry.name,
-        page_props: &page_props,
-        page_tags: &page_tags,
-    };
-    let mut hit = false;
-    let mut path_refs = PathRefCounts::new();
-    walk_path_refs(
-        &doc.roots,
-        &mut path_refs,
-        pred.uses_path_refs(),
-        &mut |block, ancestor_refs| {
-            if !hit && pred.eval_with_path_refs(block, ancestor_refs, &ctx) {
-                hit = true;
-            }
-        },
-    );
-    hit
-}
-
 pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
     AdvancedResult {
         groups: Vec::new(),
@@ -1585,12 +1260,10 @@ pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
     }
 }
 
-/// Run an advanced `[:find … :where …]` / `{:query … :inputs …}` query by mapping
-/// the common clause subset (task / between / page-ref / property / page-property
-/// / priority + and/or/not) onto the simple-DSL `Pred` engine — the matching
-/// predicates already exist. Unrecognized clauses (custom rules, `[?e ?a ?v]`
-/// joins, `:view`/`:result-transform`) are listed in `ignored` and skipped, never
-/// guessed (a wrong result is worse than "unsupported").
+/// Run an advanced `[:find … :where …]` / `{:query … :inputs …}` query: the
+/// join-free pattern subset (#542) lowered by `tine_core::query` and executed
+/// by [`exec`]. Unrecognized clauses are listed in `ignored` and the query is
+/// unsupported, never guessed (a wrong result is worse than "unsupported").
 #[cfg(test)]
 pub(crate) fn run_advanced_query(graph: &impl GraphRead, query_src: &str) -> AdvancedResult {
     run_advanced_query_bounded(graph, query_src, usize::MAX, usize::MAX).0
@@ -1611,495 +1284,7 @@ pub(crate) fn run_advanced_query_bounded(
         };
         return (rejected_advanced_query(message), false, 0);
     }
-    let today = JournalDate::today();
-    let (pred, ran, ignored) = advanced_pred(query_src, today);
-    let Some(pred) = pred else {
-        return (
-            AdvancedResult {
-                groups: Vec::new(),
-                ran,
-                ignored,
-                supported: false,
-            },
-            false,
-            0,
-        );
-    };
-    let mut opts = QueryOpts::default();
-    pred.collect_opts(&mut opts);
-    let bounded = run_pred_bounded(graph, &pred, &opts, max_rows, max_bytes);
-    (
-        AdvancedResult {
-            groups: bounded.groups,
-            ran,
-            ignored,
-            supported: true,
-        },
-        bounded.exceeded,
-        bounded.total,
-    )
-}
-
-fn advanced_pred(query_src: &str, today: JournalDate) -> (Option<Pred>, Vec<String>, Vec<String>) {
-    if !query_nesting_within_limit(query_src) {
-        return (None, Vec::new(), vec!["query-nesting-too-deep".to_string()]);
-    }
-    let inputs = resolve_inputs(query_src, today);
-    let mut ran = Vec::new();
-    let mut ignored = Vec::new();
-    let groups = where_groups(query_src);
-    let (lowered_page_properties, consumed_patterns) = lower_page_property_patterns(&groups);
-    let preds: Vec<Pred> = groups
-        .iter()
-        .enumerate()
-        .filter_map(|(index, group)| {
-            if let Some(pred) = lowered_page_properties.get(&index) {
-                ran.push("page-property".into());
-                return Some(pred.clone());
-            }
-            if consumed_patterns.contains(&index) {
-                return None;
-            }
-            parse_adv_group(group, &inputs, today, &mut ran, &mut ignored, 0)
-        })
-        .collect();
-    if ignored.iter().any(|item| item == "query-nesting-too-deep") {
-        return (None, Vec::new(), ignored);
-    }
-    if preds.is_empty() {
-        return (None, ran, ignored);
-    }
-    let pred = if preds.len() == 1 {
-        preds.into_iter().next().unwrap()
-    } else {
-        Pred::And(preds)
-    };
-    (Some(pred), ran, ignored)
-}
-
-/// Conservatively lower only the exact DataScript relationship used by the
-/// released BEGIN_QUERY page-property form. The entity/property-map pattern and
-/// `(get ...)` predicate must share the literal `?props` binding; every other
-/// bracket form remains visible as an unsupported `pattern` in `parse_adv_group`.
-fn lower_page_property_patterns(
-    groups: &[String],
-) -> (
-    std::collections::HashMap<usize, Pred>,
-    std::collections::HashSet<usize>,
-) {
-    let relations = groups
-        .iter()
-        .enumerate()
-        .filter_map(|(index, group)| {
-            let inner = group.trim().strip_prefix('[')?.strip_suffix(']')?.trim();
-            (inner.split_whitespace().collect::<Vec<_>>() == ["?p", ":block/properties", "?props"])
-                .then_some(index)
-        })
-        .collect::<Vec<_>>();
-    if relations.len() != 1 {
-        return Default::default();
-    }
-
-    let mut lowered = std::collections::HashMap::new();
-    let mut consumed = std::collections::HashSet::new();
-    for (index, group) in groups.iter().enumerate() {
-        let Some(inner) = group
-            .trim()
-            .strip_prefix('[')
-            .and_then(|s| s.strip_suffix(']'))
-        else {
-            continue;
-        };
-        let Some(call) = inner
-            .trim()
-            .strip_prefix('(')
-            .and_then(|s| s.strip_suffix(')'))
-        else {
-            continue;
-        };
-        let tokens = call.split_whitespace().collect::<Vec<_>>();
-        if tokens.len() != 3 || tokens[0] != "get" || tokens[1] != "?props" {
-            continue;
-        }
-        let Some(key) = tokens[2].strip_prefix(':').filter(|key| !key.is_empty()) else {
-            continue;
-        };
-        if key
-            .chars()
-            .any(|c| c.is_whitespace() || "()[]{}".contains(c))
-        {
-            continue;
-        }
-        lowered.insert(index, Pred::PageProperty(key.to_string(), None));
-        consumed.insert(relations[0]);
-    }
-    (lowered, consumed)
-}
-
-/// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
-/// stopping at the first top-level *closing* bracket (so scanning after `:where`
-/// halts at the find-vector's `]` rather than swallowing `:inputs`).
-fn scan_groups(s: &str) -> Vec<String> {
-    let b = s.as_bytes();
-    let mut i = 0;
-    let mut out = Vec::new();
-    while i < b.len() {
-        let c = b[i] as char;
-        if c == ')' || c == ']' || c == '}' {
-            break;
-        }
-        // EDN/DataScript line comment (`; …` to end of line) — skip it so example
-        // clauses written inside a `;;` hint are NOT parsed as real groups.
-        if c == ';' {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        if c == '(' || c == '[' {
-            let start = i;
-            let mut depth = 0;
-            let mut in_str = false;
-            while i < b.len() {
-                let ch = b[i] as char;
-                if in_str {
-                    if ch == '\\' {
-                        i += 2;
-                        continue;
-                    }
-                    if ch == '"' {
-                        in_str = false;
-                    }
-                } else if ch == ';' {
-                    // Comment inside a group body (between clauses) — skip to EOL.
-                    while i < b.len() && b[i] != b'\n' {
-                        i += 1;
-                    }
-                    continue;
-                } else if ch == '"' {
-                    in_str = true;
-                } else if ch == '(' || ch == '[' || ch == '{' {
-                    depth += 1;
-                } else if ch == ')' || ch == ']' || ch == '}' {
-                    depth -= 1;
-                    if depth == 0 {
-                        i += 1;
-                        break;
-                    }
-                }
-                i += 1;
-            }
-            out.push(s[start..i.min(s.len())].to_string());
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
-/// The clause groups in the `:where` section.
-fn where_groups(src: &str) -> Vec<String> {
-    match src.find(":where") {
-        Some(idx) => scan_groups(&src[idx + ":where".len()..]),
-        None => Vec::new(),
-    }
-}
-
-/// Map one `:where` group to a `Pred` (or None → ignored). Recurses for and/or/not.
-fn parse_adv_group(
-    group: &str,
-    inputs: &std::collections::HashMap<String, i64>,
-    today: JournalDate,
-    ran: &mut Vec<String>,
-    ignored: &mut Vec<String>,
-    depth: usize,
-) -> Option<Pred> {
-    if depth > QUERY_NESTING_MAX {
-        ignored.push("query-nesting-too-deep".into());
-        return None;
-    }
-    let c = group.trim();
-    if !c.starts_with('(') {
-        ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
-        return None;
-    }
-    if !c.ends_with(')') || c.len() < 2 {
-        ignored.push("pattern".into());
-        return None;
-    }
-    let inner = &c[1..c.len() - 1];
-    let head = inner
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match head.as_str() {
-        "and" | "or" | "not" => {
-            let kids: Vec<Pred> = scan_groups(inner)
-                .iter()
-                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, depth + 1))
-                .collect();
-            if kids.is_empty() {
-                None
-            } else if head == "not" {
-                Some(Pred::Not(Box::new(kids.into_iter().next().unwrap())))
-            } else if head == "or" {
-                Some(Pred::Or(kids))
-            } else {
-                Some(Pred::And(kids))
-            }
-        }
-        "task" | "todo" => {
-            ran.push("task".into());
-            Some(Pred::Task(adv_strings(inner)))
-        }
-        "priority" => {
-            ran.push("priority".into());
-            Some(Pred::Priority(adv_strings(inner)))
-        }
-        "page-ref" => adv_strings(inner).into_iter().next().map(|n| {
-            ran.push("page-ref".into());
-            Pred::PageRef(n)
-        }),
-        "property" | "page-property" => inner
-            .split_whitespace()
-            .skip(1)
-            .find(|t| t.starts_with(':'))
-            .map(|t| t.trim_start_matches(':').to_string())
-            .map(|k| {
-                let val = adv_strings(inner).into_iter().next();
-                ran.push(head.clone());
-                if head == "property" {
-                    Pred::Property(k, val)
-                } else {
-                    Pred::PageProperty(k, val)
-                }
-            }),
-        "page" => adv_strings(inner).into_iter().next().map(|n| {
-            ran.push("page".into());
-            Pred::Page(n)
-        }),
-        "namespace" => adv_strings(inner).into_iter().next().map(|n| {
-            ran.push("namespace".into());
-            Pred::Namespace(n)
-        }),
-        "page-tags" | "tags" => {
-            let ts = adv_strings(inner);
-            if ts.is_empty() {
-                ignored.push(head.clone());
-                None
-            } else {
-                ran.push("page-tags".into());
-                Some(Pred::PageTags(ts))
-            }
-        }
-        "scheduled" => {
-            ran.push("scheduled".into());
-            Some(Pred::Scheduled)
-        }
-        "deadline" => {
-            ran.push("deadline".into());
-            Some(Pred::Deadline)
-        }
-        "journal" => {
-            ran.push("journal".into());
-            Some(Pred::Journal)
-        }
-        "between" => {
-            // (between [FIELD] ?b ?start ?end): the last two args are always the
-            // bounds. An optional field keyword (journal|scheduled|deadline) may
-            // appear among the earlier args — matching the simple parser. The bare
-            // `(between ?b lo hi)` keeps OG's journal-day semantics.
-            let args: Vec<&str> = inner.split_whitespace().skip(1).collect();
-            if args.len() < 2 {
-                ignored.push("between".into());
-                return None;
-            }
-            let field = args
-                .iter()
-                .take(args.len() - 2)
-                .find_map(
-                    |a| match a.trim_start_matches(':').to_ascii_lowercase().as_str() {
-                        "scheduled" => Some(BetweenField::Scheduled),
-                        "deadline" => Some(BetweenField::Deadline),
-                        "journal" => Some(BetweenField::Journal),
-                        _ => None,
-                    },
-                )
-                .unwrap_or(BetweenField::Journal);
-            let lo = adv_bound(args[args.len() - 2], inputs, today);
-            let hi = adv_bound(args[args.len() - 1], inputs, today);
-            if lo.is_none() && hi.is_none() {
-                ignored.push("between".into());
-                return None;
-            }
-            let (lo, hi) = ordered_bounds(lo, hi);
-            ran.push("between".into());
-            Some(Pred::Between(field, lo, hi))
-        }
-        other => {
-            if !other.is_empty() {
-                ignored.push(other.to_string());
-            }
-            None
-        }
-    }
-}
-
-/// All double-quoted string literals in a clause (markers, page names, values).
-fn adv_strings(s: &str) -> Vec<String> {
-    let b = s.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'"' {
-            let start = i + 1;
-            i += 1;
-            while i < b.len() && b[i] != b'"' {
-                if b[i] == b'\\' {
-                    i += 1;
-                }
-                i += 1;
-            }
-            out.push(s[start..i.min(s.len())].to_string());
-        }
-        i += 1;
-    }
-    out
-}
-
-/// Resolve a `between` bound: an input `?var` (looked up) or a literal token.
-fn adv_bound(
-    tok: &str,
-    inputs: &std::collections::HashMap<String, i64>,
-    today: JournalDate,
-) -> Option<i64> {
-    let t = tok.trim();
-    if t.starts_with('?') {
-        return inputs.get(t).copied();
-    }
-    // A literal bound may be written as a bare token (`2026-06-24`) or a quoted
-    // string (`"2026-06-24"`); `split_whitespace` keeps the quotes, so strip them.
-    resolve_date_token(t.trim_matches('"').trim_start_matches(':'), today)
-}
-
-/// Build a `?var → yyyymmdd` map by zipping `:in $ ?a ?b …` var names with the
-/// `:inputs [ … ]` values (Logseq's positional binding). Only date inputs resolve
-/// to an ordinal; others (e.g. `:current-page`) are skipped — their pattern
-/// clause is ignored anyway.
-fn resolve_inputs(src: &str, today: JournalDate) -> std::collections::HashMap<String, i64> {
-    let mut map = std::collections::HashMap::new();
-    let vars: Vec<String> = match src.find(":in") {
-        Some(i) => {
-            let rest = &src[i + 3..];
-            let end = rest
-                .find(":where")
-                .or_else(|| rest.find(']'))
-                .unwrap_or(rest.len());
-            rest[..end]
-                .split_whitespace()
-                .filter(|t| t.starts_with('?'))
-                .map(String::from)
-                .collect()
-        }
-        None => Vec::new(),
-    };
-    let vals: Vec<String> = match src.find(":inputs") {
-        Some(i) => {
-            let rest = &src[i + ":inputs".len()..];
-            match (rest.find('['), rest.find(']')) {
-                (Some(a), Some(b)) if b > a => rest[a + 1..b]
-                    .split_whitespace()
-                    .map(String::from)
-                    .collect(),
-                _ => Vec::new(),
-            }
-        }
-        None => Vec::new(),
-    };
-    for (v, val) in vars.iter().zip(vals.iter()) {
-        if let Some(ord) = resolve_date_token(val.trim_start_matches(':'), today) {
-            map.insert(v.clone(), ord);
-        }
-    }
-    map
-}
-
-/// A result block's sort key: a numeric axis (recency, in Unix seconds) or a text
-/// value (priority/page/property/planning date). Within one sort every block uses
-/// the same variant; the derived `Ord` only ever compares like with like.
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-enum SortDecor {
-    Num(i64),
-    Text(String),
-}
-
-/// Fields naming a block's position on the recency time-axis (journal day for
-/// journal pages, file mtime otherwise) — sorted numerically, not lexically.
-/// `modified` is the canonical token; `updated`/`updated-at`/`date` are aliases.
-fn is_recency_field(field: &str) -> bool {
-    matches!(
-        field.to_ascii_lowercase().as_str(),
-        "modified" | "updated" | "updated-at" | "date"
-    )
-}
-
-/// A page's position on the recency axis, in Unix seconds: a journal page by the
-/// midnight of the day it represents (stable — independent of when it was last
-/// edited); any other page by its file's last-modified time. `i64::MIN` when a
-/// non-journal page can't be stat'd (so it sorts oldest).
-fn page_recency_secs(
-    entry: &PageEntry,
-    mtimes: &std::collections::HashMap<String, std::time::SystemTime>,
-) -> i64 {
-    if let Some(dk) = entry.date_key {
-        return JournalDate::from_ordinal(dk).to_days() * 86_400;
-    }
-    mtimes
-        .get(entry.rel_path_str())
-        .copied()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(i64::MIN)
-}
-
-/// Sort key for a result block: the named property's value if present, else the
-/// block's visible first line (lowercased for stable case-insensitive order).
-fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
-    match field.to_ascii_lowercase().as_str() {
-        // Task priority is the `[#A]` marker, NOT a `priority::` property — map it
-        // to A<B<C and sort unprioritized blocks last (so ascending floats A to the
-        // top). Descending naturally reverses (A sinks to the bottom).
-        // Priority off the DTO's lsdoc-derived facet (header-position `[#A]`, matching
-        // the chip) — no reparse, no `[#A]`-anywhere false positive (audit C3/P4).
-        "priority" => b
-            .priority
-            .as_deref()
-            .map_or_else(|| "Z".to_string(), |c| c.to_ascii_uppercase()),
-        // Sort by the source page name.
-        "page" => page.to_lowercase(),
-        // SCHEDULED / DEADLINE planning dates off the DTO facet (lead with
-        // `YYYY-MM-DD`, so lexical order == chronological). Blocks without one sort
-        // last in ascending ("soonest first") order via the high sentinel `~`.
-        "deadline" => b.deadline.clone().unwrap_or_else(|| "~".to_string()),
-        "scheduled" => b.scheduled.clone().unwrap_or_else(|| "~".to_string()),
-        // Otherwise: a block property value (off the DTO's lsdoc properties — no
-        // reparse, format-correct, audit P4), else the block's visible first line.
-        _ => {
-            let field = property_key_norm(field);
-            if let Some((_, v)) = b
-                .properties
-                .iter()
-                .find(|(k, _)| property_key_norm(k) == field)
-            {
-                return v.to_lowercase();
-            }
-            // Fallback: visible text (the DTO carries no visible text; reparse, bounded
-            // to sorted-result blocks via `sort_by_cached_key`).
-            let (_, visible) = tine_core::doc::block_sort_facets(&b.raw);
-            visible.lines().next().unwrap_or("").to_lowercase()
-        }
-    }
+    exec::run_advanced_query_bounded(graph, query_src, max_rows, max_bytes).0
 }
 
 /// Literal fuzzy full-text autocomplete for the `((` block picker, grouped by
@@ -2213,21 +1398,6 @@ fn template_copy_drops_markdown_and_org_ids_regardless_of_case() {
     assert_eq!(copied.raw, "body\n:PROPERTIES:\n:END:\nkeep:: yes");
 }
 
-/// Properties that are internal/metadata and shouldn't be offered as query
-/// filters (mirrors the frontend's hidden-property set).
-const INTERNAL_PROPS: &[&str] = &[
-    "id",
-    "collapsed",
-    "hl-page",
-    "hl-color",
-    "hl-type",
-    "ls-type",
-    "background-color",
-    "logseq.order-list-type",
-    "template",
-    "template-including-parent",
-];
-
 /// Distinct property keys (each with its sorted distinct values) used across the
 /// graph. Drives the query builder's property-filter pickers.
 pub(crate) fn property_facets_bounded(
@@ -2246,7 +1416,10 @@ pub(crate) fn property_facets_bounded(
             if !walk_until(&doc.roots, &mut |b| {
                 for (k, v) in b.properties() {
                     let k = property_key_norm(&k);
-                    if INTERNAL_PROPS.iter().any(|p| property_key_norm(p) == k) {
+                    if tine_core::query::internal_property_keys()
+                        .iter()
+                        .any(|p| property_key_norm(p) == k)
+                    {
                         continue;
                     }
                     if v.trim().is_empty() {
@@ -2930,345 +2103,7 @@ fn resolve_ids_in_page<'a>(
     });
 }
 
-/// Is this query body an advanced datalog query we don't support?
-// ---------------------------------------------------------------------------
-// Query predicate AST + parser + evaluator
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq)]
-enum Pred {
-    PageRef(String),
-    Task(Vec<String>),
-    Priority(Vec<String>),
-    Property(String, Option<String>),
-    Scheduled,
-    Deadline,
-    /// Block lives on a journal page.
-    Journal,
-    /// Date range (inclusive) over a chosen date field. Bounds are `yyyymmdd`
-    /// ordinals; `None` = open.
-    Between(BetweenField, Option<i64>, Option<i64>),
-    /// Blocks on a specific page (by name).
-    Page(String),
-    /// Pages whose name is under a namespace (`ns/…`).
-    Namespace(String),
-    /// A page-level property (on the page's pre-block).
-    PageProperty(String, Option<String>),
-    /// Page has any of these `tags::`.
-    PageTags(Vec<String>),
-    /// Full-text match on the block's visible content.
-    Content(String),
-    /// The friendly Ctrl-K search language, explicitly embedded in the durable
-    /// query DSL. The decoded source is retained exactly and compiled once when
-    /// the surrounding query is parsed.
-    Search(FriendlySearch),
-    /// A case-sensitive Rust regex over the block's projected visible content.
-    /// Invalid patterns are retained but deliberately match nothing.
-    ContentRegex(ContentRegex),
-    And(Vec<Pred>),
-    Or(Vec<Pred>),
-    Not(Box<Pred>),
-    /// Result-level options (always pass as filters; collected as `QueryOpts`).
-    Sample(usize),
-    SortBy(String, bool),
-    /// Result-level aggregation, computed in the FRONTEND from the returned block
-    /// list (D1). Parsed-but-ignored here (eval → true) so `run_query` succeeds and
-    /// the builder DSL round-trips; the frontend re-parses the same DSL to render it.
-    Aggregate(AggKind),
-    /// Result-level grouping (`(group-by page|<prop>)`), also frontend-computed.
-    GroupBy(String),
-}
-
-/// Compiled `(search "...")` predicate. Equality intentionally compares the
-/// lossless decoded source rather than the matcher's internal representation;
-/// this keeps parser tests useful without making the shared matcher API expose
-/// implementation details.
-#[derive(Clone)]
-struct FriendlySearch {
-    source: String,
-    matcher: Matcher,
-}
-
-impl FriendlySearch {
-    fn new(source: String) -> Self {
-        let matcher = Matcher::parse(&source);
-        Self { source, matcher }
-    }
-
-    fn matches(&self, block: &DocBlock) -> bool {
-        let projection = block.projection();
-        self.matcher
-            .matches(&projection.visible_lower, &projection.visible)
-    }
-}
-
-impl std::fmt::Debug for FriendlySearch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("FriendlySearch").field(&self.source).finish()
-    }
-}
-
-impl PartialEq for FriendlySearch {
-    fn eq(&self, other: &Self) -> bool {
-        self.source == other.source
-    }
-}
-
-/// Compiled `(content-regex "...")` predicate. Keeping an invalid pattern as
-/// `None` makes its behavior deterministic (no panic, no accidental match-all)
-/// while retaining the original source for diagnostics and round-tripping.
-#[derive(Clone)]
-struct ContentRegex {
-    source: String,
-    compiled: Option<regex::Regex>,
-}
-
-impl ContentRegex {
-    fn new(source: String) -> Self {
-        let compiled = regex::Regex::new(&source).ok();
-        Self { source, compiled }
-    }
-
-    fn matches(&self, block: &DocBlock) -> bool {
-        self.compiled
-            .as_ref()
-            .is_some_and(|regex| regex.is_match(&block.projection().visible))
-    }
-}
-
-impl std::fmt::Debug for ContentRegex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ContentRegex")
-            .field("source", &self.source)
-            .field("valid", &self.compiled.is_some())
-            .finish()
-    }
-}
-
-impl PartialEq for ContentRegex {
-    fn eq(&self, other: &Self) -> bool {
-        self.source == other.source
-    }
-}
-
-/// A result aggregation directive. `Sum`/`Avg` carry the property whose numeric
-/// values are combined; `Count` needs no field.
-#[derive(Debug, Clone, PartialEq)]
-enum AggKind {
-    Count,
-    Sum(String),
-    Avg(String),
-}
-
-/// Which date a `between` range is tested against.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum BetweenField {
-    /// Journal date OR scheduled OR deadline. This is a Tine extension and is
-    /// requested explicitly as `(between any …)`; OG's fieldless form is
-    /// journal-only.
-    Any,
-    /// The page's journal date only — implies journal pages, matching OG's
-    /// `:between` rule (`:block/journal? true`).
-    Journal,
-    Scheduled,
-    Deadline,
-}
-
-/// Result-level options extracted from the query (sample, sort-by).
-#[derive(Debug, Default, Clone)]
-struct QueryOpts {
-    sample: Option<usize>,
-    sort: Option<(String, bool)>, // (field, ascending)
-}
-
-/// Per-block evaluation context (the page it lives on).
-struct EvalCtx<'a> {
-    /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
-    journal: Option<i64>,
-    /// Whether the block lives on a journal page (drives `(journal)`).
-    is_journal: bool,
-    page_name: &'a str,
-    page_props: &'a [(String, String)],
-    page_tags: &'a [String],
-}
-
-fn date_ordinal(y: i64, m: i64, d: i64) -> i64 {
-    y * 10000 + m * 100 + d
-}
-
-/// Parse an org timestamp body like `<2026-06-15 Mon>` to a `yyyymmdd` ordinal.
-fn parse_angle_date(s: &str) -> Option<i64> {
-    let s = s.trim().strip_prefix('<')?;
-    let end = s.find([' ', '>']).unwrap_or(s.len());
-    let mut it = s[..end].split('-');
-    let y: i64 = it.next()?.parse().ok()?;
-    let m: i64 = it.next()?.parse().ok()?;
-    let d: i64 = it.next()?.parse().ok()?;
-    Some(date_ordinal(y, m, d))
-}
-
-/// Ordinals from a block's SCHEDULED:/DEADLINE: lines. `only` restricts to one
-/// marker (`"SCHEDULED:"` / `"DEADLINE:"`); `None` returns both.
-fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
-    // Match the planning marker ANYWHERE on a line (not just at line start), so an
-    // inline `TODO SCHEDULED: <…> do the thing` is found too — consistent with the
-    // lenient render (block.ts) and `Pred::Scheduled`'s `raw.contains`. The angle
-    // date is parsed from just after the marker; trailing text is ignored.
-    let want_sched = !matches!(only, Some("DEADLINE:"));
-    let want_dead = !matches!(only, Some("SCHEDULED:"));
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        if want_sched {
-            if let Some(i) = line.find("SCHEDULED:") {
-                if let Some(o) = parse_angle_date(&line[i + "SCHEDULED:".len()..]) {
-                    out.push(o);
-                }
-            }
-        }
-        if want_dead {
-            if let Some(i) = line.find("DEADLINE:") {
-                if let Some(o) = parse_angle_date(&line[i + "DEADLINE:".len()..]) {
-                    out.push(o);
-                }
-            }
-        }
-    }
-    out
-}
-
-impl Pred {
-    fn parse(src: &str, today: JournalDate) -> Option<Pred> {
-        if is_advanced(src) || !query_source_within_limit(src) || !query_nesting_within_limit(src) {
-            return None;
-        }
-        let tokens = tokenize(src);
-        let mut pos = 0;
-        let p = parse_expr(&tokens, &mut pos, today, 0)?;
-        Some(p)
-    }
-
-    /// Pull result-level options (sample / sort-by) out of the tree.
-    fn collect_opts(&self, opts: &mut QueryOpts) {
-        match self {
-            Pred::Sample(n) => opts.sample = Some(*n),
-            Pred::SortBy(f, asc) => opts.sort = Some((f.clone(), *asc)),
-            Pred::And(ps) | Pred::Or(ps) => ps.iter().for_each(|p| p.collect_opts(opts)),
-            Pred::Not(p) => p.collect_opts(opts),
-            _ => {}
-        }
-    }
-
-    fn uses_path_refs(&self) -> bool {
-        match self {
-            Pred::PageRef(_) => true,
-            Pred::And(ps) | Pred::Or(ps) => ps.iter().any(Pred::uses_path_refs),
-            Pred::Not(p) => p.uses_path_refs(),
-            _ => false,
-        }
-    }
-
-    #[cfg(test)]
-    fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
-        self.eval_with_path_refs(block, &PathRefCounts::new(), ctx)
-    }
-
-    fn eval_with_path_refs(
-        &self,
-        block: &DocBlock,
-        ancestor_refs: &PathRefCounts,
-        ctx: &EvalCtx,
-    ) -> bool {
-        match self {
-            // OG's `:page-ref` query rule reads `:block/path-refs`, which is the
-            // union of this block's explicit refs, every ancestor's refs, and
-            // the page a block physically belongs to. `(page …)` below
-            // deliberately remains membership-only.
-            Pred::PageRef(name) => {
-                let normalized = refs::normalize(name);
-                block.projection().refs_contains_norm(&normalized)
-                    || ancestor_refs.contains_key(&normalized)
-                    || refs::normalize(ctx.page_name) == normalized
-            }
-            Pred::Task(markers) => block
-                .marker()
-                .map(|m| markers.iter().any(|x| x.eq_ignore_ascii_case(m)))
-                .unwrap_or(false),
-            Pred::Priority(ps) => block
-                .priority()
-                .map(|p| ps.iter().any(|x| x.eq_ignore_ascii_case(p)))
-                .unwrap_or(false),
-            Pred::Property(key, val) => {
-                let key = property_key_norm(key);
-                block
-                    .properties()
-                    .iter()
-                    .any(|(k, v)| property_key_norm(k) == key && value_matches(v, val.as_deref()))
-            }
-            Pred::Scheduled => block.raw().contains("SCHEDULED:"),
-            Pred::Deadline => block.raw().contains("DEADLINE:"),
-            Pred::Journal => ctx.is_journal,
-            Pred::Between(field, lo, hi) => {
-                let in_range = |c: i64| lo.map_or(true, |l| c >= l) && hi.map_or(true, |h| c <= h);
-                match field {
-                    BetweenField::Any => {
-                        ctx.journal.is_some_and(in_range)
-                            || block_date_ordinals(block.raw(), None)
-                                .into_iter()
-                                .any(in_range)
-                    }
-                    BetweenField::Journal => ctx.journal.is_some_and(in_range),
-                    BetweenField::Scheduled => block_date_ordinals(block.raw(), Some("SCHEDULED:"))
-                        .into_iter()
-                        .any(in_range),
-                    BetweenField::Deadline => block_date_ordinals(block.raw(), Some("DEADLINE:"))
-                        .into_iter()
-                        .any(in_range),
-                }
-            }
-            Pred::Page(name) => refs::normalize(ctx.page_name) == refs::normalize(name),
-            Pred::Namespace(ns) => {
-                let p = refs::normalize(ctx.page_name);
-                let n = refs::normalize(ns);
-                p.starts_with(&format!("{n}/"))
-            }
-            Pred::PageProperty(key, val) => {
-                let key = property_key_norm(key);
-                ctx.page_props
-                    .iter()
-                    .any(|(k, v)| property_key_norm(k) == key && value_matches(v, val.as_deref()))
-            }
-            Pred::PageTags(tags) => tags
-                .iter()
-                .any(|t| ctx.page_tags.iter().any(|pt| pt.eq_ignore_ascii_case(t))),
-            // `s` is already lowercased at parse time; `visible_lower` is the
-            // block's lowercased visible text — a direct substring test.
-            Pred::Content(s) => block.projection().visible_lower.contains(s.as_str()),
-            Pred::Search(search) => search.matches(block),
-            Pred::ContentRegex(regex) => regex.matches(block),
-            Pred::And(ps) => ps
-                .iter()
-                .all(|p| p.eval_with_path_refs(block, ancestor_refs, ctx)),
-            Pred::Or(ps) => ps
-                .iter()
-                .any(|p| p.eval_with_path_refs(block, ancestor_refs, ctx)),
-            Pred::Not(p) => !p.eval_with_path_refs(block, ancestor_refs, ctx),
-            // Options and frontend-computed directives are not filters.
-            Pred::Sample(_) | Pred::SortBy(..) | Pred::Aggregate(_) | Pred::GroupBy(_) => true,
-        }
-    }
-}
-
-/// Match a stored property value against a query value. Handles multi-value
-/// (comma-separated) and page-ref / tag wrapping, case-insensitively. A `None`
-/// query value matches any present value.
-fn value_matches(stored: &str, query: Option<&str>) -> bool {
-    let Some(q) = query else { return true };
-    let q = strip_ref(q).to_lowercase();
-    stored
-        .split(',')
-        .map(|p| strip_ref(p.trim()).to_lowercase())
-        .any(|v| v == q)
-}
+/// A page-ref argument's bare name: `#tag`, `[[Page]]` and `Page` alike.
 fn strip_ref(s: &str) -> String {
     let t = s.trim();
     let t = t.strip_prefix('#').unwrap_or(t).trim();
@@ -3277,393 +2112,6 @@ fn strip_ref(s: &str) -> String {
         .and_then(|x| x.strip_suffix("]]"))
         .unwrap_or(t);
     t.trim().to_string()
-}
-
-/// Resolve a `between` bound token to a `yyyymmdd` ordinal: `today`/`yesterday`/
-/// `tomorrow`, signed durations `±N[dwmy]`, `yyyy-MM-dd`, or a journal title.
-fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
-    let t = tok.trim();
-    match t.to_ascii_lowercase().as_str() {
-        "today" | "now" => return Some(today.ordinal_key()),
-        "yesterday" => return Some(today.add_days(-1).ordinal_key()),
-        "tomorrow" => return Some(today.add_days(1).ordinal_key()),
-        _ => {}
-    }
-    if let Some(d) = parse_relative(t, today) {
-        return Some(d.ordinal_key());
-    }
-    if let Some(jd) = JournalDate::from_file_stem(t) {
-        return Some(jd.ordinal_key());
-    }
-    journal_ordinal(t)
-}
-
-/// OG's `build-between-two-arg` orders its two resolved bounds before building
-/// the predicate, so `(between END START)` has the same inclusive interval as
-/// `(between START END)`. Preserve open bounds used by Tine's advanced subset.
-fn ordered_bounds(lo: Option<i64>, hi: Option<i64>) -> (Option<i64>, Option<i64>) {
-    match (lo, hi) {
-        (Some(lo), Some(hi)) if lo > hi => (Some(hi), Some(lo)),
-        pair => pair,
-    }
-}
-
-/// Parse a signed relative duration like `-7d`, `+2w`, `3m`, `-1y` off `today`.
-fn parse_relative(t: &str, today: JournalDate) -> Option<JournalDate> {
-    let bytes = t.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    let (sign, rest) = match bytes[0] {
-        b'+' => (1i64, &t[1..]),
-        b'-' => (-1i64, &t[1..]),
-        _ => (1i64, t),
-    };
-    let unit = rest.chars().last()?;
-    if !matches!(unit, 'd' | 'w' | 'm' | 'y') {
-        return None;
-    }
-    let n: i64 = rest[..rest.len() - 1].parse().ok()?;
-    let n = sign * n;
-    Some(match unit {
-        'd' => today.add_days(n),
-        'w' => today.add_days(n * 7),
-        'm' => today.add_months(n),
-        'y' => today.add_months(n * 12),
-        _ => return None,
-    })
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Tok {
-    LParen,
-    RParen,
-    PageRef(String), // [[...]]
-    Tag(String),     // #...
-    Word(String),
-    Str(String),
-}
-
-fn tokenize(src: &str) -> Vec<Tok> {
-    let mut toks = Vec::new();
-    let mut i = 0;
-    let chars: Vec<char> = src.chars().collect();
-    while i < chars.len() {
-        let c = chars[i];
-        if c.is_whitespace() {
-            i += 1;
-        } else if c == '(' {
-            toks.push(Tok::LParen);
-            i += 1;
-        } else if c == ')' {
-            toks.push(Tok::RParen);
-            i += 1;
-        } else if c == '[' && i + 1 < chars.len() && chars[i + 1] == '[' {
-            // [[ ... ]]
-            let mut j = i + 2;
-            let mut name = String::new();
-            while j + 1 < chars.len() && !(chars[j] == ']' && chars[j + 1] == ']') {
-                name.push(chars[j]);
-                j += 1;
-            }
-            toks.push(Tok::PageRef(name));
-            i = j + 2;
-        } else if c == '#' {
-            if i + 2 < chars.len() && chars[i + 1] == '[' && chars[i + 2] == '[' {
-                let mut j = i + 3;
-                let mut name = String::new();
-                while j + 1 < chars.len() && !(chars[j] == ']' && chars[j + 1] == ']') {
-                    name.push(chars[j]);
-                    j += 1;
-                }
-                toks.push(Tok::Tag(name));
-                i = j + 2;
-            } else {
-                let mut j = i + 1;
-                let mut name = String::new();
-                while j < chars.len()
-                    && (chars[j].is_alphanumeric() || matches!(chars[j], '-' | '_' | '/' | '.'))
-                {
-                    name.push(chars[j]);
-                    j += 1;
-                }
-                toks.push(Tok::Tag(name));
-                i = j;
-            }
-        } else if c == '"' {
-            let mut j = i + 1;
-            let mut s = String::new();
-            // Escape-aware: ONLY `\"` and `\\` are escapes (→ literal quote/
-            // backslash), so a quote inside the value doesn't end the string
-            // early. A backslash before any other char is kept literally, so a
-            // hand-authored path like `"C:\tmp"` round-trips unchanged (mirrors
-            // the frontend query-builder tokenizer + serializer's quoteStr).
-            while j < chars.len() && chars[j] != '"' {
-                if chars[j] == '\\' && matches!(chars.get(j + 1), Some('"') | Some('\\')) {
-                    s.push(chars[j + 1]);
-                    j += 2;
-                } else {
-                    s.push(chars[j]);
-                    j += 1;
-                }
-            }
-            toks.push(Tok::Str(s));
-            i = j + 1;
-        } else {
-            let mut j = i;
-            let mut w = String::new();
-            while j < chars.len() && !chars[j].is_whitespace() && !matches!(chars[j], '(' | ')') {
-                w.push(chars[j]);
-                j += 1;
-            }
-            toks.push(Tok::Word(w));
-            i = j;
-        }
-    }
-    toks
-}
-
-fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate, depth: usize) -> Option<Pred> {
-    if depth > QUERY_NESTING_MAX {
-        return None;
-    }
-    let t = toks.get(*pos)?.clone();
-    match t {
-        Tok::PageRef(name) | Tok::Tag(name) => {
-            *pos += 1;
-            Some(Pred::PageRef(name))
-        }
-        // A bare quoted string is a full-text content filter. Fold to lowercase
-        // ONCE here (the match is case-insensitive) so the per-block evaluator
-        // compares against an already-lowered term instead of re-lowering the
-        // constant query string for every candidate block (perf Codex#7).
-        Tok::Str(s) => {
-            *pos += 1;
-            Some(Pred::Content(tine_core::search_query::canonical_fold(&s)))
-        }
-        // Logseq's simple-query macros substitute parser-decoded arguments into
-        // the query template. A quoted invocation argument can therefore arrive
-        // here as a bare word. It is still a block-content term, not syntax to
-        // silently discard.
-        Tok::Word(s) => {
-            *pos += 1;
-            Some(Pred::Content(tine_core::search_query::canonical_fold(&s)))
-        }
-        Tok::LParen => {
-            *pos += 1; // consume (
-            let head = match toks.get(*pos)? {
-                Tok::Word(w) => w.to_lowercase(),
-                _ => return None,
-            };
-            *pos += 1;
-            let pred = match head.as_str() {
-                "and" => Pred::And(parse_list(toks, pos, today, depth + 1)),
-                "or" => Pred::Or(parse_list(toks, pos, today, depth + 1)),
-                "not" => Pred::Not(Box::new(parse_expr(toks, pos, today, depth + 1)?)),
-                "task" | "todo" => {
-                    let markers = parse_words(toks, pos);
-                    // `(todo)` with no args means any open task.
-                    if markers.is_empty() {
-                        Pred::Task(vec![
-                            "TODO".into(),
-                            "DOING".into(),
-                            "NOW".into(),
-                            "LATER".into(),
-                        ])
-                    } else {
-                        Pred::Task(markers)
-                    }
-                }
-                "priority" => {
-                    let ps = parse_words(toks, pos);
-                    if ps.is_empty() {
-                        Pred::Priority(vec!["A".into(), "B".into(), "C".into()])
-                    } else {
-                        Pred::Priority(ps)
-                    }
-                }
-                "page-ref" | "tag" => {
-                    let name = parse_name(toks, pos)?;
-                    Pred::PageRef(name)
-                }
-                "page" => {
-                    let name = parse_name(toks, pos)?;
-                    Pred::Page(name)
-                }
-                "namespace" => {
-                    let name = parse_name(toks, pos)?;
-                    Pred::Namespace(name)
-                }
-                "property" => {
-                    let key = normalize_prop_key(&parse_name(toks, pos)?);
-                    let val = parse_opt_value(toks, pos);
-                    Pred::Property(key, val)
-                }
-                "page-property" => {
-                    let key = normalize_prop_key(&parse_name(toks, pos)?);
-                    let val = parse_opt_value(toks, pos);
-                    Pred::PageProperty(key, val)
-                }
-                "page-tags" | "tags" => Pred::PageTags(parse_words(toks, pos)),
-                "search" => Pred::Search(FriendlySearch::new(parse_name(toks, pos)?)),
-                "content-regex" => Pred::ContentRegex(ContentRegex::new(parse_name(toks, pos)?)),
-                "scheduled" => Pred::Scheduled,
-                "deadline" => Pred::Deadline,
-                "journal" => Pred::Journal,
-                "between" => {
-                    // (between [FIELD] START END): optional leading field keyword
-                    // journal|scheduled|deadline|any (default Journal, matching
-                    // OG; `any` retains Tine's journal-or-planning extension);
-                    // bounds are journal titles,
-                    // `today`/`yesterday`/`tomorrow`, signed durations `±N[dwmy]`,
-                    // or `yyyy-MM-dd`.
-                    let field = match toks.get(*pos) {
-                        Some(Tok::Word(w)) => match w.to_ascii_lowercase().as_str() {
-                            "journal" => {
-                                *pos += 1;
-                                BetweenField::Journal
-                            }
-                            "scheduled" => {
-                                *pos += 1;
-                                BetweenField::Scheduled
-                            }
-                            "deadline" => {
-                                *pos += 1;
-                                BetweenField::Deadline
-                            }
-                            "any" => {
-                                *pos += 1;
-                                BetweenField::Any
-                            }
-                            _ => BetweenField::Journal,
-                        },
-                        _ => BetweenField::Journal,
-                    };
-                    let lo = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
-                    let hi = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
-                    let (lo, hi) = ordered_bounds(lo, hi);
-                    Pred::Between(field, lo, hi)
-                }
-                "sample" => {
-                    let n = parse_name(toks, pos)
-                        .and_then(|s| s.parse::<usize>().ok())
-                        .unwrap_or(0);
-                    Pred::Sample(n)
-                }
-                "sort-by" => {
-                    let field = parse_name(toks, pos).unwrap_or_default();
-                    let dir = parse_opt_name(toks, pos).unwrap_or_else(|| "asc".into());
-                    Pred::SortBy(field, !dir.eq_ignore_ascii_case("desc"))
-                }
-                // Frontend-computed result directives (D1/D2): parse-but-ignore so
-                // run_query succeeds and the builder round-trips the DSL text.
-                "aggregate" => {
-                    let kind = match parse_name(toks, pos) {
-                        Some(k) => match k.to_ascii_lowercase().as_str() {
-                            "sum" => AggKind::Sum(parse_name(toks, pos).unwrap_or_default()),
-                            "avg" | "average" => {
-                                AggKind::Avg(parse_name(toks, pos).unwrap_or_default())
-                            }
-                            _ => AggKind::Count,
-                        },
-                        None => AggKind::Count,
-                    };
-                    Pred::Aggregate(kind)
-                }
-                "group-by" => Pred::GroupBy(parse_name(toks, pos).unwrap_or_else(|| "page".into())),
-                _ => return None,
-            };
-            // consume closing )
-            if let Some(Tok::RParen) = toks.get(*pos) {
-                *pos += 1;
-            }
-            Some(pred)
-        }
-        _ => None,
-    }
-}
-
-fn parse_list(toks: &[Tok], pos: &mut usize, today: JournalDate, depth: usize) -> Vec<Pred> {
-    let mut out = Vec::new();
-    while let Some(t) = toks.get(*pos) {
-        if *t == Tok::RParen {
-            break;
-        }
-        match parse_expr(toks, pos, today, depth) {
-            Some(p) => out.push(p),
-            None => break,
-        }
-    }
-    out
-}
-
-fn parse_words(toks: &[Tok], pos: &mut usize) -> Vec<String> {
-    let mut out = Vec::new();
-    while let Some(t) = toks.get(*pos) {
-        match t {
-            Tok::Word(w) => {
-                out.push(w.clone());
-                *pos += 1;
-            }
-            Tok::Str(s) => {
-                out.push(s.clone());
-                *pos += 1;
-            }
-            Tok::Tag(s) | Tok::PageRef(s) => {
-                out.push(s.clone());
-                *pos += 1;
-            }
-            _ => break,
-        }
-    }
-    out
-}
-
-fn parse_name(toks: &[Tok], pos: &mut usize) -> Option<String> {
-    match toks.get(*pos)?.clone() {
-        Tok::Word(w) => {
-            *pos += 1;
-            Some(w)
-        }
-        Tok::Str(s) => {
-            *pos += 1;
-            Some(s)
-        }
-        Tok::PageRef(s) | Tok::Tag(s) => {
-            *pos += 1;
-            Some(s)
-        }
-        _ => None,
-    }
-}
-
-fn parse_opt_name(toks: &[Tok], pos: &mut usize) -> Option<String> {
-    match toks.get(*pos) {
-        Some(Tok::Word(_)) | Some(Tok::Str(_)) => parse_name(toks, pos),
-        _ => None,
-    }
-}
-
-/// A property KEY normalized the way Logseq's query DSL does: drop a leading `:`,
-/// lowercase, and map spaces/underscores to dashes. Thus keyword and symbol forms
-/// share the same effective key as the stored-property comparison.
-fn normalize_prop_key(k: &str) -> String {
-    property_key_norm(k.trim_start_matches(':'))
-}
-
-/// Optional property VALUE: like `parse_opt_name`, but also accepts a `[[page]]`
-/// or `#tag` token (Logseq's parse-property-value extracts the page name and
-/// strips a leading `#`; `value_matches` does the ref/tag stripping on both
-/// sides). WITHOUT this, `(property k [[Page]])` / `(property k #tag)` dropped the
-/// value AND leaked the ref token, which was then mis-parsed as a stray page-ref
-/// clause — the second reported failure mode.
-fn parse_opt_value(toks: &[Tok], pos: &mut usize) -> Option<String> {
-    match toks.get(*pos) {
-        Some(Tok::Word(_)) | Some(Tok::Str(_)) | Some(Tok::PageRef(_)) | Some(Tok::Tag(_)) => {
-            parse_name(toks, pos)
-        }
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -3747,10 +2195,6 @@ mod tests {
         day: 16,
     };
 
-    fn pred(src: &str) -> Pred {
-        Pred::parse(src, TODAY).expect("parse")
-    }
-
     fn nested_boolean(head: &str, depth: usize, leaf: &str) -> String {
         format!(
             "{}{}{}",
@@ -3760,51 +2204,526 @@ mod tests {
         )
     }
 
+    // The Pred engine's parser/evaluator unit tests are replaced by the tests
+    // below, which assert the same selections through the ONE executor
+    // (`exec`, over a real snapshot) instead of a private AST. The parse
+    // shapes themselves are pinned by tine-core's `query/og.rs` and
+    // `query/parse_tests.rs` (og 14 Q1).
+
+    fn one_page(name: &str, journal: Option<i64>, source: &str) -> crate::model::ReadSnapshot {
+        let dir = if journal.is_some() {
+            "journals"
+        } else {
+            "pages"
+        };
+        let rel = format!("{dir}/{}.md", name.replace('/', "___"));
+        let entry = PageEntry {
+            name: name.into(),
+            kind: if journal.is_some() {
+                PageKind::Journal
+            } else {
+                PageKind::Page
+            },
+            date_key: journal,
+            rel_path: Some(rel.as_str().into()),
+            path: rel.as_str().into(),
+        };
+        crate::model::ReadSnapshot::from_page_snapshot(vec![(
+            entry,
+            std::sync::Arc::new(tine_core::doc::parse(source)),
+        )])
+    }
+
+    fn block(raw: &str) -> String {
+        format!("- {}\n", raw.replace('\n', "\n  "))
+    }
+
+    /// First lines of the blocks `query` (OG DSL, executed on TODAY) returns.
+    fn hits_on(query: &str, name: &str, journal: Option<i64>, source: &str) -> Vec<String> {
+        let graph = one_page(name, journal, source);
+        exec::run_query_at(&graph, query, usize::MAX, usize::MAX, TODAY)
+            .0
+            .groups
+            .into_iter()
+            .flat_map(|group| group.blocks)
+            .map(|block| block.raw.lines().next().unwrap_or("").to_string())
+            .collect()
+    }
+
+    /// Whether `query` selects the one block `raw` on an ordinary page.
+    fn selects(query: &str, raw: &str) -> bool {
+        !hits_on(query, "Test", None, &block(raw)).is_empty()
+    }
+
+    /// Whether `query` selects the one block `raw` on the journal of `day`.
+    fn selects_on_journal(query: &str, day: i64, raw: &str) -> bool {
+        !hits_on(query, "Journal", Some(day), &block(raw)).is_empty()
+    }
+
     #[test]
     fn query_parsers_fail_closed_past_the_shared_depth_and_size_limits() {
-        let simple_at_limit = nested_boolean("and", QUERY_NESTING_MAX - 1, "(task TODO)");
-        assert!(Pred::parse(&simple_at_limit, TODAY).is_some());
-        let simple_too_deep = nested_boolean("and", QUERY_NESTING_MAX, "(task TODO)");
-        assert!(Pred::parse(&simple_too_deep, TODAY).is_none());
+        const DEPTH: usize = 64;
+        let graph = one_page("Test", None, &block("TODO x"));
+        let simple_at_limit = nested_boolean("and", DEPTH - 1, "(task TODO)");
+        assert_eq!(run_query(&graph, &simple_at_limit).len(), 1);
+        let simple_too_deep = nested_boolean("and", DEPTH, "(task TODO)");
+        assert!(run_query(&graph, &simple_too_deep).is_empty());
 
         let advanced_at_limit = format!(
             "[:find (pull ?b [*]) :where {}]",
-            nested_boolean("and", QUERY_NESTING_MAX - 1, "(task ?b #{\"TODO\"})")
+            nested_boolean("and", DEPTH - 1, "(task ?b #{\"TODO\"})")
         );
-        let (accepted, _, rejected) = advanced_pred(&advanced_at_limit, TODAY);
+        let accepted = run_advanced_query(&graph, &advanced_at_limit);
         assert!(
-            accepted.is_some(),
-            "unexpected ignored clauses: {rejected:?}"
+            accepted.supported,
+            "unexpected ignored clauses: {:?}",
+            accepted.ignored
         );
+        assert_eq!(accepted.groups.len(), 1);
         let advanced_too_deep = format!(
             "[:find (pull ?b [*]) :where {}]",
-            nested_boolean("and", QUERY_NESTING_MAX, "(task ?b #{\"TODO\"})")
+            nested_boolean("and", DEPTH, "(task ?b #{\"TODO\"})")
         );
-        let (rejected, ran, ignored) = advanced_pred(&advanced_too_deep, TODAY);
-        assert!(rejected.is_none());
-        assert!(ran.is_empty());
-        assert!(ignored.iter().any(|item| item == "query-nesting-too-deep"));
+        let rejected = run_advanced_query(&graph, &advanced_too_deep);
+        assert!(!rejected.supported);
+        assert!(rejected.ran.is_empty());
+        assert!(rejected
+            .ignored
+            .iter()
+            .any(|item| item == "query-nesting-too-deep"));
 
         let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
-        assert!(!query_source_within_limit(&oversized));
-        assert!(Pred::parse(&oversized, TODAY).is_none());
+        assert!(!tine_core::query::query_source_within_limit(&oversized));
+        assert!(run_query(&graph, &oversized).is_empty());
 
-        let harmless = format!("(and (content \"{}\"))", "(".repeat(QUERY_NESTING_MAX + 10));
-        assert!(query_nesting_within_limit(&harmless));
-
-        let simple_semicolon = format!(";{}", "(".repeat(QUERY_NESTING_MAX + 1));
+        let harmless = format!("(and (content \"{}\"))", "(".repeat(DEPTH + 10));
+        assert!(tine_core::query::query_nesting_within_limit(&harmless));
+        let simple_semicolon = format!(";{}", "(".repeat(DEPTH + 1));
         assert!(
-            !query_nesting_within_limit(&simple_semicolon),
+            !tine_core::query::query_nesting_within_limit(&simple_semicolon),
             "semicolon is ordinary text, not a comment, in the simple DSL"
         );
         let advanced_comment = format!(
             "[:find ?b :where ;; {}\n(task ?b #{{\"TODO\"}})]",
-            "(".repeat(QUERY_NESTING_MAX + 1)
+            "(".repeat(DEPTH + 1)
         );
         assert!(
-            query_nesting_within_limit(&advanced_comment),
+            tine_core::query::query_nesting_within_limit(&advanced_comment),
             "advanced EDN comments must not count delimiter text"
         );
+    }
+
+    #[test]
+    fn page_refs_tags_and_booleans_select_blocks() {
+        assert!(selects("[[Foo]]", "x [[Foo]]"));
+        assert!(!selects("[[Foo]]", "x [[Other]]"));
+        assert!(selects("#bar", "x #bar"));
+        assert!(selects("(and [[A]] [[B]])", "x [[A]] [[B]]"));
+        assert!(!selects("(and [[A]] [[B]])", "x [[A]]"));
+        assert!(selects("(not [[A]])", "x [[B]]"));
+        assert!(!selects("(not [[A]])", "x [[A]]"));
+
+        let task = "TODO buy milk for [[Home]]";
+        assert!(selects("(task TODO)", task));
+        assert!(selects("(task TODO DOING)", task));
+        assert!(!selects("(task DONE)", task));
+        assert!(selects("[[Home]]", task));
+        assert!(selects("(and (task TODO) [[Home]])", task));
+        assert!(!selects("(and (task DONE) [[Home]])", task));
+        assert!(selects("(not [[Work]])", task));
+    }
+
+    #[test]
+    fn property_keys_and_ref_values_match_logseq() {
+        let book = "a book\ntype:: book";
+        assert!(selects("(property type book)", book));
+        assert!(selects("(property type)", book));
+        assert!(!selects("(property type article)", book));
+        // Leading `:` on the key is stripped (keyword form == symbol form).
+        assert!(selects("(property :type book)", book));
+        // `_` and `-` fold to one key (Logseq stores `my_key` as `my-key`).
+        assert!(selects("(property my_key v)", "x\nmy-key:: v"));
+        assert!(selects(
+            "(property done-at 2026-07-19)",
+            "shipped task\ndone_at:: 2026-07-19"
+        ));
+        assert!(selects(
+            "(property DONE_AT)",
+            "shipped task\ndone_at:: 2026-07-19"
+        ));
+        // `[[page]]` and `#tag` values are values, not stray page refs.
+        assert!(selects(
+            "(property :fach [[Foo Bar]])",
+            "x\nfach:: [[Foo Bar]]"
+        ));
+        assert!(!selects("(property :fach [[Foo Bar]])", "x [[Foo Bar]]"));
+        assert!(selects(
+            "(property :type #assignment)",
+            "x\ntype:: #assignment"
+        ));
+        // Multi-value properties match any member.
+        let tagged = "x\ntags:: [[research]], optimization";
+        assert!(selects("(property tags research)", tagged));
+        assert!(selects("(property tags optimization)", tagged));
+        assert!(!selects("(property tags cooking)", tagged));
+    }
+
+    #[test]
+    fn reported_and_of_colon_properties_matches_both_clauses() {
+        // GH: this used to parse to And[Property(":fach"), PageRef(X)], dropping
+        // the second clause, so the query answered "No results".
+        let query = r##"(and (property :fach [[Management der digitalen Transformation]]) (property :type "#assignment"))"##;
+        let block = "assignment one\nfach:: [[Management der digitalen Transformation]]\ntype:: #assignment";
+        assert!(selects(query, block));
+        assert!(!selects(
+            query,
+            "assignment one\nfach:: [[Other Course]]\ntype:: #assignment"
+        ));
+        assert!(!selects(
+            query,
+            "assignment one\nfach:: [[Management der digitalen Transformation]]\ntype:: essay"
+        ));
+    }
+
+    #[test]
+    fn content_terms_unescape_and_match_canonical_unicode() {
+        // `\"`/`\\` inside a quoted term are unescaped; any other backslash is
+        // literal, so `"C:\tmp"` stays `C:\tmp`.
+        assert!(selects("\"foo \\\"bar\\\"\"", "note: foo \"bar\" baz"));
+        assert!(!selects("\"foo \\\"bar\\\"\"", "note: foo bar baz"));
+        assert!(selects("\"a\\\\b\"", "x a\\b y"));
+        assert!(selects("\"C:\\tmp\"", "open C:\\tmp now"));
+        assert!(selects("\"quick brown\"", "the quick brown fox"));
+        assert!(!selects("\"slow\"", "the quick brown fox"));
+        // Canonical composition, no accent folding.
+        assert!(selects("\"Résumé\"", "Re\u{301}sume\u{301}"));
+        assert!(!selects("\"Resume\"", "Re\u{301}sume\u{301}"));
+    }
+
+    /// Macro arguments arrive without their source quotes after the parser has
+    /// expanded `$1`. OG's simple query reader treats that bare value as a
+    /// block-content term; Tine must not silently drop it from an `and` form.
+    #[test]
+    fn og_bare_word_is_a_content_term() {
+        let query = "(and (task DONE) changelog)";
+        assert!(selects(query, "DONE Write changelog for v0.0.9"));
+        assert!(!selects(query, "DONE Publish release notes"));
+    }
+
+    #[test]
+    fn search_predicate_preserves_escaped_friendly_source_and_evaluates_it() {
+        let query = r#"(search "foo \"exact phrase\" -draft OR C:\\tmp")"#;
+        assert!(selects(query, "foo and an exact phrase, ready"));
+        assert!(!selects(query, "foo and an exact phrase, but draft"));
+        // The decoded backslash reaches the friendly parser losslessly.
+        assert!(selects(query, r"open C:\tmp\notes"));
+        // It remains an ordinary composable clause.
+        let task_search = r#"(and (task TODO) (search "foo -draft"))"#;
+        assert!(selects(task_search, "TODO foo ready"));
+        assert!(!selects(task_search, "DONE foo ready"));
+    }
+
+    #[test]
+    fn content_regex_preserves_escapes_and_invalid_patterns_match_nothing() {
+        let query = r#"(content-regex "ID:\\s+[A-Z]{3}\\d+\\s+\"quoted\"")"#;
+        assert!(selects(query, r#"prefix ID: ABC42 "quoted" suffix"#));
+        // Regex matching is case-sensitive.
+        assert!(!selects(query, r#"prefix ID: abc42 "quoted" suffix"#));
+        assert!(!selects(r#"(content-regex "[unclosed")"#, "[unclosed"));
+    }
+
+    #[test]
+    fn aggregate_and_group_by_do_not_filter() {
+        // The directives ride in the DSL so the builder round-trips; they are
+        // view settings and never restrict the matches.
+        for directive in [
+            "(aggregate count)",
+            "(aggregate sum hours)",
+            "(group-by page)",
+        ] {
+            assert!(selects(
+                &format!("(and (task TODO) {directive})"),
+                "TODO ship it"
+            ));
+            assert!(!selects(
+                &format!("(and (task DONE) {directive})"),
+                "TODO ship it"
+            ));
+        }
+    }
+
+    #[test]
+    fn advanced_datalog_outside_the_pattern_subset_is_unsupported() {
+        let graph = one_page("Test", None, &block("TODO x"));
+        assert!(tine_core::query::is_advanced(
+            "[:find (pull ?b [*]) :where [?b :block/marker]]"
+        ));
+        assert!(run_query(&graph, "[:find ?b :where ...]").is_empty());
+        let unrelated = run_advanced_query(
+            &graph,
+            r#"[:find (pull ?p [*])
+                :where
+                [?p :block/name ?name]
+                [(get ?name :class)]]"#,
+        );
+        assert!(!unrelated.supported);
+        assert!(unrelated.groups.is_empty());
+    }
+
+    #[test]
+    fn advanced_exact_page_property_pair_matches_page_property_predicate() {
+        let source = r#"[:find (pull ?p [*])
+                         :where
+                         [?p :block/properties ?props]
+                         [(get ?props :class)]]"#;
+        let with = one_page("Classy", None, "class:: yes\n\n- body\n");
+        let without = one_page("Plain", None, "other:: yes\n\n- body\n");
+        let result = run_advanced_query(&with, source);
+        assert!(result.supported, "{:?}", result.ignored);
+        assert_eq!(
+            result
+                .groups
+                .iter()
+                .map(|g| g.page.as_str())
+                .collect::<Vec<_>>(),
+            run_query(&with, "(page-property :class)")
+                .iter()
+                .map(|g| g.page.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(!result.groups.is_empty());
+        assert!(run_advanced_query(&without, source).groups.is_empty());
+    }
+
+    #[test]
+    fn between_journal_titles_and_relative_dates() {
+        let q = "(between [[Jan 1st, 2021]] [[Jan 1st, 2100]])";
+        assert!(selects_on_journal(q, 20220615, "TODO something"));
+        assert!(!selects_on_journal(q, 20190101, "TODO something"));
+        assert!(!selects(q, "TODO x\nSCHEDULED: <2022-03-03 Thu>"));
+        assert!(selects(
+            "(between any [[Jan 1st, 2021]] [[Jan 1st, 2100]])",
+            "TODO x\nSCHEDULED: <2022-03-03 Thu>"
+        ));
+
+        // TODAY = 2026-06-16: (between -7d +7d) is [2026-06-09, 2026-06-23].
+        assert!(selects_on_journal("(between -7d +7d)", 20260616, "x"));
+        assert!(selects_on_journal("(between -7d +7d)", 20260609, "x"));
+        assert!(selects_on_journal("(between -7d +7d)", 20260623, "x"));
+        assert!(!selects_on_journal("(between -7d +7d)", 20260601, "x"));
+        assert!(!selects_on_journal("(between -7d +7d)", 20260624, "x"));
+        assert!(selects_on_journal(
+            "(between today tomorrow)",
+            20260617,
+            "x"
+        ));
+        assert!(!selects_on_journal(
+            "(between today tomorrow)",
+            20260615,
+            "x"
+        ));
+        assert!(selects_on_journal("(between -1m +1y)", 20260516, "x"));
+        assert!(selects_on_journal("(between -1m +1y)", 20270616, "x"));
+        assert!(!selects_on_journal("(between -1m +1y)", 20260515, "x"));
+    }
+
+    #[test]
+    fn between_field_selector_and_journal_only() {
+        let sched = "TODO x\nSCHEDULED: <2026-06-10 Wed>";
+        // `between journal` restricts to journal pages.
+        let q = "(between journal -30d today)";
+        assert!(!selects(q, sched));
+        assert!(selects_on_journal(q, 20260610, "TODO y"));
+        assert!(selects_on_journal(q, 20260517, "TODO y"));
+        assert!(!selects_on_journal(q, 20260101, "TODO z"));
+        // `between scheduled` ignores the page's journal date.
+        let qs = "(between scheduled -30d today)";
+        assert!(selects(qs, sched));
+        assert!(!selects_on_journal(qs, 20260610, "TODO y"));
+        assert!(selects("(between scheduled -7d +7d)", sched));
+        // `between deadline` only looks at DEADLINE lines.
+        let qd = "(between deadline -30d today)";
+        assert!(selects(qd, "TODO x\nDEADLINE: <2026-06-10 Wed>"));
+        assert!(!selects(qd, sched));
+    }
+
+    #[test]
+    fn agenda_query_keys_off_scheduled_deadline_not_journal_date() {
+        // The journal-agenda DSL the app inserts must match on the planning date
+        // itself, NOT the journal day the block happens to live on.
+        let q = "(or (between scheduled -7d +7d) (between deadline -7d +7d))";
+        assert!(!selects_on_journal(
+            q,
+            20260616,
+            "TODO old thing\nDEADLINE: <2025-01-01 Wed>"
+        ));
+        assert!(selects(q, "TODO pay\nDEADLINE: <2026-06-16 Tue>"));
+        assert!(selects_on_journal(
+            q,
+            20200101,
+            "TODO meet\nSCHEDULED: <2026-06-18 Thu>"
+        ));
+        assert!(!selects_on_journal(q, 20260616, "just a note"));
+    }
+
+    #[test]
+    fn planning_markers_are_found_anywhere_in_the_block() {
+        // TODAY + 20d = 2026-07-06.
+        let q = "(between scheduled +20d +20d)";
+        assert!(selects(q, "TODO x\nSCHEDULED: <2026-07-06 Mon>"));
+        assert!(selects(q, "TODO SCHEDULED: <2026-07-06 Mon> do it"));
+        assert!(selects(
+            q,
+            "TODO y\n SCHEDULED: <2026-07-06 Mon> #email students"
+        ));
+        assert!(!selects(q, "TODO z\nDEADLINE: <2026-07-06 Mon>"));
+        assert!(selects(
+            "(between deadline +20d +20d)",
+            "TODO z\nDEADLINE: <2026-07-06 Mon>"
+        ));
+    }
+
+    #[test]
+    fn journal_predicate_and_target_query() {
+        assert!(selects_on_journal("(journal)", 20260616, "TODO buy milk"));
+        assert!(!selects("(journal)", "TODO buy milk"));
+        // TODOs on journal pages dated in the last 30 days.
+        let q = "(and (task TODO) (between journal -30d today))";
+        assert!(selects_on_journal(q, 20260601, "TODO buy milk"));
+        assert!(!selects_on_journal(q, 20260101, "TODO buy milk"));
+        assert!(!selects_on_journal(q, 20260601, "DONE buy milk"));
+        assert!(!selects(q, "TODO buy milk"));
+    }
+
+    #[test]
+    fn registry_is_built_once_and_only_for_property_queries() {
+        let graph = one_page("Test", None, &block("TODO item\nstatus:: open"));
+        let before = super::index::registry_builds();
+        assert_eq!(
+            exec::run_query_at(&graph, "(task TODO)", usize::MAX, usize::MAX, TODAY)
+                .0
+                .groups
+                .len(),
+            1
+        );
+        assert_eq!(
+            super::index::registry_builds(),
+            before,
+            "a task query read the registry"
+        );
+        for _ in 0..2 {
+            let hits = exec::run_query_at(
+                &graph,
+                "(property status open)",
+                usize::MAX,
+                usize::MAX,
+                TODAY,
+            )
+            .0;
+            assert_eq!(hits.groups.len(), 1);
+        }
+        assert_eq!(
+            super::index::registry_builds(),
+            before + 1,
+            "one registry per generation"
+        );
+    }
+
+    #[test]
+    fn config_value_keys_reach_query_matching() {
+        // `:property/separated-by-commas` keeps a value's plain segments next to
+        // its refs (without it OG's ref set drops them), and
+        // `:ignored-page-references-keywords` keeps one as a single string.
+        let matches = |edn: &str, query: &str, raw: &str| {
+            let entry = PageEntry {
+                name: "Test".into(),
+                kind: PageKind::Page,
+                date_key: None,
+                rel_path: Some("pages/Test.md".into()),
+                path: "pages/Test.md".into(),
+            };
+            let pages = vec![(
+                entry,
+                std::sync::Arc::new(tine_core::doc::parse(&block(raw))),
+            )];
+            let graph = crate::model::Graph::from_page_snapshot("", pages);
+            graph.with_pages(|_| ());
+            let snapshot = crate::model::ReadSnapshot::capture(
+                &graph,
+                tine_core::config::Config::parse(edn),
+                graph.list_pages_shared(),
+                None,
+                &[],
+            );
+            let groups = exec::run_query_at(&snapshot, query, usize::MAX, usize::MAX, TODAY).0;
+            !groups.groups.is_empty()
+        };
+        let split = "{:property/separated-by-commas #{:authors}}";
+        assert!(!matches(
+            "{}",
+            "(property authors Bob)",
+            "item\nauthors:: [[Ann]], Bob"
+        ));
+        assert!(matches(
+            split,
+            "(property authors Bob)",
+            "item\nauthors:: [[Ann]], Bob"
+        ));
+        let ignored = "{:ignored-page-references-keywords #{:topic}}";
+        assert!(matches(
+            "{}",
+            "(property topic Rust)",
+            "item\ntopic:: [[Rust]], [[Go]]"
+        ));
+        assert!(!matches(
+            ignored,
+            "(property topic Rust)",
+            "item\ntopic:: [[Rust]], [[Go]]"
+        ));
+    }
+
+    #[test]
+    fn page_namespace_page_property_and_page_tags() {
+        let alpha = |q: &str| !hits_on(q, "Project/Alpha", None, &block("hi")).is_empty();
+        assert!(alpha("(page Project/Alpha)"));
+        assert!(!alpha("(page Project/Beta)"));
+        assert!(alpha("(namespace Project)"));
+        assert!(!alpha("(namespace Other)"));
+
+        let source = "type:: project\ntags:: research, active\n\n- hi\n";
+        let on_p = |q: &str| !hits_on(q, "P", None, source).is_empty();
+        assert!(on_p("(page-property type project)"));
+        assert!(on_p("(page-property type)"));
+        assert!(!on_p("(page-property type book)"));
+        assert!(on_p("(page-property :type project)"));
+        assert!(on_p("(page-tags research)"));
+        assert!(!on_p("(page-tags archived)"));
+    }
+
+    #[test]
+    fn sample_and_sort_by_shape_the_result() {
+        let source = (1..=8)
+            .map(|n| {
+                let priority = ["A", "B", "C"][n % 3];
+                format!("- TODO [#{priority}] item {n}\n")
+            })
+            .collect::<String>();
+        let rows = hits_on("(and (task TODO) (sample 5))", "Test", None, &source);
+        assert_eq!(rows.len(), 5);
+        let sorted = hits_on(
+            "(and (task TODO) (sort-by priority desc))",
+            "Test",
+            None,
+            &source,
+        );
+        let priorities = sorted
+            .iter()
+            .map(|line| line.split("[#").nth(1).unwrap()[..1].to_string())
+            .collect::<Vec<_>>();
+        let mut expected = priorities.clone();
+        expected.sort_by(|a, b| b.cmp(a));
+        assert_eq!(priorities, expected);
+        assert_eq!(sorted.len(), 8);
     }
 
     #[test]
@@ -3875,281 +2794,6 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// A minimal eval context for a block on a named (non-journal) page.
-    fn ctx_named<'a>() -> EvalCtx<'a> {
-        EvalCtx {
-            journal: None,
-            is_journal: false,
-            page_name: "Test",
-            page_props: &[],
-            page_tags: &[],
-        }
-    }
-    fn ctx_journal<'a>(key: i64) -> EvalCtx<'a> {
-        EvalCtx {
-            journal: Some(key),
-            is_journal: true,
-            page_name: "Journal",
-            page_props: &[],
-            page_tags: &[],
-        }
-    }
-
-    #[test]
-    fn parse_pageref_and_tag() {
-        assert_eq!(pred("[[Foo]]"), Pred::PageRef("Foo".into()));
-        assert_eq!(pred("#bar"), Pred::PageRef("bar".into()));
-        assert_eq!(pred("(tag Foo)"), Pred::PageRef("Foo".into()));
-    }
-
-    #[test]
-    fn parse_boolean() {
-        assert_eq!(
-            pred("(and [[A]] [[B]])"),
-            Pred::And(vec![Pred::PageRef("A".into()), Pred::PageRef("B".into())])
-        );
-        assert_eq!(
-            pred("(not [[A]])"),
-            Pred::Not(Box::new(Pred::PageRef("A".into())))
-        );
-    }
-
-    #[test]
-    fn parse_task_and_property() {
-        assert_eq!(
-            pred("(task TODO DOING)"),
-            Pred::Task(vec!["TODO".into(), "DOING".into()])
-        );
-        assert_eq!(
-            pred("(property type book)"),
-            Pred::Property("type".into(), Some("book".into()))
-        );
-        assert_eq!(
-            pred("(property public)"),
-            Pred::Property("public".into(), None)
-        );
-    }
-
-    #[test]
-    fn property_key_and_ref_value_match_logseq() {
-        // Leading `:` on the key is stripped (keyword form == symbol form).
-        assert_eq!(
-            pred("(property :type book)"),
-            Pred::Property("type".into(), Some("book".into()))
-        );
-        // `_` → `-` (Logseq stores `my_key` as `my-key`).
-        assert_eq!(
-            pred("(property my_key v)"),
-            Pred::Property("my-key".into(), Some("v".into()))
-        );
-        // A `[[page]]` value is captured (was dropped, leaking a stray page-ref).
-        assert_eq!(
-            pred("(property :fach [[Foo Bar]])"),
-            Pred::Property("fach".into(), Some("Foo Bar".into()))
-        );
-        // A `#tag` value is captured.
-        assert_eq!(
-            pred("(property :type #assignment)"),
-            Pred::Property("type".into(), Some("assignment".into()))
-        );
-        // page-property mirrors the same normalization + value capture.
-        assert_eq!(
-            pred("(page-property :fach [[Foo]])"),
-            Pred::PageProperty("fach".into(), Some("Foo".into()))
-        );
-    }
-
-    #[test]
-    fn reported_and_of_colon_properties_parses_both_clauses() {
-        // GH: `(and (property :fach [[X]]) (property :type "#assignment"))` used to
-        // parse to And[Property(":fach", None), PageRef(X)] — the colon key never
-        // matched, the ref leaked, and the second clause was dropped → "No results".
-        let p = pred(
-            r##"(and (property :fach [[Management der digitalen Transformation]]) (property :type "#assignment"))"##,
-        );
-        assert_eq!(
-            p,
-            Pred::And(vec![
-                Pred::Property(
-                    "fach".into(),
-                    Some("Management der digitalen Transformation".into())
-                ),
-                Pred::Property("type".into(), Some("#assignment".into())),
-            ])
-        );
-    }
-
-    #[test]
-    fn eval_colon_property_and_query_matches_block() {
-        let none = ctx_named();
-        let mut b = DocBlock::new("assignment one");
-        b.set_raw("assignment one\nfach:: [[Management der digitalen Transformation]]\ntype:: #assignment");
-        // The reported query now matches a block carrying both properties.
-        assert!(pred(
-            r##"(and (property :fach [[Management der digitalen Transformation]]) (property :type "#assignment"))"##
-        )
-        .eval(&b, &none));
-        // A different course value does not match.
-        assert!(!pred("(property :fach [[Other Course]])").eval(&b, &none));
-        // Colon-less form still works (unchanged behavior).
-        assert!(pred("(property type assignment)").eval(&b, &none));
-    }
-
-    #[test]
-    fn parse_escaped_string_content() {
-        // `\"`/`\\` inside a quoted full-text term are unescaped (mirrors the
-        // query-builder serializer's quoteStr), so a quote in the term doesn't
-        // end the string early and silently truncate the query.
-        assert_eq!(
-            pred("\"foo \\\"bar\\\"\""),
-            Pred::Content("foo \"bar\"".into())
-        );
-        assert_eq!(pred("\"a\\\\b\""), Pred::Content("a\\b".into()));
-        // Only `\"`/`\\` are escapes: a hand-authored backslash before another
-        // char is literal, so `"C:\tmp"` stays `C:\tmp` (not `C:tmp`). The term
-        // is case-folded at parse time (the content match is case-insensitive).
-        assert_eq!(pred("\"a\\q\""), Pred::Content("a\\q".into()));
-        assert_eq!(pred("\"C:\\tmp\""), Pred::Content("c:\\tmp".into()));
-        // End-to-end: the term still matches a block whose text contains the quote.
-        let none = ctx_named();
-        let b = DocBlock::new("note: foo \"bar\" baz");
-        assert!(pred("\"foo \\\"bar\\\"\"").eval(&b, &none));
-    }
-
-    #[test]
-    fn search_predicate_preserves_escaped_friendly_source_and_evaluates_it() {
-        let parsed = pred(r#"(search "foo \"exact phrase\" -draft OR C:\\tmp")"#);
-        assert_eq!(
-            parsed,
-            Pred::Search(FriendlySearch::new(
-                r#"foo "exact phrase" -draft OR C:\tmp"#.into()
-            ))
-        );
-
-        let none = ctx_named();
-        assert!(parsed.eval(&DocBlock::new("foo and an exact phrase, ready"), &none));
-        assert!(!parsed.eval(&DocBlock::new("foo and an exact phrase, but draft"), &none));
-        // The decoded backslash is passed losslessly to the friendly parser;
-        // the second OR branch can therefore match a Windows-style path.
-        assert!(parsed.eval(&DocBlock::new(r"open C:\tmp\notes"), &none));
-
-        // The predicate remains an ordinary composable query-DSL clause.
-        let task_search = pred(r#"(and (task TODO) (search "foo -draft"))"#);
-        assert!(task_search.eval(&DocBlock::new("TODO foo ready"), &none));
-        assert!(!task_search.eval(&DocBlock::new("DONE foo ready"), &none));
-    }
-
-    #[test]
-    fn content_regex_preserves_escapes_and_invalid_patterns_match_nothing() {
-        let parsed = pred(r#"(content-regex "ID:\\s+[A-Z]{3}\\d+\\s+\"quoted\"")"#);
-        assert_eq!(
-            parsed,
-            Pred::ContentRegex(ContentRegex::new(r#"ID:\s+[A-Z]{3}\d+\s+"quoted""#.into()))
-        );
-
-        let none = ctx_named();
-        assert!(parsed.eval(&DocBlock::new(r#"prefix ID: ABC42 "quoted" suffix"#), &none));
-        // Rust regex matching is intentionally case-sensitive.
-        assert!(!parsed.eval(&DocBlock::new(r#"prefix ID: abc42 "quoted" suffix"#), &none));
-
-        let invalid = pred(r#"(content-regex "[unclosed")"#);
-        assert!(matches!(invalid, Pred::ContentRegex(_)));
-        assert!(!invalid.eval(&DocBlock::new("[unclosed"), &none));
-    }
-
-    #[test]
-    fn aggregate_and_group_by_parse_as_noop_filters() {
-        // 1a: the aggregation/grouping directives ride in the DSL (D2) so the
-        // builder round-trips and run_query succeeds; they never filter (eval→true).
-        assert_eq!(pred("(aggregate count)"), Pred::Aggregate(AggKind::Count));
-        assert_eq!(
-            pred("(aggregate sum hours)"),
-            Pred::Aggregate(AggKind::Sum("hours".into()))
-        );
-        assert_eq!(
-            pred("(aggregate avg score)"),
-            Pred::Aggregate(AggKind::Avg("score".into()))
-        );
-        assert_eq!(pred("(group-by page)"), Pred::GroupBy("page".into()));
-        assert_eq!(pred("(group-by status)"), Pred::GroupBy("status".into()));
-
-        // No-op filter: a block passes regardless.
-        let none = ctx_named();
-        let b = DocBlock::new("just a note");
-        assert!(pred("(aggregate count)").eval(&b, &none));
-        assert!(pred("(group-by page)").eval(&b, &none));
-        // Combined with a real filter, the aggregate doesn't restrict the matches.
-        let task = DocBlock::new("TODO ship it");
-        assert!(pred("(and (task TODO) (aggregate count))").eval(&task, &none));
-        assert!(!pred("(and (task DONE) (aggregate count))").eval(&task, &none));
-    }
-
-    #[test]
-    fn advanced_datalog_is_unsupported() {
-        assert!(is_advanced(
-            "[:find (pull ?b [*]) :where [?b :block/marker]]"
-        ));
-        assert!(Pred::parse("[:find ?b :where ...]", TODAY).is_none());
-    }
-
-    #[test]
-    fn advanced_exact_page_property_pair_matches_page_property_predicate() {
-        let source = r#"[:find (pull ?p [*])
-                         :where
-                         [?p :block/properties ?props]
-                         [(get ?props :class)]]"#;
-        let (lowered, ran, ignored) = advanced_pred(source, TODAY);
-
-        assert_eq!(lowered, Some(pred("(page-property :class)")));
-        assert_eq!(ran, vec!["page-property"]);
-        assert!(ignored.is_empty());
-    }
-
-    #[test]
-    fn advanced_unrelated_bracket_pattern_stays_unsupported() {
-        let source = r#"[:find (pull ?p [*])
-                         :where
-                         [?p :block/name ?name]
-                         [(get ?name :class)]]"#;
-        let (lowered, ran, ignored) = advanced_pred(source, TODAY);
-
-        assert_eq!(lowered, None);
-        assert!(ran.is_empty());
-        assert_eq!(ignored, vec!["pattern", "pattern"]);
-    }
-
-    #[test]
-    fn eval_against_blocks() {
-        let none = ctx_named();
-        let task = DocBlock::new("TODO buy milk for [[Home]]");
-        assert!(pred("(task TODO)").eval(&task, &none));
-        assert!(pred("[[Home]]").eval(&task, &none));
-        assert!(pred("(and (task TODO) [[Home]])").eval(&task, &none));
-        assert!(!pred("(and (task DONE) [[Home]])").eval(&task, &none));
-        assert!(pred("(not [[Work]])").eval(&task, &none));
-
-        let mut withprop = DocBlock::new("a book");
-        withprop.set_raw("a book\ntype:: book");
-        assert!(pred("(property type book)").eval(&withprop, &none));
-        assert!(pred("(property type)").eval(&withprop, &none));
-        assert!(!pred("(property type article)").eval(&withprop, &none));
-    }
-
-    #[test]
-    fn eval_between_journal_titles() {
-        let on_2022 = ctx_journal(20220615);
-        let on_2019 = ctx_journal(20190101);
-        let b = DocBlock::new("TODO something");
-        let q = pred("(between [[Jan 1st, 2021]] [[Jan 1st, 2100]])");
-        assert!(q.eval(&b, &on_2022));
-        assert!(!q.eval(&b, &on_2019));
-        let sched = DocBlock::new("TODO x\nSCHEDULED: <2022-03-03 Thu>");
-        assert!(!q.eval(&sched, &ctx_named()));
-        assert!(
-            pred("(between any [[Jan 1st, 2021]] [[Jan 1st, 2100]])").eval(&sched, &ctx_named())
-        );
     }
 
     /// The unqualified two-bound form is OG's journal-page range. Scheduled and
@@ -4224,160 +2868,6 @@ mod tests {
         assert_eq!(any.iter().map(|group| group.blocks.len()).sum::<usize>(), 6);
 
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn eval_between_relative_dates() {
-        // TODAY = 2026-06-16. (between -7d +7d) => [2026-06-09, 2026-06-23].
-        let q = pred("(between -7d +7d)");
-        assert_eq!(
-            q,
-            Pred::Between(BetweenField::Journal, Some(20260609), Some(20260623))
-        );
-        let b = DocBlock::new("x");
-        assert!(q.eval(&b, &ctx_journal(20260616)));
-        assert!(q.eval(&b, &ctx_journal(20260609)));
-        assert!(!q.eval(&b, &ctx_journal(20260601)));
-        // keyword bounds + month/year units
-        assert_eq!(
-            pred("(between today tomorrow)"),
-            Pred::Between(BetweenField::Journal, Some(20260616), Some(20260617))
-        );
-        assert_eq!(
-            pred("(between -1m +1y)"),
-            Pred::Between(BetweenField::Journal, Some(20260516), Some(20270616))
-        );
-    }
-
-    #[test]
-    fn between_field_selector_and_journal_only() {
-        // Field keyword parses into the right variant.
-        assert_eq!(
-            pred("(between journal -30d today)"),
-            Pred::Between(BetweenField::Journal, Some(20260517), Some(20260616))
-        );
-        assert_eq!(
-            pred("(between scheduled -7d +7d)"),
-            Pred::Between(BetweenField::Scheduled, Some(20260609), Some(20260623))
-        );
-
-        // `between journal` restricts to journal pages: a block with an in-range
-        // SCHEDULED date on a *named* page must NOT match.
-        let q = pred("(between journal -30d today)");
-        let sched = DocBlock::new("TODO x\nSCHEDULED: <2026-06-10 Wed>");
-        assert!(!q.eval(&sched, &ctx_named())); // named page, journal=None
-        assert!(q.eval(&DocBlock::new("TODO y"), &ctx_journal(20260610))); // journal page in range
-        assert!(!q.eval(&DocBlock::new("TODO z"), &ctx_journal(20260101))); // journal page out of range
-
-        // `between scheduled` ignores the page's journal date entirely.
-        let qs = pred("(between scheduled -30d today)");
-        assert!(qs.eval(&sched, &ctx_named()));
-        assert!(!qs.eval(&DocBlock::new("TODO y"), &ctx_journal(20260610)));
-
-        // `between deadline` only looks at DEADLINE lines.
-        let qd = pred("(between deadline -30d today)");
-        let dead = DocBlock::new("TODO x\nDEADLINE: <2026-06-10 Wed>");
-        assert!(qd.eval(&dead, &ctx_named()));
-        assert!(!qd.eval(&sched, &ctx_named()));
-    }
-
-    #[test]
-    fn agenda_query_keys_off_scheduled_deadline_not_journal_date() {
-        // The journal-agenda DSL the app inserts (window = ±7d around TODAY).
-        // It must match on the SCHEDULED/DEADLINE date itself, NOT the journal
-        // day the block happens to live on — otherwise a stale-deadline item
-        // carried onto a recent day shows up forever (the reported bug).
-        let q = pred("(or (between scheduled -7d +7d) (between deadline -7d +7d))");
-
-        // Ancient deadline, sitting on TODAY's journal page: must NOT match.
-        let stale = DocBlock::new("TODO old thing\nDEADLINE: <2025-01-01 Wed>");
-        assert!(!q.eval(&stale, &ctx_journal(20260616)));
-
-        // Deadline today (on any page): matches.
-        let due = DocBlock::new("TODO pay\nDEADLINE: <2026-06-16 Tue>");
-        assert!(q.eval(&due, &ctx_named()));
-
-        // Scheduled in range but on an OLD journal page: still matches (the scan
-        // is whole-graph; the journal day is irrelevant to the window).
-        let sched = DocBlock::new("TODO meet\nSCHEDULED: <2026-06-18 Thu>");
-        assert!(q.eval(&sched, &ctx_journal(20200101)));
-
-        // No scheduled/deadline at all: never in the agenda, even on today.
-        assert!(!q.eval(&DocBlock::new("just a note"), &ctx_journal(20260616)));
-    }
-
-    #[test]
-    fn journal_predicate_and_target_query() {
-        let b = DocBlock::new("TODO buy milk");
-        assert_eq!(pred("(journal)"), Pred::Journal);
-        assert!(pred("(journal)").eval(&b, &ctx_journal(20260616)));
-        assert!(!pred("(journal)").eval(&b, &ctx_named()));
-
-        // The motivating query: TODOs on journal pages dated in the last 30 days.
-        let q = pred("(and (task TODO) (between journal -30d today))");
-        assert!(q.eval(&b, &ctx_journal(20260601)));
-        assert!(!q.eval(&b, &ctx_journal(20260101))); // too old
-        assert!(!q.eval(&DocBlock::new("DONE buy milk"), &ctx_journal(20260601))); // not TODO
-        assert!(!q.eval(&b, &ctx_named())); // not a journal page
-    }
-
-    #[test]
-    fn eval_page_and_namespace() {
-        let b = DocBlock::new("hi");
-        let ctx = EvalCtx {
-            journal: None,
-            is_journal: false,
-            page_name: "Project/Alpha",
-            page_props: &[],
-            page_tags: &[],
-        };
-        assert!(pred("(page Project/Alpha)").eval(&b, &ctx));
-        assert!(!pred("(page Project/Beta)").eval(&b, &ctx));
-        assert!(pred("(namespace Project)").eval(&b, &ctx));
-        assert!(!pred("(namespace Other)").eval(&b, &ctx));
-    }
-
-    #[test]
-    fn eval_page_property_and_tags() {
-        let b = DocBlock::new("hi");
-        let props = vec![("type".to_string(), "project".to_string())];
-        let tags = vec!["research".to_string(), "active".to_string()];
-        let ctx = EvalCtx {
-            journal: None,
-            is_journal: false,
-            page_name: "P",
-            page_props: &props,
-            page_tags: &tags,
-        };
-        assert!(pred("(page-property type project)").eval(&b, &ctx));
-        assert!(pred("(page-property type)").eval(&b, &ctx));
-        assert!(!pred("(page-property type book)").eval(&b, &ctx));
-        assert!(pred("(page-tags research)").eval(&b, &ctx));
-        assert!(!pred("(page-tags archived)").eval(&b, &ctx));
-    }
-
-    #[test]
-    fn eval_content_and_multivalue_property() {
-        let none = ctx_named();
-        let b = DocBlock::new("the quick brown fox");
-        assert!(pred("\"quick brown\"").eval(&b, &none));
-        assert!(!pred("\"slow\"").eval(&b, &none));
-        // multi-value + page-ref property value matching
-        let mut mv = DocBlock::new("x");
-        mv.set_raw("x\ntags:: [[research]], optimization");
-        assert!(pred("(property tags research)").eval(&mv, &none));
-        assert!(pred("(property tags optimization)").eval(&mv, &none));
-        assert!(!pred("(property tags cooking)").eval(&mv, &none));
-    }
-
-    #[test]
-    fn property_query_matches_folded_source_key() {
-        let none = ctx_named();
-        let mut block = DocBlock::new("shipped task");
-        block.set_raw("shipped task\ndone_at:: 2026-07-19");
-
-        assert!(pred("(property done-at 2026-07-19)").eval(&block, &none));
-        assert!(pred("(property DONE_AT)").eval(&block, &none));
     }
 
     #[test]
@@ -4457,51 +2947,6 @@ mod tests {
                 <= 3
         );
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn content_predicate_uses_canonical_unicode_without_accent_folding() {
-        let none = ctx_named();
-        let block = DocBlock::new("Re\u{301}sume\u{301}");
-        assert!(pred("\"Résumé\"").eval(&block, &none));
-        assert!(!pred("\"Resume\"").eval(&block, &none));
-    }
-
-    #[test]
-    fn parse_extracts_options() {
-        let mut opts = QueryOpts::default();
-        pred("(and (task TODO) (sample 5) (sort-by priority desc))").collect_opts(&mut opts);
-        assert_eq!(opts.sample, Some(5));
-        assert_eq!(opts.sort, Some(("priority".to_string(), false)));
-    }
-
-    #[test]
-    fn block_date_ordinals_finds_planning_markers_anywhere() {
-        let ord = date_ordinal(2026, 7, 6);
-        // own line (after trim)
-        assert_eq!(
-            block_date_ordinals("TODO x\nSCHEDULED: <2026-07-06 Mon>", Some("SCHEDULED:")),
-            vec![ord]
-        );
-        // inline on the marker line (the regressed case)
-        assert_eq!(
-            block_date_ordinals("TODO SCHEDULED: <2026-07-06 Mon> do it", Some("SCHEDULED:")),
-            vec![ord]
-        );
-        // with trailing text after the timestamp
-        assert_eq!(
-            block_date_ordinals(
-                " SCHEDULED: <2026-07-06 Mon> #email students",
-                Some("SCHEDULED:")
-            ),
-            vec![ord]
-        );
-        // DEADLINE restricted; SCHEDULED-only query ignores it
-        assert!(block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("SCHEDULED:")).is_empty());
-        assert_eq!(
-            block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("DEADLINE:")),
-            vec![ord]
-        );
     }
 
     fn quick_switch_fingerprint(entries: Vec<PageEntry>) -> Vec<(String, PageKind, String)> {
@@ -5016,44 +3461,32 @@ mod tests {
                 .iter()
                 .find(|(entry, _)| entry.name == "Inherited Only")
                 .expect("inherited-only fixture page");
-            assert!(page_affects_query(
-                "(and (task TODO) [[Target]])",
-                entry,
-                doc
+            // The memo's per-page invalidation test is the plan's own
+            // selection, so an inherited-only page invalidates a page-ref query
+            // and not a physical-page one.
+            let index = graph.query_index();
+            let facts = index.facts(entry, doc);
+            let config = index.parse_config();
+            let touches = |plan: std::sync::Arc<exec::Plan>| plan.touches(entry, doc, &facts, config);
+            assert!(touches(
+                exec::run_query_bounded(&graph, "(and (task TODO) [[Target]])", 20, 1 << 20).1
             ));
-            assert!(!page_affects_query(
-                "(and (task TODO) (page \"Target\"))",
-                entry,
-                doc
+            assert!(!touches(
+                exec::run_query_bounded(&graph, "(and (task TODO) (page \"Target\"))", 20, 1 << 20).1
             ));
-            assert!(page_affects_advanced_query(
-                r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "Target"))]"#,
-                entry,
-                doc,
+            assert!(touches(
+                exec::run_advanced_query_bounded(
+                    &graph,
+                    r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "Target"))]"#,
+                    20,
+                    1 << 20,
+                )
+                .1
+                .expect("supported advanced query")
             ));
         });
 
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// Macro arguments arrive without their source quotes after the parser has
-    /// expanded `$1`. OG's simple query reader treats that bare value as a
-    /// block-content term; Tine must not silently drop it from an `and` form.
-    #[test]
-    fn og_bare_word_is_a_content_term() {
-        let parsed = pred("(and (task DONE) changelog)");
-        assert_eq!(
-            parsed,
-            Pred::And(vec![
-                Pred::Task(vec!["DONE".into()]),
-                Pred::Content("changelog".into())
-            ])
-        );
-        assert!(parsed.eval(
-            &DocBlock::new("DONE Write changelog for v0.0.9"),
-            &ctx_named()
-        ));
-        assert!(!parsed.eval(&DocBlock::new("DONE Publish release notes"), &ctx_named()));
     }
 
     #[test]

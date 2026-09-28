@@ -1032,9 +1032,17 @@ fn resolve_blocks_uses_indexed_hinted_page_lookup() {
 #[test]
 fn run_advanced_query_uses_generation_keyed_memo_cache() {
     let src = include_str!("../src/model.rs");
+    // og 14 Q2: every query entry point shares the one scoped query memo
+    // (`query/memo.rs`); the behaviour is pinned by
+    // `advanced_query_reuses_cached_result_until_graph_changes`.
+    let body = src
+        .split("pub(crate) fn run_advanced_query_bounded_cached(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n    }\n").next())
+        .expect("advanced bridge");
     assert!(
-        src.contains("fn advanced_memo_bounded("),
-        "advanced queries should have a dedicated memo cache"
+        body.contains("self.query_answer("),
+        "advanced queries should be memoized by the query memo"
     );
     assert!(
         !src.contains("Not memoized (invoked on demand)"),

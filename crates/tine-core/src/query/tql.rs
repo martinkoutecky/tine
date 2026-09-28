@@ -753,6 +753,22 @@ impl Lower<'_> {
         }
     }
 
+    /// A date literal; an out-of-range relative offset is a diagnostic, never
+    /// a garbage day (the [`DateToken`](crate::query::DateToken) grammar).
+    fn date(&mut self, text: &str) -> Option<Value> {
+        if crate::query::DateToken::parse(text) == Some(crate::query::DateToken::OutOfRange) {
+            self.reject(
+                DiagnosticKind::Syntax,
+                format!(
+                    "date offset `{text}` is out of range (at most {} years)",
+                    crate::query::MAX_DATE_OFFSET_YEARS
+                ),
+            );
+            return None;
+        }
+        Some(Value::date(text))
+    }
+
     fn value(&mut self, expr: &Expr, ty: ValueType) -> Option<Value> {
         match expr {
             Expr::Nested(inner) => self.value(inner, ty),
@@ -775,14 +791,14 @@ impl Lower<'_> {
             Expr::Value(value) => match &value.value {
                 SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) => {
                     Some(if ty == ValueType::Date {
-                        Value::date(text)
+                        self.date(text)?
                     } else {
                         Value::text(text)
                     })
                 }
                 SqlValue::Number(text, _) => {
                     if ty == ValueType::Date {
-                        return Some(Value::date(text));
+                        return self.date(text);
                     }
                     match text.parse::<f64>() {
                         Ok(number) => Some(Value::Number { number }),
@@ -1206,19 +1222,22 @@ fn is_day_ordinal(text: &str) -> bool {
     text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-/// `'2026-09-04'` or a relative `'-7d'` / `'+2w'` / `'-1m'` / `'-1y'`.
+/// `'2026-09-04'` or a SIGNED relative `'-7d'` / `'+2w'` / `'-1m'` / `'-1y'`:
+/// the subset of the [`DateToken`](crate::query::DateToken) grammar that types
+/// a quoted TQL literal as a date (Rule 3: one grammar, no local recognizer).
+/// An out-of-range offset still types as a date, so it is diagnosed.
 fn is_date_literal(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    if text.len() == 10 && bytes[4] == b'-' && bytes[7] == b'-' {
-        return text
-            .split('-')
-            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    use crate::query::DateToken;
+    if text != text.trim() {
+        return false;
     }
-    if bytes.len() >= 3 && matches!(bytes[0], b'-' | b'+') {
-        let unit = bytes[bytes.len() - 1];
-        return b"dwmy".contains(&unit) && bytes[1..bytes.len() - 1].iter().all(u8::is_ascii_digit);
+    match DateToken::parse(text) {
+        Some(DateToken::Relative { .. } | DateToken::OutOfRange) => {
+            matches!(text.as_bytes().first(), Some(b'+' | b'-'))
+        }
+        Some(DateToken::Stem(_)) => text.len() == 10 && text.as_bytes()[4] == b'-',
+        _ => false,
     }
-    false
 }
 
 /// `like 'p%'` with no other wildcard is `StartsWith` (range-lowerable, §4.2.3);

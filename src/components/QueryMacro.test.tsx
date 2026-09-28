@@ -8,9 +8,10 @@ import { backend } from "../backend";
 import { blockProperty, resetStore, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
-import { route } from "../router";
+import { openJournals, openPage, route } from "../router";
+import { journalTitle } from "../journal";
 import { clearSimpleForm, getSimpleForm, stashSimpleForm } from "../editor/queryBuilder";
-import type { QueryExecution, RefGroup } from "../types";
+import type { QueryExecution, QueryRunResult, RefGroup } from "../types";
 import { bumpDataRev } from "../graphSession";
 
 beforeAll(async () => {
@@ -555,5 +556,84 @@ describe("QueryMacro sheet integration", () => {
     expect(root.querySelector(".qb-bar")).not.toBeNull();
 
     dispose();
+  });
+});
+
+describe("QueryMacro through query_parse + query_run", () => {
+  const emptyRun = (extra: Partial<QueryRunResult> = {}): QueryRunResult => ({
+    anchor: "block",
+    groups: [],
+    report: { ran: [], ignored: [], supported: true },
+    total: 0,
+    exceeded: false,
+    ...extra,
+  } as QueryRunResult);
+
+  it("renders a page-anchored answer as page rows, sending the host block's tine.* view properties", async () => {
+    loadQueryDoc("{{query (page-property type book)}}\ntine.sample:: 5\nowner:: Martin");
+    const parse = vi.spyOn(backend(), "queryParse").mockResolvedValue({ query: "ir", view: {} });
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue({
+      anchor: "page",
+      pages: [
+        { path: "pages/Dune.md", name: "Dune", kind: "page", properties: [["type", "book"]] },
+        { path: "pages/Emma.md", name: "Emma", kind: "page", properties: [["type", "book"]] },
+      ],
+      report: { ran: [], ignored: [], supported: true },
+      total: 2,
+      exceeded: false,
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelectorAll(".query-page").length).toBe(2));
+      // Only `tine.*` keys travel; the engine merges them into the view
+      // (master semantics: `tine.sample::` on the host block samples).
+      expect(parse).toHaveBeenCalledWith("(page-property type book)", "macro_query", [["tine.sample", "5"]]);
+      // An OG DSL query binds no current page.
+      expect(run).toHaveBeenCalledWith({ query: "ir", view: {} }, undefined);
+      expect([...root.querySelectorAll(".query-page")].map((el) => el.textContent)).toEqual(["Dune", "Emma"]);
+      expect(root.querySelector(".query-count")?.textContent).toBe("2");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("shows an invalid query's diagnostics instead of a bare \"No results\" (I-9)", async () => {
+    loadQueryDoc("{{query (frobnicate x)}}");
+    vi.spyOn(backend(), "queryParse").mockResolvedValue({ query: "ir", view: {} });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(emptyRun({
+      diagnostics: [
+        { kind: "unknown_head", message: "unknown query head `frobnicate`" },
+        { kind: "syntax", message: "greyed out", disabled: true },
+      ],
+    }));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-diagnostics")).not.toBeNull());
+      const text = root.querySelector(".query-diagnostics")!.textContent ?? "";
+      expect(text).toContain("didn't understand part of this query");
+      expect(text).toContain("unknown query head `frobnicate`");
+      expect(text).not.toContain("greyed out");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("binds :current-page to OG's current page — the focused route, else today — not the rendering page", async () => {
+    const source = "{{query {:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p]] :inputs [:current-page]}}}";
+    loadQueryDoc(source);
+    vi.spyOn(backend(), "queryParse").mockResolvedValue({ query: "ir", view: {} });
+    const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(emptyRun());
+    openJournals();
+    const { dispose } = mount(() => <Block id="query" />);
+    try {
+      // No routed page and no configured home: OG falls back to today.
+      await vi.waitFor(() => expect(run).toHaveBeenCalled());
+      expect(run.mock.calls.at(-1)![1]).toBe(journalTitle(new Date()));
+      openPage("Elsewhere");
+      await vi.waitFor(() => expect(run.mock.calls.at(-1)![1]).toBe("Elsewhere"));
+      expect(run.mock.calls.map((call) => call[1])).not.toContain("Sheet");
+    } finally {
+      dispose();
+    }
   });
 });

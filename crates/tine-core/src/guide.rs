@@ -69,6 +69,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/sheets.md"),
     },
     GuideTemplate {
+        title: "Features/Queries",
+        markdown: include_str!("templates/queries.md"),
+    },
+    GuideTemplate {
         title: "Features/Formulas",
         markdown: include_str!("templates/formulas.md"),
     },
@@ -215,5 +219,43 @@ mod rename_guide_tests {
                 "missing family-4 Guide control: {control}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod query_guide_tests {
+    /// og 14 Q2: the Guide describes queries as this build runs them — the
+    /// OG simple language, the advanced subset with its ran/ignored note, OG's
+    /// current-page binding, host-block view properties, visible diagnostics,
+    /// the refusal bound, and what is NOT offered here yet.
+    #[test]
+    fn queries_are_documented_as_this_build_runs_them() {
+        let queries = include_str!("templates/queries.md");
+        for control in [
+            "{{query (task TODO DOING)}}",
+            "(page-property type book)",
+            "(between scheduled today +7d)",
+            "at most 10,000 years",
+            "tine.sample:: 10",
+            "**ran**",
+            "**ignored**",
+            ":inputs [:current-page]",
+            "then today's journal. It is not the page the query block sits on",
+            "Tine didn't understand part of this query, so it returned no results",
+            "more than 20,000 rows",
+            "{{tine-query …}}",
+        ] {
+            assert!(
+                queries.contains(control),
+                "missing query Guide control: {control}"
+            );
+        }
+        assert!(
+            super::GUIDE_TEMPLATES
+                .iter()
+                .any(|template| template.title == "Features/Queries"),
+            "the queries page is in the Guide manifest"
+        );
+        assert!(include_str!("templates/guide.md").contains("[[Features/Queries]]"));
     }
 }

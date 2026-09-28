@@ -22,6 +22,8 @@ mod native_mouse_history;
 mod pdf_crop_rollback;
 mod platform;
 mod plugins;
+#[path = "commands/query_ir.rs"]
+mod query_ir;
 mod settings;
 mod spellcheck;
 mod state;
@@ -61,6 +63,9 @@ use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external}
 use plugins::{
     install_plugin, list_installed_plugins, load_plugin_registry_cache, read_plugin_entry,
     set_plugin_enabled, store_plugin_registry_cache, uninstall_plugin, verify_plugin_registry,
+};
+use query_ir::{
+    query_explain_empty, query_og_expressible, query_parse, query_print, query_registry, query_run,
 };
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
@@ -787,6 +792,12 @@ pub fn run() {
             run_graph_search,
             run_advanced_query,
             query_facets,
+            query_parse,
+            query_print,
+            query_og_expressible,
+            query_registry,
+            query_run,
+            query_explain_empty,
             page_icons,
             set_favorites,
             set_preferred_workflow,

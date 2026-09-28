@@ -601,3 +601,36 @@ fn a_quoted_value_survives_the_og_escaping() {
     let (again, _) = og(&printed);
     assert_eq!(again.normalized(), query.normalized());
 }
+
+/// Rule 3 (og 14 Q2 Reader B): the printer's bare-or-`[[ ]]` choice is the
+/// resolver's grammar. `-7D` (uppercase unit) does not resolve, so it is not
+/// printed as a bare date; a `yyyy_MM_dd` stem resolves, so it is.
+#[test]
+fn the_og_printer_writes_bare_exactly_the_tokens_the_resolver_reads() {
+    let today = JournalDate::from_ordinal(20260904);
+    for (source, expected) in [
+        (
+            "(between scheduled 2026_01_05 today)",
+            "(between scheduled 2026_01_05 today)",
+        ),
+        (
+            "(between scheduled [[-7D]] today)",
+            "(between scheduled [[-7D]] today)",
+        ),
+        ("(between scheduled -7d NOW)", "(between scheduled -7d NOW)"),
+    ] {
+        let (query, view) = og(source);
+        assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
+        let printed = print_og(&query, &view, false).expect(source);
+        assert_eq!(printed, expected, "{source}");
+        let Some(literal) = printed.split_whitespace().nth(2) else {
+            panic!("{printed}")
+        };
+        let bare = !literal.starts_with("[[");
+        assert_eq!(
+            bare,
+            crate::query::resolve_date_token(literal.trim_matches(['[', ']']), today).is_some(),
+            "{literal}: printed bare iff it resolves"
+        );
+    }
+}

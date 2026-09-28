@@ -786,8 +786,26 @@ impl<'a> OgParse<'a> {
         let bound = |token: Option<String>| -> Option<String> {
             token.map(|token| token.strip_prefix(':').unwrap_or(&token).to_string())
         };
+        let at = self.pos;
         let low = bound(self.name());
         let high = bound(self.name());
+        for (index, token) in [low.as_deref(), high.as_deref()].into_iter().enumerate() {
+            if let Some(token) = token {
+                if crate::query::DateToken::parse(token)
+                    == Some(crate::query::DateToken::OutOfRange)
+                {
+                    let span = self.span_at(at + index);
+                    self.diagnose(
+                        DiagnosticKind::Syntax,
+                        format!(
+                            "date offset `{token}` is out of range (at most {} years)",
+                            crate::query::MAX_DATE_OFFSET_YEARS
+                        ),
+                        span,
+                    );
+                }
+            }
+        }
         let range = |attr: Attr| bounded(attr, low.as_deref(), high.as_deref());
         match field {
             BetweenField::Journal => through_page(range(Attr::Day)),
@@ -993,6 +1011,22 @@ pub fn rebase_to_block(filter: &Filter) -> Filter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reader B (og 14 Q2): an out-of-range relative `between` bound is a
+    /// diagnostic, not a garbage day.
+    #[test]
+    fn an_out_of_range_between_bound_is_a_diagnostic() {
+        let query = parse("(between scheduled -9223372036854775807d today)");
+        assert!(
+            query
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("out of range")),
+            "{:?}",
+            query.diagnostics
+        );
+        assert!(!parse("(between scheduled -7d today)").is_invalid());
+    }
 
     fn parse(source: &str) -> Query {
         parse_og(source, JournalDate::from_ordinal(20260904)).0

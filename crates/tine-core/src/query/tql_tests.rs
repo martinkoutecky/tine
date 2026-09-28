@@ -866,3 +866,16 @@ fn starts_with_recognises_only_a_single_trailing_wildcard() {
     assert_eq!(starts_with_prefix("proj"), None);
     assert_eq!(starts_with_prefix("50\\%%"), Some("50%".to_string()));
 }
+
+/// Reader B (og 14 Q2): an out-of-range relative date is a diagnostic, not a
+/// query that silently matches a garbage day.
+#[test]
+fn an_out_of_range_relative_date_is_a_diagnostic() {
+    let diagnostics = rejected("scheduled between '-9223372036854775807d' and today");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message.contains("out of range")),
+        "{diagnostics:?}"
+    );
+}

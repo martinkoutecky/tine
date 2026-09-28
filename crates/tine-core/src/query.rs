@@ -62,6 +62,7 @@ pub mod view;
 #[allow(missing_docs)]
 pub mod wire_parse;
 
+pub use advanced_patterns::{resolve_date_token, DateToken, DateUnit, MAX_DATE_OFFSET_YEARS};
 pub use parse::*;
 
 /// Properties that are internal/metadata and are not offered as query

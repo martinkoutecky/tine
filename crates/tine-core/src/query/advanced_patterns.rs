@@ -729,7 +729,8 @@ fn parse_adv_group(
         ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
         return None;
     }
-    let inner = &c[1..c.len().saturating_sub(1)];
+    // A lone `(` has no body; slicing `1..0` would panic on hostile input.
+    let inner = c.get(1..c.len().saturating_sub(1)).unwrap_or("");
     let head = inner
         .split_whitespace()
         .next()
@@ -1029,48 +1030,167 @@ fn adv_text_list(values: Vec<String>) -> Value {
     }
 }
 
-/// Resolve a `between` bound token to a `yyyymmdd` ordinal: `today`/`yesterday`/
-/// `tomorrow`, signed durations `±N[dwmy]`, `yyyy-MM-dd`, or a journal title.
-fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
-    let t = tok.trim();
-    match t.to_ascii_lowercase().as_str() {
-        "today" | "now" => return Some(today.ordinal_key()),
-        "yesterday" => return Some(today.add_days(-1).ordinal_key()),
-        "tomorrow" => return Some(today.add_days(1).ordinal_key()),
-        _ => {}
-    }
-    if let Some(d) = parse_relative(t, today) {
-        return Some(d.ordinal_key());
-    }
-    if let Some(jd) = JournalDate::from_file_stem(t) {
-        return Some(jd.ordinal_key());
-    }
-    // master `journal_ordinal`: a default-format journal title literal.
-    JournalDate::from_title(t).map(|d| d.ordinal_key())
+/// The largest relative offset a date token may carry, in years (and the
+/// same span in days, weeks and months). Within it every resolved date keeps a
+/// monotone `yyyymmdd` ordinal; beyond it the token is [`DateToken::OutOfRange`].
+pub const MAX_DATE_OFFSET_YEARS: i64 = 10_000;
+
+/// The unit of a relative date token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateUnit {
+    /// `d`
+    Day,
+    /// `w`
+    Week,
+    /// `m`
+    Month,
+    /// `y`
+    Year,
 }
 
-/// Parse a signed relative duration like `-7d`, `+2w`, `3m`, `-1y` off `today`.
-fn parse_relative(t: &str, today: JournalDate) -> Option<JournalDate> {
-    let bytes = t.as_bytes();
-    if bytes.is_empty() {
-        return None;
+/// A date-literal token (a `between` bound, a TQL date, an advanced input),
+/// read WITHOUT `today`. The ONE date-token grammar: the resolver
+/// ([`resolve_date_token`]) and the OG printer's bare-or-`[[ ]]` choice both
+/// read it (Rule 3), and the parsers diagnose [`DateToken::OutOfRange`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateToken {
+    /// `today`/`now` (0), `yesterday` (−1), `tomorrow` (+1), any case: a day
+    /// offset.
+    Keyword(i64),
+    /// `[+|-]N[dwmy]`: ASCII digits, a lowercase unit (`-7D` is not one).
+    Relative {
+        /// The signed count of units.
+        n: i64,
+        /// The unit.
+        unit: DateUnit,
+    },
+    /// A relative token past ±[`MAX_DATE_OFFSET_YEARS`] years (or past `i64`):
+    /// never resolves; parsers report it instead of answering a garbage day.
+    OutOfRange,
+    /// A `yyyy_MM_dd` or `yyyy-MM-dd` stem (zero padding optional), calendar
+    /// valid.
+    Stem(JournalDate),
+    /// A journal title in the default `MMM do, yyyy` format. The OG printer
+    /// writes it inside `[[ ]]`; every other shape prints bare.
+    Title(JournalDate),
+}
+
+impl DateToken {
+    /// Read `tok` (trimmed). `None`: not a date token.
+    pub fn parse(tok: &str) -> Option<DateToken> {
+        let t = tok.trim();
+        for (keyword, offset) in [("today", 0), ("now", 0), ("yesterday", -1), ("tomorrow", 1)] {
+            if t.eq_ignore_ascii_case(keyword) {
+                return Some(DateToken::Keyword(offset));
+            }
+        }
+        if let Some(token) = Self::relative(t) {
+            return Some(token);
+        }
+        if let Some(date) = JournalDate::from_file_stem(t) {
+            return Some(DateToken::Stem(date));
+        }
+        // master `journal_ordinal`: a default-format journal title literal.
+        JournalDate::from_title(t).map(DateToken::Title)
     }
-    let (sign, rest) = match bytes[0] {
-        b'+' => (1i64, &t[1..]),
-        b'-' => (-1i64, &t[1..]),
-        _ => (1i64, t),
-    };
-    let unit = rest.chars().last()?;
-    if !matches!(unit, 'd' | 'w' | 'm' | 'y') {
-        return None;
+
+    fn relative(t: &str) -> Option<DateToken> {
+        let (sign, rest) = match t.as_bytes().first()? {
+            b'+' => (1i64, &t[1..]),
+            b'-' => (-1i64, &t[1..]),
+            _ => (1i64, t),
+        };
+        let unit = match rest.as_bytes().last()? {
+            b'd' => DateUnit::Day,
+            b'w' => DateUnit::Week,
+            b'm' => DateUnit::Month,
+            b'y' => DateUnit::Year,
+            _ => return None,
+        };
+        let digits = &rest[..rest.len() - 1];
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let per_year = match unit {
+            DateUnit::Day => 366,
+            DateUnit::Week => 53,
+            DateUnit::Month => 12,
+            DateUnit::Year => 1,
+        };
+        match digits.parse::<i64>() {
+            Ok(n) if n <= MAX_DATE_OFFSET_YEARS * per_year => {
+                Some(DateToken::Relative { n: sign * n, unit })
+            }
+            _ => Some(DateToken::OutOfRange),
+        }
     }
-    let n: i64 = rest[..rest.len() - 1].parse().ok()?;
-    let n = sign * n;
-    Some(match unit {
-        'd' => today.add_days(n),
-        'w' => today.add_days(n * 7),
-        'm' => today.add_months(n),
-        'y' => today.add_months(n * 12),
-        _ => return None,
-    })
+
+    /// The `yyyymmdd` ordinal this token names on `today`. Offsets are bounded
+    /// at parse, so the arithmetic cannot overflow.
+    pub fn resolve(self, today: JournalDate) -> Option<i64> {
+        let date = match self {
+            DateToken::Keyword(offset) => today.add_days(offset),
+            DateToken::Relative { n, unit } => match unit {
+                DateUnit::Day => today.add_days(n),
+                DateUnit::Week => today.add_days(n * 7),
+                DateUnit::Month => today.add_months(n),
+                DateUnit::Year => today.add_months(n * 12),
+            },
+            DateToken::OutOfRange => return None,
+            DateToken::Stem(date) | DateToken::Title(date) => date,
+        };
+        Some(date.ordinal_key())
+    }
+
+    /// Whether the OG printer may write this token bare (a title needs `[[ ]]`).
+    pub fn prints_bare(self) -> bool {
+        !matches!(self, DateToken::Title(_))
+    }
+}
+
+/// Resolve a date-literal token to a `yyyymmdd` ordinal against `today`: the
+/// [`DateToken`] grammar. `None` for a non-date or an out-of-range offset.
+/// The ONE date-literal resolver: the advanced lowering and the executor's
+/// date comparisons both call it (I-12).
+pub fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
+    DateToken::parse(tok)?.resolve(today)
+}
+
+#[cfg(test)]
+mod date_token_tests {
+    use super::*;
+
+    /// Reader B (og 14 Q2): an offset past the admitted range neither panics
+    /// (debug overflow in `to_days() + n`, `n * 7`, `n * 12`) nor resolves to a
+    /// garbage day in release; it does not resolve at all.
+    #[test]
+    fn an_out_of_range_offset_resolves_to_nothing_and_never_panics() {
+        let today = JournalDate::from_ordinal(20260904);
+        for token in [
+            "+9223372036854775807d",
+            "-9223372036854775807w",
+            "1537228672809129302m",
+            "-768614336404564651y",
+            "+99999999999999999999999d",
+            "-99999y",
+        ] {
+            assert_eq!(
+                DateToken::parse(token),
+                Some(DateToken::OutOfRange),
+                "{token}"
+            );
+            assert_eq!(resolve_date_token(token, today), None, "{token}");
+        }
+        assert!(
+            resolve_date_token("-10000y", today).is_some(),
+            "the admitted limit resolves"
+        );
+        assert_eq!(resolve_date_token("+2w", today), Some(20260918));
+        assert_eq!(
+            resolve_date_token("-7D", today),
+            None,
+            "units are lowercase"
+        );
+        assert_eq!(resolve_date_token("2026_01_05", today), Some(20260105));
+    }
 }
