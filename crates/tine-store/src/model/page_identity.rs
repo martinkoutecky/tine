@@ -70,13 +70,19 @@ pub(crate) fn graph_text_directory_scannable(root: &Path, path: &Path) -> bool {
     true
 }
 
-pub(crate) fn graph_text_eligible(root: &Path, path: &Path) -> bool {
+/// Files the watcher must observe, including provider conflict copies that
+/// appear in the conflict list but must never become page claimants.
+pub(crate) fn graph_text_watch_relevant(root: &Path, path: &Path) -> bool {
     if !is_page_file(path) || !graph_text_directory_scannable(root, path.parent().unwrap_or(root)) {
         return false;
     }
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| !name.starts_with('.') && portable_component(name))
+}
+
+pub(crate) fn graph_text_eligible(root: &Path, path: &Path) -> bool {
+    graph_text_watch_relevant(root, path)
         && path
             .file_stem()
             .and_then(|stem| stem.to_str())
