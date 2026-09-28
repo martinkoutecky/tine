@@ -26,10 +26,13 @@
       "stability": "stable"
     },
     "scripts/e2e-block-ref-count.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Copy block ref gives a fresh target one durable identity; a pasted reference updates its badge and referrer panel before reload, survives reload, and follows later source changes.", "blocking": true }],
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Copy block ref gives a fresh target one durable identity; a pasted reference updates its badge and referrer panel before reload, survives reload, and follows later source changes.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "The ((uuid)) that Copy block ref puts on the native clipboard names an id:: already present in the target's file at the moment the reference becomes available.", "blocking": true, "authority": "og batch 10 durable block-ref receipt (id persisted before the reference is handed out)" }
+      ],
       "acceptableVariations": ["Refresh timing may vary within the completed save lifecycle."],
       "nonRequirements": ["Exact badge typography, panel layout, animation, or generated UUID value."],
-      "stability": "stable"
+      "stability": "burn-in"
     },
     "scripts/e2e-blockselect.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Escape and arrow keys transition between editing and block selection without losing the live selection.", "blocking": true }],
@@ -80,10 +83,13 @@
       "stability": "stable"
     },
     "scripts/e2e-journal-format.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Custom journal filename and title formats load and render the corresponding journal feed entries.", "blocking": true }],
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Custom journal filename and title formats load and render the corresponding journal feed entries.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "A title-named journal file is never renamed by opening the graph; Backups & recovery lists the exact rename, declining the native confirmation changes nothing, and accepting renames it with identical bytes after a snapshot that keeps the original name.", "blocking": true, "authority": "og batch 11 journal filename proposals (master e6f9b6e1ceae: open proposes, never renames)" }
+      ],
       "acceptableVariations": ["Locale rendering and feed layout may vary while configured dates remain discoverable."],
-      "nonRequirements": ["Exact locale punctuation or date-label spacing."],
-      "stability": "stable"
+      "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot directory naming beyond the pre-journal-rename tag."],
+      "stability": "burn-in"
     },
     "scripts/e2e-journal-future-feed.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Future journals stay out of the feed while remaining directly reachable without changing their file bytes.", "blocking": true }],
@@ -110,10 +116,13 @@
       "stability": "stable"
     },
     "scripts/e2e-multigraph.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "One app process keeps two graph windows distinct and routes Quick Capture to the intended open graph.", "blocking": true }],
-      "acceptableVariations": ["Window placement and OS activation order may vary while graph routing remains correct."],
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "One app process keeps two graph windows distinct and routes Quick Capture to the intended open graph.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "An edit still unsaved when a window switches to another graph lands in the graph it was typed in, never in the new graph, and no old-graph content paints into the switched window.", "blocking": true, "authority": "I-20 late landing (og batches 7-10)" }
+      ],
+      "acceptableVariations": ["Window placement and OS activation order may vary while graph routing remains correct.", "The switch may save the pending edit before or after the new graph paints, and the switched window may show any route of the new graph."],
       "nonRequirements": ["Exact native window coordinates or stacking order."],
-      "stability": "stable"
+      "stability": "burn-in"
     },
     "scripts/e2e-native-titlebar.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "A native Linux titlebar close uses Tine's safe persistence path and closes the real window.", "blocking": true }],
@@ -210,10 +219,15 @@
       "stability": "stable"
     },
     "scripts/e2e-rename.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.", "blocking": true }],
-      "acceptableVariations": ["Navigation timing and rendered reference layout may vary after rename."],
-      "nonRequirements": ["Exact file-list ordering or transition animation."],
-      "stability": "stable"
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.", "blocking": true },
+        { "class": "core-operation", "userOutcome": "A page whose title:: differs from its filename is found and renamed by its title: the file moves to the new title's name, title:: and every [[title]] reference are rewritten, and the filename is not offered as a separate page.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Renaming onto an existing page asks for confirmation; declining leaves every file byte-identical, accepting merges the source into the survivor (aliases and blocks), rewrites references, and keeps the source's exact bytes recoverable once.", "blocking": true, "authority": "og rename-merge contract (batches 8/12); title-owned rename bytes equal master (og 11e)" },
+        { "class": "stateful-ux", "userOutcome": "After a rename or merge the user is on the renamed or surviving page, whatever page they came from.", "blocking": true }
+      ],
+      "acceptableVariations": ["Navigation timing and rendered reference layout may vary after rename.", "The merged alias order and the trash location of the source copy may vary while both aliases survive and exactly one copy of the source bytes remains under logseq/."],
+      "nonRequirements": ["Exact file-list ordering or transition animation.", "The wording or button labels of the native merge confirmation."],
+      "stability": "burn-in"
     },
     "scripts/e2e-right-sidebar-collapse.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Right-sidebar disclosures, bulk controls, edit-safe unmounting, and restart restoration retain their state correctly.", "blocking": true }],
@@ -258,10 +272,13 @@
       "stability": "stable"
     },
     "scripts/e2e-structured-paste.mjs": {
-      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Structured HTML and Markdown paste preserves approved outline structure atomically without unsafe interpretation.", "blocking": true, "authority": "Tine structured-paste safety and persistence contract" }],
-      "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved."],
-      "nonRequirements": ["Exact clipboard-event implementation, indentation pixels, or paste animation."],
-      "stability": "stable"
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "Structured HTML and Markdown paste preserves approved outline structure atomically without unsafe interpretation.", "blocking": true, "authority": "Tine structured-paste safety and persistence contract" },
+        { "class": "core-operation", "userOutcome": "Keyboard Copy of a selected block leaves its page unchanged; keyboard Cut removes the selected subtree only after the native clipboard holds it, and a keyboard paste on another page reproduces the nested outline.", "blocking": true }
+      ],
+      "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved.", "With Tine's default copy setting the public clipboard text may hold only the selected block while the subtree travels in Tine's private payload; the pasted outline is the oracle."],
+      "nonRequirements": ["Exact clipboard-event implementation, indentation pixels, or paste animation.", "Exact clipboard text or HTML flavour for block Cut/Copy."],
+      "stability": "burn-in"
     },
     "scripts/e2e-tab-overflow.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Overflowing pane tabs expose an accessible overview that activates, closes, and restores focus without unintended drag capture.", "blocking": true }],
@@ -292,6 +309,12 @@
       "acceptableVariations": ["Picker layout and formula-editor presentation may evolve while dismissal ownership remains correct."],
       "nonRequirements": ["Exact option-row geometry, menu animation, or iconography."],
       "stability": "stable"
+    },
+    "scripts/e2e-journal-rollover.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "When the local day changes during editing, the new day appears at the top of the Journals feed while the open editor keeps its textarea, unsaved text, selection and focus, and the text saves to the day it was typed in.", "blocking": true }],
+      "acceptableVariations": ["The new day may appear a moment after midnight (timer margin), before or after the older day's save."],
+      "nonRequirements": ["Whether the new day's journal file is created at rollover.", "Exact scroll position of the feed."],
+      "stability": "burn-in"
     }
   }
 }
