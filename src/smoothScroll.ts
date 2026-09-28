@@ -14,6 +14,8 @@
 import { createSignal } from "solid-js";
 import Lenis from "lenis";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const [enabled, setEnabled] = createSignal(false);
 /** Reactive: is smooth scrolling currently on? (drives the Settings toggle) */
@@ -59,15 +61,16 @@ function apply(on: boolean): void {
 
 /** Toggle from the UI: persist the choice, then apply it live. */
 export function setSmoothScroll(on: boolean): void {
-  apply(on);
-  void backend().setSmoothScroll(on).catch(() => {});
+  writePreference(enabled, apply, on, (next) => backend().setSmoothScroll(next), "smooth scrolling preference");
 }
 
 /** Read the persisted preference at startup and apply it. Default OFF. */
 export async function initSmoothScroll(): Promise<void> {
+  const revision = preferenceRevision(enabled);
   try {
-    apply(await backend().getSmoothScroll());
+    const value = await backend().getSmoothScroll();
+    if (preferenceReadCurrent(enabled, revision)) { apply(value); seedPreference(enabled); }
   } catch {
-    /* default off */
+    pushToast("Could not load smooth scrolling preference.", "error");
   }
 }

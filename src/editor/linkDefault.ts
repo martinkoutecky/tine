@@ -3,6 +3,8 @@
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import type { LinkAutocompletePolicy } from "./autocomplete";
+import { writePreference, seedPreference } from "../preferenceWrites";
+import { pushToast } from "../toasts";
 
 export type { LinkAutocompletePolicy } from "./autocomplete";
 
@@ -29,8 +31,7 @@ export function migrateLinkAutocompletePolicy(value: unknown, legacy?: boolean |
 /** Apply a new setting live and persist only the generic string key. */
 export function setLinkAutocompletePolicy(next: LinkAutocompletePolicy): void {
   ++refreshGeneration;
-  setPolicy(next);
-  void backend().setAppString(POLICY_KEY, next).catch(() => {});
+  writePreference(policy, setPolicy, next, (value) => backend().setAppString(POLICY_KEY, value), "link autocomplete policy");
 }
 
 /** Read the string policy in each WebView. Quick Capture is an independent
@@ -38,7 +39,7 @@ export function setLinkAutocompletePolicy(next: LinkAutocompletePolicy): void {
 export async function initLinkDefault(): Promise<void> {
   const generation = ++refreshGeneration;
   const applyIfCurrent = (next: LinkAutocompletePolicy) => {
-    if (generation === refreshGeneration) setPolicy(next);
+    if (generation === refreshGeneration) { setPolicy(next); seedPreference(policy); }
   };
   try {
     const stored = await backend().getAppString(POLICY_KEY, "");
@@ -50,15 +51,17 @@ export async function initLinkDefault(): Promise<void> {
     try {
       legacy = await backend().getLinkFirstMatch();
     } catch {
-      // Backend/read failure remains the safe current default.
+      pushToast("Could not load legacy link preference.", "error");
     }
     const migrated = migrateLinkAutocompletePolicy(stored, legacy);
     applyIfCurrent(migrated);
     if (legacy !== undefined && generation === refreshGeneration) {
-      void backend().setAppString(POLICY_KEY, migrated).catch(() => {});
+      void backend().setAppString(POLICY_KEY, migrated)
+        .catch(() => pushToast("Could not save migrated link autocomplete policy.", "error"));
     }
   } catch {
     applyIfCurrent("adaptive");
+    pushToast("Could not load link autocomplete policy.", "error");
   }
 }
 
@@ -67,5 +70,6 @@ export async function initLinkDefault(): Promise<void> {
 export const linkFirstMatch = () => policy() === "existing";
 export function setLinkFirstMatch(on: boolean): void {
   setLinkAutocompletePolicy(on ? "existing" : "adaptive");
-  void backend().setLinkFirstMatch(on).catch(() => {});
+  void backend().setLinkFirstMatch(on)
+    .catch(() => pushToast("Could not save legacy link preference.", "error"));
 }

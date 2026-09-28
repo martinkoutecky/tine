@@ -12,6 +12,8 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY_SUBTREE = "copy_include_subtree";
 const KEY_COLLAPSED = "copy_strip_collapsed";
@@ -32,35 +34,38 @@ export const copyStripCollapsed = stripCollapsed;
 export const refClickZoom = refZoom;
 
 export function setRefClickZoom(on: boolean): void {
-  setRefZoomSig(on);
-  void backend().setAppBool(KEY_REF_ZOOM, on).catch(() => {});
+  writePreference(refZoom, setRefZoomSig, on, (next) => backend().setAppBool(KEY_REF_ZOOM, next), "block reference click behavior");
 }
 
 export function setCopyIncludeSubtree(on: boolean): void {
-  setIncludeSubtreeSig(on);
-  void backend().setAppBool(KEY_SUBTREE, on).catch(() => {});
+  writePreference(includeSubtree, setIncludeSubtreeSig, on, (next) => backend().setAppBool(KEY_SUBTREE, next), "copy subtree preference");
 }
 export function setCopyStripCollapsed(on: boolean): void {
-  setStripCollapsedSig(on);
-  void backend().setAppBool(KEY_COLLAPSED, on).catch(() => {});
+  writePreference(stripCollapsed, setStripCollapsedSig, on, (next) => backend().setAppBool(KEY_COLLAPSED, next), "copy collapsed preference");
 }
 
 /** Load the persisted preferences at startup. Tine defaults: include-subtree OFF,
  *  strip-collapsed ON (both differ from Logseq; revertible in Settings). */
 export async function initCopySettings(): Promise<void> {
+  const subtreeRevision = preferenceRevision(includeSubtree);
+  const collapsedRevision = preferenceRevision(stripCollapsed);
+  const zoomRevision = preferenceRevision(refZoom);
   try {
-    setIncludeSubtreeSig(await backend().getAppBool(KEY_SUBTREE, false));
+    const value = await backend().getAppBool(KEY_SUBTREE, false);
+    if (preferenceReadCurrent(includeSubtree, subtreeRevision)) { setIncludeSubtreeSig(value); seedPreference(includeSubtree); }
   } catch {
-    /* default off */
+    pushToast("Could not load copy subtree preference.", "error");
   }
   try {
-    setStripCollapsedSig(await backend().getAppBool(KEY_COLLAPSED, true));
+    const value = await backend().getAppBool(KEY_COLLAPSED, true);
+    if (preferenceReadCurrent(stripCollapsed, collapsedRevision)) { setStripCollapsedSig(value); seedPreference(stripCollapsed); }
   } catch {
-    /* default on */
+    pushToast("Could not load collapsed copy preference.", "error");
   }
   try {
-    setRefZoomSig(await backend().getAppBool(KEY_REF_ZOOM, false));
+    const value = await backend().getAppBool(KEY_REF_ZOOM, false);
+    if (preferenceReadCurrent(refZoom, zoomRevision)) { setRefZoomSig(value); seedPreference(refZoom); }
   } catch {
-    /* default off */
+    pushToast("Could not load block reference preference.", "error");
   }
 }

@@ -13,6 +13,8 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY_ENABLED = "spellcheck_enabled";
 const KEY_LANGS = "spellcheck_languages";
@@ -38,19 +40,18 @@ export function parseLanguages(s: string): string[] {
 }
 
 function apply(): void {
-  void backend().applySpellcheck(enabled(), parseLanguages(languages())).catch(() => {});
+  void backend().applySpellcheck(enabled(), parseLanguages(languages()))
+    .catch(() => pushToast("Could not apply spellcheck settings.", "error"));
 }
 
 export function setSpellcheckEnabled(on: boolean): void {
-  setEnabledSig(on);
-  void backend().setAppBool(KEY_ENABLED, on).catch(() => {});
-  apply();
+  writePreference(enabled, (next) => { setEnabledSig(next); apply(); }, on,
+    (next) => backend().setAppBool(KEY_ENABLED, next), "spellcheck preference");
 }
 
 export function setSpellcheckLanguages(value: string): void {
-  setLanguagesSig(value);
-  void backend().setAppString(KEY_LANGS, value).catch(() => {});
-  apply();
+  writePreference(languages, (next) => { setLanguagesSig(next); apply(); }, value,
+    (next) => backend().setAppString(KEY_LANGS, next), "spellcheck languages");
 }
 
 /** Is this dictionary code currently selected? */
@@ -93,15 +94,19 @@ export async function loadDictionaries(): Promise<void> {
  *  already applied them once from the same file; re-applying is idempotent and
  *  also sets this webview-context's signals (e.g. the separate capture window). */
 export async function initSpellcheckSettings(): Promise<void> {
+  const enabledRevision = preferenceRevision(enabled);
+  const languageRevision = preferenceRevision(languages);
   try {
-    setEnabledSig(await backend().getAppBool(KEY_ENABLED, true));
+    const value = await backend().getAppBool(KEY_ENABLED, true);
+    if (preferenceReadCurrent(enabled, enabledRevision)) { setEnabledSig(value); seedPreference(enabled); }
   } catch {
-    /* default on */
+    pushToast("Could not load spellcheck preference.", "error");
   }
   try {
-    setLanguagesSig(await backend().getAppString(KEY_LANGS, ""));
+    const value = await backend().getAppString(KEY_LANGS, "");
+    if (preferenceReadCurrent(languages, languageRevision)) { setLanguagesSig(value); seedPreference(languages); }
   } catch {
-    /* default: OS locale */
+    pushToast("Could not load spellcheck languages.", "error");
   }
   void loadDictionaries();
   apply();

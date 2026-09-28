@@ -12,6 +12,7 @@ import { pluginManager } from "./manager";
 import { THEME_API_VERSION, parseThemeManifest } from "../themes/manifest";
 import { applyThemeRevocations, installThemePackage, themeVersionIsRevoked } from "../themes/manager";
 import { applyTheme, selectedGalleryTheme } from "../themeGallery";
+import { pushToast } from "../toasts";
 
 export const COMMUNITY_REGISTRY_URL =
   "https://raw.githubusercontent.com/martinkoutecky/tine-plugin-registry/main/index.json";
@@ -636,7 +637,8 @@ export function loadSafetyReport(plugin: RegistryPlugin, version: RegistryVersio
       bytes = await boundedBytes(version.audit.url, MAX_AUDIT_BYTES);
       if ((await digestHex(bytes)) !== version.audit.sha256) throw new Error("safety report digest does not match the signed registry");
       const report = parseSafetyReport(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), plugin, version);
-      await backend().setAppString(`plugin-audit:${key}`, new TextDecoder().decode(bytes)).catch(() => {});
+      await backend().setAppString(`plugin-audit:${key}`, new TextDecoder().decode(bytes))
+        .catch(() => pushToast("Could not cache plugin safety report.", "error"));
       return report;
     } catch (networkError) {
       const cached = await backend().getAppString(`plugin-audit:${key}`, "");

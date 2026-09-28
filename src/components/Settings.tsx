@@ -79,6 +79,7 @@ import {
   setLauncherRankingEnabled,
 } from "../launcherRanking";
 import { registerTransientLayer } from "../transientLayers";
+import { writePreference, seedPreference } from "../preferenceWrites";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
 // `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
@@ -931,12 +932,14 @@ function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.El
   const layerId = `settings-advanced-${createUniqueId()}`;
   const key = `tine.settings.advanced.${props.tab}`;
   let initial = false;
-  try { initial = localStorage.getItem(key) === "1"; } catch {}
+  try { initial = localStorage.getItem(key) === "1"; }
+  catch { pushToast("Could not load Advanced section preference.", "error"); }
   const [open, setOpen] = createSignal(initial);
   let button: HTMLButtonElement | undefined;
   const expanded = () => props.forceOpen || open();
   const persist = (value: boolean) => {
-    try { localStorage.setItem(key, value ? "1" : "0"); } catch {}
+    try { localStorage.setItem(key, value ? "1" : "0"); }
+    catch { pushToast("Could not save Advanced section preference.", "error"); }
   };
   const toggle = () => {
     const next = !open();
@@ -1633,14 +1636,16 @@ function EditorTab(props: { search: string }): JSX.Element {
 function JournalsTab(props: { search: string }): JSX.Element {
   // Quick-capture Enter behaviour (app-level setting, read by the capture window).
   const [captureEnterFiles, setCaptureEnterFiles] = createSignal(false);
+  let captureChanged = false;
   void backend()
     .getCaptureEnterFiles()
-    .then(setCaptureEnterFiles)
-    .catch(() => {});
+    .then((value) => { if (!captureChanged) { setCaptureEnterFiles(value); seedPreference(captureEnterFiles); } })
+    .catch(() => pushToast("Could not load capture Enter preference.", "error"));
   const toggleCaptureEnter = () => {
+    captureChanged = true;
     const v = !captureEnterFiles();
-    setCaptureEnterFiles(v);
-    void backend().setCaptureEnterFiles(v).catch(() => {});
+    writePreference(captureEnterFiles, setCaptureEnterFiles, v,
+      (next) => backend().setCaptureEnterFiles(next), "capture Enter preference");
   };
   return (
     <>
@@ -2467,14 +2472,16 @@ function FilesTab(props: { search: string }): JSX.Element {
   const pasteExample = () => formatAssetName(assetNameFormat(), undefined, sampleDate);
   // File-watch mechanism (device-local). Loaded from the backend on mount.
   const [watchMode, setWatchMode] = createSignal<"inotify" | "poll">("inotify");
+  let watchChanged = false;
   void backend()
     .getWatchMode()
-    .then((m) => setWatchMode(m === "poll" ? "poll" : "inotify"))
-    .catch(() => {});
+    .then((m) => { if (!watchChanged) { setWatchMode(m === "poll" ? "poll" : "inotify"); seedPreference(watchMode); } })
+    .catch(() => pushToast("Could not load file watcher mode.", "error"));
   const changeWatchMode = (m: "inotify" | "poll") => {
     if (m === watchMode()) return;
-    setWatchMode(m);
-    void backend().setWatchMode(m).catch(() => {});
+    watchChanged = true;
+    writePreference(watchMode, setWatchMode, m,
+      (next) => backend().setWatchMode(next), "file watcher mode");
   };
   return (
     <>

@@ -17,6 +17,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { isTauri } from "./backend";
 import { activePane } from "./ui";
 import { platformKind } from "./platform";
+import { pushToast } from "./toasts";
 
 const ZOOM_KEY = "logseq-claude.zoom";
 const MIN = 0.5;
@@ -72,7 +73,7 @@ export function applyZoom(): void {
       document.documentElement.style.zoom = "";
       return getCurrentWebview().setZoom(scale);
     })
-    .catch(() => {});
+    .catch(() => pushToast("Could not apply interface zoom.", "error"));
 }
 
 function setZoom(z: number) {
@@ -83,7 +84,7 @@ function setZoom(z: number) {
     if (next === 1) localStorage.removeItem(ZOOM_KEY);
     else localStorage.setItem(ZOOM_KEY, String(next));
   } catch {
-    // ignore
+    pushToast("Could not save interface zoom.", "error");
   }
   applyZoom();
 }

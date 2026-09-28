@@ -57,6 +57,17 @@ describe("guide announcement", () => {
     expect(setFlag).toHaveBeenCalledWith(true);
     expect(graphMeta()?.guide_announced).toBe(true);
   });
+
+  it("reports a failed announcement write and restores the flag", async () => {
+    vi.spyOn(backend(), "setGuideAnnounced").mockRejectedValue(new Error("disk full"));
+    await seedMeta("/mock/guide-failed-write");
+    maybeShowGuideAnnouncement();
+    dismissToast(toasts()[0].id);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(graphMeta()?.guide_announced).toBe(false);
+    expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+  });
 });
 
 describe("guide copy inventory", () => {

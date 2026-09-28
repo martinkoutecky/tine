@@ -3,6 +3,8 @@
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY_REUSE_TABS = "nav_reuse_tabs";
 
@@ -13,15 +15,16 @@ const [reuseTabs, setReuseTabsSig] = createSignal(true);
 export const navReuseTabs = reuseTabs;
 
 export function setNavReuseTabs(on: boolean): void {
-  setReuseTabsSig(on);
-  void backend().setAppBool(KEY_REUSE_TABS, on).catch(() => {});
+  writePreference(reuseTabs, setReuseTabsSig, on, (next) => backend().setAppBool(KEY_REUSE_TABS, next), "tab reuse preference");
 }
 
 /** Load the persisted navigation preference at startup. Default ON. */
 export async function initNavSettings(): Promise<void> {
+  const revision = preferenceRevision(reuseTabs);
   try {
-    setReuseTabsSig(await backend().getAppBool(KEY_REUSE_TABS, true));
+    const value = await backend().getAppBool(KEY_REUSE_TABS, true);
+    if (preferenceReadCurrent(reuseTabs, revision)) { setReuseTabsSig(value); seedPreference(reuseTabs); }
   } catch {
-    /* default on */
+    pushToast("Could not load tab reuse preference.", "error");
   }
 }
