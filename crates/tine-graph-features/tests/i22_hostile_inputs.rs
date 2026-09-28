@@ -83,9 +83,9 @@ fn renderer_flattens_tail_without_losing_text() {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let mut source = String::new();
-    for depth in 0..180 {
+    for depth in 0..120 {
         source.push_str(&" ".repeat(depth * 2));
-        source.push_str(if depth == 179 {
+        source.push_str(if depth == 119 {
             "- LAST-CHILD\n"
         } else {
             "- parent\n"
@@ -242,7 +242,7 @@ fn hostile_child() {
         }
         "wide_outline" => {
             let mut text = String::new();
-            for depth in 0..512 {
+            for depth in 0..128 {
                 text.push_str(&" ".repeat(depth));
                 text.push_str("- item\n");
             }
@@ -250,7 +250,7 @@ fn hostile_child() {
         }
         "wide_org_headlines" => {
             let mut text = String::new();
-            for depth in 1..=512 {
+            for depth in 1..=128 {
                 text.push_str(&"*".repeat(depth));
                 text.push_str(" item\n");
             }
@@ -333,7 +333,7 @@ fn hostile_child() {
 }
 
 /// I-4 + I-22: the benign extreme of the nesting cap. A page exactly at the
-/// 512-level admission cap, with realistic multi-line, referencing content,
+/// 128-level admission cap, with realistic multi-line, referencing content,
 /// must open, edit, save byte-exactly, reopen, diff against a conflict copy,
 /// print, publish and answer queries, on the 2 MiB stack a Tauri command
 /// worker runs on. Every recursive consumer is bounded by that cap.
@@ -349,9 +349,9 @@ fn benign_page_at_depth_cap_round_trips_on_a_command_stack() {
 
 fn at_cap_outline(leaf: &str) -> String {
     let mut text = String::from("title:: Deep\n\n");
-    for depth in 0..512 {
+    for depth in 0..128 {
         let indent = "  ".repeat(depth);
-        let body = if depth == 511 {
+        let body = if depth == 127 {
             leaf.to_owned()
         } else {
             format!("level {depth} [[Tag]] with **bold** and ((not a ref))")
@@ -359,11 +359,38 @@ fn at_cap_outline(leaf: &str) -> String {
         text.push_str(&format!(
             "{indent}- {body}\n{indent}  second line {depth}\n"
         ));
+        if depth == 127 {
+            text.push_str(&format!(
+                "{indent}  #+BEGIN_NOTE\n{indent}  > quoted\n{indent}  #+END_NOTE\n"
+            ));
+        }
         if depth % 97 == 0 {
             text.push_str(&format!("{indent}  note:: n{depth}\n"));
         }
     }
     text
+}
+
+#[test]
+fn over_cap_page_is_visible_as_unreadable_with_named_reason() {
+    let root = std::env::temp_dir().join(format!("tine-i22-too-deep-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("pages")).unwrap();
+    let mut source = String::new();
+    for depth in 0..129 {
+        source.push_str(&format!("{}- level {depth}\n", "  ".repeat(depth)));
+    }
+    fs::write(root.join("pages/TooDeep.md"), source).unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert!(store.page(&PageId::from("pages/TooDeep.md")).is_err());
+    let reason = format!("{:?}", store.whole_graph().unwrap().unreadable_files());
+    assert!(
+        reason.contains("outline nesting exceeds 128 levels"),
+        "{reason}"
+    );
+    store.close();
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn benign_page_at_depth_cap() {
@@ -393,7 +420,7 @@ fn benign_page_at_depth_cap() {
         leaf = &mut leaf.children[0];
         depth += 1;
     }
-    assert_eq!(depth, 512, "the page opens with all 512 levels");
+    assert_eq!(depth, 128, "the page opens with all 128 levels");
     leaf.raw = leaf.raw.replace("LEAF needle", "LEAF edited");
     assert!(matches!(
         store.save(
@@ -441,18 +468,21 @@ fn benign_page_at_depth_cap() {
 
 fn at_cap_org(leaf: &str) -> String {
     let mut text = String::new();
-    for depth in 1..=512 {
-        let body = if depth == 512 {
+    for depth in 1..=128 {
+        let body = if depth == 128 {
             leaf.to_owned()
         } else {
             format!("level {depth} [[Tag]]")
         };
         text.push_str(&format!("{} {body}\nbody {depth}\n", "*".repeat(depth)));
+        if depth == 128 {
+            text.push_str("#+BEGIN_NOTE\n> quoted\n#+END_NOTE\n");
+        }
     }
     text
 }
 
-/// The Org twin of the benign extreme: 512 headline levels open, edit and
+/// The Org twin of the benign extreme: 128 headline levels open, edit and
 /// save byte-exactly on a command-worker stack.
 #[test]
 fn benign_org_page_at_depth_cap_round_trips_on_a_command_stack() {
@@ -478,7 +508,7 @@ fn benign_org_page_at_depth_cap_round_trips_on_a_command_stack() {
                 leaf = &mut leaf.children[0];
                 depth += 1;
             }
-            assert_eq!(depth, 512, "all 512 Org headline levels open");
+            assert_eq!(depth, 128, "all 128 Org headline levels open");
             leaf.raw = leaf.raw.replace("LEAF needle", "LEAF edited");
             assert!(matches!(
                 store.save(

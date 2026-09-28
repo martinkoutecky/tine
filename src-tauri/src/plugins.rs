@@ -531,6 +531,10 @@ pub(crate) fn uninstall_plugin(
     Ok(())
 }
 
+/// List valid packages under app-owned plugin storage, across all versions.
+/// Reads and hashes each wasm (at most 8 MiB each) and a 64 KiB manifest;
+/// malformed, missing, oversized or unreadable packages are omitted. A root
+/// lookup error returns an empty list. Cost O(installed wasm bytes).
 #[tauri::command]
 pub(crate) fn list_installed_plugins(app: tauri::AppHandle) -> Vec<InstalledPlugin> {
     let Ok(root) = plugins_dir(&app) else {
@@ -595,6 +599,9 @@ fn list_installed_plugins_at(
     installed
 }
 
+/// Read one installed wasm from app-owned plugin storage. Unsafe id/version,
+/// missing, oversized (>8 MiB), unreadable or invalid wasm returns a string
+/// error; this checks neither enabled state nor the package hash.
 #[tauri::command]
 pub(crate) fn read_plugin_entry(
     id: String,

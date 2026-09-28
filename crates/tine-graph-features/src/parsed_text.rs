@@ -15,11 +15,11 @@ pub(crate) fn read(store: &Store, file: &FileId) -> io::Result<(String, FileRev)
     })?;
     if !tine_store::parse_input_depth_within_limit(&text)
         || (file.as_str().to_ascii_lowercase().ends_with(".org")
-            && !tine_core::org::headline_levels_within_limit(&text, 512))
+            && !tine_core::org::headline_levels_within_limit(&text, 128))
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "I-22: input nesting exceeds 512 levels",
+            "I-22: outline nesting exceeds 128 levels",
         ));
     }
     Ok((text, rev))

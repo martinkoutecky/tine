@@ -1680,6 +1680,10 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
     }
 }
 
+/// Read an opted-in local image by absolute path outside every bound graph.
+/// Symlinks resolve before the graph-scope check; non-image extensions,
+/// non-regular files and files over 64 MiB fail with a string error. The
+/// bounded read also stops if a regular file grows after metadata was read.
 #[tauri::command]
 pub(crate) fn read_local_image(
     path: String,

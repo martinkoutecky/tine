@@ -44,7 +44,7 @@ use unicode_normalization::UnicodeNormalization;
 /// Maximum source bytes admitted to a page/config/EDN parser or renderer.
 pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// Maximum structural depth admitted before recursive projections or rendering.
-pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = 512;
+pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = 128;
 
 pub(crate) enum SyncFileResult {
     Reconciled {
@@ -122,13 +122,13 @@ fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<()> {
     if !parse_input_depth_within_limit(text) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "input nesting exceeds 512 levels",
+            "outline nesting exceeds 128 levels",
         ));
     }
     if org && !tine_core::org::headline_levels_within_limit(text, PARSE_INPUT_MAX_DEPTH) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Org headline nesting exceeds 512 levels",
+            "Org headline nesting exceeds 128 levels",
         ));
     }
     Ok(())
@@ -146,13 +146,11 @@ pub(crate) fn dto_depth_within_limit(page: &PageDto) -> bool {
 }
 
 /// Whether source text is within the parser and renderer nesting ceiling
-/// (`PARSE_INPUT_MAX_DEPTH` = 512 levels, inclusive). Per line it sums
-/// list-item column levels, open `#+BEGIN_<name>` callouts (every non-literal
-/// BEGIN counts until its matching END — an unclosed one counts for the rest of
-/// the file), and `>` quote markers; paired `()[]{}` on a line add their depth to
-/// callouts + quotes. Fenced code and src/example/export/comment bodies are not
-/// counted. Lone `\r`/CRLF end lines. Org headline levels are checked separately
-/// by the path-aware reader. Pure, O(n).
+/// (`PARSE_INPUT_MAX_DEPTH` = 128 levels, inclusive). List-item columns define
+/// outline depth; callouts, quotes, and paired inline delimiters have separate
+/// ceilings and do not consume outline levels. Fenced code and literal
+/// src/example/export/comment bodies are excluded. Org headline levels are
+/// checked separately by the path-aware reader. Pure, O(n).
 pub fn parse_input_depth_within_limit(input: &str) -> bool {
     let input: &str = &doc::normalize_line_endings(input); // a lone `\r` ends a line (K01a)
     let mut bullet_columns = Vec::new();
@@ -267,7 +265,7 @@ pub fn parse_input_depth_within_limit(input: &str) -> bool {
             }
         }
         let quotes = body.bytes().take_while(|byte| *byte == b'>').count();
-        if bullet_columns.len() + containers.len() + quotes > PARSE_INPUT_MAX_DEPTH {
+        if quotes > PARSE_INPUT_MAX_DEPTH {
             return false;
         }
         // Inline parsing starts afresh for each source line. Only paired
@@ -302,9 +300,7 @@ pub fn parse_input_depth_within_limit(input: &str) -> bool {
             }
             if matches!(byte, b'[' | b'{' | b'(') {
                 depth += 1;
-                if depth > PARSE_INPUT_MAX_DEPTH
-                    || depth + containers.len() + quotes > PARSE_INPUT_MAX_DEPTH
-                {
+                if depth > PARSE_INPUT_MAX_DEPTH {
                     return false;
                 }
             } else {
@@ -329,9 +325,9 @@ mod depth_contract_tests {
             }
             text
         };
-        assert!(parse_input_depth_within_limit(&outline(258, 4)));
-        assert!(parse_input_depth_within_limit(&outline(512, 1)));
-        assert!(!parse_input_depth_within_limit(&outline(513, 1)));
+        assert!(parse_input_depth_within_limit(&outline(128, 4)));
+        assert!(parse_input_depth_within_limit(&outline(128, 1)));
+        assert!(!parse_input_depth_within_limit(&outline(129, 1)));
     }
 
     #[test]
@@ -339,10 +335,10 @@ mod depth_contract_tests {
         let org = Path::new("page.org");
         let markdown = Path::new("page.md");
         assert!(
-            validate_parse_bytes_for_path(format!("{}\n", "*".repeat(512)).as_bytes(), org).is_ok()
+            validate_parse_bytes_for_path(format!("{}\n", "*".repeat(128)).as_bytes(), org).is_ok()
         );
         for suffix in ["", "\tTitle", "\r"] {
-            let source = format!("{}{}\n", "*".repeat(513), suffix);
+            let source = format!("{}{}\n", "*".repeat(129), suffix);
             assert!(validate_parse_bytes_for_path(source.as_bytes(), org).is_err());
             assert!(validate_parse_bytes_for_path(source.as_bytes(), markdown).is_ok());
         }
@@ -7890,6 +7886,28 @@ mod tests {
         assert_eq!(stats[1].1, 1, "page trash should still be counted");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trash_stats_counts_asset_sidecar_recovery_roots() {
+        let dir = scratch("asset-recovery-stats");
+        let recovery = dir.join("assets/.tine-restore-recovery/restore-1");
+        fs::create_dir_all(&recovery).unwrap();
+        fs::write(recovery.join("note.edn"), b"12345").unwrap();
+        let store = crate::store::Store::open(&dir, Default::default())
+            .unwrap()
+            .0;
+        let legacy = store
+            .trash_stats()
+            .unwrap()
+            .into_iter()
+            .find(|(kind, _, _)| *kind == crate::store::TrashKind::Legacy)
+            .unwrap();
+        assert_eq!(legacy.1, 1);
+        assert_eq!(legacy.2, 5);
+        store.close();
+        drop(store);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

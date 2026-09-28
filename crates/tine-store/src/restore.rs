@@ -112,7 +112,13 @@ impl Store {
     /// assets counts as a sidecar, regardless of a matching PDF. The store
     /// copies sidecar bytes and supplies no EDN parser or sidecar schema.
     /// Other asset files are left in place. The method then copies new files
-    /// without replacing a concurrent winner. It blocks saves and transactions
+    /// with a no-replace publish. If another writer creates a target after it
+    /// was retired, that live file is kept, its id is the only entry in
+    /// `kept_external`, and restore stops with `RestoreFailed`: later inputs are
+    /// not copied and later extras are not retired. `kept_external` is non-empty
+    /// only on failure. An empty or text-free input is accepted and retires all
+    /// live pages and journals; the safety snapshot and recovery roots retain
+    /// their prior bytes. It blocks saves and transactions
     /// for the full operation. Cost includes all input bytes, all live page,
     /// journal, and sidecar bytes hashed for baseline and publication, and an
     /// asset-tree walk excluding earlier `.tine-restore-recovery` sidecars,
@@ -129,8 +135,9 @@ impl Store {
     /// guarded but publication waits for successful `scan_refresh()` recovery.
     /// An in-flight save holding the writer lock
     /// finishes before this restore; a later save checks against restored
-    /// bytes. Check `recovery` and
-    /// `kept_external` when reconciling disk state. Existing `WholeGraph` views
+    /// bytes. After any failure, check `done.recovery` and
+    /// `done.kept_external` when reconciling disk state; a retry retires the
+    /// partial result again. Existing `WholeGraph` views
     /// remain captured snapshots until the final publication. `page()` and the
     /// watcher wait for the writer lock; `scan_area()` can observe intermediate
     /// files because it reads disk without that lock.
@@ -203,18 +210,19 @@ impl Store {
                     source.seek(SeekFrom::Start(0))?;
                     let mut bytes = Vec::new();
                     source.take(file.len + 1).read_to_end(&mut bytes)?;
-                    if let Ok(text) = std::str::from_utf8(&bytes) {
-                        let config = tine_core::config::Config::parse(text);
-                        self.graph.validate_config_layout(&config)?;
-                        let current = self.graph.current_config();
-                        if config.pages_dir != current.pages_dir
-                            || config.journals_dir != current.journals_dir
-                        {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                "restore config changes managed directories",
-                            ));
-                        }
+                    crate::model::validate_parse_bytes_for_path(&bytes, Path::new("config.edn"))?;
+                    let text = std::str::from_utf8(&bytes)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                    let config = tine_core::config::Config::parse(text);
+                    self.graph.validate_config_layout(&config)?;
+                    let current = self.graph.current_config();
+                    if config.pages_dir != current.pages_dir
+                        || config.journals_dir != current.journals_dir
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "restore config changes managed directories",
+                        ));
                     }
                     Ok(())
                 })();
@@ -454,6 +462,39 @@ mod config_directory_tests {
             ],
         );
         assert!(result.is_ok(), "{result:?}");
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn restore_refuses_unloadable_config_before_retiring_pages() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-restore-invalid-config-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("pages/A.md"), b"- keep me\n").unwrap();
+        let source = root.join("candidate.edn");
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        for bytes in [
+            vec![0xff, 0xfe],
+            format!("{}\n", "(".repeat(129) + &")".repeat(129)).into_bytes(),
+        ] {
+            fs::write(&source, &bytes).unwrap();
+            let input = RestoreFile {
+                area: Area::Meta,
+                rel: "config.edn".into(),
+                source: File::open(&source).unwrap(),
+                len: bytes.len() as u64,
+            };
+            assert!(store
+                .restore(crate::EditKind::ReplacePage, vec![input])
+                .is_err());
+            assert_eq!(fs::read(root.join("pages/A.md")).unwrap(), b"- keep me\n");
+        }
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();
