@@ -38,11 +38,20 @@ pub struct Config {
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
     pub block_hidden_properties: Vec<String>,
-    /// `:property/separated-by-commas #{:a :b}` — extra property keys whose plain
-    /// value OG splits on commas. Read by `query::atom::ParseConfig`.
+    /// `:property/separated-by-commas #{:a :b}` — keys added to the built-in
+    /// `alias`/`aliases`/`tags` set. Tine already comma-splits EVERY key's plain
+    /// value (Q21), so this only matters for a value that also contains refs: the
+    /// value's comma-separated plain segments are kept as atoms next to its refs
+    /// instead of being dropped. Keys are stored without the leading `:`; matched
+    /// with `property_key_norm`. Read by `query::atom::ParseConfig` (queries and
+    /// the property registry only).
     pub separated_by_commas: Vec<String>,
-    /// `:ignored-page-references-keywords #{:a :b}` — property keys whose value OG
-    /// keeps as one unparsed string. Read by `query::atom::ParseConfig`.
+    /// `:ignored-page-references-keywords #{:a :b}` — keys whose values get no
+    /// reference parsing: `[[x]]`/`#x` stay literal text. The value is still
+    /// comma-split into plain atoms like every other key (Q21); only a
+    /// double-quoted value stays one string. Wins over `separated_by_commas` for a
+    /// key in both. Read by `query::atom::ParseConfig` (queries and the property
+    /// registry only).
     pub ignored_page_references_keywords: Vec<String>,
     /// `:property-pages/enabled?` — OG creates a page reference from every
     /// eligible property key unless this is explicitly false. Absent defaults to

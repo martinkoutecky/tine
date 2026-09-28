@@ -22,12 +22,15 @@ const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum QueryPrintDialect {
+    /// OG DSL, the argument of a `{{query …}}` macro (wrapper not included).
     Og,
     /// The text pane's multi-line editing layout.
     Tql,
-    /// The persisted single-line `{{tine-query …}}` form.
+    /// The argument of the persisted single-line `{{tine-query …}}` macro
+    /// (wrapper not included).
     TqlMacro,
-    /// A `{{query [:find …]}}` advanced macro, printed from its authored source.
+    /// The argument of a `{{query [:find …]}}` advanced macro, printed from its
+    /// authored source (wrapper not included).
     AdvancedMacro,
 }
 
@@ -152,8 +155,13 @@ async fn on_graph<T: Send + 'static>(
     .map_err(|error| error.to_string())?
 }
 
-/// SPEC §7.1 `query_parse`: text → `{query, view}`, with the host block's
-/// `tine.*` properties merged here and nowhere else.
+/// SPEC §7.1 `query_parse`: text → `{query, view}` (plus the scoped display
+/// settings), with the host block's `tine.*` properties merged here and nowhere
+/// else (a `tine.*` value wins per field; other keys are ignored). A syntax
+/// error is NOT an `Err`: it comes back in `query.diagnostics`. `Err` only for
+/// a source over the size/nesting limit, or a graph that is unbound, closed or
+/// failed to load. Waits for the initial graph load; the first call per
+/// registry generation builds the property registry, O(P + B).
 #[tauri::command]
 pub(crate) async fn query_parse(
     text: String,
@@ -173,8 +181,17 @@ pub(crate) async fn query_parse(
     .await
 }
 
-/// SPEC §7.1 `query_print`: the OG printer is partial and rejects a non-OG
-/// expressible IR with its diagnostic.
+/// SPEC §7.1 `query_print`: the IR as the MACRO ARGUMENT (no `{{…}}`) for
+/// `og`/`tql_macro`/`advanced_macro`, or the text pane's layout for `tql`.
+/// Refusals (`Err("query-print-refused:<reason>:<diagnostic JSON>")`): `og` when
+/// the IR is not OG-expressible; any macro dialect whose output fails the
+/// macro-safety / document-parser check; `advanced_macro`, or
+/// `preserve_form = true`, when the query's source is not that dialect's
+/// (`tql` always refuses `preserve_form`). `preserve_form` re-emits the
+/// authored source verbatim plus its options map. View: `og` prints only a
+/// single-key sort and `sample`; aggregates, grouping, columns and the view
+/// kind are NOT printed and must be persisted as `tine.*` properties by the
+/// caller; `tql`/`tql_macro` ignore the view. Pure; no graph access.
 #[tauri::command]
 pub(crate) async fn query_print(
     query: Query,
@@ -185,13 +202,18 @@ pub(crate) async fn query_print(
     print_query_text(&query, &view, dialect, preserve_form.unwrap_or(false))
 }
 
-/// SPEC §7.1 `query_og_expressible`.
+/// SPEC §7.1 `query_og_expressible`: whether the OG DSL can express this
+/// filter and view (false only for an OG-inexpressible filter or a multi-key
+/// sort). A precondition of `query_print(og)`, not a guarantee: the printer can
+/// still refuse text that fails the macro-safety check. Pure.
 #[tauri::command]
 pub(crate) async fn query_og_expressible(query: Query, view: ViewSettings) -> bool {
     tine_core::query::print::og_expressible(&query, &view)
 }
 
-/// SPEC §7.1 `query_registry`: the observed property registry (§6.1).
+/// SPEC §7.1 `query_registry`: the observed property registry (§6.1), at most
+/// 8 top values per key. Waits for the initial graph load; `Err` only for a
+/// graph that is unbound, closed or failed to load.
 #[tauri::command]
 pub(crate) async fn query_registry(state: GraphContext<'_>) -> Result<RegistrySnapshot, String> {
     on_graph(&state, |graph| {
@@ -200,8 +222,14 @@ pub(crate) async fn query_registry(state: GraphContext<'_>) -> Result<RegistrySn
     .await
 }
 
-/// SPEC §7.1 `query_run`: the parsed IR, evaluated in memory; an over-bound
-/// answer is refused, never truncated.
+/// SPEC §7.1 `query_run`: the parsed IR, evaluated in memory on the latest
+/// published snapshot (waits for the initial load). An over-bound answer
+/// (20,000 rows / 32 MiB, checked after `sample` for both anchors) is refused
+/// with `Err("result-too-large: …")`, never truncated. An invalid query is `Ok`
+/// with no rows and its `diagnostics`. `context` binds only an advanced
+/// source's typed `:current-page` input; without it that clause is dropped and
+/// listed in `report.ignored`, so the answer is broader. A statistics fold over
+/// budget is an `Err`.
 #[tauri::command]
 pub(crate) async fn query_run(
     query: Query,
@@ -213,9 +241,12 @@ pub(crate) async fn query_run(
     on_graph(&state, move |graph| run(graph, &query, &view, &context)).await
 }
 
-/// SPEC §7.1 `query_explain_empty` (N19): why the query returned nothing. The
-/// view is accepted for master's command shape; probes count rows unsorted
-/// and unsampled, so it does not change the answer.
+/// SPEC §7.1 `query_explain_empty` (N19): why the query returned nothing — one
+/// row per root conjunct with its count alone and without it (one row, with no
+/// `without` count, for a non-`And` root; none for a non-executable query).
+/// The view is accepted for master's command shape and ignored: probes count
+/// rows unsorted and unsampled. Cost O(conjuncts × (P + B)); not memoized.
+/// Waits for the initial graph load.
 #[tauri::command]
 pub(crate) async fn query_explain_empty(
     query: Query,
@@ -494,7 +525,9 @@ mod tests {
     }
 
     /// #301: `:inputs [:current-page]` (BEGIN_QUERY's execution source) binds
-    /// the page the macro renders on; with no page bound it answers nothing.
+    /// the page the caller passes as `context` (the query block passes OG's
+    /// current page: focused route, else home, else today); with no page bound
+    /// it answers nothing.
     #[test]
     fn current_page_binds_the_rendering_page() {
         let (_dir, graph) = graph_with(&[

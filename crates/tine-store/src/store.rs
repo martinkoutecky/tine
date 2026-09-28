@@ -2277,7 +2277,10 @@ pub enum IrRequest<'a> {
 pub enum IrAnswer {
     /// Rows, totals and statistics.
     Result(Box<tine_core::query::ir::QueryResult>),
-    /// One explanation row per probe.
+    /// One explanation row per root conjunct, each with the conjunct's count
+    /// alone and the count without it (one row, with no `without` count, for a
+    /// non-`And` root); no rows for a non-executable query (its diagnostics
+    /// and report say why).
     ExplainEmpty(tine_core::query::ir::ExplainEmptyResult),
     /// This generation's registry.
     Registry(Arc<tine_core::query::registry::Registry>),
