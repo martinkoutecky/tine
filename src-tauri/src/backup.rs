@@ -1187,6 +1187,36 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn uncapturable_page_names_fail_the_safety_snapshot_before_restore() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = scratch("backup-uncapturable-names");
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        let non_utf = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
+        let non_utf_path = root.join("pages").join(non_utf);
+        let invalid_id_path = root.join("pages/invalid\\name.md");
+        let invalid_dir_path = root.join("pages/invalid\\directory");
+        std::fs::write(&non_utf_path, b"- keep A\n").unwrap();
+        std::fs::write(&invalid_id_path, b"- keep B\n").unwrap();
+        std::fs::create_dir_all(&invalid_dir_path).unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let (copied, failed, failure) = copy_store_area(
+            &store,
+            Area::Pages,
+            &root.join("backup-out"),
+            is_graph_text,
+            &|| false,
+        );
+        assert_eq!((copied, failed), (0, 3));
+        assert!(require_safety_snapshot(BackupOutcome { copied, failure }, 2).is_err());
+        assert_eq!(std::fs::read(&non_utf_path).unwrap(), b"- keep A\n");
+        assert_eq!(std::fs::read(&invalid_id_path).unwrap(), b"- keep B\n");
+        store.close();
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn backup_root_ids_do_not_conflate_punctuation() {
         let root = scratch("backup-root-id");

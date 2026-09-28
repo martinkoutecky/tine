@@ -31,7 +31,7 @@ pub(crate) fn read_regular_file_bounded(path: &Path, max: u64) -> Result<Vec<u8>
     #[cfg(unix)]
     let file = {
         use std::os::unix::fs::OpenOptionsExt;
-        fs::OpenOptions::new()
+        fs::File::options()
             .read(true)
             .custom_flags(libc::O_NONBLOCK)
             .open(path)
@@ -86,7 +86,7 @@ pub(crate) fn import_asset_from_path(
 }
 
 #[cfg(test)]
-mod asset_import_tests {
+mod tests {
     use super::*;
 
     #[cfg(unix)]

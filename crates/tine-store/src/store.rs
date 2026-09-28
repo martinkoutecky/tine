@@ -1673,7 +1673,18 @@ impl Store {
                     }
                 };
                 if ty.is_dir() {
-                    pending.push(path);
+                    if store.file_id(area, &rel).is_ok() {
+                        pending.push(path);
+                    } else {
+                        out.unreadable.push((
+                            rel,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "invalid directory id",
+                            )
+                            .into(),
+                        ));
+                    }
                 } else if ty.is_file() {
                     match entry.metadata() {
                         Ok(meta) => {
@@ -5275,9 +5286,10 @@ mod rev5_tests {
         let name = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
         fs::write(root.join("pages").join(name), b"- text\n").unwrap();
         fs::write(root.join("pages/invalid\\name.md"), b"- text\n").unwrap();
+        fs::create_dir_all(root.join("pages/invalid\\directory")).unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let listing = store.scan_area(Area::Pages, None).unwrap();
-        assert_eq!(listing.unreadable.len(), 2);
+        assert_eq!(listing.unreadable.len(), 3);
         assert!(listing
             .unreadable
             .iter()

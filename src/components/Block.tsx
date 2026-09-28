@@ -3271,8 +3271,11 @@ export function Editor(props: { id: string }): JSX.Element {
     const insert = (prepared: OutlineNode[] | null) => {
       if (!prepared?.length || !ref.isConnected || ref.value !== rawAtPaste || docNode(props.id)?.page !== pageAtPaste) return;
       if (asChildren) {
-        commit(rawAtPaste);
-        if (!insertOutlineChildren(props.id, prepared)) pushToast("Pasted outline was refused", "error");
+        const inserted = withUndoUnit(tag, [pageAtPaste], () => {
+          commit(rawAtPaste);
+          return insertOutlineChildren(props.id, prepared) ?? false;
+        });
+        if (!inserted) pushToast("Pasted outline was refused", "error");
         return;
       }
       const wasEmpty = rawAtPaste.trim() === "" && docNode(props.id).children.length === 0;

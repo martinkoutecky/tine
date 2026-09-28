@@ -3980,7 +3980,7 @@ mod tests {
                 .sum()
         }
 
-        const DEPTH: usize = 512;
+        const DEPTH: usize = crate::model::PARSE_INPUT_MAX_DEPTH;
         let dir =
             std::env::temp_dir().join(format!("tine-non-overlap-results-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

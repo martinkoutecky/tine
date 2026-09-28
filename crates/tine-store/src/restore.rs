@@ -106,8 +106,9 @@ impl Store {
     /// Replaced files are retired too. An unlisted `config.edn` and
     /// `custom.css` stay live. Only `config.edn` is accepted in the Meta area;
     /// Trash targets and non-`.edn` assets are refused. A supplied config is
-    /// refused if it exceeds 64 MiB, names unsafe managed directories, or
-    /// changes the current pages/journals directories: this restore places
+    /// refused if it exceeds 64 MiB, is not UTF-8, fails the same parse-input
+    /// admission as graph load, names unsafe managed directories, or changes
+    /// the current pages/journals directories: this restore places
     /// files in the current directories. Any `.edn` file under
     /// assets counts as a sidecar, regardless of a matching PDF. The store
     /// copies sidecar bytes and supplies no EDN parser or sidecar schema.

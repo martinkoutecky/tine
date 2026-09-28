@@ -115,8 +115,8 @@ export function outlineFits(hostId: string, nodes: readonly OutlineNode[], level
   return !!doc.byId[hostId] && depthOf(hostId) + levelsBelowHost + outlineDepth(nodes) <= OUTLINE_MAX_DEPTH;
 }
 
-/** Append parsed outline blocks as children of `parentId`.
- *  Shared by normal editor paste (via parseOutline) and sheet indented paste. */
+/** Append parsed outline blocks as children of `parentId`; null means empty,
+ *  read-only, missing parent, or over-depth refusal. Shared by editor and sheet paste. */
 export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): string | null {
   if (!nodes.length) return null;
   const parent = doc.byId[parentId];
@@ -244,7 +244,8 @@ export function splitBlock(
   markDirty(pageName, ["save-block", "insert-blocks"]);
 }
 
-/** Tab: make the block the last child of its previous sibling. */
+/** Tab: make the block the last child of its previous sibling. Returns false
+ *  when that would exceed the outline cap; the caller shows the refusal. */
 export function indentBlock(id: string, caretOffset: number) {
   if (!blockWritable(id)) return;
   const i = indexInSiblings(id);
@@ -360,8 +361,8 @@ export function mergeWithPrev(
   return true;
 }
 
-/** Insert a parsed outline (from a paste) as siblings right after `afterId`.
- *  Returns the last top-level inserted block id (to focus). */
+/** Insert parsed outline siblings after `afterId`. Returns the last inserted id
+ *  for focus, or null for empty input, read-only, missing host or excess depth. */
 export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): string | null {
   if (!nodes.length) return null;
   // Read-only gate at the choke point — file drops (and any future caller)
@@ -402,9 +403,10 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
   return lastId;
 }
 
-/** Replace one empty leaf with a parsed outline in one store transaction and one
- * undo entry. Structured/multiline paste uses this instead of insert-then-delete,
- * which could leave a partial import after one Undo. */
+/** Replace one empty leaf with a parsed outline in one transaction and undo
+ * entry, reusing the host id for the first root and its hidden properties.
+ * Returns the last root id, or null if the host is not empty/writable or the
+ * outline exceeds the cap. */
 export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): string | null {
   const current = doc.byId[id];
   if (!nodes.length || !current || current.children.length || !blockWritable(id)) return null;
