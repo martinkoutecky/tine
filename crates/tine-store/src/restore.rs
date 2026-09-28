@@ -622,9 +622,11 @@ fn copy_new(recovery: &Recovery, live: &Path, source: &mut File, len: u64) -> io
         publish_temp(&parent, Path::new(&temp), name)?;
         #[cfg(feature = "test-faults")]
         restore_abort_boundary();
-        if let Ok(sync) = parent.try_clone() {
-            let _ = sync.into_std_file().sync_all();
-        }
+        crate::directory_durability::sync_directory_entry(
+            &recovery
+                .root_path
+                .join(live.parent().unwrap_or(Path::new(""))),
+        )?;
         Ok(())
     })();
     if result.is_err() {

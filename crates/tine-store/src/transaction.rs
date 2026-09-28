@@ -11,6 +11,12 @@
 //! files share one publication after a successful initial load.
 
 use std::collections::{BTreeMap, HashSet};
+
+mod io_helpers;
+use io_helpers::{
+    collision, content_refusal, directory_read_error, disk_rev, failed, failed_trash_dir,
+    sync_move_dirs,
+};
 use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -246,6 +252,8 @@ pub enum FaultPoint {
     NoReplaceCollision,
     /// Simulate an I/O error after a step starts.
     MidStepIo,
+    /// Simulate a real directory sync error after a rename.
+    DirectorySyncIo,
     /// Simulate an I/O error at the indexed step.
     MidStepIoAt(usize),
     /// Simulate an external write while undoing a live file.
@@ -270,6 +278,7 @@ pub(crate) enum FaultPoint {
     Stage2ConfigExternal,
     NoReplaceCollision,
     MidStepIo,
+    DirectorySyncIo,
     MidStepIoAt(usize),
     UndoLiveWrite,
     UndoWithdrawalIo,
@@ -1112,6 +1121,13 @@ impl<'a> Transaction<'a> {
         }
     }
 
+    fn arm_directory_sync_fault(&self) {
+        #[cfg(all(feature = "test-faults", unix))]
+        if fault(self.store, FaultPoint::DirectorySyncIo) {
+            crate::directory_durability::fail_next_sync();
+        }
+    }
+
     fn fault_twin(&self, file: &FileId) {
         if !self.page(file) || !fault(self.store, FaultPoint::TwinAfterPublish) {
             return;
@@ -1162,6 +1178,7 @@ impl<'a> Transaction<'a> {
                 if old.is_none() {
                     self.fault_collision(&src);
                 }
+                self.arm_directory_sync_fault();
                 let result = if let Some(old) = old {
                     atomic_write_with_check(&src, new, || {
                         if fault(self.store, FaultPoint::AfterTempSync) {
@@ -1187,7 +1204,12 @@ impl<'a> Transaction<'a> {
                 } else {
                     atomic_write_new(&src, new)
                 };
-                result.map_err(|error| collision(&plan.src, error, &src))?;
+                if let Err(error) = result {
+                    if crate::directory_durability::is_directory_sync_failure(&error) {
+                        undo.created = true;
+                    }
+                    return Err(collision(&plan.src, error, &src));
+                }
                 undo.created = true;
                 self.fault_mid_step(index)?;
                 if old.is_none() {
@@ -1245,7 +1267,12 @@ impl<'a> Transaction<'a> {
                             source.seek(SeekFrom::Start(0)).map_err(failed)?;
                             let stage =
                                 path.with_file_name(format!(".tine-tx-{}.tmp", trash_stamp()));
-                            atomic_copy_file_new(source, &stage, *max_bytes).map_err(failed)?;
+                            if let Err(error) = atomic_copy_file_new(source, &stage, *max_bytes) {
+                                if crate::directory_durability::is_directory_sync_failure(&error) {
+                                    let _ = fs::remove_file(&stage);
+                                }
+                                return Err(failed(error));
+                            }
                             if self.page(&file) && !valid_utf8_file(&stage).map_err(failed)? {
                                 let _ = fs::remove_file(&stage);
                                 return Err(Why::Refused(Refusal::Undecodable));
@@ -1257,6 +1284,7 @@ impl<'a> Transaction<'a> {
                     undo.src = file.clone();
                     undo.new = Some(expected);
                     self.fault_collision(&path);
+                    self.arm_directory_sync_fault();
                     let result = match undo.new.as_ref().unwrap() {
                         Expected::Bytes(bytes) => atomic_write_new(&path, bytes),
                         Expected::File(stage) => atomic_copy_new(stage, &path),
@@ -1289,7 +1317,12 @@ impl<'a> Transaction<'a> {
                         Err(error) if unique && error.kind() == io::ErrorKind::AlreadyExists => {
                             continue
                         }
-                        Err(error) => return Err(collision(&file, error, &path)),
+                        Err(error) => {
+                            if crate::directory_durability::is_directory_sync_failure(&error) {
+                                undo.created = true;
+                            }
+                            return Err(collision(&file, error, &path));
+                        }
                     }
                 }
                 unreachable!()
@@ -1309,7 +1342,7 @@ impl<'a> Transaction<'a> {
                     move_file_noreplace(&src, &dst)
                         .map_err(|error| collision(dst_id, error, &dst))?;
                     undo.created = true;
-                    sync_move_dirs(&src, &dst);
+                    sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
                     self.fault_mid_step(index)?;
                     self.fault_twin(dst_id);
                     if let Some(twin) = self.disk_twin(dst_id)? {
@@ -1347,7 +1380,7 @@ impl<'a> Transaction<'a> {
                     move_file_noreplace(&src, &dst)
                         .map_err(|error| collision(dst_id, error, &dst))?;
                     undo.created = true;
-                    sync_move_dirs(&src, &dst);
+                    sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
                     self.fault_mid_step(index)?;
                     self.fault_twin(dst_id);
                     if let Some(twin) = self.disk_twin(dst_id)? {
@@ -1372,7 +1405,13 @@ impl<'a> Transaction<'a> {
                 }
                 undo.new = Some(Expected::Bytes(new.clone()));
                 self.fault_collision(&dst);
-                atomic_write_new(&dst, new).map_err(|e| collision(dst_id, e, &dst))?;
+                self.arm_directory_sync_fault();
+                if let Err(error) = atomic_write_new(&dst, new) {
+                    if crate::directory_durability::is_directory_sync_failure(&error) {
+                        undo.created = true;
+                    }
+                    return Err(collision(dst_id, error, &dst));
+                }
                 undo.created = true;
                 self.fault_mid_step(index)?;
                 self.fault_twin(dst_id);
@@ -1392,8 +1431,8 @@ impl<'a> Transaction<'a> {
                     self.store.graph.transaction_note_delete(&src);
                 }
                 move_file_noreplace(&src, &trash).map_err(|e| collision(&plan.src, e, &src))?;
-                sync_move_dirs(&src, &trash);
                 undo.moved = true;
+                sync_move_dirs(self.store, &src, &trash).map_err(failed)?;
                 self.fault_mid_step(index)?;
                 if fs::read(&trash).map_err(failed)? != old {
                     return Err(Why::Conflict {
@@ -1421,7 +1460,7 @@ impl<'a> Transaction<'a> {
                     move_file_noreplace(&src, &trash)
                         .map_err(|error| collision(&plan.src, error, &src))?;
                     undo.moved = true;
-                    sync_move_dirs(&src, &trash);
+                    sync_move_dirs(self.store, &src, &trash).map_err(failed)?;
                     self.fault_mid_step(index)?;
                     self.verify_opaque(&trash_id, rev)?;
                     return Ok(StepResult::Trashed {
@@ -1441,8 +1480,8 @@ impl<'a> Transaction<'a> {
                     self.store.graph.transaction_note_delete(&src);
                 }
                 move_file_noreplace(&src, &trash).map_err(|e| collision(&plan.src, e, &src))?;
-                sync_move_dirs(&src, &trash);
                 undo.moved = true;
+                sync_move_dirs(self.store, &src, &trash).map_err(failed)?;
                 self.fault_mid_step(index)?;
                 if fs::read(&trash).map_err(failed)? != old {
                     return Err(Why::Conflict {
@@ -1491,7 +1530,7 @@ impl<'a> Transaction<'a> {
                         ));
                     }
                     move_file_noreplace(&dst, &live)?;
-                    sync_move_dirs(&dst, &live);
+                    sync_move_dirs(self.store, &dst, &live)?;
                     Ok(())
                 })();
                 match result {
@@ -1609,7 +1648,11 @@ impl<'a> Transaction<'a> {
                     .undo_failed
                     .push((record.src.clone(), error.into()));
             } else {
-                sync_move_dirs(&trash, &live);
+                if let Err(error) = sync_move_dirs(self.store, &trash, &live) {
+                    rollback
+                        .undo_failed
+                        .push((record.src.clone(), error.into()));
+                }
             }
         }
     }
@@ -2043,81 +2086,6 @@ impl<'a> Transaction<'a> {
                 graph_rev: published_rev,
             },
         }
-    }
-}
-
-fn failed(error: io::Error) -> Why {
-    Why::Failed(error.into())
-}
-
-fn content_refusal(error: io::Error) -> Why {
-    if error
-        .get_ref()
-        .and_then(|inner| inner.downcast_ref::<std::str::Utf8Error>())
-        .is_some()
-    {
-        return Why::Refused(Refusal::Undecodable);
-    }
-    Why::Refused(Refusal::InvalidTarget(format!(
-        "page content cannot be parsed safely: {error}"
-    )))
-}
-
-/// Reading a directory fails with EISDIR on Unix but ERROR_ACCESS_DENIED on
-/// Windows. Report both as `IsADirectory` so a caller that treats an occupying
-/// directory as "name taken" (the Guide copy) behaves the same on every
-/// platform instead of failing with "Access is denied" on Windows.
-fn directory_read_error(error: io::Error, path: &Path) -> io::Error {
-    if error.kind() != io::ErrorKind::IsADirectory
-        && fs::metadata(path).is_ok_and(|metadata| metadata.is_dir())
-    {
-        io::Error::new(
-            io::ErrorKind::IsADirectory,
-            format!("{}: is a directory ({error})", path.display()),
-        )
-    } else {
-        error
-    }
-}
-
-fn failed_trash_dir(error: io::Error, parent: &Path) -> Why {
-    let display = if error.kind() == io::ErrorKind::NotADirectory
-        && parent.ends_with(Path::new("logseq/.tine-trash/assets"))
-    {
-        Path::new("logseq/.tine-trash/assets")
-    } else {
-        parent
-    };
-    Why::Failed(IoError {
-        kind: error.kind(),
-        message: format!(
-            "could not create trash directory {}: {error}",
-            display.display()
-        ),
-    })
-}
-
-fn sync_move_dirs(source: &Path, destination: &Path) {
-    for parent in [source.parent(), destination.parent()]
-        .into_iter()
-        .flatten()
-    {
-        let _ = File::open(parent).and_then(|dir| dir.sync_all());
-    }
-}
-
-fn disk_rev(path: &Path) -> Option<FileRev> {
-    fs::read(path).ok().map(|bytes| FileRev::from_bytes(&bytes))
-}
-
-fn collision(file: &FileId, error: io::Error, path: &Path) -> Why {
-    if error.kind() == io::ErrorKind::AlreadyExists {
-        Why::Conflict {
-            file: file.clone(),
-            disk: disk_rev(path),
-        }
-    } else {
-        failed(error)
     }
 }
 

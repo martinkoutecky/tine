@@ -22,7 +22,7 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
         file.sync_all()?;
         drop(file);
         super::no_replace::move_file_noreplace(&tmp, path)?;
-        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        super::directory_durability::sync_directory_entry(dir)?;
         Ok(())
     })();
     if res.is_err() {
@@ -59,7 +59,7 @@ pub(crate) fn atomic_write_with_check(
     if res.is_err() {
         let _ = fs::remove_file(&tmp);
     } else {
-        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        super::directory_durability::sync_directory_entry(dir)?;
         on_dir_sync();
     }
     res

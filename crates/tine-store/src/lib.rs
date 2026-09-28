@@ -21,6 +21,9 @@
 //! view can wait for the initial parse. [`Store::close`] stops observation and releases
 //! callers waiting for load. Writes, restore, publication, and graph acquisition
 //! can block without a timeout; run them off a UI thread.
+//! A directory sync error after a rename reports failure even though the new
+//! name may already be visible. Re-read disk state before retrying; a
+//! transaction also attempts undo and reports any remaining changes.
 //! [`FileId`] and [`PageId`] are re-exports of the same types in
 //! `tine_core::model`, not separate store-specific identities.
 //!
@@ -74,6 +77,7 @@ pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
 mod atomic_file;
 #[cfg(feature = "test-faults")]
 pub mod cost_counters;
+pub mod directory_durability;
 mod no_replace;
 mod path_identity;
 #[cfg(test)]

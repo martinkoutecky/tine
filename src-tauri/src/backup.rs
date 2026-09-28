@@ -202,7 +202,7 @@ fn write_manifest(dir: &std::path::Path, manifest: &SnapshotManifest) -> std::io
     record_backup_op("manifest_sync");
     drop(file);
     crate::device_io::move_file_noreplace(&tmp, &path)?;
-    sync_dir(dir)
+    tine_store::directory_durability::sync_directory_entry(dir)
 }
 
 #[cfg(test)]
@@ -215,20 +215,6 @@ fn record_backup_op(op: &'static str) {
     BACKUP_OPS.with(|ops| ops.borrow_mut().push(op));
     #[cfg(not(test))]
     let _ = op;
-}
-
-fn sync_dir(path: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(windows)]
-    {
-        // FlushFileBuffers does not support directory handles. The two
-        // namespace publications use MoveFileExW(MOVEFILE_WRITE_THROUGH).
-        let _ = path;
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        std::fs::File::open(path)?.sync_all()
-    }
 }
 
 fn write_payload(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -254,7 +240,7 @@ fn sync_payload_dirs(dir: &std::path::Path) -> std::io::Result<()> {
             sync_payload_dirs(&entry.path())?;
         }
     }
-    sync_dir(dir)?;
+    tine_store::directory_durability::sync_directory_entry(dir)?;
     record_backup_op("payload_dir_sync");
     Ok(())
 }
@@ -268,7 +254,9 @@ fn publish_snapshot(
     write_manifest(partial, manifest)?;
     crate::device_io::move_file_noreplace(partial, final_dest)?;
     record_backup_op("publish_rename");
-    sync_dir(final_dest.parent().expect("snapshot has parent"))?;
+    tine_store::directory_durability::sync_directory_entry(
+        final_dest.parent().expect("snapshot has parent"),
+    )?;
     record_backup_op("publication_dir_sync");
     Ok(())
 }

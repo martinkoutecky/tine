@@ -5334,12 +5334,11 @@ pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
         std::io::copy(&mut input, &mut output)?;
         output.sync_all()?;
         drop(output);
-        fs::rename(&tmp, dst)
+        fs::rename(&tmp, dst)?;
+        crate::directory_durability::sync_directory_entry(dir)
     })();
     if res.is_err() {
         let _ = fs::remove_file(&tmp);
-    } else {
-        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
     }
     res
 }
@@ -5369,7 +5368,7 @@ pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
         output.sync_all()?;
         drop(output);
         move_file_noreplace(&tmp, dst)?;
-        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        crate::directory_durability::sync_directory_entry(dir)?;
         Ok(())
     })();
     if res.is_err() {
@@ -5413,7 +5412,7 @@ pub(crate) fn atomic_copy_file_new(
         output.sync_all()?;
         drop(output);
         move_file_noreplace(&tmp, dst)?;
-        let _ = fs::File::open(dir).and_then(|directory| directory.sync_all());
+        crate::directory_durability::sync_directory_entry(dir)?;
         Ok(())
     })();
     if res.is_err() {
