@@ -6,7 +6,8 @@ import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../
 import { LiveRefGroup } from "./LiveRefGroup";
 import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { canonicalFold, matcherMatches, parseSearchQuery } from "../editor/searchQuery";
+import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
+import { searchFold } from "../editor/searchFold";
 
 const norm = (s: string) => s.trim().toLowerCase();
 const pageIdentity = (s: string) => {
@@ -75,7 +76,7 @@ function searchableFilterEntry(
   return {
     text: entry.text,
     facets: entry.facets,
-    normalizedText: canonicalFold(entry.text, searchRemoveAccents()),
+    normalizedText: searchFold(entry.text, searchRemoveAccents()),
   };
 }
 

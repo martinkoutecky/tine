@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { SEARCH_SYNTAX, canonicalFold, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
+import { SEARCH_SYNTAX, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
+import { searchFold } from "./searchFold";
 
 // Mirrors crates/tine-core/src/search_query.rs tests — keep the two in sync.
 const hit = (q: string, text: string) =>
-  matcherMatches(parseSearchQuery(q), canonicalFold(text), text);
+  matcherMatches(parseSearchQuery(q), searchFold(text), text);
 
 describe("searchQuery parser (#44)", () => {
   it("executes every example displayed by Ctrl K syntax help", () => {
@@ -115,14 +116,14 @@ describe("searchQuery parser (#44)", () => {
       ["Příliš žluťoučký kůň", "prilis zlutoucky kun"],
       ["γειά", "γεια"], ["שָׁלוֹם", "שלום"], ["مَرْحَبًا", "مرحبا"],
       ["Øresund", "oresund"], ["Đà Nẵng", "da nang"], ["Ｔｉｎｅ", "tine"],
-    ]) expect(canonicalFold(raw), raw).toBe(canonicalFold(plain));
+    ]) expect(searchFold(raw), raw).toBe(searchFold(plain));
     for (const [raw, plain] of [["が", "か"], ["कु", "क"], ["й", "и"]])
-      expect(canonicalFold(raw), raw).not.toBe(canonicalFold(plain));
+      expect(searchFold(raw), raw).not.toBe(searchFold(plain));
     const off = parseSearchQuery("cafe", false);
-    expect(matcherMatches(off, canonicalFold("café", false), "café")).toBe(false);
-    expect(matcherMatches(parseSearchQuery("café", false), canonicalFold("cafe\u0301", false), "cafe\u0301")).toBe(true);
+    expect(matcherMatches(off, searchFold("café", false), "café")).toBe(false);
+    expect(matcherMatches(parseSearchQuery("café", false), searchFold("cafe\u0301", false), "cafe\u0301")).toBe(true);
     expect(matchHighlights(off, "café")).toEqual([]);
-    expect(canonicalFold("Ｔｉｎｅ", false)).toBe("tine");
+    expect(searchFold("Ｔｉｎｅ", false)).toBe("tine");
   });
 
   it("keeps erased accent terms false when positive and true when excluded", () => {

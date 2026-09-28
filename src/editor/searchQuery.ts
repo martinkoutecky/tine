@@ -7,7 +7,7 @@ import { searchFold } from "./searchFold";
 // in Rust). See that file's doc comment for the grammar.
 
 export interface Term {
-  // Shared search-fold needle for `.includes(..)`.
+  // Needle for `.includes(..)` against a body folded with the same policy.
   text: string;
   negated: boolean;
   // Came from a `"quoted phrase"` — an explicit grammar opt-in, so even a single
@@ -29,11 +29,6 @@ export const SEARCH_SYNTAX = [
   { example: '"exact phrase"', description: "matches adjacent words", match: "an exact phrase here", miss: "exact other phrase" },
   { example: "/[A-Z]{3}/", description: "case-sensitive regular expression", match: "ABC", miss: "abc" },
 ] as const;
-
-/** Native-compatible comparison form for non-regex search. */
-export function canonicalFold(value: string, removeAccents = true): string {
-  return searchFold(value, removeAccents);
-}
 
 interface SourceSpan { start: number; end: number }
 
@@ -64,7 +59,7 @@ function foldedWithMap(original: string, removeAccents = true): { scalars: strin
       start: contributors[0]?.start ?? 0,
       end: contributors.at(-1)?.end ?? 0,
     };
-    for (const scalar of canonicalFold(part.segment, removeAccents)) {
+    for (const scalar of searchFold(part.segment, removeAccents)) {
       scalars.push(scalar);
       spans.push(source);
     }
@@ -85,9 +80,12 @@ function foldedWithMap(original: string, removeAccents = true): { scalars: strin
   return { scalars: composedScalars, spans: composedSpans };
 }
 
+/** Fold both inputs with the chosen policy and map overlapping matches to the
+ * original UTF-16 text. The scan compares each candidate start with the needle;
+ * duplicate source spans are removed. Empty needle has no matches. */
 export function searchSubstringSpans(text: string, needle: string, limit = Number.POSITIVE_INFINITY, removeAccents = true): SourceSpan[] {
   const hay = foldedWithMap(text, removeAccents);
-  const wanted = Array.from(canonicalFold(needle, removeAccents));
+  const wanted = Array.from(searchFold(needle, removeAccents));
   if (!wanted.length || wanted.length > hay.scalars.length) return [];
   const out: SourceSpan[] = [];
   for (let at = 0; at <= hay.scalars.length - wanted.length && out.length < limit; at += 1) {
@@ -180,7 +178,7 @@ export function matchHighlights(m: SearchMatcher, text: string, limit = 24): { s
     return out;
   }
   if (m.kind !== "boolean") return [];
-  const lower = canonicalFold(text, m.removeAccents);
+  const lower = searchFold(text, m.removeAccents);
   const group = m.groups.find((candidate) => groupMatches(candidate, lower));
   if (!group) return [];
   const out: { start: number; end: number }[] = [];
@@ -218,8 +216,8 @@ export function friendlySearchToDsl(query: string): { dsl: string; error: string
 }
 
 /** Canonical lossless on-disk representation for a friendly search workspace.
- * The `(search …)` predicate is a Tine query extension compiled by the same
- * Rust QueryPlan as Ctrl+K; it keeps the friendly source reconstructible. */
+ * The `(search …)` predicate is a Tine query extension evaluated by the
+ * in-memory query evaluator using the graph's search policy. */
 export function friendlySearchToSavedDsl(query: string): string {
   return `(search ${quoteDsl(query.trim())})`;
 }
@@ -259,7 +257,7 @@ function parseBoolean(q: string, removeAccents: boolean): Term[][] {
       continue;
     }
     if (!tok.text) continue;
-    cur.push({ text: canonicalFold(tok.text, removeAccents), negated: tok.negated, quoted: tok.quoted });
+    cur.push({ text: searchFold(tok.text, removeAccents), negated: tok.negated, quoted: tok.quoted });
   }
   groups.push(cur);
   return groups.filter((g) => g.length > 0);

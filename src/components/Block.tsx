@@ -85,7 +85,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { graphMeta, dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
@@ -986,14 +986,8 @@ function templateToOutline(
     children: b.children.map((c) => templateToOutline(c, currentPage)),
   };
 }
-// Markdown for a freshly saved asset: images embed inline, everything else
-// (PDFs included) becomes an asset reference — a .pdf reference renders as a clickable chip that
-// opens the PDF pane.
-// `onSubmit`/`onCancel` (set only by the quick-capture window) repurpose a plain
-// Enter / Escape when the autocomplete popup is closed: Enter commits the capture
-// instead of splitting the block, Escape dismisses instead of entering
-// block-selection. Everything else — autocomplete, slash commands, formatting —
-// is the identical page-editing experience because it's the identical component.
+// Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
+// Enter/Escape when autocomplete is closed to commit or dismiss the capture.
 export function Editor(props: { id: string }): JSX.Element {
   // Non-null only inside the quick-capture window (see CaptureCtx).
   const cap = useContext(CaptureCtx);
@@ -1334,7 +1328,7 @@ export function Editor(props: { id: string }): JSX.Element {
     setAcItems(orderAcItems(
       result.value.map((page) => ({ name: page.name, item: pageItem(page.name) })),
       { name: q, item: createItem },
-      { query: q, policy: linkAutocompletePolicy(), removeAccents: graphMeta()?.enable_search_remove_accents !== false },
+      { query: q, policy: linkAutocompletePolicy(), removeAccents: searchRemoveAccents() },
     ));
   };
 
@@ -1468,6 +1462,7 @@ export function Editor(props: { id: string }): JSX.Element {
     } catch (error) { pushToast(`Couldn’t save to assets/: ${String(error)}`, "error"); return; }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
     const page = pageByName(docNode(props.id)?.page ?? "");
+    // Saved images embed inline; other assets, including PDFs, become links.
     const md = assetMarkdown(stored, {
       label: origName,
       pagePath: page?.id,
