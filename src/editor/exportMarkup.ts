@@ -1,6 +1,7 @@
 import { isPropertyLine } from "../render/block";
 import type { Format } from "../render/ast";
 import type { ExportNode, MaxDepth } from "./exportText";
+import { orgBlockDrawerRange } from "./properties";
 
 export interface MarkupExportOptions {
   stripLinks: boolean;
@@ -46,16 +47,11 @@ export function cleanInline(text: string, format: Format, options: MarkupExportO
  * Markdown property lines and Org property drawers before serializing a node. */
 export function nodeText(node: ExportNode, options: MarkupExportOptions): string {
   const kept: string[] = [];
-  let inOrgProperties = false;
-  for (const line of node.raw.split("\n")) {
-    if (/^\s*:PROPERTIES:\s*$/i.test(line)) {
-      inOrgProperties = true;
-      continue;
-    }
-    if (inOrgProperties) {
-      if (/^\s*:END:\s*$/i.test(line)) inOrgProperties = false;
-      continue;
-    }
+  const lines = node.raw.split("\n");
+  const drawer = node.format === "org" ? orgBlockDrawerRange(lines) : null;
+  for (let i = 0; i < lines.length; i++) {
+    if (drawer && i >= drawer[0] && i <= drawer[1]) continue;
+    const line = lines[i];
     if (!isPropertyLine(line)) kept.push(cleanInline(line, node.format ?? "md", options));
   }
   while (kept.length > 1 && kept[kept.length - 1].trim() === "") kept.pop();

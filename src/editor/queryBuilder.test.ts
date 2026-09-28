@@ -193,6 +193,13 @@ describe("parse + serialize round-trip", () => {
       ],
     });
   });
+
+  it("preserves unknown forms after astral characters at both raw capture sites", () => {
+    const dsl = '(and [[😀]] (custom (nested x)) [[B]])';
+    expect(roundtrip(dsl), "query span rule: parseQuery preserves (custom (nested x)) after [[😀]]").toBe(dsl);
+    const deep = `${"(not ".repeat(130)}[[😀]] (custom x)${")".repeat(130)}`;
+    expect(roundtrip(deep)).toBe(deep);
+  });
 });
 
 describe("tree shape", () => {

@@ -1,8 +1,12 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { render } from "solid-js/web";
 import { AstBody, renderBlocks, estimateBodyReserve } from "./body";
 import { initParser, parseBlock } from "./parse";
 import { renderedBlocks } from "../lazyObserve";
+import { resetStore } from "../document";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
+import { setGraphMeta } from "../graphSession";
 
 // AstBody gates the parse + AST→DOM build behind a "near the viewport"
 // IntersectionObserver (P1 block-render virtualization). jsdom has no
@@ -14,6 +18,7 @@ import { renderedBlocks } from "../lazyObserve";
 beforeAll(async () => {
   await initParser();
 });
+beforeEach(() => { resetStore(); setGraphMeta(null); });
 
 async function htmlOf(el: () => unknown): Promise<string> {
   const div = document.createElement("div");
@@ -26,6 +31,50 @@ async function htmlOf(el: () => unknown): Promise<string> {
 }
 
 describe("AstBody (no-IO degrade path)", () => {
+  it("ignores a fenced checkbox line before the first rendered checkbox", async () => {
+    const raw = "Task\n```md\n+ [ ] code\n```\n+ [ ] real";
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw, collapsed: false, children: [] }], format: "md" });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => AstBody({ raw, blockId: "body" }), host);
+    await Promise.resolve();
+    const checkboxes = host.querySelectorAll('[role="checkbox"]');
+    expect(checkboxes, "checkbox rule: only the real list checkbox renders after fenced code").toHaveLength(1);
+    checkboxes[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(doc.byId.body.raw, "checkbox rule: toggleAstCheckbox must skip the fenced code exemplar").toBe("Task\n```md\n+ [ ] code\n```\n+ [x] real");
+    dispose();
+    host.remove();
+  });
+
+  it("ignores an Org source block before the first rendered checkbox", async () => {
+    const raw = "* Task\n#+BEGIN_SRC md\n+ [ ] code\n#+END_SRC\n+ [ ] real";
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw, collapsed: false, children: [] }], format: "org" });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => AstBody({ raw, blockId: "body", format: "org" }), host);
+    await Promise.resolve();
+    const checkboxes = host.querySelectorAll('[role="checkbox"]');
+    expect(checkboxes, "checkbox rule: Org source content is not a rendered list").toHaveLength(1);
+    checkboxes[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(doc.byId.body.raw, "checkbox rule: toggleAstCheckbox skips the Org source exemplar").toBe("* Task\n#+BEGIN_SRC md\n+ [ ] code\n#+END_SRC\n+ [x] real");
+    dispose();
+    host.remove();
+  });
+
+  it("toggles the rendered checkbox after a fenced checkbox lookalike", async () => {
+    const raw = "Task\n+ [ ] first\n```md\n+ [ ] code\n```\n+ [ ] second";
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw, collapsed: false, children: [] }], format: "md" });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => AstBody({ raw, blockId: "body" }), host);
+    await Promise.resolve();
+    const checkboxes = host.querySelectorAll('[role="checkbox"]');
+    expect(checkboxes).toHaveLength(2);
+    checkboxes[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(doc.byId.body.raw, "checkbox rule: separate rendered list groups share the block's index").toBe("Task\n+ [ ] first\n```md\n+ [ ] code\n```\n+ [x] second");
+    dispose();
+    host.remove();
+  });
   it("renders the parsed body, not a deferred placeholder", async () => {
     const h = await htmlOf(() => AstBody({ raw: "a **bold** b", blockId: "blk-1" }));
     expect(h).toContain("<strong");

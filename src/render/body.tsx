@@ -1,7 +1,7 @@
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createContext, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { InlineText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
@@ -9,6 +9,7 @@ import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
 import { hiccupToHtml } from "./hiccup";
 import { coarseSpanAttrs, type SpanDomAttrs } from "./spans";
 import { evalCalc } from "../editor/calc";
+import { transitionFence, type FenceState } from "../editor/fences";
 import { toggleListItemAtIndex, formatForBlock, node as docNode } from "../document";
 import { graphMeta } from "../graphSession";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
@@ -365,10 +366,31 @@ function flattenCheckboxItems(items: AstListItem[]): AstListItem[] {
   return out;
 }
 
-// An in-block list from the AST (`ListItem[]`). `cbItems` is the block-wide
-// depth-first list of checkbox items, shared across nested AstLists so each
-// checkbox knows its global index.
+const CheckboxItemsContext = createContext<AstListItem[]>();
+
+function allCheckboxItems(blocks: AstBlock[]): AstListItem[] {
+  const out: AstListItem[] = [];
+  const walkBlocks = (bs: AstBlock[]) => {
+    for (const block of bs) {
+      if (block.kind === "list") walkItems(block.items);
+      else if (block.kind === "quote" || block.kind === "custom") walkBlocks(block.children);
+    }
+  };
+  const walkItems = (items: AstListItem[]) => {
+    for (const item of items) {
+      if (item.checkbox !== undefined) out.push(item);
+      walkBlocks(item.content);
+      walkItems(item.items);
+    }
+  };
+  walkBlocks(blocks);
+  return out;
+}
+
+// An in-block list from the AST (`ListItem[]`). The rendering context holds
+// checkbox order across separate list nodes; `cbItems` covers direct callers.
 function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[]; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
+  const blockCheckboxes = useContext(CheckboxItemsContext) ?? props.cbItems;
   const ordered = props.items[0]?.ordered ?? false;
   return (
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list" {...(props.spanAttrs ?? {})}>
@@ -389,7 +411,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
                 aria-checked={item.checkbox === true}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (props.blockId) toggleAstCheckbox(props.blockId, props.cbItems.indexOf(item));
+                  if (props.blockId) toggleAstCheckbox(props.blockId, blockCheckboxes.indexOf(item));
                 }}
               />{" "}
             </Show>
@@ -436,7 +458,9 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
   const beginQuery = inspectBeginQuery(raw, format, blocks);
   return beginQuery
     ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
-    : renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties));
+    : <CheckboxItemsContext.Provider value={allCheckboxItems(blocks)}>
+        {renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties))}
+      </CheckboxItemsContext.Provider>;
 }
 
 /** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
@@ -525,7 +549,24 @@ function toggleAstCheckbox(blockId: string, cbIndex: number) {
   const lines = node.raw.split("\n");
   const re = /^\s*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s+/;
   let seen = -1;
+  let fence: FenceState | null = null;
+  let orgLiteral: string | null = null;
+  const org = formatForBlock(blockId) === "org";
   for (let i = 0; i < lines.length; i++) {
+    if (orgLiteral) {
+      if (new RegExp(`^\\s*#\\+END_${orgLiteral}\\b`, "i").test(lines[i])) orgLiteral = null;
+      continue;
+    }
+    if (org) {
+      const begin = /^\s*#\+BEGIN_(SRC|EXAMPLE)\b/i.exec(lines[i]);
+      if (begin) {
+        orgLiteral = begin[1];
+        continue;
+      }
+    }
+    const transition = transitionFence(fence, lines[i]);
+    fence = transition.next;
+    if (fence || transition.closes) continue;
     if (re.test(lines[i])) {
       if (++seen === cbIndex) {
         toggleListItemAtIndex(blockId, i);

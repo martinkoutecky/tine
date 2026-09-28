@@ -136,7 +136,9 @@ function tokenize(src: string): Tok[] {
       i = j;
     }
   }
-  return toks;
+  const offsets = [0];
+  for (const c of ch) offsets.push(offsets[offsets.length - 1] + c.length);
+  return toks.map((tok) => ({ ...tok, s: offsets[tok.s], e: offsets[Math.min(tok.e, ch.length)] }));
 }
 
 // ---------------------------------------------------------------------------
