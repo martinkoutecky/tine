@@ -15,58 +15,51 @@ const LANDING = /\b(?:ensurePageLoaded|reloadPage|markDirty|markConflict|forgetP
 
 // I-20 existing landings at a4c46c22c. Each entry needs its reason and
 // the list may only shrink as ownership is moved behind the session door.
-const FROZEN_LATE_LANDING_COUNT = 62;
+const FROZEN_LATE_LANDING_COUNT = 28;
 const ORIGINAL_LATE_KEYS = new Set(`
   src/assetSettings.ts:41 src/capture.tsx:330 src/components/AudioOverlay.tsx:86 src/components/Block.tsx:1321 src/components/Block.tsx:1669
   src/components/Block.tsx:1695 src/components/Block.tsx:1715 src/components/ContextMenu.tsx:660 src/components/ContextMenu.tsx:762 src/components/ContextMenu.tsx:781
-  src/components/LinkedReferences.tsx:114 src/components/LiveRefGroup.tsx:72 src/components/PdfViewer.tsx:1003 src/components/Settings.tsx:1045 src/components/Settings.tsx:1642
-  src/components/Settings.tsx:1868 src/components/Settings.tsx:1884 src/components/Settings.tsx:193 src/components/Settings.tsx:2188 src/components/Settings.tsx:2384
-  src/components/Settings.tsx:2472 src/components/Settings.tsx:2605 src/components/Settings.tsx:2697 src/components/Settings.tsx:2706 src/components/Settings.tsx:2719
-  src/components/Settings.tsx:2728 src/components/Settings.tsx:2748 src/components/Settings.tsx:560 src/components/Sidebar.tsx:344 src/components/Sidebar.tsx:413
-  src/components/UnlinkedReferences.tsx:53 src/debug.ts:38 src/editor/linkDefault.ts:58 src/filedrop.ts:84 src/graph.ts:269
+  src/components/LinkedReferences.tsx:114 src/components/LiveRefGroup.tsx:72 src/components/PdfViewer.tsx:1003 src/components/Settings.tsx:1048 src/components/Settings.tsx:1642
+  src/components/Settings.tsx:1873 src/components/Settings.tsx:1884 src/components/Settings.tsx:194 src/components/Settings.tsx:2188 src/components/Settings.tsx:2384
+  src/components/Settings.tsx:2478 src/components/Settings.tsx:2605 src/components/Settings.tsx:2697 src/components/Settings.tsx:2706 src/components/Settings.tsx:2719
+  src/components/Settings.tsx:2728 src/components/Settings.tsx:2748 src/components/Settings.tsx:561 src/components/Sidebar.tsx:344 src/components/Sidebar.tsx:413
+  src/components/UnlinkedReferences.tsx:53 src/debug.ts:38 src/editor/linkDefault.ts:54 src/filedrop.ts:84 src/graph.ts:269
   src/graph.ts:313 src/graph.ts:53 src/graph.ts:76 src/guide.ts:75 src/launcherRanking.ts:43
-  src/mediaEditorSettings.ts:61 src/mediaEditorSettings.ts:72 src/nativeChrome.ts:68 src/nativeChrome.ts:81 src/pageIconBatch.ts:42
-  src/pageIndex.ts:71 src/plugins/manager.ts:267 src/plugins/manager.ts:273 src/plugins/manager.ts:781 src/plugins/registry.ts:455
-  src/plugins/registry.ts:513 src/print.ts:111 src/render/inline.tsx:1241 src/render/inline.tsx:794 src/router.ts:733
-  src/session.ts:286 src/session.ts:302 src/sheet/queryHydration.ts:325 src/spellcheckSettings.ts:88 src/themes/manager.ts:50
-  src/ui.ts:241 src/workspaces.ts:96
+  src/mediaEditorSettings.ts:67 src/mediaEditorSettings.ts:72 src/nativeChrome.ts:68 src/nativeChrome.ts:81 src/pageIconBatch.ts:42
+  src/pageIndex.ts:71 src/plugins/manager.ts:267 src/plugins/manager.ts:273 src/plugins/manager.ts:781 src/plugins/registry.ts:456
+  src/plugins/registry.ts:514 src/print.ts:111 src/render/inline.tsx:1241 src/render/inline.tsx:794 src/router.ts:733
+  src/session.ts:286 src/session.ts:302 src/sheet/queryHydration.ts:325 src/spellcheckSettings.ts:89 src/themes/manager.ts:50
+  src/ui.ts:228 src/workspaces.ts:96
 `.trim().split(/\s+/));
 const ALLOWED_LATE_LANDINGS: Record<string, string> = {
-  "src/assetSettings.ts:41": "legacy settings UI result needs a binding audit",
   "src/capture.tsx:330": "legacy UI continuation needs a binding audit",
   "src/components/AudioOverlay.tsx:86": "legacy UI continuation needs a binding audit",
   "src/components/Block.tsx:1321": "legacy block UI result needs a binding audit (line rebased after asset guards)",
   "src/components/LinkedReferences.tsx:114": "legacy UI continuation needs a binding audit",
   "src/components/LiveRefGroup.tsx:72": "legacy UI continuation needs a binding audit",
   "src/components/PdfViewer.tsx:1003": "census #2: PDF write intent awaits its design batch",
-  "src/components/Settings.tsx:193": "legacy settings UI result needs a binding audit",
-  "src/components/Settings.tsx:560": "legacy settings UI result needs a binding audit",
-  "src/components/Settings.tsx:1045": "legacy settings UI result needs a binding audit",
+  "src/components/Settings.tsx:194": "legacy settings UI result needs a binding audit",
+  "src/components/Settings.tsx:561": "legacy settings UI result needs a binding audit",
+  "src/components/Settings.tsx:1048": "legacy settings UI result needs a binding audit",
   "src/components/Settings.tsx:1642": "legacy settings preference result needs a binding audit",
-  "src/components/Settings.tsx:1868": "census #2: graph maintenance intent awaits its design batch",
-  "src/components/Settings.tsx:2472": "legacy watch-mode preference result needs a binding audit",
+  "src/components/Settings.tsx:1873": "census #2: graph maintenance intent awaits its design batch",
+  "src/components/Settings.tsx:2478": "legacy watch-mode preference result needs a binding audit",
   "src/components/Sidebar.tsx:344": "legacy UI continuation needs a binding audit",
   "src/components/Sidebar.tsx:413": "legacy sidebar navigation needs a binding audit",
   "src/components/UnlinkedReferences.tsx:53": "legacy UI continuation needs a binding audit",
   "src/debug.ts:38": "debug reporting is best effort",
-  "src/editor/linkDefault.ts:58": "legacy UI continuation needs a binding audit",
+  "src/editor/linkDefault.ts:54": "failed legacy read toasts; the refresh generation owns the migrated result",
   "src/graph.ts:76": "census #1: graph-session continuation awaits its design batch",
-  "src/launcherRanking.ts:43": "legacy UI continuation needs a binding audit",
-  "src/mediaEditorSettings.ts:61": "device-local autodetect revision check owns the result",
-  "src/mediaEditorSettings.ts:72": "device-local startup read revision check owns the result",
-  "src/nativeChrome.ts:68": "legacy UI continuation needs a binding audit",
-  "src/nativeChrome.ts:81": "legacy UI continuation needs a binding audit",
+  "src/mediaEditorSettings.ts:67": "device-local autodetect revision check owns the result",
   "src/pageIndex.ts:71": "legacy UI continuation needs a binding audit",
   "src/pageIconBatch.ts:42": "legacy page-icon read result needs a binding audit",
   "src/plugins/manager.ts:267": "legacy plugin completion needs an ownership audit",
-  "src/plugins/manager.ts:781": "legacy plugin completion needs an ownership audit",
-  "src/plugins/registry.ts:455": "legacy plugin completion needs an ownership audit",
-  "src/plugins/registry.ts:513": "legacy plugin completion needs an ownership audit",
+  "src/plugins/registry.ts:456": "legacy plugin completion needs an ownership audit",
+  "src/plugins/registry.ts:514": "legacy plugin completion needs an ownership audit",
   "src/print.ts:111": "legacy UI continuation needs a binding audit",
   "src/sheet/queryHydration.ts:325": "legacy UI continuation needs a binding audit",
-  "src/spellcheckSettings.ts:88": "legacy settings UI result needs a binding audit",
-  "src/themes/manager.ts:50": "legacy UI continuation needs a binding audit",
-  "src/ui.ts:241": "journal migration rebinds its own graph; completion checks root and selected format",
+  "src/spellcheckSettings.ts:89": "legacy settings UI result needs a binding audit",
+  "src/ui.ts:228": "journal migration rebinds its own graph; completion checks root and selected format",
 };
 
 export function lateLandingViolations(file: string, source: string): string[] {
@@ -76,12 +69,15 @@ export function lateLandingViolations(file: string, source: string): string[] {
     const window = lines.slice(start, start + 6).join("\n");
     const chained = /(?:backend\(\)|\bapi\b|\bdeps\b)/.test(lines[start]) && BACKEND_THEN.test(window);
     if (!BACKEND_AWAIT.test(lines[start]) && !chained) continue;
+    // Device-local app preferences (getApp*/setApp*) are not graph-bound results.
+    if (/backend\(\)\s*\.\s*(?:get|set)App\w*\s*\(/.test(lines[start])) continue;
     const landingStart = chained ? start + window.slice(0, window.search(/\.then\s*\(/)).split("\n").length - 1 : start + 1;
     let guarded = false;
     for (let i = landingStart; i < Math.min(lines.length, landingStart + 18); i++) {
       const line = lines[i].replace(/\/\/.*$/, "");
       if (/\bawait\s+/.test(line) && !chained) break;
-      if (/\bstillBound\s*\(/.test(line)) guarded = true;
+      // Device-local preference reads prove ownership by write revision (src/preferenceWrites.ts).
+      if (/\b(?:stillBound|preferenceReadCurrent)\s*\(/.test(line)) guarded = true;
       if (LANDING.test(line)) {
         if (!guarded) violations.push(`${file}:${i + 1}: unguarded landing after backend await at line ${start + 1}`);
         break;
