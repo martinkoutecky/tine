@@ -423,7 +423,9 @@ mod inventory_adapter_tests {
                 ),
                 (
                     "pages/Beta.org",
-                    "#+TITLE: Display Beta\nalias:: Shared\n* [[Only Linked]]\n",
+                    // Org page properties are `#+KEY:` directives; mldoc parses a bare
+                    // `alias::` line in Org as a paragraph (og 8e, OG graph-parser).
+                    "#+TITLE: Display Beta\n#+ALIAS: Shared\n* [[Only Linked]]\n",
                 ),
                 ("pages/nested/Alpha.org", "* nested twin\n"),
                 ("pages/Team%2FChild.md", "- [[Another Ref]]\n"),
