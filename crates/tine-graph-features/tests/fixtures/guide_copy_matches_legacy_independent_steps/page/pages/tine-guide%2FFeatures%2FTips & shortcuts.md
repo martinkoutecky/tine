@@ -8,6 +8,7 @@ icon:: ⌨️
 	- Use **Search syntax** for phrases, alternatives, exclusions, and regular expressions. Choose **Open all results** to keep the complete search in a graph-specific tab instead of choosing only one hit.
 	- That result tab can switch between **Search**, **List**, **Table**, and **Board** without changing what matched. Rename it when the search is worth keeping: Tine turns it into an ordinary query page in your graph. The compact filter button handles friendly fields and date ranges; **Query builder** opens the deeper visual editor when needed.
 	- Page-title matching keeps exact, prefix, substring, and fuzzy results in that order. Repeated choices may break ties inside one class using device-local history; disable or reset this under Search settings if you prefer fixed ordering.
+	- The quick switcher, page search, suggestions, and find-in-page ignore accents, case, and compatibility-width differences by default: `cafe` finds `café`, `lodz` finds `Łódź`, and `Tine` finds `Ｔｉｎｅ`. Marks that form another letter stay significant (`か` and `が` differ). To require accents in these searches, set `:feature/enable-search-remove-accents? false` in `logseq/config.edn`. This changes matching only; page names and Markdown keep their original spelling.
 - ## Create one yourself
 	- 1. Press **Ctrl+K**.
 	- 2. Type part of a page name, a block phrase, or a command such as `Open Guide`.

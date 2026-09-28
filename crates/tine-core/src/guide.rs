@@ -180,6 +180,26 @@ mod journal_guide_tests {
 }
 
 #[cfg(test)]
+mod search_guide_tests {
+    #[test]
+    fn search_fold_and_graph_opt_out_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for text in [
+            "`cafe` finds `café`",
+            "`lodz` finds `Łódź`",
+            "`か` and `が` differ",
+            ":feature/enable-search-remove-accents? false",
+            "Markdown keep their original spelling",
+        ] {
+            assert!(
+                tips.contains(text),
+                "missing search Guide explanation: {text}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod rename_guide_tests {
     #[test]
     fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide() {
