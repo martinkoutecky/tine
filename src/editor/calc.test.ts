@@ -17,6 +17,10 @@ describe("calc evaluator (Logseq parity)", () => {
       "I-22: calc rejects imported powers and scientific exponents above the digit budget")
       .toEqual([[null, true], [null, true], ["3", false]]);
   });
+  it("budgets the parsed expression independently of a trailing comment", () => {
+    expect(evalCalc(`2 # ${"x".repeat(16000)}`)[0].output).toBe("2");
+    expect(evalCalc(`${"1".repeat(16001)} # short`)[0].error).toBe(true);
+  });
   it("basic arithmetic + precedence", () => {
     expect(out("1 + 2 * 3")).toEqual(["7"]);
     expect(out("(1 + 2) * 3")).toEqual(["9"]);

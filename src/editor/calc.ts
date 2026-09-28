@@ -758,15 +758,15 @@ function formatValue(env: CalcEnvironment, value: Decimal): string {
   return formatNormal(env, value);
 }
 
-/** Evaluate a multi-line calc source; returns one entry per input line. Lines
- * beyond 16k characters or results beyond 10k digits become error rows. */
+/** Evaluate a multi-line calc source; returns one entry per input line. Parsed
+ * expressions beyond 16k characters or results beyond 10k digits become error rows. */
 export function evalCalc(src: string): CalcLine[] {
   const env: CalcEnvironment = { values: new Map() };
   return src.split("\n").map((line) => {
     const noComment = line.split("#")[0];
     if (!noComment.trim()) return { input: line, output: null };
     try {
-      if (line.length > MAX_CALC_LINE_CHARS) throw new Error("calc line too long");
+      if (noComment.length > MAX_CALC_LINE_CHARS) throw new Error("calc line too long");
       let value: CalcValue | undefined;
       if (noComment.trimStart().startsWith(":")) {
         const directive = parseDirective(noComment);

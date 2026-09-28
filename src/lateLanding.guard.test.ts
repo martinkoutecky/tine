@@ -59,7 +59,6 @@ const ALLOWED_LATE_LANDINGS: Record<string, string> = {
   "src/print.ts:111": "legacy UI continuation needs a binding audit",
   "src/sheet/queryHydration.ts:325": "legacy UI continuation needs a binding audit",
   "src/spellcheckSettings.ts:89": "legacy settings UI result needs a binding audit",
-  "src/ui.ts:228": "journal migration rebinds its own graph; completion checks root and selected format",
 };
 
 export function lateLandingViolations(file: string, source: string): string[] {

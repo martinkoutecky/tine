@@ -54,6 +54,8 @@ describe("pageProperties", () => {
       ["filetags", ":demo:org:"],
     ]);
     expect(pageProperties(":PROPERTIES:\n:key: value\n:END:", "org")).toEqual([["key", "value"]]);
+    expect(pageProperties("alias:: Ghost\n#+ALIAS: Novel", "org")).toEqual([["alias", "Novel"]]);
+    expect(pageProperties(":PROPERTIES:\n:alias: Vacant\n:END:", "org")).toEqual([["alias", "Vacant"]]);
   });
 });
 

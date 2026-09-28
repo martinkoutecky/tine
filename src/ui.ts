@@ -208,6 +208,7 @@ export function changePreferredFormat(fmt: "md" | "org") {
  *  Optimistically updates the in-memory formatter + meta and bumps the graph
  *  epoch so open journal titles re-render; persists to config.edn. The configured
  *  file-name format is unchanged; eligible legacy title-named files are migrated. */
+let journalTitleFormatIntent = 0;
 export function changeJournalTitleFormat(fmt: string) {
   const next = fmt.trim() || "MMM do, yyyy";
   const m = graphMeta();
@@ -215,6 +216,10 @@ export function changeJournalTitleFormat(fmt: string) {
   setGraphMeta({ ...m, journal_page_title_format: next });
   setJournalTitleFormat(next);
   bumpGraphEpoch(); // immediate: re-render open journal titles with the new format
+  const binding = captureBinding();
+  const intent = ++journalTitleFormatIntent;
+  const ownsField = () => intent === journalTitleFormatIntent
+    && graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next;
   // The backend rewrites config.edn AND reopens the graph (so its journal_format
   // + the title-named-journal migration take effect). Bump again once that's done
   // so the feed reloads against the refreshed backend — otherwise a reload racing
@@ -222,19 +227,19 @@ export function changeJournalTitleFormat(fmt: string) {
   void backend()
     .setJournalTitleFormat(next, ["rename-page"])
     .then((migration) => {
-      if (graphMeta()?.root !== m.root || graphMeta()?.journal_page_title_format !== next) return;
+      if (!stillBound(binding) || !ownsField()) return;
       bumpGraphEpoch();
       const message = journalMigrationSkipMessage(migration);
       if (message) pushToast(message, "info");
       void refreshJournalConflicts(true); // surface any days the migration couldn't merge
     })
     .catch(() => {
-      if (graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next) {
+      if (stillBound(binding) && ownsField()) {
         setGraphMeta({ ...graphMeta()!, journal_page_title_format: m.journal_page_title_format });
         setJournalTitleFormat(m.journal_page_title_format);
         bumpGraphEpoch();
+        pushToast("Could not save journal title format.", "error");
       }
-      pushToast("Could not save journal title format.", "error");
     });
 }
 
@@ -1248,16 +1253,19 @@ export function removeDeletedBlocksFromSidebar(uuids: ReadonlySet<string>) {
 /** Drop restored block items whose block can't be resolved (its in-memory uuid
  *  changed across the restart). Page items are left untouched. */
 export async function pruneSidebarBlocks(): Promise<void> {
+  const binding = captureBinding();
+  const root = graphMeta()?.root;
   const blocks = rightSidebar().filter((i): i is SidebarBlock => i.kind === "block");
   if (!blocks.length) return;
   const resolved = await Promise.allSettled(blocks.map((b) => backend().resolveBlock(b.uuid)));
+  if (!stillBound(binding) || graphMeta()?.root !== root) return;
   const dead = new Set(blocks.filter((_, i) =>
-    resolved[i].status === "fulfilled" && !resolved[i].value).map((b) => b.uuid));
+    resolved[i].status === "fulfilled" && !resolved[i].value));
   if (resolved.some((result) => result.status === "rejected")) {
     pushToast("Could not check some sidebar blocks. Try again after the graph loads.", "error");
   }
   if (dead.size) {
-    setRightSidebar(rightSidebar().filter((i) => i.kind !== "block" || !dead.has(i.uuid)));
+    setRightSidebar(rightSidebar().filter((i) => i.kind !== "block" || !dead.has(i)));
   }
 }
 
