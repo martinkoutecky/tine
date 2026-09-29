@@ -58,6 +58,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Files with very long names can be imported, deleted and resolved.** An asset
+  or page whose name is close to the 255-byte limit (an 84-character CJK title)
+  could not be imported, re-imported under a numbered name, moved to trash,
+  resolved after a VCS merge, or created: the helper files and trash copies Tine
+  names after it were too long. Trash copies now shorten the name and keep its
+  extension. Merging a page also no longer repeats an alias written after a
+  full-width comma, and a drag that would nest the outline too deep now says so.
 - **A page marked `public:: false` stays out of every export.** With
   `:publishing/all-pages-public? true` in `config.edn`, or **Include every page**
   ticked, Tine published such pages anyway; like Logseq it now leaves them out,
