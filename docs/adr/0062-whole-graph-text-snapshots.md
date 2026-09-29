@@ -5,6 +5,12 @@
   is added (OG-RULES Rule 8), so the ADR waits for Martin before it is
   Accepted.
 - **Date:** 2026-09-29
+- **Unit cost:** 0 bytes and 0 files per edit on a 1-block or a 60-block page
+  (snapshots are taken at launch and before user-requested rewrites, never per
+  edit); no transport. Per snapshot on a copy of the anonymized graph (1,075
+  text files): text copy unchanged at 1,075 files / 1,300,622 bytes, manifest
+  +6,574 bytes (154,891 vs 148,317). Measured by snapshotting the copy with the
+  old and new writers; details under Unit cost below.
 
 ## Context
 
