@@ -113,7 +113,9 @@ function serialized<T>(work: () => Promise<T>): Promise<T> {
     }
     return work();
   });
-  writeQueue = run.catch(() => undefined);
+  // The tail only sequences the next writer; this failure is not dropped, it is
+  // returned to the caller through `run` below.
+  writeQueue = run.then(() => undefined, () => undefined);
   return run;
 }
 
