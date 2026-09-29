@@ -2,6 +2,7 @@
 // continuation lines or a page's pre-block. No store/DOM, so unit-testable.
 
 import { transitionFence, displayMathOpenAfter, closesDisplayMath, type FenceState } from "./fences";
+import { literalBlockOfLine } from "./literalLines";
 
 /** Ordinary `key:: value` lines share the page-header key class at column zero. */
 export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
@@ -229,18 +230,14 @@ function classifyLines(
 ): LineClass[] {
   const cls: LineClass[] = new Array(lines.length).fill("v");
   const drawer = format === "org" ? orgBlockDrawerRange(lines) : null;
-  let fence: FenceState | null = null;
+  // Code/src/example lines (delimiters included) are content, never metadata:
+  // the one lsdoc-backed answer (editor/literalLines.ts; C3 L13/L14).
+  const literal = literalBlockOfLine(lines.join("\n"), format);
   let i = 0;
   while (i < lines.length) {
     const l = lines[i];
-    const t = transitionFence(fence, l);
-    if (t.opens || t.closes) {
-      fence = t.next; // fence delimiter lines are always visible content
+    if (literal[i] !== -1) {
       i++;
-      continue;
-    }
-    if (fence !== null) {
-      i++; // inside a code fence — never metadata
       continue;
     }
     if (drawer && i === drawer[0]) {
@@ -372,15 +369,23 @@ export function joinProps(visible: string, hidden: string, format: PropFormat = 
     return lines.join("\n");
   }
   if (lines.length === 0) return [":PROPERTIES:", ...hiddenLines, ":END:"].join("\n");
+  return orgLinesWithNewDrawer(lines, hiddenLines).join("\n");
+}
+
+/** Org block lines with a fresh `:PROPERTIES:` drawer holding `drawerLines`, at
+ *  OG's canonical spot: title, SCHEDULED*, DEADLINE*, drawer, rest of the body
+ *  (util/property.cljs insert-property). The one placement shared by joinProps
+ *  and rawWithBlockId. A SCHEDULED/DEADLINE line inside a src/example block is
+ *  content and stays where it is — a NAMED OG DIVERGENCE (OG hoists every such
+ *  line; C3 L13/L14, see editor/literalLines.ts). */
+export function orgLinesWithNewDrawer(lines: string[], drawerLines: string[]): string[] {
   const [title, ...rest] = lines;
-  const isSched = (l: string) => l.startsWith("SCHEDULED");
-  const isDead = (l: string) => l.startsWith("DEADLINE");
-  const scheduled = rest.filter(isSched);
-  const deadline = rest.filter(isDead);
-  const body = rest.filter((l) => !isSched(l) && !isDead(l));
-  return [title, ...scheduled, ...deadline, ":PROPERTIES:", ...hiddenLines, ":END:", ...body].join(
-    "\n"
-  );
+  const literal = literalBlockOfLine(lines.join("\n"), "org");
+  const hoist = (word: string) => (l: string, k: number) => literal[k + 1] === -1 && l.startsWith(word);
+  const scheduled = rest.filter(hoist("SCHEDULED"));
+  const deadline = rest.filter(hoist("DEADLINE"));
+  const body = rest.filter((l, k) => !hoist("SCHEDULED")(l, k) && !hoist("DEADLINE")(l, k));
+  return [title, ...scheduled, ...deadline, ":PROPERTIES:", ...drawerLines, ":END:", ...body];
 }
 
 /** First value for `key` (case-insensitive) in a property block, or null. */

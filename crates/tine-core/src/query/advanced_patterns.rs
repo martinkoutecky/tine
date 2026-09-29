@@ -30,6 +30,17 @@ pub(super) fn scan_groups(s: &str) -> Vec<String> {
             }
             continue;
         }
+        // A top-level string is one literal, as `query_nesting_within_limit`
+        // reads it: collecting the brackets inside it as groups handed an
+        // unguarded nest to the recursive consumers (og C3 L01, I-22).
+        if c == '"' {
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                i += if b[i] == b'\\' { 2 } else { 1 };
+            }
+            i += 1;
+            continue;
+        }
         if c == '(' || c == '[' {
             let start = i;
             let mut depth = 0;
@@ -178,8 +189,11 @@ pub(super) fn advanced_find_var(src: &str) -> Option<String> {
 /// contributes its clauses, and an `(or ..)`/`(or-join [..] ..)` with exactly
 /// one branch IS that branch. Both are the same query; only the shape differs.
 pub(super) fn flatten_single_branch_groups(groups: Vec<String>) -> Vec<String> {
+    // An explicit stack, not recursion: the nesting is authored text, so the
+    // walk must not spend a native frame per level (I-22).
     let mut out = Vec::new();
-    for group in groups {
+    let mut pending: Vec<String> = groups.into_iter().rev().collect();
+    while let Some(group) = pending.pop() {
         let Some(body) = edn_body(&group, '(', ')') else {
             out.push(group);
             continue;
@@ -194,7 +208,7 @@ pub(super) fn flatten_single_branch_groups(groups: Vec<String>) -> Vec<String> {
             _ => None,
         };
         match branches {
-            Some(branches) => out.extend(flatten_single_branch_groups(branches)),
+            Some(branches) => pending.extend(branches.into_iter().rev()),
             None => out.push(group),
         }
     }

@@ -131,7 +131,7 @@ import {
   startDesktopVoiceRecording,
   stopDesktopVoiceRecording,
 } from "../mediaCapture";
-import { sheetConfig } from "../sheet/config";
+import { childrenSheetConfig } from "../sheet/childrenSheet";
 import { SheetCellContext } from "../sheet/context";
 import { appendSheetCellChild, structuralSheetPasteNode } from "../sheet/mutations";
 import { cellBlockId, cellOwner, cellSurfaceKey, selectCellAfterEdit, moveCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
@@ -175,13 +175,6 @@ function detectMacro(raw: string): { kind: "query" | "embed"; inner: string; sou
   if (q && !rest.length && q.start === 0 && q.end === text.length) return { kind: "query", inner: `${q.name} ${q.argument}`, sourceExtent: singleQueryMacroExtent(raw, q) };
   const m = /^\{\{(embed)\b([\s\S]*)\}\}$/.exec(text);
   return m ? { kind: "embed", inner: `${m[1]}${m[2]}` } : null;
-}
-
-// Any complete {{query …}} macro anywhere in the body. The shared scanner is
-// brace/string/page-ref aware and catches inline macros ("Tasks {{query …}}"),
-// not only macros occupying their own line.
-function bodyContainsQueryMacro(raw: string): boolean {
-  return queryMacroExtents(raw).length > 0;
 }
 
 // (Rendered-property hidden set lives in render/block.ts as RENDER_HIDDEN_PROPS /
@@ -283,19 +276,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     const n = node();
     return n ? facetsOf(n.raw, fmt()) : null;
   });
-  // A table/board view on a block whose body CONTAINS a {{query}} macro belongs
-  // to the query results (the macro path renders it, rowSource: query) — the
-  // children-source face here would render a SECOND, empty sheet below it. The
-  // macro need not be the whole body: the §4 demo block is a heading +
-  // {{query}} + tine.view:: board in ONE block, which the exact-body
-  // detectMacro misses. Grid stays children-source even on a query block.
-  const sheet = createMemo(() => {
-    const cfg = sheetConfig(blockFacets()?.properties ?? []);
-    if ((cfg.view === "table" || cfg.view === "board") && bodyContainsQueryMacro(node().raw)) {
-      return { ...cfg, view: null };
-    }
-    return cfg;
-  });
+  // The children-source sheet this block owns (a query block's table/board is the macro's).
+  const sheet = createMemo(() => childrenSheetConfig(blockFacets()?.properties ?? [], node().raw));
   // Heading level of THIS block's first line, so the bullet column can match the
   // (taller) heading line box and the bullet stays centered on it.
   const headingLevel = createMemo(() => {
@@ -3066,7 +3048,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // commit — type-anywhere-while-editing, normalize-on-exit (M1c). The editor is
     // closing, so there is no caret to preserve.
     const calcExit = isCalc();
-    commit(calcExit ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
+    commit(calcExit || codeShown() ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
     finishPageHeaderEdit(props.id);
     // Only clear if no other block grabbed editing focus.
     if (editingId() === props.id) endEdit("blur");

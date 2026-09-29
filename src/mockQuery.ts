@@ -68,4 +68,7 @@ export const mockQueryCommands = {
   async publishLive(): Promise<never> {
     throw new Error("Live publication requires the desktop graph engine.");
   },
+  async sheetExportInputs(): Promise<never> {
+    throw new Error("Sheet export requires the desktop graph engine.");
+  },
 };

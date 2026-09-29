@@ -999,11 +999,12 @@ pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usi
 pub(crate) async fn page_print_html(
     name: String,
     opts: tine_graph_features::print::PrintOpts,
+    sheets: Vec<tine_graph_features::SheetExport>,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::print::page_print_html(&slot.store, &name, opts)
+        tine_graph_features::print::page_print_html_with_sheets(&slot.store, &name, opts, sheets)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "no-page".to_string())
     })

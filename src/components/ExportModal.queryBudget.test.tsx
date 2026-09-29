@@ -54,8 +54,8 @@ describe("query clipboard/export hydration budget", () => {
 
     expect(native).toHaveBeenCalledTimes(1);
     expect(native.mock.calls[0][0]).toEqual([
-      { key: batch.results[0].key, query: "(task TODO)", advanced: false },
-      { key: batch.results[1].key, query: "(task DONE)", advanced: false },
+      { key: batch.results[0].key, query: "(task TODO)" },
+      { key: batch.results[1].key, query: "(task DONE)" },
     ]);
     expect(getPage).not.toHaveBeenCalled();
     expect(warmed.get(batch.results[0].key)?.truncation).toContain(

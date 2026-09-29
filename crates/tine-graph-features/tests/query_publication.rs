@@ -236,3 +236,32 @@ fn build_real_query_site_for_browser_smoke() {
     println!("query browser fixture: {}", receipt.path);
     store.close();
 }
+
+/// I-22 (og C3 L02): the macro scanner and the TQL prepass sliced block text
+/// at byte offsets, so a multibyte character at the probed offset panicked
+/// the whole publication (`publish_live` from the CLI aborts). Every one of
+/// these is ordinary text a user can type; none may abort the export.
+#[test]
+fn live_publication_survives_multibyte_text_at_every_probed_offset() {
+    let (graph, output, store) = fixture();
+    fs::write(
+        graph.join("pages/Public.md"),
+        concat!(
+            "public:: true\n",
+            "- {{中文}}\n",
+            "- {{中文}} {{query (task TODO)}}\n",
+            "- {{ 名前 }}\n",
+            "- {{ščř\n",
+            "- {{query a}é}\n",
+            "- {{tine-query @page ab中}}\n",
+            "- {{tine-query @block žž}}\n",
+            "- {{tine-query @block and #x\n  -- ab中}}\n",
+            "- {{tine-query @block and #x\n  -- oř}}\n",
+        ),
+    )
+    .unwrap();
+    store.scan_refresh().unwrap();
+    publish_live(&store, &output, "Multibyte", false, &bundle()).unwrap();
+    assert!(output.join("multibyte/app/snapshot.json").is_file());
+    store.close();
+}

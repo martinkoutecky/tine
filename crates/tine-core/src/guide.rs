@@ -709,4 +709,20 @@ mod og_20d_guide_tests {
         let recovery = include_str!("templates/troubleshooting-recovery.md");
         assert!(recovery.contains("offers only **Review**"));
     }
+
+    /// og 22c: sheets in an export are computed by the app; the command-line
+    /// export keeps the plain outline (a named divergence) and a sheet that
+    /// cannot be computed degrades to the outline with a note.
+    #[test]
+    fn guide_describes_sheets_in_export_and_the_cli_divergence() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains(
+            "Tine computes them with the app's own sheet code before it writes the export"
+        ));
+        assert!(files.contains(
+            "has no app to compute them, so it writes a sheet as the plain outline of its rows"
+        ));
+        assert!(files.contains("A sheet that cannot be computed"));
+        assert!(files.contains("the export still succeeds"));
+    }
 }

@@ -1329,6 +1329,7 @@ impl<'a> Transaction<'a> {
         record: &'b Undo,
         rollback: &mut Rollback,
         exact_copies: &mut Vec<(PathBuf, &'b Expected)>,
+        old_copies: &mut Vec<(&'b Undo, FileId)>,
     ) {
         if matches!(record.kind, UndoKind::Expect) {
             return;
@@ -1393,6 +1394,21 @@ impl<'a> Transaction<'a> {
                 ));
                 return;
             }
+            // I-2 (C3 L07): the withdrawal below leaves no live name until the
+            // old bytes are rewritten. Stage them in conflict trash first, as a
+            // rewritten move does, so a crash or a failed rewrite (disk full) in
+            // that window keeps them on disk; if they cannot be staged, withdraw
+            // nothing and leave this transaction's bytes live.
+            if let (UndoKind::Replace, None, Some(old)) = (&record.kind, &record.trash, &record.old)
+            {
+                match self.write_old_copy(id, old) {
+                    Ok(copy) => old_copies.push((record, copy)),
+                    Err(error) => {
+                        rollback.undo_failed.push((id.clone(), error.into()));
+                        return;
+                    }
+                }
+            }
             let result = match record.new.as_ref().expect("undo expected") {
                 Expected::Bytes(bytes) => self
                     .store
@@ -1403,6 +1419,10 @@ impl<'a> Transaction<'a> {
                     .graph
                     .withdraw_file_to_conflict_if_matching_file(&path, stage, "tx-undo"),
             };
+            #[cfg(feature = "test-faults")]
+            if result.is_ok() && fault(self.store, FaultPoint::AbortAfterUndoWithdraw) {
+                std::process::abort();
+            }
             let withdrawn = result.is_ok();
             match result {
                 Ok(Withdrawal::Exact(staged)) => {
@@ -1476,25 +1496,30 @@ impl<'a> Transaction<'a> {
     }
 
     fn preserve_old(&self, id: &FileId, bytes: &[u8], rollback: &mut Rollback) {
+        if let Err(error) = self.write_old_copy(id, bytes) {
+            rollback.undo_failed.push((id.clone(), error.into()));
+        }
+    }
+
+    /// Write a file's pre-transaction bytes to a fresh `tx-old` conflict-trash
+    /// copy and return its id.
+    fn write_old_copy(&self, id: &FileId, bytes: &[u8]) -> io::Result<FileId> {
         let name = Path::new(id.as_str())
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("file");
-        let recovery = self
-            .store
-            .graph
-            .root
-            .join("logseq/.tine-trash/conflicts")
-            .join(format!("{}__tx-old__{name}", trash_stamp()));
-        let result = self
-            .store
-            .graph
-            .ensure_write_target(&recovery)
-            .and_then(|()| recovery.parent().map(fs::create_dir_all).unwrap_or(Ok(())))
-            .and_then(|()| atomic_write_new(&recovery, bytes));
-        if let Err(error) = result {
-            rollback.undo_failed.push((id.clone(), error.into()));
-        }
+        let copy = FileId::from(format!(
+            "logseq/.tine-trash/conflicts/{}__tx-old__{name}",
+            trash_stamp()
+        ));
+        let recovery = self.store.graph.root.join(copy.as_str());
+        self.store.graph.ensure_write_target(&recovery)?;
+        recovery
+            .parent()
+            .map(fs::create_dir_all)
+            .unwrap_or(Ok(()))?;
+        atomic_write_new(&recovery, bytes)?;
+        Ok(copy)
     }
 
     /// Check all guards before writing, apply queued steps, then publish the
@@ -1686,20 +1711,28 @@ impl<'a> Transaction<'a> {
         }
         let mut rollback = Rollback::default();
         let mut exact_copies = Vec::new();
+        let mut old_copies = Vec::new();
+        // Files whose old bytes stay in an undo's staged copy need no second one.
+        let mut kept_old = Vec::new();
         if failure.is_some() {
             for undo in done.iter().rev() {
-                self.undo(undo, &mut rollback, &mut exact_copies);
+                self.undo(undo, &mut rollback, &mut exact_copies, &mut old_copies);
             }
             // A rewritten move copies the old bytes to trash before replacing
             // the destination. Withdraw that copy only after undo has restored
             // the source; leave it recoverable if restoration was incomplete.
-            for record in &done {
-                // A marker resolution's staged copy (`UndoKind::Replace`) is
-                // withdrawn under the same rule as a rewritten move's.
-                if !matches!(record.kind, UndoKind::Rename | UndoKind::Replace) || record.moved {
-                    continue;
-                }
-                let (Some(trash_id), Some(old)) = (&record.trash, &record.old) else {
+            // A marker resolution's staged copy and undo's own old-byte copy
+            // (both `UndoKind::Replace`) are withdrawn under the same rule.
+            let staged = done
+                .iter()
+                .filter(|record| {
+                    matches!(record.kind, UndoKind::Rename | UndoKind::Replace) && !record.moved
+                })
+                .filter_map(|record| Some((record, record.trash.clone()?)))
+                .chain(old_copies);
+            for (record, trash_id) in staged {
+                let trash_id = &trash_id;
+                let Some(old) = &record.old else {
                     continue;
                 };
                 let result = (|| -> io::Result<()> {
@@ -1728,6 +1761,9 @@ impl<'a> Transaction<'a> {
                 })();
                 if let Err(error) = result {
                     rollback.undo_failed.push((trash_id.clone(), error.into()));
+                }
+                if self.path(trash_id).is_ok_and(|trash| trash.exists()) {
+                    kept_old.push(record.src.clone());
                 }
             }
         }
@@ -1841,7 +1877,9 @@ impl<'a> Transaction<'a> {
                 {
                     rollback.kept_external.push((id.clone(), None));
                 }
-                self.preserve_old(&id, baseline.as_ref().unwrap(), &mut rollback);
+                if !kept_old.contains(&id) {
+                    self.preserve_old(&id, baseline.as_ref().unwrap(), &mut rollback);
+                }
             }
             if now.as_ref() != baseline.as_ref() {
                 let kind = match (baseline, &now) {

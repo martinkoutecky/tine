@@ -114,8 +114,11 @@ pub(super) fn take_anchor(text: &str) -> (Anchor, String, usize) {
         let trimmed = after.trim_start();
         let skipped = after.len() - trimmed.len();
         let mut consumed = lead + token.len() + skipped;
-        let rest = if trimmed.len() >= 3
-            && trimmed[..3].eq_ignore_ascii_case("and")
+        // `get`, not `[..3]`: a multibyte character at byte 3 is ordinary
+        // query text, not a reason to panic (I-22).
+        let rest = if trimmed
+            .get(..3)
+            .is_some_and(|word| word.eq_ignore_ascii_case("and"))
             && !trimmed[3..]
                 .chars()
                 .next()
@@ -542,9 +545,13 @@ pub(super) fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) 
 
 pub(super) fn split_connector(payload: &str) -> (&'static str, &str) {
     for (word, connector) in [("and", "and "), ("or", "or ")] {
-        if payload.len() > word.len()
-            && payload[..word.len()].eq_ignore_ascii_case(word)
-            && payload.as_bytes()[word.len()].is_ascii_whitespace()
+        if payload
+            .get(..word.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(word))
+            && payload
+                .as_bytes()
+                .get(word.len())
+                .is_some_and(u8::is_ascii_whitespace)
         {
             return (connector, payload[word.len()..].trim_start());
         }

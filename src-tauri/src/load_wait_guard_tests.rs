@@ -43,6 +43,8 @@ fn reaches_load_wait(body: &str) -> bool {
         "tine_graph_features::pages::source_path_for_os_handoff(",
         "tine_graph_features::guide::copy_guide_into_graph(",
         "tine_graph_features::print::page_print_html(",
+        "tine_graph_features::print::page_print_html_with_sheets(",
+        "tine_graph_features::publish::sheet_export_inputs(",
         "tine_graph_features::pdf::open_pdf(",
         "tine_graph_features::pdf::write_highlights(",
     ]

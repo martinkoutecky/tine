@@ -5,7 +5,7 @@ import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
 import { rawWithCollapsed } from "./edits/properties";
-import { orgRawWithProperty } from "./edits/identity";
+import { existingBlockId, orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
 export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
@@ -279,8 +279,7 @@ export function pageToDto(pageName: string): PageDto | null {
 /** The block id (`id:: <uuid>` trailer) a guide node exposes to `((uuid))`
  *  references — matching the backend, which keys a block by its persisted id::. */
 function guideBlockDurableId(raw: string): string | null {
-  const m = /(?:^|\n)id:: *(\S+)/i.exec(raw);
-  return m ? m[1] : null;
+  return existingBlockId(raw, "md");
 }
 
 function findGuideNode(ids: string[], uuid: string): string | null {

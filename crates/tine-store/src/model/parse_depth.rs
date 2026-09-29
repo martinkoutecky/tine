@@ -138,8 +138,8 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
                 containers.pop();
             }
         }
-        let quotes = body.bytes().take_while(|byte| *byte == b'>').count();
-        if quotes > PARSE_INPUT_MAX_DEPTH {
+        // Spaced (`> > >`) and list-prefixed (`- > >`) staircases nest too.
+        if tine_core::render::line_quote_depth(body) > PARSE_INPUT_MAX_DEPTH {
             return false;
         }
         // Inline parsing starts afresh for each source line. Only paired

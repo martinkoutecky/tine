@@ -1913,7 +1913,8 @@ pub(crate) fn export_query_subtrees(
     for spec in specs.iter().take(query_limit) {
         const QUERY_EXPORT_CONSTRUCTION_ROWS: usize = 20_000;
         const QUERY_EXPORT_CONSTRUCTION_BYTES: usize = 32 * 1024 * 1024;
-        let bounded = if spec.advanced {
+        // One answerer (I-12): the caller's `advanced` flag is not trusted.
+        let bounded = if tine_core::query::is_advanced(&spec.query) {
             let (result, exceeded, total) = run_advanced_query_bounded(
                 graph,
                 &spec.query,
@@ -4305,12 +4306,10 @@ mod tests {
                 QueryExportSpec {
                     key: "todo".into(),
                     query: "(task TODO)".into(),
-                    advanced: false,
                 },
                 QueryExportSpec {
                     key: "done".into(),
                     query: "(task DONE)".into(),
-                    advanced: false,
                 },
             ],
             64,

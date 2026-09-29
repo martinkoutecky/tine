@@ -634,3 +634,203 @@ fn the_og_printer_writes_bare_exactly_the_tokens_the_resolver_reads() {
         );
     }
 }
+
+/// A small deterministic generator over the TQL grammar (xorshift, fixed
+/// seed), so the round-trip property is checked over COMPOSITIONS — compound
+/// atom tests under every quantifier, `not`/`and`/`or` at every depth, page
+/// hops — not over a hand-picked list. A printer that drops a quantifier or a
+/// parenthesis rewrites a saved query to a different meaning when the sheet
+/// reprints it (I-4); this is the class check for that.
+struct TqlGen(u64);
+
+impl TqlGen {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+    fn pick<'a>(&mut self, options: &[&'a str]) -> &'a str {
+        options[(self.next() % options.len() as u64) as usize]
+    }
+    fn chance(&mut self, percent: u64) -> bool {
+        self.next() % 100 < percent
+    }
+    fn combine(&mut self, depth: u32, leaf: &mut dyn FnMut(&mut Self, u32) -> String) -> String {
+        if depth == 0 || self.chance(35) {
+            return leaf(self, depth);
+        }
+        match self.next() % 5 {
+            0 => format!("not {}", self.combine(depth - 1, leaf)),
+            1 => format!(
+                "{} and {}",
+                self.combine(depth - 1, leaf),
+                self.combine(depth - 1, leaf)
+            ),
+            2 => format!(
+                "{} or {}",
+                self.combine(depth - 1, leaf),
+                self.combine(depth - 1, leaf)
+            ),
+            3 => format!("({})", self.combine(depth - 1, leaf)),
+            _ => format!(
+                "not ({} and {})",
+                self.combine(depth - 1, leaf),
+                self.combine(depth - 1, leaf)
+            ),
+        }
+    }
+    fn atom_test(&mut self, depth: u32) -> String {
+        self.combine(depth, &mut |g, _| {
+            g.pick(&[
+                "value > 1",
+                "value < 5",
+                "value = 'a'",
+                "value != 'b'",
+                "value in ('a', 'b')",
+                "value not in ('c')",
+                "value between 1 and 5",
+                "value like 'a%'",
+                "value = ''",
+                "true",
+            ])
+            .to_string()
+        })
+    }
+    fn block(&mut self, depth: u32) -> String {
+        self.combine(depth, &mut |g, depth| match g.next() % 6 {
+            0 | 1 => g
+                .pick(&[
+                    "#x",
+                    "[[a]]",
+                    "task = 'TODO'",
+                    "priority = 'A'",
+                    "content like '%foo%'",
+                    "scheduled is not null",
+                    "page.name = 'Home'",
+                    "page.journal = true",
+                    "tag('t')",
+                    "page_tag('w')",
+                    "prop('k') = 'v'",
+                    "prop('k') > 3",
+                    "prop('k') in ('a', 'b')",
+                    "prop('k') is null",
+                    "prop('k') is not null",
+                    "prop('k') = ''",
+                    "prop('k') between 1 and 5",
+                    "page_prop('s') = 'p'",
+                    "page_prop('s') is null",
+                ])
+                .to_string(),
+            2 | 3 => {
+                let quant = g.pick(&["any", "every", "none"]);
+                let over = g.pick(&["prop('k')", "page_prop('s')"]);
+                let test = g.atom_test(depth.min(3));
+                format!("{quant}({over}, {test})")
+            }
+            4 => {
+                let quant = g.pick(&["any", "every", "none"]);
+                format!(
+                    "{quant}(children, {})",
+                    g.block(depth.saturating_sub(1).min(2))
+                )
+            }
+            _ => format!("off({})", g.block(depth.saturating_sub(1).min(2))),
+        })
+    }
+}
+
+/// Repeated disabling has one persisted representation (see
+/// `repeated_off_collapses_without_flattening_its_authored_group`); every
+/// other difference between the parsed and the reprinted tree is a defect.
+fn collapse_repeated_off(filter: &Filter) -> Filter {
+    match filter {
+        Filter::Off { inner } => {
+            let mut inner = inner.as_ref();
+            while let Filter::Off { inner: deeper } = inner {
+                inner = deeper;
+            }
+            Filter::off(collapse_repeated_off(inner))
+        }
+        Filter::Not { inner } => Filter::not(collapse_repeated_off(inner)),
+        Filter::And { items } => Filter::and(items.iter().map(collapse_repeated_off).collect()),
+        Filter::Or { items } => Filter::or(items.iter().map(collapse_repeated_off).collect()),
+        Filter::Leaf {
+            leaf: Leaf::Rel { rel, quant, pred },
+        } => Filter::rel(*rel, *quant, collapse_repeated_off(pred)),
+        other => other.clone(),
+    }
+}
+
+#[test]
+fn generated_tql_round_trips_exactly_through_both_printers() {
+    let mut generator = TqlGen(0x9E37_79B9_7F4A_7C15);
+    let mut checked = 0usize;
+    let mut refused = 0usize;
+    let mut failures = Vec::new();
+    for _ in 0..4000 {
+        let source = generator.block(4);
+        let query = tql(&source);
+        if query.is_invalid() {
+            continue;
+        }
+        checked += 1;
+        let expected = collapse_repeated_off(&query.filter);
+        let pane = print_tql(&query);
+        let again = tql(&pane);
+        if again.filter != expected {
+            failures.push(format!("pane: {source:?} → {pane:?}"));
+        }
+        match query_print(
+            &query,
+            &ViewSettings::default(),
+            PrintDialect::TqlMacro,
+            false,
+        ) {
+            Ok(persisted) => {
+                if tql(&persisted).filter != expected {
+                    failures.push(format!("macro: {source:?} → {persisted:?}"));
+                }
+            }
+            // A visible refusal is not a silent rewrite; the macro-safety
+            // check owns which texts the Markdown reader reads back.
+            Err(_) => refused += 1,
+        }
+    }
+    assert!(
+        checked > 2000,
+        "the generator produced too few valid queries: {checked}"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} of {checked} generated queries changed on reprint; first few:\n{}",
+        failures.len(),
+        failures
+            .iter()
+            .take(12)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn a_compound_property_test_keeps_its_quantifier_and_grouping() {
+    for source in [
+        "any(prop('k'), value > 1 and value < 5)",
+        "any(prop('k'), not value = 'a')",
+        "any(prop('k'), value = 'a' or value = 'b')",
+        "every(prop('k'), not value > 1 and value < 5)",
+        "every(prop('k'), not (value > 1 and value < 5))",
+        "none(page_prop('s'), (value = 'a' or value = 'b') and value != 'c')",
+        "every(prop('k'), not (value between 1 and 5))",
+        "any(prop('k'), not (value in ('a', 'b')))",
+        "any(prop('k'), value = '')",
+        "any(prop('k'), value is not null)",
+        "every(children, any(page_prop('s'), true))",
+    ] {
+        round_trips_exactly(source);
+    }
+}

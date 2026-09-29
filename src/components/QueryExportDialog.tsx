@@ -1,5 +1,6 @@
 import { For, Show, createResource, createSignal, onCleanup, onMount, type Accessor, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { exportSheets } from "../sheet/exportSheets";
 import { closeQueryExport } from "../ui";
 import { pushToast } from "../toasts";
 import { graphOwner, readOwned, writeOwned } from "../owned";
@@ -37,7 +38,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     setBusy(true);
     setError("");
     try {
-      const receipt = await writeOwned(owner, backend().publishQuery({ ...props.request, name: plannedName() }, selection.fingerprint, parent));
+      const receipt = await writeOwned(owner, backend().publishQuery({ ...props.request, name: plannedName() }, selection.fingerprint, parent, await exportSheets()));
       if (receipt.kind === "current") {
         closeQueryExport();
         pushToast(`Exported ${receipt.value.pages} pages to ${receipt.value.path}`, "success", { sticky: true });

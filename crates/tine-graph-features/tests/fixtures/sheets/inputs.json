@@ -1,0 +1,271 @@
+[
+  {
+    "page": "Sheets",
+    "path": [
+      0
+    ],
+    "fp": "5035638010a09224",
+    "owner": {
+      "id": "0db610fd-42ac-83a0-bfc3-cebf8c0812aa",
+      "raw": "Tasks\ntine.view:: table\ntine.fields:: price=number;qty=number\ntine.formula.total:: price * qty\ntine.col-aggregates:: prop:price=sum;formula:total=sum",
+      "collapsed": false,
+      "children": [],
+      "breadcrumb": [],
+      "properties": [
+        [
+          "tine.view",
+          "table"
+        ],
+        [
+          "tine.fields",
+          "price=number;qty=number"
+        ],
+        [
+          "tine.formula.total",
+          "price * qty"
+        ],
+        [
+          "tine.col-aggregates",
+          "prop:price=sum;formula:total=sum"
+        ]
+      ]
+    },
+    "rows": [
+      {
+        "id": "dd206fa6-3bb8-82b6-ace0-daccd54609da",
+        "raw": "TODO [#A] First #x\nprice:: 5\nqty:: 2",
+        "collapsed": false,
+        "children": [],
+        "breadcrumb": [],
+        "marker": "TODO",
+        "priority": "A",
+        "tags": [
+          "x"
+        ],
+        "properties": [
+          [
+            "price",
+            "5"
+          ],
+          [
+            "qty",
+            "2"
+          ]
+        ]
+      },
+      {
+        "id": "ac4db89d-60e0-8070-a209-ec566cd6468c",
+        "raw": "DONE Second\nprice:: 1\nqty:: 2",
+        "collapsed": false,
+        "children": [],
+        "breadcrumb": [],
+        "marker": "DONE",
+        "properties": [
+          [
+            "price",
+            "1"
+          ],
+          [
+            "qty",
+            "2"
+          ]
+        ]
+      },
+      {
+        "id": "4986621b-4bae-81c5-8558-d319c977d32c",
+        "raw": "Third <script>alert(1)</script> row\nprice:: 3\nbackground-color:: yellow",
+        "collapsed": false,
+        "children": [],
+        "breadcrumb": [],
+        "properties": [
+          [
+            "price",
+            "3"
+          ],
+          [
+            "background-color",
+            "yellow"
+          ]
+        ]
+      }
+    ],
+    "omitted": 0
+  },
+  {
+    "page": "Sheets",
+    "path": [
+      1
+    ],
+    "fp": "53580002d1eafb29",
+    "owner": {
+      "id": "47eafeb2-3b32-8372-b662-602459053d9c",
+      "raw": "Board\ntine.view:: board\ntine.group-by:: state",
+      "collapsed": false,
+      "children": [],
+      "breadcrumb": [],
+      "properties": [
+        [
+          "tine.view",
+          "board"
+        ],
+        [
+          "tine.group-by",
+          "state"
+        ]
+      ]
+    },
+    "rows": [
+      {
+        "id": "b38f0f97-307a-878b-bad1-5ed713d988bd",
+        "raw": "TODO Write tests",
+        "collapsed": false,
+        "children": [],
+        "breadcrumb": [],
+        "marker": "TODO"
+      },
+      {
+        "id": "e0855caf-641c-8ac7-8eaa-4e5392b26e92",
+        "raw": "DOING Implement",
+        "collapsed": false,
+        "children": [],
+        "breadcrumb": [],
+        "marker": "DOING"
+      },
+      {
+        "id": "d9062d28-af7d-82a6-86f0-c321db95374f",
+        "raw": "Plain card",
+        "collapsed": false,
+        "children": [],
+        "breadcrumb": []
+      }
+    ],
+    "omitted": 0
+  },
+  {
+    "page": "Sheets",
+    "path": [
+      2
+    ],
+    "fp": "4bb7ec994d086a41",
+    "owner": {
+      "id": "562eb914-8672-85d3-a63d-d2ee98621046",
+      "raw": "Grid\ntine.view:: grid\ntine.header:: true\ntine.col-aggregates:: 1=sum",
+      "collapsed": false,
+      "children": [],
+      "breadcrumb": [],
+      "properties": [
+        [
+          "tine.view",
+          "grid"
+        ],
+        [
+          "tine.header",
+          "true"
+        ],
+        [
+          "tine.col-aggregates",
+          "1=sum"
+        ]
+      ]
+    },
+    "rows": [
+      {
+        "id": "5e96200f-e2fb-87d7-909f-372855190278",
+        "raw": "",
+        "collapsed": false,
+        "children": [
+          {
+            "id": "a0649e1c-d077-8ac5-a9a3-a32922ccabb9",
+            "raw": "Name",
+            "collapsed": false,
+            "children": [],
+            "breadcrumb": []
+          },
+          {
+            "id": "8e06705b-6a42-8494-ade4-b7150f18611f",
+            "raw": "Qty",
+            "collapsed": false,
+            "children": [],
+            "breadcrumb": []
+          }
+        ],
+        "breadcrumb": []
+      },
+      {
+        "id": "3219823a-2e1a-832e-89d3-a6b9114e1d55",
+        "raw": "",
+        "collapsed": false,
+        "children": [
+          {
+            "id": "7c8b0aff-9932-851e-891b-0c4a7fe0874a",
+            "raw": "a",
+            "collapsed": false,
+            "children": [],
+            "breadcrumb": []
+          },
+          {
+            "id": "5cae2e21-89ea-8f95-9f43-e1453d349e0b",
+            "raw": "2",
+            "collapsed": false,
+            "children": [],
+            "breadcrumb": []
+          }
+        ],
+        "breadcrumb": []
+      },
+      {
+        "id": "dd31893b-3f42-8938-83d2-b5bbb6ba83de",
+        "raw": "",
+        "collapsed": false,
+        "children": [
+          {
+            "id": "afde5dc5-21ff-8d09-9e4a-2dbe1f9bb945",
+            "raw": "b",
+            "collapsed": false,
+            "children": [],
+            "breadcrumb": []
+          },
+          {
+            "id": "c82a508f-30e0-853a-9422-2f6fe4008c85",
+            "raw": "5",
+            "collapsed": false,
+            "children": [],
+            "breadcrumb": []
+          }
+        ],
+        "breadcrumb": []
+      }
+    ],
+    "omitted": 0
+  },
+  {
+    "page": "Sheets",
+    "path": [
+      3
+    ],
+    "fp": "e991d37f6fedd9a9",
+    "owner": {
+      "id": "48d535fc-5c77-8fb3-8f1e-02542c38ae3d",
+      "raw": "Not a sheet\ntine.view:: nonsense",
+      "collapsed": false,
+      "children": [],
+      "breadcrumb": [],
+      "properties": [
+        [
+          "tine.view",
+          "nonsense"
+        ]
+      ]
+    },
+    "rows": [
+      {
+        "id": "035cabd9-ca60-8fef-8a71-f6be8fba3562",
+        "raw": "stays outline",
+        "collapsed": false,
+        "children": [],
+        "breadcrumb": []
+      }
+    ],
+    "omitted": 0
+  }
+]

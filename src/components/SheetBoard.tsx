@@ -1,8 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
-import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
-import { visibleBody, isRenderHiddenProp } from "../render/block";
+import { facetsOf } from "../render/facets";
 import { InlineText } from "../render/inline";
 import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
@@ -28,18 +27,17 @@ import {
   cycleField,
   fieldLabel,
   groupKeysForBlock,
-  isFieldId,
   isFormulaField,
-  readField,
   writeTagDelta,
   writeField,
   type FieldId,
 } from "../sheet/fields";
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
+import { boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns, type BoardColumn as BoardColumnOf } from "../sheet/boardColumns";
+import { fieldIdsForRecords, recordFacets } from "../sheet/tableFields";
 import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
-import { MARKERS } from "../markers";
 import { graphEpoch } from "../graphSession";
 import { openDatePicker, openSheetCellContextMenu, openSheetContextMenu, workflow } from "../ui";
 import { pushToast } from "../toasts";
@@ -53,11 +51,7 @@ import { registerTransientLayer } from "../transientLayers";
 import { appNow } from "../journal";
 interface RowRecord extends FormulaEvalRow {}
 
-interface BoardColumn {
-  key: string | null;
-  label: string;
-  rows: RowRecord[];
-}
+type BoardColumn = BoardColumnOf<RowRecord>;
 
 interface BoardDragCoordinator {
   start(pointerId: number, cancel: () => void): void;
@@ -72,8 +66,6 @@ function boardColumnId(key: string | null): string {
   return JSON.stringify(key);
 }
 
-const NONE_LABEL = "(none)";
-
 export const __sheetBoardTestHooks: {
   onGroupingRowWalk?: (rowId: string) => void;
   onPointIndexRow?: (rowId: string) => void;
@@ -87,11 +79,7 @@ export function SheetBoard(props: {
   schemaPage?: string;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
-  const groupBy = createMemo<FieldId>(() => {
-    const raw = props.groupBy || "state";
-    const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
-    return isFieldId(normalized) ? normalized : "state";
-  });
+  const groupBy = createMemo<FieldId>(() => boardGroupField(props.groupBy));
   const groupByOptions = createMemo<FieldId[]>(() => {
     const options = boardGroupByOptions(props.ownerId);
     const current = groupBy();
@@ -177,7 +165,12 @@ export function SheetBoard(props: {
 
   const baseColumns = createMemo<BoardColumn[]>(() => {
     const now = appNow();
-    return buildColumns(rows(), groupBy(), schemaFields(), { formulas: formulas(), now });
+    return buildBoardColumns(rows(), groupBy(), schemaFields(), {
+      formulas: formulas(),
+      now,
+      workflow: workflow(),
+      onRow: __sheetBoardTestHooks.onGroupingRowWalk,
+    });
   });
   const columns = createMemo<BoardColumn[]>(() => {
     const cols = baseColumns();
@@ -567,140 +560,16 @@ export function SheetBoard(props: {
   );
 }
 
-function buildColumns(
-  rows: readonly RowRecord[],
-  groupBy: FieldId,
-  schema: readonly FieldSpec[] = [],
-  opts: { formulas?: ReadonlyMap<string, string>; now?: Date } = {}
-): BoardColumn[] {
-  const rowsByKey = new Map<string | null, RowRecord[]>();
-  const keys: (string | null)[] = [];
-  const allKeys: (string | null)[] = [];
-  const seenAllKeys = new Set<string | null>();
-  let hasNull = false;
-  let hasFormulaError = false;
-  for (const row of rows) {
-    __sheetBoardTestHooks.onGroupingRowWalk?.(row.id);
-    const rowKeys = groupKeysForBlock(row, groupBy, opts);
-    keys.push(rowKeys[0] ?? null);
-    const seenForRow = new Set<string | null>();
-    for (const key of rowKeys) {
-      hasNull ||= key === null;
-      hasFormulaError ||= key === "(error)";
-      if (!seenAllKeys.has(key)) {
-        seenAllKeys.add(key);
-        allKeys.push(key);
-      }
-      if (seenForRow.has(key)) continue;
-      seenForRow.add(key);
-      const bucket = rowsByKey.get(key);
-      if (bucket) bucket.push(row);
-      else rowsByKey.set(key, [row]);
-    }
-  }
-  let order: (string | null)[];
-  const enumValues = enumValuesFor(schema, groupBy);
-  if (isFormulaField(groupBy)) {
-    const present = new Set(keys.filter((key): key is string => key !== null));
-    const booleanish = present.has("true") || present.has("false");
-    order = [];
-    if (booleanish) {
-      if (present.has("true")) order.push("true");
-      if (present.has("false")) order.push("false");
-    }
-    for (const key of keys) {
-      if (key === null || key === "(error)") continue;
-      if (booleanish && (key === "true" || key === "false")) continue;
-      if (!order.includes(key)) order.push(key);
-    }
-  } else if (groupBy === "tags") {
-    order = [];
-    for (const key of allKeys) if (key !== null) order.push(key);
-  } else if (enumValues) {
-    order = [...enumValues];
-    for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
-    order.push(null);
-  } else if (groupBy === "state") {
-    const standard = workflow() === "todo" ? ["TODO", "DOING", "DONE"] : ["LATER", "NOW", "DONE"];
-    order = [
-      ...standard,
-      ...MARKERS.filter((m) => !standard.includes(m) && keys.includes(m)),
-    ];
-  } else if (groupBy === "priority") {
-    order = ["A", "B", "C"];
-  } else {
-    order = [];
-    for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
-  }
-  if (hasNull && !order.includes(null)) order.push(null);
-  if (isFormulaField(groupBy) && hasFormulaError && !order.includes("(error)")) {
-    order.push("(error)");
-  }
-  if (order.length === 0) order = [null];
-  return order.map((key) => ({
-    key,
-    label: key === null ? NONE_LABEL : groupBy === "priority" ? `[#${key}]` : key,
-    rows: rowsByKey.get(key) ?? [],
-  }));
-}
-
-function enumValuesFor(schema: readonly FieldSpec[], field: FieldId): readonly string[] | null {
-  const spec = schema.find((s) => s.field === field);
-  return spec && typeof spec.type === "object" && "enum" in spec.type ? spec.type.enum : null;
-}
-
 function observedFieldsForRows(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
   const loadedIds = rows.filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
   if (loadedIds.length === rows.length) return fieldIdsForBlocks(loadedIds, { includePage });
   return fieldIdsForRecords(rows, includePage);
 }
 
-function fieldIdsForRecords(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
-  const out: FieldId[] = [];
-  const props: FieldId[] = [];
-  const seenProps = new Set<string>();
-  let hasState = false;
-  let hasPriority = false;
-  let hasScheduled = false;
-  let hasDeadline = false;
-  let hasTags = false;
-  for (const r of rows) {
-    const f = recordFacets(r);
-    if (!f) continue;
-    hasState ||= !!f.marker;
-    hasPriority ||= !!f.priority;
-    hasScheduled ||= !!f.scheduled;
-    hasDeadline ||= !!f.deadline;
-    hasTags ||= f.tags.length > 0;
-    for (const [key] of f.properties) {
-      if (isRenderHiddenProp(key)) continue;
-      const field: FieldId = `prop:${key}`;
-      if (!seenProps.has(field)) {
-        seenProps.add(field);
-        props.push(field);
-      }
-    }
-  }
-  if (hasState) out.push("state");
-  if (hasPriority) out.push("priority");
-  if (hasScheduled) out.push("scheduled");
-  if (hasDeadline) out.push("deadline");
-  if (hasTags) out.push("tags");
-  out.push(...props);
-  if (includePage) out.push("page");
-  return out;
-}
-
 function formulaReferenceName(field: FieldId): string | null {
   if (isFormulaField(field)) return null;
   if (field.startsWith("prop:")) return field.slice(5);
   return field;
-}
-
-function recordFacets(row: RowRecord): Facets | null {
-  const n = liveFormulaRowNode(row);
-  if (n) return facetsOf(n.raw, formatForBlock(row.id));
-  return row.dto ? facetsFromDto(row.dto) : null;
 }
 
 function moveRowToColumn(row: RowRecord, from: string | null, target: string | null, field: FieldId): boolean {
@@ -710,28 +579,6 @@ function moveRowToColumn(row: RowRecord, from: string | null, target: string | n
   if (from === null) return target !== null && writeTagDelta(row.id, { add: target });
   if (target === null) return tags.length === 1 && writeTagDelta(row.id, { remove: from });
   return writeTagDelta(row.id, { remove: from, add: target });
-}
-
-function dtoField(row: RowRecord, field: FieldId): string | null {
-  if (isFormulaField(field)) return null;
-  const f = recordFacets(row);
-  if (!f) return null;
-  if (field === "state") return f.marker;
-  if (field === "priority") return f.priority;
-  if (field === "scheduled") return f.scheduled;
-  if (field === "deadline") return f.deadline;
-  if (field === "tags") return f.tags.join(" ") || null;
-  if (field === "page") return row.page;
-  const key = field.slice(5);
-  return f.properties.find(([k]) => k === key)?.[1] ?? null;
-}
-
-function rowRaw(row: RowRecord): string {
-  return liveFormulaRowNode(row)?.raw ?? row.dto?.raw ?? "";
-}
-
-function rowTitle(row: RowRecord): string {
-  return visibleBody(rowRaw(row))[0] ?? "";
 }
 
 // Lazy-mount virtualization (P2): a board card's heavy content (title
@@ -1025,10 +872,10 @@ function BoardCard(props: {
         fallback={
           <Show
             when={near()}
-            fallback={<div class="sheet-board-card-title sheet-cell-defer">{rowTitle(props.row)}</div>}
+            fallback={<div class="sheet-board-card-title sheet-cell-defer">{boardRowTitle(props.row)}</div>}
           >
             <div class="sheet-board-card-title">
-              <InlineText text={rowTitle(props.row)} format={fmt()} />
+              <InlineText text={boardRowTitle(props.row)} format={fmt()} />
             </div>
             <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />
           </Show>
@@ -1045,52 +892,44 @@ function BoardCard(props: {
 }
 
 function CardChips(props: { row: RowRecord; groupBy: FieldId; onFieldClick: (field: FieldId, e: MouseEvent) => void }): JSX.Element {
-  const value = (field: FieldId) => (liveFormulaRowNode(props.row) ? readField(props.row.id, field)?.text ?? "" : dtoField(props.row, field) ?? "");
-  const priority = () => props.groupBy === "priority" ? "" : value("priority");
-  const scheduled = () => props.groupBy === "scheduled" ? "" : value("scheduled");
-  const deadline = () => props.groupBy === "deadline" ? "" : value("deadline");
-  const tags = () => props.groupBy === "tags" ? "" : value("tags");
+  const chips = createMemo(() => boardCardChips(props.row, props.groupBy));
   const stopDoubleClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
   };
   return (
     <div class="sheet-board-card-chips">
-      <Show when={priority()}>
+      <Show when={chips().priority}>
         <span
           class="block-priority"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => props.onFieldClick("priority", e)}
           onDblClick={stopDoubleClick}
         >
-          {priority()}
+          {chips().priority}
         </span>
       </Show>
-      <Show when={scheduled()}>
+      <Show when={chips().scheduled}>
         <span
           class="date-chip scheduled"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => props.onFieldClick("scheduled", e)}
           onDblClick={stopDoubleClick}
         >
-          {scheduled()}
+          {chips().scheduled}
         </span>
       </Show>
-      <Show when={deadline()}>
+      <Show when={chips().deadline}>
         <span
           class="date-chip deadline"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => props.onFieldClick("deadline", e)}
           onDblClick={stopDoubleClick}
         >
-          {deadline()}
+          {chips().deadline}
         </span>
       </Show>
-      <Show when={tags()}>
-        <For each={tags().split(/\s+/).filter(Boolean)}>
-          {(tag) => <span class="sheet-tag-chip">{tag.startsWith("#") ? tag : `#${tag}`}</span>}
-        </For>
-      </Show>
+      <For each={chips().tags}>{(tag) => <span class="sheet-tag-chip">{tag}</span>}</For>
     </div>
   );
 }
