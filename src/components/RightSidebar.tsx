@@ -11,7 +11,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
-import { ensurePageLoaded, pageByName, resolveBlockRef, node as docNode } from "../document";
+import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, whenPageReplaceable, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
@@ -205,17 +205,22 @@ export function RightSidebar(): JSX.Element {
 // Ensure the item's page is loaded into the working set. Return an error signal
 // so a failed load is visible while the item stays available for retry.
 // Re-runs on graphEpoch so a sidebar restored *before* the graph is open
-// retries once it opens.
+// retries once it opens. A load refused because another file holding the name
+// has unsaved work says so and re-runs once that page is replaceable, instead
+// of leaving an empty body observing nothing (GH #254 family, master 7bd793bd0).
 function useEnsurePage(
   name: () => string,
   kind: () => "journal" | "page",
   path: () => string | undefined,
   enabled: () => boolean,
 ) {
-  const [loadError, setLoadError] = createSignal(false);
+  const uid = createUniqueId();
+  const [loadError, setLoadError] = createSignal<string | null>(null);
+  const [retry, setRetry] = createSignal(0);
   createEffect(() => {
     if (!enabled()) return;
-    setLoadError(false);
+    retry();
+    setLoadError(null);
     const epoch = graphEpoch();
     const n = name();
     const k = kind();
@@ -223,7 +228,8 @@ function useEnsurePage(
     const loaded = pageByName(n);
     if (n && (!loaded || (p && loaded.id !== p))) {
       let active = true;
-      onCleanup(() => { active = false; });
+      let stopWaiting: (() => void) | undefined;
+      onCleanup(() => { active = false; stopWaiting?.(); });
       const request = p ? backend().getPageByPath(p) : backend().getPage(n, k);
       void request
         .then((dto) => {
@@ -235,11 +241,14 @@ function useEnsurePage(
             // A restored/early mixed-case item can race it; adopt the backend's
             // canonical page name before the exact-keyed store renders the body.
             if (!p && k === "page" && dto.name !== n) adoptResolvedPageName(n, dto.name);
-            ensurePageLoaded(dto);
+            const refusal = ensurePageLoaded(dto);
+            if (!refusal) return;
+            setLoadError(pageLoadRefusalMessage(refusal));
+            stopWaiting = whenPageReplaceable(refusal.page, `sidebar:${uid}`, () => setRetry((count) => count + 1));
           }
         })
         .catch(() => {
-          if (active && epoch === graphEpoch()) setLoadError(true);
+          if (active && epoch === graphEpoch()) setLoadError("Could not load this sidebar page. Collapse and expand to retry.");
         });
     }
   });
@@ -307,7 +316,7 @@ function PageItem(props: {
         </button>
       </div>
       <Show when={!props.collapsed}>
-        <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ? "Could not load this sidebar page. Collapse and expand to retry." : ""}</div>}>
+        <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
           <div id={bodyId} class="rs-item-body">
             <For each={page()!.roots}>{(id) => <Block id={id} />}</For>
             {/* The same producer the main pane uses: a page opened only here still
@@ -385,7 +394,7 @@ function BlockItem(props: {
           fallback={
             <Show
               when={pageLoaded()}
-              fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ? "Could not load this sidebar page. Collapse and expand to retry." : ""}</div>}
+              fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}
             >
               <div id={bodyId} class="rs-item-body rs-item-missing">This block is no longer available.</div>
             </Show>

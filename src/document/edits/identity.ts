@@ -266,7 +266,8 @@ export async function persistBlockRefTarget(
       ? backend().getPageByPath(path)
       : backend().getPage(page, kind));
     if (result.kind === "stale") return false;
-    if (result.value) ensurePageLoaded(result.value);
+    // A refused load leaves another file in the slot: nothing safe to stamp.
+    if (result.value && ensurePageLoaded(result.value)) return false;
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new

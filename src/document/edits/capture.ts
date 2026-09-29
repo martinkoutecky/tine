@@ -1,10 +1,9 @@
 import { journalTitle, appNow } from "../../journal";
 import { OUTLINE_MAX_DEPTH, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
 import { type PageKind } from "../../types";
-import { graphOwner, readOwned } from "../../owned";
+import { graphOwner } from "../../owned";
 import { pageByName, freshId, setDoc } from "../model";
-import { backend } from "../../backend";
-import { ensurePageLoaded } from "../workingSet";
+import { admitPageFile, reportPageLoadRefusal } from "../workingSet";
 import { captureEmptyPage } from "../convert";
 import { pageWritable } from "./properties";
 import { insertOutlineAfter, deleteBlock } from "./blocks";
@@ -18,9 +17,9 @@ import { markDirty, flushPage } from "../save/engine";
  *  single writer for global quick-capture: routing through the live store (rather
  *  than a separate-process file append) means a capture can't race a main-view
  *  edit of today's journal into a conflict. Loads — or, if the day has no file
- *  yet, synthesizes — the journal first; never clobbers in-progress edits
- *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether the write
- *  reached disk. */
+ *  yet, synthesizes — the journal first; never clobbers in-progress edits and
+ *  refuses (false, with a message) when another file holding today's name has
+ *  unsaved input (`admitPageFile`). Returns whether the write reached disk. */
 export async function appendToTodayJournal(markdown: string): Promise<boolean> {
   return captureOutlineInto(journalTitle(appNow()), "journal", parseOutline(markdown));
 }
@@ -37,17 +36,23 @@ export async function captureToPage(title: string, markdown: string): Promise<bo
 
 /** Append outline `nodes` at the END of the named page (loaded — or synthesized
  *  if it has no file yet — first), then flush immediately. Shared by the journal
- *  append and the new-page capture; never clobbers in-progress edits
- *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether it landed. */
+ *  append and the new-page capture; never clobbers in-progress edits and never
+ *  writes into a second file holding the name. One page read. Returns whether
+ *  it landed. */
 async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNode[]): Promise<boolean> {
   // Captured blocks land at root level, so the outline's own depth is the result's (I-22).
   if (!nodes.length || outlineDepth(nodes) > OUTLINE_MAX_DEPTH) return false;
   const owner = graphOwner();
-  if (!pageByName(name)) {
-    const result = await readOwned(owner, backend().getPage(name, kind));
-    if (result.kind === "stale") return false;
-    const dto = result.value ?? captureEmptyPage(name, kind);
-    ensurePageLoaded(dto);
+  // Admit the file the name resolves to. Another file holding the name is
+  // replaced when it has no unsaved input; when it has, stop rather than append
+  // into it: the capture would land where the feed does not show it and be
+  // reported as saved (GH #254 family, master 7bd793bd0). Returning false keeps
+  // the text in the capture window, which says so.
+  const admitted = await admitPageFile(name, kind, owner, captureEmptyPage(name, kind));
+  if (admitted === "stale") return false;
+  if (admitted) {
+    reportPageLoadRefusal(admitted, "Nothing was captured into it.");
+    return false;
   }
   const page = pageByName(name);
   if (!page || !pageWritable(name)) return false;

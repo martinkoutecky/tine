@@ -34,20 +34,35 @@ describe("pageListLabels", () => {
 describe("pageListLabels scales with the list, not with list x rows", () => {
   const list = (n: number) => Array.from({ length: n }, (_, i) => page(`p${i}`, `pages/p${i}.md`));
 
-  function costOfLabellingEveryRow(n: number): number {
-    const pages = list(n);
-    const started = performance.now();
+  // Count field reads instead of wall time: a timing ratio flaked under
+  // full-suite load, while reads are deterministic and still tell linear from
+  // quadratic (a per-row scan of the list reads ~N fields per row).
+  function readsWhileLabellingEveryRow(n: number): number {
+    let reads = 0;
+    const pages = list(n).map((entry) => {
+      const counted = {} as PageEntry;
+      for (const key of Object.keys(entry) as (keyof PageEntry)[]) {
+        Object.defineProperty(counted, key, {
+          enumerable: true,
+          get: () => {
+            reads += 1;
+            return entry[key];
+          },
+        });
+      }
+      return counted;
+    });
     const label = pageListLabels(pages);
     for (const p of pages) label(p);
-    return performance.now() - started;
+    return reads;
   }
 
-  it("stays roughly linear when the list grows tenfold", () => {
-    costOfLabellingEveryRow(2_000); // warm the JIT
-    const small = costOfLabellingEveryRow(1_000);
-    const large = costOfLabellingEveryRow(10_000);
-    // Quadratic would be ~100x; a loose ceiling because this is a shape check.
-    expect(large).toBeLessThan(Math.max(small, 0.5) * 25);
+  it("stays linear when the list grows tenfold", () => {
+    const small = readsWhileLabellingEveryRow(1_000);
+    const large = readsWhileLabellingEveryRow(10_000);
+    // Linear is ~10x; a per-row scan of the list would be ~100x.
+    expect(small).toBeGreaterThan(0);
+    expect(large).toBeLessThan(small * 15);
   });
 
   it("still disambiguates correctly at scale", () => {

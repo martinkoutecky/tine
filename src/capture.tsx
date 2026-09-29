@@ -84,8 +84,10 @@ function Capture() {
   const roots = () => pageByName(SCRATCH)?.roots ?? [];
 
   const seed = () => {
-    ensurePageLoaded(createCaptureScratchPage());
-    const root = pageByName(SCRATCH)?.roots[0];
+    // The scratch page has no file, so a re-seed matches the incumbent and is
+    // never refused; if it were, no editor would open on another page's block.
+    const refused = ensurePageLoaded(createCaptureScratchPage());
+    const root = refused ? undefined : pageByName(SCRATCH)?.roots[0];
     if (root) startEditing(root, 0, null);
     setReady(true);
   };

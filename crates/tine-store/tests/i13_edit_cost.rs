@@ -1,7 +1,5 @@
 //! I-13/I-15/I-25: one page edit must not inherit a graph-sized disk bill.
 use std::fs;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use tine_store::cost_counters::{self, Counts};
@@ -9,19 +7,23 @@ use tine_store::{PageId, SaveBase, SaveOutcome, Store};
 
 static CASE_LOCK: Mutex<()> = Mutex::new(());
 
-fn graph(pages: usize, blocks: usize) -> (Store, PageId) {
+/// A fixture graph. Callers bind it as `let (_dir, store, id) = graph(..)`: the
+/// self-deleting `TempDir` is declared first, so it drops last (after the store
+/// releases the files) and the graph never outlives the test, panic included.
+fn graph(pages: usize, blocks: usize) -> (tempfile::TempDir, Store, PageId) {
     graph_with_target(pages, blocks, 0)
 }
 
-fn graph_with_target(pages: usize, blocks: usize, target: usize) -> (Store, PageId) {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!(
-            "i13-cost-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+fn graph_with_target(
+    pages: usize,
+    blocks: usize,
+    target: usize,
+) -> (tempfile::TempDir, Store, PageId) {
+    let dir = tempfile::Builder::new()
+        .prefix("i13-cost-")
+        .tempdir()
+        .unwrap();
+    let root = dir.path().to_path_buf();
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     for index in 0..pages {
@@ -34,11 +36,15 @@ fn graph_with_target(pages: usize, blocks: usize, target: usize) -> (Store, Page
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
-    (store, PageId::from(format!("pages/Page{target:04}.md")))
+    (
+        dir,
+        store,
+        PageId::from(format!("pages/Page{target:04}.md")),
+    )
 }
 
 fn edit(pages: usize, blocks: usize) -> (Counts, usize) {
-    let (store, id) = graph(pages, blocks);
+    let (_dir, store, id) = graph(pages, blocks);
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
     doc.blocks[0].raw = "after".into();
@@ -108,7 +114,7 @@ fn memo_carry_checks_only_the_changed_page() {
     let mut max_probes = 0;
     for blocks in [1, 60] {
         for pages in [1, 1000] {
-            let (store, id) = graph_with_target(pages, blocks, pages - 1);
+            let (_dir, store, id) = graph_with_target(pages, blocks, pages - 1);
             let old = store.whole_graph().unwrap();
             let _ = old.backlinks("Target").unwrap();
             let read = store.page(&id).unwrap();
@@ -139,7 +145,7 @@ fn held_snapshot_edit_and_icon_request_have_bounded_page_work() {
     let _case = CASE_LOCK.lock().unwrap();
     for blocks in [1, 60] {
         for pages in [1, 1000] {
-            let (store, id) = graph(pages, blocks);
+            let (_dir, store, id) = graph(pages, blocks);
             let old = store.whole_graph().unwrap();
             cost_counters::reset();
             let _icons = old.page_icons(&["Page0000".into()]);
@@ -170,7 +176,7 @@ fn held_snapshot_edit_and_icon_request_have_bounded_page_work() {
 fn single_page_print_builds_one_corpus() {
     let _case = CASE_LOCK.lock().unwrap();
     for pages in [20, 2000] {
-        let (store, _) = graph(pages, 1);
+        let (_dir, store, _) = graph(pages, 1);
         cost_counters::reset();
         let html =
             tine_graph_features::print::page_print_html(&store, "Page0000", Default::default())
@@ -191,7 +197,7 @@ fn single_page_print_builds_one_corpus() {
 #[test]
 fn full_publish_builds_one_corpus() {
     let _case = CASE_LOCK.lock().unwrap();
-    let (store, _) = graph(20, 1);
+    let (_dir, store, _) = graph(20, 1);
     cost_counters::reset();
     let _ = tine_graph_features::publish::publish_html(&store).unwrap();
     let counts = cost_counters::snapshot();

@@ -101,6 +101,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **A second file holding a page's name is never shown or written as that page** (master 7bd793bd0, og J1).
+  When a duplicate journal day (left by sync or a date-format change) or a same-named page opened by path
+  was open with unsaved input, the journals feed showed it as the requested day, so what was typed there
+  saved to the wrong file; quick capture and "add to today" could append into it and report success; a
+  sidebar item pinned to the other file stayed blank; and a PDF-notes refresh declined during an edit was
+  dropped, leaving the notes stale. The feed now keeps its previous days (or, on first open, says why in place) and fills in once
+  that input is finished; capture and carry go into today's real file, or, when the other file has unsaved
+  input, refuse and name both files (capture keeps its text in the capture window); the sidebar says why and retries;
+  the notes refresh applies once the edit ends.
+- **The preview build never offers the released Tine as an update** (og J3). The updater and the
+  Check for updates button ask the Tauri updater plugin what the `og-preview` release offers (its
+  `releases/download/og-preview/latest.json`, the same manifest the installer uses), never `releases/latest`,
+  whose higher version number would have offered to replace the preview with the shipped app. With no
+  `og-preview` release, an unreachable or invalid manifest, or nothing newer, there is no toast and About says it
+  could not check or that you are current. The manual releases link opens the `og-preview` page.
+- **Plugin settings: an operation finishing no longer re-enables controls under a later one.** The Plugins
+  tab's busy state is held per operation (also while the uninstall confirmation is open) and released only by
+  its owner (master cdd0eda4b).
 - **A `file:` link opens the file** (GH #444, master c817fb150, og I3). A link written
   `[Test](file://D:\test.txt)` (Logseq) or `[Test](<file:///D:\test.txt>)` (Obsidian) rendered
   as a link and did nothing; it now opens that file or folder in the application your system uses

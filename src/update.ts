@@ -1,6 +1,7 @@
 // "A newer Tine is available" check — best-effort, once per launch.
 //
-// Notifier: ask GitHub for the latest *published* release and, if it's newer than
+// Notifier: ask the Tauri updater plugin what the og-preview channel offers (NEVER
+// the shipped Tine's `releases/latest` — see RELEASES_PAGE) and, if it's newer than
 // the running build, show a sticky toast. This is the cross-platform half and is
 // always the way a user LEARNS an update exists.
 //
@@ -27,22 +28,22 @@ import { pushToast, dismissToast } from "./toasts";
 import { openSettings } from "./ui";
 import { reportUiFailure } from "./uiFailure";
 
-const REPO = "martinkoutecky/tine";
-const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
-const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+/** THE update channel (og-only). This build (`page.tine.TineOG`) must never offer
+ * the shipped Tine: `releases/latest` there carries a higher version number, and
+ * installing it would REPLACE og with master. The channel is the fixed-tag GitHub
+ * release `og-preview`. What it offers is answered ONCE, by the Tauri updater
+ * plugin: `check()` reads the endpoint in `tauri.conf.json` (Rust-side, so no
+ * webview CORS problem: GitHub release-asset downloads send no
+ * Access-Control-Allow-Origin) and the installer downloads from that same
+ * manifest. This file therefore names no channel URL to fetch and never calls
+ * `fetch()`; the only URL here is the human-facing release page below (guard:
+ * `src/updateChannel.guard.test.ts`). */
+const RELEASES_PAGE = "https://github.com/martinkoutecky/tine/releases/tag/og-preview";
 
 /** Parse the first `X.Y.Z` out of a version/tag string (`v0.3.0`, `0.3.0`, …). */
 function parseVer(s: string): [number, number, number] | null {
   const m = /(\d+)\.(\d+)\.(\d+)/.exec(s);
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-
-/** Is `a` a strictly newer semver triple than `b`? */
-function isNewer(a: [number, number, number], b: [number, number, number]): boolean {
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] > b[i];
-  }
-  return false;
 }
 
 type UpdateMode = "self" | "manual" | "unavailable";
@@ -299,24 +300,29 @@ export async function offerUpdate(version: string, current: string): Promise<voi
   );
 }
 
-/** Check GitHub for a newer published release; toast if there is one. Resolves
- *  silently (never throws) in every failure case. */
+/** The version the og-preview channel offers when it is newer than this build,
+ *  else null. The updater plugin decides "newer" (and reads the manifest); it
+ *  throws on a missing, unreachable or invalid manifest, which callers absorb.
+ *  Releases the plugin's resource handle (the installer takes its own). */
+async function offeredVersion(): Promise<[number, number, number] | null> {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const offer = await check();
+  if (!offer) return null;
+  const version = parseVer(offer.version);
+  try { await offer.close(); } catch (error) { dbg(`updater handle close failed: ${String(error)}`); }
+  return version;
+}
+
+/** Check the og-preview channel for a newer build; toast if there is one.
+ *  Resolves silently (never throws) in every failure case. */
 export async function checkForUpdate(): Promise<void> {
   if ((await updateMode()) === "unavailable") return;
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
     const cur = parseVer(await getVersion());
     if (!cur) return;
-
-    // `/releases/latest` is the newest NON-prerelease, NON-draft release.
-    const res = await fetch(LATEST_API, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
-    if (!res.ok) return;
-    const data: unknown = await res.json();
-    const tag = (data as { tag_name?: unknown })?.tag_name;
-    const latest = typeof tag === "string" ? parseVer(tag) : null;
-    if (!latest || !isNewer(latest, cur)) return;
+    const latest = await offeredVersion();
+    if (!latest) return;
     await offerUpdate(latest.join("."), cur.join("."));
   } catch {
     // offline / rate-limited / network blocked — never bother the user.
@@ -326,40 +332,30 @@ export async function checkForUpdate(): Promise<void> {
 export type UpdateStatus =
   | { kind: "current"; version: string }
   | { kind: "available"; version: string; current: string }
-  | { kind: "unavailable" }; // offline, rate-limited, or not the packaged app
+  | { kind: "unavailable" }; // offline, rate-limited, no preview release, or not the packaged app
 
 /** The About tab's explicit "Check for updates" button. Unlike `checkForUpdate`
  *  (silent on the common no-update path), this reports every outcome so the
  *  button can show feedback. Checking never installs by itself: an available
- *  release gets an explicit Install update action in a sticky toast. Never throws. */
+ *  build gets an explicit Install update action in a sticky toast. Never throws. */
 export async function checkForUpdateNow(): Promise<UpdateStatus> {
   if ((await updateMode()) === "unavailable") return { kind: "unavailable" };
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
-    const curStr = await getVersion();
-    const cur = parseVer(curStr);
+    const cur = parseVer(await getVersion());
     if (!cur) return { kind: "unavailable" };
-
-    const res = await fetch(LATEST_API, { headers: { Accept: "application/vnd.github+json" } });
-    if (!res.ok) return { kind: "unavailable" };
-    const data: unknown = await res.json();
-    const tag = (data as { tag_name?: unknown })?.tag_name;
-    const latest = typeof tag === "string" ? parseVer(tag) : null;
-    if (!latest) return { kind: "unavailable" };
-
-    if (isNewer(latest, cur)) {
-      const version = latest.join(".");
-      const current = cur.join(".");
-      await offerUpdate(version, current);
-      return { kind: "available", version, current };
-    }
-    return { kind: "current", version: cur.join(".") };
+    const offered = await offeredVersion();
+    if (!offered) return { kind: "current", version: cur.join(".") };
+    const version = offered.join(".");
+    const current = cur.join(".");
+    await offerUpdate(version, current);
+    return { kind: "available", version, current };
   } catch {
     return { kind: "unavailable" };
   }
 }
 
-/** Open the GitHub releases page (exported for the About tab's manual link). */
+/** Open the og-preview releases page (exported for the About tab's manual link). */
 export function openReleasesPage(): void {
   openReleases();
 }

@@ -5100,6 +5100,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "time",
  "tine-core",
  "tine-store",

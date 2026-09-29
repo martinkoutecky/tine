@@ -8,7 +8,7 @@ import { toLoadablePage } from "./convert";
 import { doc, feedNames, pageByName } from "./model";
 import { applyObservedDivergence, isConflicted } from "./save/engine";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
-import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, restoreTodayJournalInFeed } from "./workingSet";
+import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
 
 /** Route and feed actions belong to the app; the document module owns the
  * decision to call them. The snapshot keeps one watcher event on one UI view. */
@@ -115,7 +115,10 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
     }
     ui?.leaveRemovedPage(c.name);
     if (c.kind === "journal" && ui?.journalsOpen) {
-      restoreTodayJournalInFeed();
+      // Another file holding today's name keeps it out of the feed (og J1);
+      // the restart below retries once that holder is replaceable.
+      const refused = restoreTodayJournalInFeed();
+      if (refused) reportPageLoadRefusal(refused);
       restartJournalFeed();
     }
     return;

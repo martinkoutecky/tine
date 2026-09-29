@@ -81,8 +81,8 @@ export { blockIsGridView, collapseEpochOf, node, childIds, pageRoots, loadedPage
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, installDraftKeeper, installLiveResolution, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, trackAssetWrite, unsavedDrafts, unsavedPageCount, waitingFor, waitingOn, type UnsavedState } from "./save/engine";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
-export { replayDeferredExternalReloads } from "./deferredReload";
-export { appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed } from "./workingSet";
+export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
+export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { graphRewriteFrozen } from "./graphRewriteState";
 export { emptyPage, favoritesArrangementPage, favoritesArrangementBlocks, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
