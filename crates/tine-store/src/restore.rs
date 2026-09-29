@@ -146,10 +146,18 @@ impl Store {
     /// recovery directories; there is no store import or cleanup call.
     /// An editor must separately
     /// preserve its unsaved buffer and compare its base revision before saving.
+    ///
+    /// `graph_text: Some(hidden)` restores a whole-graph snapshot instead: text
+    /// arrives as `Area::Graph` files at their graph-relative paths (Pages and
+    /// Journals inputs are refused), and the unlisted live text retired is
+    /// every file in the graph-text scope as recorded at snapshot time, with
+    /// `hidden` in place of the live `:hidden`, into `<restore-id>/graph/`.
+    /// `None` is the configured-roots restore described above.
     pub fn restore(
         &self,
         _kind: crate::EditKind,
         mut files: Vec<RestoreFile>,
+        graph_text: Option<&[String]>,
     ) -> Result<RestoreReport, RestoreFailed> {
         let _writer = self.writer.lock().unwrap();
         let mut done = RestoreReport {
@@ -165,11 +173,21 @@ impl Store {
                 done,
             ));
         }
+        // The recorded scope decides what a whole-graph restore may write and
+        // retire, so a later `:hidden` edit cannot retire text it never saw.
+        let scope = graph_text.map(|hidden| {
+            let mut config = (*self.graph.current_config()).clone();
+            config.hidden = hidden.to_vec();
+            config
+        });
         for file in &files {
             let allowed = match file.area {
                 Area::Pages | Area::Journals => {
-                    crate::file_kind::is_graph_text_path(Path::new(&file.rel))
+                    scope.is_none() && crate::file_kind::is_graph_text_path(Path::new(&file.rel))
                 }
+                Area::Graph => scope.as_ref().is_some_and(|scope| {
+                    crate::model::graph_text_relative_eligible(&file.rel, scope)
+                }),
                 Area::Assets => {
                     crate::file_kind::is_asset_sidecar_path(Path::new(&file.rel))
                         && !file.rel.split('/').any(|part| part == ASSET_RECOVERY)
@@ -177,7 +195,8 @@ impl Store {
                 Area::Meta => file.rel == "config.edn",
                 Area::Trash => false,
             };
-            if !allowed || self.file_id(file.area, &file.rel).is_err() {
+            if !allowed || (file.area != Area::Graph && self.file_id(file.area, &file.rel).is_err())
+            {
                 return Err(fail(
                     "restore",
                     io::Error::new(io::ErrorKind::InvalidInput, "unsafe restore file"),
@@ -293,21 +312,29 @@ impl Store {
         let mut changed = false;
 
         // The old protocol completes one area before starting the next one.
-        for (area, phase, live_prefix, recovery_prefix) in [
-            (
-                Area::Journals,
-                "restore journals failed",
-                self.graph.current_config().journals_dir.as_str(),
-                "journals",
-            ),
-            (
-                Area::Pages,
-                "restore pages failed",
-                self.graph.current_config().pages_dir.as_str(),
-                "pages",
-            ),
-            (Area::Assets, "restore asset sidecars failed", "", ""),
-        ] {
+        let config = self.graph.current_config();
+        let text_areas = match scope {
+            None => vec![
+                (
+                    Area::Journals,
+                    "restore journals failed",
+                    config.journals_dir.as_str(),
+                    "journals",
+                ),
+                (
+                    Area::Pages,
+                    "restore pages failed",
+                    config.pages_dir.as_str(),
+                    "pages",
+                ),
+            ],
+            Some(_) => vec![(Area::Graph, "restore graph text failed", "", "graph")],
+        };
+        for (area, phase, live_prefix, recovery_prefix) in
+            text_areas
+                .into_iter()
+                .chain([(Area::Assets, "restore asset sidecars failed", "", "")])
+        {
             let bound = if area == Area::Assets {
                 &assets
             } else {
@@ -337,7 +364,9 @@ impl Store {
                 })();
                 if let Err(error) = result {
                     if copying && error.kind() == io::ErrorKind::AlreadyExists {
-                        if let Ok(id) = self.file_id(area, &file.rel) {
+                        if area == Area::Graph {
+                            done.kept_external.push(FileId::from(file.rel.clone()));
+                        } else if let Ok(id) = self.file_id(area, &file.rel) {
                             done.kept_external.push(id);
                         }
                     }
@@ -361,6 +390,7 @@ impl Store {
                 Path::new(recovery_prefix),
                 &restored,
                 area,
+                scope.as_ref(),
                 &mut changed,
             ) {
                 if changed {
@@ -440,7 +470,7 @@ mod config_directory_tests {
             len: fs::metadata(path).unwrap().len(),
         };
         assert!(store
-            .restore(crate::EditKind::ReplacePage, vec![candidate(&source)])
+            .restore(crate::EditKind::ReplacePage, vec![candidate(&source)], None)
             .is_err());
         assert_eq!(fs::read(root.join("pages/A.md")).unwrap(), b"- keep me\n");
         fs::write(
@@ -461,6 +491,7 @@ mod config_directory_tests {
                     len: fs::metadata(&page_source).unwrap().len(),
                 },
             ],
+            None,
         );
         assert!(result.is_ok(), "{result:?}");
         store.close();
@@ -492,7 +523,7 @@ mod config_directory_tests {
                 len: bytes.len() as u64,
             };
             assert!(store
-                .restore(crate::EditKind::ReplacePage, vec![input])
+                .restore(crate::EditKind::ReplacePage, vec![input], None)
                 .is_err());
             assert_eq!(fs::read(root.join("pages/A.md")).unwrap(), b"- keep me\n");
         }
@@ -687,8 +718,19 @@ fn retire_extras(
     recovery_prefix: &Path,
     restored: &HashSet<PathBuf>,
     area: Area,
+    scope: Option<&tine_core::config::Config>,
     changed: &mut bool,
 ) -> io::Result<()> {
+    // Whole-graph text: the recorded discovery scope, from the graph root.
+    let graph = |child: &Path, dir: bool| {
+        scope.is_some_and(|scope| {
+            if dir {
+                crate::model::graph_text_directory_scannable(Path::new(""), child, scope)
+            } else {
+                crate::model::graph_text_eligible(Path::new(""), child, scope)
+            }
+        })
+    };
     let mut pending: Vec<(PathBuf, Option<Dir>)> = vec![(PathBuf::new(), None)];
     while let Some((rel, handle)) = pending.pop() {
         let current = match handle.map_or_else(
@@ -710,7 +752,9 @@ fn retire_extras(
                     if name == ASSET_RECOVERY {
                         continue;
                     }
-                } else if name.to_str().is_none_or(|s| s.starts_with('.')) {
+                } else if name.to_str().is_none_or(|s| s.starts_with('.'))
+                    || (area == Area::Graph && !graph(&child, true))
+                {
                     continue;
                 }
                 pending.push((child, None));
@@ -719,7 +763,8 @@ fn retire_extras(
                 && crate::file_kind::is_asset_sidecar_path(&child))
                 || (area != Area::Assets
                     && (kind.is_file() || kind.is_symlink())
-                    && crate::file_kind::is_graph_text_path(&child)))
+                    && crate::file_kind::is_graph_text_path(&child)
+                    && (area != Area::Graph || graph(&child, false))))
                 && !restored.contains(&child)
             {
                 let live = live_dir.join(&child);

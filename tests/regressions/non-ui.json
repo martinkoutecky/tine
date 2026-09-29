@@ -98,7 +98,8 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "src-tauri/src/backup.rs"
+          "src-tauri/src/backup.rs",
+          "src-tauri/src/backup/restore.rs"
         ],
         "scenario": "backup.restore-cross-filesystem-recovery",
         "failBefore": "proven"
@@ -380,7 +381,8 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "src-tauri/src/backup.rs"
+          "src-tauri/src/backup.rs",
+          "src-tauri/src/backup/restore.rs"
         ],
         "scenario": "backup.restore-recovery-capability-boundary",
         "failBefore": "proven"

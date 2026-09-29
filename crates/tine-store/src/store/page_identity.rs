@@ -41,6 +41,28 @@ impl Store {
         Some(PageId::from(path))
     }
 
+    /// `file_id(Area::Graph, rel)`: an eligible graph-text file anywhere in
+    /// the graph, named by its graph-relative path.
+    pub(super) fn graph_text_file_id(&self, rel: &str) -> Result<FileId, StoreError> {
+        if !crate::model::graph_text_relative_eligible(rel, &self.graph.current_config()) {
+            return Err(StoreError::InvalidTarget(rel.into()));
+        }
+        let id = FileId::from(rel.to_owned());
+        self.validate_file(&id)?;
+        Ok(id)
+    }
+
+    /// Whether an `Area::Graph` scan lists (or descends into) `rel`: the same
+    /// scope graph discovery reads, so a backup copies exactly the graph text.
+    pub(super) fn graph_text_listed(&self, rel: &str, is_dir: bool) -> bool {
+        let config = self.graph.current_config();
+        if is_dir {
+            crate::model::graph_text_directory_scannable(Path::new(""), Path::new(rel), &config)
+        } else {
+            crate::model::graph_text_relative_eligible(rel, &config)
+        }
+    }
+
     pub(crate) fn validate_file(&self, file: &FileId) -> Result<(), StoreError> {
         let path = file.as_str();
         if path.is_empty()

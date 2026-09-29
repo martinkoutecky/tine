@@ -1015,7 +1015,7 @@ impl Store {
                 Area::Journals => root.join("journals"),
                 Area::Assets => root.join("assets"),
                 Area::Meta => root.join("logseq"),
-                Area::Trash => {
+                Area::Trash | Area::Graph => {
                     return Err(failed(
                         &root,
                         std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid seed area"),
@@ -1532,6 +1532,7 @@ impl Store {
             Area::Assets => "assets",
             Area::Meta => "logseq",
             Area::Trash => "logseq/.tine-trash",
+            Area::Graph => return self.graph_text_file_id(rel),
         };
         let id = FileId::from(format!("{directory}/{rel}"));
         self.validate_file(&id)?;
@@ -1657,6 +1658,7 @@ impl Store {
                 live
             }
             Area::Meta | Area::Trash => self.graph.root.join("logseq"),
+            Area::Graph => self.graph.root.clone(),
         };
         let root = if area == Area::Trash {
             root.join(".tine-trash")
@@ -1720,6 +1722,11 @@ impl Store {
                 };
                 let name = entry.file_name();
                 let Some(name) = name.to_str() else {
+                    if area == Area::Graph
+                        && !crate::file_kind::is_graph_text_path(Path::new(&name))
+                    {
+                        continue;
+                    }
                     let path = entry.path();
                     let rel = path
                         .strip_prefix(root)
@@ -1767,8 +1774,11 @@ impl Store {
                         continue;
                     }
                 };
+                if area == Area::Graph && !store.graph_text_listed(&rel, ty.is_dir()) {
+                    continue;
+                }
                 if ty.is_dir() {
-                    if store.file_id(area, &rel).is_ok() {
+                    if area == Area::Graph || store.file_id(area, &rel).is_ok() {
                         pending.push(path);
                     } else {
                         out.unreadable.push((
@@ -2063,6 +2073,9 @@ pub enum Area {
     Meta,
     /// Graph-local `logseq/.tine-trash` area.
     Trash,
+    /// Whole graph root limited to graph text (`graph_text_relative_eligible`);
+    /// `rel` is graph-relative. Backup and restore use it (og-B).
+    Graph,
 }
 
 /// One successfully listed and statted file. `rel` is the exact name within
@@ -4067,6 +4080,7 @@ mod rev5_tests {
                         source: File::open(&source).unwrap(),
                         len: fs::metadata(&source).unwrap().len(),
                     }],
+                    None,
                 )
                 .unwrap();
             let restored = store.whole_graph().unwrap();

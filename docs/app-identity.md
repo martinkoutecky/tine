@@ -69,7 +69,7 @@ rewritten into another format, and none is deleted or made into an error.
 | `.window-state.json` (config dir) | read as-is | tauri-plugin-window-state. |
 | `diagnostics/process.lock`, `session-active` | read as-is | Same semantics. The single-instance lock stops master and og from running at once. |
 | `diagnostics/*.jsonl` | disjoint | og writes `history.jsonl`; master's `current`/`previous` files are left alone. |
-| `backups/<graph>/<stamp>/` schema 3 | master-only | og does not list, restore or prune them: `backup::is_foreign_snapshot`. Before this change, og pruning deleted master's snapshots once it had enough of its own. og's own schema-2 snapshots are ones master lists and restores. |
+| `backups/<graph>/<stamp>/` schema 3 | read as-is, never pruned | Since og-B (ADR 0062) og writes the same schema-3 layout and lists and restores master's snapshots. og marks its own with `"writer": "og"` (master ignores the field) and its keep-count prunes only its own and schema-2 ones: `backup::is_foreign_snapshot`. Master's keep-count counts every snapshot, og's included, as it already did for og's schema-2 ones. |
 | `backups/…/.partial-*` | cleaned | A crashed, never-published snapshot. It is cleaned by whichever Tine runs, and the single-instance lock means it is never a live one. |
 | `direct-files-projections/`, `direct-move-recovery/`, `conflict-capsules/`, `mediakeys/`, `hsts-storage.sqlite`, `WebKitCache/` | master-only | og has no reader and never opens them. They are byte-identical after an og run. |
 | `concord-ledger/<root>/` | **conflict (open)** | Same path and schema number, but a different layout. Each build's prune deletes the other's pin files. See Open items. |

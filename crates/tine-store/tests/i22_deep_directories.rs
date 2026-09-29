@@ -86,7 +86,7 @@ fn restore_retires_extras_from_a_deep_page_directory_iteratively() {
     let store = Store::open(&root, Default::default()).unwrap().0;
     on_small_stack(|| {
         let report = store
-            .restore(tine_store::EditKind::ReplacePage, Vec::new())
+            .restore(tine_store::EditKind::ReplacePage, Vec::new(), None)
             .unwrap();
         assert!(!report.recovery.is_empty());
     });

@@ -369,7 +369,7 @@ fn crash_restore_worker() {
             }
         })
         .collect();
-    let _ = store.restore(tine_store::EditKind::ReplacePage, files);
+    let _ = store.restore(tine_store::EditKind::ReplacePage, files, None);
     panic!("I-2: restore fault did not abort; exemplar Store::restore");
 }
 
@@ -412,6 +412,80 @@ fn restore_kill_reopen_keeps_live_or_recovery_bytes() {
                 "I-2: restore lost old {name} at boundary {boundary}; exemplar Store::restore"
             );
         }
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn crash_graph_restore_worker() {
+    if std::env::var("TINE_CRASH_KIND").as_deref() != Ok("graph-restore") {
+        return;
+    }
+    let root = PathBuf::from(std::env::var("TINE_CRASH_ROOT").unwrap());
+    let store = open(&root);
+    let files = ["pages/A.md", "Root.md"]
+        .into_iter()
+        .map(|rel| {
+            let source = File::open(root.join("snapshot").join(rel)).unwrap();
+            let len = source.metadata().unwrap().len();
+            RestoreFile {
+                area: Area::Graph,
+                rel: rel.into(),
+                source,
+                len,
+            }
+        })
+        .collect();
+    let _ = store.restore(tine_store::EditKind::ReplacePage, files, Some(&[]));
+    panic!("I-2: graph restore fault did not abort; exemplar Store::restore");
+}
+
+/// og-B whole-graph restore: text outside `pages/` and `journals/` (a root
+/// page, a stale page under `archive/`) crosses the same durable boundaries.
+/// A kill at any of them leaves each file whole, live or in recovery.
+#[test]
+fn graph_restore_kill_reopen_keeps_live_or_recovery_bytes() {
+    for boundary in 0..5 {
+        let root = scratch("graph-restore");
+        fs::create_dir_all(root.join("snapshot/pages")).unwrap();
+        fs::create_dir_all(root.join("archive")).unwrap();
+        for rel in ["pages/A.md", "Root.md"] {
+            fs::write(root.join(rel), format!("old {rel}")).unwrap();
+            fs::write(root.join("snapshot").join(rel), format!("new {rel}")).unwrap();
+        }
+        fs::write(root.join("archive/Stale.md"), "stale").unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("crash_graph_restore_worker")
+            .arg("--nocapture")
+            .env("TINE_CRASH_KIND", "graph-restore")
+            .env("TINE_CRASH_ROOT", &root)
+            .env("TINE_RESTORE_ABORT_BOUNDARY", boundary.to_string())
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "I-2: graph restore child must abort at boundary {boundary}; exemplar Store::restore"
+        );
+        let reopened = open(&root);
+        reopened.whole_graph().unwrap();
+        for rel in ["pages/A.md", "Root.md"] {
+            let old = format!("old {rel}");
+            let new = format!("new {rel}");
+            let live = fs::read(root.join(rel)).ok();
+            assert!(live.as_deref() == Some(old.as_bytes()) || live.as_deref() == Some(new.as_bytes()) || live.is_none(),
+                "I-2: graph restore left torn bytes for {rel} at boundary {boundary}; exemplar Store::restore");
+            assert!(
+                live.as_deref() == Some(old.as_bytes()) || recovery_has(&root, old.as_bytes()),
+                "I-2: graph restore lost old {rel} at boundary {boundary}; exemplar Store::restore"
+            );
+        }
+        assert!(
+            fs::read(root.join("archive/Stale.md")).is_ok_and(|bytes| bytes == b"stale")
+                || recovery_has(&root, b"stale"),
+            "I-2: graph restore lost a retired page at boundary {boundary}; exemplar Store::restore"
+        );
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
     }

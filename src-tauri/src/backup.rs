@@ -9,7 +9,10 @@ use std::sync::Arc;
 use tauri::Manager;
 use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
 
-// Snapshot the graph's markdown into the OS app-data dir on open, keeping the
+mod restore;
+pub(crate) use restore::restore_backup;
+
+// Snapshot the graph's Markdown/Org into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
 // net against a bad write or accidental edit. Source validation runs at launch;
 // the file copy runs in a detached best-effort worker.
@@ -137,6 +140,7 @@ struct BackupSource {
     journals_dir: String,
     pages_dir: String,
     assets_dir_name: String,
+    hidden: Vec<String>,
 }
 
 impl BackupSource {
@@ -153,11 +157,23 @@ impl BackupSource {
             journals_dir: config.journals_dir.clone(),
             pages_dir: config.pages_dir.clone(),
             assets_dir_name,
+            hidden: config.hidden.clone(),
         })
     }
 }
 
-const SNAPSHOT_SCHEMA: u32 = 2;
+/// Schema 3 (og-B, ADR 0062) keeps graph text under `graph/<graph-relative
+/// path>` and records the graph-text scope it covered; schema 2 kept only the
+/// configured `journals/` and `pages/` roots and still lists and restores.
+/// Both are master's wire formats, so either build reads the other's.
+const SNAPSHOT_SCHEMA: u32 = 3;
+const LEGACY_SNAPSHOT_SCHEMA: u32 = 2;
+/// Master's `GRAPH_TEXT_SCOPE_VERSION`: the discovery exclusions this build's
+/// `graph_text_eligible` applies (`published-queries/` included).
+const GRAPH_TEXT_SCOPE_VERSION: u32 = 2;
+/// Marks this build's schema-3 snapshots; master ignores the field. Prune
+/// counts only snapshots this build wrote (docs/app-identity.md).
+const SNAPSHOT_WRITER: &str = "og";
 const SNAPSHOT_MANIFEST: &str = "snapshot.json";
 
 #[cfg(test)]
@@ -177,8 +193,22 @@ struct SnapshotManifest {
     root: String,
     journals_dir: String,
     pages_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    graph_text_policy: Option<SnapshotGraphTextPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    writer: Option<String>,
     files: Vec<SnapshotFile>,
     complete: bool,
+}
+
+/// The graph-text scope a schema-3 snapshot covered: restore retires only
+/// unlisted live text inside it. og's `:hidden` fails open on an invalid
+/// value, so this build always records `hidden_parse_failed_closed: false`.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SnapshotGraphTextPolicy {
+    version: u32,
+    hidden: Vec<String>,
+    hidden_parse_failed_closed: bool,
 }
 
 pub(crate) fn root_backup_id(root: &std::path::Path) -> String {
@@ -287,7 +317,13 @@ fn publish_snapshot(
 fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
     let bytes = std::fs::read(dir.join(SNAPSHOT_MANIFEST)).ok()?;
     let manifest: SnapshotManifest = serde_json::from_slice(&bytes).ok()?;
-    (manifest.schema == SNAPSHOT_SCHEMA && manifest.complete).then_some(manifest)
+    let supported = manifest.schema == LEGACY_SNAPSHOT_SCHEMA
+        || (manifest.schema == SNAPSHOT_SCHEMA
+            && manifest
+                .graph_text_policy
+                .as_ref()
+                .is_some_and(|policy| policy.version == GRAPH_TEXT_SCOPE_VERSION));
+    (supported && manifest.complete).then_some(manifest)
 }
 
 fn hash_snapshot_file(path: &std::path::Path) -> std::io::Result<String> {
@@ -373,6 +409,7 @@ fn copy_store_area(
         Area::Assets => "assets",
         Area::Meta => "config",
         Area::Trash => "trash",
+        Area::Graph => "graph",
     };
     if cancelled() {
         return (
@@ -542,6 +579,21 @@ fn do_backup_source_cancellable(
         return BackupOutcome::failed(0, "app-data", ErrorKind::NotFound);
     };
     let base = data_dir.join("backups").join(root_backup_id(&source.root));
+    let outcome = write_snapshot(&base, store, source, suffix, cancelled);
+    if outcome.failure.is_none() && outcome.copied > 0 {
+        prune_backups(&base, backup_keep(app));
+    }
+    outcome
+}
+
+/// Copy one snapshot into `base` and publish it; the caller prunes.
+fn write_snapshot(
+    base: &std::path::Path,
+    store: &Store,
+    source: BackupSource,
+    suffix: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> BackupOutcome {
     let stamp = tine_core::date::utc_backup_stamp();
     let name = if suffix.is_empty() {
         stamp
@@ -577,22 +629,14 @@ fn do_backup_source_cancellable(
         path: dest.clone(),
         committed: false,
     };
-    let Some(live_text_n) = count_store_text(store, Area::Journals)
-        .and_then(|journals| count_store_text(store, Area::Pages).map(|pages| journals + pages))
-    else {
+    let Some(live_text_n) = count_store_text(store, Area::Graph) else {
         return BackupOutcome::failed(0, "inventory", ErrorKind::Other);
     };
-    let (cj, fj, ej) = copy_store_area(
+    // Graph text anywhere in the graph-text scope, at its graph-relative path.
+    let (ct, ft, et) = copy_store_area(
         store,
-        Area::Journals,
-        &dest.join("journals"),
-        is_graph_text,
-        cancelled,
-    );
-    let (cp, fp, ep) = copy_store_area(
-        store,
-        Area::Pages,
-        &dest.join("pages"),
+        Area::Graph,
+        &dest.join("graph"),
         is_graph_text,
         cancelled,
     );
@@ -603,9 +647,9 @@ fn do_backup_source_cancellable(
         is_asset_sidecar,
         cancelled,
     );
-    let mut n = cj + cp + ca;
-    let mut failed = fj + fp + fa;
-    let mut first_failure = ej.or(ep).or(ea);
+    let mut n = ct + ca;
+    let mut failed = ft + fa;
+    let mut first_failure = et.or(ea);
     if !cancelled() {
         match store.scan_area(Area::Meta, None) {
             Ok(listing) => {
@@ -673,7 +717,7 @@ fn do_backup_source_cancellable(
             })),
         };
     }
-    if cj + cp != live_text_n {
+    if ct != live_text_n {
         return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
     }
     if n == 0 {
@@ -691,6 +735,12 @@ fn do_backup_source_cancellable(
         root: source.root.display().to_string(),
         journals_dir: source.journals_dir,
         pages_dir: source.pages_dir,
+        graph_text_policy: Some(SnapshotGraphTextPolicy {
+            version: GRAPH_TEXT_SCOPE_VERSION,
+            hidden: source.hidden,
+            hidden_parse_failed_closed: false,
+        }),
+        writer: Some(SNAPSHOT_WRITER.into()),
         files,
         complete: true,
     };
@@ -698,7 +748,6 @@ fn do_backup_source_cancellable(
         return BackupOutcome::failed(n, "publish", error.kind());
     }
     partial.committed = true;
-    prune_backups(&base, backup_keep(app));
     BackupOutcome::success(n)
 }
 
@@ -796,246 +845,22 @@ fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec
     out
 }
 
-/// Restore a snapshot into the live graph, overwriting `journals/`, `pages/`,
-/// asset `.edn` sidecars, and `config.edn`. Takes a fresh safety snapshot of the
-/// *current* state first (so a mistaken restore is itself reversible).
-/// Destructive — the frontend confirms.
-#[tauri::command]
-pub(crate) async fn restore_backup(
-    stamp: String,
-    app: tauri::AppHandle,
-    state: GraphContext<'_>,
-) -> Result<(), String> {
-    // Guard against path traversal — a stamp is only ever `YYYY-MM-DD_HH-MM-SS`.
-    if stamp.is_empty()
-        || !stamp
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err("invalid backup id".into());
-    }
-    let slot = slot_for_context(&state)?;
-    let source = BackupSource::from_store(&slot.store, &slot.root_key)
-        .map_err(|message| format!("backup-failed:source:Other: {message}"))?;
-    let restore_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
-        restore_from_backup_source(&stamp, &base, &slot.store, source, |source| {
-            do_backup_source(&restore_app, &slot.store, source.clone(), "pre-restore")
-        })
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    Ok(())
-}
-
-fn restore_from_backup_source(
-    stamp: &str,
-    base: &std::path::Path,
-    store: &Store,
-    source: BackupSource,
-    snapshot_current: impl FnOnce(&BackupSource) -> BackupOutcome,
-) -> Result<(), String> {
-    let src = base.join(stamp);
-    if !src.is_dir() {
-        return Err("backup not found".into());
-    }
-    let manifest = read_manifest(&src).ok_or("backup is incomplete or unverified")?;
-    if manifest.root != source.root.display().to_string() {
-        return Err("backup belongs to a different graph".into());
-    }
-    if !verify_snapshot(&src, &manifest) {
-        return Err("backup contents do not match the verified manifest".into());
-    }
-    let safe_dir = |raw: &str| -> Result<(), String> {
-        let rel = std::path::Path::new(raw);
-        if raw.is_empty()
-            || raw.contains('\\')
-            || rel.is_absolute()
-            || rel
-                .components()
-                .any(|c| !matches!(c, std::path::Component::Normal(_)))
-        {
-            return Err("backup contains an unsafe graph directory".into());
-        }
-        Ok(())
-    };
-    safe_dir(&manifest.journals_dir)?;
-    safe_dir(&manifest.pages_dir)?;
-    // Restore targets the open graph's current layout; a backup taken under a
-    // different :pages-directory / :journals-directory is not restored (v0.6.5
-    // wrote into the backup's old directory names).
-    if manifest.journals_dir != source.journals_dir || manifest.pages_dir != source.pages_dir {
-        return Err("backup was made with a different pages or journals directory setting".into());
-    }
-    if ["journals", "pages", &source.assets_dir_name]
-        .into_iter()
-        .any(|area| !src.join(area).is_dir())
-    {
-        return Err("backup contents do not match the verified manifest".into());
-    }
-    let snapshot = snapshot_current(&source);
-    let live_n = [Area::Journals, Area::Pages, Area::Assets]
-        .into_iter()
-        .map(|area| {
-            store.scan_area(area, None).ok().map(|listing| {
-                listing
-                    .files
-                    .iter()
-                    .filter(|entry| match area {
-                        Area::Assets => is_asset_sidecar(&entry.id),
-                        _ => is_graph_text(&entry.id),
-                    })
-                    .count()
-            })
-        })
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| {
-            format!(
-                "{}: couldn't create a complete pre-restore safety snapshot — restore aborted",
-                BackupFailure {
-                    phase: "live-inventory",
-                    kind: ErrorKind::Other
-                }
-                .wire()
-            )
-        })?
-        .into_iter()
-        .sum::<usize>();
-    require_safety_snapshot(snapshot, live_n)?;
-    let files = open_verified_restore_files(&src, &manifest, &source)?;
-    store
-        .restore(tine_store::EditKind::ReplacePage, files)
-        .map_err(|error| format_restore_failure(&error))?;
-    Ok(())
-}
-
-fn require_safety_snapshot(snapshot: BackupOutcome, live_n: usize) -> Result<(), String> {
-    if live_n > 0 && (snapshot.copied == 0 || snapshot.failure.is_some()) {
-        let token = snapshot.failure.map_or_else(
-            || {
-                BackupFailure {
-                    phase: "safety-snapshot",
-                    kind: ErrorKind::InvalidData,
-                }
-                .wire()
-            },
-            |failure| failure.wire(),
-        );
-        return Err(format!(
-            "{token}: couldn't create a complete pre-restore safety snapshot — restore aborted"
-        ));
-    }
-    Ok(())
-}
-
-fn format_restore_failure(error: &tine_store::RestoreFailed) -> String {
-    let recovery = error
-        .done
-        .recovery
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let kept = error
-        .done
-        .kept_external
-        .iter()
-        .map(|file| file.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "restore-failed:{:?}: {}: {}; recovery: {}; kept live: {}",
-        error.cause.kind, error.phase, error.cause.message, recovery, kept
-    )
-}
-
-fn open_verified_restore_files(
-    snapshot: &std::path::Path,
-    manifest: &SnapshotManifest,
-    source: &BackupSource,
-) -> Result<Vec<RestoreFile>, String> {
-    let mut files = Vec::new();
-    // Preserve the old area order: journals, pages, asset sidecars, config.
-    for (prefix, area) in [
-        ("journals", Area::Journals),
-        ("pages", Area::Pages),
-        (source.assets_dir_name.as_str(), Area::Assets),
-        ("logseq", Area::Meta),
-    ] {
-        for entry in &manifest.files {
-            let Some(rel) = entry
-                .path
-                .strip_prefix(prefix)
-                .and_then(|rest| rest.strip_prefix('/'))
-            else {
-                continue;
-            };
-            let accepted = match area {
-                Area::Journals | Area::Pages => {
-                    is_graph_text(&tine_store::FileId::from(format!("{prefix}/{rel}")))
-                }
-                Area::Assets => {
-                    is_asset_sidecar(&tine_store::FileId::from(format!("{prefix}/{rel}")))
-                }
-                Area::Meta => rel == "config.edn",
-                Area::Trash => false,
-            };
-            if !accepted {
-                continue;
-            }
-            let path = std::path::Path::new(rel);
-            if rel.is_empty()
-                || rel.contains('\\')
-                || path.is_absolute()
-                || path
-                    .components()
-                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
-            {
-                return Err("backup contents do not match the verified manifest".into());
-            }
-            let mut file = std::fs::File::open(snapshot.join(&entry.path))
-                .map_err(|_| "backup contents do not match the verified manifest")?;
-            let meta = file
-                .metadata()
-                .map_err(|_| "backup contents do not match the verified manifest")?;
-            if !meta.is_file() {
-                return Err("backup contents do not match the verified manifest".into());
-            }
-            let mut hasher = Sha256::new();
-            let mut buf = [0u8; 64 * 1024];
-            loop {
-                let n = file
-                    .read(&mut buf)
-                    .map_err(|_| "backup contents do not match the verified manifest")?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buf[..n]);
-            }
-            if format!("{:x}", hasher.finalize()) != entry.sha256 {
-                return Err("backup contents do not match the verified manifest".into());
-            }
-            files.push(RestoreFile {
-                area,
-                rel: rel.into(),
-                source: file,
-                len: meta.len(),
-            });
-        }
-    }
-    Ok(files)
-}
-
-/// Page/journal text files Tine snapshots + restores: Markdown and Org. Asset
-/// `.edn` sidecars are handled separately under `assets`; binary asset bytes stay
-/// excluded from snapshots by design.
+/// A snapshot the keep-count must leave alone: another Tine wrote it.
 fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
-    std::fs::read(dir.join(SNAPSHOT_MANIFEST))
+    let Some(manifest) = std::fs::read(dir.join(SNAPSHOT_MANIFEST))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|manifest| manifest.get("schema").and_then(serde_json::Value::as_u64))
-        .is_some_and(|schema| schema != u64::from(SNAPSHOT_SCHEMA))
+    else {
+        return false;
+    };
+    match manifest.get("schema").and_then(serde_json::Value::as_u64) {
+        None => false,
+        Some(schema) if schema == u64::from(LEGACY_SNAPSHOT_SCHEMA) => false,
+        Some(schema) if schema == u64::from(SNAPSHOT_SCHEMA) => {
+            manifest.get("writer").and_then(serde_json::Value::as_str) != Some(SNAPSHOT_WRITER)
+        }
+        Some(_) => true,
+    }
 }
 
 fn prune_backups(base: &std::path::Path, keep: usize) {
@@ -1062,9 +887,9 @@ fn prune_backups(base: &std::path::Path, keep: usize) {
                     .unwrap_or(false)
         })
         .collect();
-    // A snapshot whose manifest names another schema belongs to another Tine
-    // sharing this app-data dir (the released one reads and writes schema 3;
-    // docs/app-identity.md). It is not ours to count or delete.
+    // A snapshot another Tine sharing this app-data dir wrote (master's schema
+    // 3, which carries no og writer mark; docs/app-identity.md) is listed and
+    // restorable here but is not ours to count or delete.
     dirs.retain(|dir| !is_foreign_snapshot(dir));
     dirs.sort(); // timestamp-named → chronological
     if dirs.len() > keep {
@@ -1086,25 +911,28 @@ mod tests {
     }
 
     /// A released Tine sharing this app-data dir (docs/app-identity.md) writes
-    /// schema-3 snapshots this build can neither list nor restore. The launch
-    /// keep-count must never delete them: they are that Tine's backups.
+    /// schema-3 snapshots without this build's writer mark. They list and
+    /// restore here, but the launch keep-count must never delete them: they
+    /// are that Tine's backups. This build's own schema-2 and marked schema-3
+    /// snapshots are the ones the keep-count counts.
     #[test]
     fn prune_never_deletes_another_tines_snapshots() {
         let base = scratch("backup-prune-foreign");
-        let snapshot = |name: &str, schema: u32| {
+        let snapshot = |name: &str, schema: u32, writer: &str| {
             let dir = base.join(name);
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
                 dir.join(SNAPSHOT_MANIFEST),
-                format!(r#"{{"schema":{schema},"root":"/g","journals_dir":"journals","pages_dir":"pages","files":[],"complete":true}}"#),
+                format!(r#"{{"schema":{schema},"root":"/g","journals_dir":"journals","pages_dir":"pages",{writer}"files":[],"complete":true}}"#),
             )
             .unwrap();
         };
-        snapshot("2026-09-01_00-00-00", 3);
-        snapshot("2026-09-02_00-00-00", SNAPSHOT_SCHEMA);
-        snapshot("2026-09-03_00-00-00", 3);
-        snapshot("2026-09-04_00-00-00", SNAPSHOT_SCHEMA);
-        snapshot("2026-09-05_00-00-00", SNAPSHOT_SCHEMA);
+        let ours = format!(r#""writer":"{SNAPSHOT_WRITER}","#);
+        snapshot("2026-09-01_00-00-00", 3, "");
+        snapshot("2026-09-02_00-00-00", LEGACY_SNAPSHOT_SCHEMA, "");
+        snapshot("2026-09-03_00-00-00", 3, r#""writer":"master","#);
+        snapshot("2026-09-04_00-00-00", SNAPSHOT_SCHEMA, &ours);
+        snapshot("2026-09-05_00-00-00", SNAPSHOT_SCHEMA, &ours);
 
         prune_backups(&base, 2);
 
@@ -1156,10 +984,12 @@ mod tests {
         write_payload(&partial.join("pages/nested/a.md"), b"- durable\n").unwrap();
         let final_dest = root.join("complete-1");
         let manifest = SnapshotManifest {
-            schema: SNAPSHOT_SCHEMA,
+            schema: LEGACY_SNAPSHOT_SCHEMA,
             root: "test".into(),
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
+            graph_text_policy: None,
+            writer: None,
             files: vec![],
             complete: true,
         };
@@ -1176,42 +1006,6 @@ mod tests {
             b"- durable\n"
         );
         std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn restore_wire_error_names_recovery_paths_and_kind() {
-        let root = scratch("restore-wire-error");
-        let store = Store::open(&root, Default::default()).unwrap().0;
-        let recovery = root.join("logseq/.tine-trash/restore-1");
-        let error = tine_store::RestoreFailed {
-            phase: "copy pages".into(),
-            cause: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "copy failed").into(),
-            done: tine_store::RestoreReport {
-                restored: 1,
-                recovery: vec![recovery.clone()],
-                kept_external: Vec::new(),
-                graph_rev: store.whole_graph().unwrap().rev(),
-            },
-        };
-        let wire = format_restore_failure(&error);
-        assert!(
-            wire.starts_with("restore-failed:PermissionDenied:"),
-            "I-9: restore wire keeps family; exemplar backup.rs restore_from_backup_source: {wire}"
-        );
-        assert!(wire.contains(&recovery.display().to_string()), "I-9: restore wire names recovery location; exemplar backup.rs restore_from_backup_source: {wire}");
-        drop(store);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn backup_failure_wire_has_fixed_phase_and_kind() {
-        let wire = require_safety_snapshot(
-            BackupOutcome::failed(2, "pages", ErrorKind::PermissionDenied),
-            3,
-        )
-        .unwrap_err();
-        assert!(wire.starts_with("backup-failed:pages:PermissionDenied:"),
-            "I-9: pre-restore backup errors need a fixed family token; exemplar backup.rs require_safety_snapshot: {wire}");
     }
 
     #[test]
@@ -1234,36 +1028,6 @@ mod tests {
         assert_eq!(token, format!("backup-failed:pages:{:?}", failure.kind),
             "I-9: forced copy failure must reach the launch diagnostic adapter; exemplar backup.rs backup_async");
         store.close();
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn uncapturable_page_names_fail_the_safety_snapshot_before_restore() {
-        use std::os::unix::ffi::OsStringExt;
-        let root = scratch("backup-uncapturable-names");
-        std::fs::create_dir_all(root.join("pages")).unwrap();
-        let non_utf = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
-        let non_utf_path = root.join("pages").join(non_utf);
-        let invalid_id_path = root.join("pages/invalid\\name.md");
-        let invalid_dir_path = root.join("pages/invalid\\directory");
-        std::fs::write(&non_utf_path, b"- keep A\n").unwrap();
-        std::fs::write(&invalid_id_path, b"- keep B\n").unwrap();
-        std::fs::create_dir_all(&invalid_dir_path).unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
-        let (copied, failed, failure) = copy_store_area(
-            &store,
-            Area::Pages,
-            &root.join("backup-out"),
-            is_graph_text,
-            &|| false,
-        );
-        assert_eq!((copied, failed), (0, 3));
-        assert!(require_safety_snapshot(BackupOutcome { copied, failure }, 2).is_err());
-        assert_eq!(std::fs::read(&non_utf_path).unwrap(), b"- keep A\n");
-        assert_eq!(std::fs::read(&invalid_id_path).unwrap(), b"- keep B\n");
-        store.close();
-        drop(store);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1377,10 +1141,12 @@ mod tests {
     fn only_complete_v2_manifests_are_readable() {
         let root = scratch("backup-manifest");
         let manifest = SnapshotManifest {
-            schema: SNAPSHOT_SCHEMA,
+            schema: LEGACY_SNAPSHOT_SCHEMA,
             root: root.display().to_string(),
             journals_dir: "diary".into(),
             pages_dir: "archive/pages".into(),
+            graph_text_policy: None,
+            writer: None,
             files: Vec::new(),
             complete: true,
         };
@@ -1412,10 +1178,12 @@ mod tests {
         write_manifest(
             &snapshot,
             &SnapshotManifest {
-                schema: SNAPSHOT_SCHEMA,
+                schema: LEGACY_SNAPSHOT_SCHEMA,
                 root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
                 journals_dir: "journals".into(),
                 pages_dir: "pages".into(),
+                graph_text_policy: None,
+                writer: None,
                 files: vec![SnapshotFile {
                     path: "pages/note.md".into(),
                     sha256: "manifest metadata only".into(),
@@ -1436,141 +1204,6 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].files, 1);
         let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restore_verifies_a_selected_snapshot_before_mutating_the_graph() {
-        let root = scratch("restore-verification-before-mutation");
-        let graph = root.join("graph");
-        let base = root.join("backups");
-        let stamp = "2026-07-22_12-00-00";
-        let snapshot = base.join(stamp);
-        let live_page = graph.join("pages/note.md");
-        std::fs::create_dir_all(live_page.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(snapshot.join("pages")).unwrap();
-        std::fs::write(&live_page, b"live graph data").unwrap();
-        std::fs::write(snapshot.join("pages/note.md"), b"tampered payload").unwrap();
-        write_manifest(
-            &snapshot,
-            &SnapshotManifest {
-                schema: SNAPSHOT_SCHEMA,
-                root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
-                journals_dir: "journals".into(),
-                pages_dir: "pages".into(),
-                files: vec![SnapshotFile {
-                    path: "pages/note.md".into(),
-                    sha256: "does not match the payload".into(),
-                }],
-                complete: true,
-            },
-        )
-        .unwrap();
-        let source = BackupSource {
-            root: graph.clone(),
-            journals_dir: "journals".into(),
-            pages_dir: "pages".into(),
-            assets_dir_name: "assets".into(),
-        };
-        for dir in ["journals", "assets", "logseq"] {
-            std::fs::create_dir_all(graph.join(dir)).unwrap();
-        }
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-
-        PAYLOAD_HASH_READS.with(|reads| reads.set(0));
-        let result = restore_from_backup_source(stamp, &base, &store, source, |_| {
-            std::fs::write(&live_page, b"mutated graph data").unwrap();
-            BackupOutcome::success(1)
-        });
-
-        assert_eq!(
-            PAYLOAD_HASH_READS.with(|reads| reads.get()),
-            1,
-            "restoring must verify the selected snapshot payload"
-        );
-        assert!(result.is_err());
-        assert_eq!(std::fs::read(&live_page).unwrap(), b"live graph data");
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn verified_snapshot_files_reach_store_restore() {
-        let root = scratch("verified-restore-handoff");
-        let graph = root.join("graph");
-        let snapshot = root.join("backups/2026-07-22_12-00-00");
-        for dir in ["pages", "journals", "assets", "logseq"] {
-            std::fs::create_dir_all(graph.join(dir)).unwrap();
-            std::fs::create_dir_all(snapshot.join(dir)).unwrap();
-        }
-        std::fs::write(graph.join("pages/Old.md"), b"old").unwrap();
-        std::fs::write(snapshot.join("pages/New.md"), b"new").unwrap();
-        let manifest = SnapshotManifest {
-            schema: SNAPSHOT_SCHEMA,
-            root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
-            journals_dir: "journals".into(),
-            pages_dir: "pages".into(),
-            files: snapshot_inventory(&snapshot).unwrap(),
-            complete: true,
-        };
-        write_manifest(&snapshot, &manifest).unwrap();
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let source = BackupSource::from_store(&store, &graph).unwrap();
-        restore_from_backup_source(
-            "2026-07-22_12-00-00",
-            &root.join("backups"),
-            &store,
-            source,
-            |_| BackupOutcome::success(1),
-        )
-        .unwrap();
-        assert_eq!(std::fs::read(graph.join("pages/New.md")).unwrap(), b"new");
-        assert!(!graph.join("pages/Old.md").exists());
-        drop(store);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn missing_empty_snapshot_area_cannot_retire_live_files() {
-        let root = scratch("missing-empty-snapshot-area");
-        let graph = root.join("graph");
-        let snapshot = root.join("backups/2026-07-22_12-00-00");
-        for dir in ["pages", "journals", "assets", "logseq"] {
-            std::fs::create_dir_all(graph.join(dir)).unwrap();
-        }
-        for dir in ["pages", "assets"] {
-            std::fs::create_dir_all(snapshot.join(dir)).unwrap();
-        }
-        std::fs::write(graph.join("journals/Old.md"), b"old").unwrap();
-        write_manifest(
-            &snapshot,
-            &SnapshotManifest {
-                schema: SNAPSHOT_SCHEMA,
-                root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
-                journals_dir: "journals".into(),
-                pages_dir: "pages".into(),
-                files: Vec::new(),
-                complete: true,
-            },
-        )
-        .unwrap();
-        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
-        let source = BackupSource::from_store(&store, &graph).unwrap();
-        let result = restore_from_backup_source(
-            "2026-07-22_12-00-00",
-            &root.join("backups"),
-            &store,
-            source,
-            |_| panic!("missing snapshot area must be rejected before the safety snapshot"),
-        );
-        assert_eq!(
-            result.unwrap_err(),
-            "backup contents do not match the verified manifest"
-        );
-        assert_eq!(
-            std::fs::read(graph.join("journals/Old.md")).unwrap(),
-            b"old"
-        );
-        drop(store);
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
