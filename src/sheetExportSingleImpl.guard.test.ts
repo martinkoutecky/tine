@@ -15,7 +15,7 @@ const SEMANTIC_NAME = /^(aggregate\w*|group\w*|sort\w*|compare\w*|evaluate\w*|ev
 describe("static-export sheets have no second implementation (I-12)", () => {
   it("imports every sheet semantic from the shared sheet modules", () => {
     for (const [name, module] of [
-      ["sheetConfig", "./config"],
+      ["childrenSheetConfig", "./childrenSheet"],
       ["filterFormulaRows", "./formulaEval"],
       ["computeFormulaResults", "./formulaEval"],
       ["buildBoardColumns", "./boardColumns"],

@@ -13,6 +13,7 @@ import type { BlockDto } from "../types";
 import { aggregate, AGGREGATE_LABELS, collectAggregateColumns } from "./aggregate";
 import { boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns } from "./boardColumns";
 import { cellView, displayFieldValue, type CellView } from "./cellPresentation";
+import { childrenSheetConfig } from "./childrenSheet";
 import { sheetConfig, type FieldType } from "./config";
 import { fieldLabel, isFormulaField, type FieldId } from "./fields";
 import {
@@ -168,7 +169,7 @@ function gridBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>): Sheet
  *  Never throws: a failing sheet exports as `{view: "error"}`. */
 export function computeSheetExport(input: SheetInput, env: ExportEnv): SheetExport | null {
   try {
-    const cfg = sheetConfig(facetsFromDto(input.owner).properties);
+    const cfg = childrenSheetConfig(facetsFromDto(input.owner).properties, input.owner.raw);
     if (!cfg.view) return null;
     const rows = input.rows.map((dto, ix) => detach(input.page, dto, ix));
     const body = cfg.view === "table"

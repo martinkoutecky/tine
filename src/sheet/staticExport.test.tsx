@@ -194,6 +194,15 @@ describe("static sheet export failure handling (contract 3, TS half)", () => {
     expect(computeSheetExport(inputOf(fx), { now: NOW, workflow: "todo" })).toBeNull();
   });
 
+  it("a query-backed table or board is the macro's, not a children sheet (same answer as the live Block)", () => {
+    for (const view of ["table", "board"]) {
+      const fx = { owner: `Tasks {{query (task TODO)}}\ntine.view:: ${view}`, rows: [{ raw: "a" }] };
+      expect(computeSheetExport(inputOf(fx), { now: NOW, workflow: "todo" })).toBeNull();
+    }
+    const grid = { owner: "Grid {{query (task TODO)}}\ntine.view:: grid", rows: [{ raw: "", kids: ["a"] }] };
+    expect(computeSheetExport(inputOf(grid), { now: NOW, workflow: "todo" })?.view).toBe("grid");
+  });
+
   it("a sheet that throws exports as an error record, not an exception", () => {
     const input = inputOf(TABLE);
     (input as any).rows = [null];

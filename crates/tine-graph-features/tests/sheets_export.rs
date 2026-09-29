@@ -352,3 +352,46 @@ fn inputs_sent_to_the_app_are_bounded() {
     assert_eq!(json["omitted"], 100);
     store.close();
 }
+
+#[test]
+fn a_sheet_inside_a_grid_cell_is_found_by_its_path_and_laid_out_in_the_cell() {
+    let (base, store) = open_fixture();
+    fs::write(
+        base.join("graph/pages/Nested.md"),
+        "public:: true\n\n- Outer\n  tine.view:: grid\n  -\n    - Inner\n      tine.view:: table\n      - one\n      - two\n",
+    )
+    .unwrap();
+    store.scan_refresh().unwrap();
+    let inputs = sheet_export_inputs(&store, Some(&["Nested".to_owned()])).unwrap();
+    let paths: Vec<_> = inputs.iter().map(|i| i.path.clone()).collect();
+    assert_eq!(
+        paths,
+        vec![vec![0], vec![0, 0, 0]],
+        "outer grid, then the table in its cell"
+    );
+    // Answer as the app would: a table for the inner block only.
+    let inner = &inputs[1];
+    let sheets: Vec<SheetExport> = serde_json::from_value(serde_json::json!([{
+        "page": "Nested", "path": inner.path, "fp": inner.fp, "view": "table",
+        "columns": [{"label": "Block", "formula": false}],
+        "rows": [
+            {"ix": 0, "title": "one", "bg": null, "cells": []},
+            {"ix": 1, "title": "two", "bg": null, "cells": []}
+        ],
+        "footer": null, "filterError": null, "omitted": 0
+    }]))
+    .unwrap();
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        true,
+        &bundle(),
+        sheets,
+    )
+    .unwrap();
+    let html = fs::read_to_string(base.join("output/export/nested.html")).unwrap();
+    assert!(html.contains("<table class=\"sheet-table\">"), "{html}");
+    assert!(html.contains("<td>one</td>") && html.contains("<td>two</td>"));
+    store.close();
+}
