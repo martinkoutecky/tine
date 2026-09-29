@@ -192,7 +192,8 @@ pub struct QueryExportSpec {
     pub key: String,
     /// Query expression source.
     pub query: String,
-    /// Evaluate as advanced datalog when true, simple syntax otherwise.
+    /// Ignored: export asks [`is_advanced`] (I-12). The field stays only for
+    /// wire compatibility until the frontend stops sending it (og C3 L02).
     pub advanced: bool,
 }
 
@@ -225,15 +226,13 @@ pub struct QueryExportBatch {
     pub omitted_queries: usize,
 }
 
-/// Coarse lexical test for datalog: true when the substring `:find` or `:where`
-/// occurs ANYWHERE in the source (a leading `[:find` included), even inside an
-/// OG string literal or a `[[page]]` ref. So an OG DSL query that merely
-/// mentions `:where` is classified as datalog: `parse_query_source` (the OG
-/// branch of `parse_query_text`) refuses it as "advanced", and
-/// [`query_nesting_within_limit`] treats `;` in it as a comment. This is not
-/// the §7.1 macro discriminator (`parse::advanced_form`, which skips strings
-/// and refs). No size check. O(source length).
+/// Whether a `{{query}}` form is datalog: a `:find`/`:where` token outside
+/// an OG string or a `[[page]]` ref. This is the ONE answerer (I-12): it is
+/// the §7.1 macro discriminator (`parse::advanced_form`) itself, so the OG
+/// parser, [`query_nesting_within_limit`]'s comment rule and query export
+/// cannot disagree with the macro reader (`{{query "meeting :where"}}` was
+/// refused as datalog by a second, substring answerer; og C3 L02).
+/// No size check. O(source length).
 pub fn is_advanced(query_src: &str) -> bool {
-    let s = query_src.trim_start();
-    s.starts_with("[:find") || s.contains(":where") || s.contains(":find")
+    parse::advanced_form(query_src)
 }
