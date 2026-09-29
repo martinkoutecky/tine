@@ -62,7 +62,7 @@ describe("app identity switch", () => {
         expect(conf.app.windows.find((w: { label: string }) => w.label === "main").title).toBe(identity.productName);
         expect(derived["src-tauri/gen/android/app/build.gradle.kts"]).toContain(`applicationId = "${identity.androidApplicationId}"`);
         expect(JSON.parse(derived["src-tauri/app-identity.json"]).ship).toBe(ship);
-        for (const key of ["identifier", "androidApplicationId", "deployName"]) {
+        for (const key of ["identifier", "androidApplicationId", "deployName"] as const) {
           expect(seen.has(`${key}=${identity[key]}`), `${ship} shares ${key}`).toBe(false);
           seen.add(`${key}=${identity[key]}`);
         }
