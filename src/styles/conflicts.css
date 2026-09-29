@@ -1,5 +1,14 @@
 /* Concord (og 8c): the conflict badge, the in-page resolver and the Conflicts
    overview. Ported from master; the dock bar is not ported. */
+
+/* master f5dbe8cdb: Concord is a review workspace, not reading prose. While
+   the resolver is mounted the pane uses its wide-mode width, so both versions
+   and their controls fit without discovering wide mode; resolving removes the
+   panel and restores the reading width. */
+.main-content-inner:has(.page-conflict) {
+  max-width: 100%;
+}
+
 /* A 3-way pre-selection (Concord base ledger) the user hasn't overridden. */
 .sync-merge-suggested-tag {
   font-size: 11px;
