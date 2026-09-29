@@ -76,12 +76,15 @@ export function toggleSpellcheckLanguage(code: string, on: boolean): void {
 }
 
 /** Human-readable name for a locale code via the platform's own language data —
- *  e.g. "en_US" → "American English", "cs_CZ" → "Czech (Czechia)". Falls back to
+ *  e.g. "en_US" → "English (United States)", "cs_CZ" → "Czech (Czechia)". Falls back to
  *  the raw code if Intl can't resolve it. */
 export function languageDisplayName(code: string): string {
   const bcp = code.replace(/_/g, "-");
   try {
-    const dn = new Intl.DisplayNames([navigator.language || "en"], { type: "language" });
+    const dn = new Intl.DisplayNames([navigator.language || "en"], {
+      type: "language",
+      languageDisplay: "standard",
+    });
     return dn.of(bcp) ?? code;
   } catch {
     return code;
