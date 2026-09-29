@@ -618,6 +618,10 @@ textarea {
 }
 
 .tab-title {
+  /* Grow into the tab's free space so the close control stays pinned to the
+     right edge at any width; min-width: 0 keeps long titles ellipsizing. */
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -631,13 +635,20 @@ textarea {
 }
 
 .tab-close {
+  flex: none;
   opacity: 0;
-  font-size: 11px;
-  border-radius: 3px;
   padding: 0 3px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
 }
 
-.tab:hover .tab-close {
+.tab:hover .tab-close,
+.tab-close:focus-visible {
   opacity: 0.6;
 }
 
@@ -807,6 +818,14 @@ textarea {
   flex: 1;
   min-width: 0; /* shrink horizontally when the right sidebar/PDF pane is open */
   overflow-y: auto;
+}
+
+/* The pane scroller is tabindex="-1" only as a programmatic focus target; a
+   click on empty space focuses it and the UA then paints its default frame
+   around the whole content area (GH #345). Only that UA frame is suppressed:
+   the `.pane-selected` ring and controls' :focus-visible cues are separate. */
+.main-content:focus {
+  outline: none;
 }
 
 /* Solo-pane shell: a non-scrolling, positioned wrapper so the pane-select
@@ -3355,8 +3374,8 @@ textarea {
 /* Block background color (set via the context menu). */
 .block-content.has-bg {
   border-radius: 5px;
-  padding: 1px 6px;
-  margin: -1px -6px;
+  padding: 1px 4px;
+  margin: -1px -4px;
 }
 
 /* Numbered list: the block's OWN bullet becomes its ordinal (OG numbers the
@@ -3365,6 +3384,7 @@ textarea {
 .bullet-container.ordered {
   width: auto;
   min-width: 18px;
+  margin-right: 4px;
 }
 .bullet-order {
   color: var(--text-secondary);
@@ -3686,7 +3706,7 @@ textarea {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  margin-right: 4px;
+  margin-right: 6px;
   cursor: pointer;
 }
 

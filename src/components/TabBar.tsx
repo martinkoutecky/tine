@@ -622,10 +622,15 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               </span>
             </Show>
             <span class="tab-title"><EmojiText text={tabTitle(router.tabRoute(t))} /></span>
-            {/* The last tab can't be closed (closeTab keeps one), so hide its ✕. */}
+            {/* The last tab can't be closed (closeTab keeps one), so hide its ✕.
+                A real button with its own title: keyboard-operable, and its hover
+                tooltip can't fall back to the tab's pin hint (GH #340). */}
             <Show when={router.tabs().length > 1}>
-              <span
+              <button
                 class="tab-close"
+                type="button"
+                title="Close tab"
+                aria-label="Close tab"
                 data-tab-drag-exempt
                 onClick={(e) => {
                   e.stopPropagation();
@@ -633,7 +638,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                 }}
               >
                 ✕
-              </span>
+              </button>
             </Show>
           </div>
         )}
