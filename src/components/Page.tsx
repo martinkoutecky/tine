@@ -22,7 +22,7 @@ import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { aliasNamesOf, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay } from "../journal";
+import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay, appNow } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { JournalFeedPage, RefGroup } from "../types";
 import { tagRef } from "../tags";
@@ -116,7 +116,7 @@ let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeed
 /** Ensure today's configured template before any feed read for that day. */
 async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<unknown | null> {
   if (!ownerIsLive(owner) || windowUnbound()) return null;
-  const date = new Date();
+  const date = appNow();
   const day = localDayKey(date);
   const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
   if (!graphMeta()?.default_journal_template) return restartJournalFeed(owner, false, rollover);
@@ -454,7 +454,7 @@ export function PageView(): JSX.Element {
     const restart = () => { void refreshJournalFeedForCurrentDay(owner); };
     const arm = () => {
       if (disposed || !ownerIsLive(owner)) return;
-      const now = new Date();
+      const now = appNow();
       timer = window.setTimeout(() => {
         // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
         // trigger, including a deferred/error response, while this owner lives.
@@ -1096,7 +1096,7 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   const addRow = async () => {
     const ok = await appendToTodayJournal(`${tagRef(props.pageName)} `);
     if (!ok) return;
-    const today = pageByName(journalTitle(new Date()));
+    const today = pageByName(journalTitle(appNow()));
     const id = today?.roots[today.roots.length - 1];
     if (id && docNode(id)) startEditing(id, docNode(id).raw.length);
   };

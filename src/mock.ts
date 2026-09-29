@@ -1574,6 +1574,10 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async clearDiagnostics(): Promise<void> { mockDiagnostics.length = 0; },
     async diagnosticSessionActive(): Promise<void> { /* no session marker in the mock */ },
     async diagnosticFrontendEvent(kind: DiagnosticFrontendKind): Promise<void> { mockDiagnostics.push(kind); },
+    async localClock() {
+      const now = Date.now();
+      return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
+    },
     async appArchitecture(): Promise<string> { return "x86_64"; },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];

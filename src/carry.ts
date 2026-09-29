@@ -6,7 +6,7 @@
 import { backend } from "./backend";
 import { graphOwner, readOwned, type Owner } from "./owned";
 import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove } from "./document";
-import { journalTitle } from "./journal";
+import { journalTitle, appNow } from "./journal";
 import { carryKeepsContext, carryHeaderText } from "./ui";
 import { pushToast } from "./toasts";
 import { openJournals } from "./router";
@@ -25,7 +25,7 @@ async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner
 /** Make sure today's journal is in the working set (synthesize an empty one if
  *  it has no file yet, like the feed does). */
 async function ensureToday(owner: Owner): Promise<string | null> {
-  const t = journalTitle(new Date());
+  const t = journalTitle(appNow());
   if (!pageByName(t)) {
     const result = await readOwned(owner, backend().getPage(t, "journal"));
     if (result.kind === "stale") return null;
@@ -55,7 +55,7 @@ async function report(n: number, today: string, owner: Owner): Promise<void> {
  * save; a save failure leaves moved tasks in the editor for resolution. */
 export async function carryPrevDay(): Promise<void> {
   const owner = graphOwner();
-  const today = new Date();
+  const today = appNow();
   const todayKey =
     today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
   let days: number[] = [];
@@ -107,7 +107,7 @@ export async function carryDaysBack(days: number): Promise<void> {
   try {
     const today = await ensureToday(owner);
     if (!today || !owner()) return;
-    const base = new Date();
+    const base = appNow();
     const candidates: string[] = [];
     for (let i = 1; i <= days; i++) {
       const d = new Date(base);

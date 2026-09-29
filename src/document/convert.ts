@@ -3,7 +3,7 @@ import { Node, FeedPage, DocState, doc } from "./model";
 import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine } from "../editor/properties";
-import { journalTitle } from "../journal";
+import { journalTitle, appNow } from "../journal";
 import { rawWithCollapsed } from "./edits/properties";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
@@ -12,7 +12,7 @@ export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
 }
 
 export function withToday(js: PageDto[]): PageDto[] {
-  const title = journalTitle(new Date());
+  const title = journalTitle(appNow());
   return js.some((p) => p.name === title) ? js : [emptyPage(title, "journal"), ...js];
 }
 

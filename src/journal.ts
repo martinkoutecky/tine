@@ -20,8 +20,71 @@ const WD_1 = ["S", "M", "T", "W", "T", "F", "S"];
 const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 let titleFormat = DEFAULT_TITLE_FORMAT;
 
+/** The app's wall clock (GH #607). The backend's time-zone rules are the
+ * calendar authority: journal membership, the feed's `as_of_day` and relative
+ * queries all use them. A WebView can carry older zone rules than the OS (the
+ * AppImage bundles its own ICU, which still applied Mexico City's abolished
+ * daylight saving time), and a frontend "today" read from `new Date()` then
+ * disagreed with the backend's for an hour a night, stalling the journal feed.
+ * `appNow()` is `new Date()` shifted by the difference between the two zone
+ * offsets at one instant: zero whenever both sides agree, so it changes nothing
+ * for a WebView with current rules. Its local getters read the backend's wall
+ * clock. Every frontend read of "now" goes through here
+ * (`src/appClock.guard.test.ts`). O(1), no I/O. */
+type BackendClock = { offset_minutes: number; unix_ms: number };
+let zoneSkewMs = 0;
+
+/** Stale zone rules move an offset by an hour or two (a DST rule, a zone
+ *  re-basing); a wider disagreement is likelier a backend that failed to detect
+ *  the zone at all (and fell back to UTC), where the WebView is the better
+ *  witness. */
+const MAX_ZONE_SKEW_MINUTES = 180;
+
+function skewFor(clock: BackendClock): number {
+  const browserOffset = -new Date(clock.unix_ms).getTimezoneOffset();
+  const skew = clock.offset_minutes - browserOffset;
+  return Math.abs(skew) > MAX_ZONE_SKEW_MINUTES ? 0 : skew * 60_000;
+}
+
+{
+  const injected = (globalThis as { __TINE_LOCAL_CLOCK__?: BackendClock }).__TINE_LOCAL_CLOCK__;
+  if (injected && Number.isFinite(injected.offset_minutes) && Number.isFinite(injected.unix_ms)) {
+    zoneSkewMs = skewFor(injected);
+  }
+}
+
+export function appNow(): Date {
+  return new Date(Date.now() + zoneSkewMs);
+}
+
+/** Adopt a fresh backend clock sample; re-derives the reactive day key when the
+ *  correction changes. */
+export function setBackendClock(clock: BackendClock): void {
+  if (!Number.isFinite(clock.offset_minutes) || !Number.isFinite(clock.unix_ms)) return;
+  const skew = skewFor(clock);
+  if (skew === zoneSkewMs) return;
+  zoneSkewMs = skew;
+  setDayKey(localDayKey());
+}
+
+let clockSourceInstalled = false;
+/** Keep the correction current: now, on focus/visibility, and every ten minutes
+ *  (a zone transition moves both offsets at once for an agreeing WebView, so a
+ *  stale sample can only err where the correction was already needed). */
+export function installBackendClock(read: () => Promise<BackendClock>): void {
+  if (clockSourceInstalled || typeof window === "undefined") return;
+  clockSourceInstalled = true;
+  const refresh = () => void read().then(setBackendClock, () => {});
+  refresh();
+  window.setInterval(refresh, 10 * 60_000);
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refresh();
+  });
+}
+
 /** Stable local calendar day, also across DST changes. */
-export function localDayKey(now = new Date()): number {
+export function localDayKey(now = appNow()): number {
   return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
 }
 
@@ -35,7 +98,7 @@ export function localDateFromDayKey(key: number): Date {
 }
 
 /** Milliseconds until the next local midnight plus margin, clamped to at least 1. */
-export function localDayRolloverDelay(now = new Date(), marginMs = 25): number {
+export function localDayRolloverDelay(now = appNow(), marginMs = 25): number {
   const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   return Math.max(1, next.getTime() - now.getTime() + marginMs);
 }

@@ -141,7 +141,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder",
   "pickGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
   "readHighlights", "onGraphChanged", "onGraphConfigChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
-  "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "gpuEnv", "getSmoothScroll",
+  "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "appArchitecture",
 ]);

@@ -391,6 +391,23 @@ pub(crate) fn create_graph(dir: String) -> Result<String, String> {
     Ok(root.display().to_string())
 }
 
+/// This process's local clock: UTC offset in minutes and the instant sampled.
+/// The backend's zone rules are the app's calendar authority (GH #607).
+#[derive(serde::Serialize)]
+pub(crate) struct LocalClock {
+    offset_minutes: i32,
+    unix_ms: i64,
+}
+
+#[tauri::command]
+pub(crate) fn local_clock() -> LocalClock {
+    let (offset_minutes, unix_ms) = tine_core::date::JournalDate::local_utc_offset_now();
+    LocalClock {
+        offset_minutes,
+        unix_ms,
+    }
+}
+
 #[tauri::command]
 pub(crate) fn app_platform() -> &'static str {
     if cfg!(target_os = "android") {

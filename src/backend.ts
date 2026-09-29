@@ -671,6 +671,9 @@ export interface Backend {
   /** Record one fixed-kind frontend event. The backend drops the event when a
    *  token is outside its closed vocabulary; fields carry no free text. */
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void>;
+  /** The backend's current UTC offset and sample instant: the app's calendar
+   * authority (see `appNow` in journal.ts, GH #607). */
+  localClock(): Promise<{ offset_minutes: number; unix_ms: number }>;
   /** The CPU architecture of this binary (`x86`, `x86_64`, `aarch64`, …). */
   appArchitecture(): Promise<string>;
 }
@@ -1390,6 +1393,9 @@ class TauriBackend implements Backend {
   }
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields: DiagnosticFrontendFields = {}) {
     return this.call<void>("diagnostic_frontend_event", { kind, ...fields });
+  }
+  localClock() {
+    return this.call<{ offset_minutes: number; unix_ms: number }>("local_clock");
   }
   appArchitecture() {
     return this.call<string>("app_architecture");

@@ -1,6 +1,6 @@
 import { leadingMarker, OPEN_MARKERS } from "../../markers";
 import { doc, pageByName, setDoc, freshId } from "../model";
-import { journalTitle } from "../../journal";
+import { journalTitle, appNow } from "../../journal";
 import { pageWritable } from "./properties";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
@@ -43,7 +43,7 @@ export function carryUnfinished(
   keepContext: boolean,
   header: string | null
 ): number {
-  const today = journalTitle(new Date());
+  const today = journalTitle(appNow());
   if (!pageWritable(today) || fromPages.some((page) => pageByName(page) && !pageWritable(page))) return 0;
   type Item = { id: string; from: string; parent: string | null };
   const plan: Item[] = [];

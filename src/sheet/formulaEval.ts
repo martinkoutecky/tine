@@ -15,6 +15,7 @@ import { isPlainDecimalNumber, isoDatePrefix } from "./typed";
 import { readField, type FieldId, type FieldValue } from "./fields";
 import type { BlockDto, PageKind } from "../types";
 
+import { appNow } from "../journal";
 export interface FormulaEvalRow {
   id: string;
   page: string;
@@ -192,7 +193,7 @@ export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<
     const rows = opts.rows();
     const formulas = opts.formulas();
     const names = [...formulas.keys()];
-    const now = opts.now?.() ?? new Date();
+    const now = opts.now?.() ?? appNow();
     const out = new Map<string, FormulaValue>();
     let evaluations = 0;
 
@@ -232,7 +233,7 @@ export function createFormulaFilterMemo<T extends FormulaEvalRow>(
     }
 
     const formulas = opts.formulas();
-    const now = opts.now?.() ?? new Date();
+    const now = opts.now?.() ?? appNow();
     const kept: T[] = [];
     for (const row of rows) {
       observeFormulaRow(row);

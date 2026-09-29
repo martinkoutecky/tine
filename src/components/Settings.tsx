@@ -54,7 +54,7 @@ import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
 import { captureBinding } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile } from "../types";
-import { formatJournal } from "../journal";
+import { formatJournal, appNow } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
 import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES } from "../plugins/manifest";
 import {
@@ -1135,7 +1135,7 @@ function JournalTemplateField(): JSX.Element {
  *  (today rendered in it). Includes the graph's current value even if it isn't
  *  one of the presets, so a hand-edited config.edn round-trips. */
 function DateFormatSelect(): JSX.Element {
-  const today = new Date();
+  const today = appNow();
   const current = () => graphMeta()?.journal_page_title_format || "MMM do, yyyy";
   const options = () => (JOURNAL_TITLE_FORMATS.some((format) => format === current()) ? JOURNAL_TITLE_FORMATS : [current(), ...JOURNAL_TITLE_FORMATS]);
   return (

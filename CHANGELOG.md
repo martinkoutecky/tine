@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Journal days and "Today" follow the calendar zone the backend uses**
+  (GH #607). The frontend no longer trusts a WebView clock that can disagree
+  with the system zone; it applies the measured backend offset, refreshed
+  periodically and on focus.
+- **Opening a page by a differently cased name lands on the spelling that
+  exists on disk** (GH #597), and renaming an Org page keeps `file:` links to
+  it valid under the graph's filename format.
+- **Application chrome no longer starts a text selection** while page content
+  and editors stay selectable.
+
 ## [0.6.5] - 2026-07-22
 
 ### Added

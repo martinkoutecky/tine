@@ -6,7 +6,8 @@ import { initParser } from "./render/parse";
 import { applyTheme, applyAccent } from "./ui";
 import { pushToast } from "./toasts";
 import { startCommunityExtensions } from "./plugins/startup";
-import { isTauri } from "./backend";
+import { backend, isTauri } from "./backend";
+import { installBackendClock } from "./journal";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // Full upstream Inter variable fonts retain OpenType stylistic sets/character
@@ -36,6 +37,7 @@ import "./styles/conflicts.css";
 import "./styles/published.css";
 
 installPlatformAttribute();
+if (isTauri()) installBackendClock(() => backend().localClock());
 installSystemInsetOwner();
 installEditableEmojiPlatform();
 applyTheme();

@@ -16,7 +16,7 @@ import { editingId, endEdit } from "../editorController";
 import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
 import { isBlockMoving } from "./edits/moves";
-import { journalTitle } from "../journal";
+import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToast } from "../toasts";
 import { resetReferenceSectionState } from "../referenceSectionState";
@@ -477,7 +477,7 @@ export function appendFeed(dtos: (PageDto & { id?: string })[]) {
  *  writable — `upsertPage` lifts the delete tombstone, so the first keystroke saves
  *  a fresh file, exactly like reopening the journal. */
 export function restoreTodayJournalInFeed() {
-  const title = journalTitle(new Date());
+  const title = journalTitle(appNow());
   if (doc.feed.includes(title)) return;
   upsertUnlessDirty(emptyPage(title, "journal"));
   setDoc("feed", [title, ...doc.feed]);

@@ -1418,6 +1418,8 @@ html[data-system-insets="native-viewport"] {
   font: inherit;
   font-size: 20px;
   line-height: 1;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .page-title-row:hover .page-actions-trigger,
 .page-actions-trigger:focus-visible,
@@ -1445,6 +1447,8 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.1s, background 0.1s, color 0.1s;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .page-title-row:hover .tag-table-toggle,
 .tag-table-toggle.active {
@@ -1463,6 +1467,8 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .guide-copy-btn:hover {
   background: var(--bg-tertiary);
@@ -2517,6 +2523,8 @@ html[data-system-insets="native-viewport"] {
   gap: 8px;
   flex-wrap: wrap;
   margin-left: auto;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .carry-btn {
   background: none;
@@ -3436,6 +3444,8 @@ html[data-system-insets="native-viewport"] {
   cursor: text;
   text-align: left;
   padding-left: 34px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .page-trailing-block-target span {
   opacity: 0;
@@ -6504,6 +6514,8 @@ img.emoji {
   display: flex;
   align-items: center;
   gap: 8px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .references-header > button { margin-left: 0; }

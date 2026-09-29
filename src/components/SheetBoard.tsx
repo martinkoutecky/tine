@@ -50,6 +50,7 @@ import { isBareTagName } from "../tags";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 import { registerTransientLayer } from "../transientLayers";
 
+import { appNow } from "../journal";
 interface RowRecord extends FormulaEvalRow {}
 
 interface BoardColumn {
@@ -175,7 +176,7 @@ export function SheetBoard(props: {
   });
 
   const baseColumns = createMemo<BoardColumn[]>(() => {
-    const now = new Date();
+    const now = appNow();
     return buildColumns(rows(), groupBy(), schemaFields(), { formulas: formulas(), now });
   });
   const columns = createMemo<BoardColumn[]>(() => {

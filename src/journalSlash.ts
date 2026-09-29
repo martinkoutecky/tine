@@ -1,6 +1,6 @@
 import { pageByName } from "./document";
 import { pageInsert } from "./editor/autocomplete";
-import { journalTitle, parseJournalTitle } from "./journal";
+import { journalTitle, parseJournalTitle, appNow } from "./journal";
 import { pushToast } from "./toasts";
 
 /** Complete a journal date slash command from the loaded containing page and
@@ -14,7 +14,7 @@ export function runJournalSlash(
   replaceTrigger: (text: string) => void,
 ): void {
   const page = pageByName(pageName);
-  const date = action === "today" ? new Date() : page?.kind === "journal" ? parseJournalTitle(page.name) : null;
+  const date = action === "today" ? appNow() : page?.kind === "journal" ? parseJournalTitle(page.name) : null;
   replaceTrigger(date ? pageInsert(journalTitle(date)) : "");
   if (!date) pushToast("/thatday is only available on journal pages.", "info");
 }
