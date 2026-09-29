@@ -38,7 +38,7 @@ import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
-import { setRaw, formatForPage, formatForBlock, node as docNode } from "../document";
+import { setRaw, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -1240,7 +1240,8 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // Inline block reference. Bare `((uuid))` shows the referenced block's first
 // line; the labeled form `[label](((uuid)))` shows the label instead. Both
 // navigate to the source page on click and show a hover preview of the full
-// referenced block (mirrors OG); a missing target falls back to a short id.
+// referenced block (mirrors OG); a missing target, or an id that is not a
+// UUID, shows its source `((id))` in full, as OG does (GH #589).
 function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth >= MAX_DEPTH_OF_LINKS) {
@@ -1250,7 +1251,8 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLSpanElement | undefined;
   const [grp] = createResource(
-    () => `${props.id}\0${graphEpoch()}\0${dataRev()}`,
+    // Not a UUID: nothing to resolve (OG's `parse-uuid` gate), so no lookup.
+    () => isBlockRefUuid(props.id) && `${props.id}\0${graphEpoch()}\0${dataRev()}`,
     async () => {
       const result = await readOwned(graphOwner(), resolveBlockBatched(props.id));
       return result.kind === "current" ? result.value : null;
@@ -1369,7 +1371,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
         }}
       >
-        <Show when={text() !== undefined} fallback={<>(({props.id.slice(0, 8)}))</>}>
+        <Show when={text() !== undefined} fallback={<>(({props.id}))</>}>
           <LinkDepthContext.Provider value={linkDepth + 1}>
             <Show when={marker()}>
               {(m) => <><span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}</>}

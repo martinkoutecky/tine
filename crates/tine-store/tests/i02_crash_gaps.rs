@@ -443,7 +443,7 @@ fn crash_feature_worker() {
         }
         "conflict" => {
             let copy = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
-            let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", copy)
+            let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", copy, &[])
                 .unwrap()
                 .unwrap();
             let decisions = diff
@@ -458,6 +458,8 @@ fn crash_feature_worker() {
                 &decisions,
                 &diff.base_rev,
                 &diff.conflict_rev,
+                None,
+                &[],
                 "union",
             )
             .unwrap();

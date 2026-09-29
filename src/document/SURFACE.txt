@@ -3,6 +3,7 @@ FeedPage
 HistoryRouteContext
 Node
 OutlineScope
+UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 appendFeed
 appendToTodayJournal
 applyGraphChange
@@ -65,6 +66,7 @@ installHistoryRouteContextAdapter
 installPageIdentityNavigation  # why: route/tab rekey must precede exact-path working-set identity adoption; batch11e
 installRenameRefreshHandler
 isBlockMoving
+isBlockRefUuid  # why: an unresolved ((id)) that is not a UUID is shown, never looked up (GH #589); batch20b
 isConflicted
 isDirty
 isLoaded
@@ -150,6 +152,7 @@ toggleUndoRedoMode
 trackAssetWrite
 undo
 undoTopTag  # why: the query crossing notice offers Undo only while its own save is still the top undo step; batch14q4a
+unsavedDrafts  # why: the unsaved-changes recovery panel and close prompt list each page whose edits are not on disk, with its draft (GH #540); batch20b
 unsavedPageCount  # why: a close that discards drafts records how many pages it dropped, as a count only; batch18a
 visibleOrder
 waitingFor  # why: show unresolved group member; batch03

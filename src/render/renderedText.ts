@@ -92,8 +92,11 @@ function renderResolvedLeaf<T>(fallback: T, render: () => T): T {
 function resolvedBlockRefText(uuid: string, o: RenderedTextOptions): string {
   if (renderedTextResolveDepth >= MAX_RENDERED_TEXT_RESOLVE_DEPTH) return uuid;
   return renderResolvedLeaf(uuid, () => {
-    const resolved = o.resolveBlockRef?.(uuid);
-    if (!resolved) return uuid;
+    // No resolver: the caller asked for the id itself (byte-compatible text).
+    if (!o.resolveBlockRef) return uuid;
+    const resolved = o.resolveBlockRef(uuid);
+    // Unresolved: the reference's source text, as OG shows it (GH #589).
+    if (!resolved) return `((${uuid}))`;
     const text = resolved.text ?? renderedBlockText(resolved.raw, resolved.format, o);
     return o.resolveBlockRefsFully ? text : (text.split("\n")[0] ?? "");
   });

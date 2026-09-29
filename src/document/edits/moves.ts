@@ -3,7 +3,7 @@ import { blockWritable, pageWritable, orderListTypeFromRaw, rawWithInheritedOrde
 import { produce } from "solid-js/store";
 import { markDirty, persistTogether, refuseConflictedMove } from "../save/engine";
 import { captureBinding, stillBound } from "../../binding";
-import { pushUndo } from "../history";
+import { pushMoveSelectionUndo, pushUndo } from "../history";
 import { createSignal } from "solid-js";
 import { rootsOf, nextVisible, existingSubtreeFits } from "../tree";
 import { topSelected } from "./selection";
@@ -397,6 +397,18 @@ export function reassignPage(s: DocState, id: string, page: string) {
 
 /** Move root blocks `ids` (document order) to the start (down) / end (up) of
  *  `toPage`, removing them from `fromPage`. Both pages must be loaded. */
+/** True while every id is still a root of `fromPage`. A cross-day move plans
+ *  before awaiting the feed extender and must re-check its plan after it: a
+ *  second nudge issued meanwhile may already have moved these blocks, and
+ *  applying the stale plan would put them into the target day twice (duplicate
+ *  content and `id::`; master eba7c56b2 H3). O(ids + fromPage roots). */
+function stillRootsOf(ids: readonly string[], fromPage: string): boolean {
+  const from = pageByName(fromPage);
+  if (!from) return false;
+  const roots = new Set(from.roots);
+  return ids.every((id) => roots.has(id) && doc.byId[id]?.page === fromPage && doc.byId[id]?.parent === null);
+}
+
 function crossMoveBlocks(ids: string[], fromPage: string, toPage: string, dir: 1 | -1) {
   setDoc(
     produce((s) => {
@@ -468,15 +480,16 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
     return "within";
   }
   if (node.parent !== null) return "none"; // nested block at a child-list edge: stop
-  const target = await feedNeighbor(node.page, dir);
+  const from = node.page;
+  const target = await feedNeighbor(from, dir);
   if (!stillBound(binding)) return "none";
-  if (!target || !pageWritable(target)) return "none";
-  if (refuseConflictedMove([node.page, target])) return "none";
+  if (!target || target === from || !pageWritable(target)) return "none";
+  if (refuseConflictedMove([from, target])) return "none";
   if (!stillBound(binding)) return "none";
-  if (!doc.byId[id]) return "none"; // vanished during the flush
-  if (!pageWritable(node.page) || !pageWritable(target)) return "none";
-  pushUndo("move-cross", [node.page, target]);
-  crossMoveBlocks([id], node.page, target, dir);
+  if (!stillRootsOf([id], from)) return "none"; // moved or vanished during the await (H3)
+  if (!pageWritable(from) || !pageWritable(target)) return "none";
+  pushUndo("move-cross", [from, target]);
+  crossMoveBlocks([id], from, target, dir);
   return "crossed";
 }
 
@@ -495,7 +508,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
     const ordered = dir === 1 ? [...ids].reverse() : ids;
     const pages = [...new Set(ordered.map((id) => doc.byId[id]?.page).filter(Boolean) as string[])];
     if (pages.length > 1 && refuseConflictedMove(pages)) return;
-    pushUndo("move-sel", pages); // scope the undo to the touched pages, not the whole set
+    pushMoveSelectionUndo(ids, pages); // one step per held-key burst, scoped to the touched pages
     setDoc(
       produce((s) => {
         for (const id of ordered) {
@@ -524,9 +537,10 @@ export async function moveSelectionItems(dir: 1 | -1) {
   if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
   const target = await feedNeighbor(page, dir);
   if (!stillBound(binding)) return;
-  if (!target || !pageWritable(target)) return;
+  if (!target || target === page || !pageWritable(target)) return;
   if (refuseConflictedMove([page, target])) return;
   if (!stillBound(binding)) return;
+  if (!stillRootsOf(ids, page)) return; // moved or vanished during the await (H3)
   if (!pageWritable(page) || !pageWritable(target)) return;
   pushUndo("move-sel-cross", [page, target]);
   crossMoveBlocks(ids, page, target, dir);

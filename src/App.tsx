@@ -41,9 +41,10 @@ import { applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./gra
 import { installPageIndex } from "./pageIndex";
 import { checkForUpdate } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
+import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, refreshConflictQueueIfTouched, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
-import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch } from "./graphSession";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
+import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
@@ -51,7 +52,7 @@ import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage, unsavedPageCount } from "./document";
+import { flushAll, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
@@ -90,18 +91,21 @@ import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
 import { exitAndroidActivity, installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
+import { openUnsavedRecovery } from "./unsavedRecovery";
+import { UnsavedRecovery } from "./components/UnsavedRecovery";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
+import { initContentWidths } from "./contentWidth";
 
 const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
-const safeClose = createSafeCloseCoordinator({
+export const safeClose = createSafeCloseCoordinator({
   blurActive() {
     const active = document.activeElement;
     if (active instanceof HTMLElement) active.blur();
@@ -111,10 +115,18 @@ const safeClose = createSafeCloseCoordinator({
   },
   flushPdfWork: drainPdfWork,
   flushAll,
-  confirmDiscard: () => backend().confirm(
-    "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
-    "Unsaved changes",
-  ),
+  // GH #540: name the pages at risk; "No" opens the recovery panel.
+  confirmDiscard: (reason) => {
+    const explanation = reason === "still-saving"
+      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this."
+      : "Tine has changes that could not be saved (a conflict or a stuck save).";
+    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n") || "Pending attachments or storage work; no page draft identified.";
+    return backend().confirm(
+      `${explanation}\n\n${inventory}\n\nChoose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?`,
+      "Unsaved changes",
+    );
+  },
+  onDiscardDeclined: openUnsavedRecovery,
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
   flushSession,
   setTransition: setGraphTransitioning,
@@ -332,7 +344,9 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
       <Show when={route().kind === "invalid" ? route() as InvalidRoute : null} fallback={
         <PaneScroller paneId={props.paneId} router={props.router} class={props.scrollerClass}
           identifyPane={!props.scrollerClass}>
-          <PaneContent router={props.router} />
+          <FailureBoundary region="This page">
+            <PaneContent router={props.router} />
+          </FailureBoundary>
         </PaneScroller>
       }>
         {(invalid) => <div class="pane-route-error" role="alert">
@@ -584,6 +598,7 @@ export function App(): JSX.Element {
       // the onboarding Welcome screen instead of leaving a blank app; don't toast
       // on first run (the empty/`""` path legitimately has no graph yet).
       dbg(`graph load failed: ${String(e)}`);
+      if (graphPath) setStartupOpenFailure({ path: graphPath, message: String(e) });
     } finally {
       if (isPublishedExport() && window.location.hash) {
         try {
@@ -630,6 +645,7 @@ export function App(): JSX.Element {
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
   onMount(() => void initSettingsLayout());
+  onMount(() => void initContentWidths());
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.
@@ -655,7 +671,7 @@ export function App(): JSX.Element {
     let unsub = () => {};
     let alive = true;
     const owner = ownedWhen(() => alive);
-    void readOwnedResource(owner, backend().onGraphChanged((c) => { void applyGraphChange(c); void refreshConflictQueueIfTouched([c]); }), (u) => u())
+    void readOwnedResource(owner, backend().onGraphChanged((c) => { void applyGraphChange(c); }), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
     onCleanup(() => { alive = false; unsub(); });
   });
@@ -974,7 +990,9 @@ export function App(): JSX.Element {
             <Show when={mobileDrawerMode()}>
               <button class="mobile-drawer-close" type="button" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>Close</button>
             </Show>
-            <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
+            <FailureBoundary region="The sidebar">
+              <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
+            </FailureBoundary>
           </div>
           <div
             class="sidebar-resizer"
@@ -1179,6 +1197,7 @@ export function App(): JSX.Element {
       </DrawerBackground>
       <PageProps />
       <ExportModal />
+      <UnsavedRecovery />
       <PdfExportDialog />
       <QueryExportDialog request={queryExportRequest} />
       <Show when={settingsOpen()}>

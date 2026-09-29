@@ -43,6 +43,8 @@ import { platformKind } from "../platform";
 import { openConflicts, openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
+import { Field } from "./settingsField";
+import { ContentWidthFields } from "./ContentWidthFields";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
@@ -54,7 +56,7 @@ import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
 import { captureBinding } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile } from "../types";
-import { formatJournal } from "../journal";
+import { formatJournal, appNow } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
 import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES } from "../plugins/manifest";
 import {
@@ -276,23 +278,6 @@ export function Settings(): JSX.Element {
         </div>
       </div>
     </Show>
-  );
-}
-
-// One setting: label + control on a line, with the explanatory hint on its own
-// full-width line below (so long hints read cleanly instead of being squeezed
-// into the right column). Pass `hint` as JSX to allow inline <code>/markup.
-function Field(props: { label: string; hint?: JSX.Element; children: JSX.Element }): JSX.Element {
-  return (
-    <div class="settings-field" data-setting-label={props.label}>
-      <div class="settings-field-row">
-        <span class="settings-label">{props.label}</span>
-        <div class="settings-field-control">{props.children}</div>
-      </div>
-      <Show when={props.hint}>
-        <div class="settings-hint settings-field-hint">{props.hint}</div>
-      </Show>
-    </div>
   );
 }
 
@@ -1046,6 +1031,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
 
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
+        <ContentWidthFields />
         <Field
           label="Smooth scrolling (experimental)"
           hint="Animate the journal feed's scrolling to smooth out WebKitGTK's stepped mouse-wheel jumps. Off by default; this is a feel experiment — turn it off if it gets in the way."
@@ -1135,7 +1121,7 @@ function JournalTemplateField(): JSX.Element {
  *  (today rendered in it). Includes the graph's current value even if it isn't
  *  one of the presets, so a hand-edited config.edn round-trips. */
 function DateFormatSelect(): JSX.Element {
-  const today = new Date();
+  const today = appNow();
   const current = () => graphMeta()?.journal_page_title_format || "MMM do, yyyy";
   const options = () => (JOURNAL_TITLE_FORMATS.some((format) => format === current()) ? JOURNAL_TITLE_FORMATS : [current(), ...JOURNAL_TITLE_FORMATS]);
   return (
@@ -1357,8 +1343,8 @@ function JournalsTab(props: { search: string }): JSX.Element {
         hint={
           <>
             How journal dates are displayed and how new <code>[[date]]</code> titles are written.
-            Changing this also renames existing journal <em>files</em>. Saved to
-            <code>:journal/page-title-format</code>.
+            Display-only — your journal <em>file names</em> are untouched and existing journals keep
+            working. Saved to <code>:journal/page-title-format</code>.
           </>
         }
       >

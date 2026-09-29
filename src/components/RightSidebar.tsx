@@ -16,6 +16,7 @@ import { LinkedReferences } from "./LinkedReferences";
 import { PageTypingTarget } from "./Page";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { endEditForSurface } from "../editorController";
+import { FailureBoundary } from "./FailureBoundary";
 
 function surfaceKey(item: SidebarItem): string {
   return `sidebar:${sidebarItemKey(item)}`;
@@ -290,8 +291,12 @@ function PageItem(props: {
             <PageTypingTarget page={page} surface={props.surfaceKey} />
             {/* OG shows a page's Linked/Unlinked References in the sidebar view too,
                 not just the main pane. Same lazy components, so this stays cheap. */}
-            <LinkedReferences name={props.item.name} />
-            <UnlinkedReferences name={props.item.name} />
+            <FailureBoundary region="Linked References">
+              <LinkedReferences name={props.item.name} />
+            </FailureBoundary>
+            <FailureBoundary region="Unlinked References">
+              <UnlinkedReferences name={props.item.name} />
+            </FailureBoundary>
           </div>
         </Show>
       </Show>

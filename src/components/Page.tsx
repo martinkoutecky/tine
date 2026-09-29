@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -14,6 +14,7 @@ import { pushToast } from "../toasts";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
+import { FailureBoundary } from "./FailureBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { SheetTable } from "./SheetTable";
@@ -23,7 +24,7 @@ import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { aliasNamesOf, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay } from "../journal";
+import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay, appNow } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { JournalFeedPage, RefGroup } from "../types";
 import { tagRef } from "../tags";
@@ -117,7 +118,7 @@ let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeed
 /** Ensure today's configured template before any feed read for that day. */
 async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<unknown | null> {
   if (!ownerIsLive(owner) || windowUnbound()) return null;
-  const date = new Date();
+  const date = appNow();
   const day = localDayKey(date);
   const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
   if (!graphMeta()?.default_journal_template) return restartJournalFeed(owner, false, rollover);
@@ -455,7 +456,7 @@ export function PageView(): JSX.Element {
     const restart = () => { void refreshJournalFeedForCurrentDay(owner); };
     const arm = () => {
       if (disposed || !ownerIsLive(owner)) return;
-      const now = new Date();
+      const now = appNow();
       timer = window.setTimeout(() => {
         // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
         // trigger, including a deferred/error response, while this owner lives.
@@ -608,12 +609,20 @@ export function PageView(): JSX.Element {
             </Show>
             <Show
               when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide && tagTableEnabled(pagesToRender()[0].name)}
-              fallback={<Show when={!pagesToRender()[0].guide}><LinkedReferences name={pagesToRender()[0].name} /></Show>}
+              fallback={
+                <Show when={!pagesToRender()[0].guide}>
+                  <FailureBoundary region="Linked References">
+                    <LinkedReferences name={pagesToRender()[0].name} />
+                  </FailureBoundary>
+                </Show>
+              }
             >
               <TagPageTable pageName={pagesToRender()[0].name} />
             </Show>
             <Show when={!pagesToRender()[0].guide}>
-              <UnlinkedReferences name={pagesToRender()[0].name} />
+              <FailureBoundary region="Unlinked References">
+                <UnlinkedReferences name={pagesToRender()[0].name} />
+              </FailureBoundary>
             </Show>
           </Show>
         </div>
@@ -723,6 +732,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
   const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  // An open title-rename draft pins its page: no reload may remount it (og 20b contract 2).
+  onCleanup(pinPageWhileDrafting(() => (renaming() ? props.page.name : null)));
   let renameInFlight = false;
   let renameSubmitted = false;
   let renameCancelled = false;
@@ -991,7 +1002,11 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
       </Show>
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <Show when={conflictForPage(props.page.id)}>
-        {(conflict) => <PageConflictResolution conflict={conflict()} />}
+        {(conflict) => (
+          <FailureBoundary region="The conflict panel">
+            <PageConflictResolution conflict={conflict()} />
+          </FailureBoundary>
+        )}
       </Show>
       <div class="page-blocks">
         <Show when={preambleContent()}>
@@ -1145,7 +1160,7 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   const addRow = async () => {
     const ok = await appendToTodayJournal(`${tagRef(props.pageName)} `);
     if (!ok) return;
-    const today = pageByName(journalTitle(new Date()));
+    const today = pageByName(journalTitle(appNow()));
     const id = today?.roots[today.roots.length - 1];
     if (id && docNode(id)) startEditing(id, docNode(id).raw.length);
   };

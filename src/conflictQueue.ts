@@ -1,14 +1,16 @@
 // Concord conflict queue (og family 8): which pages need the user's judgement.
 //
-// The queue is DERIVED, never persisted: `conflict_inventory` recomputes it
-// from disk (sync-tool copies paired with their winner, marker-bearing pages),
-// so it survives a restart by being recomputed and nothing is written into the
-// graph to remember it. The listings and the queue are one answer from one
-// graph walk, held in one signal, so a banner can never point at an object the
-// queue does not have. `refreshSyncConflicts` (ui.ts) is the only refresher.
+// The queue is DERIVED, never persisted: the backend derives it from disk
+// (sync-tool copies paired with their winner, marker-bearing pages) with one
+// walk at graph open, then re-derives only the files each change touched and
+// announces `conflicts-changed` when the answer moved. It survives a restart
+// by being recomputed and nothing is written into the graph to remember it.
+// The listings and the queue are one answer, held in one signal, so a banner
+// can never point at an object the queue does not have. `refreshSyncConflicts`
+// (ui.ts) is the only refresher.
 import { createSignal } from "solid-js";
 import { clearOnBindingInvalidated } from "./binding";
-import type { ConflictInventory, ConflictObject, PageKind, SyncConflict } from "./types";
+import type { ConflictInventory, ConflictObject, SyncConflict } from "./types";
 
 const EMPTY: ConflictInventory = { sync_conflicts: [], vcs_markers: [], queue: [] };
 
@@ -41,16 +43,6 @@ export function setSyncConflicts(sync_conflicts: SyncConflict[]): void {
 /** The queued conflict for the page file at `path`, if any. */
 export function conflictForPage(path: string | undefined): ConflictObject | undefined {
   return path ? conflictQueue().find((conflict) => conflict.page_path === path) : undefined;
-}
-
-/** Whether a watcher change touched a page that is in the queue, so a merge
- *  finished outside Tine (git resolving the markers) leaves the queue. The
- *  ordinary case, an empty queue, costs one length check. */
-export function queueTouchedBy(changes: { name: string; kind: PageKind; path?: string }[]): boolean {
-  const queue = conflictQueue();
-  return queue.length > 0 && changes.some((change) => queue.some((item) =>
-    (change.path !== undefined && item.page_path === change.path)
-    || (item.page_name === change.name && item.kind === change.kind)));
 }
 
 /** Retire one object a guarded resolve just proved gone, without waiting for a

@@ -166,7 +166,7 @@ const PAGES: PageDto[] = [
       b("A code block:\n```rust\nfn main() {\n    println!(\"hello, tine\");\n}\n```"),
       b("A table:\n| Feature | Status |\n| --- | --- |\n| Outliner | done |\n| Queries | partial |"),
       b("DONE Validate round-trip on the real `shui-graph`"),
-      b("Inline math works too: $E = mc^2$ and references like ((arch-1))."),
+      b("Inline math works too: $E = mc^2$ and references like ((58900000-0000-4000-8000-0000000000b1))."),
       b("```calc\n1 + 2\n2+4\n5 + 4\nx = 12 * 3\nx / 4\n```"),
       b("Open tasks across the graph:"),
       b("{{query (todo TODO DOING)}}"),
@@ -212,7 +212,7 @@ const NAMED: PageDto[] = [
         b("Reads the same markdown graph as OG Logseq."),
       ]),
       b("## Architecture"),
-      b("Rust core owns parsing; the frontend owns the live editing tree.\nid:: arch-1"),
+      b("Rust core owns parsing; the frontend owns the live editing tree.\nid:: 58900000-0000-4000-8000-0000000000b1"),
       b("A PDF asset: [sample.pdf](../assets/sample.pdf)"),
     ],
   },
@@ -1574,6 +1574,10 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async clearDiagnostics(): Promise<void> { mockDiagnostics.length = 0; },
     async diagnosticSessionActive(): Promise<void> { /* no session marker in the mock */ },
     async diagnosticFrontendEvent(kind: DiagnosticFrontendKind): Promise<void> { mockDiagnostics.push(kind); },
+    async localClock() {
+      const now = Date.now();
+      return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
+    },
     async appArchitecture(): Promise<string> { return "x86_64"; },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];

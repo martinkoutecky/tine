@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX 
 import { backend } from "../backend";
 import { graphOwner, readOwned, writeOwned } from "../owned";
 import { EmojiText } from "../render/emoji";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { pushToast } from "../toasts";
 import {
   activeWorkspaceId,
@@ -32,21 +32,15 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
 
   createEffect(() => {
     if (!menuOpen()) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (root && target && !root.contains(target)) closeMenu();
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
     const unregister = registerTransientLayer({
       id: "workspace-switcher",
       root: () => root ?? null,
       dismiss: () => { closeMenu(); return true; },
     });
-    onCleanup(() => {
-      window.removeEventListener("pointerdown", onPointerDown, true);
-      unregister();
-    });
+    onCleanup(unregister);
   });
+  // `root` wraps the trigger as well as the menu.
+  dismissOnOutsidePointer({ open: menuOpen, inside: () => [root], dismiss: closeMenu });
 
   createEffect(() => {
     if (edit()) queueMicrotask(() => editInput?.focus());

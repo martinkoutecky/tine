@@ -13,6 +13,7 @@ mod command_surface;
 mod commands;
 #[path = "commands/concord.rs"]
 mod concord;
+mod concord_ledger;
 mod debug;
 mod device_io;
 #[cfg(test)]
@@ -67,8 +68,8 @@ use debug::{
 };
 use graph::{
     app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph,
-    default_graph_parent, inspect_graph_access, load_graph, open_graph_window, resolve_root,
-    startup_graph_path, warm_done,
+    default_graph_parent, inspect_graph_access, load_graph, local_clock, open_graph_window,
+    resolve_root, startup_graph_path, warm_done,
 };
 use pdf_crop_rollback::rollback_pdf_area_image;
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
@@ -553,6 +554,13 @@ pub fn run() {
         crate::graph::app_platform()
     ));
 
+    // The backend's zone offset at launch, so the frontend's first "today" is
+    // already the backend's (GH #607); `local_clock` keeps it current.
+    let (offset_minutes, unix_ms) = tine_core::date::JournalDate::local_utc_offset_now();
+    let builder = builder.append_invoke_initialization_script(format!(
+        "globalThis.__TINE_LOCAL_CLOCK__ = {{ offset_minutes: {offset_minutes}, unix_ms: {unix_ms} }};"
+    ));
+
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.append_invoke_initialization_script(format!(
         "globalThis.__TINE_NATIVE_FRAME__ = {native_frame_active};"
@@ -801,6 +809,7 @@ pub fn run() {
             capture_frontend_ready,
             create_graph,
             app_platform,
+            local_clock,
             default_graph_parent,
             android_folder_picker::pick_graph_folder,
             android_media::capture_photo,
@@ -948,8 +957,11 @@ pub fn run() {
         ])
         .build(context)
         .expect("error while building tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                // Queued Concord base-ledger updates get one bounded drain
+                // (`EXIT_DRAIN_BUDGET`); the ledger is never a save authority.
+                concord_ledger::drain_all_for_exit(&app.state::<AppState>());
                 // `App::run` never returns, so the orderly end of a run is
                 // here: clear the unclean-exit marker (master d9763603).
                 flight::mark_clean_shutdown();
@@ -958,7 +970,7 @@ pub fn run() {
                 // receives WM_QUIT nor switches to an exiting ControlFlow.
                 // Returning would leave Tine alive until Windows names it on the
                 // "app is preventing shutdown" screen and force-terminates it
-                // (GH #455). Nothing remains to flush here: page saves are
+                // (GH #455). Nothing else remains to flush: page saves are
                 // already durable when they report success, so terminate.
                 #[cfg(target_os = "windows")]
                 std::process::exit(0);
@@ -1084,7 +1096,7 @@ mod platform_lifecycle_guard_tests {
     #[test]
     fn windows_session_end_exit_terminates_the_process() {
         let source = lib_source();
-        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &source[source.find(".run(|app, event|").expect("the event loop")..];
         let run = &run[..run.find("});").expect("the end of the event loop")];
         assert!(
             run.contains("tauri::RunEvent::Exit")
@@ -1102,7 +1114,7 @@ mod platform_lifecycle_guard_tests {
     #[test]
     fn the_exit_arm_clears_the_unclean_exit_marker_before_terminating() {
         let source = lib_source();
-        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &source[source.find(".run(|app, event|").expect("the event loop")..];
         let run = &run[..run.find("});").expect("the end of the event loop")];
         let clean = run
             .find("flight::mark_clean_shutdown();")
@@ -1122,6 +1134,19 @@ mod platform_lifecycle_guard_tests {
                 "\"globalThis.__TINE_PLATFORM__ = {:?};\",\n        crate::graph::app_platform()"
             ),
             "GH #446: lib.rs must inject __TINE_PLATFORM__ from crate::graph::app_platform()"
+        );
+    }
+
+    /// GH #607: the frontend's calendar is the backend's. The launch offset is
+    /// injected before frontend code runs, from the same zone source as
+    /// `JournalDate::today`; `local_clock` keeps it current.
+    #[test]
+    fn frontend_clock_correction_is_injected_from_the_backend_zone() {
+        let source = lib_source();
+        assert!(
+            source.contains("JournalDate::local_utc_offset_now();")
+                && source.contains("globalThis.__TINE_LOCAL_CLOCK__ = "),
+            "GH #607: lib.rs must inject __TINE_LOCAL_CLOCK__ from JournalDate::local_utc_offset_now()"
         );
     }
 

@@ -1,5 +1,5 @@
 import { FeedPage, Node, doc, pageByName, setDoc, docHasBlockIdentity } from "./model";
-import { addDirty, persistTogether, scheduleSave, type TransferEdge } from "./save/engine";
+import { addDirty, pageInstanceGeneration, pageInstanceGenerations, persistTogether, scheduleSave, type TransferEdge } from "./save/engine";
 import { type Route } from "../routeTypes";
 import { type HistorySidebarContext, captureHistorySidebarContext, restoreHistorySidebarContext } from "../ui";
 import { type HistoryEditorContext, captureHistoryEditorContext, captureRawHistoryViewport, editingId, endEdit, restoreHistoryEditorContext } from "../editorController";
@@ -29,6 +29,8 @@ interface SnapEntry {
   nodes: Record<string, Node>; // snapshot of nodes living on those pages
   dirty: string[]; // pages to re-save on undo/redo
   context: HistoryContext;
+  /** Page-instance generations this entry was recorded against (GH #305). */
+  instances: Record<string, number>;
   /** Identity-bearing clipboard paste whose redo must fail on a live conflict. */
   preservedIds?: string[];
   /** The `pushUndo` tag, so a caller can ask whether Undo would take back ITS change. */
@@ -45,6 +47,8 @@ interface RawEntry {
   headerRoot?: { node: Node; rootIndex: number };
   removeHeaderOnApply?: boolean;
   context: HistoryContext;
+  /** Page-instance generations this entry was recorded against (GH #305). */
+  instances: Record<string, number>;
   preservedIds?: string[];
 }
 type UndoEntry = SnapEntry | RawEntry;
@@ -78,6 +82,7 @@ export function historyPageOnlyMode(): boolean {
 
 export function toggleUndoRedoMode(): "Page only" | "Global" {
   pageOnlyHistoryMode = !pageOnlyHistoryMode;
+  bumpHistory(); // the toggle changes which entry Undo would take back (undoTopTag)
   return pageOnlyHistoryMode ? "Page only" : "Global";
 }
 
@@ -183,6 +188,34 @@ export function invalidateUndoForPage(name: string) {
   bumpHistory();
 }
 
+/** The page-instance generations an entry is recorded against. An entry
+ *  describes ONE loaded instance of each page: eviction keeps history, and a
+ *  re-open installs a fresh instance holding what the file says NOW, so replaying
+ *  the old entry would restore pre-eviction content and save it under a baseline
+ *  the revision guard accepts. Stamping makes that staleness visible at replay,
+ *  for every way an instance is swapped (evict, reload, rebind, forget). (GH #305) */
+function captureInstances(names: readonly string[]): Record<string, number> {
+  const instances: Record<string, number> = {};
+  for (const name of names) {
+    const generation = pageInstanceGeneration(name);
+    if (generation !== null) instances[name] = generation;
+  }
+  return instances;
+}
+
+/** Peek, never the lazily-activating reader: minting a generation here would
+ *  pass the check by inventing the identity it compares. */
+function staleInstances(e: UndoEntry): string[] {
+  return Object.keys(e.instances).filter((name) => pageInstanceGenerations.get(name) !== e.instances[name]);
+}
+
+/** Drop the popped stale entry's page histories and say so: silence would read
+ *  as "undo did nothing", which is how this class of bug hides. */
+function discardStaleHistory(stale: readonly string[]): void {
+  for (const name of stale) invalidateUndoForPage(name);
+  pushToast("Undo history for this page was discarded: the page was reloaded since those edits", "info");
+}
+
 // Hand-rolled clones — Node/FeedPage are flat (primitives + a string[]), so a
 // tailored copy is far cheaper than structuredClone (which probes types and
 // walks for cycles). This runs on EVERY structural op (split/merge/indent/move/
@@ -229,6 +262,7 @@ function snapEntry(affected?: string[] | null, preservedIds?: readonly string[])
     nodes,
     dirty: names,
     context,
+    instances: captureInstances(names),
     ...(preservedIds?.length ? { preservedIds: [...preservedIds] } : {}),
   };
 }
@@ -248,6 +282,32 @@ export function pushUndo(tag: string, affected?: string[], preservedIds?: readon
   bumpHistory();
 }
 
+/** A held Mod+Up/Down on a selection is one undo step (master 45279b9c9): a
+ *  repeat within 400 ms of the previous one, and 3 s of the first, reuses the
+ *  first nudge's snapshot while the entry is still the top of history, the
+ *  ordered selection roots are the same, and every page is the same loaded
+ *  instance. Anything else starts a new step. */
+let moveBurst: { entry: UndoEntry; roots: string[]; startedAt: number; lastAt: number } | null = null;
+const MOVE_BURST_IDLE_MS = 400, MOVE_BURST_MAX_MS = 3_000;
+
+/** Record the undo step for one selection nudge over `pages`, continuing the
+ *  current burst when it matches (see `moveBurst`). O(1) for a continued burst,
+ *  otherwise `pushUndo`'s O(blocks of those pages). */
+export function pushMoveSelectionUndo(roots: readonly string[], pages: string[]): void {
+  const now = Date.now();
+  const burst = moveBurst;
+  if (burst && undoSuppressionDepth === 0 && !redoStack.length && undoStack[undoStack.length - 1] === burst.entry
+      && burst.roots.length === roots.length && burst.roots.every((id, i) => id === roots[i])
+      && now - burst.lastAt < MOVE_BURST_IDLE_MS && now - burst.startedAt < MOVE_BURST_MAX_MS
+      && pages.every((name) => name in burst.entry.instances) && !staleInstances(burst.entry).length) {
+    burst.lastAt = now;
+    return;
+  }
+  pushUndo("move-sel", pages);
+  const entry = undoStack[undoStack.length - 1];
+  moveBurst = entry && undoSuppressionDepth === 0 ? { entry, roots: [...roots], startedAt: now, lastAt: now } : null;
+}
+
 /** Record an O(1) inverse patch for a single-block text edit (typing). A typing
  *  burst in one block coalesces to a single entry holding the pre-burst text. */
 export function pushRawUndo(id: string, prevRaw: string) {
@@ -264,6 +324,7 @@ export function pushRawUndo(id: string, prevRaw: string) {
     raw: prevRaw,
     page: node.page,
     context: captureHistoryContext(),
+    instances: captureInstances([node.page]),
     ...(rootIndex >= 0 ? { headerRoot: { node: cloneNode(node), rootIndex } } : {}),
   });
   if (undoStack.length > 200) undoStack.shift();
@@ -285,6 +346,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
       raw: node ? node.raw : "",
       page: e.page,
       context: captureHistoryContext(),
+      instances: captureInstances([e.page]),
       ...(node && rootIndex >= 0 ? { headerRoot: { node: cloneNode(node), rootIndex } } : {}),
       ...(e.preservedIds?.length ? { preservedIds: [...e.preservedIds] } : {}),
     };
@@ -416,11 +478,15 @@ function transferOrder(entry: UndoEntry, inverse: UndoEntry): TransferEdge[] {
 
 /** Undo the selected global or page-scoped entry, restore its UI context and
  *  schedule affected pages for save. O(blocks of those pages). Returns false if
- *  empty or a graph rewrite is frozen. */
+ *  empty, a graph rewrite is frozen, or the entry was recorded against a page
+ *  instance that is gone (evicted, reloaded, rebound, forgotten): that page's
+ *  history is then dropped with an info toast instead of replayed (GH #305). */
 export function undo(): boolean {
   if (graphRewriteFrozen()) return false;
   const entry = popHistoryEntry(undoStack);
   if (!entry) return false;
+  const stale = staleInstances(entry);
+  if (stale.length) { discardStaleHistory(stale); return false; }
   const restoreViewport = entry.kind === "raw" ? captureRawHistoryViewport(entry.id) : undefined;
   const inverse = applyEntry(entry);
   if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
@@ -434,13 +500,16 @@ export function undo(): boolean {
   return true;
 }
 
-/** Redo the selected entry unless empty or frozen. If it would recreate an id
+/** Redo the selected entry unless empty or frozen; a stale-instance entry is
+ *  discarded as for undo (GH #305). If it would recreate an id
  *  now present elsewhere, show an error and clear the redo stack. Otherwise
  *  restore its pages and UI context and schedule a save. */
 export function redo() {
   if (graphRewriteFrozen()) return;
   const entry = popHistoryEntry(redoStack);
   if (!entry) return;
+  const stale = staleInstances(entry);
+  if (stale.length) { discardStaleHistory(stale); return; }
   if (entry.preservedIds?.some(docHasBlockIdentity)) {
     // The selected prerequisite is already popped. A later redo snapshot cannot
     // remain valid without it, including in page-only mode where the tagged

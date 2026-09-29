@@ -153,6 +153,14 @@ pub struct SyncConflictDiff {
     /// shape byte for byte.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub three_way: bool,
+    /// Identity (sha256 hex) of the Concord-ledger base a sync-copy 3-way
+    /// alignment and its `"merged"` proposals were computed from. The resolve
+    /// requires it back, so a base that changed between diff and apply can
+    /// never silently substitute a merged body the user was not shown. `None`
+    /// on 2-way diffs and on marker diffs, whose base is reconstructed from the
+    /// same file `base_rev` already pins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_base_rev: Option<String>,
 }
 
 /// Diff `theirs` (the conflict copy's blocks) against `mine` (the winner's).
@@ -175,13 +183,15 @@ pub fn diff_docs(mine: &crate::doc::Document, theirs: &crate::doc::Document) -> 
         rows,
         blocks_identical,
         three_way: false,
+        merge_base_rev: None,
     }
 }
 
 /// Build the full 3-way page-level diff: the SAME mine/theirs alignment as
 /// [`diff_docs`] (so row ids stay compatible with [`merge_blocks`]), with each
 /// row additionally classified against `base` — the common ancestor both sides
-/// descend from (in og: the diff3 base a VCS merge left in the file itself). Non-conflicting rows carry a `suggestion`
+/// descend from (in og: the diff3 base a VCS merge left in the file itself, or the Concord
+/// ledger's last-agreed text for a sync copy). Non-conflicting rows carry a `suggestion`
 /// (`"mine"`/`"theirs"`); rows both sides changed carry none. Suggestions are
 /// advice for the UI to pre-select, never something to auto-apply.
 pub fn diff3_docs(
@@ -233,6 +243,7 @@ pub fn diff3_docs_with_artifact(
         rows,
         blocks_identical,
         three_way: true,
+        merge_base_rev: None,
     }
 }
 

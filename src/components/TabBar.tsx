@@ -5,7 +5,7 @@ import { formatForBlock, node as docNode } from "../document";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane } from "../panes";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 
 const MAX_TITLE = 32;
 const DRAG_THRESHOLD_PX = 4;
@@ -430,20 +430,20 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
       const activeIndex = Math.max(0, router.tabs().findIndex((tab) => tab.id === router.activeId()));
       focusOverviewRow(activeIndex);
     });
-    const outside = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!root?.contains(target) && !document.getElementById(overviewId)?.contains(target)) dismissOverview();
-    };
-    document.addEventListener("pointerdown", outside, true);
     window.addEventListener("resize", positionOverview);
     window.addEventListener("scroll", positionOverview, true);
     onCleanup(() => {
       cancelOverviewReorder?.();
       unregister();
-      document.removeEventListener("pointerdown", outside, true);
       window.removeEventListener("resize", positionOverview);
       window.removeEventListener("scroll", positionOverview, true);
     });
+  });
+  // The overview panel is portalled out of `root`, so both count as inside.
+  dismissOnOutsidePointer({
+    open: overviewOpen,
+    inside: () => [root, document.getElementById(overviewId)],
+    dismiss: () => dismissOverview(),
   });
   onMount(() => {
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(revealActive) : null;

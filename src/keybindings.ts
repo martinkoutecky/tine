@@ -24,7 +24,7 @@ import {
   activatePrevTab,
   route,
 } from "./router";
-import { journalTitle, parseJournalTitle } from "./journal";
+import { journalTitle, parseJournalTitle, appNow } from "./journal";
 import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
@@ -72,8 +72,8 @@ import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCur
 export function goAdjacentJournal(dir: 1 | -1): void {
   const current = route();
   const anchor = current.kind === "page" && current.pageKind === "journal"
-    ? parseJournalTitle(current.name) ?? new Date()
-    : new Date();
+    ? parseJournalTitle(current.name) ?? appNow()
+    : appNow();
   openPage(journalTitle(new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + dir)), "journal");
 }
 function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {

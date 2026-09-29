@@ -16,9 +16,10 @@ icon:: 👋
 		- {{embed ((7a1c0f5e-0000-4000-8000-000000000001))}}
 - ## Keep exploring
 	- [[tine-guide/Tine Guide]] — open the in-app how-to guide beside your own graph, with live examples you can copy into a sandbox.
+	- [[tine-guide/Start/Where things are]] — a map of the main places: the page, the sidebars, tabs, and Settings and Help.
 	- [[tine-guide/Features/Quick capture]] — drop a thought into your graph from **any** app with a global hotkey. (Set this one up — it's genuinely good.)
 	- [[tine-guide/Features/Tips & shortcuts]] — slash commands, the command palette, tabs, the sidebar, focus mode and dimming.
 	- [[tine-guide/Features/Sheets]] — grids, field tables, and task boards over plain bullets.
 	- [[tine-guide/Features/PDF annotation]] — highlight PDFs and turn them into linked notes.
 	- [[tine-guide/Features/Plugins]] — add small capability-limited extensions or token themes without giving code unrestricted access to Tine.
-	- When you're ready, point Tine at your **own** Logseq graph: open Settings (**t s**) and pick a different folder. Your notes stay exactly where they are.
+	- When you're ready, point Tine at your **own** Logseq graph: open Settings (**t s**) and pick a different folder — [[tine-guide/Start/Bring an existing graph]] walks you through it. Your notes stay exactly where they are.

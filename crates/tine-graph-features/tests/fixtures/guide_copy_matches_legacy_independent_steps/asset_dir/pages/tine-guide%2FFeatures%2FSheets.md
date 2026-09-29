@@ -1,7 +1,12 @@
 icon:: ▦
 
 - # Sheets
-	- Sheets turn ordinary outline branches into 2-D views. The same file still opens in Logseq as nested bullets with harmless `tine.*` properties.
+	- Sheets turn ordinary outline branches into 2-D views — tables, boards, and grids. The same file still opens in Logseq as nested bullets with harmless `tine.*` properties.
+	- This page starts with the easiest path — viewing bullets you already have — and shows fields, formulas, and grids after.
+- ## Start from bullets you already have
+	- Sheets never move your data: rows are child bullets, columns are their properties, cards are child bullets. Nothing is converted or copied.
+	- Right-click a parent bullet and choose **Show children as → Grid** or **Table** — or type `/Grid`, `/Table`, or `/Board` on that block.
+	- What Tine writes: plain block properties such as `tine.view:: table` on the view-owning block. Editing a sheet cell writes back into the underlying bullet, so the outline and the sheet always agree.
 	- Formula columns derive values live (the *Typed reading list* below computes `effort` from `rating`); derived values are shown, never written onto the rows.
 - ## Positional grid
   tine.view:: grid

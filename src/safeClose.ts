@@ -5,11 +5,13 @@ export interface SafeCloseDeps {
   endEdit(): void;
   flushPdfWork(): Promise<boolean>;
   flushAll(): Promise<boolean>;
-  confirmDiscard(): Promise<boolean>;
+  confirmDiscard(reason: DiscardReason): Promise<boolean>;
   /** The user accepted losing work. Recorded (fixed reason, page count) so a
    *  run that discarded drafts is distinguishable in the diagnostic report
    *  (GH #540). Bounded to one second; its failure never blocks the close. */
   recordDiscard?(reason: DiscardReason): Promise<void>;
+  /** The user chose to keep unsaved work: show where it is (GH #540). */
+  onDiscardDeclined?(): void;
   flushSession(): Promise<void>;
   setTransition(active: boolean): void;
   notifyPdfFailure(): void;
@@ -91,14 +93,17 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
         const reason: DiscardReason = saved === STILL_RUNNING ? "still-saving" : "failed";
         let discard = false;
         try {
-          const result = await readOwned(owner, deps.confirmDiscard());
+          const result = await readOwned(owner, deps.confirmDiscard(reason));
           if (result.kind === "stale") return "rejected";
           discard = result.value;
         } catch {
           deps.notifyConfirmationFailure();
           return "rejected";
         }
-        if (!discard) return "rejected";
+        if (!discard) {
+          deps.onDiscardDeclined?.();
+          return "rejected";
+        }
         try {
           await writeOwned(owner, bounded(deps.recordDiscard?.(reason) ?? Promise.resolve(), 1000, undefined));
         } catch {

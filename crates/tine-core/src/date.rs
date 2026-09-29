@@ -95,6 +95,16 @@ impl JournalDate {
         }
     }
 
+    /// The device's current UTC offset (minutes east of UTC) and the instant it
+    /// was sampled, read through the same time-zone source as [`Self::today`].
+    /// The frontend corrects its own wall clock by this (GH #607): a WebView's
+    /// bundled ICU can carry older zone rules than the OS, and the two sides then
+    /// disagree about the calendar day near midnight.
+    pub fn local_utc_offset_now() -> (i32, i64) {
+        let now = chrono::Local::now();
+        (now.offset().local_minus_utc() / 60, now.timestamp_millis())
+    }
+
     /// Default display title, e.g. "Jun 14th, 2026".
     pub fn title(&self) -> String {
         let month = MONTHS

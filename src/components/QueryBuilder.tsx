@@ -38,12 +38,11 @@ import {
   type AnchorPrompt,
   type RegistryAccess,
 } from "./QuerySheet";
-import { dismissOnOutsidePointer } from "./querySheetParts";
 import { sharedQueryResult } from "../queryResultCache";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
 
 // **The visual query builder: a resting SENTENCE that expands into a SHEET** (SPEC §7.2–§7.4).

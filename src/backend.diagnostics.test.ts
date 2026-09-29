@@ -32,6 +32,24 @@ it("records a slow command when it crosses the threshold and again when it compl
   expect(JSON.stringify(phases())).not.toContain("secret");
 });
 
+it("exposes commands past the slow threshold to the UI until they settle (GH #332)", async () => {
+  let finish!: (value: unknown) => void;
+  invoke.mockImplementation((cmd: string) => cmd === "inspect_graph_access"
+    ? new Promise((resolve) => { finish = resolve; })
+    : Promise.resolve(null));
+  const backend = await tauriBackend();
+  await backend.startupGraphPath();
+  const { slowBackendState } = await import("./slowBackend");
+  vi.useFakeTimers();
+  const pending = backend.inspectGraphAccess("/g");
+  expect(slowBackendState().count).toBe(0);
+  await vi.advanceTimersByTimeAsync(600);
+  expect(slowBackendState().count).toBe(1);
+  finish(null);
+  await pending;
+  expect(slowBackendState().count).toBe(0);
+});
+
 it("records a failed command and still rejects to the caller", async () => {
   invoke.mockImplementation((cmd: string) => cmd === "diagnostic_ipc_event"
     ? Promise.resolve()

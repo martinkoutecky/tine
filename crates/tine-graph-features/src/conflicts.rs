@@ -76,83 +76,157 @@ fn preview(store: &Store, file: &FileId) -> String {
         .unwrap_or_default()
 }
 
-/// List Syncthing and Dropbox copies in pages and journals. Unreadable scan
-/// entries are skipped and unreadable previews are empty. Cost O(P + J +
-/// conflict-copy bytes), including winner presence checks.
-pub fn list_sync_conflicts(store: &Store) -> Vec<SyncConflict> {
+/// The page kind, area-relative stem and display name of a page/journal file,
+/// or `None` for any other path. One answer for both conflict listings.
+fn graph_text_title(store: &Store, file: &FileId) -> Option<(PageKind, String, String)> {
     let config = store.config();
-    let journal_format = JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    );
+    let (kind, rel) = if let Some(rel) = file
+        .as_str()
+        .strip_prefix(&format!("{}/", config.journals_dir))
+    {
+        (PageKind::Journal, rel)
+    } else {
+        let rel = file
+            .as_str()
+            .strip_prefix(&format!("{}/", config.pages_dir))?;
+        (PageKind::Page, rel)
+    };
+    if !tine_store::is_graph_text(file) {
+        return None;
+    }
+    let stem = rel.rsplit('/').next()?.rsplit_once('.')?.0.to_owned();
+    let title = |stem: &str| {
+        if kind == PageKind::Journal {
+            let journal_format = JournalFormat::new(
+                config.journal_file_name_format.as_deref(),
+                config.journal_page_title_format.as_deref(),
+            );
+            journal_format
+                .parse(stem)
+                .map(|day| journal_format.title(day))
+                .unwrap_or_else(|| stem.to_owned())
+        } else {
+            decode_page_name(stem, config.file_name_format)
+        }
+    };
+    let name = sync_conflict_base(&stem).map_or_else(|| title(&stem), title);
+    Some((kind, stem, name))
+}
+
+/// The winner a graph page or journal file shadows when it is a
+/// sync-conflict copy; `None` for every other file. Pure path arithmetic.
+pub fn sync_copy_of(store: &Store, file: &FileId) -> Option<String> {
+    let (_, stem, _) = graph_text_title(store, file)?;
+    sync_conflict_base(&stem)?;
+    sync_copy_winner(file.as_str())
+}
+
+/// The winner a sync-conflict copy shadows: the same directory and extension
+/// with the provider's tail removed. `None` when `copy` is not a recognized
+/// copy name. Pure path arithmetic; the winner may not exist.
+pub fn sync_copy_winner(copy: &str) -> Option<String> {
+    let (dir, name) = copy.rsplit_once('/').map_or(("", copy), |(d, n)| (d, n));
+    let (stem, ext) = name.rsplit_once('.')?;
+    let base = sync_conflict_base(stem)?;
+    Some(if dir.is_empty() {
+        format!("{base}.{ext}")
+    } else {
+        format!("{dir}/{base}.{ext}")
+    })
+}
+
+/// The listing entry for one sync-conflict copy file, or `None` when `file`
+/// is not a copy. `winner_exists` answers whether the shadowed file is on
+/// disk. Cost O(copy preview bytes).
+fn sync_copy_entry(
+    store: &Store,
+    file: &FileId,
+    winner_exists: impl FnOnce(&str) -> bool,
+) -> Option<SyncConflict> {
+    let (kind, stem, base_name) = graph_text_title(store, file)?;
+    let base_stem = sync_conflict_base(&stem)?;
+    let winner = sync_copy_winner(file.as_str())?;
+    let tag = stem[base_stem.len()..]
+        .trim_matches(|ch: char| matches!(ch, '.' | ' ' | '(' | ')'))
+        .to_owned();
+    Some(SyncConflict {
+        path: file.as_str().to_owned(),
+        base_name,
+        base_path: winner_exists(&winner).then_some(winner),
+        kind,
+        tag,
+        preview: preview(store, file),
+    })
+}
+
+fn sort_copies(out: &mut [SyncConflict]) {
+    out.sort_by(|a, b| {
+        a.base_name
+            .cmp(&b.base_name)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+}
+
+/// List Syncthing, Dropbox and Seafile copies in pages and journals.
+/// Unreadable scan entries are skipped and unreadable previews are empty.
+/// Cost O(P + J + conflict-copy bytes), including winner presence checks.
+pub fn list_sync_conflicts(store: &Store) -> Vec<SyncConflict> {
     let mut out = Vec::new();
-    for (area, kind) in [
-        (Area::Journals, PageKind::Journal),
-        (Area::Pages, PageKind::Page),
-    ] {
+    for area in [Area::Journals, Area::Pages] {
         let Ok(listing) = store.scan_area(area, None) else {
             continue;
         };
         let present: std::collections::HashSet<_> = listing
             .files
             .iter()
-            .map(|entry| entry.rel.clone())
+            .map(|entry| entry.id.as_str().to_owned())
             .collect();
-        for entry in listing.files {
-            let Some((name_stem, ext)) = entry.rel.rsplit_once('.') else {
-                continue;
-            };
-            if !tine_store::is_graph_text(&entry.id) {
-                continue;
-            }
-            let Some(base_stem) = sync_conflict_base(name_stem) else {
-                continue;
-            };
-            let base_rel = if let Some((parent, _)) = entry.rel.rsplit_once('/') {
-                format!("{parent}/{base_stem}.{ext}")
-            } else {
-                format!("{base_stem}.{ext}")
-            };
-            let base_path = present
-                .contains(base_rel.as_str())
-                .then(|| store.file_id(area, &base_rel).ok())
-                .flatten()
-                .map(|base| base.as_str().to_owned());
-            let base_name = if kind == PageKind::Journal {
-                journal_format
-                    .parse(base_stem)
-                    .map(|day| journal_format.title(day))
-                    .unwrap_or_else(|| base_stem.to_owned())
-            } else {
-                decode_page_name(base_stem, config.file_name_format)
-            };
-            let tag = name_stem[base_stem.len()..]
-                .trim_matches(|ch: char| matches!(ch, '.' | ' ' | '(' | ')'))
-                .to_owned();
-            out.push(SyncConflict {
-                path: entry.id.as_str().to_owned(),
-                base_name,
-                base_path,
-                kind,
-                tag,
-                preview: preview(store, &entry.id),
-            });
+        for entry in &listing.files {
+            out.extend(sync_copy_entry(store, &entry.id, |winner| {
+                present.contains(winner)
+            }));
         }
     }
-    out.sort_by(|a, b| {
-        a.base_name
-            .cmp(&b.base_name)
-            .then_with(|| a.path.cmp(&b.path))
-    });
+    sort_copies(&mut out);
     out
 }
 
-/// Structural diff of two exact files. A missing file or invalid path returns
-/// `None`; undecodable bytes error as in v0.6.5. Cost O(both file bytes + blocks).
+/// The ancestor a sync-copy 3-way review uses: the newest candidate that
+/// differs from the winner's current bytes (master's rule: a base identical
+/// to the winner is almost always the admission artifact, the winner's
+/// post-sync bytes recorded before this diff ran, and 3-way against it would
+/// blanket-suggest "theirs"). When that candidate equals the copy's current
+/// bytes the review stays 2-way (Tine addition): on og this is normally the
+/// copy's own artifact — this device's last save, which Syncthing renamed to
+/// the copy when the other device's edit won the winner name — and 3-way
+/// against it would pre-select discarding this device's edit everywhere. A
+/// copy that genuinely equals the ancestor cannot be told apart from it, and
+/// an older base could turn a winner-side revert into a "theirs" suggestion,
+/// so neither side is pre-selected. Returns the base and its identity token
+/// (sha256 hex of its bytes).
+fn pick_base<'a>(candidates: &'a [String], mine: &str, theirs: &str) -> Option<(&'a str, String)> {
+    use sha2::{Digest, Sha256};
+    let base = candidates.iter().find(|base| base.as_str() != mine)?;
+    (base.as_str() != theirs).then(|| {
+        (
+            base.as_str(),
+            format!("{:x}", Sha256::digest(base.as_bytes())),
+        )
+    })
+}
+
+/// Structural diff of two exact files. `bases` are candidate common
+/// ancestors, newest first (the Concord base ledger: the copy's pin, then the
+/// winner's retained revisions); with one that differs from the winner the
+/// diff is 3-way and its rows carry suggestions the UI pre-selects (never
+/// applies), stamped with `merge_base_rev`. With none it is the 2-way diff.
+/// A missing file or invalid path returns `None`; undecodable bytes error as
+/// in v0.6.5. Cost O(both file bytes + base bytes + blocks).
 pub fn sync_conflict_diff(
     store: &Store,
     winner: &str,
     conflict: &str,
+    bases: &[String],
 ) -> io::Result<Option<SyncConflictDiff>> {
     let (Ok(win), Ok(conf)) = (id(store, winner), id(store, conflict)) else {
         return Ok(None);
@@ -167,8 +241,16 @@ pub fn sync_conflict_diff(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let mut diff =
-        sync_diff::diff_docs(&parse(&mine, format(&win)), &parse(&theirs, format(&conf)));
+    let fmt = format(&win);
+    let (mine_doc, theirs_doc) = (parse(&mine, fmt), parse(&theirs, format(&conf)));
+    let mut diff = match pick_base(bases, &mine, &theirs) {
+        Some((base, token)) => {
+            let mut diff = sync_diff::diff3_docs(&parse(base, fmt), &mine_doc, &theirs_doc);
+            diff.merge_base_rev = Some(token);
+            diff
+        }
+        None => sync_diff::diff_docs(&mine_doc, &theirs_doc),
+    };
     diff.base_rev = base_rev.into();
     diff.conflict_rev = conflict_rev.into();
     Ok(Some(diff))
@@ -265,8 +347,14 @@ fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
 
 /// Merge the selected blocks into the winner, then trash the copy in one
 /// guarded transaction. Stale UI revisions yield `winner changed on disk` or
-/// `conflict copy changed on disk`; Org round-trip refusal is unchanged. Cost
-/// O(both file bytes + blocks) per attempt, at most four attempts.
+/// `conflict copy changed on disk`; Org round-trip refusal is unchanged.
+/// `merge_base_rev` is the diff's base token: `None` resolves 2-way (a
+/// `"merged"` decision then refuses). With `Some` and a `"merged"` decision
+/// the SAME base is re-derived from `bases`; when it is gone or different the
+/// resolve refuses with `merge base changed since the review`, so a merged
+/// body is only ever computed from the three texts the user saw. Other
+/// decisions never read the base. Cost O(both file bytes + blocks) per attempt, at most
+/// four attempts.
 pub fn resolve_sync_conflict(
     store: &Store,
     winner: &str,
@@ -274,6 +362,8 @@ pub fn resolve_sync_conflict(
     decisions: &HashMap<String, String>,
     base_rev: &str,
     conflict_rev: &str,
+    merge_base_rev: Option<&str>,
+    bases: &[String],
     pre_choice: &str,
 ) -> io::Result<()> {
     let win = id(store, winner)?;
@@ -311,10 +401,35 @@ pub fn resolve_sync_conflict(
         }
         let mine_doc = parse(&mine, fmt);
         let their_doc = parse(&theirs, format(&conf));
-        // A conflict copy carries no common ancestor, so this is the 2-way
-        // merge; a forged `"merged"` decision refuses the whole resolve.
-        let roots = sync_diff::merge_blocks(&mine_doc.roots, &their_doc.roots, decisions)
-            .map_err(merge_refused)?;
+        // Only a `"merged"` row reads the base (mine/theirs/both do not), so a
+        // base that is gone or different blocks nothing else: a ledger read
+        // failure never refuses a resolve. For a merged row, scenario:
+        // sync-service delivery or an honest concurrent instance moved the
+        // ledger between review and apply; the user must review the body the
+        // merge would now compute.
+        let wants_merged = decisions.values().any(|d| d == "merged");
+        let base_doc = match (merge_base_rev, wants_merged) {
+            (Some(token), true) => match pick_base(bases, &mine, &theirs) {
+                Some((base, current)) if current == token => Some(parse(base, fmt)),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "merge base changed since the review",
+                    ))
+                }
+            },
+            _ => None,
+        };
+        // A forged `"merged"` decision on a 2-way review refuses the whole
+        // resolve (malformed input).
+        let roots = sync_diff::merge_blocks3(
+            base_doc.as_ref().map(|doc| doc.roots.as_slice()),
+            &mine_doc.roots,
+            &their_doc.roots,
+            None,
+            decisions,
+        )
+        .map_err(merge_refused)?;
         let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc);
         let merged = dto(store, &page, Document { pre_block, roots });
         let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
@@ -355,67 +470,47 @@ pub fn trash_sync_conflict(store: &Store, conflict: &str) -> io::Result<()> {
     })
 }
 
-/// Page and journal files carrying unresolved VCS markers. They stay real,
-/// readable pages; the store refuses to save them (R-VCS-MARKERS). Sync-tool
-/// copies are listed by [`list_sync_conflicts`] instead. Unreadable files are
-/// skipped (no refusal on an inventory read). Cost: one bounded read of every
-/// page and journal file, O(graph text bytes); a byte prefilter skips the
-/// UTF-8 check and line scan for files without an anchor marker.
+/// The marker listing entry for one page or journal file, or `None` when it
+/// is not a graph page, is a sync copy, is unreadable, or carries no column-0
+/// VCS marker. Such files stay real, readable pages; the store refuses to save
+/// them (R-VCS-MARKERS). An unreadable file is not an error here: an inventory
+/// read never refuses. Cost: one bounded read, O(file bytes); a byte prefilter
+/// skips the UTF-8 check and line scan for files without an anchor marker.
+fn marker_entry(store: &Store, file: &FileId) -> Option<VcsMarkerConflict> {
+    let (kind, stem, name) = graph_text_title(store, file)?;
+    if sync_conflict_base(&stem).is_some() {
+        return None;
+    }
+    let (bytes, _) = store
+        .read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+        .ok()?;
+    if !has_anchor(&bytes) {
+        return None;
+    }
+    let markers = vcs_conflict_markers(std::str::from_utf8(&bytes).ok()?);
+    (!markers.is_empty()).then(|| VcsMarkerConflict {
+        path: file.as_str().to_owned(),
+        name,
+        kind,
+        markers: markers.iter().map(|m| m.to_string()).collect(),
+    })
+}
+
+/// Page and journal files carrying unresolved VCS markers. Sync-tool copies
+/// are listed by [`list_sync_conflicts`] instead. Cost: one bounded read of
+/// every page and journal file, O(graph text bytes).
 fn list_vcs_marker_pages(store: &Store) -> Vec<VcsMarkerConflict> {
-    let config = store.config();
-    let journal_format = JournalFormat::new(
-        config.journal_file_name_format.as_deref(),
-        config.journal_page_title_format.as_deref(),
-    );
     let mut out = Vec::new();
-    for (area, kind) in [
-        (Area::Journals, PageKind::Journal),
-        (Area::Pages, PageKind::Page),
-    ] {
+    for area in [Area::Journals, Area::Pages] {
         let Ok(listing) = store.scan_area(area, None) else {
             continue;
         };
-        for entry in listing.files {
-            let Some((stem, _)) = entry
-                .rel
-                .rsplit('/')
-                .next()
-                .and_then(|n| n.rsplit_once('.'))
-            else {
-                continue;
-            };
-            if !tine_store::is_graph_text(&entry.id) || sync_conflict_base(stem).is_some() {
-                continue;
-            }
-            let Ok((bytes, _)) = store.read(&entry.id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-            else {
-                continue;
-            };
-            if !has_anchor(&bytes) {
-                continue;
-            }
-            let Ok(text) = std::str::from_utf8(&bytes) else {
-                continue;
-            };
-            let markers = vcs_conflict_markers(text);
-            if markers.is_empty() {
-                continue;
-            }
-            let name = if kind == PageKind::Journal {
-                journal_format
-                    .parse(stem)
-                    .map(|day| journal_format.title(day))
-                    .unwrap_or_else(|| stem.to_owned())
-            } else {
-                decode_page_name(stem, config.file_name_format)
-            };
-            out.push(VcsMarkerConflict {
-                path: entry.id.as_str().to_owned(),
-                name,
-                kind,
-                markers: markers.iter().map(|m| m.to_string()).collect(),
-            });
-        }
+        out.extend(
+            listing
+                .files
+                .iter()
+                .filter_map(|entry| marker_entry(store, &entry.id)),
+        );
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
     out
@@ -429,95 +524,239 @@ fn has_anchor(bytes: &[u8]) -> bool {
         .any(|line| line.starts_with(b"<<<<<<< ") || line.starts_with(b">>>>>>> "))
 }
 
+/// The queue object for one listed copy; `None` for a stray whose winner is
+/// gone (a one-sided file, not a conflict; the overview discards it). Cost:
+/// one 2-way diff, O(both file bytes + blocks).
+fn copy_object(store: &Store, copy: &SyncConflict) -> Option<ConflictObject> {
+    let winner = copy.base_path.clone()?;
+    let diff = sync_conflict_diff(store, &winner, &copy.path, &[])
+        .ok()
+        .flatten();
+    Some(ConflictObject {
+        id: format!("copy:{}", copy.path),
+        source: ConflictSource::SyncCopy,
+        page_name: copy.base_name.clone(),
+        page_path: winner.clone(),
+        kind: copy.kind,
+        sides: vec![
+            ConflictSide {
+                role: SideRole::Mine,
+                label: "This device".to_string(),
+                path: Some(winner),
+            },
+            ConflictSide {
+                role: SideRole::Theirs,
+                label: if copy.tag.is_empty() {
+                    "Conflict copy".to_string()
+                } else {
+                    copy.tag.clone()
+                },
+                path: Some(copy.path.clone()),
+            },
+        ],
+        block_conflicts: diff.as_ref().map(|d| decidable_row_count(&d.rows)),
+        markers: Vec::new(),
+    })
+}
+
+/// The queue object for one marker-bearing page. Cost O(file bytes + blocks).
+fn marker_object(store: &Store, marked: &VcsMarkerConflict) -> ConflictObject {
+    let parsed = vcs_marker_conflict_diff(store, &marked.path).ok().flatten();
+    let label = |pick: fn(&MarkerConflictDiff) -> &str, fallback: &str| {
+        parsed
+            .as_ref()
+            .map(pick)
+            .filter(|l| !l.is_empty())
+            .unwrap_or(fallback)
+            .to_string()
+    };
+    let mut sides = vec![
+        ConflictSide {
+            role: SideRole::Mine,
+            label: label(|p| p.mine_label.as_str(), "Local side"),
+            path: None,
+        },
+        ConflictSide {
+            role: SideRole::Theirs,
+            label: label(|p| p.theirs_label.as_str(), "Merged-in side"),
+            path: None,
+        },
+    ];
+    if parsed.as_ref().is_some_and(|p| p.diff.three_way) {
+        sides.push(ConflictSide {
+            role: SideRole::Base,
+            label: "Common ancestor".to_string(),
+            path: None,
+        });
+    }
+    ConflictObject {
+        id: format!("markers:{}", marked.path),
+        source: ConflictSource::VcsMarkers,
+        page_name: marked.name.clone(),
+        page_path: marked.path.clone(),
+        kind: marked.kind,
+        sides,
+        block_conflicts: parsed.as_ref().map(|p| decidable_row_count(&p.diff.rows)),
+        markers: marked.markers.clone(),
+    }
+}
+
+fn sort_queue(queue: &mut [ConflictObject]) {
+    queue.sort_by(|a, b| a.page_name.cmp(&b.page_name).then_with(|| a.id.cmp(&b.id)));
+}
+
 /// The Concord conflict queue: ONE derived inventory of everything on disk
 /// that needs the user's judgement — sync-tool copies paired with their
 /// winner, and marker-bearing pages. Never persisted and never an authority:
 /// the same disk state recomputes the same objects with the same ids, and
 /// every resolve re-checks the files it writes. A copy whose winner is gone is
-/// a stray, not a two-sided conflict, and stays out (Settings discards it).
-/// Cost: the two listings plus one diff per queued item (conflicts are few).
+/// a stray, not a two-sided conflict, and stays out (the overview discards it).
+/// Cost: the two whole-graph listings (one bounded read of every page and
+/// journal file) plus one diff per queued item (conflicts are few).
 pub fn conflict_inventory(store: &Store) -> ConflictInventory {
     let sync_conflicts = list_sync_conflicts(store);
     let vcs_markers = list_vcs_marker_pages(store);
-    let mut out = Vec::new();
-    for copy in &sync_conflicts {
-        let Some(winner) = copy.base_path.clone() else {
-            continue;
-        };
-        let diff = sync_conflict_diff(store, &winner, &copy.path)
-            .ok()
-            .flatten();
-        out.push(ConflictObject {
-            id: format!("copy:{}", copy.path),
-            source: ConflictSource::SyncCopy,
-            page_name: copy.base_name.clone(),
-            page_path: winner.clone(),
-            kind: copy.kind,
-            sides: vec![
-                ConflictSide {
-                    role: SideRole::Mine,
-                    label: "This device".to_string(),
-                    path: Some(winner),
-                },
-                ConflictSide {
-                    role: SideRole::Theirs,
-                    label: if copy.tag.is_empty() {
-                        "Conflict copy".to_string()
-                    } else {
-                        copy.tag.clone()
-                    },
-                    path: Some(copy.path.clone()),
-                },
-            ],
-            block_conflicts: diff.as_ref().map(|d| decidable_row_count(&d.rows)),
-            markers: Vec::new(),
-        });
-    }
-    for marked in &vcs_markers {
-        let parsed = vcs_marker_conflict_diff(store, &marked.path).ok().flatten();
-        let label = |pick: fn(&MarkerConflictDiff) -> &str, fallback: &str| {
-            parsed
-                .as_ref()
-                .map(pick)
-                .filter(|l| !l.is_empty())
-                .unwrap_or(fallback)
-                .to_string()
-        };
-        let mut sides = vec![
-            ConflictSide {
-                role: SideRole::Mine,
-                label: label(|p| p.mine_label.as_str(), "Local side"),
-                path: None,
-            },
-            ConflictSide {
-                role: SideRole::Theirs,
-                label: label(|p| p.theirs_label.as_str(), "Merged-in side"),
-                path: None,
-            },
-        ];
-        if parsed.as_ref().is_some_and(|p| p.diff.three_way) {
-            sides.push(ConflictSide {
-                role: SideRole::Base,
-                label: "Common ancestor".to_string(),
-                path: None,
-            });
-        }
-        out.push(ConflictObject {
-            id: format!("markers:{}", marked.path),
-            source: ConflictSource::VcsMarkers,
-            page_name: marked.name.clone(),
-            page_path: marked.path.clone(),
-            kind: marked.kind,
-            sides,
-            block_conflicts: parsed.as_ref().map(|p| decidable_row_count(&p.diff.rows)),
-            markers: marked.markers.clone(),
-        });
-    }
-    out.sort_by(|a, b| a.page_name.cmp(&b.page_name).then_with(|| a.id.cmp(&b.id)));
+    let mut queue: Vec<_> = sync_conflicts
+        .iter()
+        .filter_map(|copy| copy_object(store, copy))
+        .chain(
+            vcs_markers
+                .iter()
+                .map(|marked| marker_object(store, marked)),
+        )
+        .collect();
+    sort_queue(&mut queue);
     ConflictInventory {
         sync_conflicts,
         vcs_markers,
-        queue: out,
+        queue,
+    }
+}
+
+/// The derived conflict queue of one open graph, held in memory only and
+/// never persisted. [`ConflictQueue::inventory`] walks the whole graph once
+/// (at graph open) and afterwards answers from memory;
+/// [`ConflictQueue::refresh_files`] re-derives only the entries a published
+/// change can have affected. Every answer equals what [`conflict_inventory`]
+/// would compute from the same disk state; resolves never trust it.
+#[derive(Default)]
+pub struct ConflictQueue {
+    derived: std::sync::Mutex<Option<ConflictInventory>>,
+}
+
+impl ConflictQueue {
+    /// The inventory: one full [`conflict_inventory`] walk the first time
+    /// (O(graph text bytes), about 72 ms on the 1,075-file anonymized graph),
+    /// then a clone of the in-memory answer (O(conflicts)). The walk holds the
+    /// queue's lock, so no concurrent [`Self::refresh_files`] can be lost.
+    pub fn inventory(&self, store: &Store) -> ConflictInventory {
+        let mut derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
+        derived
+            .get_or_insert_with(|| conflict_inventory(store))
+            .clone()
+    }
+
+    /// Re-derive what one published store change can affect. An external
+    /// change (watcher, scan) re-derives every changed file, so a marker or
+    /// copy written while the graph is open enters the queue on its next
+    /// event. An own change (a Tine save) re-derives only files the queue
+    /// already names or that are sync copies, so an ordinary save costs no
+    /// read here. Returns whether the queue changed.
+    pub fn refresh_change(&self, store: &Store, change: &tine_store::Change) -> bool {
+        let files: Vec<FileId> = {
+            let derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(inventory) = derived.as_ref() else {
+                return false;
+            };
+            let named = |path: &str| {
+                sync_copy_winner(path).is_some()
+                    || inventory.vcs_markers.iter().any(|m| m.path == path)
+                    || inventory.sync_conflicts.iter().any(|c| {
+                        c.path == path || sync_copy_winner(&c.path).as_deref() == Some(path)
+                    })
+            };
+            change
+                .files
+                .iter()
+                .filter(|(file, _, _)| {
+                    change.origin == tine_store::Origin::External || named(file.as_str())
+                })
+                .map(|(file, _, _)| file.clone())
+                .collect()
+        };
+        !files.is_empty() && self.refresh_files(store, &files)
+    }
+
+    /// Re-derive the entries `files` can affect: each file's own copy or
+    /// marker entry, and every copy whose winner is one of them. Returns
+    /// whether the queue or listings changed. Before the first
+    /// [`Self::inventory`] it does nothing and returns `false` (that walk will
+    /// read the current disk). Idempotent: it re-reads the files, so applying
+    /// the same change twice is harmless. Cost: one bounded read per changed
+    /// page or journal file plus one diff per affected copy, O(changed bytes);
+    /// no directory walk.
+    pub fn refresh_files(&self, store: &Store, files: &[FileId]) -> bool {
+        let mut derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(inventory) = derived.as_mut() else {
+            return false;
+        };
+        let before = serde_json::to_string(&*inventory).ok();
+        let exists = |rel: &str| id(store, rel).is_ok_and(|file| store.open_read(&file).is_ok());
+        let mut copies: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for file in files {
+            if graph_text_title(store, file).is_none() {
+                continue;
+            }
+            let path = file.as_str();
+            if sync_copy_winner(path).is_some() {
+                copies.insert(path.to_owned());
+                continue;
+            }
+            inventory.vcs_markers.retain(|m| m.path != path);
+            inventory.vcs_markers.extend(marker_entry(store, file));
+            copies.extend(
+                inventory
+                    .sync_conflicts
+                    .iter()
+                    .filter(|c| sync_copy_winner(&c.path).as_deref() == Some(path))
+                    .map(|c| c.path.clone()),
+            );
+        }
+        for copy in &copies {
+            inventory.sync_conflicts.retain(|c| &c.path != copy);
+            let file = FileId::from(copy.clone());
+            if exists(copy) {
+                inventory
+                    .sync_conflicts
+                    .extend(sync_copy_entry(store, &file, exists));
+            }
+        }
+        inventory.vcs_markers.sort_by(|a, b| a.path.cmp(&b.path));
+        sort_copies(&mut inventory.sync_conflicts);
+        let touched = |object: &ConflictObject| match object.source {
+            ConflictSource::SyncCopy => object
+                .sides
+                .iter()
+                .any(|s| s.path.as_ref().is_some_and(|p| copies.contains(p))),
+            _ => files.iter().any(|f| f.as_str() == object.page_path),
+        };
+        inventory.queue.retain(|object| !touched(object));
+        let fresh: Vec<_> = inventory
+            .sync_conflicts
+            .iter()
+            .filter(|c| copies.contains(&c.path))
+            .filter_map(|c| copy_object(store, c))
+            .chain(
+                inventory
+                    .vcs_markers
+                    .iter()
+                    .filter(|m| files.iter().any(|f| f.as_str() == m.path))
+                    .map(|m| marker_object(store, m)),
+            )
+            .collect();
+        inventory.queue.extend(fresh);
+        sort_queue(&mut inventory.queue);
+        serde_json::to_string(&*inventory).ok() != before
     }
 }
 

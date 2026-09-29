@@ -5,7 +5,7 @@
 // blocks on IPC. Journal-page-title tokens are NOT resolved here (that needs the
 // graph); they pass through to the backend verbatim.
 
-import { journalTitle } from "../journal";
+import { journalTitle, appNow } from "../journal";
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -34,7 +34,7 @@ function addMonths(d: Date, n: number): Date {
 
 /** Resolve a bound token to a concrete date, or null if it needs the graph
  *  (a journal page title) or is malformed. `today` defaults to the real today. */
-export function resolveDateToken(tok: string, today = new Date()): Date | null {
+export function resolveDateToken(tok: string, today = appNow()): Date | null {
   const t = tok.trim();
   switch (t.toLowerCase()) {
     case "":
@@ -79,7 +79,7 @@ export function resolveDateToken(tok: string, today = new Date()): Date | null {
 
 /** Short, human preview of a resolved token ("→ Jun 16th, 2026"), or "" if the
  *  token can't be resolved on the frontend. */
-export function previewDate(tok: string, today = new Date()): string {
+export function previewDate(tok: string, today = appNow()): string {
   const d = resolveDateToken(tok, today);
   return d ? journalTitle(d) : "";
 }

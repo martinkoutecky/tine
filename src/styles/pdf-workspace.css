@@ -708,4 +708,10 @@
 .welcome-choice-title { font-weight: 600; color: var(--text-primary); font-size: 1.02rem; }
 .welcome-choice-sub { color: var(--text-muted); font-size: .88rem; line-height: 1.4; }
 .welcome-busy { color: var(--text-muted); font-size: .9rem; margin: 16px 0 0; }
+.welcome-recovery { text-align: left; margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated, var(--bg)); }
+.welcome-recovery p { margin: 0 0 6px; }
+.welcome-recovery-title { font-weight: 600; }
+.welcome-recovery-path { font-family: var(--font-mono, monospace); font-size: .85rem; word-break: break-all; }
+.welcome-recovery-reason, .welcome-recovery-note { color: var(--text-muted); font-size: .85rem; overflow-wrap: anywhere; }
+.welcome-recovery-actions { display: flex; gap: 8px; margin: 8px 0; }
 .welcome-foot { color: var(--text-muted); font-size: .82rem; margin: 26px 0 0; }

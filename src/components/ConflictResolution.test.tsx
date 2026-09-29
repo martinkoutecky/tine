@@ -141,6 +141,25 @@ describe("in-page conflict resolution", () => {
     dispose();
   });
 
+  // og 20a (master ADR 0056): a sync copy reviewed 3-way against the Concord
+  // base ledger sends the base's identity back, so the resolve applies a
+  // "merged" row only against the base the user saw.
+  it("sends the reviewed ledger base back with a sync-copy resolve", async () => {
+    setConflictInventory(inventoryWith(copyConflict));
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue({ ...diff([threeWayRows[0]], "winner-rev"), three_way: true, merge_base_rev: "base-sha" });
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(copyConflict);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(sync).toHaveBeenCalledWith(
+      "pages/Plan.md", "pages/Plan.sync-conflict-20260705-141233-ABCDEFG.md", { "0": "theirs" },
+      "winner-rev", "copy-rev", ["replace-page", "delete-page"], "union", "base-sha",
+    );
+    dispose();
+  });
+
   it("routes a conflict copy through the sync resolve path, not the marker one", async () => {
     setConflictInventory(inventoryWith(copyConflict));
     const diffCall = vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff([threeWayRows[1]], "winner-rev"));
@@ -157,7 +176,7 @@ describe("in-page conflict resolution", () => {
     await settle();
     expect(sync).toHaveBeenCalledWith(
       "pages/Plan.md", "pages/Plan.sync-conflict-20260705-141233-ABCDEFG.md", { "1": "both" },
-      "winner-rev", "copy-rev", ["replace-page", "delete-page"], "union",
+      "winner-rev", "copy-rev", ["replace-page", "delete-page"], "union", undefined,
     );
     expect(marker).not.toHaveBeenCalled();
     expect(conflictQueue()).toEqual([]);
@@ -188,7 +207,7 @@ describe("in-page conflict resolution", () => {
     await settle();
     expect(sync).toHaveBeenCalledWith(
       "journals/2026_07_05.md", "journals/2026_07_05.sync-conflict-20260705-141233-ABCDEFG.md", { "1": "both" },
-      "journal-rev", "copy-rev", ["replace-page", "delete-page"], "union",
+      "journal-rev", "copy-rev", ["replace-page", "delete-page"], "union", undefined,
     );
     expect(conflictQueue()).toEqual([]);
     expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "journals/2026_07_05.md", name: "Jul 5th, 2026", kind: "journal", created: false, removed: false });

@@ -12,7 +12,7 @@ import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
 import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
-import { journalTitle, localDayKey, setJournalTitleFormat } from "./journal";
+import { journalTitle, localDayKey, setJournalTitleFormat, appNow } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
 import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
@@ -508,7 +508,7 @@ async function seedTodayJournal(): Promise<void> {
   const binding = captureBinding();
   const owner = graphOwner();
   try {
-    const title = journalTitle(new Date());
+    const title = journalTitle(appNow());
     const page = await readOwned(owner, backend().getPage(title, "journal"));
     if (page.kind === "stale") return;
     const existing = page.value;

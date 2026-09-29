@@ -7,6 +7,7 @@
     "Courier New", monospace;
 
   --ls-main-content-max-width: 810px;
+  --ls-main-content-max-width-wide: 100%;
   --ls-left-sidebar-width: 246px;
   --ls-headbar-height: 48px;
   --ls-page-title-size: 28px;

@@ -75,5 +75,6 @@ see the project `CLAUDE.md`.
 | [0046](0046-declarative-plugin-settings-and-themes.md) | Plugin settings and themes are separate declarative host contracts | Accepted |
 | [0047](0047-android-plugin-platform-at-launch.md) | Android joins the initial plugin-platform launch through explicit opt-in | Accepted |
 | [0052](0052-ios-plugin-platform-apple-4-7-2.md) | The plugin API may never re-export native surface (Apple 4.7.2); read before widening `PLUGIN_CAPABILITIES` | Accepted |
+| [0056](0056-concord-base-ledger.md) | Concord base ledger: the last two agreed texts per page, in app data, feed 3-way sync-copy reviews; never an authority | Accepted |
 | [0058](0058-privacy-safe-diagnostic-flight-recorder.md) | Diagnostics are a privacy-safe flight recorder, persisted in app data (bounded, atomic, no graph bytes) | Accepted |
 | [0059](0059-bounded-theme-presentation-presets.md) | Theme API 0.2 adds bounded host-owned typography, journal-header, and Today-summary presets | Accepted |
