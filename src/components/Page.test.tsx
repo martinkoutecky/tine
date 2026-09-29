@@ -2,13 +2,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { invalidateBinding } from "../binding";
 import { initParser } from "../render/parse";
-import { pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, moveBlockFeed } from "../document";
+import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, moveBlockFeed } from "../document";
 import { setBlockMoving } from "../document/edits/moves";
 import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
-import { loadSingle } from "../document/workingSet";
+import { loadSingle, pinPageWhileDrafting } from "../document/workingSet";
 import { editingId, editingOwner, activeSurface, endEdit, startEditing } from "../editorController";
 import { journalTitle } from "../journal";
 import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
@@ -423,6 +424,48 @@ describe("Journals feed generation lifecycle", () => {
     expect(call).not.toHaveBeenCalled();
     expect(pageByName(today)).toBe(before);
     expect(doc.feed).toEqual([today]);
+  });
+
+  // Master ba80a151e (family 8, Concord lifecycle): a Journals refresh that
+  // lands while something holds today's journal must neither drop today from the
+  // feed nor install over it, and must replay the moment the hold releases, so
+  // a resolved conflict on today shows its result in place. og's hold is the
+  // draft pin (it has no page mutation lock); the replay is the declined feed
+  // page's deferred reload.
+  it("keeps today in place when a hold owns it while a journal refresh is in flight, then replays", async () => {
+    invalidateBinding(); // no deferred reload from an earlier test
+    const today = journalTitle(new Date());
+    const older = "August 21st, 2026";
+    setDoc({
+      byId: { today: node("today", "visible today", today), older: node("older", "visible older", older) },
+      pages: [page(today, "journal", ["today"]), page(older, "journal", ["older"])],
+      feed: [today, older],
+      loaded: true,
+    });
+    // Every feed read stays in flight until the hold is taken.
+    const lands: ((response: JournalFeedPage) => void)[] = [];
+    const api = vi.spyOn(backend(), "journalFeedPage").mockImplementation(() => new Promise((resolve) => { lands.push(resolve); }));
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(journalDto(today, "fresh today"));
+    installExternalChangeUiHandler(() => ({ pageOpen: () => false, journalsOpen: true, leaveRemovedPage() {}, restartJournalFeed() {} }));
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      expect(api).toHaveBeenCalled();
+      const release = pinPageWhileDrafting(() => today);
+      for (const land of lands) land(feedResponse([journalDto(today, "response today"), journalDto(older, "response older")]));
+      await flushMicrotasks();
+      await flushMicrotasks();
+      expect(doc.feed).toEqual([today, older]);
+      expect(pageByName(today)?.roots.map((id) => doc.byId[id].raw)).toEqual(["visible today"]);
+
+      release();
+      await vi.waitFor(() => expect(pageByName(today)?.roots.map((id) => doc.byId[id].raw)).toEqual(["fresh today"]));
+      expect(doc.feed).toEqual([today, older]);
+      expect(getPage).toHaveBeenCalledWith(today, "journal");
+    } finally {
+      installExternalChangeUiHandler(() => ({ pageOpen: () => false, journalsOpen: false, leaveRemovedPage() {}, restartJournalFeed() {} }));
+      mounted.dispose();
+    }
   });
 
   it("rejects a false owner before generation acquisition so its live request still lands", async () => {

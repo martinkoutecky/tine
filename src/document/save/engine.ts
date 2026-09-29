@@ -682,6 +682,10 @@ export function trackAssetWrite<T>(write: Promise<T>): Promise<T> {
 export function setBaseRev(name: string, rev: string | null) {
   baseRev.set(name, rev);
 }
+/** The revision page `name` was last loaded or saved at; `undefined` when unknown. O(1). */
+export function baseRevFor(name: string): string | null | undefined {
+  return baseRev.get(name);
+}
 /** Transfer one exact loaded file's save ownership after its effective title
  * changes. A pending old-name save is allowed to retire; any newer dirty intent
  * is scheduled under the new name and remains revision guarded. */
