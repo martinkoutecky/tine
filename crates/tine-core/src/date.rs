@@ -516,6 +516,19 @@ impl JournalFormat {
         self.file.format(d)
     }
 
+    /// Whether `stem` names the canonical file of its day: a `yyyy_MM_dd` /
+    /// `yyyy-MM-dd` date stem, or exactly the stem the configured
+    /// `:journal/file-name-format` renders for the date it parses to. The one
+    /// answer to "is this journal file the day's own file or a stray" — a
+    /// configured-format file must never count as a stray of itself (C3 L05).
+    pub fn is_canonical_stem(&self, stem: &str) -> bool {
+        JournalDate::from_file_stem(stem).is_some()
+            || self
+                .file
+                .parse(stem)
+                .is_some_and(|d| self.file.format(d) == stem)
+    }
+
     /// Configured page-title format string, including unsupported literals.
     pub fn title_format(&self) -> &str {
         &self.title_pat
@@ -529,6 +542,20 @@ impl JournalFormat {
 #[cfg(test)]
 mod fmt_tests {
     use super::*;
+
+    #[test]
+    fn configured_file_stem_is_its_days_canonical_file() {
+        for (pat, own, stray) in [
+            ("dd-MM-yyyy", "24-06-2026", "Wednesday, 24-06-2026"),
+            ("yyyyMMdd", "20260624", "Jun 24th, 2026"),
+            ("yyyy.MM.dd", "2026.06.24", "Jun 24th, 2026"),
+        ] {
+            let f = JournalFormat::new(Some(pat), Some("EEEE, dd-MM-yyyy"));
+            assert!(f.is_canonical_stem(own), "{pat}");
+            assert!(f.is_canonical_stem("2026_06_24"), "{pat}");
+            assert!(!f.is_canonical_stem(stray), "{pat}");
+        }
+    }
 
     fn d(y: i32, m: u32, day: u32) -> JournalDate {
         JournalDate {
