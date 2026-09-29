@@ -318,9 +318,13 @@ mod rename_guide_tests {
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("**Code blocks**: type ``` "));
         assert!(tips.contains("only the code itself is in the text box"));
-        assert!(tips.contains("**Drag a bullet onto another bullet and move a little to the right**"));
+        assert!(
+            tips.contains("**Drag a bullet onto another bullet and move a little to the right**")
+        );
         assert!(tips.contains("that bullet's last child"));
-        assert!(tips.contains("Typing `::` at the start of a line inside a bullet starts a property"));
+        assert!(
+            tips.contains("Typing `::` at the start of a line inside a bullet starts a property")
+        );
     }
 
     #[test]
