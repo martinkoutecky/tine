@@ -281,3 +281,27 @@ fn production_plugin_writes_stay_on_the_no_replace_store_path() {
         "I-16: no replacing rename in plugin storage; use device_io::move_file_noreplace"
     );
 }
+
+#[test]
+fn plugin_states_distinguish_absent_from_unreadable_and_keep_unknown_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("tine-settings.json");
+    assert!(plugin_states_at(&settings).unwrap().is_empty());
+
+    std::fs::write(
+        &settings,
+        r#"{"plugin_states":{"a":{"version":"1.0.0","enabled":true"#,
+    )
+    .unwrap();
+    let error = plugin_states_at(&settings).unwrap_err();
+    assert!(error.contains("tine-settings.json"), "{error}");
+
+    std::fs::write(
+        &settings,
+        r#"{"plugin_states":{"a":{"version":"1.0.0","enabled":true},"future":{"channel":"x"}}}"#,
+    )
+    .unwrap();
+    let states = plugin_states_at(&settings).unwrap();
+    assert_eq!(states.len(), 1);
+    assert!(states["a"].enabled);
+}
