@@ -756,7 +756,9 @@ mod og_20d_guide_tests {
         assert!(files.contains("A sheet that cannot be computed"));
         assert!(files.contains("the export still succeeds"));
         // A query-backed table or board exports as a sheet; the old "result list for now" is gone.
-        assert!(files.contains("A table or board that shows a query's results is written the same way"));
+        assert!(
+            files.contains("A table or board that shows a query's results is written the same way")
+        );
         assert!(!files.contains("result list for now"));
     }
 

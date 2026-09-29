@@ -873,6 +873,9 @@ mod tests {
                 }
             }
         }
-        assert!(declared_rows > 0, "the generator never produced a declared key");
+        assert!(
+            declared_rows > 0,
+            "the generator never produced a declared key"
+        );
     }
 }

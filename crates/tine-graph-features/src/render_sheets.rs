@@ -376,7 +376,12 @@ pub(super) fn sole_query_macro(block: &DocBlock) -> Option<(String, String)> {
 
 /// FNV-1a of a query sheet's identity: the owner's subtree, the macro and each
 /// result row (page, raw text). Recomputed at render time from a fresh run.
-fn query_fingerprint(owner: &DocBlock, found: &(String, String), pages: &[String], rows: &[BlockDto]) -> String {
+fn query_fingerprint(
+    owner: &DocBlock,
+    found: &(String, String),
+    pages: &[String],
+    rows: &[BlockDto],
+) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut feed = |bytes: &[u8]| {
         for byte in bytes {
@@ -832,7 +837,11 @@ pub(super) fn emit_query(
         ));
         return false;
     }
-    if !rows.pages.iter().all(|page| publish_page_allowed(e.ctx, page)) {
+    if !rows
+        .pages
+        .iter()
+        .all(|page| publish_page_allowed(e.ctx, page))
+    {
         return false;
     }
     match &export.body {

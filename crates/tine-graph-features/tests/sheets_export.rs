@@ -438,19 +438,40 @@ fn tail_queries_html(base: &Path) -> String {
 #[test]
 fn query_backed_sheets_lay_out_as_table_and_board_in_place_of_the_result_list() {
     let (base, store) = open_fixture();
-    publish_live_with_sheets(&store, &base.join("output"), "export", false, &bundle(), exports())
-        .unwrap();
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        &bundle(),
+        exports(),
+    )
+    .unwrap();
     let html = tail_queries_html(&base);
     // The table: the query's rows under the observed columns, the page column last.
     assert!(html.contains("<table class=\"sheet-table\">"), "{html}");
-    assert!(html.contains("<th>Page</th>") && html.contains("<td>Sheets</td>"), "{html}");
+    assert!(
+        html.contains("<th>Page</th>") && html.contains("<td>Sheets</td>"),
+        "{html}"
+    );
     assert!(html.contains("First"), "{html}");
     // The board: state columns over the same rows, no result list beside it.
-    assert!(html.contains("<div class=\"sheet-board\">") && html.contains("Write tests"), "{html}");
+    assert!(
+        html.contains("<div class=\"sheet-board\">") && html.contains("Write tests"),
+        "{html}"
+    );
     // The grid face is not a query face: the block keeps its flat result list and outline.
     assert!(html.contains("stays a result list"), "{html}");
-    assert_eq!(html.matches("<table class=\"sheet-table\">").count(), 1, "{html}");
-    assert_eq!(html.matches("class=\"query\"").count(), 1, "only the grid block keeps a result list: {html}");
+    assert_eq!(
+        html.matches("<table class=\"sheet-table\">").count(),
+        1,
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("class=\"query\"").count(),
+        1,
+        "only the grid block keeps a result list: {html}"
+    );
     store.close();
 }
 
@@ -458,16 +479,28 @@ fn query_backed_sheets_lay_out_as_table_and_board_in_place_of_the_result_list() 
 fn a_query_sheet_whose_result_changed_is_refused_with_a_note_and_shows_the_results() {
     let html = {
         let mut all = raw_exports();
-        for x in all.iter_mut().filter(|x| x["query"] == true && x["view"] == "table") {
+        for x in all
+            .iter_mut()
+            .filter(|x| x["query"] == true && x["view"] == "table")
+        {
             x["fp"] = "0000000000000000".into();
         }
         export_html_of(&all)
     };
     let html = html.1;
-    assert!(html.contains("This query changed while the export was prepared; showing its results."), "{html}");
+    assert!(
+        html.contains("This query changed while the export was prepared; showing its results."),
+        "{html}"
+    );
     assert!(!html.contains("<table class=\"sheet-table\">"), "{html}");
-    assert!(html.contains("First"), "the flat result list still shows it: {html}");
-    assert!(html.contains("<div class=\"sheet-board\">"), "the other query sheet is unaffected");
+    assert!(
+        html.contains("First"),
+        "the flat result list still shows it: {html}"
+    );
+    assert!(
+        html.contains("<div class=\"sheet-board\">"),
+        "the other query sheet is unaffected"
+    );
 }
 
 fn export_html_of(all: &[Value]) -> (Scratch, String) {
@@ -492,12 +525,19 @@ fn a_query_sheet_over_an_unpublished_page_keeps_the_filtered_result_list() {
     // sheet with any row on a page the export does not publish falls back to the list,
     // which drops that row.
     let (base, store) = open_fixture();
-    fs::write(base.join("graph/pages/Secret.md"), "- TODO hidden-secret-row\n").unwrap();
+    fs::write(
+        base.join("graph/pages/Secret.md"),
+        "- TODO hidden-secret-row\n",
+    )
+    .unwrap();
     store.scan_refresh().unwrap();
     let inputs = sheet_export_inputs(&store, Some(&["Tail-queries".to_owned()])).unwrap();
     let table = &inputs[0];
     let query = table.query.as_ref().expect("the query table has rows");
-    assert!(query.pages.iter().any(|p| p == "Secret"), "the app sees the private row");
+    assert!(
+        query.pages.iter().any(|p| p == "Secret"),
+        "the app sees the private row"
+    );
     let answer: Vec<SheetExport> = serde_json::from_value(serde_json::json!([{
         "page": table.page, "path": table.path, "fp": query.fp, "query": true, "view": "table",
         "columns": [{"label": "Block", "formula": false}],
@@ -505,11 +545,24 @@ fn a_query_sheet_over_an_unpublished_page_keeps_the_filtered_result_list() {
         "footer": null, "filterError": null, "omitted": 0
     }]))
     .unwrap();
-    publish_live_with_sheets(&store, &base.join("output"), "export", false, &bundle(), answer)
-        .unwrap();
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        &bundle(),
+        answer,
+    )
+    .unwrap();
     let html = tail_queries_html(&base);
     assert!(!html.contains("<table class=\"sheet-table\">"), "{html}");
-    assert!(!html.contains("hidden-secret-row"), "the private row never publishes: {html}");
-    assert!(html.contains("First"), "the public results still list: {html}");
+    assert!(
+        !html.contains("hidden-secret-row"),
+        "the private row never publishes: {html}"
+    );
+    assert!(
+        html.contains("First"),
+        "the public results still list: {html}"
+    );
     store.close();
 }
