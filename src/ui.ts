@@ -88,13 +88,13 @@ function loadStr(key: string): string | null {
     return null;
   }
 }
-function saveStr(key: string, val: string | null): boolean {
+function saveStr(key: string, val: string | null, what = "display preference"): boolean {
   try {
     if (val === null) localStorage.removeItem(key);
     else localStorage.setItem(key, val);
     return true;
   } catch {
-    pushToast("Could not save display preference.", "error");
+    pushToast(`Could not save ${what}.`, "error");
     return false;
   }
 }
@@ -259,8 +259,10 @@ export async function refreshJournalConflicts(notify = false): Promise<void> {
         { sticky: true, action: { label: "Open", run: () => openSettings("backups") } }
       );
     }
-  } catch {
-    /* best-effort */
+  } catch (error) {
+    // A failed listing must not read as "no duplicate days": say so, but only
+    // for the graph that asked (a switch already emptied the list).
+    if (owner()) pushToast(`Could not check for duplicate journal days: ${String(error)}`, "error");
   }
 }
 
@@ -805,12 +807,10 @@ function loadShortcutOverrides(): Record<string, string> {
 export const [shortcutOverrides, setShortcutOverrides] =
   createSignal<Record<string, string>>(loadShortcutOverrides());
 function persistShortcuts(next: Record<string, string>) {
+  // Like changeAccent: a refused write is announced and NOT applied, so the
+  // shortcut the user sees is the one that will still be there after a restart.
+  if (!saveStr(SHORTCUTS_KEY, JSON.stringify(next), "keyboard shortcuts")) return;
   setShortcutOverrides(next);
-  try {
-    localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(next));
-  } catch {
-    // ignore
-  }
 }
 export function setShortcutOverride(id: string, binding: string) {
   persistShortcuts({ ...shortcutOverrides(), [id]: binding });
