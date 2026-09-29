@@ -274,6 +274,44 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("keeps Pages and Blocks as separate result sections, including an empty family", async () => {
+    const route: QueryRoute = { kind: "query", id: "section-test", sourceKind: "search", source: "alpha", presentation: "search" };
+    const deps = workspaceDeps();
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelectorAll("[data-query-result-kind]")).toHaveLength(2));
+      expect([...root.querySelectorAll("[data-query-result-kind] h3")].map((heading) => heading.textContent?.split(" ")[0])).toEqual(["Pages", "Blocks"]);
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("Alpha notes"));
+      expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("Alpha notes");
+      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("An alpha result");
+      vi.mocked(deps.runGraphSearch).mockResolvedValue({ ...executionFixture(false), hits: executionFixture(false).hits.filter((hit) => hit.entity === "block") });
+      const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+      input.value = "beta"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("No matching pages."));
+      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("An alpha result");
+    } finally { dispose(); }
+  });
+  it("opens an alias match through the owner path and marks each family's truncation", async () => {
+    const route: QueryRoute = { kind: "query", id: "alias-section", sourceKind: "search", source: "nickname", presentation: "search" };
+    const deps = workspaceDeps();
+    vi.mocked(deps.runGraphSearch).mockResolvedValue({
+      ...executionFixture(false),
+      hits: [{ entity: "page", page: { name: "Owner", kind: "page", path: "pages/owner.md", date_key: null },
+        display_text: "Nickname", evidence: [], score: 100, matched_alias: "Nickname" }],
+      has_more: { pages: true, blocks: false },
+    });
+    const router = routerMock(route);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("matched alias Nickname"));
+      expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("More pages match than are shown.");
+      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).not.toContain("More blocks");
+      root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] .query-result-row')!.click();
+      expect(router.openPageTarget).toHaveBeenCalledWith({ name: "Owner", pageKind: "page", path: "pages/owner.md" });
+    } finally { dispose(); }
+  });
   // Ported from master src/components/QueryWorkspace.test.tsx (same title).
   it("peels a QueryBuilder child before its Advanced parent and preserves the draft", async () => {
     const route: QueryRoute = {

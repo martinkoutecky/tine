@@ -34,7 +34,9 @@ import type {
 import type { ParsedQuery, Query, QueryResult, ViewSettings, ExplainEmptyResult } from "../editor/queryIr";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
-import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
+import { SearchResultRow } from "./SearchResultRow";
+import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
+import { QueryResultSections } from "./QueryResultSections";
 import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
@@ -672,9 +674,11 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   );
 
   const hits = () => execution()?.hits ?? [];
+  const pageHits = () => hits().filter((hit): hit is QueryPageHit => hit.entity === "page");
+  const blockHits = () => hits().filter((hit): hit is Extract<QueryHit, { entity: "block" }> => hit.entity === "block");
   const boardGroups = createMemo(() => {
     const grouped = new Map<string, QueryHit[]>();
-    for (const hit of hits()) {
+    for (const hit of blockHits()) {
       const page = hitPage(hit);
       const group = grouped.get(page);
       if (group) group.push(hit);
@@ -853,33 +857,25 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         </section>
       </Show>
 
-      <Show when={!execution.loading && !execution.error && !hits().length && source().trim() && !execution()?.diagnostics.length}>
-        <p class="query-workspace-empty">No matching pages or blocks.</p>
-      </Show>
-
-      <Switch>
+      <Show when={source().trim()}>
+      <QueryResultSections
+        pending={execution.loading}
+        failure={execution.error ? `Search failed: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}` : null}
+        families={[
+          { kind: "page", hits: pageHits().length, hasMore: !!execution()?.has_more?.pages,
+            body: <QueryPageResults hits={pageHits()} presentation={presentation()} surfaceId={hitSurfaceId} onOpen={openHit} /> },
+          { kind: "block", hits: blockHits().length, hasMore: !!execution()?.has_more?.blocks,
+            body: <Switch>
         <Match when={presentation() === "search"}>
-          <div class="query-results-search" role="list" aria-label="Search results">
-            <For each={hits()}>{(hit) => (
+          <div class="query-results-search" role="list" aria-label="Block results">
+            <For each={blockHits()}>{(hit) => (
               <div role="listitem">
-                {hit.entity === "block"
-                  ? resultButton(hit, <SearchResultRow
+                {resultButton(hit, <SearchResultRow
                     page={hit.page}
                     breadcrumb={hit.block.breadcrumb ?? []}
                     text={hit.display_text}
                     spans={hitSpans(hit)}
-                  />)
-                  : resultButton(hit, <>
-                    <span class="switcher-kind">page</span>
-                    <span class="search-result-body">
-                      <span class="search-result-context">Page</span>
-                      <span class="search-result-excerpt">
-                        <For each={buildSearchExcerpt(hit.display_text, hitSpans(hit))}>{(segment) => segment.marked
-                          ? <mark>{segment.text}</mark>
-                          : segment.text}</For>
-                      </span>
-                    </span>
-                  </>)}
+                  />)}
               </div>
             )}</For>
           </div>
@@ -887,7 +883,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
 
         <Match when={presentation() === "list"}>
           <ul class="query-results-list" aria-label="Query results">
-            <For each={hits()}>{(hit) => (
+            <For each={blockHits()}>{(hit) => (
               <li>
                 <button type="button" data-inpage-find-surface={hitSurfaceId(hit)} onClick={() => openHit(hit)}>
                   <span class="query-list-context">{hitPage(hit)}</span>
@@ -904,7 +900,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
               <caption class="sr-only">Query results</caption>
               <thead><tr><th scope="col">Type</th><th scope="col">Page</th><th scope="col">Content</th></tr></thead>
               <tbody>
-                <For each={hits()}>{(hit) => (
+                <For each={blockHits()}>{(hit) => (
                   <tr data-inpage-find-surface={hitSurfaceId(hit)}>
                     <td>{hitKind(hit)}</td>
                     <td><button type="button" onClick={() => openHit(hit)}>{hitPage(hit)}</button></td>
@@ -932,7 +928,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             )}</For>
           </div>
         </Match>
-      </Switch>
+      </Switch> },
+        ]}
+      />
+      </Show>
 
       <Show when={advancedOpen()}>
         <AdvancedModal
