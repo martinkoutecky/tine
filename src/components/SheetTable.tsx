@@ -1,7 +1,7 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
-import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
-import { visibleBody, isRenderHiddenProp } from "../render/block";
+import { facetsOf } from "../render/facets";
+import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { editorOffsetFromRenderedRange } from "../render/spans";
@@ -45,14 +45,13 @@ import {
   createFormulaResultsMemo,
   formulaResultKey,
   formulaRowKey,
-  formulaValueText,
   formulaValueToFieldValue,
   readFormulaRowField,
   liveFormulaRowNode,
   type FormulaEvalRow,
 } from "../sheet/formulaEval";
 import type { FormulaValue } from "../sheet/formula";
-import { isPlainDecimalNumber, parseIsoDateLike } from "../sheet/typed";
+import { isPlainDecimalNumber } from "../sheet/typed";
 import { openActionContextMenu, openDatePicker, openFormulaEditor, openSheetCellContextMenu, openSheetContextMenu, type ContextMenuAction } from "../ui";
 import { pushToast } from "../toasts";
 import { blockBackgroundColor } from "../blockColors";
@@ -64,6 +63,9 @@ import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydra
 import { compareSortKeys, measuredGridTracks, nextQuerySort, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
   SCHEMA_PROP_TYPES, type SchemaMenuType, type SortKey, type SortState } from "../sheet/tablePresentation";
 import type { ViewSettings } from "../editor/queryIr";
+import { FieldValueView, isEnumFieldType } from "./SheetFieldValue";
+import { fieldIdsForRecords, recordFacets } from "../sheet/tableFields";
+import { createTableColumnResize } from "../sheet/tableColumnResize";
 
 interface RowRecord extends FormulaEvalRow {}
 
@@ -75,8 +77,10 @@ type FieldHeaderDrop = { field: FieldId; before: boolean };
 
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
 const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
-/** A table receives one query display controller for saved columns and header
- * sorts. Without it, headers keep their existing local-only arrangement. */
+/** Render children or query rows as a table. A query display controller owns
+ * saved columns and sorts; without it headers keep their local arrangement.
+ * Resizing reads one owner's widths and writes one property through document
+ * on commit; row and field work scales with the supplied table, never a graph. */
 export function SheetTable(props: {
   ownerId: string;
   rowSource: "children" | "query";
@@ -214,6 +218,7 @@ export function SheetTable(props: {
   const formulaEntries = () => [...formulas().entries()];
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
+  const tableWidths = createTableColumnResize(props.ownerId, props.schemaPage);
   const columnIndex = createMemo(() => new Map(columns().map((column, index) => [column, index] as const)));
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
   const actionColumn = () => hasActionColumn() ? "96px" : "";
@@ -221,15 +226,20 @@ export function SheetTable(props: {
   // white-space) instead of stretching its column to the full unwrapped line —
   // an uncapped `max-content` track made one long value blow the table out
   // horizontally. Users can still resize wider (stableColumns overrides this).
-  const baseGridColumns = createMemo(() =>
-    // NB: fit-content() is NOT valid inside minmax() — that voids the whole
-    // grid-template-columns and collapses the table to one column. Use bare
-    // fit-content() tracks; the title cell keeps its own min-width (`.sheet-cell`
-    // / `.sheet-title-header`), so the 180px floor is preserved.
-    `fit-content(420px) repeat(${fields().length}, fit-content(320px)) ${actionColumn()}`
-  );
+  const baseGridColumns = createMemo(() => [...columns().map((column, index) =>
+    tableWidths.widths().has(column) ? `${tableWidths.widths().get(column)}px`
+      : index === 0 ? "fit-content(420px)" : "fit-content(320px)"), actionColumn()].join(" "));
   const editingInThisTable = () => editingOwner()?.startsWith(`sheet:${surfaceId}:${props.ownerId}:`) ?? false;
-  const gridColumns = createMemo(() => stableColumns() ?? baseGridColumns());
+  const gridColumns = createMemo(() => {
+    const stable = stableColumns();
+    if (!stable || tableWidths.resizing()) return baseGridColumns();
+    const tracks = stable.trim().split(/\s+/);
+    columns().forEach((column, index) => {
+      const width = tableWidths.widths().get(column);
+      if (width !== undefined) tracks[index] = `${width}px`;
+    });
+    return tracks.join(" ");
+  });
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
   const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
   const showFooter = createMemo(() => hasAggregates() || footerPinned());
@@ -816,8 +826,7 @@ export function SheetTable(props: {
               title={props.addRowLabel ?? "Add row"}
               onClick={runAddRow}
             >
-              <span class="sheet-ghost-plus">+</span>
-              <span>{props.addRowLabel ?? "Add row"}</span>
+              <span class="sheet-ghost-sticky"><span class="sheet-ghost-plus">+</span><span>{props.addRowLabel ?? "Add row"}</span></span>
             </button>
           </Show>
         </div>
@@ -828,6 +837,7 @@ export function SheetTable(props: {
           tableRef = el;
         }}
         class="sheet-table"
+        classList={{ "sheet-table-resizing": tableWidths.resizing() !== null }}
         data-sheet-grid-id={props.ownerId}
         data-sheet-surface-id={surfaceId}
         style={{ "grid-template-columns": gridColumns() }}
@@ -846,6 +856,7 @@ export function SheetTable(props: {
               </span>
             )}
           </Show>
+          {tableWidths.handle("title", "Block")}
         </div>
         <For each={fields()}>
           {(field, i) => (
@@ -914,6 +925,7 @@ export function SheetTable(props: {
                   }}
                 />
               </Show>
+              {tableWidths.handle(field, fieldLabel(field))}
             </div>
           )}
         </For>
@@ -1067,8 +1079,7 @@ export function SheetTable(props: {
               runAddRow();
             }}
           >
-            <span class="sheet-ghost-plus">+</span>
-            <span class="sheet-ghost-label">{props.addRowLabel ?? "Add row"}</span>
+            <span class="sheet-ghost-sticky"><span class="sheet-ghost-plus">+</span><span class="sheet-ghost-label">{props.addRowLabel ?? "Add row"}</span></span>
           </button>
         </Show>
         <Show when={!sheetOverlay && showFooterToggle()}>
@@ -1077,48 +1088,6 @@ export function SheetTable(props: {
       </div>
     </Show>
   );
-}
-
-function recordFacets(row: RowRecord): Facets | null {
-  const n = liveFormulaRowNode(row);
-  if (n) return facetsOf(n.raw, formatForBlock(row.id));
-  return row.dto ? facetsFromDto(row.dto) : null;
-}
-
-function fieldIdsForRecords(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
-  const out: FieldId[] = [];
-  const props: FieldId[] = [];
-  const seenProps = new Set<string>();
-  let hasState = false;
-  let hasPriority = false;
-  let hasScheduled = false;
-  let hasDeadline = false;
-  let hasTags = false;
-  for (const r of rows) {
-    const f = recordFacets(r);
-    if (!f) continue;
-    hasState ||= !!f.marker;
-    hasPriority ||= !!f.priority;
-    hasScheduled ||= !!f.scheduled;
-    hasDeadline ||= !!f.deadline;
-    hasTags ||= f.tags.length > 0;
-    for (const [key] of f.properties) {
-      if (isRenderHiddenProp(key)) continue;
-      const field: FieldId = `prop:${key}`;
-      if (!seenProps.has(field)) {
-        seenProps.add(field);
-        props.push(field);
-      }
-    }
-  }
-  if (hasState) out.push("state");
-  if (hasPriority) out.push("priority");
-  if (hasScheduled) out.push("scheduled");
-  if (hasDeadline) out.push("deadline");
-  if (hasTags) out.push("tags");
-  out.push(...props);
-  if (includePage) out.push("page");
-  return out;
 }
 
 function formulaReferenceName(field: FieldId): string | null {
@@ -1516,167 +1485,4 @@ function FieldCell(props: {
       </Show>
     </div>
   );
-}
-
-function FieldValueView(props: {
-  field: FieldId;
-  fieldType?: FieldType;
-  value: FieldValue | null;
-  formulaValue?: FormulaValue | null;
-  page: string;
-  onControlClick?: (e: MouseEvent) => void;
-}): JSX.Element {
-  if (isFormulaField(props.field)) return <FormulaValueView value={props.formulaValue ?? null} />;
-  const text = () => props.value?.text ?? "";
-  const stopControlDoubleClick = (e: MouseEvent) => {
-    if (!props.onControlClick) return;
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  return (
-    <Show when={props.value}>
-      <Show when={props.field === "state"}>
-        <span
-          class={`block-marker marker-${(props.value?.raw ?? "").toLowerCase()}`}
-          onClick={props.onControlClick}
-          onDblClick={stopControlDoubleClick}
-        >
-          {props.value?.text}
-        </span>
-      </Show>
-      <Show when={props.field === "priority"}>
-        <span
-          class={`block-priority priority-${props.value?.raw}`}
-          onClick={props.onControlClick}
-          onDblClick={stopControlDoubleClick}
-        >
-          {props.value?.text}
-        </span>
-      </Show>
-      <Show when={props.field === "scheduled"}>
-        <span class="date-chip scheduled" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{text()}</span>
-      </Show>
-      <Show when={props.field === "deadline"}>
-        <span class="date-chip deadline" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{text()}</span>
-      </Show>
-      <Show when={props.field === "tags"}>
-        <For each={(props.value?.raw ?? "").split(/\s+/).filter(Boolean)}>
-          {(tag) => <span class="sheet-tag-chip">#{tag}</span>}
-        </For>
-      </Show>
-      <Show when={props.field.startsWith("prop:")}>
-        <PropValueView type={props.fieldType} value={props.value!} page={props.page} onControlClick={props.onControlClick} />
-      </Show>
-      <Show when={props.field === "page"}>
-        <InlineText text={text()} format={formatForPage(props.page)} />
-      </Show>
-    </Show>
-  );
-}
-
-function FormulaValueView(props: { value: FormulaValue | null }): JSX.Element {
-  return (
-    <Switch>
-      <Match when={props.value?.kind === "error"}>
-        <span class="sheet-formula-error" title={props.value?.kind === "error" ? props.value.message : ""}>
-          ⚠
-        </span>
-      </Match>
-      <Match when={props.value?.kind === "number"}>
-        {formulaValueText(props.value)}
-      </Match>
-      <Match when={props.value?.kind === "date"}>
-        <span class="date-chip scheduled">{formulaValueText(props.value)}</span>
-      </Match>
-      <Match when={props.value?.kind === "boolean"}>
-        <input
-          class="sheet-checkbox"
-          type="checkbox"
-          checked={props.value?.kind === "boolean" ? props.value.value : false}
-          disabled
-        />
-      </Match>
-      <Match when={props.value?.kind === "list"}>
-        <For each={props.value?.kind === "list" ? props.value.values : []}>
-          {(value) => <span class="sheet-tag-chip">{formulaValueText(value)}</span>}
-        </For>
-      </Match>
-      <Match when={props.value?.kind === "text" || props.value?.kind === "duration"}>
-        {formulaValueText(props.value)}
-      </Match>
-    </Switch>
-  );
-}
-
-function PropValueView(props: { type?: FieldType; value: FieldValue; page: string; onControlClick?: (e: MouseEvent) => void }): JSX.Element {
-  const text = () => props.value.text;
-  const raw = () => props.value.raw ?? props.value.text;
-  const stopControlDoubleClick = (e: MouseEvent) => {
-    if (!props.onControlClick) return;
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  const checkbox = () => {
-    if (props.type !== "checkbox") return null;
-    const lower = raw().trim().toLowerCase();
-    if (lower === "true") return true;
-    if (lower === "false") return false;
-    return null;
-  };
-  const dateValue = () => {
-    if (props.type !== "date" && props.type !== "datetime") return null;
-    const value = raw().trim();
-    return validDateLike(value) ? value : null;
-  };
-  const enumValue = () => {
-    if (!isEnumFieldType(props.type)) return null;
-    const value = raw().trim();
-    return props.type.enum.includes(value) ? value : null;
-  };
-  const listValues = () =>
-    props.type === "list"
-      ? raw()
-          .split(",")
-          .map((v) => v.trim())
-          .filter(Boolean)
-      : [];
-  const refValue = () => {
-    if (props.type !== "ref") return null;
-    const value = raw().trim();
-    return /^\[\[[^\]\n\r]+\]\]$/.test(value) ? value : null;
-  };
-  return (
-    <Switch fallback={<InlineText text={text()} format={formatForPage(props.page)} />}>
-      <Match when={checkbox() !== null}>
-        <input
-          class="sheet-checkbox"
-          type="checkbox"
-          checked={checkbox() === true}
-          readOnly
-          onClick={props.onControlClick}
-          onDblClick={stopControlDoubleClick}
-        />
-      </Match>
-      <Match when={dateValue()}>
-        {(value) => <span class="date-chip scheduled" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{value()}</span>}
-      </Match>
-      <Match when={enumValue()}>
-        {(value) => <span class="sheet-tag-chip" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{value()}</span>}
-      </Match>
-      <Match when={props.type === "list" && listValues().length > 0}>
-        <For each={listValues()}>{(value) => <span class="sheet-tag-chip">{value}</span>}</For>
-      </Match>
-      <Match when={refValue()}>
-        {(value) => <InlineText text={value()} format={formatForPage(props.page)} />}
-      </Match>
-    </Switch>
-  );
-}
-
-function isEnumFieldType(type: FieldType | undefined): type is { enum: readonly string[] } {
-  return typeof type === "object" && type !== null && "enum" in type;
-}
-
-function validDateLike(value: string): boolean {
-  return parseIsoDateLike(value) !== null;
 }

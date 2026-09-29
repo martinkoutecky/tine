@@ -31,6 +31,43 @@ export interface SheetConfig {
 }
 
 const VIEWS = new Set<SheetView>(["table", "grid", "board"]);
+export const TABLE_COLUMN_MAX_WIDTH = 1600;
+const TABLE_COLUMN_MIN_WIDTH = 64;
+const TABLE_COLUMN_WIDTH_LIMIT = 256;
+const TABLE_COLUMN_KEY_LIMIT = 512;
+const tableColumnKeyValid = (key: string) => key.length > 0 && key.length <= TABLE_COLUMN_KEY_LIMIT && !/[\0-\x1f\x7f]/.test(key);
+
+/** Parse identity-keyed table widths from `tine.table-widths`; invalid entries
+ * are ignored and work is bounded to 256 accepted columns. */
+export function parseTableColumnWidths(value: string): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  for (const part of value.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0 || part.indexOf("=", eq + 1) >= 0) continue;
+    const token = part.slice(eq + 1).trim();
+    if (!/^\d+$/.test(token)) continue;
+    const width = Number(token);
+    if (!Number.isSafeInteger(width) || width < TABLE_COLUMN_MIN_WIDTH || width > TABLE_COLUMN_MAX_WIDTH) continue;
+    try {
+      const key = decodeURIComponent(part.slice(0, eq).trim());
+      if (!tableColumnKeyValid(key)) continue;
+      out.set(key, width);
+      if (out.size >= TABLE_COLUMN_WIDTH_LIMIT) break;
+    } catch { /* malformed URI escapes are isolated to one entry */ }
+  }
+  return out;
+}
+
+/** Serialize valid identity-keyed table widths deterministically. Work is
+ * bounded to 256 columns; callers publish through the document edit door. */
+export function serializeTableColumnWidths(widths: ReadonlyMap<string, number>): string {
+  return [...widths.entries()]
+    .filter(([key, width]) => tableColumnKeyValid(key) && Number.isFinite(width))
+    .map(([key, width]) => [encodeURIComponent(key), Math.min(TABLE_COLUMN_MAX_WIDTH, Math.max(TABLE_COLUMN_MIN_WIDTH, Math.round(width)))] as const)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .slice(0, TABLE_COLUMN_WIDTH_LIMIT)
+    .map(([key, width]) => `${key}=${width}`).join(";");
+}
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
 const PROP_FIELD_TYPES = new Set<FieldType>(["text", "number", "date", "datetime", "checkbox", "list", "ref"]);
 
