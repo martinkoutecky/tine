@@ -175,9 +175,9 @@ async function isManualOnlyBuild(): Promise<boolean> {
 
 /** Offer a manual download on a manual-only build. Recorded as its own
  * `updater.manual_only` event, never as an `updater.failure` (GH #594). */
-function offerManualOnly(version: string): void {
+function offerManualOnly(version: string): number {
   void recordDiagnostic("updater_manual_only");
-  pushToast(
+  return pushToast(
     `Tine ${version} is available, but automatic updates are not supported by this experimental 32-bit Windows build. Download the x86 package manually.`,
     "warn",
     { sticky: true, action: { label: "Download manually", run: openReleases } },
@@ -189,7 +189,7 @@ function openReleases(): void {
   void backend().openExternal(RELEASES_PAGE).catch((error) => reportUiFailure("external-link", error));
 }
 
-/** The toast's "Download" action. Win/Linux packaged app → run the Tauri updater
+/** The toast's "Install update" action. Win/Linux packaged app → run the Tauri updater
  *  in place and relaunch; everything else (macOS, browser, or any failure) → open
  *  the releases page. Never throws. */
 async function applyUpdateOrOpen(): Promise<void> {
@@ -231,6 +231,36 @@ async function applyUpdateOrOpen(): Promise<void> {
   }
 }
 
+/** The one visible offer: startup and the About tab's explicit check can find
+ * the same release, and a second sticky toast must replace the first. */
+let offeredUpdateToastId: number | null = null;
+let offerGeneration = 0;
+
+/** Publish the sticky "update available" toast. Checking never installs by
+ * itself: the user picks "Install update" (or "Download manually" on the
+ * manual-only build). Startup and an explicit check may resolve concurrently;
+ * only the newest attempt replaces the singleton toast (master 5cc573f2,
+ * b80c54f3, ca1b48f5). O(1) plus one architecture probe.
+ * @internal Exported for deterministic concurrency coverage. */
+export async function offerUpdate(version: string, current: string): Promise<void> {
+  const generation = ++offerGeneration;
+  const manualOnly = await isManualOnlyBuild();
+  if (generation !== offerGeneration) return;
+  if (offeredUpdateToastId !== null) dismissToast(offeredUpdateToastId);
+  if (manualOnly) {
+    offeredUpdateToastId = offerManualOnly(version);
+    return;
+  }
+  offeredUpdateToastId = pushToast(
+    `Tine ${version} is available — you're on ${current}.`,
+    "info",
+    {
+      sticky: true,
+      action: { label: "Install update", run: () => void applyUpdateOrOpen() },
+    },
+  );
+}
+
 /** Check GitHub for a newer published release; toast if there is one. Resolves
  *  silently (never throws) in every failure case. */
 export async function checkForUpdate(): Promise<void> {
@@ -249,21 +279,7 @@ export async function checkForUpdate(): Promise<void> {
     const tag = (data as { tag_name?: unknown })?.tag_name;
     const latest = typeof tag === "string" ? parseVer(tag) : null;
     if (!latest || !isNewer(latest, cur)) return;
-    if (await isManualOnlyBuild()) {
-      offerManualOnly(latest.join("."));
-      return;
-    }
-    pushToast(
-      `Tine ${latest.join(".")} is available — you're on ${cur.join(".")}.`,
-      "info",
-      {
-        sticky: true,
-        action: {
-          label: "Download",
-          run: () => void applyUpdateOrOpen(),
-        },
-      }
-    );
+    await offerUpdate(latest.join("."), cur.join("."));
   } catch {
     // offline / rate-limited / network blocked — never bother the user.
   }
@@ -276,8 +292,8 @@ export type UpdateStatus =
 
 /** The About tab's explicit "Check for updates" button. Unlike `checkForUpdate`
  *  (silent on the common no-update path), this reports every outcome so the
- *  button can show feedback. If a newer release exists, kicks off the same
- *  download-or-open flow as the startup toast. Never throws. */
+ *  button can show feedback. Checking never installs by itself: an available
+ *  release gets an explicit Install update action in a sticky toast. Never throws. */
 export async function checkForUpdateNow(): Promise<UpdateStatus> {
   if ((await updateMode()) === "unavailable") return { kind: "unavailable" };
   try {
@@ -294,9 +310,10 @@ export async function checkForUpdateNow(): Promise<UpdateStatus> {
     if (!latest) return { kind: "unavailable" };
 
     if (isNewer(latest, cur)) {
-      if (await isManualOnlyBuild()) offerManualOnly(latest.join("."));
-      else void applyUpdateOrOpen();
-      return { kind: "available", version: latest.join("."), current: cur.join(".") };
+      const version = latest.join(".");
+      const current = cur.join(".");
+      await offerUpdate(version, current);
+      return { kind: "available", version, current };
     }
     return { kind: "current", version: cur.join(".") };
   } catch {
