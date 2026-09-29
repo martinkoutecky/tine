@@ -105,3 +105,37 @@ fn every_page_static_export_excludes_public_false_pages() {
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&out);
 }
+
+/// A page whose slug is one of the site's own file names (`pages.html`,
+/// `index.html`) gets a distinct file instead of failing the whole publish.
+#[test]
+fn pages_named_like_site_files_publish_beside_them() {
+    let dir = graph(
+        "reserved",
+        "{:publishing/all-pages-public? true}\n",
+        &[
+            ("Pages.md", "- PAGES_PAGE_BODY [[Index]]\n"),
+            ("Index.md", "- INDEX_PAGE_BODY [[Pages]]\n"),
+        ],
+    );
+    let store = Store::open(&dir, Default::default()).unwrap().0;
+    let (out, count) = publish::publish_html(&store).unwrap();
+    assert_eq!(count, 2);
+    let files = site(Path::new(&out));
+    let index_page = files
+        .iter()
+        .find(|(name, text)| name.as_str() != "index.html" && text.contains("INDEX_PAGE_BODY"))
+        .map(|(name, _)| name.clone())
+        .expect("the Index page has its own file");
+    let pages_page = files
+        .iter()
+        .find(|(name, text)| name.as_str() != "pages.html" && text.contains("PAGES_PAGE_BODY"))
+        .map(|(name, _)| name.clone())
+        .expect("the Pages page has its own file");
+    // The site's own list is still the page list, and links reach the pages.
+    assert!(files["pages.html"].contains("<h1 class=\"page\">Pages</h1>"));
+    assert!(files[&pages_page].contains(&format!("href=\"{index_page}\"")));
+    assert!(files[&index_page].contains(&format!("href=\"{pages_page}\"")));
+    store.close();
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -225,9 +225,11 @@ fn base_slug(name: &str) -> String {
 /// runs — not a mutable counter); a `-<n>` counter is only a last resort if even
 /// the hashed slug collides. Returns the map plus the list of `(name, base,
 /// chosen)` renames so the caller can warn about them. O(n) over pages.
+/// Reserved site file stems count as used, so a page named `Pages` gets `pages-<hash>`.
 fn build_slug_map(names: &[&str]) -> (SlugMap, Vec<(String, String, String)>) {
     let mut map = SlugMap::with_capacity(names.len());
-    let mut used: HashSet<String> = HashSet::with_capacity(names.len());
+    // The site's own `index.html` / `pages.html` are taken before any page.
+    let mut used: HashSet<String> = ["index", "pages"].map(String::from).into();
     let mut collisions = Vec::new();
     for name in names {
         let base = base_slug(name);
