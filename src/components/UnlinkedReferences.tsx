@@ -10,34 +10,14 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { ReferenceExcerptBlocks } from "./ReferenceEvidence";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import type { RefGroup } from "../types";
+import { pageIdentityKey } from "../pageIdentity";
+import { mergeReferenceGroups } from "../referenceGroups";
 import { collapsedGroupsFor, sectionOverride, setCollapsedGroupsFor, setSectionOverride } from "../referenceSectionState";
-
-const pageIdentity = (name: string) => {
-  const lowered = name.trim().toLowerCase();
-  const withoutLeading = lowered.startsWith("/") ? lowered.slice(1) : lowered;
-  const withoutBoundaries = withoutLeading.endsWith("/") ? withoutLeading.slice(0, -1) : withoutLeading;
-  return withoutBoundaries.normalize("NFC");
-};
 
 type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
   total?: number;
   truncated?: boolean;
 };
-
-function mergeReferenceGroups(groups: RefGroup[]): RefGroup[] {
-  const merged = new Map<string, RefGroup>();
-  for (const group of groups) {
-    const key = pageIdentity(group.page);
-    const existing = merged.get(key);
-    if (existing) {
-      existing.blocks.push(...group.blocks);
-      existing.evidence = [...(existing.evidence ?? []), ...(group.evidence ?? [])];
-    } else {
-      merged.set(key, { ...group, blocks: [...group.blocks], evidence: [...(group.evidence ?? [])] });
-    }
-  }
-  return [...merged.values()];
-}
 
 type ReferenceLoadError = "bounded" | "backend";
 
@@ -90,7 +70,7 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
   );
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
   const count = () => mergedGroups().reduce((a, g) => a + g.blocks.length, 0);
-  const groupKey = (group: RefGroup) => pageIdentity(group.page);
+  const groupKey = (group: RefGroup) => pageIdentityKey(group.page);
   const groupCollapsed = (group: RefGroup) => collapsedGroups().has(groupKey(group));
   const setGroupCollapsed = (group: RefGroup, value: boolean) => {
     setCollapsedGroups((current) => {

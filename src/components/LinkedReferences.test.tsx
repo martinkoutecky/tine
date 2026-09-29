@@ -100,6 +100,27 @@ describe("Linked References filters", () => {
       expect(chip("yellow")?.textContent).toContain("0");
     } finally { dispose(); }
   });
+  it("folds NFC/NFD spellings of one tag into one filter chip (DUP-2)", async () => {
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([{
+      page: "Source", kind: "page", blocks: [block("a", "one [[Target]]"), block("b", "two [[Target]]")],
+    }]);
+    vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({ entries: [
+      { page: "Source", kind: "page", block_id: "a", text: "one", facets: ["Caf\u00e9"] },
+      { page: "Source", kind: "page", block_id: "b", text: "two", facets: ["Cafe\u0301"] },
+    ] });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+    try {
+      await tick(); await tick();
+      root.querySelector<HTMLButtonElement>('[aria-label="Filter linked references"]')!.click();
+      await tick(); await tick();
+      const chips = [...root.querySelectorAll<HTMLButtonElement>(".ref-filter-chip")]
+        .filter((el) => el.textContent?.normalize("NFC").includes("Caf\u00e9"));
+      expect(chips).toHaveLength(1);
+      expect(chips[0].textContent).toContain("2");
+    } finally { dispose(); }
+  });
   it("ignores an old page's failed read after the reference target changes", async () => {
     let rejectOld!: (error: Error) => void;
     vi.spyOn(backend(), "getBacklinks")
