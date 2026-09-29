@@ -52,7 +52,7 @@ import {
 import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
-import { switchGraph } from "../graph";
+import { GraphPublish } from "./GraphPublish";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
@@ -164,20 +164,6 @@ export function Settings(): JSX.Element {
       const fields = [...document.querySelectorAll<HTMLElement>("[data-setting-label]")];
       fields.find((field) => field.dataset.settingLabel === entry.label)?.scrollIntoView({ block: "center" });
     });
-  };
-  const [publishMsg, setPublishMsg] = createSignal("");
-  const doPublish = async () => {
-    setPublishMsg("Exporting…");
-    const owner = graphOwner();
-    try {
-      const result = await writeOwned(owner, backend().publishHtml());
-      if (result.kind === "stale") return;
-      const [dir, n] = result.value;
-      setPublishMsg(`Exported ${n} pages to ${dir}`);
-    } catch (e) {
-      if (owner()) setPublishMsg(`Failed: ${String(e)}`);
-      else pushToast(`Export failed: ${String(e)}`, "error");
-    }
   };
 
   // Effective binding = local override > config.edn > built-in default.
@@ -314,7 +300,7 @@ export function Settings(): JSX.Element {
                 <BackupsTab />
               </Show>
               <Show when={tab() === "graph"}>
-                <GraphTab publishMsg={publishMsg()} doPublish={doPublish} />
+                <GraphPublish />
               </Show>
               <Show when={tab() === "plugins"}>
                 <PluginsTab />
@@ -1793,38 +1779,6 @@ function JournalsTab(props: { search: string }): JSX.Element {
         />
         <span class="settings-hint">days ahead</span>
       </Field>
-    </>
-  );
-}
-
-function GraphTab(props: { publishMsg: string; doPublish: () => void }): JSX.Element {
-  return (
-    <>
-      <div class="settings-row">
-        <span class="settings-label">Graph</span>
-        <div>
-          <span class="settings-value mono">{graphMeta()?.root ?? "—"}</span>
-          <div style={{ "margin-top": "6px" }}>
-            <button class="settings-btn" onClick={() => void switchGraph()}>
-              Open another graph…
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="settings-row">
-        <span class="settings-label">Publish</span>
-        <div>
-          <button class="settings-btn" onClick={props.doPublish}>
-            Export graph to HTML
-          </button>
-          <Show when={props.publishMsg}>
-            <div class="settings-hint" style={{ "margin-top": "4px" }}>
-              {props.publishMsg}
-            </div>
-          </Show>
-        </div>
-      </div>
     </>
   );
 }

@@ -1,7 +1,8 @@
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
-import { openPageInSidebar, openPageContextMenu, pageIdentityKey } from "../ui";
+import { openPageInSidebar, openPageContextMenu, pageIdentityKey, openQueryExport } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
 import { blockProperty, blockWritable, formatForPage, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
@@ -869,7 +870,21 @@ export function QueryMacro(props: {
               <Show when={!showBuilder()}>
                 <span class="query-count">{total()}</span>
               </Show>
-              <Show when={props.blockId}>
+              <Show when={!isPublishedExport() && runnable() && displayed() && total() > 0}>
+                <button type="button" class="query-export-action" title="Export query results"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openQueryExport({
+                      argument: executionArg() ?? arg(),
+                      dialect: macroTextDialect(macroName()),
+                      properties: hostProperties(),
+                      currentPage: executionContext()?.current_page,
+                      hostBlockId: props.blockId,
+                      name: titleText(),
+                    });
+                  }}>Export…</button>
+              </Show>
+              <Show when={props.blockId && !isPublishedExport()}>
                 <div class="query-view-switcher" role="group" aria-label="Query view" onClick={stop}>
                   <For each={QUERY_VIEWS}>
                     {(view) => (

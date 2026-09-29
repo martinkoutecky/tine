@@ -1,0 +1,4 @@
+.tine-published .page-readonly-banner { font-size: 0; pointer-events: none; }
+.tine-published .page-readonly-banner > code { display: none; }
+.tine-published .page-readonly-banner::before { content: "Published read-only page"; font-size: 13px; }
+.tine-published .new-page-btn { display: none; }

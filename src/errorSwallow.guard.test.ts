@@ -10,17 +10,17 @@ function sources(dir: string): string[] {
 }
 
 const SWALLOW = /\bcatch\s*\{\s*\}|\.catch\s*\(\s*\(\s*\)\s*=>\s*(?:\{\s*\}|undefined)\s*\)/;
-const PROSE_BRANCH = /(?:\b(?:message|msg|errorText|errText)|\b\w+\.message|String\s*\([^)]*\))\s*(?:\.\s*(?:startsWith|includes)\s*\(|(?:===|==|!==|!=))/;
+const PROSE_BRANCH = /(?:\b(?:message|msg|errorText|errText)|\b\w+\.message|(?<![\w$])String\s*\([^)]*\))\s*(?:\.\s*(?:startsWith|includes)\s*\(|(?:===|==|!==|!=))/;
 
-// Existing I-9 exceptions from a4c46c22c, with line keys rebased to the
-// current source. Every entry is annotated; the exceptions may only shrink.
-const FROZEN_SWALLOW_COUNT = 25;
+// Historical I-9 keys from a4c46c22c. The allow-list is empty; these keys
+// preserve the monotonic ratchet if an exception is ever proposed again.
+const FROZEN_SWALLOW_COUNT = 0;
 const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/assetCache.ts:130 src/assetCache.ts:212 src/assetCache.ts:264 src/assetCache.ts:69
   src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
-  src/components/Block.tsx:2997 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:44
+  src/components/Block.tsx:3151 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:44
   src/components/PdfViewer.tsx:492 src/components/PdfViewer.tsx:993 src/components/PdfViewer.tsx:1058
-  src/capture.tsx:265 src/capture.tsx:573
+  src/capture.tsx:264 src/capture.tsx:572
   
   src/components/UnlinkedReferences.tsx:39 src/components/WindowChrome.tsx:24
   src/debug.ts:14
@@ -28,30 +28,12 @@ const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/plugins/startup.ts:29 src/queryResultCache.ts:55 src/session.ts:293 src/sheet/queryHydration.ts:233
   src/update.ts:61
 `.trim().split(/\s+/));
-const ALLOWED_SWALLOWS: Record<string, string> = {
-  "src/assetCache.ts:69": "best-effort stale blob URL cleanup",
-  "src/assetCache.ts:130": "best-effort stale blob URL cleanup",
-  "src/assetCache.ts:212": "best-effort stale blob URL cleanup",
-  "src/assetCache.ts:264": "best-effort stale blob URL cleanup",
-  "src/capture.tsx:265": "legacy best-effort operation needs an error-family audit",
-  "src/capture.tsx:573": "legacy error-prose branch; replace with fixed error family",
-  "src/components/AboutTab.tsx:17": "legacy best-effort operation needs an error-family audit",
-  "src/components/AudioOverlay.tsx:117": "legacy best-effort operation needs an error-family audit",
-  "src/components/AudioOverlay.tsx:154": "legacy best-effort operation needs an error-family audit",
-  "src/components/Block.tsx:2997": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
-  "src/components/HelpShortcuts.tsx:51": "legacy best-effort operation needs an error-family audit",
-  "src/components/LinkedReferences.tsx:44": "legacy error-prose branch; replace with fixed error family",
-  "src/components/PdfViewer.tsx:492": "best-effort viewer resource cleanup",
-  "src/components/PdfViewer.tsx:993": "best-effort viewer resource cleanup",
-  "src/components/PdfViewer.tsx:1058": "best-effort viewer resource cleanup",
-  "src/components/UnlinkedReferences.tsx:39": "legacy error-prose branch; replace with fixed error family",
-  "src/components/WindowChrome.tsx:24": "legacy best-effort operation needs an error-family audit",
-  "src/debug.ts:14": "legacy best-effort operation needs an error-family audit",
-  "src/plugins/manager.ts:122": "failed queued write still rejects to caller; catch only keeps the next queued write running",
-  "src/plugins/startup.ts:29": "rejection remains on returned pluginInitialization promise; main.tsx reports it",
-  "src/queryResultCache.ts:55": "legacy best-effort operation needs an error-family audit",
-  "src/sheet/queryHydration.ts:233": "legacy best-effort operation needs an error-family audit",
-  "src/update.ts:61": "legacy best-effort operation needs an error-family audit",
+const ALLOWED_SWALLOWS: Record<string, string> = {};
+
+const NAMED_BEST_EFFORT_HELPERS: Record<string, string[]> = {
+  "src/assetCache.ts": ["ignoreEvictedAssetCleanupFailure", "revokeEvictedUrl"],
+  "src/components/PdfViewer.tsx": ["ignorePdfDestroyFailure", "discardPdfDocument"],
+  "src/plugins/startup.ts": ["observePluginInitializationFailure"],
 };
 
 export function swallowViolations(file: string, source: string): string[] {
@@ -68,9 +50,32 @@ it("I-9 ratchets swallowed errors and prose branches; exemplar src/document/save
     "I-9: new swallowed error or prose branch; exemplar src/document/save/engine.ts doSave").toEqual([]);
   expect(Object.keys(ALLOWED_SWALLOWS).filter((key) => !found.includes(key)),
     "I-9: remove stale allow-list entries").toEqual([]);
+  for (const [file, helpers] of Object.entries(NAMED_BEST_EFFORT_HELPERS)) {
+    const source = readFileSync(file, "utf8");
+    for (const helper of helpers) {
+      expect(source).toMatch(new RegExp(`function ${helper}\\(`));
+      expect(source).toMatch(new RegExp(`(?:then\\([^)]*,\\s*|\\b)${helper}\\b`));
+    }
+  }
+});
+
+// An empty-bodied function is a swallow once it is passed as a rejection
+// handler, so every one must be a named best-effort helper listed above.
+const EMPTY_FUNCTION = /\bfunction\s+(\w+)\s*\([^)]*\)\s*(?::\s*void)?\s*\{\s*\}/g;
+export function emptyFunctions(source: string): string[] {
+  return [...source.matchAll(EMPTY_FUNCTION)].map((m) => m[1]);
+}
+
+it("I-9: every empty-bodied function is a registered best-effort helper; exemplar src/assetCache.ts", () => {
+  const named = new Set(Object.values(NAMED_BEST_EFFORT_HELPERS).flat());
+  const unregistered = sources("src").flatMap((file) =>
+    emptyFunctions(readFileSync(file, "utf8")).filter((name) => !named.has(name)).map((name) => `${file}:${name}`));
+  expect(unregistered, "I-9: register a best-effort helper in NAMED_BEST_EFFORT_HELPERS with why its failure is harmless").toEqual([]);
+  expect(emptyFunctions("function ignoreIt(_e: unknown): void {}\nfunction real() { work(); }")).toEqual(["ignoreIt"]);
 });
 
 it("detects planted empty catches and error-prose branches", () => {
   expect(swallowViolations("src/planted.ts", "try {} catch {}\np.catch(() => undefined)\nif (message.startsWith('bad')) fail();\nif (e.message === 'bad') fail();"))
     .toHaveLength(4);
+  expect(swallowViolations("src/capture.tsx", "if (eventToBindingString(e) === want) submit();")).toEqual([]);
 });

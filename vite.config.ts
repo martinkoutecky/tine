@@ -30,7 +30,7 @@ function gitCommit(): string {
     return "";
   }
 }
-const GIT_COMMIT = gitCommit();
+const GIT_COMMIT = process.env.TINE_BUILD_COMMIT ?? gitCommit();
 
 // The @twemoji/svg package holds one <codepoint>.svg per emoji at its root.
 const twemojiDir = fileURLToPath(new URL("./node_modules/@twemoji/svg", import.meta.url));
@@ -75,6 +75,7 @@ function twemojiAssets(): Plugin {
 
 // Tauri expects a fixed port and serves the built assets from dist/.
 export default defineConfig({
+  base: "./",
   plugins: [solid(), twemojiAssets()],
   define: {
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),

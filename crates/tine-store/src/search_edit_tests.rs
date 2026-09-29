@@ -80,6 +80,8 @@ fn search_matches(store: &Store, text: &str) -> bool {
         block_limit: 20,
         explain: false,
         page_match_scope: None,
+        page_view: None,
+        block_view: None,
     };
     let cancel = tine_store::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
     !view.search(&req, &cancel).unwrap().hits.is_empty()

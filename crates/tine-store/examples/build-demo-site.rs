@@ -1,37 +1,28 @@
-//! Build the static "live demo" site from Tine's onboarding demo graph, using
-//! Tine's OWN HTML export — so the public demo dogfoods the publish feature.
-//!
-//! Scaffolds the demo graph in a temp dir, publishes ALL its pages, and writes a
-//! self-contained site into the given output dir (e.g. `website/demo`). The demo
-//! pages carry no `public::` markers, so all-pages-public is forced **in memory
-//! for this export only** — the shipped onboarding config stays
-//! `all-pages-public=false`, so a real user's new graph never silently publishes.
-//!
-//! `publish_graph` emits asset embeds as `../assets/<file>` (it assumes the site
-//! is served from `<graph>/publish` next to `<graph>/assets`). To keep the hosted
-//! demo self-contained under one directory, the emitted HTML is rewritten to
-//! `assets/<file>` and the graph's `assets/` is copied in alongside the pages.
-//!
-//! Usage: cargo run -q -p tine-store --example build-demo-site -- website/demo
-//! (Re-run after changing the demo templates in src/templates/.)
+//! Build the public Guide demo with the same live exporter as a user graph.
+//! The graph is temporary, all-pages selection applies to this run only, and
+//! the output is an external create-only directory. `dist/` must be built first.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use tine_graph_features::guide::create_demo_graph;
-use tine_graph_features::publish::publish_html;
-use tine_store::{Area, Store, TxOutcome};
+use tine_graph_features::publish_query::publish_live;
+use tine_store::Store;
 
-fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
+fn bundle(dir: &Path, prefix: &str, files: &mut Vec<(String, Vec<u8>)>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir(&from, &to)?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        let relative = if prefix.is_empty() {
+            name
         } else {
-            fs::copy(&from, &to)?;
+            format!("{prefix}/{name}")
+        };
+        if entry.file_type()?.is_dir() {
+            bundle(&path, &relative, files)?;
+        } else if relative == "index.html" || relative.starts_with("assets/") {
+            files.push((relative, fs::read(path)?));
         }
     }
     Ok(())
@@ -41,44 +32,23 @@ fn main() {
     let out = PathBuf::from(
         std::env::args()
             .nth(1)
-            .expect("usage: build-demo-site <out_dir>   (e.g. website/demo)"),
+            .expect("usage: build-demo-site <out_dir>"),
     );
-
-    let tmp = std::env::temp_dir().join("tine-demo-site-build");
-    let _ = fs::remove_dir_all(&tmp);
-    fs::create_dir_all(&tmp).expect("create temp graph dir");
-
-    create_demo_graph(&tmp).expect("scaffold demo graph");
-
-    let (store, _, _) = Store::open(&tmp, Default::default()).expect("open demo graph");
-    let config = store.file_id(Area::Meta, "config.edn").unwrap();
-    let (bytes, rev) = store.read(&config, None).expect("read demo config");
-    let mut text = String::from_utf8(bytes).expect("UTF-8 demo config");
-    let end = text.rfind('}').expect("EDN config map");
-    text.insert_str(end, "\n :publishing/all-pages-public? true\n");
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.replace(&config, rev, text.into_bytes());
-    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
-    let (publish_dir, count) = publish_html(&store).expect("publish demo graph");
-    let publish_dir = PathBuf::from(publish_dir);
-
-    // Fresh output dir = the published pages, with self-contained asset paths.
-    let _ = fs::remove_dir_all(&out);
-    copy_dir(&publish_dir, &out).expect("copy publish output");
-    for entry in fs::read_dir(&out).expect("read out dir") {
-        let p = entry.expect("dir entry").path();
-        if p.extension().map(|e| e == "html").unwrap_or(false) {
-            let html = fs::read_to_string(&p).expect("read html");
-            fs::write(&p, html.replace("\"../assets/", "\"assets/")).expect("write html");
-        }
-    }
-
-    // Copy the demo graph's assets in next to the pages so `assets/<file>` resolves.
-    let assets = tmp.join("assets");
-    if assets.is_dir() {
-        copy_dir(&assets, &out.join("assets")).expect("copy assets");
-    }
-
-    let _ = fs::remove_dir_all(&tmp);
-    println!("published {count} pages -> {}", out.display());
+    let parent = out
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let leaf = out
+        .file_name()
+        .and_then(|s| s.to_str())
+        .expect("output leaf");
+    assert_eq!(leaf, "demo", "Guide output must be named demo");
+    let temp = tempfile::tempdir().expect("temporary Guide graph");
+    create_demo_graph(temp.path()).expect("scaffold Guide graph");
+    let (store, _, _) = Store::open(temp.path(), Default::default()).expect("open Guide graph");
+    let mut files = Vec::new();
+    bundle(Path::new("dist"), "", &mut files).expect("read built frontend");
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let receipt = publish_live(&store, parent, "demo", true, &files).expect("publish Guide demo");
+    println!("published {} pages -> {}", receipt.pages, receipt.path);
 }

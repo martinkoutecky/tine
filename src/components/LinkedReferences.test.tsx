@@ -4,6 +4,7 @@ import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import type { BacklinkFilterContext, BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
+import { resetReferenceSectionState } from "../referenceSectionState";
 
 vi.mock("./LiveRefGroup", () => ({
   LiveRefGroup: (props: { blocks: BlockDto[]; showBreadcrumb?: boolean }) => (
@@ -32,10 +33,72 @@ function wait(ms: number): Promise<void> {
 afterEach(() => {
   document.body.innerHTML = "";
   localStorage.clear();
+  resetReferenceSectionState();
   vi.restoreAllMocks();
 });
 
 describe("Linked References filters", () => {
+  it("offers batch export for visible linked references", async () => {
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([
+      { page: "Source", kind: "page", blocks: [block("a", "[[Target]]")] },
+    ]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+    try {
+      await tick(); await tick();
+      expect(root.querySelector('[aria-label="Copy / export linked references"]')).not.toBeNull();
+    } finally { dispose(); }
+  });
+  it("keeps an expanded large section open after its component remounts", async () => {
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([{
+      page: "Source", kind: "page",
+      blocks: Array.from({ length: 100 }, (_, index) => block(`b${index}`, `[[Target]] ${index}`)),
+    }]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    let dispose = render(() => <LinkedReferences name="Target" />, root);
+    try {
+      await tick(); await tick();
+      expect(root.querySelector(".test-ref-group")).toBeNull();
+      root.querySelector<HTMLElement>(".references-header")!.click();
+      expect(root.querySelector(".test-ref-group")).not.toBeNull();
+      dispose();
+      dispose = render(() => <LinkedReferences name="Target" />, root);
+      await tick(); await tick();
+      expect(root.querySelector(".test-ref-group")).not.toBeNull();
+    } finally { dispose(); }
+  });
+  it("unions include chips and narrows available chips to text matches", async () => {
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([{
+      page: "Source", kind: "page", blocks: [
+        block("a", "apple [[Target]]"), block("b", "banana [[Target]]"),
+      ],
+    }]);
+    vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({ entries: [
+      { page: "Source", kind: "page", block_id: "a", text: "apple", facets: ["red"] },
+      { page: "Source", kind: "page", block_id: "b", text: "banana", facets: ["yellow"] },
+    ] });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+    try {
+      await tick(); await tick();
+      root.querySelector<HTMLButtonElement>('[aria-label="Filter linked references"]')!.click();
+      await tick(); await tick();
+      const chip = (name: string) => [...root.querySelectorAll<HTMLButtonElement>(".ref-filter-chip")]
+        .find((el) => el.textContent?.includes(name));
+      chip("red")!.click(); chip("yellow")!.click();
+      expect(root.querySelector(".references-count")?.textContent).toBe("2");
+      const input = root.querySelector<HTMLInputElement>(".reference-filter-search")!;
+      input.value = "apple";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await wait(150);
+      expect(root.querySelector(".references-count")?.textContent).toBe("1");
+      expect(chip("red")?.textContent).toContain("1");
+      expect(chip("yellow")?.textContent).toContain("0");
+    } finally { dispose(); }
+  });
   it("ignores an old page's failed read after the reference target changes", async () => {
     let rejectOld!: (error: Error) => void;
     vi.spyOn(backend(), "getBacklinks")
@@ -85,7 +148,7 @@ describe("Linked References filters", () => {
   });
 
   it("renders a bounded bridge error instead of an empty panel", async () => {
-    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("result-too-large: 20001 matches"));
+    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("result-too-large"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <LinkedReferences name="Target" />, root);
@@ -99,7 +162,7 @@ describe("Linked References filters", () => {
   });
 
   it("does not mislabel an ordinary backend failure as a bounded bridge error", async () => {
-    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("database unavailable"));
+    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("result-too-large: prose from another failure"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <LinkedReferences name="Target" />, root);

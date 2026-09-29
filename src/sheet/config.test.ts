@@ -1,9 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   parseFields,
+  parseTableColumnWidths,
   serializeColAggregates,
   serializeColWidths,
   serializeFields,
+  serializeTableColumnWidths,
   sheetConfig,
   sheetConfigFromRaw,
 } from "./config";
@@ -14,6 +16,12 @@ import { initParser } from "../render/parse";
 beforeAll(() => initParser());
 
 describe("sheetConfig", () => {
+  it("round-trips table widths by stable field identity and rejects malformed widths", () => {
+    const widths = new Map([["title", 240], ["prop:my field", 170]]);
+    const encoded = serializeTableColumnWidths(widths);
+    expect([...parseTableColumnWidths(encoded)]).toEqual([["prop:my field", 170], ["title", 240]]);
+    expect([...parseTableColumnWidths("title=0;title=99999;bad%escape=100")]).toEqual([]);
+  });
   it("reads grid view, header, and positional column widths", () => {
     const cfg = sheetConfig([
       ["tine.view", "grid"],

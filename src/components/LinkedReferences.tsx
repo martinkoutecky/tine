@@ -1,5 +1,6 @@
 import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { errorFamily } from "../errorFamily";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../ui";
@@ -8,6 +9,8 @@ import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } fr
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
 import { searchFold } from "../editor/searchFold";
+import { ReferenceExportChooser } from "./ReferenceExportChooser";
+import { collapsedGroupsFor, sectionOverride, setCollapsedGroupsFor, setSectionOverride } from "../referenceSectionState";
 
 const norm = (s: string) => s.trim().toLowerCase();
 const pageIdentity = (s: string) => {
@@ -40,8 +43,7 @@ function mergeReferenceGroups(groups: RefGroup[]): RefGroup[] {
 type ReferenceLoadError = "bounded" | "backend";
 
 function classifyReferenceLoadError(error: unknown): ReferenceLoadError {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.startsWith("result-too-large:") ? "bounded" : "backend";
+  return errorFamily(error) === "result-too-large" ? "bounded" : "backend";
 }
 
 // Persist the per-page include/exclude reference filter so it survives reload.
@@ -104,6 +106,10 @@ function fallbackFilterEntry(block: BlockDto): SearchableFilterEntry {
 // mirroring OG's reference filter.
 const OG_REFERENCE_COLLAPSE_THRESHOLD = 100;
 
+/** Show bounded backlinks for one page. Text filters and OR include / cumulative
+ * exclude chips use the same source-root context; export snapshots visible rows.
+ * One backend read per target; a fixed result-limit token selects the bounded
+ * alert, other failures a generic alert. */
 export function LinkedReferences(props: { name: string }): JSX.Element {
   const readScope = {};
   let alive = true;
@@ -124,9 +130,21 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     }
   );
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
-  const [collapsedOverride, setCollapsedOverride] = createSignal<boolean | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
+  const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(sectionOverride("linked", props.name) ?? null);
+  const setCollapsedOverride = (value: boolean) => {
+    setSectionOverride("linked", props.name, value);
+    setCollapsedOverrideSignal(value);
+  };
+  const [collapsedGroups, setCollapsedGroupsSignal] = createSignal<Set<string>>(collapsedGroupsFor("linked", props.name));
+  const setCollapsedGroups = (update: Set<string> | ((current: Set<string>) => Set<string>)) => {
+    setCollapsedGroupsSignal((current) => {
+      const next = typeof update === "function" ? update(current) : update;
+      setCollapsedGroupsFor("linked", props.name, next);
+      return next;
+    });
+  };
   const [filterOpen, setFilterOpen] = createSignal(false);
+  const [exportChooserOpen, setExportChooserOpen] = createSignal(false);
   const [searchDraft, setSearchDraft] = createSignal("");
   const [searchQuery, setSearchQuery] = createSignal("");
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -137,8 +155,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   const [filters, setFilters] = createSignal<FilterMap>(loadFilters(props.name));
   // Reload the saved filter when the page changes.
   createEffect(() => {
-    props.name;
-    setCollapsedOverride(null);
+    const page = props.name;
+    setCollapsedOverrideSignal(sectionOverride("linked", page) ?? null);
+    setCollapsedGroupsSignal(collapsedGroupsFor("linked", page));
     setFilters(loadFilters(props.name));
     setFilterOpen(false);
     setSearchDraft("");
@@ -180,10 +199,30 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     nativeByRoot().get(filterKey(group.page, group.kind, block.id))
       ?? fallbackByRoot().get(filterKey(group.page, group.kind, block.id))!;
 
+  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
+  const searchError = createMemo(() => {
+    const parsed = parsedSearch();
+    return parsed.kind === "invalid" ? parsed.error : null;
+  });
+  const filterGroups = (source: RefGroup[], keep: (group: RefGroup, block: BlockDto) => boolean): RefGroup[] =>
+    source.map((group) => ({ ...group, blocks: group.blocks.filter((block) => keep(group, block)) }))
+      .map((group) => {
+        const ids = new Set(group.blocks.map((block) => block.id));
+        return { ...group, evidence: group.evidence?.filter((item) => ids.has(item.block_id)) };
+      }).filter((group) => group.blocks.length > 0);
+  const textMatchedGroups = createMemo<RefGroup[]>(() => {
+    const parsed = parsedSearch();
+    if (nativeContext.loading || parsed.kind === "empty" || parsed.kind === "invalid") return mergedGroups();
+    return filterGroups(mergedGroups(), (group, block) => {
+      const entry = rootEntry(group, block);
+      return matcherMatches(parsed, entry.normalizedText, entry.text);
+    });
+  });
+
   // Co-referenced pages/tags and task states in each backlink tree, with counts.
   const coRefs = createMemo(() => {
     const counts = new Map<string, { name: string; count: number }>();
-    for (const g of mergedGroups()) {
+    for (const g of textMatchedGroups()) {
       for (const b of g.blocks) {
         for (const name of rootEntry(g, b).facets) {
           const key = norm(name);
@@ -197,10 +236,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   });
 
-  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
-  const searchError = createMemo(() => {
-    const parsed = parsedSearch();
-    return parsed.kind === "invalid" ? parsed.error : null;
+  const orphanFilters = createMemo(() => {
+    const present = new Set(coRefs().map(([name]) => norm(name)));
+    return Object.keys(filters()).filter((name) => !present.has(norm(name)));
   });
   const filterState = (name: string): "in" | "out" | undefined => {
     const key = norm(name);
@@ -216,22 +254,12 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     // Do not flash descendant-only matches away while their on-demand native
     // index is still in flight. Once it arrives, filtering is synchronous.
     if ((searching || ins.length || outs.length) && nativeContext.loading) return mergedGroups();
-    if (!searching && !ins.length && !outs.length) return mergedGroups();
-    return mergedGroups()
-      .map((g) => ({
-        ...g,
-        blocks: g.blocks.filter((b) => {
-          const entry = rootEntry(g, b);
-          const facets = new Set(entry.facets.map(norm));
-          const contentMatches = !searching || matcherMatches(parsed, entry.normalizedText, entry.text);
-          return contentMatches && ins.every((i) => facets.has(i)) && outs.every((o) => !facets.has(o));
-        }),
-      }))
-      .map((g) => {
-        const ids = new Set(g.blocks.map((block) => block.id));
-        return { ...g, evidence: g.evidence?.filter((item) => ids.has(item.block_id)) };
-      })
-      .filter((g) => g.blocks.length > 0);
+    if (!ins.length && !outs.length) return textMatchedGroups();
+    return filterGroups(textMatchedGroups(), (group, block) => {
+      const facets = new Set(rootEntry(group, block).facets.map(norm));
+      return (ins.length === 0 || ins.some((name) => facets.has(name)))
+        && outs.every((name) => !facets.has(name));
+    });
   });
 
   const groupKey = (group: RefGroup) => pageIdentity(group.page);
@@ -301,6 +329,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       }
     >
     <Show when={groups() && mergedGroups().length > 0}>
+      <Show when={exportChooserOpen()}>
+        <ReferenceExportChooser subject="Linked References" groups={shown()} onClose={() => setExportChooserOpen(false)} />
+      </Show>
       <div class="linked-references">
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <span class="ref-collapse" classList={{ collapsed: collapsed() }}>
@@ -323,6 +354,10 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1v5.4l-3.6 1.8v-7.2z" /></svg>
           </button>
+          <button type="button" class="reference-export-toggle"
+            aria-label="Copy / export linked references" title="Copy / export selected linked references"
+            onClick={(event) => { event.stopPropagation(); setExportChooserOpen(true); }}
+          ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" /></svg></button>
         </div>
         <Show when={!collapsed()}>
           <Show when={occurrenceLimit().truncated}>
@@ -361,7 +396,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
               <Show when={nativeContext()?.truncated || nativeContext()?.entries.some((entry) => entry.truncated)}>
                 <div class="reference-filter-warning">Some very large reference trees are searched partially.</div>
               </Show>
-              <Show when={coRefs().length > 0}>
+              <Show when={coRefs().length > 0 || orphanFilters().length > 0}>
                 <div class="ref-filter" aria-label="Reference facets">
                   <For each={coRefs()}>
                     {([name, n]) => (
@@ -373,6 +408,15 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                       >
                         {name} <span class="ref-filter-count">{n}</span>
                       </button>
+                    )}
+                  </For>
+                  <For each={orphanFilters()}>
+                    {(name) => (
+                      <button class="ref-filter-chip"
+                        classList={{ "f-in": filterState(name) === "in", "f-out": filterState(name) === "out" }}
+                        title="No match in the current text search · click to cycle or clear"
+                        onClick={() => cycle(name)}
+                      >{name} <span class="ref-filter-count">0</span></button>
                     )}
                   </For>
                 </div>

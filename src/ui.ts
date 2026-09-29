@@ -458,6 +458,10 @@ export function agendaQuery(): string {
 
 // Block id of a "/Query" block whose QueryBuilder opens its add-filter picker once on mount.
 export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = graphScopedSignal<string>();
+/** One graph-bound reviewed query export; a graph switch closes the dialog. */
+export const [queryExportRequest, setQueryExportRequest] = graphScopedSignal<import("./types").QueryPublicationRequest>();
+export function openQueryExport(request: import("./types").QueryPublicationRequest): void { setQueryExportRequest(request); }
+export function closeQueryExport(): void { setQueryExportRequest(null); }
 
 export type PropsPanelScope = { kind: "page"; name: string } | { kind: "block"; id: string };
 /** The one open properties panel (GH #164) or null; page OR block scope despite the name (`name` = exact store page name, `id` = in-memory
@@ -477,9 +481,16 @@ export function closePageProps() {
 
 // "Copy / export as" modal — a live-preview text export of a block subtree or a
 // multi-block selection, with indent-style + remove options (mirrors OG Logseq).
-export const [exportModal, setExportModal] = graphScopedSignal<{ ids: string[] }>();
+export type ExportRequest = { ids: string[] } | { nodes: import("./editor/exportText").ExportNode[]; count: number };
+export const [exportModal, setExportModal] = graphScopedSignal<ExportRequest>();
+/** Open the shared export modal for a selection of document block ids. */
 export function openExportModal(ids: string[]) {
   if (ids.length) setExportModal({ ids });
+}
+/** Open the shared export modal for an already materialized, read-only forest.
+ * The caller supplies its visible block count; this does not write graph data. */
+export function openExportNodesModal(nodes: import("./editor/exportText").ExportNode[], count: number) {
+  if (nodes.length) setExportModal({ nodes, count });
 }
 export function closeExportModal() {
   setExportModal(null);

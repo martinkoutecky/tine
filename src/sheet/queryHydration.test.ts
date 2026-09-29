@@ -7,6 +7,7 @@ import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import type { PageDto, PageKind, RefGroup } from "../types";
 import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { setToasts, toasts } from "../toasts";
 import {
   hydrateVisibleQueryPages,
   queryHydrationCircuitStatus,
@@ -26,6 +27,7 @@ function page(name: string, kind: PageKind): PageDto {
 }
 
 beforeEach(() => {
+  setToasts([]);
   resetStore();
   backendMock.getPage.mockReset();
   backendMock.getPage.mockImplementation(async (name: string, kind: PageKind) => ({
@@ -39,6 +41,12 @@ beforeEach(() => {
 });
 
 describe("query sheet hydration identity", () => {
+  it("reports a failed visible-page hydration with fixed text", async () => {
+    backendMock.getPage.mockRejectedValueOnce(new Error("private graph path"));
+    await hydrateVisibleQueryPages([{ id: "missing", page: "Missing" }], [group("Missing", "page", "missing")]);
+    expect(toasts().map((toast) => toast.message)).toContain("Couldn't load this query page for editing.");
+    expect(toasts().map((toast) => toast.message).join(" ")).not.toContain("private graph path");
+  });
   it("hydrates the visible block's kind when a page and journal share a name", async () => {
     const groups = [group("Twin", "page", "page-block"), group("Twin", "journal", "journal-block")];
 

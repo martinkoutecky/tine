@@ -940,6 +940,8 @@ impl ReadSnapshot {
         scope: Option<crate::query_plan::QueryPageScope>,
         explain: bool,
         page_match_scope: tine_core::query::ir::FriendlyPageMatchScope,
+        page_view: Option<tine_core::query::ir::ViewSettings>,
+        block_view: Option<tine_core::query::ir::ViewSettings>,
     ) -> tine_core::query_plan::QueryExecution {
         match scope {
             Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
@@ -956,6 +958,7 @@ impl ReadSnapshot {
                 page_match_scope,
             ),
         }
+        .with_display(page_view, block_view)
         .execute_with_explain(
             self,
             || cancel.0.load(std::sync::atomic::Ordering::Acquire),
@@ -1852,7 +1855,8 @@ fn page_cache_key(kind: PageKind, name: &str) -> (PageKind, String) {
     (kind, tine_core::refs::page_key(name))
 }
 
-fn document_block_ref_counts(doc: &Document) -> std::collections::HashMap<String, usize> {
+/// Count each projected block reference once per referring block.
+pub(crate) fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize> {
     fn walk(blocks: &[DocBlock], counts: &mut std::collections::HashMap<String, usize>) {
         for block in blocks {
             // projection().block_refs is already de-duplicated per referrer block,
@@ -1863,7 +1867,6 @@ fn document_block_ref_counts(doc: &Document) -> std::collections::HashMap<String
             walk(&block.children, counts);
         }
     }
-
     let mut counts = std::collections::HashMap::new();
     walk(&doc.roots, &mut counts);
     counts
@@ -4820,7 +4823,7 @@ fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
 
 /// Decode `%XX` percent-escapes (UTF-8 aware, like JS `decodeURIComponent`). An
 /// invalid or truncated escape is left literal rather than dropped.
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     if !s.contains('%') {
         return s.to_string();
     }

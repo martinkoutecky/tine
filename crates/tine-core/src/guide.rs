@@ -200,6 +200,10 @@ mod search_guide_tests {
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("An alias result opens its owner page"));
         assert!(queries.contains("authored page properties as columns"));
+        assert!(
+            queries.contains("Sample keeps the first N of that order, separately for each section")
+        );
+        assert!(queries.contains("Pages board groups adjacent results"));
     }
     #[test]
     fn search_fold_and_graph_opt_out_are_documented() {
@@ -218,6 +222,34 @@ mod search_guide_tests {
         }
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("Both respect `:feature/enable-search-remove-accents? false`"));
+    }
+    #[test]
+    fn reference_panel_controls_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for text in [
+            "select visible results",
+            "Org source stays Org",
+            "include chips match any",
+            "collapse or expand all source groups",
+        ] {
+            assert!(
+                tips.contains(text),
+                "missing reference panel Guide detail: {text}"
+            );
+        }
+    }
+    #[test]
+    fn table_resize_and_export_are_documented() {
+        let sheets = include_str!("templates/sheets.md");
+        for text in [
+            "right edge to resize",
+            "Double-click the handle",
+            "tine.table-widths::",
+            "+ Add row",
+            "produce HTML",
+        ] {
+            assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
+        }
     }
 }
 
@@ -306,6 +338,9 @@ mod query_guide_tests {
             "the queries page is in the Guide manifest"
         );
         assert!(include_str!("templates/guide.md").contains("[[Features/Queries]]"));
+        assert!(queries.contains("## Publish a query"));
+        assert!(queries.contains("whole owner page"));
+        assert!(queries.contains("Include all pages"));
     }
 
     /// og 14 Q4a: the query block's sentence, sheet, text pane, crossing

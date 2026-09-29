@@ -38,10 +38,14 @@ import type {
   QueryPageScope,
   QueryExportBatch,
   QueryExportSpec,
+  QueryPublicationRequest,
+  QueryPublicationPlan,
+  PublicationReceipt,
 } from "./types";
 import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
+import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 export interface SavePageEntry {
   id: string;
@@ -283,6 +287,15 @@ export interface Backend {
    *  refuses, writing nothing, if it would move or rewrite one (GH #535). */
   renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]): Promise<import("./types").RenameDone>;
   publishHtml(): Promise<[string, number]>;
+  /** Resolve a query's complete owner pages without writing. O(graph query +
+   * selected source bytes); the fingerprint binds the reviewed selection. */
+  publishQueryPlan(request: QueryPublicationRequest): Promise<QueryPublicationPlan>;
+  /** Recheck the plan and publish a create-only site under a user-picked folder
+   * outside the graph. Rejects a stale plan, collision or I/O failure. */
+  publishQuery(request: QueryPublicationRequest, fingerprint: string, destination: string): Promise<PublicationReceipt>;
+  /** Publish a whole-graph read-only app plus static fallback under a picked
+   * folder. `allPages` explicitly includes private pages; default public only. */
+  publishLive(destination: string, name: string, allPages: boolean): Promise<PublicationReceipt>;
   /** Render one page to a self-contained HTML document (assets inlined, no
    *  sidebar) for the print-to-PDF export, with the dialog's options. Rejects if
    *  the page doesn't exist. */
@@ -433,7 +446,9 @@ export interface Backend {
   search(query: string, limit: number, lane?: string): Promise<RefGroup[]>;
   /** One Rust-authoritative graph scan for bounded page and block hits. Page
    * membership defaults to names/aliases; content and both scan block text.
-   * Cost O(graph text) off the UI thread; native errors reject the promise. */
+   * Each Display view sorts before its section limit, then sample caps that
+   * limit; omitted views keep relevance order. Cost O(graph text) off the UI
+   * thread, plus O(matches log matches) for authored sorts. Native errors reject. */
   runGraphSearch(
     source: string,
     pageLimit: number,
@@ -441,7 +456,8 @@ export interface Backend {
     lane?: string,
     explain?: boolean,
     scope?: QueryPageScope,
-    pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope
+    pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope,
+    views?: { page: ViewSettings; block: ViewSettings }
   ): Promise<QueryExecution>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   /** Capture-only page/tag completion capability. It is intentionally not the
@@ -859,6 +875,15 @@ class TauriBackend implements Backend {
   publishHtml() {
     return this.call<[string, number]>("publish_html");
   }
+  publishQueryPlan(request: QueryPublicationRequest) {
+    return this.call<QueryPublicationPlan>("publish_query_plan", { request });
+  }
+  publishQuery(request: QueryPublicationRequest, fingerprint: string, destination: string) {
+    return this.call<PublicationReceipt>("publish_query", { request, fingerprint, destination });
+  }
+  publishLive(destination: string, name: string, allPages: boolean) {
+    return this.call<PublicationReceipt>("publish_live", { destination, name, allPages });
+  }
   pagePrintHtml(name: string, opts: PrintOpts) {
     return this.call<string>("page_print_html", { name, opts });
   }
@@ -951,8 +976,8 @@ class TauriBackend implements Backend {
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
   }
-  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope) {
-    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null });
+  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }) {
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null });
     return {
       ...execution,
       has_more: execution.has_more ?? { pages: false, blocks: false },
@@ -1257,7 +1282,7 @@ let _backend: Backend | null = null;
 
 export function backend(): Backend {
   if (!_backend) {
-    _backend = isTauri() ? new TauriBackend() : mockBackend();
+    _backend = isTauri() ? new TauriBackend() : isPublishedExport() ? publishedBackend() : mockBackend();
   }
   return _backend;
 }

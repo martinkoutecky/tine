@@ -249,7 +249,7 @@ fn refuse_bound_graph_path(
 }
 
 mod query_error_wire;
-use query_error_wire::query_error;
+use query_error_wire::{query_error, reference_error};
 
 #[tauri::command]
 pub(crate) fn load_workspaces(
@@ -873,7 +873,7 @@ pub(crate) async fn get_backlinks(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.backlinks(&name).map_err(query_error)
+        view.backlinks(&name).map_err(reference_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -909,7 +909,7 @@ pub(crate) async fn get_unlinked_refs(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.unlinked_references(&name).map_err(query_error)
+        view.unlinked_references(&name).map_err(reference_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1091,6 +1091,8 @@ pub(crate) async fn run_graph_search(
     explain: bool,
     scope: Option<QueryPageScope>,
     page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
+    page_view: Option<tine_core::query::ir::ViewSettings>,
+    block_view: Option<tine_core::query::ir::ViewSettings>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let slot = slot_for_context(&state)?;
@@ -1110,6 +1112,8 @@ pub(crate) async fn run_graph_search(
             explain,
             scope,
             page_match_scope,
+            page_view,
+            block_view,
         )
         .map_err(feature_search_error)
     })

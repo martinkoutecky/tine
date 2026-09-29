@@ -152,6 +152,37 @@ function loadTableDoc() {
 }
 
 describe("SheetTable", () => {
+  it("resizes a table column by identity and persists one width property", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <Block id="table" />);
+    try {
+      const handle = root.querySelector<HTMLElement>('[data-sheet-resize-handle="title"]')!;
+      expect(handle).not.toBeNull();
+      handle.dispatchEvent(pointer("pointerdown", 100, 0));
+      window.dispatchEvent(pointer("pointermove", 160, 0));
+      expect(root.querySelector<HTMLElement>(".sheet-table")?.style.gridTemplateColumns).toContain("240px");
+      window.dispatchEvent(pointer("pointerup", 160, 0));
+      expect(blockProperty("table", "tine.table-widths")).toBe("title=240");
+      handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+      expect(blockProperty("table", "tine.table-widths")).toBeNull();
+    } finally { dispose(); }
+  });
+  it("shares a committed column width across two sheet surfaces", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <>
+      <SheetTable ownerId="table" rowSource="children" />
+      <SheetTable ownerId="table" rowSource="children" />
+    </>);
+    try {
+      const [left, right] = [...root.querySelectorAll<HTMLElement>(".sheet-table")];
+      const handle = left.querySelector<HTMLElement>('[data-sheet-resize-handle="title"]')!;
+      handle.dispatchEvent(pointer("pointerdown", 100, 0));
+      window.dispatchEvent(pointer("pointermove", 150, 0));
+      window.dispatchEvent(pointer("pointerup", 150, 0));
+      expect(blockProperty("table", "tine.table-widths")).toBe("title=230");
+      expect(right.style.gridTemplateColumns).toContain("230px");
+    } finally { dispose(); }
+  });
   it("routes real window Arrow keys from a clicked Table cell (GH #113)", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
@@ -1526,6 +1557,8 @@ describe("SheetTable", () => {
       loaded: true,
     });
     const { root, dispose } = mount(() => <Block id="table" />);
+
+    expect(root.querySelector(".sheet-add-row-ghost .sheet-ghost-sticky")?.textContent).toContain("Add row");
 
     (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();
     await tick();

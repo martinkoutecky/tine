@@ -1,6 +1,7 @@
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { autocompleteFacets, backend } from "../backend";
+import { reportUiFailure } from "../uiFailure";
 import { clearClipboardSlot, normalize, peekClipboardSlot, writeClipboardText } from "../clipboard";
 import {
   detectTrigger,
@@ -213,6 +214,8 @@ export interface CollapseSurfaceApi {
 // Keep this surface-local contract explicit when changing collapse parity.
 export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(null);
 
+/** Render and edit one document block through the document door. Work scales
+ * with its visible descendants; a failed structured paste shows fixed text. */
 export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
   const node = () => docNode(props.id);
   // Unique per rendered instance, so when one block uuid appears in several
@@ -2988,13 +2991,12 @@ export function Editor(props: { id: string }): JSX.Element {
         // Association is intentionally text-only and can replay the user's last
         // private block copy when a foreign clipboard happens to contain equal
         // normalized text. Identity remains separately one-shot and validated.
-        const owner = graphOwner(() => editorMounted);
-        void readOwned(owner, pasteClipboardPayload(props.id, slot))
+        void readOwned(graphOwner(() => editorMounted), pasteClipboardPayload(props.id, slot))
           .then((result) => {
             if (result.kind === "stale") return; const lastId = result.value;
             if (lastId && docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
           })
-          .catch(() => {}); // association failure is a quiet feature miss
+          .catch((error) => reportUiFailure("clipboard-association", error));
         return;
       }
     }
