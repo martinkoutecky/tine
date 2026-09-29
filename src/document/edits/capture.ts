@@ -3,8 +3,7 @@ import { OUTLINE_MAX_DEPTH, outlineDepth, parseOutline, type OutlineNode } from 
 import { type PageKind } from "../../types";
 import { graphOwner } from "../../owned";
 import { pageByName, freshId, setDoc } from "../model";
-import { admitPageFile, pageLoadRefusalMessage } from "../workingSet";
-import { pushToastUnique } from "../../toasts";
+import { admitPageFile, reportPageLoadRefusal } from "../workingSet";
 import { captureEmptyPage } from "../convert";
 import { pageWritable } from "./properties";
 import { insertOutlineAfter, deleteBlock } from "./blocks";
@@ -52,7 +51,7 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
   const admitted = await admitPageFile(name, kind, owner, captureEmptyPage(name, kind));
   if (admitted === "stale") return false;
   if (admitted) {
-    pushToastUnique(`${pageLoadRefusalMessage(admitted)} Nothing was captured into it.`, "error");
+    reportPageLoadRefusal(admitted, "Nothing was captured into it.");
     return false;
   }
   const page = pageByName(name);

@@ -17,7 +17,7 @@ async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner
   if (result.kind === "stale" || !result.value) return false;
   // A declined replacement is a refusal: stop, never assume it loaded.
   const refusal = ensurePageLoaded(result.value);
-  if (refusal) reportPageLoadRefusal(refusal, "carrying tasks");
+  if (refusal) reportPageLoadRefusal(refusal, "Nothing was carried.");
   return !refusal && !!pageByName(name);
 }
 
@@ -25,14 +25,15 @@ async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner
  *  today's name. A second file for the same day — a duplicate day left by sync
  *  delivery or a journal date-format change, opened path-pinned — can hold the
  *  name; carrying into it would land the tasks in a file the journals feed does
- *  not show for today. That refuses with a message naming both files (og I1e;
- *  GH #254 family, master 7bd793bd0; `admitPageFile`). One page read. */
+ *  not show for today. Without unsaved input it is replaced by today's file;
+ *  with unsaved input carry refuses, naming both files (og I1e, og J1; GH #254
+ *  family, master 7bd793bd0; `admitPageFile`). One page read. */
 async function ensureToday(owner: Owner): Promise<string | null> {
   const t = journalTitle(appNow());
-  const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t), "refuse");
+  const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t));
   if (admitted === "stale") return null;
   if (admitted) {
-    reportPageLoadRefusal(admitted, "carrying tasks");
+    reportPageLoadRefusal(admitted, "Nothing was carried.");
     return null;
   }
   return pageByName(t) ? t : null;

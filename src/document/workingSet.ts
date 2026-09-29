@@ -112,16 +112,14 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
  * the same name (a duplicate journal day left by sync delivery or a date-format
  * change, or a same-named page opened by path) can hold the slot. `holder` and
  * `requested` are graph-relative paths; null means a page with no file yet.
- * - `"unsaved-work"`: the holder has uncommitted input (an edit, a save in
- *   flight, a conflict, an active editor, a component draft), so replacing it
- *   would discard that input.
- * - `"second-file"`: a write that must land in `requested` found the slot held
- *   by another file (`admitPageFile`); writing would land in the wrong file. */
+ * `reason` `"unsaved-work"`: the holder has uncommitted input (an edit, a save
+ * in flight, a conflict, an active editor, a component draft), so replacing it
+ * would discard that input. A holder without such input is simply replaced. */
 export interface PageLoadRefusal {
   readonly page: string;
   readonly holder: string | null;
   readonly requested: string | null;
-  readonly reason: "unsaved-work" | "second-file";
+  readonly reason: "unsaved-work";
 }
 
 /** The one answer to "may `dto` take its name slot": null when the slot is
@@ -133,20 +131,18 @@ function slotRefusal(dto: PageDto & { id?: string }): PageLoadRefusal | null {
   return { page: dto.name, holder: existing.id ?? null, requested: dto.id ?? null, reason: "unsaved-work" };
 }
 
-/** Say why a page could not be loaded or written. `doing` names the action a
- * `"second-file"` refusal stopped. Pure; O(1). */
-export function pageLoadRefusalMessage(refusal: PageLoadRefusal, doing = "adding to it"): string {
+/** Say why a page could not be loaded or written. Pure; O(1). */
+export function pageLoadRefusalMessage(refusal: PageLoadRefusal): string {
   const holder = refusal.holder ?? "a new page that is not saved yet";
   const requested = refusal.requested ?? "the page";
-  return refusal.reason === "second-file"
-    ? `“${refusal.page}” is open from a second file (${holder}), not ${requested}. Resolve the duplicate before ${doing}.`
-    : `“${refusal.page}” is open from ${holder} with unsaved work, so ${requested} was not loaded. Finish or save that edit first.`;
+  return `“${refusal.page}” is open from ${holder} with unsaved work, so ${requested} was not loaded. Finish or save that edit first.`;
 }
 
 /** Show `pageLoadRefusalMessage` as a sticky error (the user must act), once
- * while an identical one is visible. Returns the message. O(visible toasts). */
-export function reportPageLoadRefusal(refusal: PageLoadRefusal, doing?: string): string {
-  const message = pageLoadRefusalMessage(refusal, doing);
+ * while an identical one is visible. `after` is appended (what the refusal
+ * stopped). Returns the message. O(visible toasts). */
+export function reportPageLoadRefusal(refusal: PageLoadRefusal, after?: string): string {
+  const message = after ? `${pageLoadRefusalMessage(refusal)} ${after}` : pageLoadRefusalMessage(refusal);
   pushToastUnique(message, "error");
   return message;
 }
@@ -183,19 +179,13 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusa
  * that must land in that file (capture, carry). One page read. The slot takes
  * that file (or `absent` when the page has no file yet) through
  * `ensurePageLoaded`, so another file holding the name is replaced when it has
- * no uncommitted input and refused (`"unsaved-work"`) when it has.
- * `cleanSecondFile: "refuse"` (carry, og I1e) instead refuses `"second-file"`
- * whenever another file holds the name. "stale" when `owner` retired; a failed
- * read rejects. */
-export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto, cleanSecondFile: "replace" | "refuse" = "replace"): Promise<PageLoadRefusal | "stale" | null> {
+ * no uncommitted input and refused (`"unsaved-work"`) when it has: the write
+ * never lands in a file other than the one the name resolves to. "stale" when
+ * `owner` retired; a failed read rejects. */
+export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto): Promise<PageLoadRefusal | "stale" | null> {
   const result = await readOwned(owner, backend().getPage(name, kind));
   if (result.kind === "stale") return "stale";
-  const file: (PageDto & { id?: string }) | null = result.value;
-  if (cleanSecondFile === "replace") return ensurePageLoaded(file ?? absent);
-  const loaded = pageByName(name);
-  if (!loaded || (file && !loaded.id)) return ensurePageLoaded(file ?? absent);
-  if (file?.id && loaded.id !== file.id) return { page: name, holder: loaded.id ?? null, requested: file.id, reason: "second-file" };
-  return null;
+  return ensurePageLoaded(result.value ?? absent);
 }
 
 /** Admit a routed DTO when safe, retaining the live copy if replacement is unsafe.

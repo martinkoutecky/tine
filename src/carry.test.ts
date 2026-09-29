@@ -43,12 +43,13 @@ describe("carry binding", () => {
     save.mockRestore();
   });
 
-  // og I1e (GH #254 family, master 7bd793bd0): today's name slot can be held by
-  // a second file for the same day (a duplicate day left by sync delivery or a
-  // journal date-format change, opened path-pinned and edited). Carry used to
-  // move the tasks into that file with a success toast while the canonical
-  // journal the feed shows for today never received them.
-  it("refuses to carry into a second file that holds today's name, and says so", async () => {
+  // og I1e/J1 (GH #254 family, master 7bd793bd0): today's name slot can be held
+  // by a second file for the same day (a duplicate day left by sync delivery or
+  // a journal date-format change, opened path-pinned). Carry used to move the
+  // tasks into that file with a success toast while the canonical journal the
+  // feed shows for today never received them. With unsaved input in it, carry
+  // refuses (replacing it would discard that input).
+  it("refuses to carry while a second file holding today's name has unsaved input, and says so", async () => {
     await initParser();
     resetStore();
     setToasts([]);
@@ -72,6 +73,42 @@ describe("carry binding", () => {
     expect(wrote).not.toContain("TODO carry me");
     expect(pageByName(source)!.roots.map((id) => doc.byId[id].raw)).toEqual(["TODO carry me"]);
     expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes(`pages/${today}.md`))).toBe(true);
+    expect(pageByName(today)!.id).toBe(`pages/${today}.md`);
+    expect(pageByName(today)!.roots.map((id) => doc.byId[id].raw)).toEqual(["stray edited"]);
+    vi.restoreAllMocks();
+  });
+
+  // og J1 (manager decision): one rule for the family — a second file holding
+  // today's name with NO unsaved input is replaced by today's real file, and the
+  // tasks land there, once, and not in the second file.
+  it("carries into today's real file when a second file holding its name has no unsaved input", async () => {
+    await initParser();
+    resetStore();
+    setToasts([]);
+    const today = journalTitle(new Date());
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    const source = journalTitle(y);
+    loadSingle({ id: `pages/${today}.md`, rev: "s1", name: today, kind: "journal", title: today, pre_block: null,
+      blocks: [{ id: "stray", raw: "stray text", collapsed: false, children: [] }] });
+    ensurePageLoaded({ id: "journals/source.md", rev: "r1", name: source, kind: "journal", title: source, pre_block: null,
+      blocks: [{ id: "task", raw: "TODO carry me", collapsed: false, children: [] }] });
+    vi.spyOn(backend(), "getPage").mockImplementation(async (name) => (name === today
+      ? { id: "journals/canonical.md", rev: "c1", name: today, kind: "journal", title: today, pre_block: null,
+          blocks: [{ id: "morning", raw: "morning", collapsed: false, children: [] }] }
+      : null) as never);
+    vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: [], next_before_day: null, done: true, as_of_day: 0 } as never);
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map((_, i) => `saved-${i}`) }));
+
+    await carryDay(source);
+
+    const entries = save.mock.calls.flatMap(([batch]) => batch);
+    const written = (path: string) => entries.filter((entry) => JSON.stringify(entry).includes(path));
+    expect(written("journals/canonical.md").some((entry) => JSON.stringify(entry).includes("TODO carry me"))).toBe(true);
+    expect(JSON.stringify(written(`pages/${today}.md`))).not.toContain("TODO carry me");
+    const todayRaws = pageByName(today)!.roots.map((id) => doc.byId[id].raw);
+    expect(todayRaws.filter((raw) => raw.includes("TODO carry me"))).toHaveLength(1);
+    expect(todayRaws).toContain("morning");
     vi.restoreAllMocks();
   });
 });
