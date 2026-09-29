@@ -120,6 +120,10 @@ fn hidden_prefix_answers_match_master_for_listing_and_discovery() {
                 "archive\\nested",
                 " archive",
                 "archive ",
+                // Master `lexical_components` trims Unicode whitespace (og-T2).
+                "\u{a0}archive",
+                "archive\u{a0}",
+                "archive\u{3000}",
             ],
             &paths,
         ),
@@ -165,6 +169,98 @@ fn hidden_prefix_answers_match_master_for_listing_and_discovery() {
             );
         }
     }
+}
+
+/// og-T2: an entry with leading or trailing Unicode whitespace is inert, as
+/// master's `lexical_components` (`relative != relative.trim()`) reads it,
+/// even where a path starts with those exact bytes (ADR 0062 remaining edge).
+#[test]
+fn hidden_entry_with_unicode_edge_whitespace_is_inert() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.0.join("logseq")).unwrap();
+    for dir in ["archive\u{a0}old", "\u{3000}notes"] {
+        std::fs::create_dir_all(f.0.join(dir)).unwrap();
+    }
+    std::fs::write(f.0.join("archive\u{a0}old/Nbsp.md"), "- x\n").unwrap();
+    std::fs::write(f.0.join("\u{3000}notes/Ideo.md"), "- x\n").unwrap();
+    std::fs::write(
+        f.0.join("logseq/config.edn"),
+        "{:hidden [\"archive\u{a0}\" \"\u{3000}notes\"]}",
+    )
+    .unwrap();
+    let store = f.store();
+    for name in ["Nbsp", "Ideo"] {
+        assert!(
+            store.page_named(name, PageKind::Page).unwrap().is_some(),
+            "{name} stays visible"
+        );
+    }
+}
+
+/// og-T2 (master `hidden_parse_failed_closed`): a malformed or over-limit
+/// `:hidden` value (a torn or hand-broken config.edn from sync or an external
+/// editor) hides all graph text instead of reading as "nothing hidden",
+/// which would admit the text the owner excluded.
+#[test]
+fn malformed_hidden_value_hides_all_graph_text() {
+    let oversized = format!("{{:hidden [\"{}\"]}}", "x".repeat(64 * 1024));
+    for config in [
+        r#"{:hidden ["archive" "unterminated"#,
+        r#"{:hidden ["bad\q"]}"#,
+        oversized.as_str(),
+    ] {
+        let f = Fixture::new();
+        std::fs::create_dir_all(f.0.join("logseq")).unwrap();
+        std::fs::create_dir_all(f.0.join("archive")).unwrap();
+        std::fs::write(f.0.join("archive/Secret.md"), "- hidden\n").unwrap();
+        std::fs::write(f.0.join("logseq/config.edn"), config).unwrap();
+        let store = f.store();
+        let listed: Vec<String> = store
+            .scan_area(Area::Graph, None)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|file| file.rel.to_string())
+            .filter(|rel| rel.ends_with(".md"))
+            .collect();
+        assert!(listed.is_empty(), "{listed:?}");
+        for name in ["Secret", "Note"] {
+            assert!(
+                store.page_named(name, PageKind::Page).unwrap().is_none(),
+                "{name} under {config:.40}"
+            );
+        }
+        assert!(store.page(&PageId::from("archive/Secret.md")).is_err());
+    }
+}
+
+/// og-T2 recovery: fixing a broken `:hidden` is taken in by the watcher's
+/// config reload, and the graph text is back without reopening.
+#[test]
+fn a_repaired_hidden_value_restores_the_graph_text() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.0.join("logseq")).unwrap();
+    f.put("logseq/config.edn", br#"{:hidden ["archive" "unterminated"#);
+    let store = Store::open(
+        &f.0,
+        OpenOptions {
+            approved_external_assets: None,
+            watch: tine_store::WatchMode::Poll,
+        },
+    )
+    .unwrap()
+    .0;
+    assert!(store.page_named("Note", PageKind::Page).unwrap().is_none());
+    f.put("logseq/config.edn", br#"{:hidden ["archive"]}"#);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while store.page_named("Note", PageKind::Page).unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "repaired config not taken in"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    store.close();
 }
 
 #[test]

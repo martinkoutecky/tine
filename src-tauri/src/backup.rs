@@ -141,6 +141,7 @@ struct BackupSource {
     pages_dir: String,
     assets_dir_name: String,
     hidden: Vec<String>,
+    hidden_parse_failed_closed: bool,
 }
 
 impl BackupSource {
@@ -158,6 +159,7 @@ impl BackupSource {
             pages_dir: config.pages_dir.clone(),
             assets_dir_name,
             hidden: config.hidden.clone(),
+            hidden_parse_failed_closed: config.hidden_parse_failed_closed,
         })
     }
 }
@@ -202,8 +204,9 @@ struct SnapshotManifest {
 }
 
 /// The graph-text scope a schema-3 snapshot covered: restore retires only
-/// unlisted live text inside it. og's `:hidden` fails open on an invalid
-/// value, so this build always records `hidden_parse_failed_closed: false`.
+/// unlisted live text inside it. A `:hidden` value that failed to parse hides
+/// all graph text, so the snapshot holds none and records
+/// `hidden_parse_failed_closed: true` (restore then retires none).
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct SnapshotGraphTextPolicy {
     version: u32,
@@ -738,7 +741,7 @@ fn write_snapshot(
         graph_text_policy: Some(SnapshotGraphTextPolicy {
             version: GRAPH_TEXT_SCOPE_VERSION,
             hidden: source.hidden,
-            hidden_parse_failed_closed: false,
+            hidden_parse_failed_closed: source.hidden_parse_failed_closed,
         }),
         writer: Some(SNAPSHOT_WRITER.into()),
         files,

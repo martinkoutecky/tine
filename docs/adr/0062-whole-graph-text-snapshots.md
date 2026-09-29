@@ -47,8 +47,9 @@ Alternatives on the table:
 - Asset `.edn` sidecars and `logseq/config.edn` are copied as before.
 - The manifest adds `graph_text_policy: {version: 2, hidden, hidden_parse_failed_closed}`,
   in master's field names and with master's `GRAPH_TEXT_SCOPE_VERSION`.
-- og's `:hidden` fails open on an invalid value, so og always records
-  `hidden_parse_failed_closed: false`.
+- og records `hidden_parse_failed_closed` as master does. (Amended og T2,
+  2026-09-29: og's `:hidden` failed open on an invalid value and always
+  recorded `false`; it now fails closed like master.)
 - og adds `"writer": "og"`. Master's serde ignores unknown fields.
 - A snapshot still refuses to publish when the copied count differs from the
   live count.
@@ -100,11 +101,11 @@ Alternatives on the table:
   inert, and an empty entry hides everything.
   `store_read.rs::hidden_prefix_answers_match_master_for_listing_and_discovery`
   pins these answers against master's own test cases.
-- Remaining edge: master treats an entry with leading or trailing Unicode
-  whitespace other than a space (for example a no-break space) as inert, while
-  og accepts it as a prefix. If the readings ever differ, og may retire a live
-  file that master would have left alone. That file goes to restore recovery
-  and is not deleted.
+- An entry with leading or trailing Unicode whitespace (for example a
+  no-break space) is inert in both (og T2 aligned og with master's
+  `lexical_components`; `store_read.rs::hidden_entry_with_unicode_edge_whitespace_is_inert`).
+- A malformed or over-limit `:hidden` value hides all graph text in both, and
+  a snapshot taken then records `hidden_parse_failed_closed` (og T2).
 - A snapshot file that og's reading puts outside the scope makes the restore
   refuse, not partly apply.
 

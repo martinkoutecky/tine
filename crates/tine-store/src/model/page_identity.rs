@@ -99,23 +99,30 @@ fn portable_component(name: &str) -> bool {
         })
 }
 
+/// Whether `:hidden` excludes graph-relative `relative`: an entry is a
+/// byte-exact prefix after one optional trailing `/`; an empty entry, or a
+/// `:hidden` value that failed to parse (`Config::hidden_parse_failed_closed`:
+/// a torn or hand-broken config.edn, delivered by sync or an external editor),
+/// hides everything. An entry with a leading `/`, leading or trailing
+/// (Unicode) whitespace, or a nonportable component is inert (master
+/// `GraphTextScope::new` / `lexical_components`).
 pub(crate) fn configured_hidden(relative: &str, config: &Config) -> bool {
-    config.hidden.iter().any(|prefix| {
-        if prefix.is_empty() {
-            return true;
-        }
-        let prefix = prefix.strip_suffix('/').unwrap_or(prefix);
-        if prefix.starts_with('/')
-            || prefix.starts_with(' ')
-            || prefix.ends_with(' ')
-            || prefix
-                .split('/')
-                .any(|part| !portable_component(part) || matches!(part, "." | ".."))
-        {
-            return false;
-        }
-        relative.starts_with(prefix)
-    })
+    config.hidden_parse_failed_closed
+        || config.hidden.iter().any(|prefix| {
+            if prefix.is_empty() {
+                return true;
+            }
+            let prefix = prefix.strip_suffix('/').unwrap_or(prefix);
+            if prefix.starts_with('/')
+                || prefix != prefix.trim()
+                || prefix
+                    .split('/')
+                    .any(|part| !portable_component(part) || matches!(part, "." | ".."))
+            {
+                return false;
+            }
+            relative.starts_with(prefix)
+        })
 }
 
 pub(crate) fn graph_text_directory_scannable(root: &Path, path: &Path, config: &Config) -> bool {

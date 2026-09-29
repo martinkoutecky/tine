@@ -19,10 +19,14 @@ pub struct Config {
     pub journals_dir: String,
     /// Configured ordinary-page directory, relative to the graph root.
     pub pages_dir: String,
-    /// OG `:hidden` graph-relative literal path prefixes. A malformed or
-    /// over-limit vector is ignored (empty), as OG falls back to defaults on a
-    /// bad config: hiding every file would make the whole graph appear empty.
+    /// OG `:hidden` graph-relative literal path prefixes.
     pub hidden: Vec<String>,
+    /// A malformed or over-limit `:hidden` vector (a torn or hand-broken
+    /// `config.edn`, delivered by sync or an external editor) cannot safely
+    /// read as "nothing hidden": that would admit text the owner excluded.
+    /// Graph-text scope then hides all graph text (master
+    /// `hidden_parse_failed_closed`; docs/storage-contract.md refusal table).
+    pub hidden_parse_failed_closed: bool,
     /// Preferred task marker cycle.
     pub preferred_workflow: Workflow,
     /// User keybinding overrides from `:shortcuts {:cmd "binding"}` (string
@@ -174,6 +178,7 @@ impl Default for Config {
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
             hidden: Vec::new(),
+            hidden_parse_failed_closed: false,
             preferred_workflow: Workflow::Now,
             shortcuts: HashMap::new(),
             all_pages_public: false,
@@ -228,7 +233,10 @@ impl Config {
         if let Some(v) = string_value(edn, ":pages-directory") {
             cfg.pages_dir = v;
         }
-        cfg.hidden = parse_hidden_paths(edn).unwrap_or_default();
+        match parse_hidden_paths(edn) {
+            Ok(hidden) => cfg.hidden = hidden,
+            Err(()) => cfg.hidden_parse_failed_closed = true,
+        }
         if let Some(v) = keyword_value(edn, ":preferred-workflow") {
             cfg.preferred_workflow = if v == "todo" {
                 Workflow::Todo
@@ -983,21 +991,30 @@ mod tests {
     }
 
     #[test]
-    fn hidden_vector_is_decoded_and_bad_value_is_ignored() {
+    fn hidden_vector_is_decoded_and_bad_value_fails_closed() {
         let cfg = Config::parse(
             r#"{:hidden ["archive\u002fprivate" ; ignored
                                   42 #_"discard" "pages/Secret"]}"#,
         );
         assert_eq!(cfg.hidden, ["archive/private", "pages/Secret"]);
-        assert!(Config::parse(r#"{:hidden #{"archive"}}"#).hidden.is_empty());
-        assert!(Config::parse(r#"{:hidden [42]}"#).hidden.is_empty());
-        for bad in ["{:hidden [\"unfinished\"", r#"{:hidden ["bad\q"]}"#] {
-            assert!(Config::parse(bad).hidden.is_empty(), "{bad}");
+        assert!(!cfg.hidden_parse_failed_closed);
+        for inert in [r#"{:hidden #{"archive"}}"#, r#"{:hidden [42]}"#, "{}"] {
+            let cfg = Config::parse(inert);
+            assert!(cfg.hidden.is_empty(), "{inert}");
+            assert!(!cfg.hidden_parse_failed_closed, "{inert}");
         }
         let oversized = format!("{{:hidden [\"{}\"]}}", "x".repeat(64 * 1024));
-        assert!(Config::parse(&oversized).hidden.is_empty());
         let too_many = format!("{{:hidden [{}]}}", "nil ".repeat(257));
-        assert!(Config::parse(&too_many).hidden.is_empty());
+        for bad in [
+            "{:hidden [\"unfinished\"",
+            r#"{:hidden ["bad\q"]}"#,
+            &oversized,
+            &too_many,
+        ] {
+            let cfg = Config::parse(bad);
+            assert!(cfg.hidden.is_empty(), "{bad}");
+            assert!(cfg.hidden_parse_failed_closed, "master fails closed: {bad}");
+        }
     }
 
     #[test]
