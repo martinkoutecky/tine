@@ -650,3 +650,51 @@ fn quitting_drains_the_ledger_within_its_budget() {
     drop(slot);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Every file under `dir` with its bytes, sorted: a byte-exact tree snapshot.
+fn tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(tree(&path));
+        } else {
+            out.push((path.clone(), std::fs::read(&path).unwrap()));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// og and master share one app-data directory at the identity flip (and on a
+/// rollback). Master's ledger lives in `concord-ledger/` with a layout og does
+/// not read; og must neither prune nor write it, and its own entries live in
+/// [`LEDGER_DIR`] under the same root id.
+#[test]
+fn a_master_layout_ledger_tree_is_byte_identical_after_og_opens_saves_and_prunes() {
+    let dir = scratch("master-tree");
+    std::fs::write(dir.join("graph/pages/Desk.md"), body("base")).unwrap();
+    let app_data = dir.join("appdata");
+    let root_id = crate::backup::root_backup_id(&dir.join("graph"));
+    let master = app_data.join("concord-ledger").join(&root_id);
+    let master_page = master.join("pages").join(sha(b"pages/Desk.md"));
+    std::fs::create_dir_all(&master_page).unwrap();
+    std::fs::write(master_page.join("index.json"), br#"{"v":7,"heads":["x"]}"#).unwrap();
+    std::fs::write(master_page.join("x"), b"- master text\n").unwrap();
+    std::fs::create_dir_all(master.join("pins")).unwrap();
+    std::fs::write(master.join("pins/orphan.json"), b"{}").unwrap();
+    std::fs::write(master.join("stray-temp.tmp"), b"torn").unwrap();
+    let before = tree(&app_data.join("concord-ledger"));
+
+    let (slot, subscription) = open_slot(&dir, app_data.clone());
+    save(&slot, "pages/Desk.md", "mine");
+    pump(&slot, &subscription);
+    let ledger = slot.concord_ledger.get().unwrap();
+    assert!(ledger.files().prune(&slot.store).is_ok());
+    assert_eq!(ledger.files().retained("pages/Desk.md")[0], body("mine"));
+    assert!(ledger.dir.starts_with(app_data.join(LEDGER_DIR).join(&root_id)));
+
+    assert_eq!(tree(&app_data.join("concord-ledger")), before);
+    drop(slot);
+    let _ = std::fs::remove_dir_all(dir);
+}

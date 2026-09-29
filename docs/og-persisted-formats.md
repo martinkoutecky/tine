@@ -31,7 +31,7 @@ atomic publication have the same payload as their final name.
 | Diagnostic history JSONL | app data `diagnostics/history.jsonl`, fixed-shape events, ≤ 1 MiB (ADR 0058) | `src-tauri/src/flight_store.rs` `write_history` |
 | Diagnostic session marker | app data `diagnostics/session-active` and `diagnostics/process.lock`, empty files (ADR 0058) | `src-tauri/src/flight_store.rs` `set_session_active`, `open` |
 | Diagnostic report JSON | a user-chosen file from Settings → Help & diagnostics → Save report (ADR 0058) | `src-tauri/src/flight_store.rs` `save_report` |
-| Concord base ledger | app data `concord-ledger/<graph-id>/`: per page `pages/<sha(path)>/index.json` + ≤ 2 text blobs, per sync copy `pins/<sha(path)>.{json,blob}`; disposable, never under the graph root (ADR 0056) | `src-tauri/src/concord_ledger.rs` `LedgerFiles::write` (via `device_io::atomic_write`) |
+| Concord base ledger | app data `concord-ledger-og/<graph-id>/` (never master's `concord-ledger/`, whose layout differs; og never reads, prunes or writes it): per page `pages/<sha(path)>/index.json` + ≤ 2 text blobs, per sync copy `pins/<sha(path)>.{json,blob}`; disposable, never under the graph root (ADR 0056) | `src-tauri/src/concord_ledger.rs` `LedgerFiles::write` (via `device_io::atomic_write`) |
 | Draft store JSON | app data `drafts/<graph-id>.v1.json`, unsaved drafts of pages that could not be saved, ≤ 64 records and 8 MiB (ADR 0061) | `src-tauri/src/drafts.rs` `write_unlocked` |
 
 The graph session JSON may carry `workspaceId`, the ID of the workspace that

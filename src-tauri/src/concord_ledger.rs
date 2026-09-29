@@ -21,7 +21,7 @@
 //!
 //! Never an authority: nothing refuses, delays or fails on the ledger. It is
 //! off the save path (fed from the store's change feed after commit), lives in
-//! app data outside every graph root (`<app_data>/concord-ledger/<root-id>/`),
+//! app data outside every graph root (`<app_data>/`[`LEDGER_DIR`]`/<root-id>/`),
 //! and every write is `device_io::atomic_write` (temp + fsync + rename +
 //! directory sync). Worker errors are logged and dropped. A caller must not
 //! need to know the layout, the worker, or retention.
@@ -53,6 +53,12 @@ pub(crate) const RETAINED: usize = 2;
 /// the next device's conflict needs; the bound keeps a wedged disk from
 /// holding up the exit.
 pub(crate) const EXIT_DRAIN_BUDGET: Duration = Duration::from_millis(200);
+/// og's own app-data folder. Master Tine keeps an incompatible ledger layout
+/// under `concord-ledger/`; once og and master share one app-data directory
+/// (the planned identity flip, or a rollback) each build's prune would delete
+/// the other's entries. A separate folder means og never reads, prunes or
+/// writes master's tree (and the reverse). Disposable, so no migration.
+pub(crate) const LEDGER_DIR: &str = "concord-ledger-og";
 
 fn sha(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -436,7 +442,7 @@ pub(crate) fn attach(app_data: Option<PathBuf>, slot: &std::sync::Arc<GraphSlot>
         return;
     };
     let dir = app_data
-        .join("concord-ledger")
+        .join(LEDGER_DIR)
         .join(crate::backup::root_backup_id(&slot.root_key));
     let ledger = ConcordLedger::new(dir, std::sync::Arc::downgrade(slot));
     ledger.queue_prune();
