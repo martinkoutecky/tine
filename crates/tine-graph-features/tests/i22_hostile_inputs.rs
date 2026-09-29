@@ -7,9 +7,11 @@ use tine_store::{FileRev, PageId, SaveBase, Store, StoreError};
 
 #[test]
 fn bounded_outline_round_trips_unchanged() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!("i22-roundtrip-{}", std::process::id()));
+    let temp = tempfile::Builder::new()
+        .prefix("i22-roundtrip-")
+        .tempdir()
+        .unwrap();
+    let root = temp.path().to_path_buf();
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let mut source = String::new();
@@ -77,9 +79,11 @@ fn anonymized_graph_depth_probe_when_requested() {
 
 #[test]
 fn renderer_flattens_tail_without_losing_text() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!("i22-flat-{}", std::process::id()));
+    let temp = tempfile::Builder::new()
+        .prefix("i22-flat-")
+        .tempdir()
+        .unwrap();
+    let root = temp.path().to_path_buf();
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let mut source = String::new();
@@ -126,9 +130,14 @@ fn hostile_inputs_survive_all_entry_points() {
         "wide_org_headlines",
         "wide_mismatched_inline",
     ] {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("i22-hostile-{case}-"))
+            .tempdir()
+            .unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "hostile_child", "--nocapture"])
             .env("TINE_I22_CASE", case)
+            .env("TINE_I22_ROOT", dir.path())
             .output()
             .unwrap();
         assert!(output.status.success(), "I-22: hostile {case} must not abort open/save/print/publish/conflict diff; exemplar render.rs:719 sanitize at render. exit={:?}; stderr={}", output.status, String::from_utf8_lossy(&output.stderr));
@@ -140,9 +149,11 @@ fn hostile_child() {
     let Ok(case) = std::env::var("TINE_I22_CASE") else {
         return;
     };
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!("i22-hostile-{}-{case}", std::process::id()));
+    // The parent test owns (and deletes) this directory, even when the child aborts.
+    let root = PathBuf::from(
+        std::env::var("TINE_I22_ROOT")
+            .expect("run through hostile_inputs_survive_all_entry_points"),
+    );
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::create_dir_all(root.join("assets")).unwrap();
@@ -388,8 +399,11 @@ fn at_cap_outline(leaf: &str) -> String {
 
 #[test]
 fn over_cap_page_is_visible_as_unreadable_with_named_reason() {
-    let root = std::env::temp_dir().join(format!("tine-i22-too-deep-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let temp = tempfile::Builder::new()
+        .prefix("tine-i22-too-deep-")
+        .tempdir()
+        .unwrap();
+    let root = temp.path().to_path_buf();
     fs::create_dir_all(root.join("pages")).unwrap();
     let mut source = String::new();
     for depth in 0..129 {
@@ -405,14 +419,14 @@ fn over_cap_page_is_visible_as_unreadable_with_named_reason() {
     );
     store.close();
     drop(store);
-    fs::remove_dir_all(root).unwrap();
 }
 
 fn benign_page_at_depth_cap() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!("i22-at-cap-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let temp = tempfile::Builder::new()
+        .prefix("i22-at-cap-")
+        .tempdir()
+        .unwrap();
+    let root = temp.path().to_path_buf();
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let source = at_cap_outline("LEAF needle");
@@ -479,7 +493,6 @@ fn benign_page_at_depth_cap() {
         .is_empty());
     reopened.page(&id).unwrap();
     reopened.close();
-    let _ = fs::remove_dir_all(&root);
 }
 
 fn at_cap_org(leaf: &str) -> String {
@@ -505,10 +518,11 @@ fn benign_org_page_at_depth_cap_round_trips_on_a_command_stack() {
     std::thread::Builder::new()
         .stack_size(2 * 1024 * 1024)
         .spawn(|| {
-            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target")
-                .join(format!("i22-at-cap-org-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&root);
+            let temp = tempfile::Builder::new()
+                .prefix("i22-at-cap-org-")
+                .tempdir()
+                .unwrap();
+            let root = temp.path().to_path_buf();
             fs::create_dir_all(root.join("pages")).unwrap();
             fs::create_dir_all(root.join("journals")).unwrap();
             let path = root.join("pages/DeepOrg.org");
@@ -540,7 +554,6 @@ fn benign_org_page_at_depth_cap_round_trips_on_a_command_stack() {
                 at_cap_org("LEAF edited")
             );
             store.close();
-            let _ = fs::remove_dir_all(&root);
         })
         .unwrap()
         .join()

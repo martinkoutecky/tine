@@ -20,17 +20,15 @@ fn atomic_fixture_write(path: &Path, bytes: impl AsRef<[u8]>) {
     fs::rename(temp, path).unwrap();
 }
 
-fn scratch(label: &str) -> PathBuf {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/b14a2-golden/test-copies")
-        .join(format!(
-            "{label}-{}-{}",
-            std::process::id(),
-            SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
-    fs::create_dir_all(&path).unwrap();
-    fs::canonicalize(path).unwrap()
+/// A self-deleting scratch directory plus its canonical path. Bind the guard
+/// first (`let (_dir, root) = scratch(..)`) so it drops after everything using `root`.
+fn scratch(label: &str) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::Builder::new()
+        .prefix(&format!("print-publish-{label}-"))
+        .tempdir()
+        .unwrap();
+    let path = fs::canonicalize(dir.path()).unwrap();
+    (dir, path)
 }
 
 fn copy_fixture(from: &Path, to: &Path) {
@@ -107,8 +105,8 @@ fn differences(a: &BTreeMap<String, Vec<u8>>, b: &BTreeMap<String, Vec<u8>>) -> 
 #[test]
 fn fixture_print_and_publish_match_golden() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/publish_print");
-    let old_root = scratch("fixture-old");
-    let new_root = scratch("fixture-new");
+    let (_old_dir, old_root) = scratch("fixture-old");
+    let (_new_dir, new_root) = scratch("fixture-new");
     copy_fixture(&fixture, &old_root);
     copy_fixture(&fixture, &new_root);
     let first = dump(&old_root);
@@ -128,7 +126,7 @@ fn fixture_print_and_publish_match_golden() {
 
 #[test]
 fn external_visibility_edit_is_seen_after_corpus_warmup() {
-    let root = scratch("visibility-edit");
+    let (_dir, root) = scratch("visibility-edit");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(
         root.join("pages/Alpha.md"),
@@ -152,7 +150,7 @@ fn external_visibility_edit_is_seen_after_corpus_warmup() {
 
 #[test]
 fn colliding_public_identity_does_not_publish_private_twin() {
-    let root = scratch("public-twin");
+    let (_dir, root) = scratch("public-twin");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(root.join("pages/Twin.md"), "public:: true\n- visible\n").unwrap();
     fs::write(root.join("pages/twin.md"), "- private twin token\n").unwrap();
@@ -170,7 +168,7 @@ fn colliding_public_identity_does_not_publish_private_twin() {
 #[ignore = "requires TINE_CORPUS and two cp -a graph copies"]
 fn corpus_print_and_publish_match_golden() {
     let source = PathBuf::from(std::env::var_os("TINE_CORPUS").expect("TINE_CORPUS"));
-    let base = scratch("corpus");
+    let (_base_dir, base) = scratch("corpus");
     let old_root = base.join("old");
     let new_root = base.join("new");
     for target in [&old_root, &new_root] {
@@ -185,6 +183,7 @@ fn corpus_print_and_publish_match_golden() {
     let old = dump(&old_root);
     let new = dump(&new_root);
     let oracle = site_files(
+        // target-read-only: a pre-built oracle corpus this ignored test only READS, never creates
         &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/b14a2-golden/old/corpus"),
     );
     assert!(

@@ -5,8 +5,6 @@
 //! the page count, whole-file reads do not grow with the page count, and each
 //! referrer costs one write and a bounded number of guard reads (I-13, I-25).
 use std::fs;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tine_graph_features::pages;
 use tine_store::cost_counters::{self, Counts};
@@ -17,14 +15,12 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 /// `pages` unrelated pages spread over three folders, `referrers` pages that
 /// link `[[Target]]`, and the target itself.
 fn rename(pages_count: usize, referrers: usize) -> Counts {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!(
-            "rename-cost-{}-{}",
-            std::process::id(),
-            SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
+    // Self-deleting: dropped after `store` (declared later), and on a panic too.
+    let temp = tempfile::Builder::new()
+        .prefix("rename-cost-")
+        .tempdir()
+        .unwrap();
+    let root = temp.path().to_path_buf();
     for dir in ["pages/a", "pages/b", "pages/c", "journals"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
@@ -55,7 +51,6 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
         "- links [[Renamed]] 0\n"
     );
     store.close();
-    let _ = fs::remove_dir_all(&root);
     counts
 }
 
