@@ -857,3 +857,31 @@ fn resaving_highlights_leaves_unchanged_files_and_hand_notes_alone() {
     );
     let _ = fs::remove_dir_all(&root);
 }
+
+/// Master 3c18d0e `write_highlights_leaves_an_unchanged_hls_page_byte_identical`:
+/// an `hls__` page restyled in the other house style (two-space indent, no
+/// trailing newline) with a user note is not rewritten when a reopened graph
+/// re-saves the same highlight set.
+#[test]
+fn resaving_highlights_leaves_a_restyled_hls_page_byte_identical() {
+    let root = scratch("hls-restyled");
+    let store = open(&root);
+    let h = highlight("11111111-1111-1111-1111-111111111111", 1);
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h.clone()], &[]).unwrap();
+    let page = root.join("pages/hls__paper.md");
+    let generated = fs::read_to_string(&page).unwrap();
+    let restyled = format!("{}\n  - my own note\n", generated.trim_end())
+        .replace('\t', "  ")
+        .trim_end()
+        .to_string();
+    fs::write(&page, &restyled).unwrap();
+    drop(store);
+    let reopened = open(&root);
+    pdf::write_highlights(&reopened, "paper.pdf", "Paper", &[h], &[]).unwrap();
+    assert_eq!(
+        fs::read_to_string(&page).unwrap(),
+        restyled,
+        "re-saving the same highlights must not rewrite the page"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
