@@ -29,6 +29,7 @@ import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
 import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
+import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
@@ -245,6 +246,12 @@ const COMMANDS: CommandDef[] = [
   { id: "go/search-current-page", binding: "mod+shift+k", label: "Search blocks in current page", scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "guide/open", binding: "", label: "Open Guide", scope: "global", run: () => void openGuide(), global: true },
   { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
+  // GH #274 / OG parity: `:editor/follow-link` (mod+o) and
+  // `:editor/open-link-in-sidebar` (mod+shift+o) in OG's shortcut config.
+  // Global rather than editor-scoped because the handler reads the focused
+  // textarea itself and is a no-op when nothing is being edited.
+  { id: "editor/follow-link", binding: "mod+o", label: "Open the link at the caret", scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
+  { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: "Open the link at the caret in the sidebar", scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its

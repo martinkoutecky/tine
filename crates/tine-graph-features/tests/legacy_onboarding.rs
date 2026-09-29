@@ -144,6 +144,17 @@ fn guide_explains_favorites_groups_nesting_and_page_storage() {
 }
 
 #[test]
+fn guide_explains_following_the_link_at_the_caret() {
+    // GH #274: Ctrl+O / Ctrl+Shift+O follow the link nearest the caret.
+    let tips = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Tips & shortcuts")
+        .expect("tips guide is bundled");
+    assert!(tips.markdown.contains("**Ctrl+O** opens that page"));
+    assert!(tips.markdown.contains("**Ctrl+Shift+O** opens it in the right sidebar"));
+}
+
+#[test]
 fn pdf_guide_explains_conflict_discard_and_crop_cleanup_retry() {
     let pdf = bundled_guide_pages()
         .into_iter()
