@@ -5,6 +5,7 @@ import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
 import { doc, feedNames, pageByName } from "./model";
 import { markConflict } from "./save/engine";
+import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
 import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, restoreTodayJournalInFeed } from "./workingSet";
 
 /** Route and feed actions belong to the app; the document module owns the
@@ -15,6 +16,14 @@ export interface ExternalChangeUi {
   leaveRemovedPage(name: string): void;
   restartJournalFeed(): void;
 }
+
+// A change declined below is recorded for replay; the replay re-enters
+// `applyGraphChange`, so the disposition is re-decided with whatever state holds
+// then (deferredReload.ts; GH #337).
+installDeferredReloadReplay({
+  ready: (page) => reloadDisposition(page) === "reload",
+  run: (change) => void applyGraphChange(change),
+});
 
 let captureExternalChangeUi: (() => ExternalChangeUi) | null = null;
 export function installExternalChangeUiHandler(capture: () => ExternalChangeUi): void {
@@ -63,6 +72,7 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
   if (c.removed) {
     if (disp === "conflict") await markObservedConflict();
     if (disp === "conflict" || disp === "skip") {
+      if (disp === "skip") deferExternalReload(currentName, c);
       restartJournalFeed();
       return;
     }
@@ -76,6 +86,7 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
 
   if (disp === "conflict") await markObservedConflict();
   if (disp === "conflict" || disp === "skip") {
+    if (disp === "skip") deferExternalReload(currentName, c);
     restartJournalFeed();
     return;
   }
@@ -90,7 +101,9 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
   if (ui?.pageOpen(c.name)) {
     const result = await readOwned(owner, backend().getPage(c.name, c.kind));
     if (result.kind === "stale") return;
-    if (result.value) reloadPageIfStillSafe(c.name, toLoadablePage(result.value, c.name));
+    // A decline here (the page turned busy during the read) is the same dropped
+    // reload as "skip": defer, don't drop.
+    if (result.value && !reloadPageIfStillSafe(c.name, toLoadablePage(result.value, c.name))) deferExternalReload(currentName, c);
     restartJournalFeed();
     return;
   }
@@ -98,7 +111,7 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
     if (pageByName(c.name)) {
       const result = await readOwned(owner, backend().getPage(c.name, c.kind));
       if (result.kind === "stale") return;
-      if (result.value) reloadPageIfStillSafe(c.name, result.value);
+      if (result.value && !reloadPageIfStillSafe(c.name, result.value)) deferExternalReload(currentName, c);
     }
     // The feed owner gates dirty/save/conflict/move state and records a pending
     // restart when unsafe, so this watcher event is not lost.
@@ -108,6 +121,6 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
   if (pageByName(c.name) && !feedNames().includes(c.name)) {
     const result = await readOwned(owner, backend().getPage(c.name, c.kind));
     if (result.kind === "stale") return;
-    if (result.value) reloadPageIfStillSafe(c.name, result.value);
+    if (result.value && !reloadPageIfStillSafe(c.name, result.value)) deferExternalReload(currentName, c);
   }
 }
