@@ -42,7 +42,7 @@ import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
-import { checkForUpdate } from "./update";
+import { checkForUpdate, setUpdateExitGuard } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
@@ -143,6 +143,7 @@ export const safeClose = createSafeCloseCoordinator({
   },
 });
 
+setUpdateExitGuard(safeClose);
 
 async function closeAndroidRootSafely(): Promise<void> {
   await requestAndroidRootClose(

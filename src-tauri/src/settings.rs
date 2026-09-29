@@ -50,21 +50,43 @@ pub(crate) fn native_frame_active() -> bool {
 /// another's key, and a transient read error aborts instead of resetting all prefs.
 static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Strict, fallible variant used by the signed registry cache. Unlike the
-/// legacy generic preference writer, this must never rebuild a malformed
-/// settings file from `{}`: doing so could erase unrelated device settings and
-/// turn a cache-storage failure into apparent success.
+/// The one door for device-settings writes. A settings file that exists but does
+/// not parse as a JSON object (an external edit, a sync tool's mangled copy) is
+/// REFUSED, never rebuilt from `{}`: writing the default view back would erase
+/// every known graph, plugin state, asset approval and cached registry (I-9), and
+/// a non-object root would panic the `json[key] = ..` mutators. The file is left
+/// byte-for-byte untouched and the error names it, so the user can repair or
+/// remove it. A missing or blank file is a fresh start. Unknown keys (a newer
+/// Tine) are carried through because `mutate` edits the parsed object in place.
+/// In-scope scenario for the refusal: an external editor or a sync tool left
+/// invalid bytes in this device-local file.
 pub(crate) fn update_settings_strict_at(
     path: &std::path::Path,
     mutate: impl Fn(&mut serde_json::Value) -> Result<(), String>,
 ) -> Result<(), String> {
     crate::device_io::atomic_update(path, &SETTINGS_LOCK, |content| {
-        let mut json: serde_json::Value = serde_json::from_str(content)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        let mut json: serde_json::Value = if content.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(content).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "device settings file {} is not valid JSON ({error}); \
+                         it was left untouched, repair or remove it",
+                        path.display()
+                    ),
+                )
+            })?
+        };
         if !json.is_object() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "device settings root is not an object",
+                format!(
+                    "device settings file {} does not hold a JSON object; \
+                     it was left untouched, repair or remove it",
+                    path.display()
+                ),
             ));
         }
         mutate(&mut json)
@@ -79,25 +101,24 @@ pub(crate) fn update_settings_strict_at(
     .map_err(|error| error.to_string())
 }
 
-/// Merge one or more keys into the device-settings JSON, durably. `mutate` edits the
-/// parsed object (an unparseable existing file is treated as `{}`, the prior behavior).
+/// Merge one or more keys into the device-settings JSON, durably (see
+/// [`update_settings_strict_at`] for the refusal rule).
+pub(crate) fn update_settings_at(
+    path: &std::path::Path,
+    mutate: impl Fn(&mut serde_json::Value),
+) -> Result<(), String> {
+    update_settings_strict_at(path, |json| {
+        mutate(json);
+        Ok(())
+    })
+}
+
 pub(crate) fn update_settings(
     app: &tauri::AppHandle,
     mutate: impl Fn(&mut serde_json::Value),
 ) -> Result<(), String> {
     let p = settings_path(app).ok_or("no app-data dir")?;
-    crate::device_io::atomic_update(&p, &SETTINGS_LOCK, |content| {
-        let mut json: serde_json::Value =
-            serde_json::from_str(content).unwrap_or_else(|_| serde_json::json!({}));
-        mutate(&mut json);
-        serde_json::to_string_pretty(&json)
-            .map(|mut s| {
-                s.push('\n');
-                s
-            })
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-    })
-    .map_err(|e| e.to_string())
+    update_settings_at(&p, mutate)
 }
 
 fn graph_display_name(path: &str) -> String {
@@ -753,6 +774,60 @@ mod tests {
         assert_eq!(approvals["/graphs/a"], "/media/retargeted");
         assert_eq!(approvals["/graphs/b"], "/media/two");
         assert_eq!(json["unrelated"], true);
+    }
+
+    #[test]
+    fn update_settings_refuses_an_unparseable_file_and_leaves_it_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tine-settings.json");
+        let broken = r#"{"known_graphs":[{"path":"/g","name":"g"}],"plugin_states":{"p":"#;
+        std::fs::write(&path, broken).unwrap();
+        let error = update_settings_at(&path, |json| {
+            remember_graph_json(json, "/graphs/new");
+        })
+        .unwrap_err();
+        assert!(error.contains("tine-settings.json"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+    }
+
+    #[test]
+    fn update_settings_refuses_a_non_object_root_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tine-settings.json");
+        for root in ["[1,2]", "42", "\"text\"", "null"] {
+            std::fs::write(&path, root).unwrap();
+            let outcome = std::panic::catch_unwind(|| {
+                update_settings_at(&path, |json| {
+                    json["capture_enter_files"] = serde_json::Value::Bool(true);
+                })
+            });
+            let result = outcome.expect("a non-object root must never panic the writer");
+            assert!(result.is_err(), "{root}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), root);
+        }
+    }
+
+    #[test]
+    fn update_settings_carries_unknown_keys_and_starts_fresh_when_absent_or_blank() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("tine-settings.json");
+        update_settings_at(&path, |json| json["a"] = serde_json::json!(1)).unwrap();
+        assert_eq!(read_json(&path)["a"], 1);
+        std::fs::write(&path, r#"{"future_key":{"nested":[1,2]},"a":1}"#).unwrap();
+        update_settings_at(&path, |json| json["b"] = serde_json::json!(2)).unwrap();
+        let after = read_json(&path);
+        assert_eq!(after["future_key"], serde_json::json!({"nested":[1,2]}));
+        assert_eq!(
+            (after["a"].clone(), after["b"].clone()),
+            (1.into(), 2.into())
+        );
+        std::fs::write(&path, "  \n").unwrap();
+        update_settings_at(&path, |json| json["c"] = serde_json::json!(3)).unwrap();
+        assert_eq!(read_json(&path)["c"], 3);
+    }
+
+    fn read_json(path: &std::path::Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
     #[test]

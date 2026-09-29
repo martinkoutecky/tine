@@ -21,6 +21,7 @@ import { markConflict } from "../document/save/engine";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
 import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
+import { favorites, seedFavorites } from "../favorites";
 import type { GraphMeta } from "../types";
 
 beforeAll(async () => {
@@ -1529,6 +1530,53 @@ describe("page route loading", () => {
     } finally {
       dispose();
       clearRecent();
+    }
+  });
+
+  it("opening an alias re-points the view to its owner but never rewrites the favorites config (I-9)", async () => {
+    clearRecent();
+    seedFavorites(["Nickname"]);
+    const write = vi.spyOn(backend(), "setFavorites").mockResolvedValue();
+    const owner: PageDto = {
+      name: "Real Page", kind: "page", title: "Real Page", pre_block: null,
+      blocks: [{ id: "owner-block", raw: "owner content", collapsed: false, children: [] }],
+    };
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(owner));
+    mainPaneRouter.openPage("Nickname", "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      await flushMicrotasks();
+      expect(mainPaneRouter.route()).toEqual({ kind: "page", name: "Real Page", pageKind: "page" });
+      expect(root.textContent).toContain("owner content");
+      await flushMicrotasks();
+      expect(write).not.toHaveBeenCalled();
+      expect(favorites().map((f) => f.name)).toEqual(["Nickname"]);
+    } finally {
+      dispose();
+      clearRecent();
+      seedFavorites([]);
+    }
+  });
+
+  it("a true case variant still adopts the canonical spelling in favorites", async () => {
+    clearRecent();
+    seedFavorites(["Page1"]);
+    const write = vi.spyOn(backend(), "setFavorites").mockResolvedValue();
+    const dto: PageDto = {
+      name: "page1", kind: "page", title: "page1", pre_block: null,
+      blocks: [{ id: "case-block", raw: "case content", collapsed: false, children: [] }],
+    };
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage("Page1", "page", { inPlace: true });
+    const { dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(write).toHaveBeenCalledWith(["page1"], null));
+      expect(favorites().map((f) => f.name)).toEqual(["page1"]);
+    } finally {
+      dispose();
+      clearRecent();
+      seedFavorites([]);
     }
   });
 

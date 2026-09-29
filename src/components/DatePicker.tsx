@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { datePicker, closeDatePicker, firstDayOfWeek, type DatePickerTarget } from "../ui";
 import { readSchedule, setSchedule } from "../document";
-import { fieldLabel, readField, writeField, type FieldId } from "../sheet/fields";
+import { fieldLabel, readField, writeFieldVisibly, type FieldId } from "../sheet/fields";
 import { parseIsoDateLike } from "../sheet/typed";
 import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
@@ -112,7 +112,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
       return;
     }
     const fieldTime = props.which.fieldType === "datetime" ? propDateSelection(props.bid, props.which.field)?.time : null;
-    writeField(props.bid, props.which.field, fieldTime ? `${picked} ${fieldTime}` : picked);
+    writeFieldVisibly(props.bid, props.which.field, fieldTime ? `${picked} ${fieldTime}` : picked);
   };
   const pick = (d: number) => {
     writePickedDate(view().y, view().m, d);
@@ -243,8 +243,8 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
               class="dp-btn dp-clear"
               onClick={() => {
                 if (!bound()) return closeDatePicker();
-                if (isScheduleTarget(props.which)) writeField(props.bid, props.which, "");
-                else writeField(props.bid, props.which.field, "");
+                if (isScheduleTarget(props.which)) writeFieldVisibly(props.bid, props.which, "");
+                else writeFieldVisibly(props.bid, props.which.field, "");
                 closeDatePicker();
               }}
             >

@@ -200,6 +200,25 @@ export interface PageRow {
   properties: [string, string][];
 }
 
+/** The ONE answerer for "what does this page column show": a Table cell, a Board
+ * group key and the friendly-search page rows all call it. `fallbackDay` is the
+ * catalog's `date_key` for a page whose hydrated row is absent. Cost O(properties
+ * on the row); never throws. */
+export function pageRowFieldValue(
+  page: { name: string; kind: PageKind },
+  row: PageRow | undefined,
+  field: string,
+  fallbackDay?: number | null,
+): string {
+  const name = field.startsWith("prop:") ? field.slice(5) : field;
+  if (name === "name") return page.name;
+  if (name === "kind") return page.kind === "journal" ? "Journal" : "Page";
+  if (name === "day" || name === "journal-day" || name === "journal_day")
+    return String(row?.journal_day ?? fallbackDay ?? "");
+  const key = name.trim().toLowerCase();
+  return row?.properties.find(([property]) => property.trim().toLowerCase() === key)?.[1] ?? "";
+}
+
 /** The advanced-query report (M5): OG/TQL sources report an empty `ignored` and `supported: true`. */
 export interface QueryReport {
   ran?: string[];

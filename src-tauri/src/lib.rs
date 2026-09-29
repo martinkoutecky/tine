@@ -656,8 +656,13 @@ pub fn run() {
                     // it to the wrong graph in a multi-window session.
                     if let Ok(slot) = state::slot_for_window(&state, label) {
                         if state.note_focused(label) {
-                            let _ =
-                                settings::remember_graph(app, &slot.root_key.display().to_string());
+                            if settings::remember_graph(app, &slot.root_key.display().to_string())
+                                .is_err()
+                            {
+                                // Refused (unparseable settings file) or I/O failure:
+                                // the known-graph list is stale until it is repaired.
+                                diag("remember-graph-refused");
+                            }
                         }
                     }
                 }

@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { graphMeta, setGraphMeta } from "./graphSession";
-import { changeWorkflow, workflow, setWorkflow, changeShowBrackets, pruneSidebarBlocks, setRightSidebar, rightSidebar, toggleWideMode, wideMode, setFavorites, favorites, toggleFavorite, persistSidebarWidth } from "./ui";
+import { changeWorkflow, workflow, setWorkflow, changeShowBrackets, pruneSidebarBlocks, setRightSidebar, rightSidebar, toggleWideMode, wideMode, setFavorites, favorites, toggleFavorite, persistSidebarWidth, refreshJournalConflicts, setShortcutOverride, setShortcutOverrides, shortcutOverrides } from "./ui";
 import { toasts, setToasts } from "./toasts";
 
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
@@ -117,4 +117,19 @@ it("does not dispatch a queued config write into the next graph", async () => {
   await flush();
   expect(write).toHaveBeenCalledTimes(1);
   expect(workflow()).toBe("todo");
+});
+
+// C3X X6 (L13): both of these used to swallow the failure silently.
+it("says so when the duplicate-journal listing fails instead of showing no duplicates", async () => {
+  vi.spyOn(backend(), "listJournalConflicts").mockRejectedValueOnce(new Error("I/O"));
+  await refreshJournalConflicts();
+  expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("duplicate journal days"))).toBe(true);
+});
+
+it("announces a refused shortcut write and keeps the shortcut that is really stored", () => {
+  setShortcutOverrides({});
+  vi.stubGlobal("localStorage", { setItem: () => { throw new Error("quota"); }, getItem: () => null, removeItem: () => {} });
+  setShortcutOverride("toggle-sidebar", "mod+shift+k");
+  expect(shortcutOverrides()).toEqual({});
+  expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("keyboard shortcuts"))).toBe(true);
 });

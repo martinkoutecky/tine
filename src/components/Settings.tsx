@@ -57,7 +57,7 @@ import { ThemeSettings } from "./ThemeSettings";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
-import { captureBinding } from "../binding";
+import { captureBinding, graphScopedSignal, refuseStaleWrite } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile } from "../types";
 import { formatJournal, appNow } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
@@ -1886,18 +1886,19 @@ function MediaEditorsSection(): JSX.Element {
   );
 }
 
+/** One graph's orphan scan (I-20): null once its binding is stale, so Trash cannot carry an old graph's name into the new one. */
+const [orphanScan, setOrphanScan] = graphScopedSignal<AssetInfo[]>();
+
 function AssetsTab(): JSX.Element {
-  let alive = true; onCleanup(() => { alive = false; });
-  const requests = {};
-  const [list, setList] = createSignal<AssetInfo[]>([]);
+  let alive = true; onCleanup(() => { alive = false; setOrphanScan(null); });
+  const requests = {}; const list = () => orphanScan() ?? [];
   const [busy, setBusy] = createSignal(false);
-  const [scanned, setScanned] = createSignal(false);
+  const scanned = () => orphanScan() !== null;
   const [trashInfo, setTrashInfo] = createSignal<TrashStats>({ count: 0, bytes: 0, pages: 0, journals: 0, conflicts: 0, other: 0 });
 
   const fmtSize = (n: number) =>
     n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
-  const fmtDate = (secs: number | null) => secs == null ? "" :
-    new Date(secs * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const fmtDate = (secs: number | null) => secs == null ? "" : new Date(secs * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   const total = () => list().reduce((s, a) => s + a.size, 0);
   const protectedTrashCount = () =>
     trashInfo().pages + trashInfo().journals + trashInfo().conflicts + trashInfo().other;
@@ -1916,9 +1917,7 @@ function AssetsTab(): JSX.Element {
     try {
       const info = await readOwned(owner, backend().assetTrashStats());
       if (info.kind === "current") setTrashInfo(info.value);
-    } catch {
-      /* trash stats are best-effort */
-    }
+    } catch { /* trash stats are best-effort */ }
   };
 
   const refresh = async () => {
@@ -1934,8 +1933,7 @@ function AssetsTab(): JSX.Element {
       }
       const assets = await readOwned(owner, backend().listOrphanAssets());
       if (assets.kind === "stale") return;
-      setList(assets.value);
-      setScanned(true);
+      setOrphanScan(assets.value);
       await refreshTrash();
     } catch (e) {
       if (owner()) pushToast(`Scan failed: ${String(e)}`, "error");
@@ -1954,6 +1952,7 @@ function AssetsTab(): JSX.Element {
     }
   };
   const trash = async (a: AssetInfo) => {
+    if (orphanScan() === null) return refuseStaleWrite("Moving that asset to the trash");
     const binding = captureBinding();
     const owner = graphOwner();
     // No confirm: the file only moves to the recoverable logseq/.tine-trash, so
@@ -1961,7 +1960,7 @@ function AssetsTab(): JSX.Element {
     try {
       const result = await writeOwned(owner, backend().trashAsset(a.name, binding.backendGeneration));
       if (result.kind === "stale") return;
-      setList((l) => l.filter((x) => x.name !== a.name));
+      if (alive) setOrphanScan(list().filter((x) => x.name !== a.name));
       pushToast(`Moved ${a.name} to trash`, "success");
       await refreshTrash();
     } catch (e) {
