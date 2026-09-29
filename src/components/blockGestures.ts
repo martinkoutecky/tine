@@ -91,7 +91,7 @@ export function beginDrag(id: string, e: MouseEvent) {
   document.addEventListener("mouseup", onUp);
 }
 
-// --- OG-compatible edit / drag gesture on rendered block content -----------
+// --- Click / drag gesture on rendered block content -------------------------
 //
 // OG enters edit mode from block-content-on-mouse-down (GH #368), not from
 // mouseup: a held click must show the caret immediately instead of making the
