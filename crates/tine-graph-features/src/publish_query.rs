@@ -331,11 +331,7 @@ fn collect_static(
             Ok(())
         },
     )?;
-    files.extend(
-        store
-            .publication_assets(corpus)
-            .map_err(crate::store_error)?,
-    );
+    files.extend(tine_store::publication_assets(store, corpus).map_err(crate::store_error)?);
     Ok(files)
 }
 
@@ -552,7 +548,7 @@ fn snapshot(
             _ => None,
         })
         .collect();
-    let block_ref_counts = store.publication_block_ref_counts(corpus);
+    let block_ref_counts = tine_store::publication_block_ref_counts(store, corpus);
     let snapshot = json!({ "schema": 1, "name": name, "exported_at": export_time()?,
         "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
         "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries });
@@ -621,8 +617,8 @@ fn commit(
     if total > MAX_EXPORT_BYTES {
         return Err(refusal("export byte budget exceeded"));
     }
-    let receipt = store
-        .publish_site_external(parent, leaf, &mut |writer| {
+    let receipt =
+        tine_store::publish_site_external(store, parent.as_os_str(), leaf, &mut |writer| {
             for (path, bytes) in &files {
                 writer.write(path, bytes)?;
             }

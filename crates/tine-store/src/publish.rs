@@ -185,7 +185,7 @@ impl Store {
     /// Fold the existing per-document block-reference counter over exactly a
     /// publication's selected pages. Cost O(selected blocks); no graph bytes
     /// are read or written. Callers need no cache or index state.
-    pub fn publication_block_ref_counts(
+    pub(crate) fn publication_block_ref_counts(
         &self,
         corpus: &tine_core::Corpus,
     ) -> std::collections::HashMap<String, usize> {
@@ -203,7 +203,7 @@ impl Store {
     /// scanner and file-id validator. Missing files are omitted; malformed or
     /// oversized live assets refuse. Cost O(selected text + asset bytes), with
     /// a cumulative 32 MiB byte ceiling. No graph content is written.
-    pub fn publication_assets(
+    pub(crate) fn publication_assets(
         &self,
         corpus: &tine_core::Corpus,
     ) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
@@ -252,7 +252,7 @@ impl Store {
     /// in an owned stage and the stage is moved without clobbering an existing
     /// leaf. A failure after the rename can leave a complete but unsynced site;
     /// inspect the named destination before retrying. Cost O(emitted bytes).
-    pub fn publish_site_external(
+    pub(crate) fn publish_site_external(
         &self,
         parent: &Path,
         leaf: &str,
@@ -405,6 +405,36 @@ impl Store {
             previous_kept: None,
         })
     }
+}
+
+/// Count projected block references over exactly the selected publication
+/// pages. Cost O(selected blocks); source pages are not changed.
+pub fn publication_block_ref_counts(
+    store: &Store,
+    corpus: &tine_core::Corpus,
+) -> std::collections::HashMap<String, usize> {
+    store.publication_block_ref_counts(corpus)
+}
+
+/// Read selected pages' referenced assets through Store's validated asset
+/// reader. Missing assets are omitted; the total read is capped at 32 MiB.
+pub fn publication_assets(
+    store: &Store,
+    corpus: &tine_core::Corpus,
+) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
+    store.publication_assets(corpus)
+}
+
+/// Publish a fresh site leaf below an existing user-picked OS directory. The
+/// parent must be outside the graph. Store stages and fsyncs files, then moves
+/// the stage create-only; a collision or changed stage refuses publication.
+pub fn publish_site_external(
+    store: &Store,
+    parent: &std::ffi::OsStr,
+    leaf: &str,
+    emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+) -> Result<PublishReceipt, PublishFailed> {
+    store.publish_site_external(Path::new(parent), leaf, emit)
 }
 
 struct PublishRecovery {
