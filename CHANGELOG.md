@@ -95,6 +95,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Plugin calls survive a rename or a format change** (master cdd0eda4, og-I2).
+  A plugin's ownership of the open graph followed the render epoch, which a page rename, a typography
+  change or a journal-title-format change bumps, so a call in flight across one of those was dropped as
+  if the graph had changed. It now follows the graph binding only; switching graph still retires it.
+- **Creating a page from the Quick Switcher after a graph switch says so** (og-I2). Alt+Enter and the
+  new-pane paths used to open nothing, or the wrong graph's page, when the graph changed under a
+  create in flight; they now show "The graph changed before the page was created. Try again."
+- **Restore can no longer be clicked twice while its confirmation is open** (og-I2).
+- **Arrow-key pane selection steps across the seam between panes correctly** (master 91d102fb, og-I2):
+  the candidate's near edge, not its centre, is tested against the current pane's boundary.
+- **Search regular expressions accept `\d \w \s \b`** (master f02af3ef, og-I2). Only back-references
+  `\1`–`\9` are refused. Note: the native search reads `\d \w \b` as Unicode classes and the frontend
+  as ASCII, so a non-ASCII digit or letter can match on one and not the other.
+- **The HTML export no longer prints a sheet's `tine.*` view settings as property chips** (og-I2).
+- **The reference filter summary says filtering is pending while the descendant index loads** (og-I2):
+  "Indexing N references… the filter applies when this finishes" instead of a count over an unfiltered list.
+- **The graph switcher says when it could not load the other graphs, and offers Retry** (og-I2).
+- **Diagnostics report watcher-batch timings, and `__tineWatcherLatency()` prints them in the devtools console** (og-I2).
+- **The Guide names the left and right sidebar link areas, the embed root-bullet drag versus click, and the
+  search-fold examples** (`か`/`が`, `и`/`й`, `क`/`कु`, `елка`/`ёлка`) (og-I2).
+
 - **Ctrl+F scrolls to the exact occurrence, not just its block** (GH #253, master
   46a5290a2, og H). In a block taller than the window, in-page find used to center
   only the block, leaving the match off-screen; it now centers the active occurrence
