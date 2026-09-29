@@ -1,7 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
-import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { editorOffsetFromRenderedRange } from "../render/spans";
@@ -64,8 +63,9 @@ import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydra
 import { compareSortKeys, measuredGridTracks, nextQuerySort, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
   SCHEMA_PROP_TYPES, type SchemaMenuType, type SortKey, type SortState } from "../sheet/tablePresentation";
 import type { ViewSettings } from "../editor/queryIr";
-import { FieldValueView, isEnumFieldType } from "./SheetFieldValue";
-import { fieldIdsForRecords, recordFacets } from "../sheet/tableFields";
+import { FieldValueView } from "./SheetFieldValue";
+import { displayFieldValue, isEnumFieldType } from "../sheet/cellPresentation";
+import { fieldIdsForRecords, recordFacets, rowRaw, tableFieldOrder, tableRowTitle } from "../sheet/tableFields";
 import { createTableColumnResize } from "../sheet/tableColumnResize";
 
 interface RowRecord extends FormulaEvalRow {}
@@ -151,7 +151,6 @@ export function SheetTable(props: {
     return out;
   });
   const formulaFields = createMemo<FieldId[]>(() => [...formulas().keys()].map(formulaFieldId));
-  const formulaFieldSet = createMemo(() => new Set<FieldId>(formulaFields()));
 
   const allRows = createMemo<RowRecord[]>(() => {
     if (props.rowSource === "children") {
@@ -191,19 +190,7 @@ export function SheetTable(props: {
     const observed = loadedIds.length === rows().length
       ? fieldIdsForBlocks(loadedIds, { includePage: props.rowSource === "query" })
       : fieldIdsForRecords(rows(), props.rowSource === "query");
-    const seen = new Set(observed);
-    const extra = extraFields().filter((f) => !seen.has(f));
-    const inferred = [...observed, ...extra];
-    const schema = schemaFields();
-    const declared = schema.map((s) => s.field);
-    const declaredSet = new Set(declared);
-    const formulas = formulaFields();
-    const formulasSet = formulaFieldSet();
-    return [
-      ...declared,
-      ...formulas,
-      ...inferred.filter((f) => !declaredSet.has(f) && !formulasSet.has(f)),
-    ];
+    return tableFieldOrder(observed, extraFields(), schemaFields().map((s) => s.field), formulaFields());
   });
   const formulaHintFields = createMemo(() => {
     const out: string[] = [];
@@ -298,7 +285,7 @@ export function SheetTable(props: {
     if (!s) return rs;
     const col = columns()[s.col];
     const value = (r: RowRecord): SortKey => {
-      if (col === "title") return { kind: "text", text: rowTitle(r) };
+      if (col === "title") return { kind: "text", text: tableRowTitle(r) };
       const formula = formulaValue(r, col);
       if (formula?.kind === "number") return { kind: "number", value: formula.value, text: String(formula.value) };
       const field = rowFieldValue(r, col);
@@ -1097,15 +1084,6 @@ function formulaReferenceName(field: FieldId): string | null {
   return field;
 }
 
-function rowRaw(row: RowRecord): string {
-  return liveFormulaRowNode(row)?.raw ?? row.dto?.raw ?? "";
-}
-
-function rowTitle(row: RowRecord): string {
-  const title = visibleBody(rowRaw(row)).join(" ");
-  return title.trim() === "" && (liveFormulaRowNode(row)?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;
-}
-
 function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {
   if (!contentRef) return null;
   const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
@@ -1230,9 +1208,9 @@ function TitleCell(props: {
           fallback={
             <Show
               when={props.near}
-              fallback={<span class="sheet-cell-defer">{rowTitle(props.row)}</span>}
+              fallback={<span class="sheet-cell-defer">{tableRowTitle(props.row)}</span>}
             >
-              <InlineText text={rowTitle(props.row)} format={fmt()} />
+              <InlineText text={tableRowTitle(props.row)} format={fmt()} />
             </Show>
           }
         >
@@ -1266,11 +1244,7 @@ function FieldCell(props: {
   freezeColumns: () => void;
 }): JSX.Element {
   const value = () => isFormulaField(props.field) ? formulaValueToFieldValue(props.formulaValue) : readFormulaRowField(props.row, props.field);
-  const displayValue = (): FieldValue | null => {
-    const current = value();
-    if (current) return current;
-    return props.field.startsWith("prop:") && props.fieldType === "checkbox" ? { text: "false", raw: "false" } : null;
-  };
+  const displayValue = (): FieldValue | null => displayFieldValue(props.field, props.fieldType, value());
   const editable = () => !!liveFormulaRowNode(props.row) && !isFormulaField(props.field);
   const select = () => setCellSel({
     gridId: props.ownerId,
