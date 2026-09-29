@@ -282,3 +282,65 @@ describe("right sidebar collection disclosures", () => {
     }
   });
 });
+
+// GH #358: a block explicitly parked in the right sidebar is the ROOT of that
+// view — its children must render regardless of the source outline's
+// persisted collapsed flag (the zoomed view's forceExpandedRoot contract),
+// while descendant collapse states stay respected.
+describe("right sidebar collapsed-source block (GH #358)", () => {
+  const collapsedPage: PageDto = {
+    name: "Collapsed source",
+    kind: "page",
+    title: "Collapsed source",
+    pre_block: null,
+    blocks: [
+      {
+        id: "parked-parent",
+        raw: "Parked parent",
+        collapsed: true, // hidden in the main outline — must not matter here
+        children: [
+          { id: "parked-child-1", raw: "Child one", collapsed: false, children: [] },
+          {
+            id: "parked-child-2",
+            raw: "Child two",
+            collapsed: true, // descendant collapse stays respected
+            children: [{ id: "parked-grandchild", raw: "Grandchild", collapsed: false, children: [] }],
+          },
+        ],
+      },
+      { id: "unrelated", raw: "Unrelated", collapsed: false, children: [] },
+    ],
+  };
+
+  function mountParked() {
+    loadSingle(collapsedPage);
+    applySidebarSession({
+      right: true,
+      items: [{ kind: "block", uuid: "parked-parent", page: collapsedPage.name, pageKind: "page" }],
+    });
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <RightSidebar />, root);
+    return { root, dispose };
+  }
+
+  it("renders the parked block's children despite its collapsed source state", async () => {
+    const { root, dispose } = mountParked();
+    try {
+      await vi.waitFor(() => {
+        expect(root.querySelector('.rs-item-body .ls-block[data-block-id="parked-child-1"]')).not.toBeNull();
+        expect(root.querySelector('.rs-item-body .ls-block[data-block-id="parked-child-2"]')).not.toBeNull();
+      });
+      // …while the descendant's own collapsed state is honored.
+      expect(root.querySelector('.rs-item-body .ls-block[data-block-id="parked-grandchild"]')).toBeNull();
+      // The main outline's durable state is untouched.
+      expect(doc.byId["parked-parent"].collapsed).toBe(true);
+      expect(doc.byId["parked-child-2"].collapsed).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+});
