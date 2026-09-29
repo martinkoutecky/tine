@@ -677,7 +677,7 @@ fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
                     .strip_prefix(root)
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned();
+                    .replace('\\', "/");
                 out.push((rel, fs::read(&path).unwrap()));
             }
         }
