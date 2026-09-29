@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   dispatchAndroidBack,
+  exitAndroidActivity,
   installAndroidBackHandler,
   type AndroidBackDispatchDeps,
   type AndroidBackListener,
@@ -17,14 +18,16 @@ function deferred<T>() {
 function dispatchDeps(): AndroidBackDispatchDeps & {
   transient: boolean;
   drawer: boolean;
+  routerHasBack: boolean;
 } {
   const state = {
     transient: false,
     drawer: false,
+    routerHasBack: true,
     dismissTransient: vi.fn(() => state.transient),
     dismissDrawer: vi.fn(() => state.drawer),
     restoreDrawerFocus: vi.fn(),
-    historyBack: vi.fn(),
+    historyBack: vi.fn(() => state.routerHasBack),
     closeRoot: vi.fn(),
   };
   return state;
@@ -49,9 +52,46 @@ describe("GH #161 official Android AppPlugin Back owner", () => {
     expect(deps.historyBack).toHaveBeenCalledOnce();
     expect(deps.closeRoot).not.toHaveBeenCalled();
 
+    deps.routerHasBack = false;
     expect(dispatchAndroidBack({ canGoBack: false }, deps)).toBe("root");
+    expect(deps.historyBack).toHaveBeenCalledTimes(2);
+    expect(deps.closeRoot).toHaveBeenCalledOnce();
+  });
+
+  // Master 393973956 -> 07cb27262: the WebView's canGoBack can be true while
+  // Tine's router has nothing to pop. Choosing the history rung from it made
+  // Back silently do nothing, forever; the router decides instead.
+  it("closes the root when the router cannot go back even though the WebView says it can", () => {
+    const deps = dispatchDeps();
+    deps.routerHasBack = false;
+    expect(dispatchAndroidBack({ canGoBack: true }, deps)).toBe("root");
     expect(deps.historyBack).toHaveBeenCalledOnce();
     expect(deps.closeRoot).toHaveBeenCalledOnce();
+  });
+
+  it("goes back through the router even when the WebView reports no history", () => {
+    const deps = dispatchDeps();
+    expect(dispatchAndroidBack({ canGoBack: false }, deps)).toBe("history");
+    expect(deps.closeRoot).not.toHaveBeenCalled();
+  });
+
+  // GH #386: Tauri's plugin:app has no exit command, so the root close left a
+  // gray, unusable screen. The installed process plugin exits.
+  it("hands a safely prepared root close to Tauri's installed process exit API", async () => {
+    const exit = vi.fn(async (_code?: number) => {});
+    await exitAndroidActivity(async () => ({ exit }));
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("wires App.tsx to the router rung and the process exit, with the exit permission granted", () => {
+    const app = readFileSync("src/App.tsx", "utf8");
+    const capability = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8")) as {
+      permissions: string[];
+    };
+    expect(app).not.toContain("plugin:app|exit");
+    expect(app).toContain("    exitAndroidActivity,\n");
+    expect(app).toMatch(/historyBack: \(\) => \{\s*if \(!canGoBack\(\)\) return false;\s*goBack\(\);\s*return true;/);
+    expect(capability.permissions).toContain("process:allow-exit");
   });
 
   it("subscribes exactly once only on Android and unregisters idempotently", async () => {

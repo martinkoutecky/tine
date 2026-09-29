@@ -21,6 +21,7 @@
     "clipboard-manager:allow-read-text",
     "dialog:allow-open",
     "dialog:allow-ask",
-    "process:allow-restart"
+    "process:allow-restart",
+    "process:allow-exit"
   ]
 }
