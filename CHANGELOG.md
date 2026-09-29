@@ -95,6 +95,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Closing no longer offers to throw away a save that is still running** (og I1b, master fea3c314b).
+  If writing your changes took more than four seconds — a slow or network drive is enough — the close
+  asked whether to lose them. It now says it is still saving and waits up to another 26 seconds; it
+  only asks once the save has failed or stalled, in words that say which.
 - **An edit typed while another graph is opening is kept** (og-T). It is saved
   as a draft of the graph you left and offered for review when you reopen it,
   instead of being dropped by the switch.

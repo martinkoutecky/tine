@@ -138,6 +138,9 @@ export const safeClose = createSafeCloseCoordinator({
   notifyPdfFailure: () => {
     pushToast("Couldn't save pending PDF changes. The graph remains open.", "error");
   },
+  notifyStillSaving: () => {
+    pushToast("Still saving your changes — closing in a moment.", "info");
+  },
   notifyConfirmationFailure: () => {
     pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
   },
