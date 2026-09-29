@@ -548,7 +548,14 @@ impl Core {
             let path = self.graph.root.join("logseq/config.edn");
             let mut current = stamp(&path);
             let mut previous = self.config_stamp.lock().unwrap();
-            if current.is_none() && previous.is_some() {
+            // A stamp without a hash means the file vanished (or failed to
+            // read) between its metadata and its bytes: a sync delivery or
+            // external editor removing it mid-cycle. Look again so a removal
+            // reads as one; otherwise it passed as a hashless "modification"
+            // and the later real removal compared hashless to absent, unseen.
+            if (current.is_none() && previous.is_some())
+                || current.as_ref().is_some_and(|value| value.rev.is_none())
+            {
                 current = stamp(&path);
             }
             // Byte-identity gate: taking in a config discards every parsed

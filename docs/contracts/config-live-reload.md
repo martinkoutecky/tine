@@ -29,7 +29,9 @@ The store watcher (`crates/tine-store/src/watch.rs`) marks a batch that names
 included; poll mode (every 3 s) always includes it. The file is re-read only
 when its bytes differ from the ones served (a `FileRev` byte-identity gate), so
 Logseq rewriting identical bytes, or Syncthing redelivering them, costs one
-read and publishes nothing. A real change reloads the configuration, discards
+read and publishes nothing. A config seen
+mid-removal (metadata read, bytes already gone) is looked at again, so the
+removal is published as a removal, not a modification that hides it. A real change reloads the configuration, discards
 parsed pages (the pages directory or name format may have moved) and publishes
 an External change naming `logseq/config.edn`. The desktop shell turns that
 into `graph-config-changed` with the fresh `GraphMeta`.
