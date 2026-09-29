@@ -1906,6 +1906,10 @@ export function Editor(props: { id: string }): JSX.Element {
       ref.setSelectionRange(start, end);
       return;
     }
+    if (want !== null && typeof want === "object" && "start" in want) {
+      ref.setSelectionRange(want.start, want.end, want.direction);
+      return;
+    }
     let offset: number;
     if (want == null) {
       offset = editorValue().length;
@@ -2230,8 +2234,9 @@ export function Editor(props: { id: string }): JSX.Element {
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll) { nudgeListItem(ll, +2); return true; }
       if (outlineScope?.roots.includes(props.id)) return true;
+      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value);
-      if (indentBlock(props.id, ref.selectionStart) === false) pushToast("Outline is too deep to indent", "error");
+      if (indentBlock(props.id, selection) === false) pushToast("Outline is too deep to indent", "error");
       return true;
     },
     "editor/outdent": (e) => {
@@ -2239,7 +2244,8 @@ export function Editor(props: { id: string }): JSX.Element {
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
       if (outlineScope?.forceExpandedRoot === docNode(props.id)?.parent) return true;
-      commit(ref.value); outdentBlock(props.id, ref.selectionStart); return true;
+      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+      commit(ref.value); outdentBlock(props.id, selection); return true;
     },
   };
   const mobileKeyEvent = { preventDefault() {} } as KeyboardEvent;

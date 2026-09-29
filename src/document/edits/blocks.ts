@@ -12,7 +12,10 @@ import { markDirty, noteTitleIdentityIntent } from "../save/engine";
 import { produce } from "solid-js/store";
 import { OUTLINE_MAX_DEPTH, outlineDepth, type OutlineNode } from "../../editor/outline";
 import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly, readPropertyValue } from "../../editor/properties";
-import { startEditing, editingId, endEdit } from "../../editorController";
+import { startEditing, editingId, endEdit, type EditorSelection } from "../../editorController";
+import { batch } from "solid-js";
+import type { EditKind, EditKinds } from "../../editKind";
+import { isBlockMoving, setBlockMoving } from "./moves";
 import { depthOf, existingSubtreeFits, indexInSiblings, rootsOf, OutlineScope, prevVisible, nextVisible } from "../tree";
 import { existingBlockId } from "./identity";
 import { pushToast } from "../../toasts";
@@ -246,7 +249,7 @@ export function splitBlock(
 
 /** Tab: make the block the last child of its previous sibling. Returns false
  *  when that would exceed the outline cap; the caller shows the refusal. */
-export function indentBlock(id: string, caretOffset: number) {
+export function indentBlock(id: string, caretOffset: number | EditorSelection) {
   if (!blockWritable(id)) return;
   const i = indexInSiblings(id);
   if (i <= 0) return;
@@ -255,27 +258,45 @@ export function indentBlock(id: string, caretOffset: number) {
   if (!existingSubtreeFits(id, newParent)) return false;
   pushUndo("indent", [doc.byId[id].page]);
   const pageName = doc.byId[id].page;
-  setDoc(
-    produce((s) => {
-      const arr = s.byId[id].parent === null
-        ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-        : s.byId[s.byId[id].parent!].children;
-      arr.splice(arr.indexOf(id), 1);
-      s.byId[id].parent = newParent;
-      s.byId[newParent].children.push(id);
-      // Expand the new parent — and clear any persisted collapsed:: in its raw,
-      // else a reload would re-collapse it and hide the just-indented child.
-      const np = s.byId[newParent];
-      np.raw = rawWithCollapsed(np.raw, false, formatForBlock(newParent));
-      np.collapsed = false;
-    })
-  );
-  startEditing(id, caretOffset);
-  markDirty(pageName, ["move-blocks", "save-block"]);
+  // Reparenting remounts the editor. Publish its selection and ownership in the
+  // same reactive flush as the tree change, before the replacement can focus.
+  reparentEditingBlock(pageName, ["move-blocks", "save-block"], () => {
+    setDoc(
+      produce((s) => {
+        const arr = s.byId[id].parent === null
+          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+          : s.byId[s.byId[id].parent!].children;
+        arr.splice(arr.indexOf(id), 1);
+        s.byId[id].parent = newParent;
+        s.byId[newParent].children.push(id);
+        // Expand the new parent — and clear any persisted collapsed:: in its raw,
+        // else a reload would re-collapse it and hide the just-indented child.
+        const np = s.byId[newParent];
+        np.raw = rawWithCollapsed(np.raw, false, formatForBlock(newParent));
+        np.collapsed = false;
+      })
+    );
+    startEditing(id, caretOffset);
+  });
+}
+
+/** Run a reparenting tree update and the editor handoff in one reactive batch,
+ *  marked as a block move so the old editor's blur during the flush does not
+ *  end edit mode (#519, #495). An already active move (another page) is left
+ *  to its owner. */
+function reparentEditingBlock(page: string, kinds: EditKind | EditKinds, update: () => void): void {
+  const ownsMove = !isBlockMoving();
+  if (ownsMove) setBlockMoving(true, page);
+  try {
+    batch(update);
+    markDirty(page, kinds);
+  } finally {
+    if (ownsMove) setBlockMoving(false);
+  }
 }
 
 /** Shift+Tab: move the block out to be the next sibling of its parent. */
-export function outdentBlock(id: string, caretOffset: number) {
+export function outdentBlock(id: string, caretOffset: number | EditorSelection) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id) || node.parent === null) return;
   pushUndo("outdent", [node.page]);
@@ -283,31 +304,32 @@ export function outdentBlock(id: string, caretOffset: number) {
   const grandParent = doc.byId[parentId].parent;
   const pageName = node.page;
 
-  setDoc(
-    produce((s) => {
-      const parent = s.byId[parentId];
-      const idx = parent.children.indexOf(id);
-      // OG only reparents the following siblings for traditional outdenting;
-      // logical outdenting stops after moving this block (`src/main/frontend/modules/outliner/core.cljs:835-852`
-      // at `6e7afa8eb`). Keep this decision inside the shared store operation so
-      // keyboard, mobile, and any future caller all use the same mode.
-      if (logicalOutdenting()) {
-        parent.children.splice(idx, 1);
-      } else {
-        const following = parent.children.splice(idx);
-        following.shift(); // drop id
-        for (const f of following) s.byId[f].parent = id;
-        s.byId[id].children.push(...following);
-      }
-      s.byId[id].parent = grandParent;
-      const gArr = grandParent === null
-        ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-        : s.byId[grandParent].children;
-      gArr.splice(gArr.indexOf(parentId) + 1, 0, id);
-    })
-  );
-  startEditing(id, caretOffset);
-  markDirty(pageName, "move-blocks");
+  reparentEditingBlock(pageName, "move-blocks", () => {
+    setDoc(
+      produce((s) => {
+        const parent = s.byId[parentId];
+        const idx = parent.children.indexOf(id);
+        // OG only reparents the following siblings for traditional outdenting;
+        // logical outdenting stops after moving this block (`src/main/frontend/modules/outliner/core.cljs:835-852`
+        // at `6e7afa8eb`). Keep this decision inside the shared store operation so
+        // keyboard, mobile, and any future caller all use the same mode.
+        if (logicalOutdenting()) {
+          parent.children.splice(idx, 1);
+        } else {
+          const following = parent.children.splice(idx);
+          following.shift(); // drop id
+          for (const f of following) s.byId[f].parent = id;
+          s.byId[id].children.push(...following);
+        }
+        s.byId[id].parent = grandParent;
+        const gArr = grandParent === null
+          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+          : s.byId[grandParent].children;
+        gArr.splice(gArr.indexOf(parentId) + 1, 0, id);
+      })
+    );
+    startEditing(id, caretOffset);
+  });
 }
 
 /** Backspace at offset 0: merge into the previous visible block (same page). */

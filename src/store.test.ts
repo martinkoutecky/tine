@@ -7,7 +7,7 @@ import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
 import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
 import { reloadPage, forgetPage } from "./document/workingSet";
-import { setBlockMoving } from "./document/edits/moves";
+import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition } from "./document/workingSet";
 import { trailingVisibleEmptyLeaf } from "./document/tree";
 import { pageToDto } from "./document/convert";
@@ -485,6 +485,26 @@ describe("outdent (Shift+Tab)", () => {
 
     expect(shape()).toEqual([["p", [["b"], ["c"]]], ["a"]]);
     expect(JSON.stringify(pageToDto("Test")!.blocks[0].children)).toBe(untouchedChildren);
+  });
+});
+
+describe("reparenting editor move ownership", () => {
+  it("retains an already active move on another page across indent and outdent", () => {
+    const first = blk("first");
+    const second = blk("second");
+    load([first, second]);
+    setBlockMoving(true, "Other page");
+    try {
+      indentBlock(second.id, 0);
+      expect(doc.byId[second.id].parent).toBe(first.id);
+      expect(isBlockMoving("Other page")).toBe(true);
+      expect(isBlockMoving("Test")).toBe(false);
+      outdentBlock(second.id, 0);
+      expect(doc.byId[second.id].parent).toBeNull();
+      expect(isBlockMoving("Other page")).toBe(true);
+    } finally {
+      setBlockMoving(false);
+    }
   });
 });
 
