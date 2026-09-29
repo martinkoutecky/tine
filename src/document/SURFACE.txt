@@ -22,6 +22,7 @@ carryTodayPage
 carryUnfinished
 childIds
 clearSelection
+collapseEpochOf  # why: embed occurrence folds compare the source collapse write epoch (GH #360); batch21c
 collapsibleDescendantIds
 conflictReason  # why: conflict bar reason text; batch03
 conflicts

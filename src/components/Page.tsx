@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
-import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
+import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
@@ -684,11 +684,11 @@ function ZoomedView(props: { id: string }): JSX.Element {
           onClick={(e) => {
             const dest = internalLinkDest(e);
             if (dest === "sidebar") openPageInSidebar(pageTarget());
-            else if (dest === "background") router.openPageTargetInNewTab(pageTarget());
+            else if (dest === "background") openPageTargetInNewTab(pageTarget());
             else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...pageTarget() });
             else router.openPageTarget(pageTarget());
           }}
-          onAuxClick={(e) => internalLinkAuxClick(e, () => router.openPageTargetInNewTab(pageTarget()))}
+          onAuxClick={(e) => internalLinkAuxClick(e, () => openPageTargetInNewTab(pageTarget()))}
         >
           {pageName()}
         </a>
@@ -709,11 +709,11 @@ function ZoomedView(props: { id: string }): JSX.Element {
                   const route = { kind: "page" as const, name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) };
                   if (dest === "sidebar") openBlockInSidebar(ref);
                   else if (dest === "pane") openRouteInOtherPane(route);
-                  else router.openInNewTab(route);
+                  else openInNewTab(route);
                 }}
                 onAuxClick={(e) => internalLinkAuxClick(e, () => {
                   const ref = blockRef(aid);
-                  router.openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+                  openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
                 })}
               >
                 <InlineText text={crumb(aid)} format={formatForBlock(aid)} />
@@ -875,11 +875,11 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             onClick={(e) => {
               const dest = internalLinkDest(e);
               if (dest === "sidebar" && !props.page.guide) openPageInSidebar(pageTarget());
-              else if (dest === "background" && !props.page.guide) router.openPageTargetInNewTab(pageTarget());
+              else if (dest === "background" && !props.page.guide) openPageTargetInNewTab(pageTarget());
               else if (dest === "pane" && !props.page.guide) openRouteInOtherPane({ kind: "page", ...pageTarget() });
               else router.openPageTarget(pageTarget());
             }}
-            onAuxClick={(e) => internalLinkAuxClick(e, () => router.openPageTargetInNewTab(pageTarget()))}
+            onAuxClick={(e) => internalLinkAuxClick(e, () => openPageTargetInNewTab(pageTarget()))}
             onDblClick={startRename}
             onContextMenu={(e) => {
               if (props.page.guide) return;

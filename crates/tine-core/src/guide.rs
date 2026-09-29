@@ -392,6 +392,10 @@ mod rename_guide_tests {
         assert!(tips.contains("all take the same modified clicks"));
         assert!(tips.contains("**Ctrl/Cmd-click** or **middle-click** opens a background tab"));
         assert!(tips.contains("**Alt-click** opens the other pane"));
+        assert!(tips.contains("an outline bullet's dot"));
+        assert!(tips.contains("a pane's only tab still has a close button"));
+        let refs = include_str!("templates/pages-links-references-search.md");
+        assert!(refs.contains("follows its source's fold state live"));
     }
 
     #[test]
@@ -535,6 +539,37 @@ mod query_guide_tests {
             );
         }
         assert!(!queries.contains("## Not in this build yet"));
+    }
+
+    /// GH #542 (master c1b14a859): the Guide's advanced-query example is one
+    /// Tine runs whole, and the page states the disclosed-superset rule.
+    #[test]
+    fn gh542_guide_advanced_query_example_runs_whole() {
+        let workflow = super::GUIDE_TEMPLATES
+            .iter()
+            .find(|template| template.title == "Workflows/Find and revisit")
+            .expect("the find-and-revisit workflow is registered");
+        let start = workflow
+            .markdown
+            .find("`[:find ")
+            .expect("the Guide shows an advanced query");
+        let example = &workflow.markdown[start + 1..];
+        let example = &example[..example.find('`').expect("closed code span")];
+        let today = crate::date::JournalDate::today();
+        let (query, _) = crate::query::parse_query_source(example, today);
+        let result = crate::query::resolve_for_execution(
+            &query,
+            &crate::query::ir::ExecutionContext::none(),
+            today,
+        );
+        assert!(result.report().supported, "{example}");
+        assert!(
+            result.report().ignored.is_empty(),
+            "{:?}",
+            result.report().ignored
+        );
+        assert!(workflow.markdown.contains("never fewer"));
+        assert!(workflow.markdown.contains("is left out whole"));
     }
 
     #[test]

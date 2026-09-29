@@ -325,13 +325,10 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       openRouteInOtherPane({ kind: "page", name: targetName(), pageKind: kind() }, pane?.paneId ?? focusedPaneId());
     else openPage(targetName(), kind());
   };
-  // Middle-click and Ctrl/Cmd+click belong to the pane that rendered the link.
-  // Relying on the globally focused router races pointer-focus tracking and
-  // sent split-view tabs to the previously focused/top pane (GH #87).
-  const openBackgroundTab = () => {
-    if (pane) pane.router.openPageInNewTab(targetName(), kind());
-    else openPageInNewTab(targetName(), kind());
-  };
+  // A background tab belongs to the pane that was already active, not
+  // necessarily the pane containing this link (GH #87): the pane tracker keeps
+  // the active pane across a middle-button press (ui.ts installPaneTracker).
+  const openBackgroundTab = () => openPageInNewTab(targetName(), kind());
 
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:

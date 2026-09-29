@@ -34,6 +34,7 @@ import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock } from "../blockRefActions";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
   clearFocusSurface,
   editingId,
@@ -219,10 +220,11 @@ export interface CollapseSurfaceApi {
   toggle: (id: string, current: boolean) => void;
   setMany: (ids: readonly string[], collapsed: boolean) => void;
 }
-// Deliberate Tine divergence from OG Logseq: OG block embeds use the source
-// block's persisted collapsed state, while Tine lets a secondary/transcluded
-// rendering fold locally so interacting with a view cannot mutate its source.
-// Keep this surface-local contract explicit when changing collapse parity.
+// Deliberate Tine divergence from OG Logseq: a secondary/transcluded rendering
+// never mutates its source. A block embed follows the source until its macro
+// host records an explicit occurrence-owned collapse override; reference/query
+// surfaces keep their local presentation state. Keep the surface contract
+// explicit when changing collapse parity.
 export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(null);
 
 /** Render and edit one document block through the document door. Work scales
@@ -383,8 +385,11 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           <span
             class="bullet-container"
             classList={{ "bullet-closed": collapsed() && hasChildren(), ordered: !!orderMarker() }}
-            title="Click to zoom; shift-click → sidebar; middle-click → new tab; drag to move"
+            title="Click to zoom; shift-click → sidebar; ctrl/cmd-click or middle-click → new tab; alt-click → other pane; drag to move"
             onMouseDown={(e) => {
+              // Shared link gesture contract (GH #207): suppress shift-range selection
+              // and middle-button autoscroll / PRIMARY-paste the destinations replace.
+              internalLinkMouseDown(e);
               // A transparent whole-block embed has only this root bullet. Its drag
               // moves the occurrence; click/zoom still belongs to the source
               // (master GH #514). Inline/page embeds keep ordinary source drag.
@@ -396,14 +401,16 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             onClick={(e) => {
               e.stopPropagation();
               if (bulletDragMoved()) return; // was a drag, not a click
-              if (e.shiftKey) void openDurableBlock(props.id, "sidebar");
-              else zoomInto(props.id);
+              // GH #456: the same one decision every internal link uses (GH #283).
+              switch (internalLinkDest(e)) {
+                case "sidebar": void openDurableBlock(props.id, "sidebar"); break;
+                case "background": void openDurableBlock(props.id, "tab"); break;
+                case "pane": void openDurableBlock(props.id, "pane"); break;
+                default: zoomInto(props.id);
+              }
             }}
             onAuxClick={(e) => {
-              if (e.button !== 1) return; // middle-click → open the zoom in a new tab
-              e.preventDefault();
-              e.stopPropagation();
-              void openDurableBlock(props.id, "tab");
+              if (internalLinkAuxClick(e, () => void openDurableBlock(props.id, "tab"))) e.stopPropagation();
             }}
           >
             <Show when={orderMarker()} fallback={<span class="bullet" />}>

@@ -367,6 +367,75 @@ fn all_page_tags_selects_every_page_carrying_a_tag() {
     );
 }
 
+/// Master 04ca56743 (`all_page_tags_round_trips_with_absent_blank_and_populated_properties`):
+/// `(all-page-tags)` keeps its page scope and its presence/blank meaning when the
+/// editing pane and the persisted macro spell it in TQL, and every spelling
+/// answers the same pages. A bare `atom_count > 0` had no TQL spelling, and
+/// `not(blank)` alone would include a page with no `tags::` at all.
+#[test]
+fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() {
+    use std::collections::BTreeSet;
+    use tine_core::query::print::{query_print, PrintDialect};
+
+    let fixture = open(&[
+        (
+            "pages/absent.md",
+            "- TODO absent page tags\n  tags:: block-only\n",
+        ),
+        ("pages/blank.md", "tags::\n\n- TODO blank page tags\n"),
+        (
+            "pages/whitespace.md",
+            "tags::   \n\n- TODO whitespace page tags\n",
+        ),
+        (
+            "pages/tagged.md",
+            "tags:: alpha, beta\n\n- TODO tagged task\n",
+        ),
+    ]);
+    let graph = &fixture.graph;
+    let pages = |result: &QueryResult| page_names(result).into_iter().collect::<BTreeSet<_>>();
+    let set = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<BTreeSet<_>>();
+    let today = JournalDate::today();
+
+    for (source, expected) in [
+        ("(all-page-tags)", set(&["tagged"])),
+        (
+            "(not (all-page-tags))",
+            set(&["absent", "blank", "whitespace"]),
+        ),
+    ] {
+        let (query, view) = parse_query_text(source, QueryDialect::Og, today);
+        assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
+        assert_eq!(
+            pages(&run_ir(graph, &query, &view, &ExecutionContext::none())),
+            expected,
+            "{source}"
+        );
+        for dialect in [PrintDialect::Tql, PrintDialect::TqlMacro] {
+            let printed = query_print(&query, &view, dialect, false).expect("printable");
+            let (again, _) = parse_query_text(&printed, QueryDialect::Tql, today);
+            assert!(!again.is_invalid(), "{printed}: {:?}", again.diagnostics);
+            assert_eq!(again.anchor, query.anchor, "{printed}");
+            assert_eq!(
+                again.normalized().filter,
+                query.normalized().filter,
+                "{printed}"
+            );
+            assert_eq!(
+                pages(&run_ir(graph, &again, &view, &ExecutionContext::none())),
+                expected,
+                "{printed}"
+            );
+        }
+    }
+    // Composed with a block filter, the tag test still reads the block's page.
+    case(
+        graph,
+        "(and (task TODO) (all-page-tags))",
+        &["TODO tagged task"],
+    );
+}
+
 /// REG-P0-QUERY-UNKNOWN-HEAD-001.
 #[test]
 fn an_unknown_head_returns_nothing_rather_than_a_shorter_query() {

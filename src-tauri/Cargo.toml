@@ -10,6 +10,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = { workspace = true }
 
 # `custom-protocol` switches the app from dev mode (load the frontend from the
 # Vite dev server at devUrl) to prod mode (serve the embedded `dist/` over the

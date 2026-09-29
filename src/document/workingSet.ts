@@ -1,6 +1,6 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, rekeyPageSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, conflictReason, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
-import { doc, setDoc, FeedPage, pageByName } from "./model";
+import { clearCollapseEpochs, doc, setDoc, FeedPage, pageByName } from "./model";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
@@ -15,6 +15,7 @@ import { type PageTarget } from "../routeTypes";
 import { editingId, endEdit } from "../editorController";
 import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
+import { replayDeferredExternalReloads } from "./deferredReload";
 import { isBlockMoving } from "./edits/moves";
 import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
@@ -286,7 +287,10 @@ const draftPins = new Set<() => string | null | undefined>();
  * registered accessor. */
 export function pinPageWhileDrafting(page: () => string | null | undefined): () => void {
   draftPins.add(page);
-  return () => draftPins.delete(page);
+  return () => {
+    draftPins.delete(page);
+    replayDeferredExternalReloads(); // a watcher change declined for this draft (GH #337)
+  };
 }
 function draftPinned(name: string): boolean {
   for (const draft of draftPins) if (draft() === name) return true;
@@ -384,6 +388,7 @@ export function resetStore() {
   resetReferenceSectionState();
   for (const name of pageInstanceGenerations.keys()) retirePageInstance(name);
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
+  clearCollapseEpochs();
   endEdit("graph-switch");
   notifyModeReset();
 }

@@ -56,3 +56,10 @@ against `2d0349368` to catch uncensused new writes. A caller may still route a
 new name through an existing generic writer, so review of store entry points
 remains necessary. New formats require an ADR and Martin's approval under
 OG-RULES Rule 8; their writer sites are listed in `APPROVED_WRITER_SITES`.
+
+The experiment build's one-time config seed (`src-tauri/src/experiment_config_seed.rs`,
+temporary, `docs/app-identity.md`) adds **no format**. It copies census files
+byte for byte (device settings, graph sessions, workspace registry, plugin packages, the
+webview's own store) from the released Tine's app-data dir into the experiment's. Its
+writer sites are approved in `APPROVED_WRITER_SITES`. The same document classifies each
+app-data entry the released Tine writes as read as-is or master-only.

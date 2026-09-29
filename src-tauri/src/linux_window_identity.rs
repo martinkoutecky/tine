@@ -20,8 +20,8 @@ use gtk::{
     prelude::WidgetExt,
 };
 
-const APP_ID: &str = "page.tine.TineOG";
-const DESKTOP_FILE: &str = "page.tine.TineOG.desktop";
+use crate::app_identity::{APP_IDENTIFIER as APP_ID, PRODUCT_NAME};
+const DESKTOP_FILE: &str = concat!(env!("TINE_APP_IDENTIFIER"), ".desktop");
 const MANAGED_MARKER: &str = "X-Tine-Managed=true";
 
 const ICONS: &[(&str, &[u8])] = &[
@@ -62,7 +62,7 @@ fn desktop_entry(executable: &Path) -> String {
     format!(
         "[Desktop Entry]\n\
 Type=Application\n\
-Name=Tine\n\
+Name={PRODUCT_NAME}\n\
 GenericName=Outliner\n\
 Comment=Fast, local-first Logseq-compatible outliner\n\
 Exec={} %U\n\
@@ -287,12 +287,13 @@ mod tests {
         let desktop = fs::read_to_string(
             data_home
                 .join("applications")
-                .join("page.tine.TineOG.desktop"),
+                .join(format!("{APP_ID}.desktop")),
         )
         .unwrap();
         assert!(desktop.contains("Exec=\"/opt/Tine Builds/tine%%preview\" %U"));
-        assert!(desktop.contains("Icon=page.tine.TineOG"));
-        assert!(desktop.contains("StartupWMClass=page.tine.TineOG"));
+        assert!(desktop.contains(&format!("Name={PRODUCT_NAME}\n")));
+        assert!(desktop.contains(&format!("Icon={APP_ID}\n")));
+        assert!(desktop.contains(&format!("StartupWMClass={APP_ID}\n")));
         assert!(desktop.contains(MANAGED_MARKER));
         for (size, bytes) in ICONS {
             assert_eq!(
@@ -300,7 +301,7 @@ mod tests {
                     data_home
                         .join("icons/hicolor")
                         .join(size)
-                        .join("apps/page.tine.TineOG.png")
+                        .join(format!("apps/{APP_ID}.png"))
                 )
                 .unwrap(),
                 *bytes

@@ -324,6 +324,11 @@ export function installPaneTracker(): () => void {
     // mode goes stale — the ring lingers and, worse, its keyboard handler
     // would still be armed after the user clicks off to do something else.
     exitPaneSelect();
+    // A middle-click is a background-tab gesture, not a pane activation. Keep
+    // the pane that was already active so links in another pane or the sidebar
+    // open their background tab there (GH #87). Target anchors also prevent the
+    // middle-button default focus so a following focusin cannot undo this.
+    if ("button" in e && (e as PointerEvent).button === 1) return;
     // Global chrome can still target the pane the user last focused. Back,
     // Forward, Search, and Journals all call the focused-router facade; letting
     // this capture-phase pointer event fall through would retarget to `main`

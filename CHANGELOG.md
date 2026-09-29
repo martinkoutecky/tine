@@ -44,6 +44,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   lists it.
 - Tine's Concord ledger now lives in its own app-data folder, so it no longer
   deletes, or is deleted by, the ledger of a mainline Tine build on the same machine.
+- **Middle-clicking a link opens a background tab without switching panes** (GH #87): the click no longer makes the pane under it the active one, so the tab opens where you are working.
+- **Ctrl/Cmd+click and Alt+click on an outline bullet** go where the same modifier on a link goes (GH #456): a background tab and the other pane. Bullets in linked references do the same.
+- **A split pane's only tab keeps its close button** (GH #207), unless that tab shows the journals; closing it closes the pane.
+- **A file change that arrives while you are editing that page is applied when you finish** (GH #337), instead of being dropped until the next change.
+- **Block embeds follow their source's fold state live** (GH #360). Folding the embedded block inside one embed is remembered by that embed alone, and folding rows inside an embed yields to the next fold of the source.
+- **Filter chips and groups in linked and unlinked references** treat differently-normalized spellings of one page name as the same page.
+- **Saving a search or query as a page in an Org graph writes its view properties where Org reads them** (a `:PROPERTIES:` drawer, not a body line that was never read back), and a save the workspace has since moved on from is refused instead of publishing an obsolete search: if the write had already begun, the page is kept and the workspace stays put with a note.
 - **Dragging a block embed by its bullet moves the embed itself** (GH #514), not the source block it shows. Rows nested inside the embed still drag as the source's own outline.
 - **Arrow keys move between bullets inside linked references, block references, query results and embeds** (GH #341). Up/Down and Left/Right at a block edge now step through the blocks as rendered in that view instead of jumping the caret to the source page's outline, where the editor is usually not on screen; merges and indents there still act on the real page outline.
 - **Code blocks**: the caret no longer jumps when you click into a code block or leave it with the arrow keys, the language line and fence markers are editable as text, and clicking a code card places the caret where you clicked (GH #489).
