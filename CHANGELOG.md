@@ -95,6 +95,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **`tine doctor` reports unreadable pages and duplicate page names** (og I1f, GH #35, master e7af4db9c).
+  It used to print OK and exit 0 while a page could not be read, or while two files claimed the same page name.
+  It now lists each, prints the configured home page, and exits 1 when it finds a problem.
+- **A live export opens on the graph's home page** (og I1f, GH #35). The published app, from the command line
+  or the app, now starts on the configured home page when that page is exported, then Welcome to Tine, then the
+  first page; `tine export live --home "Page name"` chooses one explicitly and refuses a page that is not exported.
 - **Tine starts when its usual application-data folder cannot be written** (og I1a, master 8e1ea0bfd).
   On Linux, a root-owned or read-only `~/.local/share` made every launch crash before a window appeared.
   Tine now keeps settings and the web view's data in `~/.tine-data` (or another private writable
