@@ -95,35 +95,6 @@ impl Store {
         Ok(self.graph.root.join(area))
     }
 
-    /// Canonical path of an existing asset FILE OR DIRECTORY for an OS opener
-    /// (GH #367: `[x](./assets/sub)` opens the folder); `None` names the assets
-    /// root itself (OG's `[path](./assets/)`). `file` must be an `Area::Assets`
-    /// id. Refuses (I-8 row "`tine-store::store` read, scan and handoff") when
-    /// sync or an external editor retargeted `assets/`, or a symlink, escaped
-    /// path, or other non-file/non-directory appears after selection. Cost
-    /// O(path components); no bytes are read.
-    pub fn asset_path_for_os_open(&self, file: Option<&FileId>) -> Result<PathBuf, StoreError> {
-        if self.is_closed() {
-            return Err(StoreError::Closed);
-        }
-        let approved = self.graph.assets_path();
-        let live = canonical_existing_path(&self.graph.root.join("assets"))
-            .map_err(StoreError::from_io)?;
-        if live != approved {
-            return Err(StoreError::InvalidTarget("assets".into()));
-        }
-        let Some(file) = file else {
-            return Ok(live);
-        };
-        let invalid = || StoreError::InvalidTarget(file.as_str().to_owned());
-        let rel = file.as_str().strip_prefix("assets/").ok_or_else(invalid)?;
-        let target = canonical_existing_path(&approved.join(rel)).map_err(StoreError::from_io)?;
-        if !target.starts_with(&live) || !(target.is_file() || target.is_dir()) {
-            return Err(invalid());
-        }
-        Ok(target)
-    }
-
     /// A validated OS path. `existing_regular_file` requires a live file in
     /// the graph-text scope or assets for an opener; it refuses meta, trash, and
     /// conflict-copy paths even if their files exist. A page source may follow
