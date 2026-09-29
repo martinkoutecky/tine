@@ -58,4 +58,23 @@ describe("high zoom PDF tiles", () => {
     expect(canvases.reduce((sum, canvas) => sum + canvas.width * canvas.height, 0)).toBeLessThanOrEqual(8 * 1_572_864);
     tiles.reset();
   });
+
+  it("admits new zoom tiles after canceling unresolved old tasks", () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const render = vi.fn(() => ({ promise: new Promise<void>(() => {}), cancel: vi.fn() }));
+    const page = { getViewport: () => ({ width: 4096, height: 4096 }), render } as unknown as pdfjs.PDFPageProxy;
+    const scroll = document.createElement("div");
+    const wrap = document.createElement("div");
+    scroll.appendChild(wrap);
+    document.body.appendChild(scroll);
+    vi.spyOn(scroll, "getBoundingClientRect").mockReturnValue(rect(0, 0, 1000, 1000));
+    vi.spyOn(wrap, "getBoundingClientRect").mockReturnValue(rect(0, 0, 4096, 4096));
+    const tiles = createPdfTiles(() => {});
+    tiles.refresh(page, 1, wrap, scroll, 3.5);
+    expect(render).toHaveBeenCalledTimes(2);
+    tiles.reset();
+    tiles.refresh(page, 1, wrap, scroll, 4);
+    expect(render).toHaveBeenCalledTimes(4);
+    tiles.reset();
+  });
 });

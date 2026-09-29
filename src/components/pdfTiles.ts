@@ -34,6 +34,7 @@ export function createPdfTiles(onError: (error: unknown) => void) {
   /** Release all transient tile rasters and invalidate pending jobs. */
   function reset() {
     generation++;
+    pending = 0;
     for (const tile of [...tiles.values()]) remove(tile);
   }
 
@@ -107,8 +108,9 @@ export function createPdfTiles(onError: (error: unknown) => void) {
         void tile.task.promise.catch((error: unknown) => {
           if ((error as { name?: string }).name !== "RenderingCancelledException" && generation === current) onError(error);
         }).finally(() => {
+          if (generation !== current) return;
           pending--;
-          if (generation === current && wrap.isConnected) refresh(page, pageNumber, wrap, scroller, scale);
+          if (wrap.isConnected) refresh(page, pageNumber, wrap, scroller, scale);
         });
       } catch (error) {
         pending--;
