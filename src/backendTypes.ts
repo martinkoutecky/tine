@@ -19,7 +19,7 @@ export interface DiagnosticReport {
 
 export type DiagnosticFrontendKind =
   | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
-  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved";
+  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast";
 
 /** Why a close discarded drafts: a save failed, or saves were still running. */
 export type DiscardReason = "failed" | "still-saving";

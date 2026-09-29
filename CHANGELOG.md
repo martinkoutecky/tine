@@ -69,6 +69,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Red error messages stay until you close them, and offer Copy.** Every error
+  is also noted in the privacy-safe diagnostic report (not its text) and, with
+  `TINE_DEBUG=1`, written in full to the debug log (og OG-TOAST).
+- **No false "couldn't finish checking for external changes" at launch.**
+  Returning to the window before the graph finished opening (or on the Welcome
+  screen) no longer reports the not-yet-open graph as a failure; the same holds
+  for the session save and inline page icons (og OG-TOAST).
 - **An edit made while a graph switch was already under way is no longer
   dropped** (og A). Tine saves once more right before it opens the other graph,
   and stays on the current graph if that edit cannot be saved.

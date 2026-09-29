@@ -6185,7 +6185,7 @@ body.file-drop-active::after {
 /* Sticky toasts persist until closed → a steady cursor (not the click-to-dismiss
    pointer) over the body; only the ✕ closes them. */
 .toast-sticky {
-  cursor: default;
+  cursor: default; -webkit-user-select: text; user-select: text; /* errors stay: let them be selected */
 }
 .toast-success { background: #15803d; }
 .toast-warn { background: #b45309; } /* amber: louder than info, not an error */

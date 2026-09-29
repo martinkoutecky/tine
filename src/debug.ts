@@ -11,7 +11,7 @@
 import { backend, type DiagnosticFrontendFields, type DiagnosticFrontendKind } from "./backend";
 import { platformKind } from "./nativeChrome";
 import { ownedWhen, writeOwned } from "./owned";
-import { pushToast, pushToastUnique } from "./toasts";
+import { pushToast, pushToastUnique, recordErrorToastsWith } from "./toasts";
 
 let enabled = false;
 let initialized = false;
@@ -37,7 +37,11 @@ export function dbg(line: string): void {
  * is noted in the opt-in debug log. O(1) plus one IPC call. */
 export function recordDiagnostic(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void> {
   if (diagnosticsUnavailable) return Promise.resolve();
-  return writeOwned(ownedWhen(), backend().diagnosticFrontendEvent(kind, fields)).then(
+  // A backend without the command throws synchronously; that is the same
+  // "recorder unavailable" refusal, and must not escape into pushToast.
+  let accepted: Promise<void>;
+  try { accepted = backend().diagnosticFrontendEvent(kind, fields); } catch (error) { accepted = Promise.reject(error); }
+  return writeOwned(ownedWhen(), accepted).then(
     () => undefined,
     () => {
       diagnosticsUnavailable = true;
@@ -72,6 +76,12 @@ export async function initDebug(): Promise<void> {
   window.addEventListener("unhandledrejection", (e) => {
     void recordDiagnostic("unhandled_rejection");
     dbg(`unhandledrejection: ${String((e as PromiseRejectionEvent).reason)}`);
+  });
+  // Every error toast: its occurrence in the persisted recorder (fixed kind,
+  // no text: it may name pages), its full text in the opt-in debug log.
+  recordErrorToastsWith((message) => {
+    void recordDiagnostic("error_toast");
+    dbg(`error toast: ${message}`);
   });
   let expected = performance.now() + HEARTBEAT_MS;
   window.setInterval(() => {

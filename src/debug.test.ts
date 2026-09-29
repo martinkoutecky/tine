@@ -11,7 +11,7 @@ vi.mock("./backend", () => ({
   backend: () => ({ diagnosticFrontendEvent, debugLog, debugInfo: async () => ({ enabled: debugEnabled, path: "/log", previousExitUnclean }) }),
 }));
 const pushToast = vi.fn();
-vi.mock("./toasts", () => ({ pushToast, pushToastUnique: vi.fn() }));
+vi.mock("./toasts", () => ({ pushToast, pushToastUnique: vi.fn(), recordErrorToastsWith: vi.fn() }));
 const openSettings = vi.fn();
 vi.mock("./ui", () => ({ openSettings }));
 
