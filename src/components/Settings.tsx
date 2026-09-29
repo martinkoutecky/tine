@@ -55,7 +55,7 @@ import { ThemeSettings } from "./ThemeSettings";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
-import { captureBinding, graphScopedSignal } from "../binding";
+import { captureBinding, graphScopedSignal, refuseStaleWrite } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile } from "../types";
 import { formatJournal, appNow } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
@@ -2051,7 +2051,7 @@ function AssetsTab(): JSX.Element {
     }
   };
   const trash = async (a: AssetInfo) => {
-    if (orphanScan() === null) { pushToast("That scan is from a graph that is no longer open. Scan again.", "error"); return; }
+    if (orphanScan() === null) return refuseStaleWrite("Moving that asset to the trash");
     const binding = captureBinding();
     const owner = graphOwner();
     // No confirm: the file only moves to the recoverable logseq/.tine-trash, so
