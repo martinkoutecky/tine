@@ -7,10 +7,11 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
+import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { blockProperty, resetStore } from "../document";
+import { blockProperty, resetStore, setBlockProperty } from "../document";
 import { setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import type { BlockDto, RefGroup } from "../types";
 import type { ViewSettings } from "../editor/queryIr";
@@ -30,6 +31,8 @@ function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => 
   document.body.appendChild(root);
   return { root, dispose: render(node, root) };
 }
+
+const setRawGroup = (field: string) => { setBlockProperty("query", "tine.group-field", field); };
 
 const row = (id: string, raw: string, status: string): BlockDto =>
   ({ id, raw, collapsed: false, children: [], properties: [["status", status]] });
@@ -84,6 +87,44 @@ describe("a query board groups by the engine's resolved grouping", () => {
       // The engine reads `tine.group-field` first: leaving it behind would make the
       // choice a no-op.
       expect(blockProperty("query", "tine.group-field")).toBe("priority");
+    } finally { dispose(); }
+  });
+
+  it("draws ONE column of every result for an explicit No grouping", async () => {
+    // FAIL-BEFORE: `""` fell through `boardGroupField` to the task-marker default, so
+    // clearing the grouping brought the state columns back.
+    load("{{query (task TODO)}}\ntine.view:: board\ntine.group-field::", { group_by: "" });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".sheet-board")).not.toBeNull());
+      const columns = root.querySelectorAll(".sheet-board-column");
+      expect(columns).toHaveLength(1);
+      expect(columns[0].textContent).toContain("All results");
+      expect(columns[0].querySelectorAll(".sheet-board-card")).toHaveLength(2);
+      expect(root.querySelector<HTMLSelectElement>(".sheet-board-groupby")!.value).toBe("");
+    } finally { dispose(); }
+  });
+
+  it("writes an explicit clear from the toolbar and from the context menu", async () => {
+    load("{{query (task TODO)}}\ntine.view:: board\ntine.group-by:: prop:status", { group_by: "prop:status" });
+    const { root, dispose } = mount(() => (<><Block id="query" /><ContextMenu /></>));
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".sheet-board")).not.toBeNull());
+      const select = root.querySelector<HTMLSelectElement>(".sheet-board-groupby")!;
+      expect([...select.options].some((option) => option.value === "")).toBe(true);
+      select.value = "";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(blockProperty("query", "tine.group-field")).toBe("");
+      expect(blockProperty("query", "tine.group-by")).toBeNull();
+
+      // the same writer from the context menu
+      setRawGroup("prop:status");
+      root.querySelector(".sheet-board")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }));
+      const item = [...document.querySelectorAll<HTMLElement>(".ctx-submenu-menu .ctx-item")]
+        .find((el) => (el.textContent ?? "").replace("✓ ", "").trim() === "No grouping");
+      expect(item, "a Group by -> No grouping action").toBeTruthy();
+      item!.click();
+      expect(blockProperty("query", "tine.group-field")).toBe("");
     } finally { dispose(); }
   });
 });
