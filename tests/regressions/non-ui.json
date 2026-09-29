@@ -1036,6 +1036,79 @@
         "failBefore": "proven"
       },
       "notes": "Fixed by the lsdoc v0.5.4 pin bump; the fail-before was reproduced on master (lsdoc v0.5.3), where the same test panicked with 'lsdoc v2 parser does not yet own \"md\" input' and page_index_failures listed pages/test-page.md."
+    },
+    {
+      "id": "REG-OG-UNICODE-PREFIX-PANIC-001",
+      "title": "Keeping both versions of an Org block and renaming a page referenced from Org content never panic on non-ASCII text",
+      "family": "content-integrity",
+      "sources": {
+        "issues": [],
+        "commits": [
+          "bf11f4647"
+        ]
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/tests/og_k1_content.rs"
+        ],
+        "scenario": null,
+        "failBefore": "proven"
+      },
+      "notes": "og checkpoint 4 L03 S2, K1 bf11f4647. Fixed-byte prefixes use checked str::get; syn source guard fixed_byte_prefixes_are_checked_throughout_core_and_store rejects constant-ended text slicing in core and store."
+    },
+    {
+      "id": "REG-OG-TQL-DISABLED-KEPT-001",
+      "title": "Editing one operand of a TQL query keeps every disabled off(...) condition byte for byte, including rejected or unknown ones",
+      "family": "query-authoring",
+      "sources": {
+        "issues": [],
+        "commits": [
+          "bf11f4647"
+        ]
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-query",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query/print_tests.rs"
+        ],
+        "scenario": null,
+        "failBefore": "proven"
+      },
+      "notes": "og checkpoint 4 L02 S1, K1 bf11f4647. Rejected leaves feed Lower::diagnose (one owner, guarded) and print as the existing Raw capsule."
+    },
+    {
+      "id": "REG-OG-MERGE-RACE-KEEPS-PAYLOAD-001",
+      "title": "A page merge whose target file is changed by another writer mid-merge never deletes the only live copy of the merged content, including across a kill and reopen",
+      "family": "data-safety",
+      "sources": {
+        "issues": [],
+        "commits": [
+          "bf11f4647"
+        ]
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "store",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-store/tests/og_k1_transaction.rs",
+          "crates/tine-store/tests/og_k1_guards.rs"
+        ],
+        "scenario": null,
+        "failBefore": "proven"
+      },
+      "notes": "og checkpoint 4 L07 S1, K1 bf11f4647. Every transaction step, including an unchanged one, checks its preflight revision before success; subprocess barrier + AbortAfterStep kill cases."
     }
   ]
 }
