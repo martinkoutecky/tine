@@ -460,7 +460,7 @@ fn project_implicit_linkable_property(
     let mut segment_start = 0;
     for (index, separator) in value
         .char_indices()
-        .filter(|(_, ch)| *ch == ',' || *ch == '，')
+        .filter(|(_, ch)| refs::is_linkable_property_separator(*ch))
         .map(|(index, ch)| (index, ch.len_utf8()))
         .chain(std::iter::once((value.len(), 0)))
     {

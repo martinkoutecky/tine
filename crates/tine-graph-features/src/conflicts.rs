@@ -256,36 +256,148 @@ pub fn sync_conflict_diff(
     Ok(Some(diff))
 }
 
-fn union_pre(mine: Option<&str>, theirs: Option<&str>) -> Option<String> {
+/// A pre-block property line as (lowercase key, value): Markdown `key:: value`,
+/// Org `#+KEY: value`.
+fn pre_property(line: &str, fmt: Format) -> Option<(String, &str)> {
+    if fmt == Format::Md {
+        return doc::parse_property_line(line).map(|(k, v)| (k.to_ascii_lowercase(), v));
+    }
+    let (key, value) = line.trim_start().strip_prefix("#+")?.split_once(':')?;
+    (!key.is_empty() && !key.contains(char::is_whitespace))
+        .then(|| (key.to_ascii_lowercase(), value.trim()))
+}
+
+/// `a, b, c` without the join method (the client path guard scans for it).
+fn comma_list(items: &[String]) -> String {
+    let mut out = String::new();
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(item);
+    }
+    out
+}
+
+/// "Both (merge)" for the page's own pre-block: `mine`, plus what only
+/// `theirs` holds — property lines with new keys (kept among the leading
+/// property lines), members of a `tags`/`alias`/`aliases` list, and free-text
+/// lines — so the conflict copy's pre-block survives the merge (C3W W5, L03;
+/// master drops the free text and the values). A key both sides set to
+/// different values, or an Org drawer line only `theirs` has, cannot be kept
+/// twice: the merge refuses and names it so the user picks mine or theirs
+/// (scenario: honest multi-device divergence of one page property).
+fn union_pre(mine: Option<&str>, theirs: Option<&str>, fmt: Format) -> io::Result<Option<String>> {
     let mine = mine.unwrap_or("");
     let Some(theirs) = theirs else {
-        return (!mine.is_empty()).then(|| mine.to_owned());
+        return Ok((!mine.is_empty()).then(|| mine.to_owned()));
     };
-    let keys: std::collections::HashSet<_> = mine
-        .lines()
-        .filter_map(|line| doc::parse_property_line(line).map(|(key, _)| key.to_ascii_lowercase()))
-        .collect();
-    let extra: Vec<_> = theirs
-        .lines()
-        .filter(|line| {
-            doc::parse_property_line(line)
-                .is_some_and(|(key, _)| !keys.contains(&key.to_ascii_lowercase()))
+    let mine_lines: Vec<&str> = mine.split_inclusive('\n').collect();
+    let body = |l: &str| l.trim_end_matches(['\r', '\n']).to_owned();
+    let mine_props: HashMap<String, (usize, &str)> = mine_lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let l = l.trim_end_matches(['\r', '\n']);
+            pre_property(l, fmt).map(|(k, v)| (k, (i, v)))
         })
         .collect();
-    if extra.is_empty() {
-        return (!mine.is_empty()).then(|| mine.to_owned());
-    }
-    let mut output = mine.to_owned();
-    if !output.is_empty() && !output.ends_with('\n') {
-        output.push('\n');
-    }
-    for (index, line) in extra.iter().enumerate() {
-        if index > 0 {
-            output.push('\n');
+    let mine_text: std::collections::HashSet<String> = mine_lines
+        .iter()
+        .map(|l| body(l).trim().to_owned())
+        .collect();
+    let mut extra_props = Vec::new();
+    let mut extra_text = Vec::new();
+    let mut members: HashMap<usize, Vec<String>> = HashMap::new();
+    let mut clashes = Vec::new();
+    for line in theirs.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || mine_text.contains(trimmed) {
+            continue;
         }
-        output.push_str(line);
+        match pre_property(line, fmt) {
+            Some((key, value)) => match mine_props.get(&key) {
+                None => extra_props.push(line.to_owned()),
+                Some((_, mine_value)) if mine_value.trim() == value.trim() => {}
+                Some((at, mine_value)) if matches!(key.as_str(), "tags" | "alias" | "aliases") => {
+                    let split = |v: &str| -> Vec<String> {
+                        v.split(tine_core::refs::is_linkable_property_separator)
+                            .map(|m| m.trim().to_owned())
+                            .filter(|m| !m.is_empty())
+                            .collect()
+                    };
+                    let held: Vec<String> = split(mine_value)
+                        .iter()
+                        .chain(members.get(at).into_iter().flatten())
+                        .map(|m| tine_core::refs::normalize(m))
+                        .collect();
+                    let new: Vec<String> = split(value)
+                        .into_iter()
+                        .filter(|m| !held.contains(&tine_core::refs::normalize(m)))
+                        .collect();
+                    members.entry(*at).or_default().extend(new);
+                }
+                Some(_) => clashes.push(key),
+            },
+            None if fmt == Format::Org && trimmed.starts_with(':') => {
+                clashes.push("properties drawer".to_owned())
+            }
+            None => extra_text.push(line.to_owned()),
+        }
     }
-    Some(output)
+    if !clashes.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "the page's own {} differs between the two versions; keep mine or theirs for the page properties",
+                comma_list(&clashes)
+            ),
+        ));
+    }
+    if extra_props.is_empty() && extra_text.is_empty() && members.is_empty() {
+        return Ok((!mine.is_empty()).then(|| mine.to_owned()));
+    }
+    let lead = mine_lines
+        .iter()
+        .take_while(|l| pre_property(l.trim_end_matches(['\r', '\n']), fmt).is_some())
+        .count();
+    let mut out = String::with_capacity(mine.len() + theirs.len());
+    let push_line = |out: &mut String, line: &str| {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(line);
+    };
+    for (i, line) in mine_lines.iter().enumerate() {
+        if i == lead {
+            for prop in &extra_props {
+                push_line(&mut out, prop);
+                out.push('\n');
+            }
+        }
+        match members.get(&i) {
+            Some(new) if !new.is_empty() => {
+                let content = line.trim_end_matches(['\r', '\n']);
+                push_line(&mut out, content.trim_end());
+                out.push_str(", ");
+                out.push_str(&comma_list(new));
+                out.push_str(&line[content.len()..]);
+            }
+            _ => push_line(&mut out, line),
+        }
+    }
+    if lead == mine_lines.len() {
+        for prop in &extra_props {
+            push_line(&mut out, prop);
+        }
+    }
+    for text in &extra_text {
+        push_line(&mut out, text);
+    }
+    if mine.ends_with('\n') && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(Some(out))
 }
 
 pub(crate) fn choose_pre(
@@ -293,13 +405,12 @@ pub(crate) fn choose_pre(
     fmt: Format,
     mine: &Document,
     theirs: &Document,
-) -> Option<String> {
-    match choice {
+) -> io::Result<Option<String>> {
+    Ok(match choice {
         "theirs" => theirs.pre_block.clone(),
         "mine" => mine.pre_block.clone(),
-        _ if fmt == Format::Md => union_pre(mine.pre_block.as_deref(), theirs.pre_block.as_deref()),
-        _ => mine.pre_block.clone(),
-    }
+        _ => union_pre(mine.pre_block.as_deref(), theirs.pre_block.as_deref(), fmt)?,
+    })
 }
 
 pub(crate) fn merge_refused(refusal: sync_diff::MergeRefused) -> io::Error {
@@ -445,7 +556,7 @@ pub fn resolve_sync_conflict(
             decisions,
         )
         .map_err(merge_refused)?;
-        let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc);
+        let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc)?;
         let merged = dto(store, &page, Document { pre_block, roots });
         let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
@@ -880,7 +991,7 @@ pub fn resolve_vcs_marker_conflict(
             decisions,
         )
         .map_err(merge_refused)?;
-        let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs);
+        let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
         let merged = dto(store, &page, Document { pre_block, roots });
         let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(

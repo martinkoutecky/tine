@@ -146,7 +146,11 @@ interface RelativeMovePlan {
  * another captured ID are subsumed. Any malformed tree, read-only page, a
  * target inside a moved subtree, or an outline-depth overflow refuses the whole
  * move before anything changes. */
-function relativeMovePlan(capturedIds: readonly string[], targetId: string): RelativeMovePlan | null {
+function relativeMovePlan(
+  capturedIds: readonly string[],
+  targetId: string,
+  position: "before" | "after" | "child",
+): RelativeMovePlan | null {
   const unique = [...new Set(capturedIds)];
   if (!unique.length || unique.some((id) => !doc.byId[id])) return null;
   const captured = new Set(unique);
@@ -195,7 +199,8 @@ function relativeMovePlan(capturedIds: readonly string[], targetId: string): Rel
     if (!siblings || siblings.filter((sibling) => sibling === id).length !== 1) return null;
     if (node.parent !== null && doc.byId[node.parent]?.page !== node.page) return null;
     if (!visit(id, node.page, new Set())) return null;
-    if (!existingSubtreeFits(id, destinationParent)) return null;
+    // A nested drop lands UNDER the target, one level deeper than its siblings.
+    if (!existingSubtreeFits(id, position === "child" ? targetId : destinationParent)) return null;
     sourcePages.push(node.page);
   }
   if (moved.has(targetId)) return null;
@@ -216,7 +221,7 @@ export async function moveBlocksRelative(
   targetId: string,
   position: "before" | "after" | "child",
 ): Promise<boolean> {
-  const plan = relativeMovePlan(capturedIds, targetId);
+  const plan = relativeMovePlan(capturedIds, targetId, position);
   if (!plan) return false;
   const pages = [...new Set([plan.destinationPage, ...plan.sourcePages])];
   const crossSources = plan.sourcePages.filter((page) => page !== plan.destinationPage);
