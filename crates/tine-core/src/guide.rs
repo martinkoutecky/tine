@@ -225,6 +225,8 @@ mod journal_guide_tests {
             "g p",
             "**g h** opens the graph's home page",
             ":default-home {:page",
+            "Renaming the home page (or a namespace it lives in) keeps it the home page",
+            "Drag an item by its header to reorder the list.",
             "default journal template",
             "Carry unfinished tasks",
             ":hidden [\"archive/private\"]",
@@ -234,6 +236,10 @@ mod journal_guide_tests {
                 "missing journal Guide control: {control}"
             );
         }
+        // og 22b: settings writes never overwrite a half-delivered config.edn.
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("`logseq/config.edn` is live too"));
+        assert!(files.contains("refused rather than written if `config.edn` is half-written"));
     }
 }
 

@@ -10,12 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Right-sidebar items can be reordered by dragging their header** (GH #211, og 22b); a short press still opens the item.
 - **External changes stay fresh without interrupting you.** Returning to Tine
   asks the watcher for a fresh pass before you type; a large checkout or sync
   burst arrives as one change; `.git/` and `.stfolder/` are ignored; and if the
   system refuses live file notifications, Tine says so and checks every 3
-  seconds instead. An optional "always ask" policy holds even clean external
-  changes for **Reload from disk** / **Keep mine**.
+  seconds instead. An optional "always ask" policy (Settings → Backups &
+  recovery) holds even clean external changes for **Reload from disk** /
+  **Keep mine**.
 - **A live-draft conflict offers Review, not a blind overwrite.** Its banner opens
   the in-page comparison, and the Conflicts page lists such pages under
   **Unsaved drafts**.
@@ -61,6 +63,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   ticked, Tine published such pages anyway; like Logseq it now leaves them out,
   and their blocks no longer reach another page's embeds, queries or references.
   A query's own **Export…** is unchanged.
+- **An outside edit to `logseq/config.edn` now applies while the graph is open**
+  (og 22b). A change made in Logseq, a text editor or delivered by a sync
+  provider was taken in only after a rename or a reopen; the store watcher now
+  reloads it in both notify and poll modes, only when its bytes changed.
+- **A settings change edits only its own top-level entry of `config.edn`** and is
+  refused, leaving the file untouched, when the file is half-written or not a map;
+  a key nested inside another setting is never overwritten (og 22b).
+- **Renaming the home page keeps it the home page**, as in Logseq; merging it
+  into another page does not (og 22b).
 - **Choosing "Keep mine" after a conflicted alias save no longer duplicates the
   alias's content on its owner page.** The retry replaces what already landed,
   and refuses rather than guessing if the owner changed meanwhile (og L13).

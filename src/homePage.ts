@@ -32,8 +32,9 @@ export type HomeOutcome = "opened" | "unresolved" | "stale";
  *  whole-graph parse — O(pages) — so on graph open the home page can land
  *  seconds after the landing on a large graph, or not at all if the user
  *  navigates first. Writes nothing to the graph (navigation schedules the
- *  usual session save). The value is a snapshot read at graph open; a
- *  config.edn edit applies at the next open. */
+ *  usual session save). The name is read from `graphMeta` at call time, which
+ *  follows an outside config.edn edit, a Settings choice and a rename of the
+ *  home page without reopening the graph. */
 export async function openConfiguredHomePage(): Promise<HomeOutcome> {
   const name = configuredHomePage();
   if (!name) return "unresolved";

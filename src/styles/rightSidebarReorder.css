@@ -1,0 +1,11 @@
+/* GH #211: a right-sidebar row is dragged by its header; the insertion line
+   shows where it lands (the favorites tree draws its own in favorites.css). */
+.rs-item-head {
+  cursor: grab;
+}
+.rs-item.row-drop-before {
+  box-shadow: inset 0 2px 0 var(--link-color);
+}
+.rs-item.row-drop-after {
+  box-shadow: inset 0 -2px 0 var(--link-color);
+}

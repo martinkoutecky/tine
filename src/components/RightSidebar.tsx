@@ -1,5 +1,7 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth, sidebarItemKey, renamePageInNavigation, registerRightSidebarClosePreparation, type SidebarItem } from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth, sidebarItemKey, renamePageInNavigation, registerRightSidebarClosePreparation, type SidebarItem } from "../ui";
+import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
+import "../styles/rightSidebarReorder.css";
 import { graphEpoch } from "../graphSession";
 import { mobileDrawerMode } from "../mobileDrawers";
 import { registerTransientLayer } from "../transientLayers";
@@ -21,6 +23,25 @@ import { FailureBoundary } from "./FailureBoundary";
 function surfaceKey(item: SidebarItem): string {
   return `sidebar:${sidebarItemKey(item)}`;
 }
+
+// Live drop target while a row reorder drag is in progress (GH #211).
+const [rsDropTarget, setRsDropTarget] = createSignal<RowDropTarget | null>(null);
+/** Pointerdown on a row head starts a reorder drag, unless it landed on an
+ *  interactive child (toggle/close button, title link). The drop lands before
+ *  or after the target row, within the list only. */
+function startRowDrag(from: number, event: PointerEvent) {
+  if ((event.target as HTMLElement | null)?.closest("button, a, input, textarea, [contenteditable=\"true\"]")) return;
+  beginRowReorderDrag(event, ".right-sidebar-body .rs-item", setRsDropTarget, ({ index, before }) => {
+    const at = index + (before ? 0 : 1);
+    moveRightSidebarItem(from, at > from ? at - 1 : at);
+  });
+}
+/** The reorder attributes every sidebar row carries. */
+function rowAttrs(index: number) {
+  const drop = () => rsDropTarget()?.index === index ? rsDropTarget() : null;
+  return { index, before: () => drop()?.before === true, after: () => drop()?.before === false };
+}
+type Row = ReturnType<typeof rowAttrs>;
 
 /** Commit the active textarea synchronously through its blur handler before a
  * disclosure removes the owning surface. Then clear any remaining edit owner
@@ -169,7 +190,7 @@ export function RightSidebar(): JSX.Element {
                 // Each sidebar item is its own editing surface, so a block that
                 // also shows in the main pane doesn't fight it for the caret.
                 <SurfaceContext.Provider value={key}>
-                  <SidebarItemView item={item} surfaceKey={key} collapsed={!!item.collapsed} onToggle={collapse} onClose={close} />
+                  <SidebarItemView item={item} surfaceKey={key} collapsed={!!item.collapsed} onToggle={collapse} onClose={close} row={rowAttrs(i())} />
                 </SurfaceContext.Provider>
                 );
               }}
@@ -231,13 +252,14 @@ function SidebarItemView(props: {
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
+  row: Row;
 }): JSX.Element {
   return (
     <Show
       when={props.item.kind === "page"}
-      fallback={<BlockItem item={props.item as Extract<SidebarItem, { kind: "block" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} />}
+      fallback={<BlockItem item={props.item as Extract<SidebarItem, { kind: "block" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} row={props.row} />}
     >
-      <PageItem item={props.item as Extract<SidebarItem, { kind: "page" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} />
+      <PageItem item={props.item as Extract<SidebarItem, { kind: "page" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} row={props.row} />
     </Show>
   );
 }
@@ -248,6 +270,7 @@ function PageItem(props: {
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
+  row: Row;
 }): JSX.Element {
   const loadError = useEnsurePage(
     () => props.item.name,
@@ -261,12 +284,13 @@ function PageItem(props: {
   };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
-    <div class="rs-item" data-sidebar-surface={props.surfaceKey} classList={{ collapsed: props.collapsed }}>
-      <div class="rs-item-head">
+    <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
+      <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
         <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
         <a class="rs-item-title" onMouseDown={internalLinkMouseDown} onClick={(e) => {
+          if (rowReorderClickSuppressed()) return;
           const target = { name: props.item.name, pageKind: props.item.pageKind, path: props.item.path };
           // The shift destination (right sidebar) is meaningless for a title
           // already IN the sidebar, so it keeps the ordinary navigation.
@@ -310,6 +334,7 @@ function BlockItem(props: {
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
   onClose: () => void;
+  row: Row;
 }): JSX.Element {
   const loadError = useEnsurePage(
     () => props.item.page,
@@ -333,14 +358,14 @@ function BlockItem(props: {
   };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
-    <div class="rs-item" data-sidebar-surface={props.surfaceKey} classList={{ collapsed: props.collapsed }}>
-      <div class="rs-item-head">
+    <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
+      <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
         <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
         <a
           class="rs-item-title"
-          onClick={() => openPageAtBlock({
+          onClick={() => rowReorderClickSuppressed() || openPageAtBlock({
             name: props.item.page,
             pageKind: props.item.pageKind,
             block: props.item.uuid,

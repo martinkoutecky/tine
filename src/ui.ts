@@ -1175,6 +1175,16 @@ export function closeRightSidebarItem(idx: number) {
 export function closeAllRightSidebarItems() {
   setRightSidebar([]);
 }
+/** Move a right-sidebar item to a new position (GH #211 drag-reorder). Order
+ *  persists through the same setRightSidebar owner (localStorage + session). */
+export function moveRightSidebarItem(from: number, to: number) {
+  const items = rightSidebar();
+  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return;
+  const next = [...items];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  setRightSidebar(next);
+}
 
 /** Remove block items whose live targets were structurally deleted. Their
  * collapse preference lives on the item, so no parallel stale-state map can

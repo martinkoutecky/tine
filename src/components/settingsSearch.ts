@@ -45,6 +45,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "files", label: "Watch for external edits", description: "inotify polling network filesystem" },
   { tab: "files", label: "Diagram editors", description: "drawio Excalidraw commands", level: "advanced" },
   { tab: "backups", label: "Snapshots to keep", description: "recovery retention conflicts" },
+  { tab: "backups", label: "Always ask before applying an external change", description: "external edits disk reload keep mine conflict review" },
   { tab: "graph", label: "Graph", description: "folder export publish" },
   { tab: "graph", label: "Home page", description: "home start startup page" },
   { tab: "diagnostics", label: "Help & diagnostics", description: "diagnostic report crash unclean exit save slow privacy help improve parser divergences anonymize" },
