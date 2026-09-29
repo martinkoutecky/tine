@@ -22,6 +22,7 @@ import {
 import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
 import { installKeybindings } from "../keybindings";
+import { setToasts, toasts } from "../toasts";
 
 beforeAll(async () => {
   await initParser();
@@ -1233,6 +1234,32 @@ describe("SheetTable", () => {
     keydown(input!, "Enter");
 
     expect(doc.byId.r1.raw).toBe("Task\nowner:: new\nbody line");
+    dispose();
+  });
+
+  it("shows a refused cell edit (page turned read-only) instead of silently discarding the typed value", () => {
+    setToasts([]);
+    const layout = {
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "Task\nbody line\nowner:: old", "table"),
+      },
+      feed: ["Sheet"],
+      loaded: true,
+    };
+    setDoc({ ...layout, pages: [page(["table"])] });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    doubleClick(cell(root, 0, 1));
+    const input = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+    // The page becomes read-only (org round-trip gate) while the input is open.
+    setDoc({ ...layout, pages: [{ ...page(["table"]), readOnly: true }] });
+    input!.value = "typed value";
+    keydown(input!, "Enter");
+
+    expect(doc.byId.r1.raw).toBe("Task\nbody line\nowner:: old");
+    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("typed value"))).toBe(true);
     dispose();
   });
 

@@ -33,7 +33,7 @@ import {
   fieldLabel,
   isFormulaField,
   readField,
-  writeField,
+  writeFieldVisibly,
   type FieldId,
   type FieldValue,
 } from "../sheet/fields";
@@ -739,7 +739,7 @@ export function SheetTable(props: {
     if (!row || !col) return true;
     if (col === "title") return false;
     if (propUsesInlineInput(col) && liveFormulaRowNode(row)) openPropInput(row.id, col, text);
-    else if ((col === "scheduled" || col === "deadline") && liveFormulaRowNode(row)) writeField(row.id, col, text);
+    else if ((col === "scheduled" || col === "deadline") && liveFormulaRowNode(row)) writeFieldVisibly(row.id, col, text);
     return true;
   };
 
@@ -1271,7 +1271,7 @@ function FieldCell(props: {
       setInputInvalid(true);
       return false;
     }
-    if (editable()) writeField(props.row.id, props.field, value);
+    if (editable()) writeFieldVisibly(props.row.id, props.field, value);
     props.closePropInput();
     setInputInvalid(false);
     return true;
@@ -1281,9 +1281,9 @@ function FieldCell(props: {
     openActionContextMenu(rect.left, rect.bottom + 4, [
       ...values.map((label): ContextMenuAction => ({
         label,
-        run: () => writeField(props.row.id, props.field, label),
+        run: () => writeFieldVisibly(props.row.id, props.field, label),
       })),
-      { label: "Clear", run: () => writeField(props.row.id, props.field, "") },
+      { label: "Clear", run: () => writeFieldVisibly(props.row.id, props.field, "") },
     ]);
   };
 
@@ -1305,7 +1305,7 @@ function FieldCell(props: {
       const type = props.fieldType;
       if (type === "checkbox") {
         const cur = (value()?.raw ?? value()?.text ?? "").trim().toLowerCase();
-        writeField(props.row.id, props.field, cur === "true" ? "false" : "true");
+        writeFieldVisibly(props.row.id, props.field, cur === "true" ? "false" : "true");
       } else if (type === "date" || type === "datetime") {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         openDatePicker(props.row.id, { field: props.field as `prop:${string}`, fieldType: type }, rect.left, rect.bottom + 4);

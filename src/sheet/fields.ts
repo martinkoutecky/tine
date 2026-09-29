@@ -13,6 +13,7 @@ import { parseIsoDateLike } from "./typed";
 import { evaluateFormulaForRow, formulaValueText, liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
 
 import { appNow } from "../journal";
+import { pushToast } from "../toasts";
 export type FieldId =
   | "state"
   | "priority"
@@ -282,6 +283,18 @@ export function writeField(id: string, field: FieldId, value: string): boolean {
   }
 
   return false;
+}
+
+/** The user-facing door for a cell edit: `writeField`, and a refusal (read-only
+ * page, vanished row, a value this column cannot take) is SHOWN with the
+ * rejected text, never a silently closed input (I-9). Same cost as writeField. */
+export function writeFieldVisibly(id: string, field: FieldId, value: string): boolean {
+  const written = writeField(id, field, value);
+  if (!written) {
+    const shown = value.trim().slice(0, 60);
+    pushToast(`Couldn't change that cell${shown ? ` to “${shown}”` : ""}: the page is read-only, the row is gone, or the value doesn't fit the column.`, "error");
+  }
+  return written;
 }
 
 export function writeTagDelta(id: string, delta: { add?: string; remove?: string }): boolean {
