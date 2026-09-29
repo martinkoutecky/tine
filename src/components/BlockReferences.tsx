@@ -1,4 +1,4 @@
-import { For, Show, createResource, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { dataRev, graphEpoch } from "../graphSession";
 import { openPage, openPageInNewTab } from "../router";
@@ -12,12 +12,29 @@ import { blockExternalId } from "../document";
 // open by the per-block reference-count badge (Block.tsx). Mirrors the page-level
 // LinkedReferences, minus the co-reference filter chips (OG doesn't show those on
 // the block-ref panel). Refetches when the graph generation changes.
+/** Show the source locations of one block's references. Reads the bounded
+ * referrer answer on graph revision changes; disclosure is local to this panel
+ * and can be changed for one group or all groups without writing the graph. */
 export function BlockReferences(props: { id: string }): JSX.Element {
   const [groups] = createResource(
     () => ({ id: blockExternalId(props.id) ?? props.id, epoch: graphEpoch(), revision: dataRev() }),
     ({ id }) => backend().getBlockReferrers(id)
   );
   const count = () => (groups() ?? []).reduce((acc, g) => acc + g.blocks.length, 0);
+  const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
+  const groupKey = (group: { page: string; kind: string; path?: string }) =>
+    `${group.kind}\0${group.path ?? ""}\0${group.page}`;
+  const groupCollapsed = (group: { page: string; kind: string; path?: string }) =>
+    collapsedGroups().has(groupKey(group));
+  const setGroupCollapsed = (group: { page: string; kind: string; path?: string }, value: boolean) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (value) next.add(groupKey(group)); else next.delete(groupKey(group));
+      return next;
+    });
+  };
+  const setAllGroups = (value: boolean) =>
+    setCollapsedGroups(value ? new Set((groups() ?? []).map(groupKey)) : new Set<string>());
 
   return (
     <Show when={groups() && groups()!.length > 0}>
@@ -25,9 +42,21 @@ export function BlockReferences(props: { id: string }): JSX.Element {
         <div class="block-references-header">
           {count()} Linked Reference{count() === 1 ? "" : "s"}
         </div>
+        <Show when={(groups() ?? []).length > 1}>
+          <div class="reference-bulk-controls" aria-label="Reference page groups">
+            <button type="button" onClick={() => setAllGroups(true)}>Collapse all</button>
+            <button type="button" onClick={() => setAllGroups(false)}>Expand all</button>
+          </div>
+        </Show>
         <For each={groups()}>
           {(g) => (
             <div class="reference-group">
+              <div class="reference-group-header">
+              <button type="button" class="reference-group-disclosure"
+                aria-expanded={!groupCollapsed(g)}
+                aria-label={`${groupCollapsed(g) ? "Expand" : "Collapse"} references from ${g.page}`}
+                onClick={() => setGroupCollapsed(g, !groupCollapsed(g))}
+              >{groupCollapsed(g) ? "▸" : "▾"}</button>
               <div
                 class="reference-page"
                 onClick={(e) => {
@@ -48,11 +77,14 @@ export function BlockReferences(props: { id: string }): JSX.Element {
               >
                 {g.page}
               </div>
+              </div>
+              <Show when={!groupCollapsed(g)}>
               <div class="reference-blocks">
                 {/* OG shows each referrer's ancestor breadcrumb in the block-ref
                     panel (:breadcrumb-show? true) for "where does this live" context. */}
                 <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} surface="ref" showBreadcrumb />
               </div>
+              </Show>
             </div>
           )}
         </For>

@@ -1,10 +1,12 @@
-import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage } from "../router";
 import { ReferenceExcerptBlocks } from "./ReferenceEvidence";
+import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import type { RefGroup } from "../types";
+import { collapsedGroupsFor, sectionOverride, setCollapsedGroupsFor, setSectionOverride } from "../referenceSectionState";
 
 const pageIdentity = (name: string) => {
   const lowered = name.trim().toLowerCase();
@@ -40,15 +42,34 @@ function classifyReferenceLoadError(error: unknown): ReferenceLoadError {
 }
 
 // "Unlinked References" — plain-text mentions of the page, collapsed by default.
-/** Show bounded plain-text mentions for one page. One backend read per target;
- * only the fixed result-limit token selects the bounded failure alert. */
+/** Show bounded plain-text mentions for one page. Expansion survives remounts
+ * within the graph session, and batch export snapshots the current results.
+ * One backend read per target; only the fixed result-limit token selects the
+ * bounded failure alert. */
 export function UnlinkedReferences(props: { name: string }): JSX.Element {
   const readScope = {};
   let alive = true;
   onCleanup(() => { alive = false; });
-  const [open, setOpen] = createSignal(false);
+  const [open, setOpenSignal] = createSignal(sectionOverride("unlinked", props.name) ?? false);
+  const setOpen = (value: boolean) => {
+    setSectionOverride("unlinked", props.name, value);
+    setOpenSignal(value);
+  };
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
+  const [exportChooserOpen, setExportChooserOpen] = createSignal(false);
+  const [collapsedGroups, setCollapsedGroupsSignal] = createSignal<Set<string>>(collapsedGroupsFor("unlinked", props.name));
+  const setCollapsedGroups = (update: Set<string> | ((current: Set<string>) => Set<string>)) => {
+    setCollapsedGroupsSignal((current) => {
+      const next = typeof update === "function" ? update(current) : update;
+      setCollapsedGroupsFor("unlinked", props.name, next);
+      return next;
+    });
+  };
+  createEffect(() => {
+    const page = props.name;
+    setOpenSignal(sectionOverride("unlinked", page) ?? false);
+    setCollapsedGroupsSignal(collapsedGroupsFor("unlinked", page));
+  });
   const [groups] = createResource(
     () => props.name,
     async (n) => {
@@ -98,7 +119,15 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
           <span class="references-count">{count()}</span>
         </Show>
         <Show when={groups.loading}><span class="references-loading"> Loading…</span></Show>
+        <button type="button" class="reference-export-toggle"
+          aria-label="Copy / export unlinked references" title="Copy / export selected unlinked references"
+          disabled={!count()}
+          onClick={(event) => { event.stopPropagation(); setExportChooserOpen(true); }}
+        ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" /></svg></button>
       </div>
+      <Show when={exportChooserOpen()}>
+        <ReferenceExportChooser subject="Unlinked References" groups={mergedGroups()} onClose={() => setExportChooserOpen(false)} />
+      </Show>
       <Show when={open()}>
         <Show when={loadError()}>
           <div class="reference-filter-error reference-error" role="alert">

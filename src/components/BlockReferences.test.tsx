@@ -121,3 +121,25 @@ describe("block referrer panel durable identity (GH #154)", () => {
     }
   });
 });
+
+it("collapses every block-reference location and reopens one source", async () => {
+  vi.spyOn(backend(), "getBlockReferrers").mockResolvedValue([
+    { page: "A", kind: "page", blocks: [{ id: "a", raw: "x", collapsed: false, children: [] }] },
+    { page: "B", kind: "page", blocks: [{ id: "b", raw: "y", collapsed: false, children: [] }] },
+  ]);
+  const { BlockReferences } = await import("./BlockReferences");
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <BlockReferences id="target" />, root);
+  try {
+    await vi.waitFor(() => expect(root.querySelectorAll(".reference-group").length).toBe(2));
+    const controls = root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button");
+    expect(controls.length).toBe(2);
+    controls[0].click();
+    expect(root.querySelectorAll(".reference-blocks").length).toBe(0);
+    root.querySelector<HTMLButtonElement>('.reference-group-disclosure[aria-label*="B"]')!.click();
+    expect(root.querySelectorAll(".reference-blocks").length).toBe(1);
+    controls[1].click();
+    expect(root.querySelectorAll(".reference-blocks").length).toBe(2);
+  } finally { dispose(); }
+});

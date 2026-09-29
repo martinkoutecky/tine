@@ -19,6 +19,7 @@ import { isBlockMoving } from "./edits/moves";
 import { journalTitle } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToast } from "../toasts";
+import { resetReferenceSectionState } from "../referenceSectionState";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -358,6 +359,7 @@ export function resetStore() {
   // across the switch (audit P2).
   clearSeededFacets();
   clearMatrixDimensionCache();
+  resetReferenceSectionState();
   for (const name of pageInstanceGenerations.keys()) retirePageInstance(name);
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   endEdit("graph-switch");
