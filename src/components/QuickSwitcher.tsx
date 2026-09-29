@@ -20,6 +20,8 @@ import { dismissTopTransient, registerTransientLayer } from "../transientLayers"
 import { persistBlockRefTarget, createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
+import { readOr } from "../resourceRead";
+import { ResourceFailure } from "./ResourceFailure";
 
 // One selectable result row.
 type Item =
@@ -96,7 +98,7 @@ export function QuickSwitcher(): JSX.Element {
   onCleanup(() => clearTimeout(qTimer));
   // Fetch OG's complete ranked pools once per query. Presentation paging below
   // changes only the rendered slice and therefore does not trigger another scan.
-  const [graphResults] = createResource(
+  const [graphResultsResource] = createResource(
     () => (commandsOnly() ? null : {
       q: debouncedQuery(),
       pages: currentPageOnly() ? 0 : PAGE_POOL,
@@ -114,6 +116,9 @@ export function QuickSwitcher(): JSX.Element {
         )
       : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false })
   );
+  // A failed search says so (below) instead of throwing into the switcher's render
+  // or claiming "No matched results".
+  const graphResults = () => readOr(graphResultsResource, undefined, "search results");
 
   const currentPageName = () => {
     const scope = currentPageScope();
@@ -628,10 +633,11 @@ export function QuickSwitcher(): JSX.Element {
                 {graphResults()!.diagnostics.map((diagnostic) => diagnostic.message).join(" · ")}
               </div>
             </Show>
-            <Show when={query().trim() && (graphResults.loading || debouncedQuery() !== query())}>
+            <ResourceFailure of={graphResultsResource} what="search results" />
+            <Show when={query().trim() && (graphResultsResource.loading || debouncedQuery() !== query())}>
               <div class="switcher-empty" role="status">Searching…</div>
             </Show>
-            <Show when={query().trim() && !graphResults.loading && debouncedQuery() === query() && flat().length === 0 && !(graphResults()?.diagnostics.length ?? 0)}>
+            <Show when={query().trim() && !graphResultsResource.loading && debouncedQuery() === query() && flat().length === 0 && graphResultsResource.error === undefined && !(graphResults()?.diagnostics.length ?? 0)}>
               <div class="switcher-empty">No matched results</div>
             </Show>
           </div>

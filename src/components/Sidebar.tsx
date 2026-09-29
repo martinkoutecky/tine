@@ -19,6 +19,7 @@ import { registerTransientLayer } from "../transientLayers";
 import { writeClipboardText } from "../clipboard";
 import { isMobilePlatform } from "../nativeChrome";
 import { graphRowMenuActions } from "./graphRowMenu";
+import { readOr } from "../resourceRead";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
 // reading route() for its active state) makes both the initial render and every
@@ -326,7 +327,10 @@ export function GraphSwitcher(props: {
   const [open, setOpen] = createSignal(false);
   let alive = true;
   onCleanup(() => { alive = false; });
-  const [knownGraphs, { refetch }] = createResource(() => backend().listKnownGraphs());
+  const [knownGraphsResource, { refetch }] = createResource(() => backend().listKnownGraphs());
+  // The switcher lists the graphs it can; a failed list is an empty menu, not a
+  // thrown render.
+  const knownGraphs = () => readOr(knownGraphsResource, undefined, "known graphs");
   const close = () => setOpen(false);
 
   createEffect(() => {

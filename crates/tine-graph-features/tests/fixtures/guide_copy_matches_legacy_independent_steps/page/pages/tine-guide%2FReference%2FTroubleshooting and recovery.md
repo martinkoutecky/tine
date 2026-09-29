@@ -48,10 +48,11 @@ icon:: 🛟
 	- 3. If it comes back every time, use **Create a privacy-safe diagnostic report** below and include the message shown in the region.
 	- 4. What you should see: your notes on disk are untouched either way — a region that cannot be displayed is a display failure, not a data failure.
 - ## A panel says it could not load something
-	- Meaning: a panel could not fetch what it needed, and says so instead of drawing itself empty, because an empty panel would tell you there is nothing there, which is a different thing from not being able to find out. Linked and Unlinked References say “Couldn’t load references”; a page in the right sidebar says “Could not load this sidebar page. Collapse and expand to retry.”
-	- 1. For a sidebar page, collapse and expand its entry to try again. For references, reopen the page or navigate away and back.
-	- 2. If it keeps failing, create a diagnostic report as described below.
-	- 3. What you should see: the rest of the window is unaffected, and nothing on disk changes.
+	- Meaning: a panel could not fetch what it needed, and says so instead of drawing itself empty, because an empty panel would tell you there is nothing there, which is a different thing from not being able to find out. Linked and Unlinked References say “Couldn’t load references”; the references under a block say “Couldn’t load references to this block” with a **Retry** button; Search says “Couldn’t load search results” instead of “No matched results”; a page in the right sidebar says “Could not load this sidebar page. Collapse and expand to retry.”
+	- 1. Where the panel has a **Retry** button, press it: it re-fetches just that panel. For a sidebar page, collapse and expand its entry to try again. For Linked and Unlinked References, reopen the page or navigate away and back.
+	- 2. Smaller pieces degrade quietly rather than saying anything: a code block that could not be highlighted shows as plain text, a formula that could not be typeset shows its LaTeX, a preview that could not load shows nothing in its place. These are display-only, and reopening the page tries them again.
+	- 3. If it keeps failing, create a diagnostic report as described below.
+	- 4. What you should see: the rest of the window is unaffected, and nothing on disk changes.
 - ## Create a privacy-safe diagnostic report
 	- 1. Open Settings → **Help & diagnostics** and choose **Create diagnostic report**. Tine previews its bounded flight recorder for the current and previous run: fixed operation names, outcomes, timings, counts, platform, version, and build information.
 	- 2. Review the report, then choose **Copy report** (or **Save report…** on desktop). Nothing is uploaded automatically. The recorder excludes graph content, paths, page titles, queries, URLs, credentials, and the opt-in detailed debug log.

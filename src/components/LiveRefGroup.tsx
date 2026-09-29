@@ -12,6 +12,7 @@ import { startEditing } from "../editorController";
 import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
 import { visibleBody } from "../render/block";
 import { LinkDepthContext } from "./linkDepth";
+import { readOr } from "../resourceRead";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -58,7 +59,7 @@ export function LiveRefGroup(props: {
   });
 
   // Load the source page only once the group is near the viewport.
-  const [ready] = createResource(
+  const [readyResource] = createResource(
     () => (near() ? { p: props.page, k: props.kind, path: props.path } : null),
     async ({ p, k, path }) => {
       const occupied = pageByName(p);
@@ -84,6 +85,9 @@ export function LiveRefGroup(props: {
       return loaded?.kind === k && (!path || loaded.id === path);
     }
   );
+  // A source page that failed to load leaves the group on its DTO path below,
+  // which is the same path it uses before the page is near the viewport.
+  const ready = () => readOr(readyResource, undefined, "reference group source page");
 
   // O(1) id → dto. The prior `props.blocks.find` inside the per-row <For> was
   // O(N) per row → O(N²) per group (250k iterations on a 500-block hub group).

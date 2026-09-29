@@ -3,6 +3,7 @@ import { backend } from "../backend";
 import { graphMeta, setGraphMeta } from "../graphSession";
 import { graphOwner, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
+import { readOr } from "../resourceRead";
 
 /** Settings picker for an existing ordinary page as graph home. Search is
  * bounded to eight graph pages; one selected name is written through the
@@ -10,12 +11,13 @@ import { pushToast } from "../toasts";
 export function HomePageSetting(): JSX.Element {
   const [query, setQuery] = createSignal("");
   const [picking, setPicking] = createSignal(false);
-  const [matches] = createResource(query, async (text) => {
+  const [matchesResource] = createResource(query, async (text) => {
     const owner = graphOwner();
     if (!owner()) return [];
     const result = await readOwned(owner, backend().quickSwitch(text, 8));
     return result.kind === "current" ? result.value.filter((page) => page.kind === "page") : [];
   });
+  const matches = () => readOr(matchesResource, undefined, "home page search");
   const commit = async (name: string | null) => {
     const owner = graphOwner();
     const previous = graphMeta();

@@ -17,6 +17,7 @@ import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../referenceGroups";
 import { collapsedGroupsFor, sectionOverride, setCollapsedGroupsFor, setSectionOverride } from "../referenceSectionState";
+import { readOr } from "../resourceRead";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -109,7 +110,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
-  const [groups] = createResource(
+  const [groupsResource] = createResource(
     () => props.name,
     async (n) => {
       const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
@@ -123,6 +124,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       }
     }
   );
+  // `createReferenceFetcher` already routes a failure to `loadError` (rendered
+  // below), so this covers the read itself rather than replacing that channel.
+  const groups = () => readOr(groupsResource, undefined, "linked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
   const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(sectionOverride("linked", props.name) ?? null);
   const setCollapsedOverride = (value: boolean) => {
@@ -164,13 +168,16 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     )
   );
   const needsNativeContext = () => filterOpen() || Object.keys(filters()).length > 0;
-  const [nativeContext] = createResource(
+  const [nativeContextResource] = createResource(
     () => {
       if (!needsNativeContext() || !groups()) return null;
       return { name: props.name, targets: targets() };
     },
     ({ name, targets }) => backend().getBacklinkFilterContext(name, targets)
   );
+  // The "Couldn't index descendant text" row below was unreachable: reading a
+  // rejected `nativeContext` threw before any Show could render it.
+  const nativeContext = () => readOr(nativeContextResource, undefined, "reference filter index");
   const fallbackByRoot = createMemo(() =>
     new Map(
       mergedGroups().flatMap((group) =>
@@ -206,7 +213,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       }).filter((group) => group.blocks.length > 0);
   const textMatchedGroups = createMemo<RefGroup[]>(() => {
     const parsed = parsedSearch();
-    if (nativeContext.loading || parsed.kind === "empty" || parsed.kind === "invalid") return mergedGroups();
+    if (nativeContextResource.loading || parsed.kind === "empty" || parsed.kind === "invalid") return mergedGroups();
     return filterGroups(mergedGroups(), (group, block) => {
       const entry = rootEntry(group, block);
       return matcherMatches(parsed, entry.normalizedText, entry.text);
@@ -247,7 +254,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     const searching = parsed.kind !== "empty" && parsed.kind !== "invalid";
     // Do not flash descendant-only matches away while their on-demand native
     // index is still in flight. Once it arrives, filtering is synchronous.
-    if ((searching || ins.length || outs.length) && nativeContext.loading) return mergedGroups();
+    if ((searching || ins.length || outs.length) && nativeContextResource.loading) return mergedGroups();
     if (!ins.length && !outs.length) return textMatchedGroups();
     return filterGroups(textMatchedGroups(), (group, block) => {
       const facets = new Set(rootEntry(group, block).facets.map(norm));
@@ -379,12 +386,12 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
               </div>
               <div class="reference-filter-summary">
                 {count()} of {totalCount()} references
-                <Show when={nativeContext.loading}> · indexing…</Show>
+                <Show when={nativeContextResource.loading}> · indexing…</Show>
               </div>
               <Show when={searchError()}>
                 {(error) => <div class="reference-filter-error">Invalid search: {error()}</div>}
               </Show>
-              <Show when={nativeContext.error}>
+              <Show when={nativeContextResource.error}>
                 <div class="reference-filter-error">Couldn’t index descendant text; searching visible root text only.</div>
               </Show>
               <Show when={nativeContext()?.truncated || nativeContext()?.entries.some((entry) => entry.truncated)}>

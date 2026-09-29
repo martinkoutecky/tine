@@ -173,6 +173,25 @@ describe("QuickSwitcher search syntax help", () => {
     }
   });
 
+  // master c5279d186 (GH #490/#332): a rejected search read used to throw out of
+  // the switcher's render; now it says the search could not load, never
+  // "No matched results", and the switcher stays usable.
+  it("says a failed search could not load instead of throwing or claiming no results", async () => {
+    vi.spyOn(backend(), "runGraphSearch").mockRejectedValue(new Error("search backend unavailable"));
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "anything";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(root.querySelector(".resource-failure")).not.toBeNull());
+    expect(root.querySelector(".resource-failure")!.textContent).toContain("Couldn’t load search results.");
+    expect(root.textContent).not.toContain("search backend unavailable");
+    expect(root.textContent).not.toContain("No matched results");
+    expect(root.querySelector(".switcher-input")).not.toBeNull();
+    dispose();
+  });
+
   it("opens a selected page in the right sidebar on Shift-only Enter", async () => {
     const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [{

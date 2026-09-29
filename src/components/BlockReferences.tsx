@@ -8,6 +8,8 @@ import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { blockExternalId } from "../document";
+import { readOr } from "../resourceRead";
+import { ResourceFailure } from "./ResourceFailure";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -18,10 +20,14 @@ import { blockExternalId } from "../document";
  * referrer answer on graph revision changes; disclosure is local to this panel
  * and can be changed for one group or all groups without writing the graph. */
 export function BlockReferences(props: { id: string }): JSX.Element {
-  const [groups] = createResource(
+  const [groupsResource, { refetch }] = createResource(
     () => ({ id: blockExternalId(props.id) ?? props.id, epoch: graphEpoch(), revision: dataRev() }),
     ({ id }) => backend().getBlockReferrers(id)
   );
+  // Unlike the page-level panels this one has no fetcher wrapper, so it owns
+  // both halves: readOr keeps a failed read out of the page's render, and the
+  // row below keeps the panel from silently claiming there are no references.
+  const groups = () => readOr(groupsResource, undefined, "block references");
   const count = () => (groups() ?? []).reduce((acc, g) => acc + g.blocks.length, 0);
   const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
   const groupKey = (group: { page: string; kind: string; path?: string }) =>
@@ -39,6 +45,8 @@ export function BlockReferences(props: { id: string }): JSX.Element {
     setCollapsedGroups(value ? new Set((groups() ?? []).map(groupKey)) : new Set<string>());
 
   return (
+    <>
+      <ResourceFailure of={groupsResource} what="references to this block" onRetry={() => void refetch()} />
     <Show when={groups() && groups()!.length > 0}>
       <div class="block-references-inner">
         <div class="block-references-header">
@@ -91,5 +99,6 @@ export function BlockReferences(props: { id: string }): JSX.Element {
         </For>
       </div>
     </Show>
+    </>
   );
 }

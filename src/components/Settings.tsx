@@ -83,6 +83,7 @@ import { registerTransientLayer } from "../transientLayers";
 import { JOURNAL_TITLE_FORMATS } from "../journalTitleFormats";
 import { writePreference, loadPreference } from "../preferenceWrites";
 import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
+import { readOr } from "../resourceRead";
 
 type Tab = SettingsTabId;
 const TABS: { id: Tab; label: string }[] = [
@@ -405,7 +406,10 @@ function PluginsTab(): JSX.Element {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [view, setView] = createSignal<"browse" | "installed">("browse");
   const [selectedPluginKey, setSelectedPluginKey] = createSignal<string | null>(null);
-  const [currentPlatform] = createResource(platformKind);
+  const [currentPlatformResource] = createResource(platformKind);
+  // `platformKind` is uncaught here; an unknown platform reads as "not yet known",
+  // which is what the buttons below already render.
+  const currentPlatform = () => readOr(currentPlatformResource, undefined, "plugin platform");
   const selectedPlugin = () => {
     const key = selectedPluginKey();
     return key ? installedPlugins().find((plugin) => `${plugin.manifest.id}@${plugin.manifest.version}` === key) : undefined;
@@ -1057,7 +1061,10 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 // to the chosen template's block. Uses existing concepts only: templates + the
 // config pointer. No catalogue, no built-in default.
 function JournalTemplateField(): JSX.Element {
-  const [templates] = createResource(() => backend().listTemplates());
+  const [templatesResource] = createResource(() => backend().listTemplates());
+  // An unreadable template list offers no templates; the field still shows and
+  // still accepts the configured pointer.
+  const templates = () => readOr(templatesResource, undefined, "journal templates");
   const current = () => graphMeta()?.default_journal_template ?? "";
   const list = () => templates() ?? [];
   const selected = () => list().find((t) => t.name === current());

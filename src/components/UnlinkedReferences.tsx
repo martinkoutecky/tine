@@ -13,6 +13,7 @@ import type { RefGroup } from "../types";
 import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../referenceGroups";
 import { collapsedGroupsFor, sectionOverride, setCollapsedGroupsFor, setSectionOverride } from "../referenceSectionState";
+import { readOr } from "../resourceRead";
 
 type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
   total?: number;
@@ -54,7 +55,7 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
     setOpenSignal(sectionOverride("unlinked", page) ?? false);
     setCollapsedGroupsSignal(collapsedGroupsFor("unlinked", page));
   });
-  const [groups] = createResource(
+  const [groupsResource] = createResource(
     () => props.name,
     async (n) => {
       const owner = latestOwner(readScope, "unlinked", graphOwner(() => alive && props.name === n));
@@ -68,6 +69,9 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
       }
     }
   );
+  // `createReferenceFetcher` already routes a failure to `loadError` (rendered
+  // below), so this covers the read itself rather than replacing that channel.
+  const groups = () => readOr(groupsResource, undefined, "unlinked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
   const count = () => mergedGroups().reduce((a, g) => a + g.blocks.length, 0);
   const groupKey = (group: RefGroup) => pageIdentityKey(group.page);
@@ -102,7 +106,7 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
         <Show when={groups()}>
           <span class="references-count">{count()}</span>
         </Show>
-        <Show when={groups.loading}><span class="references-loading"> Loading…</span></Show>
+        <Show when={groupsResource.loading}><span class="references-loading"> Loading…</span></Show>
         <button type="button" class="reference-export-toggle"
           aria-label="Copy / export unlinked references" title="Copy / export selected unlinked references"
           disabled={!count()}

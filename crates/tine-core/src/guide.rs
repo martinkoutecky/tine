@@ -683,6 +683,9 @@ mod og_20d_guide_tests {
             "**Copy details**",
             "**Retry**",
             "Changed on disk",
+            "A panel says it could not load something",
+            "Couldn’t load references to this block",
+            "Couldn’t load search results",
         ] {
             assert!(
                 recovery.contains(detail),

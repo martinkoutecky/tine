@@ -81,6 +81,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **A panel whose data fails to load no longer blanks itself** (master c5279d186,
+  og-D). When a background fetch fails, backlinks, the Quick Switcher, the
+  calendar, Settings, the sidebar and the other panels that read one now keep
+  what they had or show "Couldn’t load …" instead of throwing; the block
+  references panel and Search add a Retry. Details go to the debug log only.
 - `tine open GRAPH` while Tine is already running now opens that graph in a new
   window; the second launch used to be read as a page called "open" and opened the
   wrong folder (master e7af4db9c, og-D).

@@ -143,3 +143,32 @@ it("collapses every block-reference location and reopens one source", async () =
     expect(root.querySelectorAll(".reference-blocks").length).toBe(2);
   } finally { dispose(); }
 });
+
+// master c5279d186 (GH #490/#332): a rejected referrers read used to throw out of
+// the panel's render; now the panel says it could not load and Retry recovers.
+it("shows a failure row instead of throwing, and Retry loads the references", async () => {
+  const referrers = vi.spyOn(backend(), "getBlockReferrers")
+    .mockRejectedValueOnce(new Error("referrers unavailable"))
+    .mockResolvedValue([
+      { page: "A", kind: "page", blocks: [{ id: "a", raw: "x", collapsed: false, children: [] }] },
+    ]);
+  const { BlockReferences } = await import("./BlockReferences");
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => (
+    <>
+      <BlockReferences id="target" />
+      <div class="sibling">still rendered</div>
+    </>
+  ), root);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(".resource-failure")).not.toBeNull());
+    expect(root.querySelector(".resource-failure")!.textContent).toContain("Couldn’t load references to this block.");
+    expect(root.querySelector(".resource-failure")!.textContent).not.toContain("referrers unavailable");
+    expect(root.querySelector(".sibling")?.textContent).toBe("still rendered");
+    root.querySelector<HTMLButtonElement>(".resource-failure-retry")!.click();
+    await vi.waitFor(() => expect(root.querySelectorAll(".reference-group").length).toBe(1));
+    expect(root.querySelector(".resource-failure")).toBeNull();
+    expect(referrers).toHaveBeenCalledTimes(2);
+  } finally { dispose(); }
+});

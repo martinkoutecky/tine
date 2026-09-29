@@ -3,6 +3,7 @@ import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
 import type { JournalFile } from "../types";
+import { readOr } from "../resourceRead";
 
 // One file in a duplicate-day conflict. Click the name to reveal its full
 // contents; the action buttons let you reach and reconcile it (#21): Open
@@ -26,7 +27,7 @@ export function ConflictFileRow(props: {
   const [open, setOpen] = createSignal(false);
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
-  const [content] = createResource(
+  const [contentResource] = createResource(
     () => (open() ? props.file.name : null),
     // Owned by the graph that listed the file: a switch empties the list, and
     // a read landing after it shows nothing from the other graph.
@@ -40,6 +41,9 @@ export function ConflictFileRow(props: {
       }
     }
   );
+  // The fetcher already turns a read failure into readable text; this covers
+  // the read itself, and says the same true thing rather than "(empty file)".
+  const content = () => readOr(contentResource, "(couldn’t read this file)", "journal conflict file");
   const submitRename = () => {
     const n = newName().trim();
     if (n) props.onRename(n);
@@ -112,7 +116,7 @@ export function ConflictFileRow(props: {
         </div>
       </Show>
       <Show when={open()}>
-        <pre ref={contentRoot} class="journal-conflict-content">{content.loading ? "…" : content() || "(empty file)"}</pre>
+        <pre ref={contentRoot} class="journal-conflict-content">{contentResource.loading ? "…" : content() || "(empty file)"}</pre>
       </Show>
     </>
   );
