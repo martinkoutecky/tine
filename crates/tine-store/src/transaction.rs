@@ -651,16 +651,7 @@ impl<'a> Transaction<'a> {
         };
         match fs::symlink_metadata(&alt) {
             Ok(_) => Ok(Some(FileId::from(self.store.graph.rel_path(&alt)))),
-            // A twin name the filesystem cannot hold (a 255-byte `.md` name is
-            // a 256-byte `.org` one) cannot exist: no twin (C3Y Y3).
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::InvalidFilename
-                ) =>
-            {
-                Ok(None)
-            }
+            Err(error) if crate::atomic_file::names_nothing(&error) => Ok(None),
             Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
                 Err(content_refusal(error))
             }
@@ -851,7 +842,6 @@ impl<'a> Transaction<'a> {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("file");
-        // The trashed name fits whenever `name` does (C3Y Y2).
         FileId::from(format!(
             "logseq/.tine-trash/{kind}/{}",
             crate::atomic_file::prefixed_name(&format!("{}__", trash_stamp()), name)

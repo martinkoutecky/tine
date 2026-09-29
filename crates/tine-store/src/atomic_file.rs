@@ -50,6 +50,16 @@ pub(crate) fn marked_name(stem: &str, mark: &str, ext: &str) -> String {
     fit_name("", stem, &format!("{mark}{ext}"), NAME_MAX_BYTES)
 }
 
+/// A probe of a derived name (the `.md`/`.org` twin) that the filesystem
+/// reports absent or unable to exist — a 255-byte `.md` page's `.org` twin is
+/// 256 bytes — found nothing (C3Y Y3: the twin probe used to fail the create).
+pub(crate) fn names_nothing(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::InvalidFilename
+    )
+}
+
 /// Split at a short (at most 10-byte) extension a shortened name keeps.
 fn split_short_ext(name: &str) -> (&str, &str) {
     match name.rfind('.') {
