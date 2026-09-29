@@ -6,9 +6,11 @@
 
 use super::*;
 
-/// Restore a snapshot into the live graph, overwriting `journals/`, `pages/`,
-/// asset `.edn` sidecars, and `config.edn`. Takes a fresh safety snapshot of the
-/// *current* state first (so a mistaken restore is itself reversible).
+/// Restore a snapshot into the live graph. Schema 3 puts graph text back at
+/// its graph-relative path across the whole graph; schema 2 keeps the old
+/// configured-root behaviour. Both restore asset `.edn` sidecars and
+/// `config.edn`. Takes a fresh safety snapshot of the *current* state first
+/// (so a mistaken restore is itself reversible).
 /// Destructive — the frontend confirms.
 #[tauri::command]
 pub(crate) async fn restore_backup(
@@ -70,22 +72,38 @@ fn restore_from_backup_source(
         }
         Ok(())
     };
-    safe_dir(&manifest.journals_dir)?;
-    safe_dir(&manifest.pages_dir)?;
-    // Restore targets the open graph's current layout; a backup taken under a
-    // different :pages-directory / :journals-directory is not restored (v0.6.5
-    // wrote into the backup's old directory names).
-    if manifest.journals_dir != source.journals_dir || manifest.pages_dir != source.pages_dir {
-        return Err("backup was made with a different pages or journals directory setting".into());
-    }
-    if ["journals", "pages", &source.assets_dir_name]
-        .into_iter()
-        .any(|area| !src.join(area).is_dir())
-    {
+    // Schema 3 text sits at its graph-relative path, so the recorded pages and
+    // journals directories do not steer it (master 336833b13); `hidden` is
+    // the graph-text scope it covered. `[""]` hides all: master's fail-closed
+    // `:hidden` snapshot holds no text, so it must retire none.
+    let scope = match (&manifest.graph_text_policy, manifest.schema) {
+        (Some(policy), SNAPSHOT_SCHEMA) if policy.hidden_parse_failed_closed => {
+            Some(vec![String::new()])
+        }
+        (Some(policy), SNAPSHOT_SCHEMA) => Some(policy.hidden.clone()),
+        _ => None,
+    };
+    let areas = if scope.is_some() {
+        vec!["graph", source.assets_dir_name.as_str()]
+    } else {
+        safe_dir(&manifest.journals_dir)?;
+        safe_dir(&manifest.pages_dir)?;
+        // A schema-2 restore targets the open graph's current layout; a backup
+        // taken under a different :pages-directory / :journals-directory is not
+        // restored (v0.6.5 wrote into the backup's old directory names).
+        if manifest.journals_dir != source.journals_dir || manifest.pages_dir != source.pages_dir {
+            return Err(
+                "backup was made with a different pages or journals directory setting".into(),
+            );
+        }
+        vec!["journals", "pages", source.assets_dir_name.as_str()]
+    };
+    // A missing area would read as "no files" and retire the live ones.
+    if areas.iter().any(|area| !src.join(area).is_dir()) {
         return Err("backup contents do not match the verified manifest".into());
     }
     let snapshot = snapshot_current(&source);
-    let live_n = [Area::Journals, Area::Pages, Area::Assets]
+    let live_n = [Area::Graph, Area::Assets]
         .into_iter()
         .map(|area| {
             store.scan_area(area, None).ok().map(|listing| {
@@ -113,9 +131,9 @@ fn restore_from_backup_source(
         .into_iter()
         .sum::<usize>();
     require_safety_snapshot(snapshot, live_n)?;
-    let files = open_verified_restore_files(&src, &manifest, &source)?;
+    let files = open_verified_restore_files(&src, &manifest, &source, scope.is_some())?;
     store
-        .restore(tine_store::EditKind::ReplacePage, files)
+        .restore(tine_store::EditKind::ReplacePage, files, scope.as_deref())
         .map_err(|error| format_restore_failure(&error))?;
     Ok(())
 }
@@ -164,15 +182,20 @@ fn open_verified_restore_files(
     snapshot: &std::path::Path,
     manifest: &SnapshotManifest,
     source: &BackupSource,
+    graph_wide: bool,
 ) -> Result<Vec<RestoreFile>, String> {
     let mut files = Vec::new();
-    // Preserve the old area order: journals, pages, asset sidecars, config.
-    for (prefix, area) in [
-        ("journals", Area::Journals),
-        ("pages", Area::Pages),
+    // Preserve the old area order: graph text (or journals, pages), asset
+    // sidecars, config.
+    let text: &[(&str, Area)] = if graph_wide {
+        &[("graph", Area::Graph)]
+    } else {
+        &[("journals", Area::Journals), ("pages", Area::Pages)]
+    };
+    for &(prefix, area) in text.iter().chain(&[
         (source.assets_dir_name.as_str(), Area::Assets),
         ("logseq", Area::Meta),
-    ] {
+    ]) {
         for entry in &manifest.files {
             let Some(rel) = entry
                 .path
@@ -182,7 +205,7 @@ fn open_verified_restore_files(
                 continue;
             };
             let accepted = match area {
-                Area::Journals | Area::Pages => {
+                Area::Journals | Area::Pages | Area::Graph => {
                     is_graph_text(&tine_store::FileId::from(format!("{prefix}/{rel}")))
                 }
                 Area::Assets => {
@@ -328,10 +351,12 @@ mod tests {
         write_manifest(
             &snapshot,
             &SnapshotManifest {
-                schema: SNAPSHOT_SCHEMA,
+                schema: LEGACY_SNAPSHOT_SCHEMA,
                 root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
                 journals_dir: "journals".into(),
                 pages_dir: "pages".into(),
+                graph_text_policy: None,
+                writer: None,
                 files: vec![SnapshotFile {
                     path: "pages/note.md".into(),
                     sha256: "does not match the payload".into(),
@@ -345,6 +370,7 @@ mod tests {
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
             assets_dir_name: "assets".into(),
+            hidden: Vec::new(),
         };
         for dir in ["journals", "assets", "logseq"] {
             std::fs::create_dir_all(graph.join(dir)).unwrap();
@@ -379,10 +405,12 @@ mod tests {
         std::fs::write(graph.join("pages/Old.md"), b"old").unwrap();
         std::fs::write(snapshot.join("pages/New.md"), b"new").unwrap();
         let manifest = SnapshotManifest {
-            schema: SNAPSHOT_SCHEMA,
+            schema: LEGACY_SNAPSHOT_SCHEMA,
             root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
+            graph_text_policy: None,
+            writer: None,
             files: snapshot_inventory(&snapshot).unwrap(),
             complete: true,
         };
@@ -418,10 +446,12 @@ mod tests {
         write_manifest(
             &snapshot,
             &SnapshotManifest {
-                schema: SNAPSHOT_SCHEMA,
+                schema: LEGACY_SNAPSHOT_SCHEMA,
                 root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
                 journals_dir: "journals".into(),
                 pages_dir: "pages".into(),
+                graph_text_policy: None,
+                writer: None,
                 files: Vec::new(),
                 complete: true,
             },
@@ -446,5 +476,243 @@ mod tests {
         );
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn write(path: &std::path::Path, bytes: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    /// Graph text outside `pages/` and `journals/` for the og-B tests: a root
+    /// page, a nested non-root page, and every excluded shape next to them.
+    fn whole_graph(graph: &std::path::Path) {
+        write(
+            &graph.join("logseq/config.edn"),
+            "{:hidden [\"private\"]}\n",
+        );
+        write(&graph.join("pages/A.md"), "- a\n");
+        write(&graph.join("journals/2026_07_01.md"), "- j\n");
+        write(&graph.join("Root.md"), "- root\n");
+        write(&graph.join("archive/deep/X.org"), "* x\n");
+        write(&graph.join("private/S.md"), "- hidden\n");
+        write(&graph.join("assets/doc.edn"), "{:a 1}\n");
+        write(&graph.join("assets/note.md"), "- asset, not graph text\n");
+        write(&graph.join("logseq/bak/B.md"), "- bak\n");
+        write(&graph.join(".dot/D.md"), "- dot\n");
+        write(
+            &graph.join("Root.sync-conflict-20260101-000000-ABCDEFG.md"),
+            "- copy\n",
+        );
+    }
+
+    /// og-B (master ffb4cb3d7): a snapshot holds graph text across the whole
+    /// graph at its graph-relative path, and a restore brings it back there,
+    /// retiring later text in the recorded scope into recovery.
+    #[test]
+    fn whole_graph_snapshot_restores_text_outside_pages_and_journals() {
+        let root = scratch("whole-graph-snapshot");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        whole_graph(&graph);
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+        let stamp = std::fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .file_name();
+        let stamp = stamp.to_str().unwrap().to_owned();
+        let manifest = read_manifest(&base.join(&stamp)).unwrap();
+        let mut paths: Vec<&str> = manifest.files.iter().map(|f| f.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            [
+                "assets/doc.edn",
+                "graph/Root.md",
+                "graph/archive/deep/X.org",
+                "graph/journals/2026_07_01.md",
+                "graph/pages/A.md",
+                "logseq/config.edn",
+            ]
+        );
+        assert_eq!(manifest.schema, SNAPSHOT_SCHEMA);
+        assert_eq!(manifest.writer.as_deref(), Some(SNAPSHOT_WRITER));
+        let policy = manifest.graph_text_policy.as_ref().unwrap();
+        assert_eq!(
+            (policy.version, policy.hidden.clone()),
+            (2, vec!["private".to_owned()])
+        );
+
+        write(&graph.join("Root.md"), "- root edited\n");
+        std::fs::remove_file(graph.join("archive/deep/X.org")).unwrap();
+        write(&graph.join("archive/Later.md"), "- later\n");
+        write(&graph.join("private/Later.md"), "- hidden later\n");
+        restore_from_backup_source(&stamp, &base, &store, source, |source| {
+            write_snapshot(&base, &store, source.clone(), "pre-restore", &|| false)
+        })
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(graph.join("Root.md")).unwrap(),
+            "- root\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(graph.join("archive/deep/X.org")).unwrap(),
+            "* x\n"
+        );
+        assert!(!graph.join("archive/Later.md").exists());
+        let recovered = std::fs::read_dir(graph.join("logseq/.tine-trash"))
+            .unwrap()
+            .flatten()
+            .any(|dir| dir.path().join("graph/archive/Later.md").is_file());
+        assert!(
+            recovered,
+            "I-2: retired later text must sit in restore recovery"
+        );
+        for (rel, bytes) in [
+            ("private/Later.md", "- hidden later\n"),
+            ("private/S.md", "- hidden\n"),
+            ("assets/note.md", "- asset, not graph text\n"),
+            ("logseq/bak/B.md", "- bak\n"),
+            (".dot/D.md", "- dot\n"),
+            ("Root.sync-conflict-20260101-000000-ABCDEFG.md", "- copy\n"),
+        ] {
+            assert_eq!(
+                std::fs::read_to_string(graph.join(rel)).unwrap(),
+                bytes,
+                "{rel}"
+            );
+        }
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Old-manifest compatibility: a schema-2 snapshot exactly as og wrote it
+    /// before og-B (no scope policy, no writer mark, `journals/` + `pages/`)
+    /// still lists and restores into the configured roots, and its restore
+    /// leaves text outside those roots alone.
+    #[test]
+    fn schema_2_snapshot_restores_after_the_schema_3_bump() {
+        let root = scratch("schema-2-compat");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        let stamp = "2026-09-01_00-00-00";
+        let snapshot = base.join(stamp);
+        for dir in ["pages", "journals", "assets", "logseq"] {
+            std::fs::create_dir_all(graph.join(dir)).unwrap();
+            std::fs::create_dir_all(snapshot.join(dir)).unwrap();
+        }
+        write(&graph.join("pages/Old.md"), "- old\n");
+        write(&graph.join("Root.md"), "- root live\n");
+        write(&snapshot.join("pages/New.md"), "- new\n");
+        write(&snapshot.join("journals/2026_07_01.md"), "- j\n");
+        write(&snapshot.join("assets/doc.edn"), "{:a 1}\n");
+        let files = snapshot_inventory(&snapshot).unwrap();
+        let canonical = std::fs::canonicalize(&graph).unwrap().display().to_string();
+        let manifest = serde_json::json!({
+            "schema": 2,
+            "root": canonical,
+            "journals_dir": "journals",
+            "pages_dir": "pages",
+            "files": files.iter().map(|f| serde_json::json!({"path": f.path, "sha256": f.sha256})).collect::<Vec<_>>(),
+            "complete": true,
+        });
+        std::fs::write(
+            snapshot.join(SNAPSHOT_MANIFEST),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(list_backups_from_base(&base, &graph).len(), 1);
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        restore_from_backup_source(stamp, &base, &store, source, |_| BackupOutcome::success(1))
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(graph.join("pages/New.md")).unwrap(),
+            "- new\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(graph.join("journals/2026_07_01.md")).unwrap(),
+            "- j\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(graph.join("assets/doc.edn")).unwrap(),
+            "{:a 1}\n"
+        );
+        assert!(!graph.join("pages/Old.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(graph.join("Root.md")).unwrap(),
+            "- root live\n",
+            "a schema-2 snapshot never covered root text, so its restore must not retire it"
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A schema-3 snapshot as master writes it (scope policy, no og writer
+    /// mark) lists and restores here. Its recorded pages directory does not
+    /// steer the restore (master 336833b13), and a fail-closed `:hidden`
+    /// policy hides everything, so that restore retires no live text.
+    #[test]
+    fn master_schema_3_snapshot_restores_at_graph_relative_paths() {
+        for failed_closed in [false, true] {
+            let root = scratch(&format!("master-schema-3-{failed_closed}"));
+            let graph = root.join("graph");
+            let base = root.join("backups");
+            let stamp = "2026-09-01_00-00-00";
+            let snapshot = base.join(stamp);
+            for dir in ["pages", "journals", "assets", "logseq"] {
+                std::fs::create_dir_all(graph.join(dir)).unwrap();
+            }
+            std::fs::create_dir_all(snapshot.join("assets")).unwrap();
+            write(&graph.join("Live.md"), "- live\n");
+            if !failed_closed {
+                write(&snapshot.join("graph/Root.md"), "- root\n");
+            } else {
+                std::fs::create_dir_all(snapshot.join("graph")).unwrap();
+            }
+            let files = snapshot_inventory(&snapshot).unwrap();
+            let canonical = std::fs::canonicalize(&graph).unwrap().display().to_string();
+            let manifest = serde_json::json!({
+                "schema": 3,
+                "root": canonical,
+                "journals_dir": "old-journals",
+                "pages_dir": "old-pages",
+                "graph_text_policy": {"version": 2, "hidden": [], "hidden_parse_failed_closed": failed_closed},
+                "files": files.iter().map(|f| serde_json::json!({"path": f.path, "sha256": f.sha256})).collect::<Vec<_>>(),
+                "complete": true,
+            });
+            std::fs::write(
+                snapshot.join(SNAPSHOT_MANIFEST),
+                serde_json::to_vec_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(list_backups_from_base(&base, &graph).len(), 1);
+            assert!(
+                is_foreign_snapshot(&snapshot),
+                "master's snapshots are not ours to prune"
+            );
+            let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+            let source = BackupSource::from_store(&store, &graph).unwrap();
+            restore_from_backup_source(stamp, &base, &store, source, |_| BackupOutcome::success(1))
+                .unwrap();
+            if failed_closed {
+                assert_eq!(
+                    std::fs::read_to_string(graph.join("Live.md")).unwrap(),
+                    "- live\n"
+                );
+            } else {
+                assert_eq!(
+                    std::fs::read_to_string(graph.join("Root.md")).unwrap(),
+                    "- root\n"
+                );
+                assert!(!graph.join("Live.md").exists());
+            }
+            drop(store);
+            let _ = std::fs::remove_dir_all(root);
+        }
     }
 }

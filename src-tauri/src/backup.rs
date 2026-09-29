@@ -12,7 +12,7 @@ use tine_store::{is_asset_sidecar, is_graph_text, Area, RestoreFile, Store};
 mod restore;
 pub(crate) use restore::restore_backup;
 
-// Snapshot the graph's markdown into the OS app-data dir on open, keeping the
+// Snapshot the graph's Markdown/Org into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
 // net against a bad write or accidental edit. Source validation runs at launch;
 // the file copy runs in a detached best-effort worker.
@@ -140,6 +140,7 @@ struct BackupSource {
     journals_dir: String,
     pages_dir: String,
     assets_dir_name: String,
+    hidden: Vec<String>,
 }
 
 impl BackupSource {
@@ -156,11 +157,23 @@ impl BackupSource {
             journals_dir: config.journals_dir.clone(),
             pages_dir: config.pages_dir.clone(),
             assets_dir_name,
+            hidden: config.hidden.clone(),
         })
     }
 }
 
-const SNAPSHOT_SCHEMA: u32 = 2;
+/// Schema 3 (og-B, ADR 0062) keeps graph text under `graph/<graph-relative
+/// path>` and records the graph-text scope it covered; schema 2 kept only the
+/// configured `journals/` and `pages/` roots and still lists and restores.
+/// Both are master's wire formats, so either build reads the other's.
+const SNAPSHOT_SCHEMA: u32 = 3;
+const LEGACY_SNAPSHOT_SCHEMA: u32 = 2;
+/// Master's `GRAPH_TEXT_SCOPE_VERSION`: the discovery exclusions this build's
+/// `graph_text_eligible` applies (`published-queries/` included).
+const GRAPH_TEXT_SCOPE_VERSION: u32 = 2;
+/// Marks this build's schema-3 snapshots; master ignores the field. Prune
+/// counts only snapshots this build wrote (docs/app-identity.md).
+const SNAPSHOT_WRITER: &str = "og";
 const SNAPSHOT_MANIFEST: &str = "snapshot.json";
 
 #[cfg(test)]
@@ -180,8 +193,22 @@ struct SnapshotManifest {
     root: String,
     journals_dir: String,
     pages_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    graph_text_policy: Option<SnapshotGraphTextPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    writer: Option<String>,
     files: Vec<SnapshotFile>,
     complete: bool,
+}
+
+/// The graph-text scope a schema-3 snapshot covered: restore retires only
+/// unlisted live text inside it. og's `:hidden` fails open on an invalid
+/// value, so this build always records `hidden_parse_failed_closed: false`.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SnapshotGraphTextPolicy {
+    version: u32,
+    hidden: Vec<String>,
+    hidden_parse_failed_closed: bool,
 }
 
 pub(crate) fn root_backup_id(root: &std::path::Path) -> String {
@@ -290,7 +317,13 @@ fn publish_snapshot(
 fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
     let bytes = std::fs::read(dir.join(SNAPSHOT_MANIFEST)).ok()?;
     let manifest: SnapshotManifest = serde_json::from_slice(&bytes).ok()?;
-    (manifest.schema == SNAPSHOT_SCHEMA && manifest.complete).then_some(manifest)
+    let supported = manifest.schema == LEGACY_SNAPSHOT_SCHEMA
+        || (manifest.schema == SNAPSHOT_SCHEMA
+            && manifest
+                .graph_text_policy
+                .as_ref()
+                .is_some_and(|policy| policy.version == GRAPH_TEXT_SCOPE_VERSION));
+    (supported && manifest.complete).then_some(manifest)
 }
 
 fn hash_snapshot_file(path: &std::path::Path) -> std::io::Result<String> {
@@ -376,6 +409,7 @@ fn copy_store_area(
         Area::Assets => "assets",
         Area::Meta => "config",
         Area::Trash => "trash",
+        Area::Graph => "graph",
     };
     if cancelled() {
         return (
@@ -545,6 +579,21 @@ fn do_backup_source_cancellable(
         return BackupOutcome::failed(0, "app-data", ErrorKind::NotFound);
     };
     let base = data_dir.join("backups").join(root_backup_id(&source.root));
+    let outcome = write_snapshot(&base, store, source, suffix, cancelled);
+    if outcome.failure.is_none() && outcome.copied > 0 {
+        prune_backups(&base, backup_keep(app));
+    }
+    outcome
+}
+
+/// Copy one snapshot into `base` and publish it; the caller prunes.
+fn write_snapshot(
+    base: &std::path::Path,
+    store: &Store,
+    source: BackupSource,
+    suffix: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> BackupOutcome {
     let stamp = tine_core::date::utc_backup_stamp();
     let name = if suffix.is_empty() {
         stamp
@@ -580,22 +629,14 @@ fn do_backup_source_cancellable(
         path: dest.clone(),
         committed: false,
     };
-    let Some(live_text_n) = count_store_text(store, Area::Journals)
-        .and_then(|journals| count_store_text(store, Area::Pages).map(|pages| journals + pages))
-    else {
+    let Some(live_text_n) = count_store_text(store, Area::Graph) else {
         return BackupOutcome::failed(0, "inventory", ErrorKind::Other);
     };
-    let (cj, fj, ej) = copy_store_area(
+    // Graph text anywhere in the graph-text scope, at its graph-relative path.
+    let (ct, ft, et) = copy_store_area(
         store,
-        Area::Journals,
-        &dest.join("journals"),
-        is_graph_text,
-        cancelled,
-    );
-    let (cp, fp, ep) = copy_store_area(
-        store,
-        Area::Pages,
-        &dest.join("pages"),
+        Area::Graph,
+        &dest.join("graph"),
         is_graph_text,
         cancelled,
     );
@@ -606,9 +647,9 @@ fn do_backup_source_cancellable(
         is_asset_sidecar,
         cancelled,
     );
-    let mut n = cj + cp + ca;
-    let mut failed = fj + fp + fa;
-    let mut first_failure = ej.or(ep).or(ea);
+    let mut n = ct + ca;
+    let mut failed = ft + fa;
+    let mut first_failure = et.or(ea);
     if !cancelled() {
         match store.scan_area(Area::Meta, None) {
             Ok(listing) => {
@@ -676,7 +717,7 @@ fn do_backup_source_cancellable(
             })),
         };
     }
-    if cj + cp != live_text_n {
+    if ct != live_text_n {
         return BackupOutcome::failed(n, "inventory", ErrorKind::InvalidData);
     }
     if n == 0 {
@@ -694,6 +735,12 @@ fn do_backup_source_cancellable(
         root: source.root.display().to_string(),
         journals_dir: source.journals_dir,
         pages_dir: source.pages_dir,
+        graph_text_policy: Some(SnapshotGraphTextPolicy {
+            version: GRAPH_TEXT_SCOPE_VERSION,
+            hidden: source.hidden,
+            hidden_parse_failed_closed: false,
+        }),
+        writer: Some(SNAPSHOT_WRITER.into()),
         files,
         complete: true,
     };
@@ -701,7 +748,6 @@ fn do_backup_source_cancellable(
         return BackupOutcome::failed(n, "publish", error.kind());
     }
     partial.committed = true;
-    prune_backups(&base, backup_keep(app));
     BackupOutcome::success(n)
 }
 
@@ -799,15 +845,22 @@ fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec
     out
 }
 
-/// Page/journal text files Tine snapshots + restores: Markdown and Org. Asset
-/// `.edn` sidecars are handled separately under `assets`; binary asset bytes stay
-/// excluded from snapshots by design.
+/// A snapshot the keep-count must leave alone: another Tine wrote it.
 fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
-    std::fs::read(dir.join(SNAPSHOT_MANIFEST))
+    let Some(manifest) = std::fs::read(dir.join(SNAPSHOT_MANIFEST))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|manifest| manifest.get("schema").and_then(serde_json::Value::as_u64))
-        .is_some_and(|schema| schema != u64::from(SNAPSHOT_SCHEMA))
+    else {
+        return false;
+    };
+    match manifest.get("schema").and_then(serde_json::Value::as_u64) {
+        None => false,
+        Some(schema) if schema == u64::from(LEGACY_SNAPSHOT_SCHEMA) => false,
+        Some(schema) if schema == u64::from(SNAPSHOT_SCHEMA) => {
+            manifest.get("writer").and_then(serde_json::Value::as_str) != Some(SNAPSHOT_WRITER)
+        }
+        Some(_) => true,
+    }
 }
 
 fn prune_backups(base: &std::path::Path, keep: usize) {
@@ -834,9 +887,9 @@ fn prune_backups(base: &std::path::Path, keep: usize) {
                     .unwrap_or(false)
         })
         .collect();
-    // A snapshot whose manifest names another schema belongs to another Tine
-    // sharing this app-data dir (the released one reads and writes schema 3;
-    // docs/app-identity.md). It is not ours to count or delete.
+    // A snapshot another Tine sharing this app-data dir wrote (master's schema
+    // 3, which carries no og writer mark; docs/app-identity.md) is listed and
+    // restorable here but is not ours to count or delete.
     dirs.retain(|dir| !is_foreign_snapshot(dir));
     dirs.sort(); // timestamp-named → chronological
     if dirs.len() > keep {
@@ -858,25 +911,28 @@ mod tests {
     }
 
     /// A released Tine sharing this app-data dir (docs/app-identity.md) writes
-    /// schema-3 snapshots this build can neither list nor restore. The launch
-    /// keep-count must never delete them: they are that Tine's backups.
+    /// schema-3 snapshots without this build's writer mark. They list and
+    /// restore here, but the launch keep-count must never delete them: they
+    /// are that Tine's backups. This build's own schema-2 and marked schema-3
+    /// snapshots are the ones the keep-count counts.
     #[test]
     fn prune_never_deletes_another_tines_snapshots() {
         let base = scratch("backup-prune-foreign");
-        let snapshot = |name: &str, schema: u32| {
+        let snapshot = |name: &str, schema: u32, writer: &str| {
             let dir = base.join(name);
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
                 dir.join(SNAPSHOT_MANIFEST),
-                format!(r#"{{"schema":{schema},"root":"/g","journals_dir":"journals","pages_dir":"pages","files":[],"complete":true}}"#),
+                format!(r#"{{"schema":{schema},"root":"/g","journals_dir":"journals","pages_dir":"pages",{writer}"files":[],"complete":true}}"#),
             )
             .unwrap();
         };
-        snapshot("2026-09-01_00-00-00", 3);
-        snapshot("2026-09-02_00-00-00", SNAPSHOT_SCHEMA);
-        snapshot("2026-09-03_00-00-00", 3);
-        snapshot("2026-09-04_00-00-00", SNAPSHOT_SCHEMA);
-        snapshot("2026-09-05_00-00-00", SNAPSHOT_SCHEMA);
+        let ours = format!(r#""writer":"{SNAPSHOT_WRITER}","#);
+        snapshot("2026-09-01_00-00-00", 3, "");
+        snapshot("2026-09-02_00-00-00", LEGACY_SNAPSHOT_SCHEMA, "");
+        snapshot("2026-09-03_00-00-00", 3, r#""writer":"master","#);
+        snapshot("2026-09-04_00-00-00", SNAPSHOT_SCHEMA, &ours);
+        snapshot("2026-09-05_00-00-00", SNAPSHOT_SCHEMA, &ours);
 
         prune_backups(&base, 2);
 
@@ -928,10 +984,12 @@ mod tests {
         write_payload(&partial.join("pages/nested/a.md"), b"- durable\n").unwrap();
         let final_dest = root.join("complete-1");
         let manifest = SnapshotManifest {
-            schema: SNAPSHOT_SCHEMA,
+            schema: LEGACY_SNAPSHOT_SCHEMA,
             root: "test".into(),
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
+            graph_text_policy: None,
+            writer: None,
             files: vec![],
             complete: true,
         };
@@ -1083,10 +1141,12 @@ mod tests {
     fn only_complete_v2_manifests_are_readable() {
         let root = scratch("backup-manifest");
         let manifest = SnapshotManifest {
-            schema: SNAPSHOT_SCHEMA,
+            schema: LEGACY_SNAPSHOT_SCHEMA,
             root: root.display().to_string(),
             journals_dir: "diary".into(),
             pages_dir: "archive/pages".into(),
+            graph_text_policy: None,
+            writer: None,
             files: Vec::new(),
             complete: true,
         };
@@ -1118,10 +1178,12 @@ mod tests {
         write_manifest(
             &snapshot,
             &SnapshotManifest {
-                schema: SNAPSHOT_SCHEMA,
+                schema: LEGACY_SNAPSHOT_SCHEMA,
                 root: std::fs::canonicalize(&graph).unwrap().display().to_string(),
                 journals_dir: "journals".into(),
                 pages_dir: "pages".into(),
+                graph_text_policy: None,
+                writer: None,
                 files: vec![SnapshotFile {
                     path: "pages/note.md".into(),
                     sha256: "manifest metadata only".into(),

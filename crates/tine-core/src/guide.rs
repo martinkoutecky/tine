@@ -240,6 +240,9 @@ mod journal_guide_tests {
         let files = include_str!("templates/files-external-edits-backups.md");
         assert!(files.contains("`logseq/config.edn` is live too"));
         assert!(files.contains("refused rather than written if `config.edn` is half-written"));
+        // og-B (ADR 0062): snapshots cover text outside pages/ and journals/.
+        assert!(files.contains("pages kept in other folders or at the graph root"));
+        assert!(files.contains("moved into the restore's recovery folder"));
     }
 }
 
