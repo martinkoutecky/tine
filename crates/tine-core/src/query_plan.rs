@@ -127,6 +127,9 @@ pub enum QueryHit {
     Page {
         /// Page entry; reference-only names can have no physical path.
         page: PageEntry,
+        /// Authored properties of a physical page, when available for display columns.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        row: Option<crate::query::ir::PageRow>,
         /// Text displayed for this hit.
         display_text: String,
         /// Predicates that matched.

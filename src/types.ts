@@ -349,6 +349,8 @@ export type QueryHit =
   | {
       entity: "page";
       page: PageEntry;
+      /** Native-hydrated authored page facts for display columns; absent for references. */
+      row?: import("./editor/queryIr").PageRow;
       display_text: string;
       evidence: MatchEvidence[];
       score: number;

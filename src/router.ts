@@ -108,7 +108,7 @@ export interface PaneRouter {
   openPageTarget(target: PageTarget, opts?: { inPlace?: boolean }): void;
   openJournals(opts?: { inPlace?: boolean }): void;
   openQueryInNewTab(source: string, presentation?: QueryPresentation, foreground?: boolean): QueryRoute;
-  updateActiveQuery(patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope">>): void;
+  updateActiveQuery(patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>): void;
   replaceActiveRoute(route: Route): void;
   resetTabsToJournals(): void;
   openFile(
@@ -507,7 +507,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   function updateActiveQuery(
-    patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope">>
+    patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>
   ) {
     const current = route();
     if (current.kind !== "query") return;
@@ -1101,7 +1101,7 @@ export function openQueryInNewTab(
 }
 
 export function updateActiveQuery(
-  patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope">>
+  patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>
 ) {
   focusedRouterInstance().updateActiveQuery(patch);
 }

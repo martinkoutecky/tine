@@ -154,6 +154,10 @@ describe("persisted split session", () => {
           source: "alpha -draft",
           presentation: "search",
           pageMatchScope: "content",
+          pagePresentation: "table",
+          blockPresentation: "list",
+          pageDisplay: { columns: ["prop:owner"] },
+          blockDisplay: {},
         }],
         pos: 0,
         pinned: true,
@@ -171,6 +175,10 @@ describe("persisted split session", () => {
         source: "alpha -draft",
         presentation: "search",
         pageMatchScope: "content",
+        pagePresentation: "table",
+        blockPresentation: "list",
+        pageDisplay: { columns: ["prop:owner"] },
+        blockDisplay: {},
       }],
     });
     expect(JSON.stringify(parsed)).not.toContain("results");

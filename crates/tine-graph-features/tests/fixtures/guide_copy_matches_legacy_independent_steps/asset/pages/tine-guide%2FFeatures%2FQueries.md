@@ -13,6 +13,7 @@ icon:: 🔎
 	- 5. What you should see: pressing **Escape** (or clicking away) closes the sheet and leaves the sentence, updated. The results show as blocks grouped by page, or as pages when the query finds pages; switch **Search**, **List**, **Table** or **Board** to change how they are shown — the matches stay the same.
 - ## Query text
 	- **Open all results** from Ctrl+K for a friendly search tab with separate **Pages** and **Blocks** sections. An alias result opens its owner page. Choose **Pages match** to search names and aliases, containing block text, or both; saving that search writes `tine.page-match-scope:: content` or `both` beside the ordinary query block.
+	- Use each section's **Display** control independently. A Pages table can show authored page properties as columns while Blocks use a different view. **Save page** stores the choices as `tine.page-*` and `tine.block-*` query block properties.
 	- The foot of every open sheet has a **query text** box: the same query the rows show, written in Tine's text query language (`@block` or `@page`, then conditions joined with `and`, `or`, `not`). Type in it and Tine re-reads it as you go; press **Save query text** to make it the block's query.
 	- When Tine cannot read the text it names the problem, and a **Show me** button selects the part of the text it points at when it knows where that is.
 	- A `{{tine-query …}}` block holds this language directly and runs like any other query block.
