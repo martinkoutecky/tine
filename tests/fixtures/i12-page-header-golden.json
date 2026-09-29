@@ -117,6 +117,119 @@
         "pre_block": null,
         "title": "I12_4"
       }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "logseq.order-list-type:: number"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-5",
+            "raw": "logseq.order-list-type:: number"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_5",
+        "pre_block": null,
+        "title": "I12_5"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "heading:: 2"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-6",
+            "raw": "heading:: 2"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_6",
+        "pre_block": null,
+        "title": "I12_6"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "collapsed:: true"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-7",
+            "raw": "collapsed:: true"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_7",
+        "pre_block": null,
+        "title": "I12_7"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "background-color:: yellow"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-8",
+            "raw": "background-color:: yellow"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_8",
+        "pre_block": null,
+        "title": "I12_8"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "alias:: novel"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-9",
+            "raw": "alias:: novel"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_9",
+        "pre_block": null,
+        "title": "I12_9"
+      }
     }
   ]
 }

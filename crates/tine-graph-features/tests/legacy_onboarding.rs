@@ -151,7 +151,9 @@ fn guide_explains_following_the_link_at_the_caret() {
         .find(|page| page.title == "Features/Tips & shortcuts")
         .expect("tips guide is bundled");
     assert!(tips.markdown.contains("**Ctrl+O** opens that page"));
-    assert!(tips.markdown.contains("**Ctrl+Shift+O** opens it in the right sidebar"));
+    assert!(tips
+        .markdown
+        .contains("**Ctrl+Shift+O** opens it in the right sidebar"));
 }
 
 #[test]
