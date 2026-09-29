@@ -1144,7 +1144,7 @@ fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
             if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
                 continue;
             }
-            for value in value.split([',', '，']) {
+            for value in value.split(tine_core::refs::is_linkable_property_separator) {
                 let name = value.trim();
                 let name = name.strip_prefix('#').unwrap_or(name).trim();
                 let name = name

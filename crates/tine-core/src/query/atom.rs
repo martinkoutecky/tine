@@ -231,7 +231,7 @@ fn og_string_len(value: &str) -> Option<u32> {
 /// blanks. OG returns a set; Tine keeps text order (K19).
 fn sep_by_comma(value: &str) -> Vec<&str> {
     value
-        .split([',', '，'])
+        .split(crate::refs::is_linkable_property_separator)
         .map(str::trim)
         .filter(|segment| !segment.is_empty())
         .collect()

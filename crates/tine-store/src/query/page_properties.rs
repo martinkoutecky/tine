@@ -73,7 +73,7 @@ pub(super) fn page_facets(doc: &Document) -> (Vec<(String, String)>, Vec<String>
         for (k, v) in page_property_lines(pre, page_document_is_org(doc)) {
             if property_key_norm(&k) == "tags" {
                 tags = v
-                    .split(',')
+                    .split(tine_core::refs::is_linkable_property_separator)
                     .map(|t| strip_ref(t.trim()))
                     .filter(|t| !t.is_empty())
                     .collect();
@@ -94,6 +94,19 @@ mod tests {
             page_property_lines("alias:: Ghost\n#+ALIAS: Novel", true),
             vec![("alias".into(), "Novel".into())],
             "I-12: Org page properties come from Org syntax; alias:: Ghost is Markdown syntax"
+        );
+    }
+
+    #[test]
+    fn full_width_comma_separates_page_tags_like_every_other_answerer() {
+        let doc = Document {
+            pre_block: Some("tags:: Alpha，Beta, Gamma".into()),
+            roots: Vec::new(),
+        };
+        assert_eq!(
+            page_facets(&doc).1,
+            vec!["Alpha".to_string(), "Beta".into(), "Gamma".into()],
+            "OG sep-by-comma splits on `,` and `，`; page tags must agree with aliases and refs"
         );
     }
 
