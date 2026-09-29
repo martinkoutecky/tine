@@ -15,8 +15,8 @@ import type { ConflictInventory, ConflictObject, SyncConflict } from "./types";
 
 const EMPTY: ConflictInventory = { sync_conflicts: [], vcs_markers: [], queue: [] };
 
-const [inventory, publishInventory] = createSignal<ConflictInventory>(EMPTY);
-export const conflictInventory = inventory;
+const [conflictInventory, publishInventory] = createSignal<ConflictInventory>(EMPTY);
+export { conflictInventory };
 // Sticky "N new sync conflicts need review" notices (toast id -> the objects
 // they announced) describe live objects, not history (master 042054c1b).
 const arrivalNotices = new Map<number, Set<string>>();
