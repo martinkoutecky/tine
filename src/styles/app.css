@@ -3099,8 +3099,11 @@ html[data-system-insets="native-viewport"] {
   position: relative;
 }
 
+/* Hidden by `visibility`, not `display`, so ContextMenu can MEASURE the submenu
+   before choosing a side (GH #471); absolutely positioned, so it costs the menu
+   no size and leaves the parent's own placement measurement unchanged. */
 .ctx-submenu-menu {
-  display: none;
+  visibility: hidden;
   position: absolute;
   left: 100%;
   top: -4px;
@@ -3112,8 +3115,20 @@ html[data-system-insets="native-viewport"] {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
-.ctx-submenu:hover .ctx-submenu-menu {
-  display: block;
+.ctx-submenu:hover > .ctx-submenu-menu {
+  visibility: visible;
+}
+
+/* Side chosen by `placeSubmenu`, once per menu (GH #471). */
+.ctx-menu[data-submenu-side="left"] .ctx-submenu-menu {
+  left: auto;
+  right: 100%;
+}
+
+.ctx-menu[data-submenu-side="over"] .ctx-submenu-menu {
+  left: 0;
+  right: auto;
+  top: 100%;
 }
 
 .ctx-row {
