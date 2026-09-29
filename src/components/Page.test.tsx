@@ -445,7 +445,7 @@ describe("Journals feed generation lifecycle", () => {
     // Every feed read stays in flight until the hold is taken.
     const lands: ((response: JournalFeedPage) => void)[] = [];
     const api = vi.spyOn(backend(), "journalFeedPage").mockImplementation(() => new Promise((resolve) => { lands.push(resolve); }));
-    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(journalDto(today, "fresh today"));
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue({ ...journalDto(today, "fresh today"), id: `journals/${today}.md` });
     installExternalChangeUiHandler(() => ({ pageOpen: () => false, journalsOpen: true, leaveRemovedPage() {}, restartJournalFeed() {} }));
     const mounted = mount(() => <PageView />);
     try {
