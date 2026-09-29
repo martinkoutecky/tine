@@ -1,12 +1,13 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
-import { PaneContext, focusedRouter, rewritePageTargetAcrossPanes } from "../panes";
-import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
+import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding } from "../binding";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
-import { isConflicted } from "../document";
+import { blockRef, isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
@@ -660,7 +661,15 @@ function ZoomedView(props: { id: string }): JSX.Element {
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
-          onClick={() => router.openPageTarget(pageTarget())}
+          onMouseDown={internalLinkMouseDown}
+          onClick={(e) => {
+            const dest = internalLinkDest(e);
+            if (dest === "sidebar") openPageInSidebar(pageTarget());
+            else if (dest === "background") router.openPageTargetInNewTab(pageTarget());
+            else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...pageTarget() });
+            else router.openPageTarget(pageTarget());
+          }}
+          onAuxClick={(e) => internalLinkAuxClick(e, () => router.openPageTargetInNewTab(pageTarget()))}
         >
           {pageName()}
         </a>
@@ -668,7 +677,26 @@ function ZoomedView(props: { id: string }): JSX.Element {
           {(aid) => (
             <>
               <span class="crumb-sep">›</span>
-              <a class="crumb" onClick={() => router.focusBlock(aid)}>
+              <a
+                class="crumb"
+                onMouseDown={internalLinkMouseDown}
+                onClick={(e) => {
+                  const dest = internalLinkDest(e);
+                  if (dest === "default") {
+                    router.focusBlock(aid);
+                    return;
+                  }
+                  const ref = blockRef(aid);
+                  const route = { kind: "page" as const, name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) };
+                  if (dest === "sidebar") openBlockInSidebar(ref);
+                  else if (dest === "pane") openRouteInOtherPane(route);
+                  else router.openInNewTab(route);
+                }}
+                onAuxClick={(e) => internalLinkAuxClick(e, () => {
+                  const ref = blockRef(aid);
+                  router.openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+                })}
+              >
                 <InlineText text={crumb(aid)} format={formatForBlock(aid)} />
               </a>
             </>
@@ -821,17 +849,16 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           <h1
             class="page-title"
             classList={{ "journal-title": props.page.kind === "journal" }}
-            title={props.page.guide ? "Bundled Guide page" : props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, middle-click → new tab)" : "Shift-click to open in sidebar, middle-click → new tab"}
+            title={props.page.guide ? "Bundled Guide page" : props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, ctrl/middle-click → new tab, alt-click → other pane)" : "Shift-click to open in sidebar, ctrl/middle-click → new tab, alt-click → other pane"}
+            onMouseDown={internalLinkMouseDown}
             onClick={(e) => {
-              if (e.shiftKey && !props.page.guide) openPageInSidebar(pageTarget());
+              const dest = internalLinkDest(e);
+              if (dest === "sidebar" && !props.page.guide) openPageInSidebar(pageTarget());
+              else if (dest === "background" && !props.page.guide) router.openPageTargetInNewTab(pageTarget());
+              else if (dest === "pane" && !props.page.guide) openRouteInOtherPane({ kind: "page", ...pageTarget() });
               else router.openPageTarget(pageTarget());
             }}
-            onAuxClick={(e) => {
-              if (e.button === 1) {
-                e.preventDefault(); // middle-click → background tab, like a body link
-                router.openPageTargetInNewTab(pageTarget());
-              }
-            }}
+            onAuxClick={(e) => internalLinkAuxClick(e, () => router.openPageTargetInNewTab(pageTarget()))}
             onDblClick={startRename}
             onContextMenu={(e) => {
               if (props.page.guide) return;

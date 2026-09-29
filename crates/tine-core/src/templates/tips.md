@@ -34,6 +34,7 @@ icon:: ⌨️
 	- The carry buttons under today's journal pull unfinished tasks from earlier days. After midnight, yesterday's button changes to **Carry unfinished tasks → today**.
 - ## Tabs
 	- **Middle-click** any bullet, page, or search result to open it in a background tab. **Double-click** a tab to pin it, **drag** to reorder, **Ctrl+W** to close. Your tabs come back next launch.
+	- **Page links, block references, backlink headers, the sidebar and query results all take the same modified clicks**: **Shift-click** opens the right sidebar, **Ctrl/Cmd-click** or **middle-click** opens a background tab, and **Alt-click** opens the other pane (splitting one off if you have only one).
 	- When a pane has more tabs than fit, use its tab-overview button to see every full title, activate or pin a tab, close it, or reorder it with the drag handle / **Alt+Up/Down** without guessing from truncated labels.
 	- Use the command palette to **Toggle maximize active pane** and use the pane-size commands to grow or shrink the active pane with the keyboard. Run **Reset interface zoom** to return to normal scale.
 - ## The sidebars

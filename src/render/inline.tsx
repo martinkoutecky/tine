@@ -6,7 +6,8 @@ import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { extOf, mediaKind } from "../media";
-import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
+import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, focusBlock } from "../router";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, showBrackets } from "../ui";
@@ -316,10 +317,20 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       return;
     }
     e.stopPropagation();
-    if (e.ctrlKey || e.metaKey)
+    // Shared modified-click contract (linkGesture.ts, GH #283/#438).
+    const dest = internalLinkDest(e);
+    if (dest === "sidebar" && !isGuidePageName(targetName())) openPageInSidebar(targetName(), kind());
+    else if (dest === "background") openBackgroundTab();
+    else if (dest === "pane")
       openRouteInOtherPane({ kind: "page", name: targetName(), pageKind: kind() }, pane?.paneId ?? focusedPaneId());
-    else if (e.shiftKey && !isGuidePageName(targetName())) openPageInSidebar(targetName(), kind());
     else openPage(targetName(), kind());
+  };
+  // Middle-click and Ctrl/Cmd+click belong to the pane that rendered the link.
+  // Relying on the globally focused router races pointer-focus tracking and
+  // sent split-view tabs to the previously focused/top pane (GH #87).
+  const openBackgroundTab = () => {
+    if (pane) pane.router.openPageInNewTab(targetName(), kind());
+    else openPageInNewTab(targetName(), kind());
   };
 
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
@@ -344,10 +355,9 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         ref={anchorEl}
         class={props.tag ? "tag" : "page-ref"}
         {...(props.spanAttrs ?? {})}
-        // Shift+click opens the page in the sidebar (via `open`); suppress the
-        // browser's native shift-range-selection so the main editor's text isn't
-        // selected as a side effect (GH #42).
-        onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+        // Suppress the browser defaults the destinations replace: shift-range
+        // selection (GH #42) and middle-button autoscroll / PRIMARY paste (GH #207).
+        onMouseDown={internalLinkMouseDown}
         onClick={open}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
@@ -356,15 +366,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         onPointerUp={longPress.onPointerUp}
         onPointerCancel={longPress.onPointerCancel}
         onAuxClick={(e) => {
-          if (e.button === 1) {
-            e.preventDefault();
-            e.stopPropagation();
-            // Middle-click belongs to the pane that rendered the link. Relying
-            // on the globally focused router races pointer-focus tracking and
-            // sent split-view tabs to the previously focused/top pane (GH #87).
-            if (pane) pane.router.openPageInNewTab(targetName(), kind());
-            else openPageInNewTab(targetName(), kind());
-          }
+          if (e.button === 1) e.stopPropagation();
+          internalLinkAuxClick(e, openBackgroundTab);
         }}
         onContextMenu={(e) => {
           if (!shouldOpenTextContextMenu(e)) return;
@@ -1306,8 +1309,16 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         title={annotation()
           ? "Click to open the highlight in its PDF; shift-click → sidebar; right-click for more"
           : "Click to go to the block; shift-click → sidebar; right-click for more"}
-        // Suppress native shift-range-selection when shift+click opens the sidebar (GH #42).
-        onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+        onMouseDown={internalLinkMouseDown}
+        onAuxClick={(e) => {
+          if (e.button !== 1) return;
+          e.stopPropagation();
+          const g = grp();
+          if (!g) return;
+          const ref = blockRefTarget(props.id, g);
+          internalLinkAuxClick(e, () =>
+            openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) }));
+        }}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
         onContextMenu={(e) => {
@@ -1325,9 +1336,10 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           if (!g) return;
           const ref = blockRefTarget(props.id, g);
           const ann = annotation();
+          const dest = internalLinkDest(e);
           // OG opens a referenced PDF annotation at its source page. Modifier
-          // clicks retain Tine's existing pane/sidebar navigation semantics.
-          if (ann && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+          // clicks keep the shared destinations (sidebar / tab / other pane).
+          if (ann && dest === "default") {
             const owner = graphOwner();
             void readOwned(owner, backend().getPage(g.page, g.kind))
               .then((result) => {
@@ -1340,15 +1352,19 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
               .catch(() => { pushToast("Couldn't open the PDF for this highlight", "error"); });
             return;
           }
-          // Shift-click opens the referenced block in the right sidebar. Plain click:
-          // Tine scrolls + flashes the block in context (default); the OG behavior —
-          // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).
-          if (e.ctrlKey || e.metaKey)
+          // Shift-click opens the referenced block in the right sidebar, Ctrl/Cmd+click
+          // in a background tab (GH #283), Alt+click in the other pane (GH #438).
+          // Plain click: Tine scrolls + flashes the block in context (default); the
+          // OG behavior — zoom into the block as its own page — is opt-in
+          // (Settings → ref-click-zoom).
+          if (dest === "sidebar") openBlockInSidebar(ref);
+          else if (dest === "background")
+            openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+          else if (dest === "pane")
             openRouteInOtherPane(
               { kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) },
               pane?.paneId ?? focusedPaneId()
             );
-          else if (e.shiftKey) openBlockInSidebar(ref);
           else if (refClickZoom()) focusBlock(props.id);
           else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
         }}

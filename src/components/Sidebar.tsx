@@ -2,6 +2,8 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, onCl
 import { openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { conflictQueue, syncConflicts, openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { graphMeta } from "../graphSession";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { pushToast } from "../toasts";
 import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
 import { backend } from "../backend";
@@ -31,6 +33,7 @@ export interface SidebarPageOpenDeps {
   normal: (name: string, kind: PageKind) => void;
   sidebar: (name: string, kind: PageKind) => void;
   newTab: (name: string, kind: PageKind) => void;
+  pane: (name: string, kind: PageKind) => void;
   context: (x: number, y: number, name: string, kind: PageKind) => void;
 }
 
@@ -38,13 +41,14 @@ const sidebarPageOpenDeps: SidebarPageOpenDeps = {
   normal: openPage,
   sidebar: openPageInSidebar,
   newTab: openPageInNewTab,
+  pane: (name, kind) => void openRouteInOtherPane({ kind: "page", name, pageKind: kind }),
   context: openPageContextMenu,
 };
 
 export function openSidebarPageTarget(
   name: string,
   kind: PageKind,
-  gesture: "normal" | "sidebar" | "new-tab" | "context",
+  gesture: "normal" | "sidebar" | "new-tab" | "pane" | "context",
   point: { x: number; y: number } = { x: 0, y: 0 },
   deps: SidebarPageOpenDeps = sidebarPageOpenDeps,
   onActiveNavigationComplete?: () => void,
@@ -53,6 +57,7 @@ export function openSidebarPageTarget(
   if (gesture === "normal") { deps.normal(target.name, target.kind); onActiveNavigationComplete?.(); }
   else if (gesture === "sidebar") deps.sidebar(target.name, target.kind);
   else if (gesture === "new-tab") deps.newTab(target.name, target.kind);
+  else if (gesture === "pane") deps.pane(target.name, target.kind);
   else deps.context(point.x, point.y, target.name, target.kind);
 }
 
@@ -103,12 +108,14 @@ export function Sidebar(props: {
     path ? openFile(path, name, "page") : openPage(name, "page");
     props.onActiveNavigationComplete?.();
   };
-  // Shift+click on a sidebar page row opens it in the right sidebar (mirrors the
-  // center-pane page-link behavior; GH #63). The onMouseDown guard suppresses the
-  // browser's native shift-range text-selection (same fix as inline links, GH #42).
-  const shiftGuard = (e: MouseEvent) => {
-    if (e.shiftKey) e.preventDefault();
-  };
+  const openAllPagesTab = (p: { name: string; path?: string }) =>
+    p.path
+      ? openInNewTab({ kind: "page", name: p.name, pageKind: "page", path: p.path })
+      : openPageInNewTab(p.name, "page");
+  // Sidebar page rows follow the shared modified-click contract (linkGesture.ts):
+  // Shift → right sidebar (GH #63), Ctrl/Cmd or middle → background tab, Alt →
+  // other pane. The mousedown half suppresses shift-range selection (GH #42).
+  const shiftGuard = internalLinkMouseDown;
   const openRowMenu = (e: MouseEvent, name: string, kind: PageKind) => {
     e.preventDefault();
     openPageContextMenu(e.clientX, e.clientY, name, kind);
@@ -129,12 +136,8 @@ export function Sidebar(props: {
           class="nav-item"
           classList={{ active: route().kind === "journals" }}
           onClick={() => { openJournals(); props.onActiveNavigationComplete?.(); }}
-          onAuxClick={(e) => {
-            if (e.button === 1) {
-              e.preventDefault();
-              openInNewTab({ kind: "journals" });
-            }
-          }}
+          onMouseDown={internalLinkMouseDown}
+          onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
         >
           <Icon name="journals" />
           <span>Journals</span>
@@ -190,15 +193,13 @@ export function Sidebar(props: {
                         classList={{ active: isActive(target().name, target().path) }}
                         onMouseDown={shiftGuard}
                         onClick={(e) => {
-                          if (e.shiftKey) openPageInSidebar(target());
+                          const dest = internalLinkDest(e);
+                          if (dest === "sidebar") openPageInSidebar(target());
+                          else if (dest === "background") openPageTargetInNewTab(target());
+                          else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target() });
                           else { openPageTarget(target()); props.onActiveNavigationComplete?.(); }
                         }}
-                        onAuxClick={(e) => {
-                          if (e.button === 1) {
-                            e.preventDefault();
-                            openPageTargetInNewTab(target());
-                          }
-                        }}
+                        onAuxClick={(e) => internalLinkAuxClick(e, () => openPageTargetInNewTab(target()))}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           openPageContextMenu(e.clientX, e.clientY, target());
@@ -232,17 +233,14 @@ export function Sidebar(props: {
                   class="nav-page"
                   classList={{ active: isActive(p.name, p.path) }}
                   onMouseDown={shiftGuard}
-                  onClick={(e) =>
-                    e.shiftKey ? openPageInSidebar({ name: p.name, pageKind: "page", path: p.path }) : openEntry(p.path, p.name)
-                  }
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      p.path
-                        ? openInNewTab({ kind: "page", name: p.name, pageKind: "page", path: p.path })
-                        : openPageInNewTab(p.name, "page");
-                    }
+                  onClick={(e) => {
+                    const dest = internalLinkDest(e);
+                    if (dest === "sidebar") openPageInSidebar({ name: p.name, pageKind: "page", path: p.path });
+                    else if (dest === "background") openAllPagesTab(p);
+                    else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: p.name, pageKind: "page", ...(p.path ? { path: p.path } : {}) });
+                    else openEntry(p.path, p.name);
                   }}
+                  onAuxClick={(e) => internalLinkAuxClick(e, () => openAllPagesTab(p))}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     openPageContextMenu(e.clientX, e.clientY, { name: p.name, pageKind: "page", path: p.path });

@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Alt+click opens an internal link in the other pane** (GH #438), and **Ctrl/Cmd+click opens a background tab** (GH #283), on page links, block references, reference headers, namespaces, the sidebars, zoom breadcrumbs and query results, next to Shift+click (right sidebar) and middle-click (background tab). Middle-button autoscroll and Shift range-selection are suppressed on every one of those surfaces (GH #207). Ctrl/Cmd+click no longer opens the other pane; that is now Alt+click.
 - **Ctrl+Y also redoes** on Windows and Linux (GH #491). It is a second default for the same Redo command, shown beside the binding in the shortcuts list; remapping or unbinding Redo replaces both chords.
 - **Dropping a block on the right of another block's text nests it** as that block's last child (GH #326), with a drop marker showing where it will land.
 

@@ -2,7 +2,11 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, onCl
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { openPage } from "../router";
+import { openPage, openPageInNewTab } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { openPageContextMenu, openPageInSidebar } from "../ui";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { ReferenceExcerptBlocks } from "./ReferenceEvidence";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import type { RefGroup } from "../types";
@@ -160,7 +164,24 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
                 >
                   {groupCollapsed(g) ? "▸" : "▾"}
                 </button>
-                <button type="button" class="reference-page" onClick={() => openPage(g.page, g.kind)}>
+                <button
+                  type="button"
+                  class="reference-page"
+                  onMouseDown={internalLinkMouseDown}
+                  onClick={(e) => {
+                    const dest = internalLinkDest(e);
+                    if (dest === "sidebar") openPageInSidebar(g.page, g.kind);
+                    else if (dest === "background") openPageInNewTab(g.page, g.kind);
+                    else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: g.page, pageKind: g.kind });
+                    else openPage(g.page, g.kind);
+                  }}
+                  onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(g.page, g.kind))}
+                  onContextMenu={(e) => {
+                    if (!shouldOpenTextContextMenu(e.target)) return;
+                    e.preventDefault();
+                    openPageContextMenu(e.clientX, e.clientY, g.page, g.kind);
+                  }}
+                >
                   {g.page}
                 </button>
               </div>

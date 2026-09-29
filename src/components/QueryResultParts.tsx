@@ -1,6 +1,8 @@
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
 import type { PageRow, QueryStatistics } from "../editor/queryIr";
-import { openPageTarget } from "../router";
+import { openPageTarget, openPageTargetInNewTab } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkDest } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { fieldLabel, isFieldId } from "../sheet/fields";
 import { querySummary } from "../editor/queryAggregate";
@@ -17,7 +19,10 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
   const target = (row: PageRow) => ({ name: row.name, pageKind: row.kind, path: row.path });
   const open = (row: PageRow, event: MouseEvent) => {
     event.stopPropagation();
-    if (event.shiftKey) openPageInSidebar(target(row));
+    const dest = internalLinkDest(event);
+    if (dest === "sidebar") openPageInSidebar(target(row));
+    else if (dest === "background") openPageTargetInNewTab(target(row));
+    else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target(row) });
     else openPageTarget(target(row));
   };
   const fieldName = (field: string) => field.replace(/^prop:/, "");

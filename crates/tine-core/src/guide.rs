@@ -324,6 +324,15 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn modified_link_clicks_are_documented_in_the_bundled_guide() {
+        // GH #283/#438: one modified-click contract for internal links.
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("all take the same modified clicks"));
+        assert!(tips.contains("**Ctrl/Cmd-click** or **middle-click** opens a background tab"));
+        assert!(tips.contains("**Alt-click** opens the other pane"));
+    }
+
+    #[test]
     fn ctrl_y_redo_alias_is_documented_in_the_bundled_guide() {
         // GH #491: both redo chords, the platforms that get the second one, and
         // that remapping Redo replaces both.
