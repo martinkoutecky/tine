@@ -754,10 +754,16 @@ mod og_20d_guide_tests {
             "absolute path",
             "refuses to replace",
             "man tine",
+            // og I1f (#35): the live export's home choice and doctor's findings.
+            "--home \"Page name\"",
+            "configured home page when it is exported",
+            "every unreadable page",
+            "claimed by more than one file",
+            "exits with status 1",
         ] {
             assert!(cli.contains(promised), "Guide omitted {promised}");
         }
-        for stale in ["--replace", "graph-relative", "--home"] {
+        for stale in ["--replace", "graph-relative"] {
             assert!(
                 !cli.contains(stale),
                 "og export has no {stale}; master-only wording leaked in"

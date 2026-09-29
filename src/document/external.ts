@@ -6,7 +6,7 @@ import { graphOwner, readOwned } from "../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
 import { doc, feedNames, pageByName } from "./model";
-import { isConflicted, markConflict } from "./save/engine";
+import { applyObservedDivergence, isConflicted } from "./save/engine";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
 import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, restoreTodayJournalInFeed } from "./workingSet";
 
@@ -104,7 +104,7 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
       // conservative guard: Keep mine cannot clobber changed bytes.
     }
     if (owner() && pageByName(currentName)?.id === id && reloadDisposition(currentName) === "conflict")
-      markConflict(currentName, { kind: "disk-changed" }, revision);
+      applyObservedDivergence(currentName, revision);
   };
   if (c.removed) {
     if (disp === "conflict") await markObservedConflict();

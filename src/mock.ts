@@ -1558,6 +1558,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async gpuEnv(): Promise<GpuEnv> {
       return { software_forced: false, appimage: false };
     },
+    async takeDataHomeFallbackNotice(): Promise<string | null> {
+      return null;
+    },
     async getSmoothScroll(): Promise<boolean> {
       return false;
     },

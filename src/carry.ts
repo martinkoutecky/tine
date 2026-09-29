@@ -14,23 +14,30 @@ import { openJournals } from "./router";
 async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner): Promise<boolean> {
   if (pageByName(name)) return true;
   const result = await readOwned(owner, backend().getPage(name, kind));
-  if (result.kind === "stale") return false;
-  if (result.value) {
-    ensurePageLoaded(result.value);
-    return true;
-  }
-  return false;
+  if (result.kind === "stale" || !result.value) return false;
+  ensurePageLoaded(result.value);
+  // A declined replacement leaves the slot empty: stop, never assume it loaded.
+  return !!pageByName(name);
 }
 
 /** Make sure today's journal is in the working set (synthesize an empty one if
- *  it has no file yet, like the feed does). */
+ *  it has no file yet, like the feed does) and that the page holding today's
+ *  name is today's own file. A second file for the same day — a duplicate day
+ *  left by sync delivery or a journal date-format change, opened path-pinned —
+ *  can hold the name slot; carrying into it would land the tasks in a file the
+ *  journals feed does not show for today. That refuses with a message naming
+ *  both files (og I1e; GH #254 family, master 7bd793bd0). One page read. */
 async function ensureToday(owner: Owner): Promise<string | null> {
   const t = journalTitle(appNow());
-  if (!pageByName(t)) {
-    const result = await readOwned(owner, backend().getPage(t, "journal"));
-    if (result.kind === "stale") return null;
-    const page = result.value ?? carryTodayPage(t);
-    ensurePageLoaded(page);
+  const result = await readOwned(owner, backend().getPage(t, "journal"));
+  if (result.kind === "stale") return null;
+  if (!pageByName(t)) ensurePageLoaded(result.value ?? carryTodayPage(t));
+  const loaded = pageByName(t);
+  if (!loaded) return null;
+  const canonical = result.value?.id;
+  if (loaded.id && canonical && loaded.id !== canonical) {
+    pushToast(`Today's journal is open from a second file for the same day (${loaded.id}), not ${canonical}. Resolve the duplicate day before carrying tasks.`, "error");
+    return null;
   }
   return t;
 }

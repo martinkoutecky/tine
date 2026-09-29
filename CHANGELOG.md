@@ -116,6 +116,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **The Guide names the left and right sidebar link areas, the embed root-bullet drag versus click, and the
   search-fold examples** (`か`/`が`, `и`/`й`, `क`/`कु`, `елка`/`ёлка`) (og-I2).
 
+- **`tine doctor` reports unreadable pages and duplicate page names** (og I1f, GH #35, master e7af4db9c).
+  It used to print OK and exit 0 while a page could not be read, or while two files claimed the same page name.
+  It now lists each, prints the configured home page, and exits 1 when it finds a problem.
+- **A live export opens on the graph's home page** (og I1f, GH #35). The published app, from the command line
+  or the app, now starts on the configured home page when that page is exported, then Welcome to Tine, then the
+  first page; `tine export live --home "Page name"` chooses one explicitly and refuses a page that is not exported.
+- **Tine starts when its usual application-data folder cannot be written** (og I1a, master 8e1ea0bfd).
+  On Linux, a root-owned or read-only `~/.local/share` made every launch crash before a window appeared.
+  Tine now keeps settings and the web view's data in `~/.tine-data` (or another private writable
+  folder) for that session and says so; if nothing is writable it prints one sentence explaining why.
+- **A conflict banner goes away by itself once the file is back to what you loaded** (og I1c, master c68c0b6e7).
+  Some editors and sync clients briefly remove a file while replacing it; Tine treated the gap as a
+  conflict that only a click could clear, and held the edit unsaved behind it. If the file comes back
+  matching what your editor started from, the banner clears and your edit saves normally; a file that
+  comes back changed still raises the conflict.
+- **A page with an unresolved save conflict can be opened on disk again** (og I1d, master 6f8531344, GH #490).
+  "Open with default app" and "Show in folder" refused while a conflict was pending. Both now open the
+  file as it stands on disk and say so; your unsaved changes stay in Tine until you resolve the conflict.
+- **Carrying tasks no longer moves them into a second file for today** (og I1e).
+  When two files existed for today (a duplicate day from sync or a changed journal date format) and the
+  other one was open under today's name, carry moved the tasks into it and said "Carried", while
+  today's journal in the feed never got them. Carry now stops and names both files.
+- **Closing no longer offers to throw away a save that is still running** (og I1b, master fea3c314b).
+  If writing your changes took more than four seconds — a slow or network drive is enough — the close
+  asked whether to lose them. It now says it is still saving and waits up to another 26 seconds; it
+  only asks once the save has failed or stalled, in words that say which.
 - **Ctrl+F scrolls to the exact occurrence, not just its block** (GH #253, master
   46a5290a2, og H). In a block taller than the window, in-page find used to center
   only the block, leaving the match off-screen; it now centers the active occurrence
