@@ -6866,10 +6866,30 @@ img.emoji {
   overflow-wrap: anywhere;
 }
 
-.reference-excerpt-text mark {
+/* The highlight IS the jump affordance in Unlinked References, so it is a real
+   button: inline, inheriting the surrounding type, distinguished only by the
+   match background shared with every other search surface. */
+.reference-excerpt-text mark,
+.reference-excerpt-mark {
   color: inherit;
-  background: color-mix(in srgb, var(--accent-color) 22%, transparent);
+  background: var(--match-mark-bg);
   border-radius: 2px;
+}
+
+.reference-excerpt-mark {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.reference-excerpt-mark:hover,
+.reference-excerpt-mark:focus-visible {
+  background: var(--accent-color);
+  color: var(--bg-primary);
 }
 
 .reference-excerpt-actions,
@@ -7557,7 +7577,7 @@ img.emoji {
 
 .search-result-excerpt mark {
   border-radius: 2px;
-  background: rgba(251, 230, 158, 0.55);
+  background: var(--match-mark-bg);
   color: inherit;
 }
 
@@ -7644,7 +7664,7 @@ img.emoji {
   white-space: nowrap;
 }
 .switcher-name mark {
-  background: rgba(251, 230, 158, 0.55);
+  background: var(--match-mark-bg);
   color: inherit;
   border-radius: 2px;
 }

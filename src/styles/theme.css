@@ -66,6 +66,10 @@ html[data-theme="light"] {
   --code-bg: #f1f1f1;
   --mark-bg: #fef3ac;
   --mark-text: #262626;
+  /* Search-MATCH marking, distinct from `--mark-bg` (the user's own ^^highlight^^
+     markup): one token for the quick switcher, search results and reference
+     excerpts (master GH #200). */
+  --match-mark-bg: rgba(251, 230, 158, 0.55);
   --marker-color: #b8b8b8;
   --done-color: #9b9b9b;
 }
@@ -103,6 +107,7 @@ html[data-theme="dark"] {
   --code-bg: #2a2b30;
   --mark-bg: #5b5320;
   --mark-text: #ecedf0;
+  --match-mark-bg: rgba(251, 230, 158, 0.55);
   --marker-color: #6f7177;
   --done-color: #7a7c82;
 }

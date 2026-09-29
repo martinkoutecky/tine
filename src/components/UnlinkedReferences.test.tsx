@@ -160,7 +160,12 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
     await tick();
     await tick();
     expect(root.querySelectorAll(".reference-excerpt-row")).toHaveLength(2);
-    expect(root.querySelectorAll("mark")[0]?.textContent).toBe("Target");
+    // The highlighted mention IS the way into the source block (master GH #200),
+    // so it must be a real control, not decorated text.
+    const marks = root.querySelectorAll<HTMLButtonElement>(".reference-excerpt-mark");
+    expect(marks[0]?.textContent).toBe("Target");
+    expect(marks[0]?.tagName).toBe("BUTTON");
+    expect(marks[0]?.getAttribute("aria-label")).toBe("Open mention 1 in One");
     expect(root.querySelector(".reference-excerpt-text")!.textContent!.length).toBeLessThan(text.length);
 
     const collapseAll = [...root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button")]

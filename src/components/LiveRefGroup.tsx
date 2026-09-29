@@ -1,15 +1,14 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { blockProperty, collapseEpochOf, ensurePageLoaded, formatForPage, pageByName, setBlockProperty, node as docNode } from "../document";
+import { blockProperty, collapseEpochOf, ensurePageLoaded, pageByName, setBlockProperty, node as docNode } from "../document";
 import { Block, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
-import { OccurrenceControls } from "./ReferenceEvidence";
+import { OccurrenceControls, occurrenceSelection } from "./ReferenceEvidence";
 import { startEditing } from "../editorController";
-import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
 import { visibleBody } from "../render/block";
 import { LinkDepthContext } from "./linkDepth";
 import { readOr } from "../resourceRead";
@@ -301,14 +300,9 @@ export function LiveRefGroup(props: {
                       <div class="reference-live-evidence">
                         <OccurrenceControls
                           evidence={item()}
-                          onOccurrence={(offset) => startEditing(
+                          onOccurrence={(span) => startEditing(
                             id,
-                            rawOffsetToVisibleOffset(
-                              docNode(id)?.raw ?? "",
-                              offset,
-                              isBuiltinHidden,
-                              formatForPage(props.page),
-                            ),
+                            occurrenceSelection(docNode(id)?.raw ?? "", span, props.page),
                             null,
                             surface,
                           )}

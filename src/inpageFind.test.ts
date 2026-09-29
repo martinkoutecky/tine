@@ -239,6 +239,31 @@ describe("in-page find model", () => {
     ]);
   });
 
+  it("finds a reference mention whose mark is a jump control, without finding the chrome around it", () => {
+    setDoc({
+      loaded: true,
+      feed: ["Target"],
+      pages: [{ name: "Target", kind: "page", title: "Target", preBlock: null, roots: [], format: "md", readOnly: false, guide: false }],
+      byId: {},
+    });
+    resetPaneLayoutToSingle(pageSnapshot("Target"));
+    // An unlinked-reference excerpt renders each marked mention as a button that
+    // opens the source page there (master GH #200). The words inside it are the
+    // ones the reader searched for, so they are content; the row's own actions
+    // are chrome and must stay out of the searchable text.
+    document.body.innerHTML = `
+      <main data-pane-id="main">
+        <div class="reference-blocks" data-inpage-find-surface="unlinked:Source">
+          <div class="reference-excerpt-text">names <button type="button" class="reference-excerpt-mark" data-inpage-find-text>Query parity</button> near the start</div>
+          <button type="button" class="reference-show-full">Show full block</button>
+        </div>
+      </main>`;
+
+    expect(scopedInPageFindMatchesForQuery("names Query parity near the start").map((match) => match.surfaceId))
+      .toEqual(["unlinked:Source"]);
+    expect(scopedInPageFindMatchesForQuery("Show full block")).toEqual([]);
+  });
+
   it("reveals the exact occurrence, not just the block, in a viewport-tall block (GH #253)", async () => {
     setDoc({
       loaded: true,

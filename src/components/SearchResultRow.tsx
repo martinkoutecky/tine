@@ -4,9 +4,14 @@ import type { MatchSpan } from "../types";
 
 export type SearchMatchSpan = MatchSpan;
 
-interface Segment {
+export interface Segment {
   text: string;
   marked: boolean;
+  /** The occurrence this marked run belongs to, in RAW block offsets: the full
+   *  span, not the part the window kept. Unlinked References makes the highlight
+   *  itself the jump control (master GH #200), so a marked run must be able to
+   *  name where it came from even when the excerpt clipped it. */
+  span?: SearchMatchSpan;
 }
 
 interface Window {
@@ -114,7 +119,7 @@ export function buildSearchExcerpt(text: string, inputSpans: SearchMatchSpan[]):
       const start = Math.max(window.start, span.start);
       const end = Math.min(window.end, span.end);
       if (start > cursor) segments.push({ text: text.slice(cursor, start), marked: false });
-      if (end > start) segments.push({ text: text.slice(start, end), marked: true });
+      if (end > start) segments.push({ text: text.slice(start, end), marked: true, span });
       cursor = Math.max(cursor, end);
     }
     if (cursor < window.end) segments.push({ text: text.slice(cursor, window.end), marked: false });

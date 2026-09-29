@@ -482,6 +482,14 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn unlinked_reference_guide_says_the_highlight_is_clickable() {
+        // GH #200 (master 552d988c9): nothing in the UI announces that a
+        // highlighted mention is a control, so the Guide has to.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("the highlight is clickable"));
+    }
+
+    #[test]
     fn empty_html_export_names_the_public_page_rule_in_the_guide() {
         // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
         let files = include_str!("templates/files-external-edits-backups.md");
