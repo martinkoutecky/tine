@@ -214,3 +214,113 @@ fn first_root_on_a_properties_only_page_gets_one_separator() {
         assert_eq!(inserted, expected, "{source:?}");
     }
 }
+
+/// Reopen the page and return its block tree as `(depth, raw)` in pre-order,
+/// so each splice is checked against what the outline parser reads back.
+fn reread(page: &Page) -> Vec<(usize, String)> {
+    fn walk(blocks: &[BlockDto], depth: usize, out: &mut Vec<(usize, String)>) {
+        for b in blocks {
+            out.push((depth, b.raw.clone()));
+            walk(&b.children, depth + 1, out);
+        }
+    }
+    let store = Store::open(&page.root, Default::default()).unwrap().0;
+    let mut out = Vec::new();
+    walk(&store.page(&page.id).unwrap().doc.blocks, 0, &mut out);
+    store.close();
+    out
+}
+
+fn tree(rows: &[(usize, &str)]) -> Vec<(usize, String)> {
+    rows.iter().map(|(d, r)| (*d, r.to_string())).collect()
+}
+
+#[test]
+fn unbulleted_headings_keep_their_bytes_when_a_neighbour_is_edited() {
+    // lsdoc (= mldoc) reads each unbulleted ATX heading as its own block; a
+    // save that edits another block must not bullet them (master cc9ab56ee).
+    let source = "- editable root\n## first section\n### second section\n- trailing root";
+    let page = Page::new(source);
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        assert_eq!(doc.blocks.len(), 4);
+        doc.blocks[0].raw = "edited root".into();
+    });
+    assert_eq!(edited, source.replace("editable root", "edited root"));
+    assert_eq!(
+        reread(&page),
+        tree(&[
+            (0, "edited root"),
+            (0, "## first section"),
+            (0, "### second section"),
+            (0, "trailing root"),
+        ])
+    );
+    let inserted = page.save(EditKind::InsertBlocks, |doc| {
+        doc.blocks.insert(2, block("between"));
+    });
+    assert_eq!(
+        inserted,
+        "- edited root\n## first section\n- between\n### second section\n- trailing root"
+    );
+}
+
+#[test]
+fn a_leading_heading_stays_unbulleted_through_edits() {
+    // OG writes a leading heading unbulleted with its children one level in
+    // (og@6e7afa8 file/core.cljs `transform-content`, `markdown-top-heading?`).
+    let source = "# Project\n\t- child one\n\t- child two\n- sibling";
+    let page = Page::new(source);
+    let child = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].children[1].raw = "child 2".into();
+    });
+    assert_eq!(child, source.replace("child two", "child 2"));
+    let heading = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "# Project!".into();
+    });
+    assert_eq!(heading, child.replace("# Project", "# Project!"));
+    assert_eq!(
+        reread(&page),
+        tree(&[
+            (0, "# Project!"),
+            (1, "child one"),
+            (1, "child 2"),
+            (0, "sibling"),
+        ])
+    );
+}
+
+#[test]
+fn a_heading_edited_into_prose_is_written_as_a_bullet() {
+    // Benign-extreme pair of the above: unbulleted prose would be page text,
+    // so the block must be bulleted to stay a block.
+    let page = Page::new("# Project\n\t- child\n- sibling");
+    let written = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "Project".into();
+    });
+    assert_eq!(written, "- Project\n\t- child\n- sibling");
+    assert_eq!(
+        reread(&page),
+        tree(&[(0, "Project"), (1, "child"), (0, "sibling")])
+    );
+}
+
+#[test]
+fn moving_an_unbulleted_heading_keeps_the_tree() {
+    let page = Page::new("- a\n## h\n- b");
+    let written = page.save(EditKind::MoveBlocks, |doc| {
+        let h = doc.blocks.remove(1);
+        doc.blocks[0].children.push(h);
+    });
+    assert_eq!(written, "- a\n\t- ## h\n- b");
+    assert_eq!(reread(&page), tree(&[(0, "a"), (1, "## h"), (0, "b")]));
+}
+
+#[test]
+fn every_dash_form_lsdoc_accepts_keeps_its_bytes() {
+    let source = "-\tx\n- \n-\n-  y\n- z";
+    let page = Page::new(source);
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[4].raw = "z!".into();
+    });
+    assert_eq!(edited, format!("{source}!"));
+}

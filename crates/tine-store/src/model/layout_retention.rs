@@ -101,11 +101,15 @@ struct OldBlock<'a> {
     raw: &'a str,
     start: usize,
     len: usize,
+    /// Written as `- …`; false for an unbulleted ATX heading (lsdoc), whose
+    /// lines are its raw text verbatim.
+    bulleted: bool,
 }
 
 /// Locate every old block's physical lines. Blocks own the tail of the body,
-/// in pre-order, one line per raw line; the preamble owns the rest. `None`
-/// when that layout does not hold (e.g. a preamble heading promoted to a block).
+/// in pre-order, one line per raw line; the preamble owns the rest. A block's
+/// first line is `- raw` (any dash form lsdoc accepts) or, for an unbulleted
+/// heading, the raw line itself. `None` when that layout does not hold.
 fn map_old_blocks<'a>(old: &'a Document, lines: &[&str]) -> Option<Vec<OldBlock<'a>>> {
     let mut flat = Vec::new();
     flatten(&old.roots, &mut flat);
@@ -132,10 +136,19 @@ fn map_old_blocks<'a>(old: &'a Document, lines: &[&str]) -> Option<Vec<OldBlock<
         let len = raw.split('\n').count();
         let head = lines[start].trim_start_matches([' ', '\t']);
         let first = raw.split('\n').next().unwrap_or("");
-        if head.strip_prefix("- ").or((head == "-").then_some("")) != Some(first) {
+        let dash = head
+            .strip_prefix('-')
+            .map(|rest| rest.strip_prefix(' ').unwrap_or(rest));
+        let bulleted = lines[start] != first;
+        if bulleted && dash != Some(first) {
             return None;
         }
-        olds.push(OldBlock { raw, start, len });
+        olds.push(OldBlock {
+            raw,
+            start,
+            len,
+            bulleted,
+        });
         start += len;
     }
     Some(olds)
@@ -307,7 +320,12 @@ impl Emitter<'_> {
                 .or_else(|| next.filter(|p| valid(p)))
                 .unwrap_or_else(|| parent.map_or(String::new(), |pp| format!("{pp}{}", self.unit)));
             match self.keep[i] {
-                Some(o) => self.reuse(o, &prefix),
+                // An unbulleted heading's indentation is part of its raw text,
+                // so it can only be reused where it stood.
+                Some(o) if self.olds[o].bulleted || self.old_prefix(o) == prefix => {
+                    self.reuse(o, &prefix)
+                }
+                Some(o) => self.render(block.raw(), &prefix, Some(o)),
                 None => self.render(block.raw(), &prefix, self.hint[i]),
             }
             *index = i + 1;
@@ -345,6 +363,21 @@ impl Emitter<'_> {
         };
         let mut lines = raw.split('\n');
         let first = lines.next().unwrap_or("");
+        // A changed unbulleted heading stays unbulleted while lsdoc still
+        // reads its first line, at this column, as one (OG writes a leading
+        // heading so: og@6e7afa8 file/core.cljs `transform-content`).
+        if hint.is_some_and(|o| !self.olds[o].bulleted)
+            && first.strip_prefix(prefix).is_some_and(|rest| !rest.starts_with([' ', '\t']))
+            && tine_core::doc::is_unbulleted_heading_line(first)
+        {
+            let emitted: Vec<_> = raw
+                .split('\n')
+                .enumerate()
+                .map(|(j, line)| (line.to_string(), origin(j)))
+                .collect();
+            self.out.extend(emitted);
+            return;
+        }
         let first = if first.is_empty() {
             format!("{prefix}-")
         } else {
