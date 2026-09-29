@@ -118,7 +118,117 @@ fn f1_custom_journal_format_reload_serves_disk_and_never_clobbers_newer_bytes() 
     }
 }
 
-#[allow(dead_code)]
+/// F2 (L07): a multi-page save whose later entry fails is undone by
+/// withdrawing each written file's new bytes to conflict trash and then
+/// rewriting its old bytes. A crash between the two must still leave every
+/// page's pre-save bytes on disk: live, or recoverable in graph trash.
+#[cfg(feature = "test-faults")]
+#[test]
+fn f2_crash_in_multi_page_undo_keeps_each_pages_old_bytes() {
+    let root = scratch("f2");
+    fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
+    fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "f2_undo_crash_worker", "--nocapture"])
+        .env("TINE_C3S_ROOT", &root)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "worker must abort inside undo: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let reopened = Store::open(&root, Default::default()).unwrap().0;
+    reopened.whole_graph().unwrap();
+    // A was written and then withdrawn by undo; the crash came before its old
+    // bytes were rewritten. Its content must be live (old or new) or its old
+    // bytes recoverable in graph trash / recovery roots.
+    let live = fs::read_to_string(root.join("pages/A.md")).ok();
+    assert!(
+        matches!(live.as_deref(), Some("- old A\n" | "- new A\n"))
+            || exists_anywhere(&root.join("logseq/.tine-trash"), b"- old A\n")
+            || exists_anywhere(&root.join("assets/.tine-restore-recovery"), b"- old A\n"),
+        "I-2: page A's pre-save bytes are on disk nowhere after a crash in undo \
+         (live {live:?}); exemplar: the rewritten move's trash copy in Transaction::apply"
+    );
+    // B's racing external write is untouched.
+    assert_eq!(
+        fs::read_to_string(root.join("pages/B.md")).unwrap(),
+        "external stage-2"
+    );
+    reopened.close();
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// F2 neighbour: an uninterrupted rollback restores the old bytes and withdraws
+/// its staged `tx-old` copy, so a refused multi-page save leaves no trash debris.
+#[cfg(feature = "test-faults")]
+#[test]
+fn f2_completed_undo_restores_old_bytes_and_leaves_no_staged_copy() {
+    let root = scratch("f2-ok");
+    fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
+    fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let entries = two_page_entries(&store);
+    store.inject_fault(tine_store::FaultPoint::Stage2MismatchAt(1));
+    assert!(matches!(
+        store.save_pages(&entries),
+        tine_store::SavePagesOutcome::Failed { index: 1, .. }
+    ));
+    assert_eq!(
+        fs::read_to_string(root.join("pages/A.md")).unwrap(),
+        "- old A\n"
+    );
+    assert!(!exists_anywhere(
+        &root.join("logseq/.tine-trash"),
+        b"- old A\n"
+    ));
+    store.close();
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[cfg(feature = "test-faults")]
+fn two_page_entries(
+    store: &Store,
+) -> Vec<(
+    PageId,
+    SaveBase,
+    tine_core::model::PageDto,
+    Vec<tine_store::EditKind>,
+)> {
+    ["A", "B"]
+        .into_iter()
+        .map(|name| {
+            let id = PageId::from(format!("pages/{name}.md").as_str());
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = format!("new {name}");
+            (
+                id,
+                SaveBase::Existing(read.rev),
+                doc,
+                vec![tine_store::EditKind::ReplacePage],
+            )
+        })
+        .collect()
+}
+
+#[cfg(feature = "test-faults")]
+#[test]
+fn f2_undo_crash_worker() {
+    let Ok(root) = std::env::var("TINE_C3S_ROOT") else {
+        return;
+    };
+    let store = Store::open(Path::new(&root), Default::default()).unwrap().0;
+    let entries = two_page_entries(&store);
+    // An external writer changes B just before its write (an external-editor
+    // race): B is refused unwritten and undo runs for A alone.
+    store.inject_fault(tine_store::FaultPoint::Stage2MismatchAt(1));
+    store.inject_fault(tine_store::FaultPoint::AbortAfterUndoWithdraw);
+    let _ = store.save_pages(&entries);
+    panic!("undo did not reach the withdraw abort point");
+}
+
 fn exists_anywhere(root: &Path, needle: &[u8]) -> bool {
     fn walk(dir: &Path, needle: &[u8]) -> bool {
         let Ok(entries) = fs::read_dir(dir) else {
