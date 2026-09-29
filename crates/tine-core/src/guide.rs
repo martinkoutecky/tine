@@ -313,6 +313,16 @@ mod search_guide_tests {
 #[cfg(test)]
 mod rename_guide_tests {
     #[test]
+    fn ctrl_y_redo_alias_is_documented_in_the_bundled_guide() {
+        // GH #491: both redo chords, the platforms that get the second one, and
+        // that remapping Redo replaces both.
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("redo is Ctrl/Cmd+Shift+Z"));
+        assert!(tips.contains("On Windows and Linux **Ctrl+Y** also redoes"));
+        assert!(tips.contains("remapping Redo replaces both"));
+    }
+
+    #[test]
     fn pdf_export_save_refusal_is_documented_in_the_bundled_guide() {
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("**Export to PDF…** saves pending page edits"));

@@ -8,6 +8,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Ctrl+Y also redoes** on Windows and Linux (GH #491). It is a second default for the same Redo command, shown beside the binding in the shortcuts list; remapping or unbinding Redo replaces both chords.
+- **Dropping a block on the right of another block's text nests it** as that block's last child (GH #326), with a drop marker showing where it will land.
+
+### Fixed
+
+- **Code blocks**: the caret no longer jumps when you click into a code block or leave it with the arrow keys, the language line and fence markers are editable as text, and clicking a code card places the caret where you clicked (GH #489).
+- **Property autocomplete** follows Logseq's keyboard flow (GH #306): typing `::` at the start of a line puts the caret before the delimiter so you type the name, "Create" is offered first, values already on the line are not suggested again in a comma-separated list, and a failed facet lookup no longer raises an error toast.
+- **Context-menu submenus** open on the side that stays on screen near the window's right edge (GH #471).
+- **Block text and bullet share one first line**, so the bullet, the reference-count badge and the first text line line up in the default and serif themes (GH #459, GH #454).
+- **Default task styling**: done tasks are struck through and dimmed, and the checkbox colours follow the theme (GH #394).
+- **Typing into a page in the right sidebar** no longer reseeds an empty trailing block over your text (GH #483).
+- **Clicking into a block** starts editing on mouse-down, so the caret lands under the pointer even when a re-render follows (GH #368).
+- **IME composition** keeps a block in its edit transaction when the composing input arrives without a `compositionstart`, so a composed character is not lost.
+- **Android**: the on-screen keyboard no longer covers the block being edited (the app's bottom inset accounts for the IME).
+
 ## [0.6.5] - 2026-07-22
 
 ### Added
