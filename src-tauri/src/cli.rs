@@ -417,7 +417,14 @@ mod tests {
             assert!(matches!(parsed.command, Some(Command::Export { .. })));
         }
         let live = Cli::try_parse_from([
-            "tine", "export", "live", "g", "--output", "/o", "--home", "Directory",
+            "tine",
+            "export",
+            "live",
+            "g",
+            "--output",
+            "/o",
+            "--home",
+            "Directory",
         ])
         .unwrap();
         let Some(Command::Export {
@@ -428,7 +435,14 @@ mod tests {
         };
         assert_eq!(args.home.as_deref(), Some("Directory"));
         assert!(Cli::try_parse_from([
-            "tine", "export", "static", "g", "--output", "/o", "--home", "Directory",
+            "tine",
+            "export",
+            "static",
+            "g",
+            "--output",
+            "/o",
+            "--home",
+            "Directory",
         ])
         .is_err());
         let relative = export(ExportFormat::Static(ExportArgs {
@@ -468,8 +482,10 @@ mod tests {
         std::fs::write(root.path().join("pages/Bad.md"), [0xff, 0xfe]).unwrap();
         let report = doctor_report(root.path()).unwrap();
         assert!(
-            report.problems.iter().any(|line| line.starts_with("parse failure: ")
-                && line.contains("Bad.md")),
+            report
+                .problems
+                .iter()
+                .any(|line| line.starts_with("parse failure: ") && line.contains("Bad.md")),
             "{:?}",
             report.problems
         );

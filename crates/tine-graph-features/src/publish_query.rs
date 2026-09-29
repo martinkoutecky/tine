@@ -786,21 +786,22 @@ fn live(
             .iter()
             .find(|p| tine_core::refs::page_key(&p.name) == wanted)
     };
-    let home = match requested_home {
-        Some(requested) => Some(find(requested).ok_or_else(|| {
-            refusal("the requested home page is not among the exported pages")
-        })?),
-        None => store
-            .config()
-            .config
-            .default_home
-            .as_deref()
-            .and_then(|configured| find(configured))
-            .or_else(|| find("Welcome to Tine"))
-            .or_else(|| corpus.pages.first()),
-    }
-    .map(|p| p.name.clone())
-    .unwrap_or_default();
+    let home =
+        match requested_home {
+            Some(requested) => Some(find(requested).ok_or_else(|| {
+                refusal("the requested home page is not among the exported pages")
+            })?),
+            None => store
+                .config()
+                .config
+                .default_home
+                .as_deref()
+                .and_then(|configured| find(configured))
+                .or_else(|| find("Welcome to Tine"))
+                .or_else(|| corpus.pages.first()),
+        }
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
     let mut files = collect_static(store, &graph, &corpus, &SheetIndex::new(sheets))?;
     let snap = snapshot(store, &graph, &corpus, name, &home, None)?;
     app_files(&mut files, bundle, snap, name)?;

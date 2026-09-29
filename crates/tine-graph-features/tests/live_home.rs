@@ -22,8 +22,16 @@ fn fixture(config: &str) -> (PathBuf, Store) {
     fs::create_dir_all(base.join("output")).unwrap();
     fs::write(graph.join("logseq/config.edn"), config).unwrap();
     for page in ["Alpha", "Directory", "Hidden"] {
-        let public = if page == "Hidden" { "" } else { "public:: true\n" };
-        fs::write(graph.join(format!("pages/{page}.md")), format!("{public}- {page}\n")).unwrap();
+        let public = if page == "Hidden" {
+            ""
+        } else {
+            "public:: true\n"
+        };
+        fs::write(
+            graph.join(format!("pages/{page}.md")),
+            format!("{public}- {page}\n"),
+        )
+        .unwrap();
     }
     let store = Store::open(&graph, Default::default()).unwrap().0;
     (base, store)
@@ -61,8 +69,15 @@ fn an_unexported_configured_home_falls_back_to_the_first_page() {
 #[test]
 fn a_requested_home_wins_and_an_unexported_one_is_refused_before_writing() {
     let (base, store) = fixture("{:default-home {:page \"Directory\"}}\n");
-    publish_live_home(&store, &base.join("output"), "Site", false, Some("alpha"), &bundle())
-        .unwrap();
+    publish_live_home(
+        &store,
+        &base.join("output"),
+        "Site",
+        false,
+        Some("alpha"),
+        &bundle(),
+    )
+    .unwrap();
     assert_eq!(home(&base, "site"), "Alpha");
 
     let refused = publish_live_home(

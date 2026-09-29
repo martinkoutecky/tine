@@ -99,7 +99,10 @@ pub(crate) fn ensure_usable(identifier: &str) {
         std::env::set_var("XDG_DATA_HOME", &candidate);
         diag_private(
             "app-data-home-relocated",
-            format!("app-data home relocated to {} for this launch", candidate.display()),
+            format!(
+                "app-data home relocated to {} for this launch",
+                candidate.display()
+            ),
         );
         *RELOCATED_TO
             .lock()
