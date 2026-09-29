@@ -237,17 +237,31 @@ try {
   );
   if (alphaTarget !== "main") throw new Error(`capture target did not follow alpha focus: ${alphaTarget}`);
 
-  await browser.execute(async (target) =>
+  // A capture carries the native binding generation of the graph it was
+  // shown for (OG-K3); the receiver refuses a stale one. Read alpha's current
+  // binding from alpha's own window: loading the graph it already holds
+  // returns that binding without changing it.
+  const betaHandle = await browser.getWindowHandle();
+  await browser.switchToWindow(alpha);
+  const alphaBinding = await browser.execute(async (root) =>
+    globalThis.__TAURI_INTERNALS__.invoke("load_graph", { path: root }), A
+  );
+  await browser.switchToWindow(betaHandle);
+  if (alphaBinding?.kind !== "already_current" || !Number.isSafeInteger(alphaBinding.binding_generation)) {
+    throw new Error(`alpha did not report its current binding: ${JSON.stringify(alphaBinding)}`);
+  }
+  await browser.execute(async (target, bindingGeneration) =>
     globalThis.__TAURI_INTERNALS__.invoke("plugin:event|emit_to", {
       target: { kind: "AnyLabel", label: target },
       event: "quick-capture",
       payload: {
         id: "e2e-multigraph-capture",
         target,
+        bindingGeneration,
         text: "- E2E_CAPTURE_ONLY_ALPHA",
         title: "",
       },
-    }), alphaTarget
+    }), alphaTarget, alphaBinding.binding_generation
   );
   await browser.waitUntil(() =>
     fs.readFileSync(journalPath(A), "utf8").includes("E2E_CAPTURE_ONLY_ALPHA"), {
