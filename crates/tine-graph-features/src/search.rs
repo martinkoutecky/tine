@@ -346,7 +346,7 @@ mod tests {
         let source = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
         assert!(reason(validate_source(&source).unwrap_err()).starts_with("query-too-large:"));
 
-        let nested = format!("{}(task TODO){}", "(and ".repeat(65), ")".repeat(65));
+        let nested = format!("{}(task TODO){}", "(and ".repeat(128), ")".repeat(128));
         assert!(
             reason(validate_source(&nested).unwrap_err()).starts_with("query-nesting-too-deep:")
         );
