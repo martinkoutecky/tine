@@ -11,7 +11,7 @@ use crate::doc::{DocBlock, Document};
 use crate::edn::{self, Edn};
 use crate::model::Format;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
@@ -330,39 +330,57 @@ fn deep_merge(old: &mut Vec<(Edn, Edn)>, new: Vec<(Edn, Edn)>) {
 /// Tine's fields for one highlight, merged ONTO its existing EDN map (matched by id)
 /// so any keys the user/Logseq added — at the top level or inside content/properties —
 /// survive a highlight edit. A brand-new highlight has no existing map → just ours.
+/// Only the model fields that CHANGED are written: an untouched entry is kept
+/// value-for-value, and a recolour does not rewrite `:position`, so rects or
+/// spellings this model cannot read survive an unrelated edit.
 fn merge_highlight(existing: Option<&Edn>, h: &Highlight) -> Edn {
-    match (existing, highlight_to(h)) {
-        (Some(Edn::Map(old)), Edn::Map(new)) => {
-            let mut merged = old.clone();
-            // `:position/:bounding` is deep-merged so foreign metadata survives,
-            // but its old and current coordinate spellings must not coexist: an
-            // old `:top` would otherwise shadow newly-written `:x1` on the next
-            // read. `:rects` is replaced as a whole by deep_merge below.
-            if let Some((_, Edn::Map(position))) = merged
-                .iter_mut()
-                .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "position"))
-            {
-                if let Some((_, Edn::Map(bounding))) = position
-                    .iter_mut()
-                    .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "bounding"))
-                {
-                    bounding.retain(|(key, _)| {
-                        !matches!(
-                            key,
-                            Edn::Keyword(name)
-                                if matches!(
-                                    name.as_str(),
-                                    "top" | "left" | "x1" | "y1" | "x2" | "y2" | "width" | "height"
-                                )
-                        )
-                    });
-                }
-            }
-            deep_merge(&mut merged, new);
-            Edn::Map(merged)
+    let (Some(Edn::Map(old)), Edn::Map(mut new)) = (existing, highlight_to(h)) else {
+        return highlight_to(h);
+    };
+    if let Some(prior) = existing.and_then(highlight_from) {
+        if prior == *h {
+            return existing.cloned().unwrap_or_else(|| highlight_to(h));
         }
-        (_, ours) => ours,
+        new.retain(|(key, _)| match key {
+            Edn::Keyword(name) => match name.as_str() {
+                "page" => prior.page != h.page,
+                "position" => prior.position != h.position,
+                "content" => prior.text != h.text || prior.image != h.image,
+                "properties" => prior.color != h.color,
+                _ => true,
+            },
+            _ => true,
+        });
     }
+    let mut merged = old.clone();
+    let rewrites_position = new
+        .iter()
+        .any(|(key, _)| matches!(key, Edn::Keyword(name) if name == "position"));
+    // `:position/:bounding` is deep-merged so foreign metadata survives,
+    // but its old and current coordinate spellings must not coexist: an
+    // old `:top` would otherwise shadow newly-written `:x1` on the next
+    // read. `:rects` is replaced as a whole by deep_merge below.
+    if let Some((_, Edn::Map(position))) = merged.iter_mut().find(|(key, _)| {
+        rewrites_position && matches!(key, Edn::Keyword(name) if name == "position")
+    }) {
+        if let Some((_, Edn::Map(bounding))) = position
+            .iter_mut()
+            .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "bounding"))
+        {
+            bounding.retain(|(key, _)| {
+                !matches!(
+                    key,
+                    Edn::Keyword(name)
+                        if matches!(
+                            name.as_str(),
+                            "top" | "left" | "x1" | "y1" | "x2" | "y2" | "width" | "height"
+                        )
+                )
+            });
+        }
+    }
+    deep_merge(&mut merged, new);
+    Edn::Map(merged)
 }
 
 /// Serialize highlights to `assets/<key>.edn`, PRESERVING the foreign content of the
@@ -382,12 +400,31 @@ pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String 
                 .collect()
         })
         .unwrap_or_default();
-    let hl_vec = Edn::Vec(
-        highlights
-            .iter()
-            .map(|h| merge_highlight(existing_by_id.get(&h.id), h))
-            .collect(),
-    );
+    let mut hl_items: Vec<Edn> = highlights
+        .iter()
+        .map(|h| merge_highlight(existing_by_id.get(&h.id), h))
+        .collect();
+    // An entry this model cannot read (reversed rect, missing position, a
+    // foreign shape) was never shown to the user, so no caller can have
+    // deleted it: carry it through value-for-value at its original index
+    // (L01 H1; in-scope: malformed imported content, a newer OG sidecar).
+    let owned: HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
+    if let Some(entries) = root
+        .as_ref()
+        .and_then(|r| r.get("highlights"))
+        .and_then(Edn::as_vec)
+    {
+        for (index, entry) in entries.iter().enumerate() {
+            let claimed = entry
+                .get("id")
+                .and_then(highlight_id)
+                .is_some_and(|id| owned.contains(id));
+            if highlight_from(entry).is_none() && !claimed {
+                hl_items.insert(index.min(hl_items.len()), entry.clone());
+            }
+        }
+    }
+    let hl_vec = Edn::Vec(hl_items);
 
     // Keep every existing root key; replace only `:highlights`; ensure `:extra` exists
     // (OG canonical). A new/empty/unparseable file yields the canonical skeleton.
@@ -498,13 +535,18 @@ pub fn hls_page_document_for_format(
     highlights: &[Highlight],
     format: Format,
 ) -> Document {
-    merge_hls_page_for_format(None, pdf_filename, label, highlights, format)
+    merge_hls_page_for_format(
+        None,
+        pdf_filename,
+        label,
+        highlights,
+        &HashSet::new(),
+        format,
+    )
 }
 
-/// Upsert highlights into an existing `hls__` page, **preserving each existing
-/// annotation block (and its child notes) by `id`**. New highlights are
-/// appended; highlights deleted from the set drop their block. This is what
-/// makes the review flow safe — re-saving never clobbers notes.
+/// Test shorthand: every existing annotation id missing from `highlights`
+/// counts as deleted by this write.
 #[cfg(test)]
 pub fn merge_hls_page(
     existing: Option<&Document>,
@@ -512,14 +554,37 @@ pub fn merge_hls_page(
     label: &str,
     highlights: &[Highlight],
 ) -> Document {
-    merge_hls_page_for_format(existing, pdf_filename, label, highlights, Format::Md)
+    let removed = existing
+        .map(|doc| {
+            doc.roots
+                .iter()
+                .filter_map(|b| b.property("id"))
+                .filter(|id| highlights.iter().all(|h| h.id != *id))
+                .collect()
+        })
+        .unwrap_or_default();
+    merge_hls_page_for_format(
+        existing,
+        pdf_filename,
+        label,
+        highlights,
+        &removed,
+        Format::Md,
+    )
 }
 
+/// Upsert highlights into an existing `hls__` page, **preserving each existing
+/// annotation block (and its child notes) by `id`** and the page's block order.
+/// A block is dropped only when its id is in `removed` — highlights this write
+/// knows were deleted. An annotation whose id the writer does not know (its
+/// sidecar entry is unreadable, or the page arrived by sync before the sidecar)
+/// is kept (L01 H1/H2). New highlights go after the last annotation block.
 pub fn merge_hls_page_for_format(
     existing: Option<&Document>,
     pdf_filename: &str,
     label: &str,
     highlights: &[Highlight],
+    removed: &HashSet<String>,
     format: Format,
 ) -> Document {
     let asset_path = format!("../assets/{pdf_filename}");
@@ -549,36 +614,36 @@ pub fn merge_hls_page_for_format(
     }
     let pre = pre_lines.join("\n");
 
-    // Split existing roots into annotation blocks (keyed by id) and everything
-    // else — user-authored top-level notes that must be PRESERVED, not rebuilt
-    // away. Annotations are regenerated from the (authoritative) highlight list so
-    // a removed highlight drops its block; a non-annotation root is always kept.
-    let mut ann_by_id: HashMap<String, DocBlock> = HashMap::new();
-    let mut user_roots: Vec<DocBlock> = Vec::new();
-    if let Some(doc) = existing {
-        for b in &doc.roots {
-            let is_annotation = b.property("ls-type").as_deref() == Some("annotation");
-            match b.property("id") {
-                Some(id) if is_annotation => {
-                    ann_by_id.insert(id, b.clone());
-                }
-                _ => user_roots.push(b.clone()),
-            }
-        }
-    }
-
-    let mut roots: Vec<DocBlock> = highlights
-        .iter()
-        .map(|h| match ann_by_id.remove(&h.id) {
+    let by_id: HashMap<&str, &Highlight> = highlights.iter().map(|h| (h.id.as_str(), h)).collect();
+    let mut placed: HashSet<&str> = HashSet::new();
+    let mut roots: Vec<DocBlock> = Vec::new();
+    let mut after_last_annotation = 0;
+    for b in existing.map(|doc| doc.roots.as_slice()).unwrap_or_default() {
+        let annotation = b.property("ls-type").as_deref() == Some("annotation");
+        let id = b.property("id").filter(|_| annotation);
+        match id.as_deref() {
             // Keep the user's note text + child blocks, but refresh the highlight
             // metadata (color/page) from the authoritative highlight — so
-            // recoloring in the PDF pane updates the colored badge here too.
-            Some(existing) => refresh_annotation(existing, h, format),
-            None => highlight_block(h, format),
-        })
+            // recoloring in the PDF pane updates the colored badge here too. A
+            // duplicate block for the same id is kept as it is, never dropped.
+            Some(id) if !placed.contains(id) && by_id.contains_key(id) => {
+                let (&key, h) = by_id.get_key_value(id).expect("checked");
+                placed.insert(key);
+                roots.push(refresh_annotation(b.clone(), h, format));
+            }
+            Some(id) if removed.contains(id) => continue,
+            _ => roots.push(b.clone()),
+        }
+        if annotation {
+            after_last_annotation = roots.len();
+        }
+    }
+    let fresh: Vec<DocBlock> = highlights
+        .iter()
+        .filter(|h| placed.insert(h.id.as_str()))
+        .map(|h| highlight_block(h, format))
         .collect();
-    // Keep the user's own top-level notes (after the generated annotations).
-    roots.extend(user_roots);
+    roots.splice(after_last_annotation..after_last_annotation, fresh);
     Document {
         pre_block: Some(pre),
         roots,

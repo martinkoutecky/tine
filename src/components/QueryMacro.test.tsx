@@ -541,6 +541,9 @@ describe("QueryMacro sheet integration", () => {
     expect(activeView(root)).toBe("List");
     expect(blockProperty("query", "tine.view")).toBeNull();
     expect(root.querySelectorAll(".query-table")).toHaveLength(1);
+    // A wide result table scrolls inside .md-table-wrap instead of cram-wrapping
+    // its nowrap cells past the block (master ee7730b48).
+    expect(root.querySelector(".query-table")!.parentElement!.classList.contains("md-table-wrap")).toBe(true);
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(0);
 
     dispose();

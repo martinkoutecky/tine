@@ -3409,6 +3409,7 @@ impl SnapshotMemos {
         } else {
             (Vec::new(), Arc::new(crate::query::RealPageNames::new()))
         };
+        let journal = crate::query::journal_format(graph.config());
         let today = tine_core::date::JournalDate::today().ordinal_key();
         // Hold the derived write lock across the WHOLE prune+re-tag. This is
         // deliberately atomic: the keep/evict test (page_affects_*) is re-evaluated
@@ -3447,6 +3448,7 @@ impl SnapshotMemos {
                     Some(("b", target)) => crate::query::page_affects_backlinks(
                         &real_pages,
                         &aliases,
+                        &journal,
                         target,
                         entry,
                         candidate,
@@ -3454,6 +3456,7 @@ impl SnapshotMemos {
                     Some(("u", target)) => crate::query::page_affects_unlinked(
                         &real_pages,
                         &aliases,
+                        &journal,
                         target,
                         entry,
                         candidate,
@@ -3465,6 +3468,7 @@ impl SnapshotMemos {
                         crate::query::page_affects_backlinks(
                             &real_pages,
                             &aliases,
+                            &journal,
                             target,
                             entry,
                             candidate,
@@ -3474,6 +3478,7 @@ impl SnapshotMemos {
                         crate::query::page_affects_unlinked(
                             &real_pages,
                             &aliases,
+                            &journal,
                             target,
                             entry,
                             candidate,
@@ -5765,6 +5770,7 @@ mod tests {
     ) {
         let aliases = graph.page_aliases();
         let real_pages = crate::query::real_page_names(graph);
+        let journal = crate::query::journal_format(graph.config());
         let exact_paths = |pages: &[(PageEntry, Arc<Document>)]| {
             let mut paths = pages
                 .iter()
@@ -5772,6 +5778,7 @@ mod tests {
                     ReferenceKind::Explicit => crate::query::page_affects_backlinks(
                         &real_pages,
                         &aliases,
+                        &journal,
                         target,
                         entry,
                         doc,
@@ -5779,6 +5786,7 @@ mod tests {
                     ReferenceKind::Plain => crate::query::page_affects_unlinked(
                         &real_pages,
                         &aliases,
+                        &journal,
                         target,
                         entry,
                         doc,
