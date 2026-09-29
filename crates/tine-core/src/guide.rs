@@ -392,6 +392,10 @@ mod rename_guide_tests {
         assert!(tips.contains("all take the same modified clicks"));
         assert!(tips.contains("**Ctrl/Cmd-click** or **middle-click** opens a background tab"));
         assert!(tips.contains("**Alt-click** opens the other pane"));
+        assert!(tips.contains("an outline bullet's dot"));
+        assert!(tips.contains("a pane's only tab still has a close button"));
+        let refs = include_str!("templates/pages-links-references-search.md");
+        assert!(refs.contains("follows its source's fold state live"));
     }
 
     #[test]
