@@ -11,6 +11,9 @@ import { taskCheckboxState } from "../markers";
 import { InlineText } from "../render/inline";
 import { formatForPage } from "../document";
 import { openBlockInSidebar } from "../ui";
+import { openInNewTab, type Route } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
@@ -78,6 +81,15 @@ function RefBlock(props: {
   const properties = createMemo(() =>
     props.block.page_property ? pageProperties(props.block.raw, format()) : []
   );
+  const refTarget = () => ({
+    uuid: blockDtoExternalId(props.block),
+    page: props.page ?? "",
+    pageKind: (props.pageKind ?? "page") as "journal" | "page",
+  });
+  const openRefRoute = (open: (route: Route) => unknown): void => {
+    const t = refTarget();
+    open({ kind: "page", name: t.page, pageKind: t.pageKind, block: t.uuid });
+  };
   return (
     <div
       class="ls-block ref-block"
@@ -89,16 +101,28 @@ function RefBlock(props: {
         <div class="block-controls">
           <span
             class="bullet-container"
-            title={props.block.page_property ? "Page property reference" : "Shift-click to open in sidebar"}
+            title={props.block.page_property ? "Page property reference" : "Shift-click → sidebar; ctrl/cmd-click or middle-click → new tab; alt-click → other pane"}
+            onMouseDown={(e) => {
+              // GH #207's other half: suppress shift-range selection and
+              // middle-button autoscroll / PRIMARY-paste for the gestures this
+              // bullet answers.
+              if (!props.block.page_property) internalLinkMouseDown(e);
+            }}
             onClick={(e) => {
-              if (!props.block.page_property && e.shiftKey) {
-                e.stopPropagation();
-                openBlockInSidebar({
-                  uuid: blockDtoExternalId(props.block),
-                  page: props.page ?? "",
-                  pageKind: props.pageKind ?? "page",
-                });
-              }
+              if (props.block.page_property) return;
+              // Sibling of the live outline's bullet (GH #456): the same one
+              // decision, same destinations, minus the in-place zoom, which a
+              // read-only reference has no equivalent of, so a plain click keeps
+              // doing nothing.
+              const dest = internalLinkDest(e);
+              if (dest === "default") return;
+              e.stopPropagation();
+              if (dest === "sidebar") openBlockInSidebar(refTarget());
+              else openRefRoute(dest === "pane" ? openRouteInOtherPane : openInNewTab);
+            }}
+            onAuxClick={(e) => {
+              if (props.block.page_property) return;
+              if (internalLinkAuxClick(e, () => openRefRoute(openInNewTab))) e.stopPropagation();
             }}
           >
             <span class="bullet" />

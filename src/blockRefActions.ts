@@ -4,17 +4,22 @@
 import { persistentBlockRef } from "./document";
 import { openInNewTab } from "./router";
 import { openBlockInSidebar } from "./ui";
+import { openRouteInOtherPane } from "./panes";
 import { pushToast } from "./toasts";
 
 /** Open a persisted block destination only after its target ID has reached disk. */
-export async function openDurableBlock(id: string, destination: "sidebar" | "tab"): Promise<void> {
+export async function openDurableBlock(id: string, destination: "sidebar" | "tab" | "pane"): Promise<void> {
   try {
     const ref = await persistentBlockRef(id);
     if (ref) {
       if (destination === "sidebar") openBlockInSidebar(ref);
-      else openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+      else {
+        const route = { kind: "page" as const, name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) };
+        if (destination === "pane") openRouteInOtherPane(route);
+        else openInNewTab(route);
+      }
       return;
     }
   } catch { /* The save error is reported below. */ }
-  pushToast(`Could not save the block ID before opening the ${destination}.`, "error");
+  pushToast(`Could not save the block ID before opening the ${destination === "pane" ? "other pane" : destination}.`, "error");
 }
