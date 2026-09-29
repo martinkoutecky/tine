@@ -87,7 +87,56 @@ describe("fenced-code language completion (GH #94)", () => {
 
       enter(textarea);
       await vi.waitFor(() => expect(doc.byId.code.raw).toBe("```javascript\n\n```"));
-      expect(textarea.selectionStart).toBe("```javascript\n".length);
+      // The language picked from the scaffold's opener line completes the
+      // wrapper, swapping to the body-only code view: the caret lands at the
+      // start of the (empty) payload — the code-line position in body space.
+      expect(textarea.selectionStart).toBe(0);
+      expect(textarea.value).not.toContain("```");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the scaffold's language picker typeable until a language completes the wrapper", async () => {
+    loadSingle(page("/code"));
+    startEditing("code", "/code".length);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Code")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      openCompletion(textarea);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-item")).not.toBeNull());
+      enter(textarea);
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-item")).not.toBeNull());
+
+      // Typing the query refines the picker on the still-raw scaffold (the
+      // body-only swap waits for the picker so it can keep its opener line).
+      textarea.setSelectionRange(3, 3);
+      for (const ch of "javas") {
+        const before = textarea.selectionStart;
+        textarea.value = textarea.value.slice(0, before) + ch + textarea.value.slice(before);
+        textarea.setSelectionRange(before + 1, before + 1);
+        textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
+      }
+      expect(doc.byId.code.raw).toBe("```javas\n\n```");
+      await vi.waitFor(() => {
+        const refined = [...document.body.querySelectorAll(".autocomplete .ac-item")];
+        expect(refined.length).toBeGreaterThan(0);
+        expect(refined.some((item) => item.querySelector(".ac-label")?.textContent === "JavaScript")).toBe(true);
+      });
+      // The scaffold's raw stays byte-stable while the query is being typed.
+      expect(doc.byId.code.raw).toBe("```javas\n\n```");
+
+      // Accept JavaScript: the canonical id lands on the opener and the view
+      // swaps to the body-only payload.
+      const pick = [...document.body.querySelectorAll(".autocomplete .ac-item")]
+        .find((item) => item.querySelector(".ac-label")?.textContent === "JavaScript")!;
+      pick.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(doc.byId.code.raw).toBe("```javascript\n\n```"));
+      expect(textarea.selectionStart).toBe(0);
+      expect(textarea.value).not.toContain("```");
     } finally {
       dispose();
     }

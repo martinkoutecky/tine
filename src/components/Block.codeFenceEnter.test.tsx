@@ -139,7 +139,9 @@ describe("Double Enter exits a trailing code or calculator block", () => {
     ));
     try {
       const ta = root.querySelector("textarea") as HTMLTextAreaElement;
-      const blankLine = ta.value.indexOf("\n\n") + 1;
+      // The closer's mandatory separator is wrapper-owned, so the one explicit
+      // trailing payload newline places the caret on the blank exit row.
+      const blankLine = ta.value.length;
       pressEnter(ta, blankLine);
       expect(pageByName("Code exit")!.roots).toHaveLength(2);
       expect(doc.byId[id].raw).toBe("```js\nconst x = 1\n```");

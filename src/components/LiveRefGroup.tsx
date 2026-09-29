@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, crea
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { ensurePageLoaded, formatForPage, pageByName, node as docNode } from "../document";
-import { Block, CollapseSurfaceContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
+import { Block, CollapseSurfaceContext, EmbedNavExitContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
@@ -38,6 +38,8 @@ export function LiveRefGroup(props: {
   path?: string;
   blocks: BlockDto[];
   embedId?: string;
+  /** The block whose `{{embed}}` macro renders this group (embed surface only). */
+  hostBlockId?: string;
   showBreadcrumb?: boolean;
   surface: "ref" | "query" | "embed";
   evidence?: ReferenceBlockEvidence[];
@@ -212,6 +214,13 @@ export function LiveRefGroup(props: {
       <Show when={near()}>
         <CollapseSurfaceContext.Provider value={collapseSurface}>
         <SurfaceContext.Provider value={surface}>
+        {/* GH #415: Up from the first row of an embed's ROOT row exits the embed
+            into the host page; the other rows stay surface-local. */}
+        <EmbedNavExitContext.Provider value={
+          props.surface === "embed" && props.hostBlockId
+            ? { hostBlockId: props.hostBlockId, firstRoot: () => props.blocks[0]?.id }
+            : null
+        }>
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <For each={props.blocks.map((b) => b.id)}>
           {(id) => {
@@ -271,6 +280,7 @@ export function LiveRefGroup(props: {
           }}
         </For>
         </LinkDepthContext.Provider>
+        </EmbedNavExitContext.Provider>
         </SurfaceContext.Provider>
         </CollapseSurfaceContext.Provider>
       </Show>

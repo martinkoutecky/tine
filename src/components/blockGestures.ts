@@ -1,6 +1,8 @@
 /** Pointer gestures on a rendered block, split out of Block.tsx: the bullet's
  * drag-to-reorder and the click-or-drag gesture on rendered content.
  *
+ * - `renderedClickOffset(...)` maps a click on rendered content to the raw
+ *   offset the editor should open at, or null when no trustworthy mapping exists.
  * - `beginDrag(id, e)` arms a bullet drag from a mousedown. Past a 4 px
  *   threshold it ends editing, tracks a drop indicator (`dropInd`) under the
  *   pointer and, on mouseup, moves the active selection (or just the block) with
@@ -14,6 +16,9 @@ import { captureBinding, stillBound } from "../binding";
 import { clearSelection, extendSelectionTo, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
 import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
+import { codeBodyProjection } from "../editor/codeFence";
+import { isBuiltinHidden, splitProps } from "../editor/properties";
+import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
@@ -151,4 +156,34 @@ export function beginEditGesture(
   };
   document.addEventListener("mousemove", onMove, true);
   document.addEventListener("mouseup", onUp, true);
+}
+
+/** Click on rendered block content -> raw caret offset for the editor, placing
+ *  the caret WHERE you clicked when lsdoc span data can map the rendered leaf
+ *  back through source bytes and hidden props. Anything without trustworthy
+ *  span data (chips, macro hosts, parser fallback) returns null and the caller
+ *  keeps the old end-of-block behaviour. */
+export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "md" | "org", e: MouseEvent): number | null {
+  const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+  // GH #489: a whole-block code card is highlight.js markup with no span data,
+  // so the mapper below always declined and the caret fell to the end of the
+  // block, hundreds of lines from the click. Answer it first, from rendered text
+  // position; the past-the-end rule must not run for it (a click right of a
+  // SHORT line in a tall card means that line's end). Offsets leave here in
+  // visible-raw coordinates; the editor's `focusNow` maps them through the
+  // body-only wrapper.
+  const codeProjection = codeBodyProjection(splitProps(raw, isBuiltinHidden, fmt).visible, fmt);
+  if (codeProjection) {
+    const codeRange = d.caretRangeFromPoint?.(e.clientX, e.clientY);
+    const offset = codeRange ? codeCardOffsetFromRange(contentRef, codeRange) : null;
+    return offset === null ? null : codeProjection.open.length + Math.min(offset, codeProjection.body.length);
+  }
+  // GH #465: a click in the empty run-out past the last glyph means "the end",
+  // whatever the block ends with. Asked before the span map, because a trailing
+  // construct with an invisible closing delimiter (`*italic*`) maps that click
+  // to a legitimate-looking interior offset just before the delimiter.
+  if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return splitProps(raw, isBuiltinHidden, fmt).visible.length;
+  const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
+  if (!range) return null;
+  return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden, fmt);
 }

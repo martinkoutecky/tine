@@ -105,6 +105,8 @@ describe("outline Tab ownership (GH #157)", () => {
   it.each([
     ["hello world", "hello world", false],
     ["hello world", "hello world", true],
+    ["```js\nhello world\n```", "hello world", false],
+    ["```js\nhello world\n```", "hello world", true],
     ["hello 🌍\nsecond line", "hello 🌍\nsecond line", false],
     ["hello world\nid:: current", "hello world", false],
   ] as const)("keeps a clicked editor's selection for %s (visible=%s, outdent=%s)", async (raw, visible, outdent) => {
