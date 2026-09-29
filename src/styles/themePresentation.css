@@ -15,7 +15,7 @@
  * glyphs but never the line box the bullet column is aligned to (GH #459). */
 html[data-theme-content-typography="editorial-serif"] .page-section {
   --tine-editable-font: "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
-    Palatino, Georgia, "Noto Emoji Variable", serif;
+    Palatino, Georgia, var(--tine-editable-emoji-font), serif;
   font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
     Georgia, serif;
   font-size: 19px;

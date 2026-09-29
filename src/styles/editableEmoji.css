@@ -1,0 +1,47 @@
+/* Editable-control and native display emoji font policy (master 8ce04ad31,
+   4f3e1f90d / #458). Kept out of app.css (og size ratchet); imported just
+   before app.css by every entry (main.tsx, capture.tsx).
+
+   Native text controls cannot use the Twemoji <img> renderer. Desktop Linux
+   keeps the bundled monochrome face so WebKitGTK never reaches the crashing
+   COLRv1 Skia path (#76). Healthy native platforms use their color face first
+   and retain Noto Emoji Variable as the safe last emoji fallback (GH #293).
+   `html[data-editable-emoji]` is set before first paint by
+   installEditableEmojiPlatform (src/editableEmoji.ts).
+   Noto Emoji also contains the keycap bases #, * and 0-9; putting it first gives
+   ordinary source text emoji-width advances (for example `v 0 . 5 . 0`).
+   !important is deliberate: several specialized editors use `font: inherit` or
+   a monospace shorthand later in app.css; safety must survive those rules. */
+:root {
+  --tine-editable-emoji-font: "Noto Emoji Variable";
+}
+html[data-editable-emoji="windows"] {
+  --tine-editable-emoji-font: "Segoe UI Emoji", "Noto Emoji Variable";
+}
+html[data-editable-emoji="apple"] {
+  --tine-editable-emoji-font: "Apple Color Emoji", "Noto Emoji Variable";
+}
+html[data-editable-emoji="android"] {
+  --tine-editable-emoji-font: "Noto Color Emoji", "Noto Emoji Variable";
+}
+/* Exports ship no Twemoji and run in ordinary browsers, which paint color
+   faces safely (#76 is WebKitGTK-in-app only); skip the monochrome guard. */
+html[data-editable-emoji="published"] {
+  --tine-editable-emoji-font: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Noto Emoji Variable";
+}
+/* Native display runs share the entire editable stack, including typography
+   presets and text faces that cover some symbols. Keep ordinary text outside
+   these runs in its existing face; never split an emoji sequence (#458). */
+.emoji-native,
+input:not([type="checkbox"]):not([type="radio"]),
+textarea {
+  font-family: var(--tine-editable-font, "Inter", var(--tine-editable-emoji-font), var(--ls-font-family)) !important;
+}
+
+.formula-editor-textarea,
+.calc-wrap .block-editor {
+  /* Keep the emoji face ahead of the generic family here too: a generic may
+     resolve to the crashing system color font before CSS considers a later family. */
+  --tine-editable-font: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
+    Consolas, "Courier New", var(--tine-editable-emoji-font), monospace;
+}

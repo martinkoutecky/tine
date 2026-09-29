@@ -1,0 +1,20 @@
+/*
+ * Keep the established public family name: users target `Inter` from custom
+ * CSS. The full upstream variable faces include OpenType stylistic sets and
+ * character variants that the former per-script static subsets omitted.
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../../node_modules/inter-ui/variable/InterVariable.woff2?v=4.1") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../../node_modules/inter-ui/variable/InterVariable-Italic.woff2?v=4.1") format("woff2");
+}

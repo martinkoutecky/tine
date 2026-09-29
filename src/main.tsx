@@ -9,19 +9,20 @@ import { startCommunityExtensions } from "./plugins/startup";
 import { isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import "@fontsource/inter/400.css";
-import "@fontsource/inter/500.css";
-import "@fontsource/inter/600.css";
-import "@fontsource/inter/700.css";
-// Display emoji are Twemoji SVG <img>s (see render/emoji.tsx). Native editable
-// controls cannot contain images, so they use this monochrome font instead of a
-// system COLRv1 font, whose WebKitGTK/Skia path can abort the render process (#76).
+// Full upstream Inter variable fonts retain OpenType stylistic sets/character
+// variants. Fontsource's per-script static subsets stripped them (GH #298).
+import "./styles/inter.css";
+// Linux display emoji use Twemoji SVGs; editable controls use this safe fallback
+// instead of system COLRv1 (WebKitGTK/Skia can abort, #76). Windows/Apple share
+// their native color face between display and editing, with this fallback.
 import "@fontsource-variable/noto-emoji/wght.css";
 import "katex/dist/katex.min.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/theme.css";
 import "./lsShimInstall";
 import { installSystemInsetOwner } from "./systemInsets";
+import { installEditableEmojiPlatform } from "./editableEmoji";
+import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/topbar.css";
 import "./styles/readiness.css";
@@ -32,6 +33,7 @@ import "./styles/query.css";
 import "./styles/published.css";
 
 installSystemInsetOwner();
+installEditableEmojiPlatform();
 applyTheme();
 applyAccent();
 if (isPublishedExport()) document.documentElement.classList.add("tine-published");
