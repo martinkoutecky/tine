@@ -725,4 +725,13 @@ mod og_20d_guide_tests {
         assert!(files.contains("A sheet that cannot be computed"));
         assert!(files.contains("the export still succeeds"));
     }
+
+    #[test]
+    fn guide_says_public_false_pages_are_never_exported() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("A page marked `public:: false` is never exported"));
+        assert!(files.contains("`:publishing/all-pages-public? true`"));
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("it still leaves out pages marked `public:: false`"));
+    }
 }

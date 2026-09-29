@@ -58,6 +58,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **A page marked `public:: false` stays out of every export.** With
+  `:publishing/all-pages-public? true` in `config.edn`, or **Include every page**
+  ticked, Tine published such pages anyway; like Logseq it now leaves them out,
+  and their blocks no longer reach another page's embeds, queries or references.
+  A query's own **Export…** is unchanged.
 - **An outside edit to `logseq/config.edn` now applies while the graph is open**
   (og 22b). A change made in Logseq, a text editor or delivered by a sync
   provider was taken in only after a rename or a reopen; the store watcher now

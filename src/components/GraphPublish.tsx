@@ -35,7 +35,7 @@ export function GraphPublish(): JSX.Element {
     <div class="settings-row"><span class="settings-label">Publish</span><div>
       <label class="settings-hint">Export name <input value={name()} onInput={(event) => setName(event.currentTarget.value)} /></label>
       <label class="settings-hint"><input type="checkbox" checked={allPages()}
-        onChange={(event) => setAllPages(event.currentTarget.checked)} /> Include every page, including private pages</label>
+        onChange={(event) => setAllPages(event.currentTarget.checked)} /> Include every page not marked public:: false</label>
       <div><button class="settings-btn" disabled={busy()} onClick={() => void publish()}>Export HTML and read-only app…</button></div>
       <div class="settings-hint">Choose a destination outside the graph. The export stays on your device until you share it.</div>
       <Show when={message()}><div class="settings-hint" role="status">{message()}</div></Show>

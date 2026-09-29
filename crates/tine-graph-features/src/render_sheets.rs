@@ -19,8 +19,8 @@
 //! `MAX_TOTAL_CELLS` cells of data are accepted (I-22).
 
 use super::{
-    ast_plain_text, block_anchor, body_blocks, decorate, esc, esc_attr, md_opts, render_block,
-    render_facets, Ctx, PrintOpts,
+    ast_plain_text, body_blocks, decorate, esc, esc_attr, md_opts, render_block, render_facets,
+    Ctx, PageAnchors, PrintOpts,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -433,23 +433,28 @@ pub(super) struct Emit<'a, 'b> {
     pub ctx: &'a Ctx<'b>,
     pub slug: &'a str,
     pub title: &'a str,
-    pub counter: &'a mut u32,
-    pub authored_ids: &'a HashSet<String>,
+    pub anchors: &'a PageAnchors,
+    /// Rows already given their anchor: a card shown in two board columns
+    /// carries the block's `id` once, so every page anchor stays unique.
+    pub anchored: HashSet<*const DocBlock>,
     pub index: &'a mut Vec<serde_json::Value>,
     pub opts: PrintOpts,
     pub tree_depth: usize,
 }
 
-/// Anchor (and search-index entry) for one row/card block, in the same lock-step
-/// numbering as `render_block`.
+/// ` id="…"` (and search-index entry) for a row/card block's first emission, from
+/// the page's one `PageAnchors` answer that `render_block` uses; empty for a repeat.
 fn row_anchor(row: &DocBlock, e: &mut Emit) -> String {
-    let anchor = block_anchor(row, e.counter, e.authored_ids);
+    if !e.anchored.insert(row) {
+        return String::new();
+    }
+    let anchor = e.anchors.get(row);
     let text = ast_plain_text(&body_blocks(row.raw()));
     if !text.is_empty() {
         e.index
             .push(json!({"slug": e.slug, "title": e.title, "anchor": anchor, "text": text}));
     }
-    anchor
+    format!(" id=\"{}\"", esc_attr(&anchor))
 }
 
 fn render_table(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
@@ -482,7 +487,7 @@ fn render_table(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
         let id = owner
             .children
             .get(row.ix)
-            .map(|b| format!(" id=\"{}\"", esc_attr(&row_anchor(b, e))))
+            .map(|b| row_anchor(b, e))
             .unwrap_or_default();
         out.push_str(&format!(
             "<tr{id}{}><td>{}</td>",
@@ -521,7 +526,7 @@ fn render_board(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
             let id = owner
                 .children
                 .get(card.ix)
-                .map(|b| format!(" id=\"{}\"", esc_attr(&row_anchor(b, e))))
+                .map(|b| row_anchor(b, e))
                 .unwrap_or_default();
             let c = &card.chips;
             let mut chips = String::new();
@@ -593,8 +598,7 @@ fn render_grid(owner: &DocBlock, at: &SheetPath, body: &Body, e: &mut Emit, out:
                         e.ctx,
                         e.slug,
                         e.title,
-                        e.counter,
-                        e.authored_ids,
+                        e.anchors,
                         e.index,
                         e.opts,
                         ords[c],

@@ -1,6 +1,8 @@
 //! Raw graph text for the parser comparison panel. Scans both page areas in
 //! O(entries + eligible file bytes); unreadable and oversized files are skipped.
 
+use std::path::Path;
+use tine_core::model::Format;
 use tine_store::{Area, Store};
 
 /// One UTF-8 source file, with the path shown by the comparison panel.
@@ -33,11 +35,8 @@ pub fn graph_source_files(store: &Store, include_journals: bool) -> Vec<GraphSou
             if !tine_store::is_graph_text(&entry.id) {
                 continue;
             }
-            let format = match entry.rel.rsplit_once('.').map(|(_, ext)| ext) {
-                Some("md") => "md",
-                Some("org") => "org",
-                _ => unreachable!("file_kind accepted only md and org"),
-            };
+            // The one format answer the parser uses (`.markdown`/`.MD` are Markdown).
+            let format = Format::from_path(Path::new(&entry.rel)).ext();
             let Some(meta) = entry.meta else { continue };
             if meta.len > MAX_FILE_BYTES {
                 continue;
