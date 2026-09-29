@@ -88,7 +88,7 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "src-tauri/src/concord_ledger.rs": { sites: 1, approval: "og QUESTIONS Q4 2026-09-29; docs/adr/0056" },
   "src-tauri/src/drafts.rs": { sites: 1, approval: "og QUESTIONS Q6 2026-09-29; docs/adr/0061" },
   // Copies census formats byte for byte (no new format); temporary, deleted at the identity flip.
-  "src-tauri/src/experiment_config_seed.rs": { sites: 2, approval: "og QUESTIONS Q7 (pending Martin); docs/app-identity.md" },
+  "src-tauri/src/experiment_config_seed.rs": { sites: 2, approval: "og QUESTIONS Q7 2026-09-29; docs/app-identity.md" },
 });
 
 export function checkFormatCount(formats = PERSISTED_FORMATS) {
