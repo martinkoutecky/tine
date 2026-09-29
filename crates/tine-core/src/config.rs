@@ -382,7 +382,7 @@ pub fn find_keyword(s: &str, key: &str) -> Option<usize> {
 
 /// [`find_keyword`] restricted to nesting depth 0 of `s` — a direct entry of
 /// the map whose body `s` is, never one inside a nested map/vector/list.
-fn find_keyword_at_map_level(s: &str, key: &str) -> Option<usize> {
+pub fn find_keyword_at_map_level(s: &str, key: &str) -> Option<usize> {
     scan_keyword(s, key, true)
 }
 
@@ -766,7 +766,7 @@ fn top_level_nested_string(edn: &str, outer: &str, inner: &str) -> Option<String
 
 /// `(open, close)` of the balanced `{…}` map opening at byte `open`; `None`
 /// when there is no `{` there or it never closes.
-fn balanced_map_at(s: &str, open: usize) -> Option<(usize, usize)> {
+pub fn balanced_map_at(s: &str, open: usize) -> Option<(usize, usize)> {
     if s.as_bytes().get(open) != Some(&b'{') {
         return None;
     }

@@ -146,11 +146,18 @@ const SHORTCUT_GROUPS: { scope: ShortcutScope; title: string; description: strin
   },
 ];
 
-export function buildShortcutPaneData(shortcuts: ShortcutSettingRow[]): ShortcutPaneSection[] {
+/** Group shortcut rows and filter by all search terms across command labels,
+ * ids and bindings. Cost: O(commands × query length); no I/O or failure. */
+export function buildShortcutPaneData(shortcuts: ShortcutSettingRow[], search = ""): ShortcutPaneSection[] {
+  const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const matches = (...values: (string | undefined)[]) => {
+    const text = values.filter(Boolean).join(" ").toLocaleLowerCase();
+    return terms.every((term) => text.includes(term));
+  };
   return SHORTCUT_GROUPS.map((group) => ({
     ...group,
-    commands: shortcuts.filter((s) => s.scope === group.scope),
-    builtins: BUILTIN_KEYS.filter((s) => s.scope === group.scope),
+    commands: shortcuts.filter((s) => s.scope === group.scope && matches(s.label, s.id, s.effective, s.binding)),
+    builtins: BUILTIN_KEYS.filter((s) => s.scope === group.scope && matches(s.label, s.id, s.binding, s.details)),
   }));
 }
 
@@ -161,7 +168,7 @@ export function shortcutPaneCommandIds(sections: ShortcutPaneSection[]): string[
 function displayBinding(binding: string): string {
   const b = binding.trim();
   if (!b) return "Unbound";
-  if (b === "false") return "Disabled";
+  if (b === "false") return "Unbound";
   return b;
 }
 
@@ -310,6 +317,7 @@ function ShortcutRow(props: {
   row: ShortcutSettingRow;
   recording: string | null;
   onRecord: (id: string) => void;
+  onUnbind: (id: string) => void;
   onReset: (id: string) => void;
 }): JSX.Element {
   const recording = () => props.recording === props.row.id;
@@ -325,6 +333,9 @@ function ShortcutRow(props: {
         {recording() ? "Press keys..." : displayBinding(props.row.effective)}
       </button>
       <span class="help-shortcut-tail">
+        <Show when={props.row.effective.trim() && props.row.effective !== "false"}>
+          <button class="help-reset" title="Remove this keybinding" onClick={() => props.onUnbind(props.row.id)}>Unbind</button>
+        </Show>
         <Show when={props.row.overridden}>
           <button
             class="help-reset"
@@ -360,11 +371,13 @@ function BuiltinRow(props: { row: BuiltinKeyDef }): JSX.Element {
 
 export function ShortcutsSettingsPane(props: {
   shortcuts: ShortcutSettingRow[];
+  search: string;
   recording: string | null;
   onRecord: (id: string) => void;
+  onUnbind: (id: string) => void;
   onReset: (id: string) => void;
 }): JSX.Element {
-  const sections = createMemo(() => buildShortcutPaneData(props.shortcuts));
+  const sections = createMemo(() => buildShortcutPaneData(props.shortcuts, props.search));
 
   return (
     <div class="help-shortcuts-pane">
@@ -373,11 +386,17 @@ export function ShortcutsSettingsPane(props: {
         Overrides are saved locally on top of <code>config.edn</code>.
       </div>
 
-      <TriggerTable shortcuts={props.shortcuts} />
-      <SyntaxTable />
+      <Show when={!props.search.trim()}>
+        <TriggerTable shortcuts={props.shortcuts} />
+        <SyntaxTable />
+      </Show>
+      <Show when={props.search.trim() && sections().every((section) => !section.commands.length && !section.builtins.length)}>
+        <div class="settings-search-empty">No matching shortcuts</div>
+      </Show>
 
       <For each={sections()}>
         {(section) => (
+          <Show when={section.commands.length || section.builtins.length}>
           <section class="help-settings-section help-shortcut-group">
             <div class="help-section-head help-shortcut-group-head">
               <div>
@@ -395,6 +414,7 @@ export function ShortcutsSettingsPane(props: {
                       row={row}
                       recording={props.recording}
                       onRecord={props.onRecord}
+                      onUnbind={props.onUnbind}
                       onReset={props.onReset}
                     />
                   )}
@@ -411,6 +431,7 @@ export function ShortcutsSettingsPane(props: {
               </div>
             </Show>
           </section>
+          </Show>
         )}
       </For>
     </div>

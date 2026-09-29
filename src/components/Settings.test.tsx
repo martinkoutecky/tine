@@ -12,6 +12,42 @@ afterEach(() => {
 });
 
 describe("Settings progressive disclosure and search", () => {
+  it("searches shortcut commands and unbinds a key without hiding its command", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("shortcuts");
+    await tick();
+    const search = root.querySelector<HTMLInputElement>('.settings-search-input')!;
+    search.value = "go to home";
+    search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await tick();
+    const row = [...root.querySelectorAll<HTMLElement>(".help-shortcut-row")]
+      .find((element) => element.textContent?.includes("Go to home page"))!;
+    expect(row).toBeDefined();
+    row.querySelector<HTMLButtonElement>('button[title="Remove this keybinding"]')!.click();
+    await tick();
+    const updated = [...root.querySelectorAll<HTMLElement>(".help-shortcut-row")]
+      .find((element) => element.textContent?.includes("Go to home page"))!;
+    expect(updated.textContent).toContain("Unbound");
+    expect(updated.textContent).toContain("Go to home page");
+    dispose();
+  });
+
+  it("remembers Settings maximize across close and reopen", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("appearance");
+    await tick();
+    root.querySelector<HTMLButtonElement>('button[aria-label="Maximize settings"]')!.click();
+    expect(root.querySelector(".settings-maximized")).not.toBeNull();
+    closeSettings();
+    openSettings("appearance");
+    await tick();
+    expect(root.querySelector(".settings-maximized")).not.toBeNull();
+    dispose();
+  });
   it("exposes the accessible three-mode Link autocomplete policy through Settings search", async () => {
     const root = document.createElement("div");
     document.body.append(root);

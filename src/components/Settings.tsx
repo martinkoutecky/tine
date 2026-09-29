@@ -1,9 +1,9 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { ImproveTab } from "./ImproveTab";
 import { errorFamily } from "../errorFamily";
 import { AboutTab } from "./AboutTab";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
-import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, theme, toggleTheme, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
+import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, theme, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { setJournalTemplate, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
@@ -53,6 +53,10 @@ import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { GraphPublish } from "./GraphPublish";
+import { HomePageSetting } from "./HomePageSetting";
+import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
+import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
+import { ThemeChoice } from "./ThemeChoice";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
@@ -98,59 +102,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "shortcuts", label: "Keyboard shortcuts" },
   { id: "about", label: "About" },
 ];
-type SettingSearchEntry = { tab: Tab; label: string; description: string; aliases?: string[]; level?: "advanced" };
-const SETTING_SEARCH: SettingSearchEntry[] = [
-  { tab: "appearance", label: "Theme", description: "light dark gallery colors" },
-  { tab: "appearance", label: "Accent color", description: "interface highlight color" },
-  { tab: "appearance", label: "Interface size", description: "zoom scale Ctrl scroll" },
-  { tab: "appearance", label: "Wide mode", description: "reading width" },
-  { tab: "appearance", label: "Document mode", description: "hide bullets prose" },
-  { tab: "appearance", label: "Document-mode Enter creates a new block", description: "Enter Shift Enter internal newline config" },
-  { tab: "appearance", label: "Show brackets", description: "page references config shortcut" },
-  { tab: "appearance", label: "Typographic replacements", description: "arrows dashes glyphs" },
-  { tab: "appearance", label: "Auto-pair brackets & quotes", description: "closers selections backspace" },
-  { tab: "appearance", label: "Space after inserting a reference", description: "page block autocomplete spacing" },
-  { tab: "appearance", label: "Dim in focus mode", description: "inactive blocks" },
-  { tab: "appearance", label: "Load local-file images", description: "absolute paths permission security" },
-  { tab: "appearance", label: "Smooth scrolling (experimental)", description: "animated journal scrolling WebKit", aliases: ["scroll animation"], level: "advanced" },
-  { tab: "appearance", label: "System title bar & window controls", description: "native frame chrome" },
-  { tab: "editor", label: "File format", description: "new pages Markdown Org" },
-  { tab: "editor", label: "Logical outdenting", description: "Shift Tab following siblings Roam config" },
-  { tab: "editor", label: "Link autocomplete default", description: "OG adaptive existing typed page tag completion", level: "advanced" },
-  { tab: "editor", label: "Switch to an already-open tab when navigating", description: "reuse tabs", level: "advanced" },
-  { tab: "editor", label: "Learn Ctrl+K choices", description: "adaptive launcher ranking reset history", level: "advanced" },
-  { tab: "editor", label: "Spell checker", description: "dictionaries languages spelling" },
-  { tab: "editor", label: "Copy a parent block's sub-blocks", description: "clipboard subtree", level: "advanced" },
-  { tab: "editor", label: "Strip collapsed:: when copying", description: "clipboard properties", level: "advanced" },
-  { tab: "editor", label: "Click a block reference to zoom in", description: "reference navigation" },
-  { tab: "journals", label: "Journal date format", description: "display titles" },
-  { tab: "journals", label: "First day of week", description: "calendar Monday Sunday" },
-  { tab: "journals", label: "Carry-over", description: "buttons context header last days" },
-  { tab: "journals", label: "Task workflow", description: "TODO DOING NOW LATER" },
-  { tab: "journals", label: "Time tracking", description: "LOGBOOK clock" },
-  { tab: "journals", label: "New-journal template", description: "default journal template" },
-  { tab: "journals", label: "Quick-capture Enter key", description: "capture submit new block", level: "advanced" },
-  { tab: "journals", label: "Agenda window", description: "scheduled deadline days" },
-  { tab: "files", label: "New asset filename", description: "paste drag media names" },
-  { tab: "files", label: "Watch for external edits", description: "inotify polling network filesystem" },
-  { tab: "files", label: "Diagram editors", description: "drawio Excalidraw commands", level: "advanced" },
-  { tab: "backups", label: "Snapshots to keep", description: "recovery retention conflicts" },
-  { tab: "graph", label: "Graph", description: "folder export publish" },
-  { tab: "improve", label: "Help improve Tine", description: "diagnostics divergences anonymize" },
-  { tab: "shortcuts", label: "Keyboard shortcuts", description: "key bindings commands remap" },
-  { tab: "about", label: "About", description: "version licenses updates" },
-];
-
-function settingMatches(entry: SettingSearchEntry, query: string): boolean {
-  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const haystack = [entry.label, entry.description, ...(entry.aliases ?? [])].join(" ").toLowerCase();
-  return terms.every((term) => haystack.includes(term));
-}
-
-function advancedMatch(tab: Tab, query: string): boolean {
-  return !!query.trim() && SETTING_SEARCH.some((entry) => entry.tab === tab && entry.level === "advanced" && settingMatches(entry, query));
-}
-
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<Tab>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
@@ -229,7 +180,7 @@ export function Settings(): JSX.Element {
 
   return (
     <Show when={settingsOpen()}>
-      <div class="modal-overlay" onClick={closeSettings}>
+      <div class="modal-overlay" classList={{ "settings-maximized": settingsMaximized() }} onClick={closeSettings}>
         <div class="settings-modal" onClick={(e) => e.stopPropagation()}>
           <aside class="settings-nav">
             <div class="settings-nav-title">Settings</div>
@@ -253,8 +204,8 @@ export function Settings(): JSX.Element {
               <input
                 class="settings-search-input"
                 type="search"
-                placeholder="Search settings…"
-                aria-label="Search settings"
+                placeholder={tab() === "shortcuts" ? "Search shortcuts…" : "Search settings…"}
+                aria-label={tab() === "shortcuts" ? "Search shortcuts" : "Search settings"}
                 value={settingsQuery()}
                 onInput={(event) => setSettingsQuery(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -265,12 +216,19 @@ export function Settings(): JSX.Element {
                   }
                 }}
               />
+              <button class="icon-btn settings-maximize" type="button"
+                aria-label={settingsMaximized() ? "Restore settings size" : "Maximize settings"}
+                aria-pressed={settingsMaximized()}
+                onClick={() => setSettingsMaximized(!settingsMaximized())}>
+                {settingsMaximized() ? "❐" : "□"}
+              </button>
               <button class="icon-btn" onClick={closeSettings}>
                 ✕
               </button>
             </div>
             <div class="settings-pane-body">
-              <Show when={settingsQuery().trim()}>
+              <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
+              <Show when={settingsQuery().trim() && tab() !== "shortcuts"}>
                 <div class="settings-search-results" aria-live="polite">
                   <Show when={matches().length} fallback={<div class="settings-search-empty">No matching settings</div>}>
                     <For each={matches()}>
@@ -300,6 +258,7 @@ export function Settings(): JSX.Element {
                 <BackupsTab />
               </Show>
               <Show when={tab() === "graph"}>
+                <HomePageSetting />
                 <GraphPublish />
               </Show>
               <Show when={tab() === "plugins"}>
@@ -311,14 +270,17 @@ export function Settings(): JSX.Element {
               <Show when={tab() === "shortcuts"}>
                 <ShortcutsSettingsPane
                   shortcuts={shortcuts()}
+                  search={settingsQuery()}
                   recording={recording()}
                   onRecord={(id) => setRecording(recording() === id ? null : id)}
+                  onUnbind={(id) => { setRecording(null); setShortcutOverride(id, "false"); }}
                   onReset={resetShortcutOverride}
                 />
               </Show>
               <Show when={tab() === "about"}>
                 <AboutTab />
               </Show>
+              </Suspense>
             </div>
           </div>
         </div>
@@ -1067,18 +1029,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
     <>
       <div class="settings-row">
         <span class="settings-label">Theme</span>
-        <button
-          class="theme-switch"
-          classList={{ "is-dark": theme() === "dark" }}
-          role="switch"
-          aria-checked={theme() === "dark"}
-          title="Toggle light / dark (t t)"
-          onClick={toggleTheme}
-        >
-          <span class="theme-opt"><span class="theme-ico">☀</span>Light</span>
-          <span class="theme-opt"><span class="theme-ico">☾</span>Dark</span>
-          <span class="theme-knob" />
-        </button>
+        <ThemeChoice />
       </div>
 
       <div class="settings-section">Themes</div>
