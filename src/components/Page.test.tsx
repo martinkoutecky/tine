@@ -707,6 +707,26 @@ describe("tag-page table", () => {
   });
 });
 
+describe("routed page loading", () => {
+  it("does not subscribe its loader to the loaded page it publishes", async () => {
+    const dto: PageRead = {
+      name: "Loaded once", kind: "page", title: "Loaded once", pre_block: null,
+      id: "pages/Loaded once.md",
+      blocks: [{ id: "once", raw: "One load", collapsed: false, children: [] }],
+    };
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    const getPageByPath = vi.spyOn(backend(), "getPageByPath").mockRejectedValue(new Error("unexpected reload"));
+    mainPaneRouter.openPage(dto.name, "page");
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("One load"));
+      await flushMicrotasks();
+      expect(getPage).toHaveBeenCalledTimes(1);
+      expect(getPageByPath).not.toHaveBeenCalled();
+    } finally { mounted.dispose(); }
+  });
+});
+
 describe("zoomed block view", () => {
   it("resolves a durable zoom route to the current transient live node", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";

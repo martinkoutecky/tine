@@ -333,7 +333,9 @@ export function PageView(): JSX.Element {
           // A path-pinned route (#21) loads that SPECIFIC file — the way to reach a
           // duplicate-day stray that shares a (kind,name) with the canonical day;
           // everything else resolves by name as before.
-          const loadedPath = r.path ? undefined : loadedPage(r.name)?.id;
+          // This is a snapshot for the route request, not an effect dependency:
+          // loadRoutedPage publishes loadedPage below and must not restart us.
+          const loadedPath = r.path ? undefined : untrack(() => loadedPage(r.name)?.id);
           const result = await readOwned(routeOwner, r.path || loadedPath
             ? backend().getPageByPath(r.path ?? loadedPath!)
             : backend().getPage(r.name, r.pageKind));
