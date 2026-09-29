@@ -423,7 +423,7 @@ export function QuickSwitcher(): JSX.Element {
     const binding = captureBinding();
     const owner = graphOwner();
     const stale = (): Owned<null> => {
-      pushToast("The graph changed before the page was created. Try again.", "error");
+      pushToast("The graph changed before the page was created. Try again.", "warn");
       return { kind: "stale" };
     };
     try {
