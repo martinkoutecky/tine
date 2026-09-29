@@ -4306,12 +4306,10 @@ mod tests {
                 QueryExportSpec {
                     key: "todo".into(),
                     query: "(task TODO)".into(),
-                    advanced: false,
                 },
                 QueryExportSpec {
                     key: "done".into(),
                     query: "(task DONE)".into(),
-                    advanced: false,
                 },
             ],
             64,

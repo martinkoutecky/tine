@@ -192,9 +192,6 @@ pub struct QueryExportSpec {
     pub key: String,
     /// Query expression source.
     pub query: String,
-    /// Ignored: export asks [`is_advanced`] (I-12). The field stays only for
-    /// wire compatibility until the frontend stops sending it (og C3 L02).
-    pub advanced: bool,
 }
 
 /// A single query macro's bounded, hierarchy-preserving export projection.

@@ -5217,7 +5217,6 @@ mod rev5_tests {
                     view.export_query_subtrees(&[QueryExportSpec {
                         key: "d3".into(),
                         query: "[[Target]]".into(),
-                        advanced: false
                     }])
                     .unwrap()
                 ),

@@ -23,18 +23,17 @@ fn export_runs_each_query_through_the_engine_the_macro_reader_chose() {
     .unwrap();
     let (store, _, _) = Store::open(&dir, OpenOptions::default()).unwrap();
     let view = store.whole_graph().unwrap();
-    // Both flags are deliberately the WRONG answer for their query.
+    // The caller says nothing about the dialect: a text query that mentions
+    // `:where` stays text, and a datalog form is recognised (one answerer, I-12).
     let batch = view
         .export_query_subtrees(&[
             QueryExportSpec {
                 key: "text".into(),
                 query: r#""meeting :where""#.into(),
-                advanced: true,
             },
             QueryExportSpec {
                 key: "datalog".into(),
                 query: "[:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]]".into(),
-                advanced: false,
             },
         ])
         .unwrap();

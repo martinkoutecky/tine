@@ -34,7 +34,6 @@ export interface BlockPreview {
 export interface QueryExportSpec {
   key: string;
   query: string;
-  advanced: boolean;
 }
 
 /** Native hierarchy projection for one query macro. */
