@@ -3,7 +3,7 @@ import { backend } from "./backend";
 import { resetStore } from "./document";
 import { journalConflicts, journalMigrationSkipMessage, refreshJournalConflicts, refreshSyncConflicts, setJournalConflicts, setSyncConflicts, syncConflicts } from "./ui";
 import { toasts, setToasts } from "./toasts";
-import type { JournalConflict, SyncConflict } from "./types";
+import type { ConflictInventory, JournalConflict } from "./types";
 
 describe("late conflict lists (I-20)", () => {
   it("explains each migration refusal and the skipped count", () => {
@@ -32,13 +32,17 @@ describe("late conflict lists (I-20)", () => {
   it("discards a sync-conflict list and notification from the old graph", async () => {
     setSyncConflicts([]);
     setToasts([]);
-    let finish!: (items: SyncConflict[]) => void;
-    const list = vi.spyOn(backend(), "listSyncConflicts").mockImplementationOnce(() =>
+    let finish!: (inventory: ConflictInventory) => void;
+    const list = vi.spyOn(backend(), "conflictInventory").mockImplementationOnce(() =>
       new Promise((resolve) => { finish = resolve; })
     );
-    const refreshing = refreshSyncConflicts(true);
+    const refreshing = refreshSyncConflicts("new");
     resetStore();
-    finish([{ path: "pages/old.sync-conflict.md", base_name: "Old", base_path: null, kind: "page", tag: "old", preview: "old" }]);
+    finish({
+      sync_conflicts: [{ path: "pages/old.sync-conflict.md", base_name: "Old", base_path: null, kind: "page", tag: "old", preview: "old" }],
+      vcs_markers: [],
+      queue: [],
+    });
     await refreshing;
     expect(syncConflicts()).toEqual([]);
     expect(toasts()).toEqual([]);

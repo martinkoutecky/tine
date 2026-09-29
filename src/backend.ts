@@ -32,6 +32,8 @@ import type {
   SyncConflict,
   SyncConflictDiff,
   MergeDecision,
+  ConflictInventory,
+  MarkerConflictDiff,
   PrintOpts,
   PdfState,
   QueryExecution,
@@ -438,6 +440,22 @@ export interface Backend {
   ): Promise<void>;
   /** Discard a conflict copy without merging (move it to the recoverable trash). */
   trashSyncConflict(conflict: string, kind: "delete-page"): Promise<void>;
+  /** The conflict listings and the derived queue from ONE graph walk; never
+   *  stored. Cost: one bounded read of every page file (O(graph text bytes)). */
+  conflictInventory(): Promise<ConflictInventory>;
+  /** A marker-bearing page's own sides as a block diff (3-way when the markers
+   *  carry a common ancestor). Read-only; null when it carries no markers. */
+  vcsMarkerConflictDiff(path: string): Promise<MarkerConflictDiff | null>;
+  /** Rewrite a marker-bearing page per the user's decisions, guarded by the
+   *  file's `baseRev` ("conflict" if it changed); the pre-resolution bytes are
+   *  first staged in the recoverable trash. */
+  resolveVcsMarkerConflict(
+    path: string,
+    decisions: Record<string, MergeDecision>,
+    baseRev: string,
+    kinds: EditKinds,
+    preChoice?: "mine" | "theirs" | "union"
+  ): Promise<void>;
   /** Subscribe to the watcher's `conflicts-changed` event (a conflict copy
    *  appeared or vanished). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
@@ -642,8 +660,14 @@ export interface Backend {
    *  events only. Build commit/time that are not a hex commit and an ISO
    *  timestamp are dropped by the backend. Never contains graph content. */
   diagnosticReport(buildCommit: string, buildTime: string): Promise<DiagnosticReport>;
-  /** Drop every recorded diagnostic event of this run. */
+  /** Build the report and save it where the user picks (desktop save
+   *  dialog); `false` when cancelled. Mobile rejects: use Copy report. */
+  saveDiagnosticReport(buildCommit: string, buildTime: string): Promise<boolean>;
+  /** Drop every recorded diagnostic event of this run and the previous one. */
   clearDiagnostics(): Promise<void>;
+  /** Mobile only (GH #426): whether the recorded session counts as live, so an
+   *  OS reap of a hidden app is not reported as an unclean exit. */
+  diagnosticSessionActive(active: boolean): Promise<void>;
   /** Record one fixed-kind frontend event. The backend drops the event when a
    *  token is outside its closed vocabulary; fields carry no free text. */
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void>;
@@ -654,6 +678,10 @@ export interface Backend {
 export interface DebugInfo {
   enabled: boolean;
   path: string;
+  /** The flight recorder is persisted in app data for this run. */
+  recorderActive: boolean;
+  /** The previous run ended without an orderly shutdown. */
+  previousExitUnclean: boolean;
 }
 
 export interface DiagnosticReport {
@@ -744,6 +772,7 @@ export function queryPrintRefusal(error: unknown): QueryPrintRefusedError | null
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
   "debug_info", "debug_log", "diagnostic_ipc_event", "diagnostic_frontend_event", "diagnostic_report", "clear_diagnostics",
+  "save_diagnostic_report", "diagnostic_session_active",
 ]);
 /** A command still running after this long is recorded as `slow`. */
 const SLOW_IPC_MS = 500;
@@ -1166,6 +1195,21 @@ class TauriBackend implements Backend {
   trashSyncConflict(conflict: string) {
     return this.call<void>("trash_sync_conflict", { conflict });
   }
+  conflictInventory() {
+    return this.call<ConflictInventory>("conflict_inventory");
+  }
+  vcsMarkerConflictDiff(path: string) {
+    return this.call<MarkerConflictDiff | null>("vcs_marker_conflict_diff", { path });
+  }
+  resolveVcsMarkerConflict(
+    path: string,
+    decisions: Record<string, MergeDecision>,
+    baseRev: string,
+    _kinds: EditKinds,
+    preChoice?: "mine" | "theirs" | "union"
+  ) {
+    return this.call<void>("resolve_vcs_marker_conflict", { path, decisions, baseRev, preChoice: preChoice ?? "union" });
+  }
   async onConflictsChanged(cb: () => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
     return listen("conflicts-changed", () => cb());
@@ -1335,8 +1379,14 @@ class TauriBackend implements Backend {
   diagnosticReport(buildCommit: string, buildTime: string) {
     return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime });
   }
+  saveDiagnosticReport(buildCommit: string, buildTime: string) {
+    return this.call<boolean>("save_diagnostic_report", { buildCommit, buildTime });
+  }
   clearDiagnostics() {
     return this.call<void>("clear_diagnostics");
+  }
+  diagnosticSessionActive(active: boolean) {
+    return this.call<void>("diagnostic_session_active", { active });
   }
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields: DiagnosticFrontendFields = {}) {
     return this.call<void>("diagnostic_frontend_event", { kind, ...fields });

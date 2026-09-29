@@ -216,7 +216,8 @@ mod parity_guide_tests {
             "Toggle maximize active pane",
             "Open in new tab",
             "Settings → Help & diagnostics",
-            "**Copy report**; nothing is uploaded",
+            "**Copy report**, or on desktop **Save report…**; nothing is uploaded",
+            "If Tine did not close cleanly last time, it says so",
             ":ref/linked-references-collapsed-threshold",
             "**Ctrl/Cmd+Shift+C** copies an embed",
             "hover a result to copy it",
@@ -316,6 +317,26 @@ mod rename_guide_tests {
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("**Export to PDF…** saves pending page edits"));
         assert!(tips.contains("stops the export and shows an error"));
+    }
+
+    #[test]
+    fn concord_conflict_queue_and_resolver_are_documented_in_the_bundled_guide() {
+        // og family 8c: the badge, the Conflicts page, the in-page resolver and
+        // the marker save refusal are user-visible and named in the Guide.
+        let tips = include_str!("templates/tips.md");
+        for control in [
+            "**N conflicts** badge",
+            "**Conflicts** page",
+            "**Discard copy**",
+            "**Apply resolution**",
+            "Tine refuses to save a page that still contains merge markers",
+            "the file as it was first goes to the graph trash",
+        ] {
+            assert!(
+                tips.contains(control),
+                "missing family-8 Guide control: {control}"
+            );
+        }
     }
 
     #[test]

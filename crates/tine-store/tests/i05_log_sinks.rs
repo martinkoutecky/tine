@@ -71,6 +71,7 @@ fn rust_log_sinks_keep_private_data_off_stderr() {
     for file in [
         "src-tauri/src/debug.rs",
         "src-tauri/src/commands.rs",
+        "src-tauri/src/commands/concord.rs",
         "src-tauri/src/lib.rs",
         "src-tauri/src/backup.rs",
         "src-tauri/src/platform.rs",

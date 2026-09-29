@@ -44,7 +44,8 @@ describe("mobile safe-area insets", () => {
       ".welcome-overlay",
       ".audio-overlay",
       ".lightbox-overlay",
-      ".sync-merge-overlay",
+      // og 19A retired the Settings sync-merge modal (.sync-merge-overlay): the
+      // resolver is in-page now and has no viewport-fixed overlay to inset.
     ]) {
       // Rules may live in any split sheet (e.g. .welcome-overlay moved to
       // pdf-workspace.css); allCss joins every src/styles sheet.
@@ -53,6 +54,8 @@ describe("mobile safe-area insets", () => {
         expect(rule, `${selector} ${side}`).toContain(`var(--overlay-inset-${side})`);
       }
     }
+    // A reintroduced viewport-fixed conflict modal must rejoin the list above.
+    expect(allCss).not.toContain(".sync-merge-overlay");
     expect(block(css, ".toast-stack")).toContain("calc(var(--overlay-inset-bottom) + 18px)");
     expect(block(css, ".parser-error-banner")).toContain("calc(var(--overlay-inset-top) + 8px)");
     expect(block(help, ".help-corner")).toContain("var(--overlay-inset-bottom, 0px) + 16px");

@@ -1,10 +1,12 @@
-// Settings → Help & diagnostics: review, copy or clear the privacy-safe
-// diagnostic report of this run (GH #343), and run the parser comparison
+// Settings → Help & diagnostics: review, copy, save (desktop) or clear the
+// privacy-safe diagnostic report of this run and the previous one (GH #343,
+// og ADR 0058), and run the parser comparison
 // ("Help improve Tine's parser"). Nothing here is uploaded automatically.
 import { Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend, type DiagnosticReport } from "../backend";
 import { writeClipboardText } from "../clipboard";
 import { dbg } from "../debug";
+import { isMobilePlatform } from "../nativeChrome";
 import { ownedWhen, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { ImproveTab } from "./ImproveTab";
@@ -55,6 +57,16 @@ export function DiagnosticsTab(): JSX.Element {
     }
   };
 
+  const saveReport = async () => {
+    try {
+      const saved = await writeOwned(ownedWhen(() => !disposed), backend().saveDiagnosticReport(__GIT_COMMIT__, __BUILD_TIME__));
+      if (saved.kind === "current" && saved.value) pushToast("Diagnostic report saved", "success");
+    } catch (error) {
+      dbg(`diagnostic report save failed: ${String(error)}`);
+      pushToast("Could not save the diagnostic report.", "error");
+    }
+  };
+
   const clearReport = async () => {
     try {
       const result = await writeOwned(ownedWhen(() => !disposed), backend().clearDiagnostics());
@@ -70,13 +82,15 @@ export function DiagnosticsTab(): JSX.Element {
     <section class="diagnostics-tab settings-section">
       <h2>Help & diagnostics</h2>
       <p>
-        Tine keeps a small, bounded flight recorder for the current run. It records operation
-        names, outcomes, timings, counts, platform and build information.
+        Tine keeps a small, bounded flight recorder of this run and the previous one, including
+        whether the previous run closed cleanly. It records operation names, outcomes, timings,
+        counts, platform and build information.
       </p>
       <p class="settings-hint diagnostics-privacy">
         It does not record graph content, file paths, page titles, queries, URLs, credentials, or
-        the detailed opt-in debug log. Nothing is uploaded automatically, and nothing is kept after
-        Tine quits. You choose whether to copy a report and share it.
+        the detailed opt-in debug log. It is kept in Tine's private app data (at most 1 MiB), never
+        in your graph, and nothing is uploaded. You choose whether to copy or save a report and
+        share it.
       </p>
       <div class="diagnostics-actions">
         <button type="button" class="primary" disabled={busy()} onClick={() => void createReport()}>
@@ -84,6 +98,9 @@ export function DiagnosticsTab(): JSX.Element {
         </button>
         <Show when={report()}>
           <button type="button" onClick={() => void copyReport()}>Copy report</button>
+        </Show>
+        <Show when={!isMobilePlatform}>
+          <button type="button" onClick={() => void saveReport()}>Save report…</button>
         </Show>
         <button type="button" class="danger" onClick={() => void clearReport()}>
           Clear recorded events

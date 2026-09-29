@@ -266,7 +266,7 @@ fn hostile_child() {
         _ => unreachable!(),
     }
     fs::write(
-        root.join("pages/Hostile.sync-conflict-20260926.md"),
+        root.join("pages/Hostile.sync-conflict-20260926-120000-ABCDEFG.md"),
         "- conflicting\n",
     )
     .unwrap();
@@ -324,7 +324,7 @@ fn hostile_child() {
     let _ = tine_graph_features::conflicts::sync_conflict_diff(
         &store,
         "pages/Hostile.md",
-        "pages/Hostile.sync-conflict-20260926.md",
+        "pages/Hostile.sync-conflict-20260926-120000-ABCDEFG.md",
     );
     if case == "deep_edn" {
         let _ = tine_graph_features::pdf::read_highlights(&store, "sample.pdf");
@@ -405,7 +405,7 @@ fn benign_page_at_depth_cap() {
     let path = root.join("pages/Deep.md");
     fs::write(&path, &source).unwrap();
     fs::write(
-        root.join("pages/Deep.sync-conflict-20260928.md"),
+        root.join("pages/Deep.sync-conflict-20260928-120000-ABCDEFG.md"),
         at_cap_outline("LEAF other"),
     )
     .unwrap();
@@ -439,7 +439,7 @@ fn benign_page_at_depth_cap() {
     let diff = tine_graph_features::conflicts::sync_conflict_diff(
         &store,
         "pages/Deep.md",
-        "pages/Deep.sync-conflict-20260928.md",
+        "pages/Deep.sync-conflict-20260928-120000-ABCDEFG.md",
     )
     .unwrap();
     assert!(diff.is_some(), "merge review opens at the cap");

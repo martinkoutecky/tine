@@ -30,6 +30,8 @@ import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../
 import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
+import { PageConflictResolution } from "./ConflictResolution";
+import { conflictForPage } from "../conflictQueue";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -292,7 +294,7 @@ export function PageView(): JSX.Element {
     );
     void (async () => {
       try {
-        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid") {
+        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts") {
           // Query workspaces are rendered by PaneLeaf, not PageView. Keep this
           // guard so the page loader never interprets a virtual route as a file.
           setLoadedRoute(r);
@@ -983,6 +985,10 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           Read-only — this <code>.org</code> file uses a structure Tine can't safely
           round-trip yet, so it won't be edited here.
         </div>
+      </Show>
+      {/* Concord: a queued conflict is resolved AT the page, block by block. */}
+      <Show when={conflictForPage(props.page.id)}>
+        {(conflict) => <PageConflictResolution conflict={conflict()} />}
       </Show>
       <div class="page-blocks">
         <Show when={preambleContent()}>

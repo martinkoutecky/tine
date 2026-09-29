@@ -56,6 +56,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
     let listed = commands(source);
     let other_sources = [
         include_str!("graph.rs"),
+        include_str!("commands/concord.rs"),
         include_str!("backup.rs"),
         include_str!("settings.rs"),
         include_str!("watcher.rs"),

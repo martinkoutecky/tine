@@ -28,7 +28,12 @@ impl<'a> Transaction<'a> {
                 saved_page: None,
                 opaque_rev: None,
             }),
-            Step::Save { id, base, doc } => {
+            Step::Save {
+                id,
+                base,
+                doc,
+                markers,
+            } => {
                 let file = id.file();
                 if doc.guide {
                     return Err(Why::Refused(Refusal::InvalidTarget(
@@ -53,7 +58,10 @@ impl<'a> Transaction<'a> {
                     self.twin(&file, None)?;
                 }
                 let old = match base {
-                    SaveBase::Existing(rev) => Some(self.stage(&file, rev)?),
+                    // `save_page` maps ResolvingMarkers to Existing + Markers::Resolve.
+                    SaveBase::Existing(rev) | SaveBase::ResolvingMarkers(rev) => {
+                        Some(self.stage(&file, rev)?)
+                    }
                     SaveBase::CreateNew => None,
                 };
                 if let Some(old) = old.as_ref() {
@@ -67,6 +75,21 @@ impl<'a> Transaction<'a> {
                     })?),
                     None => None,
                 };
+                // Refusal R-VCS-MARKERS (docs/storage-contract.md). Threat
+                // scenario: a VCS merge by an external writer left unresolved
+                // markers; a rewrite would re-indent them and silently lose a
+                // side. This is the one place og serializes page bytes for a
+                // save (ordinary, forced, merged and PDF-highlight page saves
+                // all reach it). Only `SaveBase::ResolvingMarkers` passes.
+                let found = text
+                    .map(tine_core::concord_queue::vcs_conflict_markers)
+                    .unwrap_or_default();
+                if !found.is_empty() && *markers == Markers::Refuse {
+                    return Err(Why::Refused(Refusal::ReadOnly(format!(
+                        "unresolved VCS merge conflict markers ({}); resolve them first",
+                        found.join(" ")
+                    ))));
+                }
                 let (new, saved_page) = self
                     .store
                     .graph

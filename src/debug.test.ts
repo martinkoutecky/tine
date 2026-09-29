@@ -5,10 +5,14 @@ import { afterEach, expect, it, vi } from "vitest";
 // the message itself never does.
 const diagnosticFrontendEvent = vi.fn(async () => {});
 const debugLog = vi.fn(async () => {});
+let previousExitUnclean = false;
 vi.mock("./backend", () => ({
-  backend: () => ({ diagnosticFrontendEvent, debugLog, debugInfo: async () => ({ enabled: false, path: "" }) }),
+  backend: () => ({ diagnosticFrontendEvent, debugLog, debugInfo: async () => ({ enabled: false, path: "", previousExitUnclean }) }),
 }));
-vi.mock("./toasts", () => ({ pushToast: vi.fn(), pushToastUnique: vi.fn() }));
+const pushToast = vi.fn();
+vi.mock("./toasts", () => ({ pushToast, pushToastUnique: vi.fn() }));
+const openSettings = vi.fn();
+vi.mock("./ui", () => ({ openSettings }));
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); diagnosticFrontendEvent.mockClear(); debugLog.mockClear(); });
 
@@ -53,4 +57,25 @@ it("records a main-thread stall of five seconds or more as a heartbeat delay", a
   await vi.waitFor(() => expect(diagnosticFrontendEvent).toHaveBeenCalledOnce());
   expect(diagnosticFrontendEvent.mock.calls[0]).toEqual(["heartbeat_delay", { delayMs: HEARTBEAT_REPORT_MS }]);
   vi.restoreAllMocks();
+});
+
+// og ADR 0058 (master 271885b2): the previous run's session marker survived,
+// so it ended without an orderly exit; the user is pointed at the report.
+it("offers the diagnostic report once when the previous run did not close cleanly", async () => {
+  const { initDebug, resetDebugForTests } = await import("./debug");
+  for (const unclean of [false, true]) {
+    resetDebugForTests();
+    pushToast.mockClear();
+    previousExitUnclean = unclean;
+    fakeWindow();
+    await initDebug();
+    const warned = pushToast.mock.calls.filter(([text]) => String(text).includes("did not close cleanly"));
+    expect(warned).toHaveLength(unclean ? 1 : 0);
+    if (unclean) {
+      expect(warned[0][2]).toMatchObject({ sticky: true, action: { label: "Diagnostics" } });
+      warned[0][2].action.run();
+      await vi.waitFor(() => expect(openSettings).toHaveBeenCalledWith("diagnostics"));
+    }
+  }
+  previousExitUnclean = false;
 });

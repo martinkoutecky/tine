@@ -11,11 +11,14 @@ mod backup;
 mod cli;
 mod command_surface;
 mod commands;
+#[path = "commands/concord.rs"]
+mod concord;
 mod debug;
 mod device_io;
 #[cfg(test)]
 mod edit_kind_guard_tests;
 mod flight;
+mod flight_store;
 mod graph;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
@@ -43,17 +46,20 @@ use commands::{
     get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
     graph_source_files, guide_pages, import_asset, import_native_capture, journal_content_days,
     journal_feed_page, list_journal_conflicts, list_journal_filename_migrations,
-    list_orphan_assets, list_sync_conflicts, list_templates, load_workspaces, merge_pages,
-    open_asset, open_page_file, open_pdf, page_icons, page_inventory, page_print_html,
-    preview_block, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
-    read_highlights, read_journal_file, read_local_image, read_text_file, rename_file_to_page,
-    rename_page, resolve_block, resolve_blocks, resolve_page, resolve_sync_conflict,
-    run_graph_search, save_asset, save_pages, save_pdf_area_image, save_workspaces, search,
-    set_default_journal_template, set_doc_mode_enter_for_new_block, set_guide_announced,
-    set_journal_title_format, set_logical_outdenting, set_preferred_format, set_preferred_workflow,
-    set_show_brackets, set_start_of_week, set_timetracking_enabled, stream_asset_path,
-    sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
-    trash_sync_conflict, write_highlights, write_pdf_view_state,
+    list_orphan_assets, list_templates, load_workspaces, merge_pages, open_asset, open_page_file,
+    open_pdf, page_icons, page_inventory, page_print_html, preview_block, publish_html,
+    query_facets, quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
+    read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
+    resolve_blocks, resolve_page, run_graph_search, save_asset, save_pages, save_pdf_area_image,
+    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
+    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
+    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
+    stream_asset_path, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
+    write_highlights, write_pdf_view_state,
+};
+use concord::{
+    conflict_inventory, list_sync_conflicts, resolve_sync_conflict, resolve_vcs_marker_conflict,
+    sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, diag_private,
@@ -658,6 +664,12 @@ pub fn run() {
             next_window: AtomicU64::new(1),
         })
         .setup(|app| {
+            // After the single-instance plugin: a forwarded second launch has
+            // already exited and cannot rotate the primary's diagnostics.
+            // Tauri's app-data path is the sandbox-private home on mobile too.
+            if let Ok(dir) = app.path().app_data_dir() {
+                flight::persist_init(dir.join("diagnostics"));
+            }
             diag("setup() begin");
             #[cfg(target_os = "linux")]
             {
@@ -858,6 +870,9 @@ pub fn run() {
             sync_conflict_diff,
             resolve_sync_conflict,
             trash_sync_conflict,
+            conflict_inventory,
+            vcs_marker_conflict_diff,
+            resolve_vcs_marker_conflict,
             trash_journal_file,
             read_journal_file,
             get_page_by_path,
@@ -925,6 +940,8 @@ pub fn run() {
             flight::diagnostic_frontend_event,
             flight::diagnostic_ipc_event,
             flight::diagnostic_report,
+            flight::diagnostic_session_active,
+            flight::save_diagnostic_report,
             tine_quit,
             close_graph_window,
             tine_open_devtools
@@ -933,6 +950,9 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                // `App::run` never returns, so the orderly end of a run is
+                // here: clear the unclean-exit marker (master d9763603).
+                flight::mark_clean_shutdown();
                 // tao delivers this callback for WM_ENDSESSION (Windows sign-out,
                 // restart, shutdown), but on that path its message loop neither
                 // receives WM_QUIT nor switches to an exiting ControlFlow.
@@ -1074,6 +1094,21 @@ mod platform_lifecycle_guard_tests {
             "GH #455: the RunEvent::Exit arm must call std::process::exit(0) on Windows, \
              because WM_ENDSESSION does not break tao's message loop"
         );
+    }
+
+    /// Master d9763603: `App::run` never returns, so a clean-shutdown call
+    /// placed after it never runs and every relaunch reports an unclean exit.
+    /// The orderly end is the `RunEvent::Exit` arm, before Windows' exit(0).
+    #[test]
+    fn the_exit_arm_clears_the_unclean_exit_marker_before_terminating() {
+        let source = lib_source();
+        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &run[..run.find("});").expect("the end of the event loop")];
+        let clean = run
+            .find("flight::mark_clean_shutdown();")
+            .expect("RunEvent::Exit must call flight::mark_clean_shutdown()");
+        assert!(clean < run.find("std::process::exit(0)").unwrap());
+        assert!(source.contains("flight::persist_init(dir.join(\"diagnostics\"))"));
     }
 
     /// GH #446: the frontend's platform identity comes from the build

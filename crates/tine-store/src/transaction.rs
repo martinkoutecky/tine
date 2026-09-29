@@ -14,6 +14,15 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use faults::fault;
+#[cfg(any(test, feature = "test-faults"))]
+use faults::inject_external_delete;
+#[cfg(any(test, feature = "test-faults"))]
+pub use faults::FaultPoint;
+#[cfg(not(any(test, feature = "test-faults")))]
+pub(crate) use faults::FaultPoint;
+
+mod faults;
 mod io_helpers;
 mod preflight;
 mod validation;
@@ -250,100 +259,16 @@ pub enum TxOutcome {
     },
 }
 
-#[cfg(any(test, feature = "test-faults"))]
-/// Deterministic one-shot failure hooks for tests. Indexed points use a
-/// zero-based transaction step index; an unreachable point stays armed in this
-/// Store. Multiple distinct points can be armed and each fires once. The two
-/// move-abort points require `test-faults` even in a plain unit-test build.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FaultPoint {
-    /// Simulate a changed file at the second revision guard.
-    Stage2Mismatch,
-    /// Simulate a changed file at the indexed step's second guard.
-    Stage2MismatchAt(usize),
-    /// Simulate an external deletion at the second revision guard.
-    Stage2ExternalDelete,
-    /// Remove a copied stream stage after its successful write/revision check.
-    RemoveStreamStageAfterWrite,
-    /// Simulate an external write after the replacement temp file is synced.
-    AfterTempSync,
-    /// Simulate a changed but valid sidecar at the second guard.
-    Stage2ValidSidecar,
-    /// Simulate an external config edit at the second guard.
-    Stage2ConfigExternal,
-    /// Simulate a no-replace destination collision.
-    NoReplaceCollision,
-    /// Simulate an I/O error after a step starts.
-    MidStepIo,
-    /// Simulate a real directory sync error after a rename.
-    DirectorySyncIo,
-    /// Simulate an I/O error at the indexed step.
-    MidStepIoAt(usize),
-    /// Simulate a read error while determining the post-apply publication.
-    PublicationReadIo,
-    /// Simulate an external write while undoing a live file.
-    UndoLiveWrite,
-    /// Simulate failure to withdraw bytes written by this transaction during undo.
-    UndoWithdrawalIo,
-    /// Simulate a twin appearing after publication.
-    TwinAfterPublish,
-    /// Abort the process immediately after the indexed step has reached disk.
-    AbortAfterStep(usize),
-    /// Abort the process after a rewritten move has renamed and synced the old
-    /// bytes at the destination, before its trash copy; requires `test-faults`.
-    AbortAfterMoveRename,
-    /// Abort the process after a rewritten move has copied the old bytes to
-    /// trash and published new destination bytes; requires `test-faults`.
-    AbortAfterMoveRewrite,
-    /// Fail a rewritten move after its old-byte trash copy, to exercise rollback.
-    MoveAfterTrashCopyIo,
-}
-
-#[cfg(not(any(test, feature = "test-faults")))]
-#[allow(dead_code)] // The production fault check is a no-op.
-pub(crate) enum FaultPoint {
-    Stage2Mismatch,
-    Stage2MismatchAt(usize),
-    Stage2ExternalDelete,
-    RemoveStreamStageAfterWrite,
-    AfterTempSync,
-    Stage2ValidSidecar,
-    Stage2ConfigExternal,
-    NoReplaceCollision,
-    MidStepIo,
-    DirectorySyncIo,
-    MidStepIoAt(usize),
-    PublicationReadIo,
-    UndoLiveWrite,
-    UndoWithdrawalIo,
-    TwinAfterPublish,
-    AbortAfterStep(usize),
-    AbortAfterMoveRename,
-    AbortAfterMoveRewrite,
-    MoveAfterTrashCopyIo,
-}
-
-#[cfg(any(test, feature = "test-faults"))]
-impl Store {
-    /// Arm one deterministic, one-shot fault in this store instance.
-    pub fn inject_fault(&self, point: FaultPoint) {
-        self.faults.lock().unwrap().insert(point);
-    }
-}
-
-#[cfg(any(test, feature = "test-faults"))]
-fn fault(store: &Store, point: FaultPoint) -> bool {
-    store.faults.lock().unwrap().remove(&point)
-}
-
-#[cfg(not(any(test, feature = "test-faults")))]
-fn fault(_store: &Store, _point: FaultPoint) -> bool {
-    false
-}
-
-#[cfg(any(test, feature = "test-faults"))]
-fn inject_external_delete(path: &Path) -> io::Result<()> {
-    fs::remove_file(path)
+/// Whether a queued page save may replace a file that carries VCS merge
+/// conflict markers. Scoped to the one step that carries it: there is no
+/// store-wide mode, so the exemption cannot outlive the resolving transaction.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Markers {
+    /// Ordinary save: a marker-bearing file on disk is refused in preflight.
+    Refuse,
+    /// `SaveBase::ResolvingMarkers`: the resolution itself. The old bytes
+    /// are staged byte-exact in conflict trash before the replacement.
+    Resolve,
 }
 
 enum Step {
@@ -351,6 +276,7 @@ enum Step {
         id: PageId,
         base: SaveBase,
         doc: PageDto,
+        markers: Markers,
     },
     Create {
         file: FileId,
@@ -456,7 +382,11 @@ impl<'a> Transaction<'a> {
     /// compares the current raw-byte revision. A Guide DTO is refused as
     /// ephemeral before disk access. `CreateNew` checks both the exact target
     /// and an alternate extension, and refuses an indexed name or day twin.
-    /// No disk I/O until commit.
+    /// No disk I/O until commit. `ResolvingMarkers` is the one save allowed to
+    /// replace a file carrying VCS conflict markers (R-VCS-MARKERS): commit
+    /// first stages a byte-exact copy of the old file under
+    /// `logseq/.tine-trash/conflicts/<stamp>__markers__<name>` and withdraws it
+    /// if undo restores the original (one extra write + fsync of the old bytes).
     /// Commit cost includes page bytes and O(P) graph metadata on publication.
     pub fn save_page(
         &mut self,
@@ -466,10 +396,15 @@ impl<'a> Transaction<'a> {
         doc: &PageDto,
     ) -> &mut Self {
         assert!(!kinds.is_empty(), "OG-RULES Rule 8: page save needs a kind; exemplar crates/tine-graph-features/src/pages.rs");
+        let (base, markers) = match base {
+            SaveBase::ResolvingMarkers(rev) => (SaveBase::Existing(rev), Markers::Resolve),
+            other => (other, Markers::Refuse),
+        };
         self.steps.push(Step::Save {
             id: id.clone(),
             base,
             doc: doc.clone(),
+            markers,
         });
         self
     }
@@ -909,6 +844,38 @@ impl<'a> Transaction<'a> {
         ))
     }
 
+    /// Stage the pre-resolution bytes of a marker-bearing page in conflict
+    /// trash (no-replace, fsync'd) before a `SaveBase::ResolvingMarkers`
+    /// replaces them. A crash after this point leaves the old file plus its
+    /// copy, or the resolved file plus the copy: never a lost side.
+    fn stage_marker_file(&self, file: &FileId, old: &[u8]) -> Result<FileId, Why> {
+        let name = Path::new(file.as_str())
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file");
+        let id = FileId::from(format!(
+            "logseq/.tine-trash/conflicts/{}__markers__{name}",
+            trash_stamp()
+        ));
+        self.write_trash_copy(&id, old)?;
+        #[cfg(feature = "test-faults")]
+        if fault(self.store, FaultPoint::AbortAfterMarkerStage) {
+            std::process::abort();
+        }
+        Ok(id)
+    }
+
+    /// Write a byte-exact copy of retired bytes into graph trash. The copy is
+    /// outside the live page area and uses the audited no-replace publication.
+    fn write_trash_copy(&self, id: &FileId, old: &[u8]) -> Result<PathBuf, Why> {
+        let path = self.path(id)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
+        }
+        atomic_write_new(&path, old).map_err(failed)?;
+        Ok(path)
+    }
+
     fn fault_collision(&self, path: &Path) {
         if fault(self.store, FaultPoint::NoReplaceCollision) {
             let _ = atomic_write_new(path, b"external collision");
@@ -991,6 +958,16 @@ impl<'a> Transaction<'a> {
                 undo.new = Some(Expected::Bytes(new.clone()));
                 if old.is_none() {
                     self.fault_collision(&src);
+                }
+                if let (
+                    Step::Save {
+                        markers: Markers::Resolve,
+                        ..
+                    },
+                    Some(old),
+                ) = (&*step, old)
+                {
+                    undo.trash = Some(self.stage_marker_file(&plan.src, old)?);
                 }
                 self.arm_directory_sync_fault();
                 let result = if let Some(old) = old {
@@ -1238,15 +1215,10 @@ impl<'a> Transaction<'a> {
                 }
                 self.fault_mid_step(index)?;
 
-                let trash_id = self.trash_id(&plan.src);
-                let trash = self.path(&trash_id)?;
-                if let Some(parent) = trash.parent() {
-                    fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
-                }
                 // Preserve the original bytes for the same recovery affordance
-                // as the old destination-first move. This copy is outside the
-                // live page area and uses the audited no-replace publication.
-                atomic_write_new(&trash, old).map_err(failed)?;
+                // as the old destination-first move.
+                let trash_id = self.trash_id(&plan.src);
+                let trash = self.write_trash_copy(&trash_id, old)?;
                 undo.trash = Some(trash_id);
                 if fault(self.store, FaultPoint::MoveAfterTrashCopyIo) {
                     return Err(failed(io::Error::other(
@@ -1727,7 +1699,9 @@ impl<'a> Transaction<'a> {
             // the destination. Withdraw that copy only after undo has restored
             // the source; leave it recoverable if restoration was incomplete.
             for record in &done {
-                if !matches!(record.kind, UndoKind::Rename) || record.moved {
+                // A marker resolution's staged copy (`UndoKind::Replace`) is
+                // withdrawn under the same rule as a rewritten move's.
+                if !matches!(record.kind, UndoKind::Rename | UndoKind::Replace) || record.moved {
                     continue;
                 }
                 let (Some(trash_id), Some(old)) = (&record.trash, &record.old) else {
@@ -1740,6 +1714,12 @@ impl<'a> Transaction<'a> {
                     let trash = self
                         .path(trash_id)
                         .map_err(|error| io::Error::other(format!("{error:?}")))?;
+                    if matches!(record.kind, UndoKind::Replace) && fs::read(&live)? != *old {
+                        // The original is not back at its name (an external
+                        // writer raced the resolution), so this copy may be the
+                        // only one left: keep it, recoverable in trash.
+                        return Ok(());
+                    }
                     if fs::read(&live)? != *old || fs::read(&trash)? != *old {
                         return Err(io::Error::new(
                             io::ErrorKind::AlreadyExists,

@@ -61,6 +61,44 @@ pub enum RowKind {
     Removed,
 }
 
+/// How a row relates to the 3-way BASE (the common ancestor a VCS merge wrote
+/// into the file's diff3 `|||||||` region). Only present on 3-way diffs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Diff3Verdict {
+    /// Only the winner diverged from the base → keeping mine preserves the change.
+    MineOnly,
+    /// Only the conflict copy diverged from the base → keeping theirs preserves it.
+    TheirsOnly,
+    /// Both sides diverged from the base — a true conflict, no safe suggestion.
+    BothChanged,
+}
+
+/// Where a proposed merged body came from. Both are confirmation-gated and both
+/// are re-derived at apply time; the distinction is provenance, which the UI
+/// shows because the two carry different guarantees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MergedSource {
+    /// Composed here from two disjoint edits of the base — a stronger claim,
+    /// so it always wins when both sources can supply a body.
+    Computed,
+    /// Lifted from the merge tool's own `####### SUGGESTED CONFLICT RESOLUTION`
+    /// region (Fossil), which Tine reconstructs into a whole page and aligns
+    /// like any other document. Tine vouches for nothing about its content
+    /// beyond the same validity gate — hence "artifact", not "merge".
+    Artifact,
+}
+
+/// A merged body offered for a `BothChanged` row. Display only: the resolve
+/// re-derives the text from the same three inputs and re-runs the same gates,
+/// so a client can never make Tine write a body it did not itself compute.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergedProposal {
+    pub text: String,
+    pub source: MergedSource,
+}
+
 /// One aligned position in the block trees. `id` is a stable path ("2.1" = 2nd
 /// child of the 3rd row) that the resolve step reproduces exactly, so the UI's
 /// per-row decisions map back onto the same blocks.
@@ -74,6 +112,20 @@ pub struct DiffRow {
     /// present). `Added`/`Removed` subtrees are atomic (one decision for the
     /// whole subtree), so they carry no child rows.
     pub children: Vec<DiffRow>,
+    /// 3-way classification against the base (None on 2-way diffs and on rows
+    /// where the base gives no signal).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<Diff3Verdict>,
+    /// The pre-selected decision the base justifies: `"mine"`, `"theirs"`, or
+    /// `"merged"` (see [`DiffRow::merged`]).
+    /// Never auto-applied — the UI only pre-selects it for the user to confirm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+    /// A merged body proposed for a `BothChanged` row: composed from two
+    /// disjoint edits of one unambiguous base, or lifted from a merge tool's
+    /// own suggestion region. Present only on 3-way diffs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged: Option<MergedProposal>,
 }
 
 /// The full diff of a conflict copy against its winner.
@@ -95,6 +147,12 @@ pub struct SyncConflictDiff {
     /// True when the two block trees are identical (only the pre-block, or
     /// nothing, differs) — lets the UI say "no block changes".
     pub blocks_identical: bool,
+    /// True when the rows carry 3-way verdicts computed against a real base
+    /// (so the UI can explain where its pre-selections come from).
+    /// Omitted from the wire when false, so a 2-way answer keeps the v0.6.5
+    /// shape byte for byte.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub three_way: bool,
 }
 
 /// Diff `theirs` (the conflict copy's blocks) against `mine` (the winner's).
@@ -116,7 +174,310 @@ pub fn diff_docs(mine: &crate::doc::Document, theirs: &crate::doc::Document) -> 
         theirs_pre,
         rows,
         blocks_identical,
+        three_way: false,
     }
+}
+
+/// Build the full 3-way page-level diff: the SAME mine/theirs alignment as
+/// [`diff_docs`] (so row ids stay compatible with [`merge_blocks`]), with each
+/// row additionally classified against `base` — the common ancestor both sides
+/// descend from (in og: the diff3 base a VCS merge left in the file itself). Non-conflicting rows carry a `suggestion`
+/// (`"mine"`/`"theirs"`); rows both sides changed carry none. Suggestions are
+/// advice for the UI to pre-select, never something to auto-apply.
+pub fn diff3_docs(
+    base: &crate::doc::Document,
+    mine: &crate::doc::Document,
+    theirs: &crate::doc::Document,
+) -> SyncConflictDiff {
+    diff3_docs_with_artifact(base, mine, theirs, None)
+}
+
+/// [`diff3_docs`] with a fourth, non-side document: the resolution a merge tool
+/// already proposed for this file (Fossil's `#######` region, reconstructed by
+/// `concord_queue::parse_vcs_marker_sides`). Rows where the computed merge
+/// declines may then offer the artifact's own body instead.
+///
+/// The artifact is aligned with the SAME machinery as the base, so an artifact
+/// block is located exactly the way a base block is; it never widens which rows
+/// may carry a proposal (still `BothChanged` under a real base) and never
+/// changes a verdict.
+pub fn diff3_docs_with_artifact(
+    base: &crate::doc::Document,
+    mine: &crate::doc::Document,
+    theirs: &crate::doc::Document,
+    artifact: Option<&crate::doc::Document>,
+) -> SyncConflictDiff {
+    let nodes = align_nodes(&mine.roots, &theirs.roots, "");
+    let mut rows = nodes_to_rows(&nodes);
+    let mut base_of_mine = HashMap::new();
+    collect_base_pairs(&base.roots, &mine.roots, &mut base_of_mine);
+    let mut base_of_theirs = HashMap::new();
+    collect_base_pairs(&base.roots, &theirs.roots, &mut base_of_theirs);
+    let mut art_of_mine = HashMap::new();
+    let mut art_of_theirs = HashMap::new();
+    if let Some(artifact) = artifact {
+        collect_base_pairs(&artifact.roots, &mine.roots, &mut art_of_mine);
+        collect_base_pairs(&artifact.roots, &theirs.roots, &mut art_of_theirs);
+    }
+    let artifacts = artifact.map(|_| (&art_of_mine, &art_of_theirs));
+    annotate_rows(&mut rows, &nodes, &base_of_mine, &base_of_theirs, artifacts);
+    let blocks_identical = rows.iter().all(|r| r.kind == RowKind::Unchanged);
+    let mine_pre = normalize_pre(mine.pre_block.as_deref());
+    let theirs_pre = normalize_pre(theirs.pre_block.as_deref());
+    SyncConflictDiff {
+        base_rev: String::new(),
+        conflict_rev: String::new(),
+        pre_differs: mine_pre != theirs_pre,
+        mine_pre,
+        theirs_pre,
+        rows,
+        blocks_identical,
+        three_way: true,
+    }
+}
+
+fn parse_text(content: &str, org: bool) -> crate::doc::Document {
+    if org {
+        crate::org::parse_org(content)
+    } else {
+        crate::doc::parse(content)
+    }
+}
+
+use std::collections::HashMap;
+
+type BasePairs<'a> = HashMap<*const DocBlock, &'a DocBlock>;
+
+/// Map each of `side`'s blocks (by identity) to its aligned base block, using
+/// the same alignment machinery as the diff. Content-equal subtrees pair their
+/// descendants positionally (identical shape); aligned modified pairs recurse.
+fn collect_base_pairs<'a>(base: &'a [DocBlock], side: &'a [DocBlock], out: &mut BasePairs<'a>) {
+    fn walk<'a>(nodes: &[Node<'a>], out: &mut BasePairs<'a>) {
+        for node in nodes {
+            if let Node::Both {
+                mine: base_block,
+                theirs: side_block,
+                modified,
+                children,
+                ..
+            } = node
+            {
+                out.insert(*side_block as *const DocBlock, base_block);
+                if *modified {
+                    walk(children, out);
+                } else {
+                    pair_equal_subtrees(base_block, side_block, out);
+                }
+            }
+        }
+    }
+    fn pair_equal_subtrees<'a>(base: &'a DocBlock, side: &'a DocBlock, out: &mut BasePairs<'a>) {
+        for (b, s) in base.children.iter().zip(side.children.iter()) {
+            out.insert(s as *const DocBlock, b);
+            pair_equal_subtrees(b, s, out);
+        }
+    }
+    walk(&align_nodes(base, side, ""), out);
+}
+
+/// Classify each aligned row against the base. `rows` and `nodes` have the same
+/// shape by construction (both come from the same `align_nodes` output).
+fn annotate_rows(
+    rows: &mut [DiffRow],
+    nodes: &[Node],
+    base_of_mine: &BasePairs,
+    base_of_theirs: &BasePairs,
+    artifacts: Option<(&BasePairs, &BasePairs)>,
+) {
+    for (row, node) in rows.iter_mut().zip(nodes.iter()) {
+        match node {
+            Node::Both {
+                mine,
+                theirs,
+                modified,
+                children,
+                ..
+            } => {
+                if !*modified {
+                    continue;
+                }
+                // The row decision picks this block's BODY (children have their
+                // own rows), so classify the body only.
+                if mine.raw != theirs.raw {
+                    let base_mine = base_of_mine.get(&(*mine as *const DocBlock)).copied();
+                    let base_theirs = base_of_theirs.get(&(*theirs as *const DocBlock)).copied();
+                    let mine_changed = base_mine.is_none_or(|b| b.raw != mine.raw);
+                    let theirs_changed = base_theirs.is_none_or(|b| b.raw != theirs.raw);
+                    let (verdict, suggestion) = match (mine_changed, theirs_changed) {
+                        (true, false) => (Diff3Verdict::MineOnly, Some("mine")),
+                        (false, true) => (Diff3Verdict::TheirsOnly, Some("theirs")),
+                        (true, true) => (Diff3Verdict::BothChanged, None),
+                        // Both sides equal their base yet differ from each
+                        // other: the two maps paired this row with DIFFERENT
+                        // base blocks (duplicate content). An ambiguous base is
+                        // no base — a conflict, and never a merge proposal.
+                        (false, false) => (Diff3Verdict::BothChanged, None),
+                    };
+                    row.verdict = Some(verdict);
+                    row.suggestion = suggestion.map(str::to_string);
+                    if let (true, true) = (mine_changed, theirs_changed) {
+                        // PRECEDENCE: a composition of two disjoint edits is a
+                        // stronger claim than a third party's guess, so the
+                        // artifact is consulted only where the computation
+                        // declines. Same order in the apply path.
+                        if let Some(text) = merged_body(base_mine, base_theirs, mine, theirs) {
+                            row.suggestion = Some("merged".to_string());
+                            row.merged = Some(MergedProposal {
+                                text,
+                                source: MergedSource::Computed,
+                            });
+                        } else if let Some(text) = artifact_body_for(artifacts, mine, theirs) {
+                            row.suggestion = Some("merged".to_string());
+                            row.merged = Some(MergedProposal {
+                                text,
+                                source: MergedSource::Artifact,
+                            });
+                        }
+                    }
+                }
+                annotate_rows(
+                    &mut row.children,
+                    children,
+                    base_of_mine,
+                    base_of_theirs,
+                    artifacts,
+                );
+            }
+            // Added row (winner-only). Absent from base → mine added it (keep).
+            // Present and unchanged → theirs deleted it (suggest the deletion).
+            // Present but edited by mine while theirs deleted it → conflict.
+            Node::Mine { block, .. } => {
+                let (verdict, suggestion) = match base_of_mine.get(&(*block as *const DocBlock)) {
+                    None => (Diff3Verdict::MineOnly, Some("mine")),
+                    Some(b) if *b == *block => (Diff3Verdict::TheirsOnly, Some("theirs")),
+                    Some(_) => (Diff3Verdict::BothChanged, None),
+                };
+                row.verdict = Some(verdict);
+                row.suggestion = suggestion.map(str::to_string);
+            }
+            // Removed row (conflict-only). Absent from base → theirs added it
+            // (suggest pulling it in). Present and unchanged → mine deleted it
+            // (suggest skipping). Present but edited by theirs → conflict.
+            Node::Theirs { block, .. } => {
+                let (verdict, suggestion) = match base_of_theirs.get(&(*block as *const DocBlock)) {
+                    None => (Diff3Verdict::TheirsOnly, Some("theirs")),
+                    Some(b) if *b == *block => (Diff3Verdict::MineOnly, Some("mine")),
+                    Some(_) => (Diff3Verdict::BothChanged, None),
+                };
+                row.verdict = Some(verdict);
+                row.suggestion = suggestion.map(str::to_string);
+            }
+        }
+    }
+}
+
+/// The merged body for one aligned `BothChanged` pair, or `None` when no
+/// proposal may be offered. Both diff and apply go through here, so the
+/// suggestion the user confirmed and the text finally written are one
+/// computation over the same three inputs.
+///
+/// Requires ONE unambiguous base: both sides must have a base block and the two
+/// base bodies must agree (the two maps can pair duplicate content with
+/// different blocks; a merge against an ambiguous base is never offered).
+fn merged_body(
+    base_mine: Option<&DocBlock>,
+    base_theirs: Option<&DocBlock>,
+    mine: &DocBlock,
+    theirs: &DocBlock,
+) -> Option<String> {
+    let (base_mine, base_theirs) = (base_mine?, base_theirs?);
+    if base_mine.raw != base_theirs.raw {
+        return None;
+    }
+    let text = crate::text_merge::merge_disjoint(&base_mine.raw, &mine.raw, &theirs.raw)?;
+    merged_body_is_valid(&text, mine.is_org).then_some(text)
+}
+
+/// [`artifact_body`] for a row, given the pair of artifact maps (or `None` when
+/// no artifact document reached this diff/merge at all). Kept next to the maps
+/// so the diff and the apply do the same two lookups.
+fn artifact_body_for(
+    artifacts: Option<(&BasePairs, &BasePairs)>,
+    mine: &DocBlock,
+    theirs: &DocBlock,
+) -> Option<String> {
+    let (art_of_mine, art_of_theirs) = artifacts?;
+    artifact_body(
+        art_of_mine.get(&(mine as *const DocBlock)).copied(),
+        art_of_theirs.get(&(theirs as *const DocBlock)).copied(),
+        mine,
+        theirs,
+    )
+}
+
+/// The merge tool's own proposed body for one aligned `BothChanged` pair, or
+/// `None` when it may not be offered. Mirrors [`merged_body`]: both the diff and
+/// the apply go through here, so the text the user confirmed and the text
+/// finally written are one lookup over the same inputs.
+///
+/// Requires ONE unambiguous artifact block — both sides must pair with one and
+/// the two bodies must agree (the two alignments can pair duplicate content with
+/// different blocks) — a body that differs from BOTH sides (a proposal equal to
+/// a side is just one of the three choices the user already has, so offering it
+/// as a fourth would be noise), and the same structural/org validity gate a
+/// computed body passes.
+fn artifact_body(
+    art_mine: Option<&DocBlock>,
+    art_theirs: Option<&DocBlock>,
+    mine: &DocBlock,
+    theirs: &DocBlock,
+) -> Option<String> {
+    let (art_mine, art_theirs) = (art_mine?, art_theirs?);
+    if art_mine.raw != art_theirs.raw {
+        return None;
+    }
+    let text = &art_mine.raw;
+    if *text == mine.raw || *text == theirs.raw {
+        return None;
+    }
+    merged_body_is_valid(text, mine.is_org).then(|| text.clone())
+}
+
+/// Whether a merged body still IS one block: serialized the way the page
+/// serializer writes it and re-parsed, it must come back as exactly one root
+/// block with no children and a byte-identical `raw`.
+///
+/// This is the structural gate a character-level merge needs. Composing two
+/// disjoint edits can produce text that no longer round-trips as one block — a
+/// line that now starts a new bullet, an unbalanced `:LOGBOOK:` drawer, an org
+/// body that breaks its headline. Such a body is never offered and never
+/// applied; the org firewall at write time remains the final authority.
+fn merged_body_is_valid(merged: &str, is_org: bool) -> bool {
+    // Complementary disjoint deletions can compose to an empty body. Emptying
+    // the block is a deletion the user must choose deliberately — it is never
+    // offered (or applied) as a "merge" of the two sides.
+    if merged.trim().is_empty() {
+        return false;
+    }
+    let mut block = DocBlock::new(merged.to_string());
+    block.is_org = is_org;
+    let doc = crate::doc::Document {
+        pre_block: None,
+        roots: vec![block],
+    };
+    let serialized = if is_org {
+        crate::org::serialize_org(&doc)
+    } else {
+        crate::doc::serialize(&doc)
+    };
+    if is_org && !crate::org::org_round_trips(&serialized) {
+        return false;
+    }
+    let reparsed = parse_text(&serialized, is_org);
+    reparsed.pre_block.is_none()
+        && reparsed.roots.len() == 1
+        && reparsed.roots[0].children.is_empty()
+        && reparsed.roots[0].raw == merged
 }
 
 fn normalize_pre(pre: Option<&str>) -> Option<String> {
@@ -137,30 +498,49 @@ fn anchor_eq(a: &DocBlock, b: &DocBlock) -> bool {
     }
 }
 
-/// First visible line of a block (property lines stripped), lowercased and
-/// trimmed — the key the L2 similarity pairing compares.
+/// Cap on the similarity key. A block's "first line" is its ENTIRE body for a
+/// single-line block, and the pairwise Levenshtein below is O(len²) — measured
+/// at 5.4 s per 64 KB pair (2-way) before this cap. Pairing is a heuristic;
+/// 512 chars decide "same edited line vs different line" just as well.
+const SIMILARITY_KEY_MAX_CHARS: usize = 512;
+
+/// First visible line of a block (property lines stripped), lowercased,
+/// trimmed, and capped at [`SIMILARITY_KEY_MAX_CHARS`] — the key the L2
+/// similarity pairing compares.
 fn first_line_key(b: &DocBlock) -> String {
     b.visible_text()
         .lines()
         .find(|l| !l.trim().is_empty())
         .unwrap_or("")
         .trim()
+        .chars()
+        .take(SIMILARITY_KEY_MAX_CHARS)
+        .collect::<String>()
         .to_lowercase()
 }
 
-/// Normalized similarity of two short strings in [0,1] (1 = identical). Bounded
-/// input (block first-lines), so the O(len²) Levenshtein is cheap.
+/// Normalized similarity of two capped strings in [0,1] (1 = identical).
+///
+/// When the length gap alone puts the pair under [`SIMILARITY_THRESHOLD`] the
+/// exact distance is skipped and the (correct) upper bound is returned —
+/// callers only test `>= SIMILARITY_THRESHOLD`, so a below-threshold value
+/// never needs to be exact.
 fn similarity(a: &str, b: &str) -> f32 {
     if a.is_empty() && b.is_empty() {
         return 1.0;
     }
-    let d = levenshtein(a, b);
-    let max = a.chars().count().max(b.chars().count());
+    let (la, lb) = (a.chars().count(), b.chars().count());
+    let max = la.max(lb);
     if max == 0 {
-        1.0
-    } else {
-        1.0 - (d as f32 / max as f32)
+        return 1.0;
     }
+    // levenshtein(a, b) >= |la − lb|.
+    let bound = 1.0 - (la.abs_diff(lb) as f32 / max as f32);
+    if bound < SIMILARITY_THRESHOLD {
+        return bound;
+    }
+    let d = levenshtein(a, b);
+    1.0 - (d as f32 / max as f32)
 }
 
 fn levenshtein(a: &str, b: &str) -> usize {
@@ -187,7 +567,11 @@ fn levenshtein(a: &str, b: &str) -> usize {
 
 const SIMILARITY_THRESHOLD: f32 = 0.8;
 const MAX_GAP_SIMILARITY_COMPARISONS: usize = 250_000;
-const MAX_LCS_COMPARISONS: usize = 1_000_000;
+/// Work budget for the exact (Hirschberg) LCS, in `n·m` products. At the old
+/// 1e6 budget an all-conflicted 1000×1000 pair spent ~0.95 s in the exact
+/// branch while 1001×1001 took 14 ms in the patience fallback — an inverted
+/// cliff. 250k keeps the exact branch's worst case around a quarter second.
+const MAX_LCS_COMPARISONS: usize = 250_000;
 
 /// One aligned position in the two trees — the SINGLE source of alignment truth
 /// that both the diff rows ([`nodes_to_rows`]) and the merged output
@@ -376,6 +760,9 @@ fn nodes_to_rows(nodes: &[Node]) -> Vec<DiffRow> {
                 mine: Some(BlockView::of(mine)),
                 theirs: Some(BlockView::of(theirs)),
                 children: nodes_to_rows(children),
+                verdict: None,
+                suggestion: None,
+                merged: None,
             },
             Node::Mine { id, block } => DiffRow {
                 id: id.clone(),
@@ -383,6 +770,9 @@ fn nodes_to_rows(nodes: &[Node]) -> Vec<DiffRow> {
                 mine: Some(BlockView::of(block)),
                 theirs: None,
                 children: Vec::new(),
+                verdict: None,
+                suggestion: None,
+                merged: None,
             },
             Node::Theirs { id, block } => DiffRow {
                 id: id.clone(),
@@ -390,6 +780,9 @@ fn nodes_to_rows(nodes: &[Node]) -> Vec<DiffRow> {
                 mine: None,
                 theirs: Some(BlockView::of(block)),
                 children: Vec::new(),
+                verdict: None,
+                suggestion: None,
+                merged: None,
             },
         })
         .collect()
@@ -405,15 +798,55 @@ enum Decision {
     Mine,
     Theirs,
     Both,
+    /// Take the proposed merged body — [`merged_body`] composed from both edits
+    /// of the base, or failing that the merge tool's own [`artifact_body`].
+    /// Only ever valid on an aligned `Modified` row of a 3-way resolve; the text
+    /// is re-derived here, never carried in the decision.
+    Merged,
 }
 
 fn decision_for(decisions: &std::collections::HashMap<String, String>, id: &str) -> Decision {
     match decisions.get(id).map(String::as_str) {
         Some("theirs") => Decision::Theirs,
         Some("both") => Decision::Both,
+        Some("merged") => Decision::Merged,
         _ => Decision::Mine,
     }
 }
+
+/// A `"merged"` decision the resolve could not re-derive. The WHOLE resolve
+/// refuses: a merged row never silently falls back to one side, because the
+/// user confirmed a specific body and no other outcome is what they approved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeRefused {
+    /// Path id of the offending row (same ids the diff published).
+    pub row: String,
+    pub reason: &'static str,
+}
+
+impl std::fmt::Display for MergeRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "cannot apply the merged body for row {}: {}",
+            self.row, self.reason
+        )
+    }
+}
+
+impl std::error::Error for MergeRefused {}
+
+/// No base reached the resolve (2-way diff, e.g. a sync-tool conflict copy,
+/// which carries no common ancestor),
+/// so no merged body was ever offered for any row.
+const NO_BASE: &str = "no common ancestor is available for this resolve";
+/// The decision names a row that carries no mergeable pair (an Added/Removed
+/// subtree, or an unchanged row).
+const NOT_A_MODIFIED_ROW: &str = "this row is not an aligned modified block";
+/// Re-derivation declined on BOTH sources: ambiguous base or artifact,
+/// overlapping edits, a bounded-diff give-up, or a body that would not re-parse
+/// as this one block.
+const NOT_MERGEABLE: &str = "the two edits no longer merge cleanly";
 
 /// Rebuild a merged sibling list from the two trees and the user's per-row
 /// decisions. Re-derives the SAME alignment the diff used, so a decision id maps
@@ -424,18 +857,59 @@ fn decision_for(decisions: &std::collections::HashMap<String, String>, id: &str)
 ///                  stripped so they don't collide with the winner's).
 ///   - Added      → kept unless explicitly dropped (`theirs`).
 ///   - Removed    → pulled in only on `theirs`/`both`.
+/// `merged` is the fourth Modified outcome and needs a base — see
+/// [`merge_blocks3`].
 pub fn merge_blocks(
     mine: &[DocBlock],
     theirs: &[DocBlock],
     decisions: &std::collections::HashMap<String, String>,
-) -> Vec<DocBlock> {
-    nodes_to_merged(&align_nodes(mine, theirs, ""), decisions)
+) -> Result<Vec<DocBlock>, MergeRefused> {
+    merge_blocks3(None, mine, theirs, None, decisions)
+}
+
+/// 3-way form of [`merge_blocks`]: with `base` present, a row may also decide
+/// `"merged"`, and the merged body is RE-DERIVED here from `base`/`mine`/
+/// `theirs` (or, failing that, from `artifact`) — the decision map carries only
+/// the plain string. `base` and `artifact` must be the same documents the diff
+/// was computed against; the caller's staleness guards are what make that
+/// true. For a marker file both are
+/// re-derived from the guarded bytes of the one file, so "same inputs" is
+/// structural.
+///
+/// With `base == None` the behavior is exactly the old 2-way merge, except that
+/// a `"merged"` decision — which no 2-way diff can have offered — refuses. An
+/// `artifact` without a `base` can therefore never be reached, matching the
+/// diff, where a proposal needs a `BothChanged` verdict.
+pub fn merge_blocks3(
+    base: Option<&[DocBlock]>,
+    mine: &[DocBlock],
+    theirs: &[DocBlock],
+    artifact: Option<&[DocBlock]>,
+    decisions: &std::collections::HashMap<String, String>,
+) -> Result<Vec<DocBlock>, MergeRefused> {
+    let mut base_of_mine = BasePairs::new();
+    let mut base_of_theirs = BasePairs::new();
+    if let Some(base) = base {
+        collect_base_pairs(base, mine, &mut base_of_mine);
+        collect_base_pairs(base, theirs, &mut base_of_theirs);
+    }
+    let mut art_of_mine = BasePairs::new();
+    let mut art_of_theirs = BasePairs::new();
+    if let Some(artifact) = artifact {
+        collect_base_pairs(artifact, mine, &mut art_of_mine);
+        collect_base_pairs(artifact, theirs, &mut art_of_theirs);
+    }
+    let bases = base.map(|_| (&base_of_mine, &base_of_theirs));
+    let artifacts = artifact.map(|_| (&art_of_mine, &art_of_theirs));
+    nodes_to_merged(&align_nodes(mine, theirs, ""), decisions, bases, artifacts)
 }
 
 fn nodes_to_merged(
     nodes: &[Node],
     decisions: &std::collections::HashMap<String, String>,
-) -> Vec<DocBlock> {
+    bases: Option<(&BasePairs, &BasePairs)>,
+    artifacts: Option<(&BasePairs, &BasePairs)>,
+) -> Result<Vec<DocBlock>, MergeRefused> {
     let mut out = Vec::new();
     for n in nodes {
         match n {
@@ -447,46 +921,90 @@ fn nodes_to_merged(
                 children,
             } => {
                 if !*modified {
+                    if decision_for(decisions, id) == Decision::Merged {
+                        return Err(refused(id, NOT_A_MODIFIED_ROW));
+                    }
                     out.push((*mine).clone()); // content-equal — keep as-is
                     continue;
                 }
                 match decision_for(decisions, id) {
-                    Decision::Mine => out.push(rebuild(mine, nodes_to_merged(children, decisions))),
-                    Decision::Theirs => {
-                        out.push(rebuild(theirs, nodes_to_merged(children, decisions)))
-                    }
+                    Decision::Mine => out.push(rebuild(
+                        mine,
+                        nodes_to_merged(children, decisions, bases, artifacts)?,
+                    )),
+                    Decision::Theirs => out.push(rebuild(
+                        theirs,
+                        nodes_to_merged(children, decisions, bases, artifacts)?,
+                    )),
                     Decision::Both => {
                         out.push((*mine).clone());
                         // Fresh block — must not duplicate the winner's id:: on disk.
                         out.push(strip_ids(theirs));
                     }
+                    Decision::Merged => {
+                        let Some((base_of_mine, base_of_theirs)) = bases else {
+                            return Err(refused(id, NO_BASE));
+                        };
+                        // SAME precedence as the diff — computed first, the
+                        // merge tool's artifact only where it declines — so the
+                        // user is written the body they were shown.
+                        let text = merged_body(
+                            base_of_mine.get(&(*mine as *const DocBlock)).copied(),
+                            base_of_theirs.get(&(*theirs as *const DocBlock)).copied(),
+                            mine,
+                            theirs,
+                        )
+                        .or_else(|| artifact_body_for(artifacts, mine, theirs))
+                        .ok_or_else(|| refused(id, NOT_MERGEABLE))?;
+                        // Same shape as keep-mine/keep-theirs: one body, the
+                        // children's own decisions.
+                        out.push(rebuild_with_raw(
+                            mine,
+                            text,
+                            nodes_to_merged(children, decisions, bases, artifacts)?,
+                        ));
+                    }
                 }
             }
             Node::Mine { id, block } => {
                 // Added (winner-only): kept unless the user drops it.
-                if decision_for(decisions, id) != Decision::Theirs {
-                    out.push((*block).clone());
+                match decision_for(decisions, id) {
+                    Decision::Merged => return Err(refused(id, NOT_A_MODIFIED_ROW)),
+                    Decision::Theirs => {}
+                    _ => out.push((*block).clone()),
                 }
             }
             Node::Theirs { id, block } => {
                 // Removed (conflict-only): pulled in on keep-theirs / keep-both. Its
                 // id is unique to the conflict (a shared id would have anchored it as
                 // a Both), so it's kept as-is.
-                if matches!(
-                    decision_for(decisions, id),
-                    Decision::Theirs | Decision::Both
-                ) {
-                    out.push((*block).clone());
+                match decision_for(decisions, id) {
+                    Decision::Merged => return Err(refused(id, NOT_A_MODIFIED_ROW)),
+                    Decision::Theirs | Decision::Both => out.push((*block).clone()),
+                    _ => {}
                 }
             }
         }
     }
-    out
+    Ok(out)
+}
+
+fn refused(row: &str, reason: &'static str) -> MergeRefused {
+    MergeRefused {
+        row: row.to_string(),
+        reason,
+    }
 }
 
 /// A block with `side`'s own body but the given (already-merged) children.
 fn rebuild(side: &DocBlock, children: Vec<DocBlock>) -> DocBlock {
-    let mut b = DocBlock::new(side.raw.clone());
+    rebuild_with_raw(side, side.raw.clone(), children)
+}
+
+/// [`rebuild`] with an explicit body — the merged-decision shape. The format
+/// still comes from `side`, since a merge never crosses page formats.
+fn rebuild_with_raw(side: &DocBlock, raw: String, children: Vec<DocBlock>) -> DocBlock {
+    let mut b = DocBlock::new(raw);
     b.is_org = side.is_org;
     b.children = children;
     b
@@ -674,228 +1192,5 @@ fn lcs_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::doc;
-
-    fn parse(s: &str) -> doc::Document {
-        doc::parse(s)
-    }
-
-    fn kinds(rows: &[DiffRow]) -> Vec<(String, RowKind)> {
-        let mut out = Vec::new();
-        fn rec(rows: &[DiffRow], out: &mut Vec<(String, RowKind)>) {
-            for r in rows {
-                out.push((r.id.clone(), r.kind));
-                rec(&r.children, out);
-            }
-        }
-        rec(rows, &mut out);
-        out
-    }
-
-    #[test]
-    fn identical_docs_are_all_unchanged() {
-        let a = parse("- one\n- two\n\t- child\n");
-        let d = diff_docs(&a, &a);
-        assert!(d.blocks_identical);
-        assert!(d.rows.iter().all(|r| r.kind == RowKind::Unchanged));
-        assert!(!d.pre_differs);
-    }
-
-    #[test]
-    fn added_and_removed_without_ids() {
-        // winner has A, B; conflict has A, C.  B is added (winner-only), C removed.
-        let mine = parse("- alpha\n- beta\n");
-        let theirs = parse("- alpha\n- gamma\n");
-        let d = diff_docs(&mine, &theirs);
-        let k = kinds(&d.rows);
-        // alpha unchanged; beta vs gamma are dissimilar → Added + Removed
-        assert_eq!(k[0].1, RowKind::Unchanged);
-        let has_added = k.iter().any(|(_, kind)| *kind == RowKind::Added);
-        let has_removed = k.iter().any(|(_, kind)| *kind == RowKind::Removed);
-        assert!(has_added && has_removed, "kinds: {k:?}");
-        assert!(!d.blocks_identical);
-    }
-
-    #[test]
-    fn large_unrelated_flat_conflict_uses_bounded_fallback_without_data_loss() {
-        let mine: Vec<DocBlock> = (0..1100)
-            .map(|i| DocBlock::new(format!("mine unique block {i}")))
-            .collect();
-        let theirs: Vec<DocBlock> = (0..1100)
-            .map(|i| DocBlock::new(format!("theirs unrelated block {i}")))
-            .collect();
-        let rows = diff_blocks(&mine, &theirs);
-        assert_eq!(rows.len(), 2200);
-        assert_eq!(
-            rows.iter().filter(|row| row.kind == RowKind::Added).count(),
-            1100
-        );
-        assert_eq!(
-            rows.iter()
-                .filter(|row| row.kind == RowKind::Removed)
-                .count(),
-            1100
-        );
-        assert_eq!(
-            merge_blocks(&mine, &theirs, &std::collections::HashMap::new()),
-            mine
-        );
-    }
-
-    #[test]
-    fn modified_by_similar_first_line() {
-        let mine = parse("- the quick brown fox jumps\n");
-        let theirs = parse("- the quick brown fox leaps\n");
-        let d = diff_docs(&mine, &theirs);
-        assert_eq!(d.rows.len(), 1);
-        assert_eq!(d.rows[0].kind, RowKind::Modified);
-    }
-
-    #[test]
-    fn modified_matched_by_id_even_when_text_differs() {
-        // Same id::, very different text → matched as Modified (id anchor), not
-        // Added+Removed.
-        let mine = parse("- hello world\n  id:: aaaaaaaa-0000-0000-0000-0000000000ab\n");
-        let theirs =
-            parse("- totally rewritten line\n  id:: aaaaaaaa-0000-0000-0000-0000000000ab\n");
-        let d = diff_docs(&mine, &theirs);
-        assert_eq!(d.rows.len(), 1);
-        assert_eq!(d.rows[0].kind, RowKind::Modified);
-    }
-
-    #[test]
-    fn child_change_recurses() {
-        // A small edit in one child (one typo) → the child pairs as Modified via
-        // similarity, and its parent is Modified because its subtree changed.
-        let mine = parse("- parent\n\t- the first child\n\t- the second child line\n");
-        let theirs = parse("- parent\n\t- the first child\n\t- the second child lyne\n");
-        let d = diff_docs(&mine, &theirs);
-        assert_eq!(d.rows.len(), 1);
-        assert_eq!(d.rows[0].kind, RowKind::Modified);
-        let ck = kinds(&d.rows[0].children);
-        assert!(ck.iter().any(|(_, k)| *k == RowKind::Unchanged), "{ck:?}");
-        assert!(ck.iter().any(|(_, k)| *k == RowKind::Modified), "{ck:?}");
-    }
-
-    #[test]
-    fn large_child_edit_shows_add_remove_not_wrong_pairing() {
-        // A change too big to be confidently the "same" block → add+remove, never a
-        // misleading Modified pairing (the plan's data-safety default).
-        let mine = parse("- parent\n\t- kid two\n");
-        let theirs = parse("- parent\n\t- kid TWO totally rewritten and much longer now\n");
-        let d = diff_docs(&mine, &theirs);
-        let ck = kinds(&d.rows[0].children);
-        assert!(ck.iter().any(|(_, k)| *k == RowKind::Added), "{ck:?}");
-        assert!(ck.iter().any(|(_, k)| *k == RowKind::Removed), "{ck:?}");
-        assert!(!ck.iter().any(|(_, k)| *k == RowKind::Modified), "{ck:?}");
-    }
-
-    #[test]
-    fn reordered_blocks_keep_one_anchor() {
-        // winner: A B C ; conflict: A C B  → LCS keeps A and one of B/C as anchors,
-        // the other becomes an Added/Removed pair. No crash, order preserved.
-        let mine = parse("- aaa\n- bbb\n- ccc\n");
-        let theirs = parse("- aaa\n- ccc\n- bbb\n");
-        let d = diff_docs(&mine, &theirs);
-        assert_eq!(
-            d.rows
-                .iter()
-                .filter(|r| r.kind == RowKind::Unchanged)
-                .count()
-                >= 2,
-            true
-        );
-        assert!(!d.blocks_identical);
-    }
-
-    // --- merge -------------------------------------------------------------
-
-    use std::collections::HashMap;
-
-    fn raws(blocks: &[DocBlock]) -> Vec<String> {
-        blocks
-            .iter()
-            .map(|b| b.raw.lines().next().unwrap_or("").to_string())
-            .collect()
-    }
-
-    #[test]
-    fn merge_default_keeps_winner() {
-        // No decisions → winner wins: modified keeps mine's body, added kept,
-        // removed dropped. Result equals the winner's blocks.
-        let mine = parse("- alpha\n- the quick brown fox jumps\n- winner only\n");
-        let theirs = parse("- alpha\n- the quick brown fox leaps\n- conflict only\n");
-        let merged = merge_blocks(&mine.roots, &theirs.roots, &HashMap::new());
-        assert_eq!(
-            raws(&merged),
-            vec!["alpha", "the quick brown fox jumps", "winner only"]
-        );
-    }
-
-    #[test]
-    fn merge_keep_theirs_on_modified() {
-        let mine = parse("- the quick brown fox jumps\n");
-        let theirs = parse("- the quick brown fox leaps\n");
-        // The single modified root has id "0".
-        let dec = HashMap::from([("0".to_string(), "theirs".to_string())]);
-        let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
-        assert_eq!(raws(&merged), vec!["the quick brown fox leaps"]);
-    }
-
-    #[test]
-    fn merge_pull_in_removed_block() {
-        // Removed (conflict-only) block pulled in with keep-theirs.
-        let mine = parse("- alpha\n");
-        let theirs = parse("- alpha\n- conflict only line\n");
-        let d = diff_docs(&mine, &theirs);
-        // Find the Removed row's id.
-        let removed_id = d
-            .rows
-            .iter()
-            .find(|r| r.kind == RowKind::Removed)
-            .map(|r| r.id.clone())
-            .expect("a removed row");
-        let dec = HashMap::from([(removed_id, "theirs".to_string())]);
-        let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
-        assert_eq!(raws(&merged), vec!["alpha", "conflict only line"]);
-    }
-
-    #[test]
-    fn merge_keep_both_strips_duplicate_id() {
-        // Same id::, both kept → the conflict copy loses the id:: so it doesn't
-        // duplicate the winner's on disk.
-        let mine = parse("- winner text\n  id:: aaaaaaaa-0000-0000-0000-0000000000cd\n");
-        let theirs = parse("- their text\n  id:: aaaaaaaa-0000-0000-0000-0000000000cd\n");
-        let dec = HashMap::from([("0".to_string(), "both".to_string())]);
-        let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
-        assert_eq!(merged.len(), 2);
-        // Winner keeps its id::; the pulled-in copy does not.
-        assert!(merged[0]
-            .raw
-            .contains("id:: aaaaaaaa-0000-0000-0000-0000000000cd"));
-        assert!(
-            !merged[1].raw.contains("id::"),
-            "dup id leaked: {:?}",
-            merged[1].raw
-        );
-        assert!(merged[1].raw.contains("their text"));
-    }
-
-    #[test]
-    fn merge_drop_added_block() {
-        let mine = parse("- alpha\n- winner only\n");
-        let theirs = parse("- alpha\n");
-        let d = diff_docs(&mine, &theirs);
-        let added_id = d
-            .rows
-            .iter()
-            .find(|r| r.kind == RowKind::Added)
-            .map(|r| r.id.clone())
-            .expect("an added row");
-        let dec = HashMap::from([(added_id, "theirs".to_string())]); // drop it
-        let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
-        assert_eq!(raws(&merged), vec!["alpha"]);
-    }
-}
+#[path = "sync_diff_tests.rs"]
+mod tests;

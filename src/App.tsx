@@ -1,7 +1,8 @@
-import { Show, Suspense, createEffect, createSignal, lazy, onCleanup, onMount, type JSX } from "solid-js";
+import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
+import { ConflictOverview } from "./components/ConflictOverview";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
@@ -41,7 +42,7 @@ import { installPageIndex } from "./pageIndex";
 import { checkForUpdate } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, refreshConflictQueueIfTouched, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
@@ -67,7 +68,7 @@ import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
-import { initDebug, dbg, recordDiagnostic } from "./debug";
+import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
 import {
@@ -93,6 +94,7 @@ import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
+import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
 
 const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
@@ -257,12 +259,14 @@ function PaneTabSplitPreview(props: { paneId: string }): JSX.Element {
 
 function PaneContent(props: { router: PaneRouter }): JSX.Element {
   return (
-    <Show
-      when={props.router.route().kind === "query"}
-      fallback={<PageView />}
-    >
-      <QueryWorkspace route={props.router.route() as QueryRoute} router={props.router} focusSource={focusedPaneId() === props.router.paneId} />
-    </Show>
+    <Switch fallback={<PageView />}>
+      <Match when={props.router.route().kind === "query"}>
+        <QueryWorkspace route={props.router.route() as QueryRoute} router={props.router} focusSource={focusedPaneId() === props.router.paneId} />
+      </Match>
+      <Match when={props.router.route().kind === "conflicts"}>
+        <ConflictOverview router={props.router} />
+      </Match>
+    </Switch>
   );
 }
 
@@ -513,6 +517,11 @@ export function App(): JSX.Element {
     flushAll,
     closeInFlight: safeClose.inFlight,
   })));
+  // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
+  onMount(() => onCleanup(installSessionActivity({
+    isMobile: isMobilePlatform,
+    setActive: (active) => void recordSessionActive(active),
+  })));
   let openCalendarJump = () => {};
   const topbarActions = {
     calendar: () => openCalendarJump(),
@@ -628,7 +637,7 @@ export function App(): JSX.Element {
     let unsub = () => {};
     let alive = true;
     const owner = ownedWhen(() => alive);
-    void readOwnedResource(owner, backend().onConflictsChanged(() => void refreshSyncConflicts()), (u) => u())
+    void readOwnedResource(owner, backend().onConflictsChanged(() => void refreshSyncConflicts("new")), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
     onCleanup(() => { alive = false; unsub(); });
   });
@@ -646,7 +655,7 @@ export function App(): JSX.Element {
     let unsub = () => {};
     let alive = true;
     const owner = ownedWhen(() => alive);
-    void readOwnedResource(owner, backend().onGraphChanged((c) => void applyGraphChange(c)), (u) => u())
+    void readOwnedResource(owner, backend().onGraphChanged((c) => { void applyGraphChange(c); void refreshConflictQueueIfTouched([c]); }), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
     onCleanup(() => { alive = false; unsub(); });
   });

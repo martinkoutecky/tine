@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 149] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 154] = [
     "app_architecture",
     "app_platform",
     "apply_journal_filename_migrations",
@@ -25,6 +25,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 149] = [
     "clear_diagnostics",
     "clipboard_files",
     "close_graph_window",
+    "conflict_inventory",
     "copy_guide_into_graph",
     "copy_image_to_clipboard",
     "create_graph",
@@ -36,6 +37,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 149] = [
     "diagnostic_frontend_event",
     "diagnostic_ipc_event",
     "diagnostic_report",
+    "diagnostic_session_active",
     "edit_asset_external",
     "empty_asset_trash",
     "export_query_subtrees",
@@ -110,11 +112,13 @@ pub(crate) const KNOWN_COMMANDS: [&str; 149] = [
     "resolve_blocks",
     "resolve_page",
     "resolve_sync_conflict",
+    "resolve_vcs_marker_conflict",
     "restore_backup",
     "reveal_known_graph",
     "rollback_pdf_area_image",
     "run_graph_search",
     "save_asset",
+    "save_diagnostic_report",
     "save_pages",
     "save_pdf_area_image",
     "save_session",
@@ -153,6 +157,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 149] = [
     "trash_journal_file",
     "trash_sync_conflict",
     "uninstall_plugin",
+    "vcs_marker_conflict_diff",
     "verify_plugin_registry",
     "warm_done",
     "write_highlights",

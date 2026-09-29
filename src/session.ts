@@ -103,6 +103,7 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
   if (o.kind === "journals") return { kind: "journals" };
+  if (o.kind === "conflicts") return { kind: "conflicts" };
   if (o.kind === "query") {
     if (!(typeof o.id === "string" && o.id.length > 0 && o.id.length <= 128
       && (o.sourceKind === "search" || o.sourceKind === "dsl")

@@ -115,12 +115,12 @@ const DURABLE_BACKEND_METHODS = new Set([
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
   "setStartOfWeek", "editAssetExternal", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",
-  "mergePages", "renameFileToPage", "resolveSyncConflict", "trashSyncConflict", "saveAsset",
+  "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "trashSyncConflict", "saveAsset",
   "pasteImage", "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
   "openPdf", "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
-  "debugLog", "diagnosticFrontendEvent", "clearDiagnostics",
+  "debugLog", "diagnosticFrontendEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
 ]);
 // All remaining Backend methods are reads, resource subscriptions, dialogs,
 // transient OS controls, or graph-binding controls. Adding a method requires
@@ -136,7 +136,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "queryRun", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
   "readCustomCss", "openExternal", "openAsset", "openPageFile", "detectMediaEditor", "listOrphanAssets",
   "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath", "listSyncConflicts",
-  "syncConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",
+  "syncConflictDiff", "conflictInventory", "vcsMarkerConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",
   "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "streamAsset",
   "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder",
   "pickGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",

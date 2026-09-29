@@ -2149,6 +2149,9 @@ pub enum SaveBase {
     Existing(FileRev),
     /// Create only if the file is absent.
     CreateNew,
+    /// As `Existing`, for the one save that resolves VCS merge conflict markers the
+    /// file carries (R-VCS-MARKERS); commit first stages the old bytes in conflict trash.
+    ResolvingMarkers(FileRev),
 }
 
 /// Result of one guarded page save. A refusal never authorizes dropping edits.
@@ -2165,20 +2168,17 @@ pub enum SaveOutcome {
         /// Revision of the current disk bytes.
         disk: FileRev,
     },
-    /// Existing base was requested, but the file disappeared. Retrying as
-    /// `CreateNew` would recreate a page that another device may have deleted.
-    /// Keep the unsaved buffer; if the user wants a separate copy, choose a
-    /// new name and use guarded `CreateNew` after checking its proposed id.
+    /// Existing base was requested, but the file disappeared. Retrying as `CreateNew` would
+    /// recreate a page another device may have deleted. Keep the unsaved buffer; for a separate
+    /// copy, choose a new name and use guarded `CreateNew` after checking its proposed id.
     Deleted,
-    /// Existing page cannot be safely rewritten; currently this is the Org
-    /// round-trip editability refusal. The reason is for display.
+    /// Existing page cannot be safely rewritten: the Org round-trip editability refusal, or
+    /// unresolved VCS conflict markers (R-VCS-MARKERS). The reason is for display.
     ReadOnly(String),
-    /// Another file claims the page name or journal day. Creation and moves
-    /// check this; an ordinary guarded save to either existing claimant is
-    /// allowed when its own revision guard and safety checks pass. If a twin
-    /// appears after a `CreateNew` write, commit withdraws its newly written
-    /// bytes during undo before returning this result; the caller still owns
-    /// the unsaved DTO and must retain it.
+    /// Another file claims the page name or journal day. Creation and moves check this; an
+    /// ordinary guarded save to either existing claimant is allowed when its own revision guard
+    /// and safety checks pass. If a twin appears after a `CreateNew` write, commit withdraws its
+    /// newly written bytes during undo before returning this result; the caller must retain its DTO.
     Twin {
         /// Existing claimant.
         existing: PageId,

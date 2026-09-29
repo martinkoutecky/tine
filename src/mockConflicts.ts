@@ -1,0 +1,82 @@
+// Browser-mock Concord surface: sync-conflict copies and the derived conflict
+// queue. Split out of mock.ts (over the size ratchet); nothing here writes.
+import type { ConflictInventory, ConflictObject, MarkerConflictDiff, SyncConflict, SyncConflictDiff } from "./types";
+
+// Gated on the `?conflicts` flag, like the journal-day demo, so the reconcile
+// surfaces stay out of the marketing screenshots by default.
+function conflictsDemo(): boolean {
+  return typeof location !== "undefined" && /[?&]conflicts\b/.test(location.search);
+}
+
+function listSyncConflicts(): SyncConflict[] {
+  if (!conflictsDemo()) return [];
+  return [
+    {
+      path: "pages/Project Plan.sync-conflict-20260705-141233-A2B2C3D.md",
+      base_name: "Project Plan",
+      base_path: "pages/Project Plan.md",
+      kind: "page" as const,
+      tag: "sync-conflict-20260705-141233-A2B2C3D",
+      preview: "Milestones for the launch",
+    },
+  ];
+}
+
+function syncConflictDiff(): SyncConflictDiff {
+  const v = (text: string) => ({ uuid: "", text, child_count: 0 });
+  return {
+    base_rev: "mock-sync-diff-rev",
+    conflict_rev: "mock-sync-copy-rev",
+    rows: [
+      { id: "0", kind: "unchanged" as const, mine: v("Milestones for the launch"), theirs: v("Milestones for the launch"), children: [] },
+      { id: "1", kind: "modified" as const, mine: v("TODO ship the beta by Friday"), theirs: v("TODO ship the beta by Thursday"), children: [] },
+      { id: "2", kind: "added" as const, mine: v("write the release notes"), theirs: null, children: [] },
+      { id: "3", kind: "removed" as const, mine: null, theirs: v("ask marketing for the banner"), children: [] },
+    ],
+    mine_pre: "title:: Project Plan",
+    theirs_pre: "title:: Project Plan",
+    pre_differs: false,
+    blocks_identical: false,
+  };
+}
+
+function conflictInventory(): ConflictInventory {
+  const sync_conflicts = listSyncConflicts();
+  const queue: ConflictObject[] = sync_conflicts.flatMap((copy) => copy.base_path ? [{
+    id: `copy:${copy.path}`,
+    source: "sync-copy" as const,
+    page_name: copy.base_name,
+    page_path: copy.base_path,
+    kind: copy.kind,
+    sides: [
+      { role: "mine" as const, label: "This device", path: copy.base_path },
+      { role: "theirs" as const, label: copy.tag, path: copy.path },
+    ],
+    block_conflicts: 3,
+  }] : []);
+  return { sync_conflicts, vcs_markers: [], queue };
+}
+
+export const mockConflictApi = {
+  async listSyncConflicts() {
+    return listSyncConflicts();
+  },
+  async syncConflictDiff() {
+    return syncConflictDiff();
+  },
+  async resolveSyncConflict(): Promise<void> {
+    // no-op in the browser mock
+  },
+  async trashSyncConflict(): Promise<void> {
+    // no-op in the browser mock
+  },
+  async conflictInventory(): Promise<ConflictInventory> {
+    return conflictInventory();
+  },
+  async vcsMarkerConflictDiff(): Promise<MarkerConflictDiff | null> {
+    return null;
+  },
+  async resolveVcsMarkerConflict(): Promise<void> {
+    // no-op in the browser mock
+  },
+};

@@ -66,4 +66,26 @@ describe("Help & diagnostics (GH #343)", () => {
     expect(writeText).toHaveBeenCalledWith(text);
     dispose();
   });
+
+  // og ADR 0058 (master 271885b2): on desktop the user may save the report to
+  // a file they pick; a cancelled dialog is not an error.
+  it("saves a report where the user picks on desktop, and says nothing when cancelled", async () => {
+    const save = vi.spyOn(backend(), "saveDiagnosticReport").mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const toasts = await import("../toasts");
+    const toast = vi.spyOn(toasts, "pushToast");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    expect(host.textContent).toContain("this run and the previous one");
+    button(host, "Save report…").click();
+    await flush();
+    expect(save).toHaveBeenCalledOnce();
+    expect(toast).toHaveBeenCalledWith("Diagnostic report saved", "success");
+    toast.mockClear();
+    button(host, "Save report…").click();
+    await flush();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(toast).not.toHaveBeenCalled();
+    dispose();
+  });
 });

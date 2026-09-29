@@ -256,9 +256,26 @@ export interface DiffRow {
   mine: BlockView | null;
   theirs: BlockView | null;
   children: DiffRow[];
+  /** 3-way classification against the base (absent on 2-way diffs). */
+  verdict?: Diff3Verdict | null;
+  /** Decision the base justifies; only pre-selected, never applied unconfirmed. */
+  suggestion?: MergeDecision | null;
+  /** Merged body offered for a `both-changed` row. Display only: the resolve
+   *  re-derives it from the same inputs and never trusts this echo. */
+  merged?: MergedProposal | null;
 }
 
-/** The full block-level diff of a conflict copy against its winner. */
+/** How a 3-way row relates to the common base. */
+export type Diff3Verdict = "mine-only" | "theirs-only" | "both-changed";
+
+/** "computed": two disjoint edits composed here; "artifact": the merge tool's
+ *  own suggested resolution (Fossil), which Tine does not vouch for. */
+export interface MergedProposal {
+  text: string;
+  source: "computed" | "artifact";
+}
+
+/** The full block-level diff of a conflict's two sides. */
 export interface SyncConflictDiff {
   base_rev: string;
   conflict_rev: string;
@@ -267,10 +284,63 @@ export interface SyncConflictDiff {
   theirs_pre: string | null;
   pre_differs: boolean;
   blocks_identical: boolean;
+  /** True when rows carry 3-way verdicts against a real base (absent = false). */
+  three_way?: boolean;
 }
 
 /** A user's per-row merge decision. */
-export type MergeDecision = "mine" | "theirs" | "both";
+export type MergeDecision = "mine" | "theirs" | "both" | "merged";
+
+/** Where a conflict object came from (og family 8 has no live-draft source yet). */
+export type ConflictSource = "sync-copy" | "vcs-markers";
+
+/** One version of a page participating in a conflict. */
+export interface ConflictSide {
+  role: "mine" | "theirs" | "base";
+  label: string;
+  /** Graph-root-relative path, when the side is a file of its own. */
+  path?: string | null;
+}
+
+/** One item of the conflict queue: DERIVED from disk on every refresh and never
+ *  persisted, so it survives a restart by being recomputed. */
+export interface ConflictObject {
+  /** Stable derived id: `copy:<copy path>` / `markers:<path>`. */
+  id: string;
+  source: ConflictSource;
+  page_name: string;
+  /** Path of the page to open: the winner, or the marker-bearing file. */
+  page_path: string;
+  kind: PageKind;
+  sides: ConflictSide[];
+  /** Rows needing a decision, when computed (absent is not zero). */
+  block_conflicts?: number | null;
+  /** Marker tokens present, for a `vcs-markers` object. */
+  markers?: string[];
+}
+
+/** A page file carrying unresolved VCS merge conflict markers. */
+export interface VcsMarkerConflict {
+  path: string;
+  name: string;
+  kind: PageKind;
+  markers: string[];
+}
+
+/** One answer from one walk: the listings and the queue cannot disagree. */
+export interface ConflictInventory {
+  sync_conflicts: SyncConflict[];
+  vcs_markers: VcsMarkerConflict[];
+  queue: ConflictObject[];
+}
+
+/** A marker-bearing page's own conflict, parsed from its marker sections. */
+export interface MarkerConflictDiff {
+  mine_label: string;
+  theirs_label: string;
+  regions: number;
+  diff: SyncConflictDiff;
+}
 
 export interface RefGroup {
   page: string;

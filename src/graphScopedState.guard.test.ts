@@ -61,7 +61,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/themes/manager.ts#installedThemes": "device-level theme catalog, not graph content",
   "src/toasts.ts#toasts": "notifications; their actions open settings, retry the session save, or undo (history is cleared by resetStore)",
   "src/ui.ts#journalConflicts": "cleared by clearOnBindingInvalidated; its reconcile writes capture graphOwner at the click",
-  "src/ui.ts#syncConflicts": "cleared by clearOnBindingInvalidated; its merge/discard writes capture graphOwner at the click",
+  "src/conflictQueue.ts#conflictInventory": "cleared by clearOnBindingInvalidated; its merge/discard/resolve writes capture graphOwner at the click",
   "src/ui.ts#switcherMode": "Ctrl-K mode enum (matches only through the literal \"current-page\")",
   "src/workspaces.ts#workspaceList": "clearWorkspaces() on a switch; every workspace write captures graphOwner",
 };

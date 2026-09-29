@@ -1,9 +1,8 @@
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
-import { errorFamily } from "../errorFamily";
 import { AboutTab } from "./AboutTab";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
-import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
+import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, conflictQueue, type SettingsTabId } from "../ui";
 import { setJournalTemplate, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
@@ -41,7 +40,7 @@ import { MEDIA_EDITORS, type MediaEditor } from "../mediaEditors";
 import { detectMediaEditorCommand, mediaEditorCommand, setMediaEditorCommand } from "../mediaEditorSettings";
 import { formatAssetName } from "../media";
 import { platformKind } from "../platform";
-import { openPage, openFile } from "../router";
+import { openConflicts, openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { GraphPublish } from "./GraphPublish";
@@ -54,7 +53,7 @@ import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
 import { captureBinding } from "../binding";
-import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
+import type { AssetInfo, TrashStats, JournalFile } from "../types";
 import { formatJournal } from "../journal";
 import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
 import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES } from "../plugins/manifest";
@@ -1631,7 +1630,7 @@ function BackupsTab(): JSX.Element {
 
       <JournalConflictsPanel />
       <JournalFilenamePanel />
-      <SyncConflictsPanel />
+      <ConflictOverviewPointer />
     </>
   );
 }
@@ -1817,322 +1816,30 @@ function JournalConflictsPanel(): JSX.Element {
   );
 }
 
-// Sync-tool conflict copies (Syncthing/Dropbox `*.sync-conflict-*` files). They're
-// excluded from the page list (so they don't show as garbage pages) and surfaced
-// here so the user can review a per-block diff against the winning page and merge,
-// or just discard the copy. Never auto-merged / auto-deleted (ADR 0007).
-function SyncConflictsPanel(): JSX.Element {
+// Concord inventory (og 8c): sync conflict copies, marker-bearing files and a
+// copy whose page is gone live on ONE surface, the Conflicts overview, which the
+// sidebar's `N conflicts` badge opens; Settings only points there. The merge
+// modal that used to live here is retired: resolution happens on the page.
+function ConflictOverviewPointer(): JSX.Element {
   void refreshSyncConflicts(); // refresh when the Backups tab opens
-  let alive = true;
-  onCleanup(() => { alive = false; });
-  const [merging, setMerging] = createSignal<SyncConflict | null>(null);
-  const discard = async (c: SyncConflict) => {
-    const owner = graphOwner(() => alive);
-    const name = c.path.split("/").pop() ?? c.path;
-    const confirmed = await readOwned(owner, backend().confirm(
-        `Discard the conflict copy “${name}”?\n\n` +
-          `It moves to logseq/.tine-trash (recoverable). The current “${c.base_name}” is left as-is.`
-      ));
-    if (confirmed.kind === "stale" || !confirmed.value) return;
-    try {
-      const result = await writeOwned(owner, backend().trashSyncConflict(c.path, "delete-page"));
-      if (result.kind === "stale") return;
-      pushToast(`Discarded ${name}`, "success");
-      await readOwned(owner, refreshSyncConflicts());
-    } catch (e) {
-      pushToast(`Couldn’t discard it: ${String(e)}`, "error");
-    }
-  };
+  const count = () => conflictQueue().length + syncConflicts().filter((c) => !c.base_path).length;
   return (
-    <Show when={syncConflicts().length}>
+    <Show when={count()}>
       <div class="settings-section" style={{ "margin-top": "18px" }}>
-        Sync conflict copies
+        Conflicts
       </div>
       <div class="settings-hint settings-block">
-        Syncthing and Dropbox leave a <code>*.sync-conflict-*</code> copy when the same page was
-        edited on two devices. Tine keeps these out of your page list.{" "}
-        <strong>Review &amp; merge</strong> shows a block-by-block diff against the current page so
-        you can keep either side (or both) per block; <strong>Discard copy</strong> trashes it
-        (recoverable) and leaves the current page unchanged.
+        {count()} {count() === 1 ? "item needs" : "items need"} a decision: sync conflict copies or
+        version-control merge markers. The Conflicts page lists them, with{" "}
+        <strong>Discard copy</strong> for sync copies; the <strong>N conflicts</strong> badge in the
+        sidebar opens it too.
       </div>
-      <For each={syncConflicts()}>
-        {(c) => (
-          <div class="settings-block sync-conflict-row">
-            <div class="sync-conflict-head">
-              <span class="settings-asset-name">{c.base_name}</span>
-              <span class="sync-conflict-tag mono">{c.tag}</span>
-            </div>
-            <div class="journal-conflict-preview">{c.preview || "(empty)"}</div>
-            <Show
-              when={c.base_path}
-              fallback={
-                <div class="settings-hint">
-                  The page this shadows no longer exists — discard the copy, or restore it in Logseq.
-                </div>
-              }
-            >
-              <span class="journal-conflict-actions">
-                <button class="settings-btn" title="See a per-block diff and merge" onClick={() => setMerging(c)}>
-                  Review &amp; merge…
-                </button>
-              </span>
-            </Show>
-            <span class="journal-conflict-actions">
-              <button class="settings-btn settings-btn-danger" onClick={() => void discard(c)}>
-                Discard copy
-              </button>
-            </span>
-          </div>
-        )}
-      </For>
-      <Show when={merging()}>
-        {(c) => <SyncConflictMergeModal conflict={c()} onClose={() => setMerging(null)} />}
-      </Show>
+      <span class="journal-conflict-actions">
+        <button class="settings-btn" onClick={() => { openConflicts(); closeSettings(); }}>
+          Open conflicts
+        </button>
+      </span>
     </Show>
-  );
-}
-
-// The effective decision for a row (default keep-the-current-page everywhere).
-function decisionOf(decisions: Record<string, MergeDecision>, id: string): MergeDecision {
-  return decisions[id] ?? "mine";
-}
-
-// Collect every decidable row (id + kind), flattened, for the escape-hatch buttons.
-function collectRows(rows: DiffRow[], out: { id: string; kind: string }[] = []): { id: string; kind: string }[] {
-  for (const r of rows) {
-    if (r.kind !== "unchanged") out.push({ id: r.id, kind: r.kind });
-    if (r.children.length) collectRows(r.children, out);
-  }
-  return out;
-}
-
-function firstLine(text: string): string {
-  const l = text.split("\n").find((s) => s.trim().length) ?? "";
-  return l.trim();
-}
-
-// The shown rows in document order with their depth: a hidden unchanged row
-// hides its subtree. Iterative, so a diff at the outline cap renders (I-22).
-function visibleDiffRows(rows: DiffRow[], showUnchanged: boolean): { row: DiffRow; depth: number }[] {
-  const out: { row: DiffRow; depth: number }[] = [];
-  const pending = rows.map((row) => ({ row, depth: 0 })).reverse();
-  while (pending.length) {
-    const item = pending.pop()!;
-    if (!showUnchanged && item.row.kind === "unchanged") continue;
-    out.push(item);
-    for (let i = item.row.children.length - 1; i >= 0; i--) pending.push({ row: item.row.children[i], depth: item.depth + 1 });
-  }
-  return out;
-}
-
-// One diff row; its aligned children follow it as their own, indented rows.
-function DiffRowView(props: {
-  row: DiffRow;
-  depth: number;
-  decisions: Record<string, MergeDecision>;
-  setDecision: (id: string, d: MergeDecision) => void;
-}): JSX.Element {
-  const row = () => props.row;
-  const dec = () => decisionOf(props.decisions, row().id);
-  const seg = (value: MergeDecision, label: string, side: "mine" | "theirs") => (
-    <button
-      class="sync-merge-seg"
-      classList={{ active: dec() === value }}
-      data-side={side}
-      onClick={() => props.setDecision(row().id, value)}
-    >
-      {label}
-    </button>
-  );
-  return (
-    <div class="sync-merge-row" data-kind={row().kind} style={{ "padding-left": `${props.depth * 16}px` }}>
-      <div class="sync-merge-cols">
-        <div class="sync-merge-cell mine" classList={{ chosen: row().kind !== "removed" && dec() !== "theirs" }}>
-          {row().mine ? firstLine(row().mine!.text) : <span class="sync-merge-absent">—</span>}
-          <Show when={(row().mine?.child_count ?? 0) > 0}>
-            <span class="sync-merge-kids"> +{row().mine!.child_count}</span>
-          </Show>
-        </div>
-        <div class="sync-merge-cell theirs" classList={{ chosen: dec() === "theirs" || dec() === "both" }}>
-          {row().theirs ? firstLine(row().theirs!.text) : <span class="sync-merge-absent">—</span>}
-          <Show when={(row().theirs?.child_count ?? 0) > 0}>
-            <span class="sync-merge-kids"> +{row().theirs!.child_count}</span>
-          </Show>
-        </div>
-      </div>
-      <div class="sync-merge-controls">
-        <Show when={row().kind === "modified"}>
-          {seg("mine", "Current", "mine")}
-          {seg("theirs", "Copy", "theirs")}
-          {seg("both", "Both", "theirs")}
-        </Show>
-        <Show when={row().kind === "added"}>
-          {seg("mine", "Keep", "mine")}
-          {seg("theirs", "Drop", "theirs")}
-        </Show>
-        <Show when={row().kind === "removed"}>
-          {seg("mine", "Skip", "mine")}
-          {seg("theirs", "Pull in", "theirs")}
-        </Show>
-        <Show when={row().kind === "unchanged"}>
-          <span class="sync-merge-unchanged-tag">unchanged</span>
-        </Show>
-      </div>
-    </div>
-  );
-}
-
-// The block-level merge modal: a two-column diff (current page vs conflict copy)
-// with a per-row keep-current / keep-copy / keep-both choice. Nothing is written
-// until "Merge & trash copy". Resolving goes through the safe backend path
-// (base_rev-guarded save + stage-before-commit trash).
-function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => void }): JSX.Element {
-  let root: HTMLDivElement | undefined;
-  let alive = true;
-  onCleanup(() => { alive = false; });
-  createEffect(() => {
-    const unregister = registerTransientLayer({ id: `sync-conflict-merge-${props.conflict.path}`, parentId: "settings", root: () => root ?? null, dismiss: () => { props.onClose(); return true; } });
-    onCleanup(unregister);
-  });
-  const winner = props.conflict.base_path!; // only opened when the winner exists
-  const [decisions, setDecisions] = createSignal<Record<string, MergeDecision>>({});
-  const [preChoice, setPreChoice] = createSignal<"mine" | "theirs" | "union">("union");
-  const [showUnchanged, setShowUnchanged] = createSignal(false);
-  const [busy, setBusy] = createSignal(false);
-  const [diff, { refetch }] = createResource<SyncConflictDiff | null>(() =>
-    backend().syncConflictDiff(winner, props.conflict.path)
-  );
-  let diffVersion: string | undefined;
-  createEffect(() => {
-    const current = diff();
-    if (!current) return;
-    const nextVersion = `${current.base_rev}\0${current.conflict_rev}`;
-    if (diffVersion !== undefined && diffVersion !== nextVersion) {
-      // Choices are row-id decisions for one exact pair of files. A refetch can
-      // publish a different alignment, so never carry old choices into it.
-      setDecisions({});
-      setPreChoice("union");
-    }
-    diffVersion = nextVersion;
-  });
-  const setDecision = (id: string, d: MergeDecision) => setDecisions((m) => ({ ...m, [id]: d }));
-  const setAll = (d: MergeDecision) => {
-    const rows = diff()?.rows ?? [];
-    const next: Record<string, MergeDecision> = {};
-    for (const { id } of collectRows(rows)) next[id] = d;
-    setDecisions(next);
-  };
-  const merge = async () => {
-    const owner = graphOwner(() => alive);
-    const currentDiff = diff();
-    if (!currentDiff || diff.loading) return;
-    setBusy(true);
-    try {
-      const result = await writeOwned(owner, backend().resolveSyncConflict(
-        winner,
-        props.conflict.path,
-        decisions(),
-        currentDiff.base_rev,
-        currentDiff.conflict_rev,
-        ["replace-page", "delete-page"], preChoice()
-      ));
-      if (result.kind === "stale") return;
-      pushToast(`Merged into “${props.conflict.base_name}”`, "success");
-      const refreshed = await readOwned(owner, refreshSyncConflicts());
-      if (refreshed.kind === "current") props.onClose();
-    } catch (e) {
-      if (errorFamily(e) === "conflict") {
-        pushToast("The current page changed on disk — re-reading it, please redo your choices.", "error");
-        setDecisions({});
-        void refetch();
-      } else {
-        pushToast(`Merge failed: ${String(e)}`, "error");
-      }
-    } finally {
-      if (owner()) setBusy(false);
-    }
-  };
-  const counts = createMemo(() => {
-    const rows = collectRows(diff()?.rows ?? []);
-    return {
-      modified: rows.filter((r) => r.kind === "modified").length,
-      added: rows.filter((r) => r.kind === "added").length,
-      removed: rows.filter((r) => r.kind === "removed").length,
-    };
-  });
-  return (
-    <div class="sync-merge-overlay" onClick={props.onClose}>
-      <div ref={root} class="sync-merge-modal" onClick={(e) => e.stopPropagation()}>
-        <div class="sync-merge-header">
-          <div>
-            <div class="sync-merge-title">Merge “{props.conflict.base_name}”</div>
-            <div class="sync-merge-sub mono">{props.conflict.tag}</div>
-          </div>
-          <button class="settings-btn" onClick={props.onClose}>Close</button>
-        </div>
-        <Show
-          when={diff()}
-          fallback={<div class="sync-merge-body">{diff.loading ? "Loading diff…" : "Couldn’t load the diff."}</div>}
-        >
-          {(d) => (
-            <Show
-              when={!d().blocks_identical || d().pre_differs}
-              fallback={
-                <div class="sync-merge-body">
-                  <p>These files are identical — the copy is safe to discard.</p>
-                </div>
-              }
-            >
-              <div class="sync-merge-toolbar">
-                <span class="settings-hint">
-                  {counts().modified} changed · {counts().added} only here · {counts().removed} only in copy
-                </span>
-                <span class="sync-merge-toolbar-actions">
-                  <button class="settings-btn" onClick={() => setAll("mine")}>Keep all current</button>
-                  <button class="settings-btn" onClick={() => setAll("theirs")}>Take all copy</button>
-                  <label class="sync-merge-showunchanged">
-                    <input type="checkbox" checked={showUnchanged()} onChange={(e) => setShowUnchanged(e.currentTarget.checked)} />
-                    show unchanged
-                  </label>
-                </span>
-              </div>
-              <div class="sync-merge-collabels">
-                <span>Current page</span>
-                <span>Conflict copy</span>
-              </div>
-              <div class="sync-merge-body">
-                <For each={visibleDiffRows(d().rows, showUnchanged())}>
-                  {(item) => (
-                    <DiffRowView row={item.row} depth={item.depth} decisions={decisions()} setDecision={setDecision} />
-                  )}
-                </For>
-              </div>
-              <Show when={d().pre_differs}>
-                <div class="sync-merge-preblock">
-                  <div class="settings-hint">
-                    Page properties differ. Keep{" "}
-                    <select value={preChoice()} onChange={(e) => setPreChoice(e.currentTarget.value as "mine" | "theirs" | "union")}>
-                      <option value="union">both (merge)</option>
-                      <option value="mine">current</option>
-                      <option value="theirs">copy</option>
-                    </select>
-                  </div>
-                </div>
-              </Show>
-            </Show>
-          )}
-        </Show>
-        <div class="sync-merge-footer">
-          <span class="settings-hint">The copy is moved to trash after a successful merge.</span>
-          <span>
-            <button class="settings-btn" onClick={props.onClose}>Cancel</button>
-            <button class="settings-btn settings-btn-primary" disabled={busy() || diff.loading || !diff()} onClick={() => void merge()}>
-              {busy() ? "Merging…" : "Merge & trash copy"}
-            </button>
-          </span>
-        </div>
-      </div>
-    </div>
   );
 }
 
