@@ -23,6 +23,7 @@ import "./styles/theme.css";
 import "./lsShimInstall";
 import { installSystemInsetOwner } from "./systemInsets";
 import "./styles/app.css";
+import "./styles/topbar.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
 import "./styles/published.css";

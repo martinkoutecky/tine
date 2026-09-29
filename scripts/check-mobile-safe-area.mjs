@@ -43,6 +43,7 @@ const entrySource = String.raw`
   // measurement below is meaningless.
   import "/src/styles/theme.css";
   import "/src/styles/app.css";
+  import "/src/styles/topbar.css";
   import {
     closeExportModal,
     closePdfExport,
