@@ -126,20 +126,10 @@ pub(crate) struct WatcherLatencyReceipt {
     seq: u64,
     /// Wall-clock Unix ms, to correlate with "I saved the file at ...".
     at_unix_ms: u64,
-    /// "inotify" or "poll" (a poll cycle, chosen or after a refused watch).
-    mode: &'static str,
     /// Window page events emitted for this batch.
     pages: usize,
-    /// Exact event paths in the batch (0 for a pure full diff).
-    event_paths: usize,
-    /// Whether the full stat diff ran (poll, unclassifiable event, burst).
-    full_diff: bool,
-    /// First notification -> reconcile start; `None` for a poll cycle.
-    event_to_reconcile_ms: Option<u64>,
-    /// Reconcile start -> last window event emitted.
-    reconcile_ms: u64,
-    /// First notification -> last window event emitted.
-    event_to_emit_ms: Option<u64>,
+    #[serde(flatten)]
+    timing: crate::flight::WatcherTiming,
 }
 
 const LATENCY_RECEIPT_CAP: usize = 64;
@@ -151,18 +141,20 @@ fn latency_receipt(batch: &WatchBatch, pages: usize, emitted_at: Instant) -> Wat
     WatcherLatencyReceipt {
         seq: 0,
         at_unix_ms: 0,
-        mode: if batch.poll { "poll" } else { "inotify" },
         pages,
-        event_paths: batch.event_paths,
-        full_diff: batch.full_diff,
-        event_to_reconcile_ms: batch.first_event_at.map(|at| {
-            batch
-                .reconcile_started
-                .saturating_duration_since(at)
-                .as_millis() as u64
-        }),
-        reconcile_ms: since(batch.reconcile_started),
-        event_to_emit_ms: batch.first_event_at.map(since),
+        timing: crate::flight::WatcherTiming {
+            mode: if batch.poll { "poll" } else { "inotify" },
+            event_paths: batch.event_paths,
+            full_diff: batch.full_diff,
+            event_to_reconcile_ms: batch.first_event_at.map(|at| {
+                batch
+                    .reconcile_started
+                    .saturating_duration_since(at)
+                    .as_millis() as u64
+            }),
+            reconcile_ms: since(batch.reconcile_started),
+            event_to_emit_ms: batch.first_event_at.map(since),
+        },
     }
 }
 
@@ -187,13 +179,13 @@ fn record_latency_receipt(mut receipt: WatcherLatencyReceipt) {
         format!(
             "watcher-latency seq={} mode={} pages={} event_paths={} full_diff={} event->reconcile={} reconcile={}ms event->emit={}",
             receipt.seq,
-            receipt.mode,
+            receipt.timing.mode,
             receipt.pages,
-            receipt.event_paths,
-            receipt.full_diff,
-            stage(receipt.event_to_reconcile_ms),
-            receipt.reconcile_ms,
-            stage(receipt.event_to_emit_ms),
+            receipt.timing.event_paths,
+            receipt.timing.full_diff,
+            stage(receipt.timing.event_to_reconcile_ms),
+            receipt.timing.reconcile_ms,
+            stage(receipt.timing.event_to_emit_ms),
         ),
     );
     if let Ok(mut ring) = LATENCY_RECEIPTS.lock() {
@@ -328,17 +320,23 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Chang
             .any(|(id, _, _)| id.as_str() == "logseq/config.edn");
     let (events, copies_changed) = window_events(&change);
     let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
-    if !events.is_empty() || conflicts_dirty {
-        crate::flight::record_watcher_batch(events.len(), conflicts_dirty);
-    }
     let pages = events.len();
     for (name, payload) in page_event_payloads(events, binding_generation) {
         let _ = app.emit_to(label, name, payload);
     }
-    if let Some(batch) = change.watch.as_ref() {
-        if change.origin == Origin::External && (pages > 0 || !change.files.is_empty()) {
-            record_latency_receipt(latency_receipt(batch, pages, Instant::now()));
-        }
+    // Measured once, after the last window event: the flight event and the
+    // devtools ring report the same numbers.
+    let receipt = change
+        .watch
+        .as_ref()
+        .filter(|_| change.origin == Origin::External && (pages > 0 || !change.files.is_empty()))
+        .map(|batch| latency_receipt(batch, pages, Instant::now()));
+    if pages > 0 || conflicts_dirty {
+        let timing = receipt.as_ref().map(|receipt| &receipt.timing);
+        crate::flight::record_watcher_batch(pages, conflicts_dirty, timing);
+    }
+    if let Some(receipt) = receipt {
+        record_latency_receipt(receipt);
     }
     if conflicts_dirty {
         let _ = app.emit_to(label, "conflicts-changed", ());
@@ -502,17 +500,20 @@ mod tests {
             event_paths: 2,
         };
         let receipt = latency_receipt(&batch, 1, started + std::time::Duration::from_millis(250));
-        assert_eq!(receipt.mode, "inotify");
-        assert_eq!(receipt.event_to_reconcile_ms, Some(200));
-        assert_eq!(receipt.reconcile_ms, 50);
-        assert_eq!(receipt.event_to_emit_ms, Some(250));
+        assert_eq!(receipt.timing.mode, "inotify");
+        assert_eq!(receipt.timing.event_to_reconcile_ms, Some(200));
+        assert_eq!(receipt.timing.reconcile_ms, 50);
+        assert_eq!(receipt.timing.event_to_emit_ms, Some(250));
         let poll = WatchBatch {
             first_event_at: None,
             poll: true,
             full_diff: true,
             ..batch
         };
-        assert_eq!(latency_receipt(&poll, 0, started).event_to_emit_ms, None);
+        assert_eq!(
+            latency_receipt(&poll, 0, started).timing.event_to_emit_ms,
+            None
+        );
         let mut ring = VecDeque::new();
         for seq in 0..70 {
             push_latency_receipt(

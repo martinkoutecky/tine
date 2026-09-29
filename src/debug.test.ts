@@ -5,10 +5,11 @@ import { afterEach, expect, it, vi } from "vitest";
 // the message itself never does.
 const diagnosticFrontendEvent = vi.fn(async () => {});
 const debugLog = vi.fn(async () => {});
+const watcherLatencyRecent = vi.fn(async () => [{ seq: 1, reconcile_ms: 7 }]);
 let previousExitUnclean = false;
 let debugEnabled = false;
 vi.mock("./backend", () => ({
-  backend: () => ({ diagnosticFrontendEvent, debugLog, debugInfo: async () => ({ enabled: debugEnabled, path: "/log", previousExitUnclean }) }),
+  backend: () => ({ diagnosticFrontendEvent, debugLog, watcherLatencyRecent, debugInfo: async () => ({ enabled: debugEnabled, path: "/log", previousExitUnclean }) }),
 }));
 const pushToast = vi.fn();
 vi.mock("./toasts", () => ({ pushToast, pushToastUnique: vi.fn(), recordErrorToastsWith: vi.fn() }));
@@ -100,4 +101,17 @@ it("logs the build-injected platform beside the user agent in the boot line", as
   } finally {
     debugEnabled = false;
   }
+});
+
+// GH #337 (master 9869c1cfe): release builds ship the devtools, so a reporter can
+// pull the watcher's latency receipts by calling one named global.
+it("installs the devtools helper that returns the watcher latency receipts", async () => {
+  const { initDebug, resetDebugForTests } = await import("./debug");
+  resetDebugForTests();
+  fakeWindow();
+  await initDebug();
+  const helper = (window as unknown as { __tineWatcherLatency?: () => Promise<unknown[]> }).__tineWatcherLatency;
+  expect(helper).toBeTypeOf("function");
+  expect(await helper!()).toEqual([{ seq: 1, reconcile_ms: 7 }]);
+  expect(watcherLatencyRecent).toHaveBeenCalledOnce();
 });

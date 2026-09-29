@@ -30,17 +30,16 @@ fn is_search_whitespace(ch: char) -> bool {
         | '\u{205f}' | '\u{3000}' | '\u{feff}')
 }
 
+/// Reject regex constructs Rust `regex` and JavaScript RegExp do not share:
+/// backreferences, look-around, inline flags. The class escapes `\d \w \s \b` are
+/// accepted as on master; on non-ASCII text Rust's are Unicode-aware and
+/// JavaScript's `\d \w \b` are ASCII (known divergence, ASCII input agrees).
 fn common_regex_pattern(pattern: &str) -> bool {
     let bytes = pattern.as_bytes();
     let (mut i, mut in_class) = (0, false);
     while i < bytes.len() {
         if bytes[i] == b'\\' {
-            if i + 1 < bytes.len()
-                && matches!(
-                    bytes[i + 1],
-                    b'1'..=b'9' | b'w' | b'W' | b'd' | b'D' | b's' | b'S' | b'b' | b'B'
-                )
-            {
+            if i + 1 < bytes.len() && matches!(bytes[i + 1], b'1'..=b'9') {
                 return false;
             }
             i += 2;

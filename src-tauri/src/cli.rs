@@ -11,7 +11,7 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tine_graph_features::publish_query::{publish_live, publish_static, ExportReceipt};
+use tine_graph_features::publish_query::{publish_live_home, publish_static, ExportReceipt};
 use tine_store::Store;
 
 #[derive(Debug, Parser)]
@@ -71,7 +71,17 @@ enum ExportFormat {
     /// Write the static HTML site.
     Static(ExportArgs),
     /// Write the read-only Tine app.
-    Live(ExportArgs),
+    Live(LiveExportArgs),
+}
+
+#[derive(Debug, Args)]
+struct LiveExportArgs {
+    #[command(flatten)]
+    export: ExportArgs,
+
+    /// Page to open first. Defaults to the configured home page when it is exported, Welcome to Tine, or the first page.
+    #[arg(long, value_name = "PAGE")]
+    home: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -141,8 +151,8 @@ fn open_store(path: &Path) -> Result<Store, String> {
 
 fn export(format: ExportFormat) -> Result<ExportReceipt, String> {
     let (live, args) = match format {
-        ExportFormat::Static(args) => (false, args),
-        ExportFormat::Live(args) => (true, args),
+        ExportFormat::Static(args) => (None, args),
+        ExportFormat::Live(args) => (Some(args.home), args.export),
     };
     if !args.output.is_absolute() {
         return Err("--output must be an absolute folder path".into());
@@ -154,26 +164,80 @@ fn export(format: ExportFormat) -> Result<ExportReceipt, String> {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Tine export".into())
     });
-    let result = if live {
-        publish_live(&store, &args.output, &display, args.all_pages, &bundle())
-    } else {
-        publish_static(&store, &args.output, &display, args.all_pages)
+    let result = match live {
+        Some(home) => publish_live_home(
+            &store,
+            &args.output,
+            &display,
+            args.all_pages,
+            home.as_deref(),
+            &bundle(),
+        ),
+        None => publish_static(&store, &args.output, &display, args.all_pages),
     };
     result.map_err(|e| e.to_string())
 }
 
-fn doctor(path: &Path) -> Result<(), String> {
+/// What `tine doctor` found: summary lines for stdout and one line per problem.
+#[derive(Debug)]
+struct DoctorReport {
+    summary: Vec<String>,
+    problems: Vec<String>,
+}
+
+fn doctor_report(path: &Path) -> Result<DoctorReport, String> {
     let store = open_store(path)?;
     let graph = store
         .whole_graph()
         .map_err(|e| format!("cannot parse graph: {e:?}"))?;
-    terminal_stdout(format_args!("Graph: {}", path.display()));
-    terminal_stdout(format_args!(
-        "Pages and journals: {}",
-        graph.corpus().pages.len()
-    ));
-    terminal_stdout(format_args!("OK: graph files are readable and parseable"));
-    Ok(())
+    let corpus = graph.corpus();
+    // One identity per page name under the store's own fold (`page_key`): two
+    // files claiming it make links and edits land on only one of them.
+    let mut identities: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for page in &corpus.pages {
+        identities
+            .entry(tine_core::refs::page_key(&page.name))
+            .or_default()
+            .push(String::from(page.id.clone()));
+    }
+    let mut problems: Vec<String> = graph
+        .unreadable_files()
+        .iter()
+        .map(|(file, reason)| format!("parse failure: {}: {reason}", file.as_str()))
+        .collect();
+    problems.extend(
+        identities
+            .into_iter()
+            .filter(|(_, paths)| paths.len() > 1)
+            .map(|(name, paths)| format!("duplicate page identity {name:?}: {}", paths.join(", "))),
+    );
+    let config = store.config();
+    let summary = vec![
+        format!("Graph: {}", path.display()),
+        format!("Pages and journals: {}", corpus.pages.len()),
+        format!(
+            "Default home: {}",
+            config.config.default_home.as_deref().unwrap_or("(none)")
+        ),
+    ];
+    Ok(DoctorReport { summary, problems })
+}
+
+fn doctor(path: &Path) -> Result<(), String> {
+    let report = doctor_report(path)?;
+    for line in &report.summary {
+        terminal_stdout(format_args!("{line}"));
+    }
+    if report.problems.is_empty() {
+        terminal_stdout(format_args!(
+            "OK: graph files are readable and parseable; page identities are unique"
+        ));
+        return Ok(());
+    }
+    for line in &report.problems {
+        terminal_stderr(format_args!("{line}"));
+    }
+    Err("graph checks found problems".into())
 }
 
 /// Handle non-GUI desktop commands before Tauri starts. `None` continues into
@@ -352,6 +416,35 @@ mod tests {
             .unwrap();
             assert!(matches!(parsed.command, Some(Command::Export { .. })));
         }
+        let live = Cli::try_parse_from([
+            "tine",
+            "export",
+            "live",
+            "g",
+            "--output",
+            "/o",
+            "--home",
+            "Directory",
+        ])
+        .unwrap();
+        let Some(Command::Export {
+            format: ExportFormat::Live(args),
+        }) = live.command
+        else {
+            panic!("live export did not parse");
+        };
+        assert_eq!(args.home.as_deref(), Some("Directory"));
+        assert!(Cli::try_parse_from([
+            "tine",
+            "export",
+            "static",
+            "g",
+            "--output",
+            "/o",
+            "--home",
+            "Directory",
+        ])
+        .is_err());
         let relative = export(ExportFormat::Static(ExportArgs {
             graph: PathBuf::from("g"),
             output: PathBuf::from("relative"),
@@ -361,6 +454,64 @@ mod tests {
         assert_eq!(
             relative.unwrap_err(),
             "--output must be an absolute folder path"
+        );
+    }
+
+    /// og I1f (#35, port of master e7af4db9): doctor names an unreadable page
+    /// and a duplicate page identity, and exits 1, instead of printing OK.
+    fn doctor_fixture(tag: &str) -> tempfile::TempDir {
+        let root = tempfile::Builder::new()
+            .prefix(&format!("tine-doctor-{tag}-"))
+            .tempdir()
+            .unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        std::fs::create_dir_all(root.path().join("journals")).unwrap();
+        std::fs::write(root.path().join("pages/Note.md"), "- fine\n").unwrap();
+        root
+    }
+
+    #[test]
+    fn doctor_passes_a_clean_graph() {
+        let root = doctor_fixture("clean");
+        assert_eq!(doctor(root.path()), Ok(()));
+    }
+
+    #[test]
+    fn doctor_reports_an_unreadable_page_and_fails() {
+        let root = doctor_fixture("unreadable");
+        std::fs::write(root.path().join("pages/Bad.md"), [0xff, 0xfe]).unwrap();
+        let report = doctor_report(root.path()).unwrap();
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|line| line.starts_with("parse failure: ") && line.contains("Bad.md")),
+            "{:?}",
+            report.problems
+        );
+        assert_eq!(
+            doctor(root.path()).unwrap_err(),
+            "graph checks found problems"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_a_duplicate_page_identity_and_fails() {
+        let root = doctor_fixture("duplicate");
+        std::fs::write(root.path().join("pages/A.md"), "title:: Same\n\n- a\n").unwrap();
+        std::fs::write(root.path().join("pages/B.md"), "title:: same\n\n- b\n").unwrap();
+        let report = doctor_report(root.path()).unwrap();
+        assert!(
+            report.problems.iter().any(|line| line
+                .starts_with("duplicate page identity \"same\": ")
+                && line.contains("A.md")
+                && line.contains("B.md")),
+            "{:?}",
+            report.problems
+        );
+        assert_eq!(
+            doctor(root.path()).unwrap_err(),
+            "graph checks found problems"
         );
     }
 

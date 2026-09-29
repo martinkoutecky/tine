@@ -612,6 +612,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async appArchitecture() {
       return "unknown";
     },
+    async watcherLatencyRecent() {
+      return [];
+    },
     async debugInfo() {
       return { enabled: false, path: "", recorderActive: false, previousExitUnclean: false };
     },
@@ -860,6 +863,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "appPlatform",
   "localClock",
   "appArchitecture",
+  "watcherLatencyRecent",
   "listKnownGraphs",
   "gpuEnv",
   "debugInfo",

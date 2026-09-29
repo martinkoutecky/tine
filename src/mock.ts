@@ -1558,6 +1558,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async gpuEnv(): Promise<GpuEnv> {
       return { software_forced: false, appimage: false };
     },
+    async takeDataHomeFallbackNotice(): Promise<string | null> {
+      return null;
+    },
     async getSmoothScroll(): Promise<boolean> {
       return false;
     },
@@ -1601,6 +1604,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
     },
     async appArchitecture(): Promise<string> { return "x86_64"; },
+    async watcherLatencyRecent(): Promise<unknown[]> { return []; },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },

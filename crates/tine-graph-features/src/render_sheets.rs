@@ -809,6 +809,15 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
     true
 }
 
+/// Whether the app computed a laid-out sheet for this block, so its view
+/// configuration is chrome rather than a property chip. O(1).
+pub(super) fn is_laid_out(ctx: &Ctx, title: &str, at: &SheetPath) -> bool {
+    ctx.graph
+        .and_then(|g| g.sheets)
+        .and_then(|sheets| sheets.0.get(&(title.to_owned(), at.to_vec())))
+        .is_some_and(|export| !matches!(export.body, Body::Error { .. }))
+}
+
 /// Lay out the app's answer for a query-backed sheet block in place of its
 /// `{{query}}` macro's flat result list. False (the caller renders the list,
 /// which also states what it omits) when there is no answer, the query's

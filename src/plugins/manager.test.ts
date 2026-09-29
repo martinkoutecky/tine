@@ -483,7 +483,7 @@ describe("plugin invocation ownership", () => {
     expect(runtime.dispose).not.toHaveBeenCalled();
   });
 
-  it("rejects stale palette/decorate owners before worker invocation and permits the current owner", async () => {
+  it("keeps owners across render epochs but rejects them after a graph rebind", async () => {
     const api = backend();
     vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
     vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([commandRecord()]);
@@ -499,17 +499,24 @@ describe("plugin invocation ownership", () => {
     sharedDoc();
     const manager = new PluginManager();
     await manager.initialize();
-    const stale = bindPluginBlockSnapshot({ id: "shared-id", raw: "same raw", parentId: null, depth: 0 })!;
+    const oldBinding = bindPluginBlockSnapshot({ id: "shared-id", raw: "same raw", parentId: null, depth: 0 })!;
     bumpGraphEpoch();
 
-    await manager.invokeCommand("page.tine.graph-owner", "write", stale);
-    await manager.decorateBlocks("page.tine.graph-owner", "badge", { owner: stale.owner, blocks: [stale.block] });
-    expect(runtime.invoke).toHaveBeenCalledTimes(1);
+    await manager.invokeCommand("page.tine.graph-owner", "write", oldBinding);
+    await manager.decorateBlocks("page.tine.graph-owner", "badge", { owner: oldBinding.owner, blocks: [oldBinding.block] });
+    expect(runtime.invoke).toHaveBeenCalledTimes(3);
+
+    resetStore();
+    setGraphMeta(graphMeta("/graph-a"));
+    sharedDoc();
+    await manager.invokeCommand("page.tine.graph-owner", "write", oldBinding);
+    await manager.decorateBlocks("page.tine.graph-owner", "badge", { owner: oldBinding.owner, blocks: [oldBinding.block] });
+    expect(runtime.invoke).toHaveBeenCalledTimes(3);
 
     const current = bindPluginBlockSnapshot({ id: "shared-id", raw: "same raw", parentId: null, depth: 0 })!;
     await manager.invokeCommand("page.tine.graph-owner", "write", current);
     await manager.decorateBlocks("page.tine.graph-owner", "badge", { owner: capturePluginGraphOwner()!, blocks: [current.block] });
-    expect(runtime.invoke).toHaveBeenCalledTimes(3);
+    expect(runtime.invoke).toHaveBeenCalledTimes(5);
   });
 
   it("does not disable or dispose a successor when an old runtime fails late", async () => {

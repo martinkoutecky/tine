@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const css = ["theme.css", "app.css", "favorites.css"]
+const css = ["theme.css", "app.css", "favorites.css", "rightSidebarReorder.css"]
   .map((file) => fs.readFileSync(path.join(root, "src/styles", file), "utf8"))
   .join("\n");
 
@@ -136,10 +136,10 @@ try {
   if (claimed.length > 0) {
     fail(`right sidebar: the title anchor still covers ${claimed.length}px right of its own text — this is the reported hitbox`);
   }
-  // og's right-sidebar head has no reorder drag (master's does, and advertises
-  // it with `grab`); what must hold here is that the spare width is not a link.
-  if (measured.cursors.rsHead === "pointer") {
-    fail(`right sidebar: the head's spare width advertises a link (cursor: ${measured.cursors.rsHead})`);
+  // The head advertises the reorder drag (og gained right-sidebar reorder in
+  // 70c5e7bad; the old relaxed "not pointer" assertion was stale).
+  if (measured.cursors.rsHead !== "grab") {
+    fail(`right sidebar: the head no longer advertises the reorder drag (cursor: ${measured.cursors.rsHead})`);
   }
   // The close button must not have followed the title leftwards.
   if (measured.rsHeadRight - measured.rsCloseRight > measured.rsHeadPadding + 2) {

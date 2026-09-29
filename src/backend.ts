@@ -21,7 +21,6 @@ import type {
   BacklinkFilterContext,
   BacklinkFilterTarget,
   AssetInfo,
-  GraphMeta,
   GuideCopyResult,
   GuidePage,
   Highlight,
@@ -48,6 +47,7 @@ import type {
   PublicationReceipt,
   DraftRecord,
 } from "./types";
+import type { GraphSourceFile, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import { dbg } from "./debug";
 import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
@@ -122,79 +122,6 @@ export async function clipboardImageToPng(img: ClipboardImage): Promise<Uint8Arr
   if (!blob || blob.size > ASSET_INGRESS_MAX_BYTES) return null;
   const encoded = await blob.arrayBuffer();
   return encoded.byteLength <= ASSET_INGRESS_MAX_BYTES ? new Uint8Array(encoded) : null;
-}
-
-/** One raw graph file, as returned by `graphSourceFiles` — the input to the
- *  in-app lsdoc↔mldoc diff panel. `text` is the file's bytes exactly as on disk. */
-export interface GraphSourceFile {
-  rel: string;
-  text: string;
-  format: "md" | "org";
-  bytes: number;
-}
-
-export type GraphFolderPickResult =
-  | { status: "picked"; path: string }
-  | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
-
-export interface ClipboardAssetFile {
-  path: string;
-  name: string;
-  size: number;
-}
-
-export interface ClipboardFileList {
-  files: ClipboardAssetFile[];
-  skipped: number;
-  truncated: boolean;
-}
-
-/** Result of an Android media-capture command. Successful photos and voice
- *  memos return a bounded native cache-file `path` which Rust streams directly
- *  into the graph. */
-export interface MediaCaptureResult {
-  status: "ok" | "recording" | "cancelled";
-  path?: string | null;
-  ext?: string | null;
-}
-
-export interface KnownGraph {
-  path: string;
-  name: string;
-}
-
-export interface InstalledPluginRecord {
-  id: string;
-  version: string;
-  manifest_json: string;
-  sha256: string;
-  selected: boolean;
-  enabled: boolean;
-}
-
-export interface PluginRegistryCacheEnvelope {
-  schemaVersion: 1;
-  indexJson: string;
-  signature: string;
-}
-
-export type PluginRegistryCacheLoad =
-  | { kind: "absent" }
-  | { kind: "envelope"; envelope: PluginRegistryCacheEnvelope }
-  | { kind: "unsafe"; reason: string };
-
-export type LoadGraphResult =
-  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
-  | { kind: "focused_existing"; window_label: string };
-
-export interface CaptureGraphBindingResult {
-  binding_generation: number;
-}
-
-export interface GraphAccessInspection {
-  graph_root: string;
-  external_assets_path: string | null;
-  approved: boolean;
 }
 
 export interface Backend {
@@ -686,6 +613,9 @@ export interface Backend {
    *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
    *  (WebGL renderer); this just supplies why/where context for the message. */
   gpuEnv(): Promise<GpuEnv>;
+  /** The fallback app-data folder iff this launch had to relocate an unwritable
+   *  one (desktop Linux), delivered once; `null` otherwise. */
+  takeDataHomeFallbackNotice(): Promise<string | null>;
   /** Experimental smooth-scrolling preference (Lenis), app-level, default off. */
   getSmoothScroll(): Promise<boolean>;
   setSmoothScroll(value: boolean): Promise<void>;
@@ -735,9 +665,13 @@ export interface Backend {
   localClock(): Promise<{ offset_minutes: number; unix_ms: number }>;
   /** The CPU architecture of this binary (`x86`, `x86_64`, `aarch64`, …). */
   appArchitecture(): Promise<string>;
+  /** The last 64 external-change latency receipts, oldest first: counts and
+   *  milliseconds only, no path. O(64). Backs the devtools helper
+   *  `window.__tineWatcherLatency()` (GH #337). */
+  watcherLatencyRecent(): Promise<unknown[]>;
 }
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange, GraphSourceFile, GraphFolderPickResult, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange } from "./backendTypes";
 
 export function isTauri(): boolean {
@@ -1420,6 +1354,9 @@ class TauriBackend implements Backend {
   gpuEnv() {
     return this.call<GpuEnv>("gpu_env");
   }
+  takeDataHomeFallbackNotice() {
+    return this.call<string | null>("take_data_home_fallback_notice");
+  }
   debugInfo() {
     return this.call<DebugInfo>("debug_info");
   }
@@ -1450,6 +1387,9 @@ class TauriBackend implements Backend {
   }
   appArchitecture() {
     return this.call<string>("app_architecture");
+  }
+  watcherLatencyRecent() {
+    return this.call<unknown[]>("watcher_latency_recent");
   }
   getSmoothScroll() {
     return this.call<boolean>("get_smooth_scroll");

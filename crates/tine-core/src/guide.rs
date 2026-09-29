@@ -771,10 +771,16 @@ mod og_20d_guide_tests {
             "absolute path",
             "refuses to replace",
             "man tine",
+            // og I1f (#35): the live export's home choice and doctor's findings.
+            "--home \"Page name\"",
+            "configured home page when it is exported",
+            "every unreadable page",
+            "claimed by more than one file",
+            "exits with status 1",
         ] {
             assert!(cli.contains(promised), "Guide omitted {promised}");
         }
-        for stale in ["--replace", "graph-relative", "--home"] {
+        for stale in ["--replace", "graph-relative"] {
             assert!(
                 !cli.contains(stale),
                 "og export has no {stale}; master-only wording leaked in"
@@ -877,5 +883,59 @@ mod og_20d_guide_tests {
         assert!(files.contains("`:publishing/all-pages-public? true`"));
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("it still leaves out pages marked `public:: false`"));
+    }
+}
+
+/// og-I2: three master Guide sentences (GH #468/#464 sidebar link areas,
+/// GH #514/#516 embed root bullet, search-fold mark examples) and the checks
+/// that keep them true.
+#[cfg(test)]
+mod i2_guide_sentence_tests {
+    #[test]
+    fn sidebar_link_areas_are_named_for_both_sidebars() {
+        let page = super::GUIDE_TEMPLATES
+            .iter()
+            .find(|template| template.title == "Workflows/Find and revisit")
+            .expect("find-and-revisit workflow is registered");
+        assert!(page
+            .markdown
+            .contains("In the left sidebar the whole row is the link"));
+        assert!(page
+            .markdown
+            .contains("In the right sidebar, where items are parked pages"));
+    }
+
+    #[test]
+    fn embed_root_bullet_drag_versus_click_is_documented() {
+        let page = include_str!("templates/pages-links-references-search.md");
+        assert!(page.contains("drag its visible root bullet to move the embed on the host page"));
+        assert!(page.contains("clicking that bullet still zooms into the source block"));
+    }
+
+    #[test]
+    fn search_guide_mark_examples_are_what_search_does() {
+        use crate::search_query::canonical_fold;
+        let page = include_str!("templates/pages-links-references-search.md");
+        for (query, text) in [
+            ("cafe", "café"),
+            ("lodz", "Łódź"),
+            ("Tine", "Ｔｉｎｅ"),
+            ("елка", "ёлка"),
+        ] {
+            assert!(page.contains(&format!("`{query}` finds `{text}`")));
+            assert_eq!(
+                canonical_fold(query),
+                canonical_fold(text),
+                "{query} finds {text}"
+            );
+        }
+        for (query, text) in [("か", "が"), ("и", "й"), ("क", "कु")] {
+            assert!(page.contains(&format!("`{query}` does not find `{text}`")));
+            assert_ne!(
+                canonical_fold(query),
+                canonical_fold(text),
+                "{query} must not find {text}"
+            );
+        }
     }
 }

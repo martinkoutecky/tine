@@ -11,7 +11,8 @@ icon:: ⌨️
 	- `PARENT` must be an existing folder outside the graph, given as an absolute path. Tine creates one new child folder in it, named after the graph (or after `--name`), and refuses to replace an existing folder of that name.
 	- Publication follows the graph's existing privacy settings: only pages with `public:: true` are included, unless `:publishing/all-pages-public?` is enabled. Add `--all-pages` to override that selection for one export.
 	- Example: `tine export live ~/notes --all-pages --output ~/Sites --name "My notes"`
+	- A live export opens on the configured home page when it is exported, then **Welcome to Tine**, then the first exported page. Use `--home "Page name"` to choose explicitly; a home page that is not exported is refused.
 - ## Check a graph
-	- `tine doctor GRAPH` reads and parses the graph, reports how many pages and journals it found, and does not change the graph.
+	- `tine doctor GRAPH` reads and parses the graph, reports how many pages and journals it found and the configured home page, names every unreadable page and every page name claimed by more than one file, and does not change the graph. It exits with status 1 when it finds a problem.
 - ## Full reference
 	- Every command and subcommand has `--help`, for example `tine export live --help`. Linux `.deb` and `.rpm` packages also install the same generated reference for `man tine`.

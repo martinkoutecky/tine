@@ -729,6 +729,21 @@ pub fn publish_live(
     publish_live_with_sheets(store, parent, name, all_pages, bundle, Vec::new())
 }
 
+/// `publish_live` opening on `home` when given (it must be a selected page,
+/// else the export is refused before anything is written), otherwise on the
+/// graph's configured `:default-home` page when selected, "Welcome to Tine",
+/// or the first page (port of master's `AppHome`; og I1f, #35).
+pub fn publish_live_home(
+    store: &Store,
+    parent: &Path,
+    name: &str,
+    all_pages: bool,
+    home: Option<&str>,
+    bundle: &[(String, Vec<u8>)],
+) -> io::Result<ExportReceipt> {
+    live(store, parent, name, all_pages, home, bundle, Vec::new())
+}
+
 /// `publish_live` with the app's computed sheets; a sheet block without one
 /// keeps its plain outline (the CLI has no frontend and calls `publish_live`).
 pub fn publish_live_with_sheets(
@@ -736,6 +751,18 @@ pub fn publish_live_with_sheets(
     parent: &Path,
     name: &str,
     all_pages: bool,
+    bundle: &[(String, Vec<u8>)],
+    sheets: Vec<SheetExport>,
+) -> io::Result<ExportReceipt> {
+    live(store, parent, name, all_pages, None, bundle, sheets)
+}
+
+fn live(
+    store: &Store,
+    parent: &Path,
+    name: &str,
+    all_pages: bool,
+    requested_home: Option<&str>,
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
 ) -> io::Result<ExportReceipt> {
@@ -752,11 +779,27 @@ pub fn publish_live_with_sheets(
         return Err(refusal("live export selects too many pages"));
     }
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
-    let home = corpus
-        .pages
-        .iter()
-        .find(|p| p.name.eq_ignore_ascii_case("Welcome to Tine"))
-        .or_else(|| corpus.pages.first())
+    let find = |wanted: &str| {
+        let wanted = tine_core::refs::page_key(wanted);
+        corpus
+            .pages
+            .iter()
+            .find(|p| tine_core::refs::page_key(&p.name) == wanted)
+    };
+    let home =
+        match requested_home {
+            Some(requested) => Some(find(requested).ok_or_else(|| {
+                refusal("the requested home page is not among the exported pages")
+            })?),
+            None => store
+                .config()
+                .config
+                .default_home
+                .as_deref()
+                .and_then(|configured| find(configured))
+                .or_else(|| find("Welcome to Tine"))
+                .or_else(|| corpus.pages.first()),
+        }
         .map(|p| p.name.clone())
         .unwrap_or_default();
     let mut files = collect_static(store, &graph, &corpus, &SheetIndex::new(sheets))?;
