@@ -1,6 +1,6 @@
 // "A newer Tine is available" check — best-effort, once per launch.
 //
-// Notifier: ask GitHub for the og-preview channel release (NEVER `releases/latest`,
+// Notifier: read the og-preview channel manifest (NEVER `releases/latest`,
 // which is the shipped Tine — see PREVIEW_TAG) and, if it's newer than the running
 // build, show a sticky toast. This is the cross-platform half and is
 // always the way a user LEARNS an update exists.
@@ -28,17 +28,18 @@ import { pushToast, dismissToast } from "./toasts";
 import { openSettings } from "./ui";
 import { reportUiFailure } from "./uiFailure";
 
-const REPO = "martinkoutecky/tine";
-/** THE update channel (og-only). This build (`page.tine.TineOG`) must never read
- * the repo's `releases/latest`: that is the shipped Tine, whose newer version
- * number would be offered here and installing it would REPLACE og with master.
- * The channel is the one fixed-tag GitHub release below; the Tauri updater's
- * endpoint in `tauri.conf.json` points at the same tag (guard:
- * `src/updateChannel.guard.test.ts`). The release's *name* must contain the
- * preview build's `X.Y.Z` (the tag itself, `og-preview`, carries no version). */
+/** THE update channel (og-only), the ONE place this file names a URL. This build
+ * (`page.tine.TineOG`) must never read the repo's `releases/latest`: that is the
+ * shipped Tine, whose newer version number would be offered here and installing
+ * it would REPLACE og with master. The channel is the fixed-tag GitHub release
+ * below. What it offers is answered by its `latest.json` manifest, the SAME file
+ * the Tauri updater's endpoint in `tauri.conf.json` reads (guard:
+ * `src/updateChannel.guard.test.ts`); the notifier reads that manifest's
+ * `version` and nothing else (no release name, no tag). */
 const PREVIEW_TAG = "og-preview";
-const RELEASES_PAGE = `https://github.com/${REPO}/releases/tag/${PREVIEW_TAG}`;
-const LATEST_API = `https://api.github.com/repos/${REPO}/releases/tags/${PREVIEW_TAG}`;
+const RELEASES = "https://github.com/martinkoutecky/tine/releases";
+const MANIFEST_URL = `${RELEASES}/download/${PREVIEW_TAG}/latest.json`;
+const RELEASES_PAGE = `${RELEASES}/tag/${PREVIEW_TAG}`;
 
 /** Parse the first `X.Y.Z` out of a version/tag string (`v0.3.0`, `0.3.0`, …). */
 function parseVer(s: string): [number, number, number] | null {
@@ -308,15 +309,16 @@ export async function offerUpdate(version: string, current: string): Promise<voi
   );
 }
 
-/** The version the og-preview channel currently offers, or null when the release
- *  does not exist / is unreachable / names no version. Throws only on network
- *  failure (callers absorb it). Reads the release NAME, never the tag. */
+/** The version the og-preview manifest offers, or null when the manifest is
+ *  missing (404), unreachable, not JSON, or has no parsable `version`. Throws
+ *  only on network failure (callers absorb it). */
 async function previewVersion(): Promise<[number, number, number] | null> {
-  const res = await fetch(LATEST_API, { headers: { Accept: "application/vnd.github+json" } });
-  if (!res.ok) return null; // 404 = no preview release yet: not an error
-  const data: unknown = await res.json();
-  const name = (data as { name?: unknown })?.name;
-  return typeof name === "string" ? parseVer(name) : null;
+  const res = await fetch(MANIFEST_URL);
+  if (!res.ok) return null; // no preview release yet: not an error
+  let data: unknown;
+  try { data = await res.json(); } catch { return null; }
+  const version = (data as { version?: unknown })?.version;
+  return typeof version === "string" ? parseVer(version) : null;
 }
 
 /** Check the og-preview channel for a newer build; toast if there is one.

@@ -70,11 +70,13 @@ async function loadUpdate(opts: {
   };
 }
 
-/** The og-preview channel release: fixed tag, the build's version in its NAME. */
+const MANIFEST = "https://github.com/martinkoutecky/tine/releases/download/og-preview/latest.json";
+
+/** The og-preview channel manifest (latest.json): the build's version in `version`. */
 function mockLatest(version: string, ok = true) {
   const fetchMock = vi.fn(async () => ({
     ok,
-    json: async () => ({ tag_name: "og-preview", name: `OG preview ${version}` }),
+    json: async () => ({ version, notes: "", platforms: {} }),
   }));
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -95,7 +97,7 @@ describe("update checks", () => {
 
     expect(fetchMock.mock.calls.length).toBe(2);
     for (const call of fetchMock.mock.calls as unknown as [string][]) {
-      expect(call[0]).toBe("https://api.github.com/repos/martinkoutecky/tine/releases/tags/og-preview");
+      expect(call[0]).toBe(MANIFEST);
     }
   });
 
@@ -110,8 +112,12 @@ describe("update checks", () => {
     expect(pushToastMock).not.toHaveBeenCalled();
   });
 
-  it("does not misread a release whose name carries no version (or only a tag)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ tag_name: "v0.6.987" }) })));
+  it.each([
+    ["a manifest with no version (only a tag/name)", async () => ({ tag_name: "v0.6.987", name: "Tine 0.6.987" })],
+    ["a non-string version", async () => ({ version: 7 })],
+    ["invalid JSON", async () => { throw new SyntaxError("Unexpected token <"); }],
+  ])("stays silent on %s", async (_label, json) => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json })));
     const { update, pushToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     await update.checkForUpdate();

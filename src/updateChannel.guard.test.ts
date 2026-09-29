@@ -4,13 +4,15 @@
 // read it would offer master, and installing it would replace og with master.
 // The og update channel is the fixed-tag release `og-preview` only. Both the
 // notifier (src/update.ts) and the Tauri updater endpoint (tauri.conf.json)
-// must name it; exemplar: src/update.ts PREVIEW_TAG.
+// must name it, and update.ts names the channel URL in exactly ONE place (the
+// notifier reads the same latest.json manifest the updater does). Exemplar:
+// src/update.ts PREVIEW_TAG / MANIFEST_URL.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const RULE =
-  "og updater must read only the og-preview channel (releases/tags/og-preview, " +
-  "releases/download/og-preview/latest.json), never releases/latest: the shipped Tine " +
+  "og updater must read only the og-preview channel (releases/download/og-preview/latest.json, " +
+  "one URL source in update.ts), never releases/latest: the shipped Tine " +
   "there is a newer version and installing it would replace og with master.";
 
 describe("og update channel", () => {
@@ -19,8 +21,14 @@ describe("og update channel", () => {
     // Comments may name the forbidden endpoint to explain the rule.
     const code = source.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
     expect(code, RULE).not.toMatch(/releases\/latest/);
-    expect(code, RULE).toMatch(/releases\/tags\/\$\{PREVIEW_TAG\}/);
     expect(code, RULE).toMatch(/PREVIEW_TAG = "og-preview"/);
+    // Exactly one URL source: one literal host reference, and every fetch reads MANIFEST_URL.
+    expect(code.match(/https?:\/\//g) ?? [], RULE).toHaveLength(1);
+    const fetches = [...code.matchAll(/\bfetch\(([^)]*)\)/g)].map((m) => m[1].trim());
+    expect(fetches.length, RULE).toBeGreaterThan(0);
+    for (const arg of fetches) expect(arg, RULE).toBe("MANIFEST_URL");
+    expect(code, RULE).toMatch(/MANIFEST_URL = `\$\{RELEASES\}\/download\/\$\{PREVIEW_TAG\}\/latest\.json`/);
+    expect(code, RULE).toMatch(/RELEASES = "https:\/\/github\.com\/martinkoutecky\/tine\/releases"/);
   });
 
   it("the Tauri updater endpoint is the og-preview download, not releases/latest", () => {
