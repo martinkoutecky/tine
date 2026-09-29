@@ -21,7 +21,7 @@ beforeAll(async () => {
 describe("isEditablePropertyKey = the intersection of every Tine reader (shared fixture)", () => {
   it("accepts exactly the fixture's accepted keys and refuses its rejected keys", () => {
     expect(accepted.length).toBeGreaterThan(5);
-    expect(rejected).toContain("klíč");
+    expect(accepted).toContain("klíč");
     for (const key of accepted) expect(isEditablePropertyKey(key), key).toBe(true);
     for (const key of rejected) expect(isEditablePropertyKey(key), JSON.stringify(key)).toBe(false);
   });
@@ -40,11 +40,11 @@ describe("isEditablePropertyKey = the intersection of every Tine reader (shared 
     }
   });
 
-  it("over printable ASCII, a key is editable iff each character is in the Rust readers' shared class", () => {
-    // The Rust test pins the same class for parse_property_line and is_md_property_line.
+  it("over printable ASCII, a key is editable iff each character is in the shared page-header class", () => {
+    // The Rust test pins that accepted keys pass parse_property_line and logbook.
     for (let code = 0x21; code <= 0x7e; code++) {
       const c = String.fromCharCode(code);
-      expect(isEditablePropertyKey(`a${c}b`), c).toBe(/[A-Za-z0-9_-]/.test(c));
+      expect(isEditablePropertyKey(`a${c}b`), c).toBe(/[A-Za-z0-9_./-]/.test(c));
     }
   });
 });

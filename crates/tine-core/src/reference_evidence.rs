@@ -388,18 +388,15 @@ fn property_values(span: Option<&Span>, mapper: SpanMapper, raw: &str) -> Vec<Pr
     for line in source.split_inclusive('\n') {
         let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
         if let Some((key, value)) = crate::doc::parse_property_line(line_without_newline) {
-            let delimiter = line_without_newline.find("::").unwrap_or_default();
-            let key_source = &line_without_newline[..delimiter];
-            let key_leading = key_source.len() - key_source.trim_start().len();
-            if let Some(value_at) = line_without_newline.rfind(&value) {
-                out.push(PropertySource {
-                    key,
-                    key_range: line_offset + key_leading
-                        ..line_offset + key_leading + key_source.trim().len(),
-                    value_offset: line_offset + value_at,
-                    value,
-                });
-            }
+            let base = line_without_newline.as_ptr() as usize;
+            let key_at = key.as_ptr() as usize - base;
+            let value_at = value.as_ptr() as usize - base;
+            out.push(PropertySource {
+                key: key.to_string(),
+                key_range: line_offset + key_at..line_offset + key_at + key.len(),
+                value_offset: line_offset + value_at,
+                value: value.to_string(),
+            });
         }
         line_offset += line.len();
     }

@@ -899,15 +899,39 @@ fn same_blocks(a: &[tine_core::model::BlockDto], b: &[tine_core::model::BlockDto
 /// `#+KEY: value` directive. Keys compare case-insensitively.
 fn header_property(line: &str, org: bool) -> Option<(String, String)> {
     if !org {
-        return doc::parse_property_line(line);
+        return doc::parse_property_line(line)
+            .map(|(key, value)| (key.to_owned(), value.to_owned()));
     }
     let (key, value) = line.strip_prefix("#+")?.split_once(':')?;
     let key = key.trim();
     (!key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')))
+        && key.chars().all(|c| {
+            c.is_alphanumeric()
+                || unicode_normalization::char::is_combining_mark(c)
+                || matches!(c, '-' | '_' | '.' | '/')
+        }))
     .then(|| (key.to_owned(), value.trim().to_owned()))
+}
+
+#[cfg(test)]
+mod header_property_tests {
+    use super::header_property;
+
+    #[test]
+    fn merge_recognizes_unicode_page_headers_in_both_formats() {
+        assert_eq!(
+            header_property("klíč:: hodnota", false),
+            Some(("klíč".into(), "hodnota".into()))
+        );
+        assert_eq!(
+            header_property("#+klíč: hodnota", true),
+            Some(("klíč".into(), "hodnota".into()))
+        );
+        assert_eq!(
+            header_property("#+a.b/c: value", true),
+            Some(("a.b/c".into(), "value".into()))
+        );
+    }
 }
 
 /// The survivor's new header (when it changes) and the blocks `source` adds,

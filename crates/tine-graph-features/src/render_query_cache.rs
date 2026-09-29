@@ -30,15 +30,15 @@ impl QueryCacheKey {
     }
 }
 
-const QUERY_CACHE_MAX_ENTRIES: usize = 64;
-const QUERY_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const QUERY_CACHE_MAX_ENTRIES: usize = 64;
+pub(crate) const QUERY_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Default)]
 /// A 64-entry, 32 MiB export-local memo. A result too large to cache is
 /// rendered once and omitted from the memo; publication still proceeds.
 pub(crate) struct QueryCache {
-    entries: HashMap<QueryCacheKey, BoundedGroups>,
-    bytes: usize,
+    pub(crate) entries: HashMap<QueryCacheKey, BoundedGroups>,
+    pub(crate) bytes: usize,
 }
 
 impl QueryCache {

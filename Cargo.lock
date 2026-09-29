@@ -4846,6 +4846,7 @@ dependencies = [
  "time",
  "tine-core",
  "tine-store",
+ "unicode-normalization",
 ]
 
 [[package]]
