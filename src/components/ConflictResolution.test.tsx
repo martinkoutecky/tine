@@ -164,6 +164,37 @@ describe("in-page conflict resolution", () => {
     dispose();
   });
 
+  // master 042054c1b: a journal's conflict copy settles and reloads the
+  // JOURNAL, addressed by its file and kind, not a same-titled page.
+  it("settles a journal conflict copy and reloads it as a journal", async () => {
+    const journal: ConflictObject = {
+      ...copyConflict,
+      id: "copy:journals/2026_07_05.sync-conflict-20260705-141233-ABCDEFG.md",
+      page_name: "Jul 5th, 2026",
+      page_path: "journals/2026_07_05.md",
+      kind: "journal",
+      sides: [
+        { role: "mine", label: "This device", path: "journals/2026_07_05.md" },
+        { role: "theirs", label: "sync-conflict-20260705-141233-ABCDEFG", path: "journals/2026_07_05.sync-conflict-20260705-141233-ABCDEFG.md" },
+      ],
+    };
+    setConflictInventory(inventoryWith(journal));
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff([threeWayRows[1]], "journal-rev"));
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
+    const { host, dispose } = mount(journal);
+    await settle();
+    button(host, "Apply resolution").click();
+    await settle();
+    expect(sync).toHaveBeenCalledWith(
+      "journals/2026_07_05.md", "journals/2026_07_05.sync-conflict-20260705-141233-ABCDEFG.md", { "1": "both" },
+      "journal-rev", "copy-rev", ["replace-page", "delete-page"], "union",
+    );
+    expect(conflictQueue()).toEqual([]);
+    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "journals/2026_07_05.md", name: "Jul 5th, 2026", kind: "journal", created: false, removed: false });
+    dispose();
+  });
+
   it("saves pending edits first and asks for a fresh review instead of writing over them", async () => {
     doc.dirty = true;
     const read = vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
