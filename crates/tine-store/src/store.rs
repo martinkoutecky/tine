@@ -573,9 +573,16 @@ impl ChangeFeed {
 pub struct Subscription {
     feed: Arc<ChangeFeed>,
     number: u64,
+    start: GraphRev,
 }
 
 impl Subscription {
+    /// The last publication before this subscription began; it receives
+    /// exactly the publications after it.
+    pub fn start_rev(&self) -> GraphRev {
+        self.start
+    }
+
     /// Wait without a timeout for the next change; returns a typed end reason
     /// after close or displacement. A queued result is O(1) to dequeue.
     pub fn recv(&self) -> Result<Change, SubscriptionEnd> {
@@ -1229,6 +1236,7 @@ impl Store {
         Subscription {
             feed: Arc::clone(&self.changes),
             number: state.subscription,
+            start: GraphRev(state.rev),
         }
     }
 
@@ -1276,6 +1284,13 @@ impl Store {
     /// leaves the last published `WholeGraph` view available.
     pub fn scan_refresh(&self) -> Result<(), LoadError> {
         self.watch.scan_refresh()
+    }
+
+    /// The latest change-feed publication, O(1). A subscriber that has
+    /// received this revision has received every change `scan_refresh`
+    /// published before this call.
+    pub fn published_rev(&self) -> GraphRev {
+        self.changes.rev()
     }
 
     pub(crate) fn publish_own(

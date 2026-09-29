@@ -37,6 +37,8 @@ pub(crate) struct GraphSlot {
     /// Concord base ledger, attached at graph open (`concord_ledger::attach`);
     /// empty when app data is unavailable, which only means 2-way reviews.
     pub(crate) concord_ledger: std::sync::OnceLock<crate::concord_ledger::ConcordLedger>,
+    /// Focus rescans waiting for this binding's dispatch thread (family 10).
+    pub(crate) rescan: crate::watcher::RescanCursor,
 }
 
 impl GraphSlot {
@@ -52,6 +54,7 @@ impl GraphSlot {
             background_cancelled: AtomicBool::new(false),
             conflict_queue: Default::default(),
             concord_ledger: Default::default(),
+            rescan: Default::default(),
         }
     }
 }

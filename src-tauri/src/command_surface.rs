@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 160] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 162] = [
     "app_architecture",
     "app_platform",
     "apply_journal_filename_migrations",
@@ -111,6 +111,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 160] = [
     "read_text_file",
     "rename_file_to_page",
     "rename_page",
+    "rescan_graph_now",
     "resolve_block",
     "resolve_blocks",
     "resolve_live_conflict",
@@ -166,6 +167,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 160] = [
     "vcs_marker_conflict_diff",
     "verify_plugin_registry",
     "warm_done",
+    "watcher_latency_recent",
     "write_highlights",
     "write_pdf_view_state",
 ];
