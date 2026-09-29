@@ -14,6 +14,8 @@ fn rollback_failure_keeps_recovery_family_and_locations() {
         why: Why::Failed(IoError {
             kind: io::ErrorKind::PermissionDenied,
             message: "write failed".into(),
+            operation: None,
+            os_error: None,
         }),
         rollback: Rollback {
             kept_external: vec![(file.clone(), Some(recovery.clone()))],
@@ -22,6 +24,8 @@ fn rollback_failure_keeps_recovery_family_and_locations() {
                 IoError {
                     kind: io::ErrorKind::PermissionDenied,
                     message: "undo failed".into(),
+                    operation: None,
+                    os_error: None,
                 },
             )],
         },
@@ -51,6 +55,8 @@ fn rollback_and_publication_failures_keep_both_locations_and_original_reason() {
         why: Why::Failed(IoError {
             kind: io::ErrorKind::PermissionDenied,
             message: "original write failed".into(),
+            operation: None,
+            os_error: None,
         }),
         rollback: Rollback {
             kept_external: vec![(
@@ -62,6 +68,8 @@ fn rollback_and_publication_failures_keep_both_locations_and_original_reason() {
                 IoError {
                     kind: io::ErrorKind::PermissionDenied,
                     message: "undo failed".into(),
+                    operation: None,
+                    os_error: None,
                 },
             )],
         },
@@ -70,6 +78,8 @@ fn rollback_and_publication_failures_keep_both_locations_and_original_reason() {
             IoError {
                 kind: io::ErrorKind::Other,
                 message: "publish failed".into(),
+                operation: None,
+                os_error: None,
             },
         )],
         graph_rev: store.whole_graph().unwrap().rev(),

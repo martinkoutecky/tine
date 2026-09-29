@@ -85,13 +85,20 @@ pub struct IoError {
     pub kind: io::ErrorKind,
     /// Human-readable cause.
     pub message: String,
+    /// Fixed name of the platform step that failed, when known (GH #538).
+    pub operation: Option<&'static str>,
+    /// OS error code of that step, when known.
+    pub os_error: Option<i32>,
 }
 
 impl From<io::Error> for IoError {
     fn from(error: io::Error) -> Self {
+        let step = crate::directory_durability::failure_step(&error);
         Self {
             kind: error.kind(),
             message: error.to_string(),
+            operation: step.map(|(operation, _)| operation),
+            os_error: step.map_or(error.raw_os_error(), |(_, os_error)| os_error),
         }
     }
 }
@@ -1329,13 +1336,9 @@ impl<'a> Transaction<'a> {
         let live = match self.path(&record.src) {
             Ok(path) => path,
             Err(error) => {
-                rollback.undo_failed.push((
-                    record.src.clone(),
-                    IoError {
-                        kind: io::ErrorKind::InvalidInput,
-                        message: format!("{error:?}"),
-                    },
-                ));
+                rollback
+                    .undo_failed
+                    .push((record.src.clone(), io_helpers::unresolved_undo_path(&error)));
                 return;
             }
         };
@@ -1370,13 +1373,9 @@ impl<'a> Transaction<'a> {
                 Some(dst) => match self.path(dst) {
                     Ok(path) => (dst, path),
                     Err(error) => {
-                        rollback.undo_failed.push((
-                            dst.clone(),
-                            IoError {
-                                kind: io::ErrorKind::InvalidInput,
-                                message: format!("{error:?}"),
-                            },
-                        ));
+                        rollback
+                            .undo_failed
+                            .push((dst.clone(), io_helpers::unresolved_undo_path(&error)));
                         return;
                     }
                 },
@@ -1456,13 +1455,9 @@ impl<'a> Transaction<'a> {
             let trash = match self.path(trash_id) {
                 Ok(path) => path,
                 Err(error) => {
-                    rollback.undo_failed.push((
-                        record.src.clone(),
-                        IoError {
-                            kind: io::ErrorKind::InvalidInput,
-                            message: format!("{error:?}"),
-                        },
-                    ));
+                    rollback
+                        .undo_failed
+                        .push((record.src.clone(), io_helpers::unresolved_undo_path(&error)));
                     return;
                 }
             };

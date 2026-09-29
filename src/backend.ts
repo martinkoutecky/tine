@@ -2,6 +2,7 @@
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
+import { readSavePlatformStep } from "./savePlatformStep";
 import { markCommandSlow } from "./slowBackend";
 import type {
   Diagnostic,
@@ -62,12 +63,12 @@ export interface SavePageEntry {
 
 export type SavePagesResult =
   | { ok: string[] }
-  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[] } };
+  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; operation?: string; osError?: number } };
 
 /** Adapt a one-page intent to the shared request while preserving its refusal. */
 export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number): Promise<string> {
   const result = await api.savePages([entry], bindingGeneration);
-  if ("failed" in result) throw Object.assign(new Error(result.failed.family), { diskRev: result.failed.diskRev });
+  if ("failed" in result) throw Object.assign(new Error(result.failed.family), { diskRev: result.failed.diskRev, platformStep: readSavePlatformStep(result.failed) });
   return result.ok[0];
 }
 

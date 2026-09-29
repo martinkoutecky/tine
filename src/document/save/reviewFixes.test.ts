@@ -148,6 +148,23 @@ describe("save-group review regressions", () => {
     expect(await resolveConflict("B", "mine")).toBe(false);
   });
 
+  it("GH #538: a platform save failure names the failed step and OS error, never a stray string", async () => {
+    const moved = block("X");
+    loadFeed([{ ...page("A", []), blocks: [moved, block("keep")] }, page("B", [])]);
+    const { save } = diskBackend({ A: ["X", "keep"], B: [] });
+    save.mockResolvedValue({ failed: { index: 0, family: "io:InvalidInput", undoFailed: [], operation: "renameat2(RENAME_NOREPLACE)", osError: 22 } });
+    await moveBlock(moved.id, null, 0, "B");
+    expect(await flushAll()).toBe(false);
+    expect(toasts().map((toast) => toast.message).join("\n")).toContain("— io:InvalidInput; renameat2(RENAME_NOREPLACE), os error 22.");
+    save.mockResolvedValue({ failed: { index: 0, family: "io:PermissionDenied", undoFailed: [], operation: "/home/me/secret.md" } });
+    setToasts([]);
+    setRaw(pageByName("A")!.roots[0], "typing in A");
+    expect(await flushAll()).toBe(false);
+    const shown = toasts().map((toast) => toast.message).join("\n");
+    expect(shown).toContain("io:PermissionDenied");
+    expect(shown).not.toContain("secret");
+  });
+
   it("resolve-id failure names the member whose resolution failed", async () => {
     loadFeed([page("A", ["A"]), page("B", ["B"]), { ...page("C", ["C"]), id: undefined, rev: undefined }]);
     vi.spyOn(backend(), "resolvePage").mockRejectedValue(new Error("unavailable"));

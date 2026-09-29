@@ -5,6 +5,8 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::platform_step::at;
+
 static NEW_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 static WRITE_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -17,9 +19,10 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
+            .open(&tmp)
+            .map_err(at("create temporary file"))?;
+        file.write_all(bytes).map_err(at("write temporary file"))?;
+        file.sync_all().map_err(at("fsync temporary file"))?;
         drop(file);
         super::no_replace::move_file_noreplace(&tmp, path)?;
         super::directory_durability::sync_directory_entry(dir)?;
@@ -47,14 +50,15 @@ pub(crate) fn atomic_write_with_check(
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&tmp)?;
-        file.write_all(bytes)?;
+            .open(&tmp)
+            .map_err(at("create temporary file"))?;
+        file.write_all(bytes).map_err(at("write temporary file"))?;
         on_write();
-        file.sync_all()?;
+        file.sync_all().map_err(at("fsync temporary file"))?;
         on_file_sync();
         drop(file);
         check()?;
-        fs::rename(&tmp, path)
+        fs::rename(&tmp, path).map_err(at("rename temporary file over target"))
     })();
     if res.is_err() {
         let _ = fs::remove_file(&tmp);

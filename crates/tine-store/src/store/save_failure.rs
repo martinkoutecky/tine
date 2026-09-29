@@ -172,6 +172,8 @@ impl Store {
                 outcome: SaveOutcome::Io(crate::IoError {
                     kind: std::io::ErrorKind::Other,
                     message: "disk steps applied but publication incomplete; inspect disk before retrying".into(),
+                    operation: None,
+                    os_error: None,
                 }),
                 undo_failed: Vec::new(),
                 publication_errors: files.into_iter().map(|(file, _)| file).collect(),
@@ -204,5 +206,7 @@ fn single_page_failure(
             },
             id.as_str(),
         ),
+        operation: None,
+        os_error: None,
     })
 }

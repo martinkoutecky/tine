@@ -103,3 +103,32 @@ fn gh538_occupied_destination_is_still_refused_where_the_flag_is_refused() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// Master 678830a086af (GH #538, #590): a failed no-replace move names which
+/// rename failed — the flagged call or the plain rename after the flag was
+/// refused — so a field report tells the two apart.
+#[test]
+fn a_failed_move_names_the_rename_that_failed() {
+    let root = fixture("step");
+    let step = |error: std::io::Error| crate::platform_step::step_of(&error).map(|(op, _)| op);
+    let missing = root.join("pages/missing.md");
+    let error =
+        crate::no_replace::move_file_noreplace(&missing, &root.join("pages/B.md")).unwrap_err();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    assert_eq!(step(error), Some("renameat2(RENAME_NOREPLACE)"));
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    assert_eq!(step(error), Some("renameatx_np(RENAME_EXCL)"));
+    let _refused = Refused::on();
+    let error =
+        crate::no_replace::move_file_noreplace(&missing, &root.join("pages/B.md")).unwrap_err();
+    assert_eq!(
+        error.kind(),
+        std::io::ErrorKind::NotFound,
+        "the kind survives the label"
+    );
+    assert_eq!(
+        step(error),
+        Some("renameat after the no-replace flag was refused")
+    );
+    let _ = fs::remove_dir_all(root);
+}

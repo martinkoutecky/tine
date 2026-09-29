@@ -84,6 +84,7 @@ mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;
 mod path_identity;
+mod platform_step;
 #[cfg(test)]
 mod production_index_guard_tests;
 pub mod publish;

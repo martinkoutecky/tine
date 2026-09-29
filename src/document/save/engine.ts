@@ -12,6 +12,7 @@ import { graphOwner, readOwned } from "../../owned";
 import { dismissToast, pushToast } from "../../toasts";
 import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { errorFamily } from "../../errorFamily";
+import { describeSavePlatformStep, readSavePlatformStep, type SavePlatformStep } from "../../savePlatformStep";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import type { EditKind, EditKinds } from "../../editKind";
 import { adoptFoldedPageHeader } from "../edits/properties";
@@ -404,7 +405,7 @@ function resolveSaveMember(name: string, kind: PageKind) {
   return backend().resolvePage(name, kind);
 }
 
-function failGroup(g: SaveGroup, failure: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[] }, order: string[], entryPaths: string[] = []): boolean {
+function failGroup(g: SaveGroup, failure: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; operation?: string; osError?: number }, order: string[], entryPaths: string[] = []): boolean {
   g.state = "open";
   sealedGroups.delete(g);
   for (const name of g.members) dirty.add(name);
@@ -421,7 +422,7 @@ function failGroup(g: SaveGroup, failure: { index: number; family: string; diskR
     if (family === "alias-owner-busy") markConflict(culprit, { kind: "alias-owner-busy" });
     else if (["conflict", "deleted", "twin", "read-only", "invalid-target"].includes(family))
       markConflict(culprit, { kind: "disk-changed" }, family === "deleted" ? null : failure.diskRev);
-    else reportSaveFailure(culprit, family, `Couldn't save “${culprit}” — ${family}.`);
+    else reportSaveFailure(culprit, family, `Couldn't save “${culprit}” — ${family}${describeSavePlatformStep(readSavePlatformStep(failure))}.`);
   }
   for (const path of failure.undoFailed) {
     const index = entryPaths.indexOf(path);
@@ -913,7 +914,7 @@ async function doSave(
         dirty.add(name); // keep pending — retried on next edit / flush
       }
       if (family !== "conflict")
-        reportSaveFailure(name, family, `Couldn't save “${name}” — ${family === "deleted" ? "the file was deleted on disk; your edits remain in the editor" : String(e)}`);
+        reportSaveFailure(name, family, `Couldn't save “${name}” — ${family === "deleted" ? "the file was deleted on disk; your edits remain in the editor" : String(e)}${describeSavePlatformStep((e as { platformStep?: SavePlatformStep | null }).platformStep ?? null)}`);
     }
     return false;
   }

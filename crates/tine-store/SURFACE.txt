@@ -35,6 +35,8 @@ field store::Change.files
 field store::Change.graph_rev
 field store::Change.origin
 field transaction::IoError.message
+field transaction::IoError.operation
+field transaction::IoError.os_error
 field transaction::Rollback.kept_external
 field transaction::Rollback.undo_failed
 fn transaction::Store::transaction

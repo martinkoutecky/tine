@@ -137,11 +137,18 @@ fn move_at(
         true => io::Error::from_raw_os_error(libc::EINVAL),
         false => io::Error::last_os_error(),
     };
-    destination_absent_where_the_flag_is_refused(error, to_dir, &to)?;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const FLAG_STEP: &str = "renameat2(RENAME_NOREPLACE)";
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    const FLAG_STEP: &str = "renameatx_np(RENAME_EXCL)";
+    destination_absent_where_the_flag_is_refused(error, to_dir, &to)
+        .map_err(super::platform_step::at(FLAG_STEP))?;
     let result = unsafe { libc::renameat(from_dir, from.as_ptr(), to_dir, to.as_ptr()) };
-    (result == 0)
-        .then_some(())
-        .ok_or_else(io::Error::last_os_error)
+    (result == 0).then_some(()).ok_or_else(|| {
+        super::platform_step::at("renameat after the no-replace flag was refused")(
+            io::Error::last_os_error(),
+        )
+    })
 }
 
 /// GH #538 (master 1739c5109a72; Martin's decision B1, 2026-09-24): Android
@@ -215,9 +222,9 @@ fn move_windows(src: &Path, dest: &Path) -> io::Result<()> {
             windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH,
         )
     };
-    (result != 0)
-        .then_some(())
-        .ok_or_else(io::Error::last_os_error)
+    (result != 0).then_some(()).ok_or_else(|| {
+        super::platform_step::at("MoveFileExW(MOVEFILE_WRITE_THROUGH)")(io::Error::last_os_error())
+    })
 }
 
 #[cfg(windows)]

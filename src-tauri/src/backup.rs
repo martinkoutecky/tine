@@ -1132,10 +1132,7 @@ mod tests {
         let recovery = root.join("logseq/.tine-trash/restore-1");
         let error = tine_store::RestoreFailed {
             phase: "copy pages".into(),
-            cause: tine_store::IoError {
-                kind: std::io::ErrorKind::PermissionDenied,
-                message: "copy failed".into(),
-            },
+            cause: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "copy failed").into(),
             done: tine_store::RestoreReport {
                 restored: 1,
                 recovery: vec![recovery.clone()],

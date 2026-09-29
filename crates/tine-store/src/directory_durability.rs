@@ -31,6 +31,15 @@ pub(crate) fn is_directory_sync_failure(error: &io::Error) -> bool {
         .is_some()
 }
 
+/// The platform step an I/O error names: one labelled by
+/// `platform_step::at`, or a directory sync. O(1), no I/O.
+pub(crate) fn failure_step(error: &io::Error) -> Option<(&'static str, Option<i32>)> {
+    crate::platform_step::step_of(error).or_else(|| {
+        let failure = error.get_ref()?.downcast_ref::<DirectorySyncFailure>()?;
+        Some(("fsync directory", failure.0.raw_os_error()))
+    })
+}
+
 #[cfg(all(feature = "test-faults", unix))]
 thread_local! {
     static FAIL_NEXT_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };

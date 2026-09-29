@@ -16,9 +16,9 @@ use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 #[cfg(test)]
 use tine_store::{SaveBase, SaveOutcome, SavePagesOutcome};
 mod save_wire;
+use save_wire::SavePagesWire;
 #[cfg(test)]
-use save_wire::save_outcome_to_wire;
-use save_wire::{record_save_wire, save_pages_outcome_to_wire, store_failure_to_wire};
+use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -623,25 +623,6 @@ pub(crate) struct SavePageEntry {
     kinds: Vec<tine_store::EditKind>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SavePagesFailure {
-    index: usize,
-    family: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    disk_rev: Option<String>,
-    undo_failed: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    publication_errors: Vec<String>,
-}
-
-#[derive(Serialize, Debug, PartialEq, Eq)]
-#[serde(untagged)]
-pub(crate) enum SavePagesWire {
-    Ok { ok: Vec<String> },
-    Failed { failed: SavePagesFailure },
-}
-
 fn log_save_kinds(entries: &[SavePageEntry]) {
     if crate::debug::debug_enabled() {
         for entry in entries {
@@ -681,13 +662,7 @@ pub(crate) fn save_pages(
             )
         })
         .collect();
-    let started = std::time::Instant::now();
-    let wire = match tine_graph_features::pages::save_pages(&slot.store, &entries) {
-        Ok(outcome) => save_pages_outcome_to_wire(outcome),
-        Err((index, error)) => store_failure_to_wire(index, error),
-    };
-    record_save_wire(&wire, entries.len(), started.elapsed());
-    Ok(wire)
+    Ok(save_wire::save_pages_wire(&slot.store, &entries))
 }
 
 #[cfg(test)]

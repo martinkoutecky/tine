@@ -12,6 +12,9 @@ mod no_replace;
 
 #[path = "../../crates/tine-store/src/atomic_file.rs"]
 mod atomic_file;
+#[allow(dead_code)]
+#[path = "../../crates/tine-store/src/platform_step.rs"]
+mod platform_step;
 use tine_store::directory_durability;
 
 /// Reads a caller-selected regular file; the caller enforces graph scope.

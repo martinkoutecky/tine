@@ -17,6 +17,11 @@ pub(super) fn publication_path_error(error: &Why) -> IoError {
     io::Error::other(format!("{error:?}")).into()
 }
 
+/// An undo step whose file id no longer resolves to a path. No I/O; O(1).
+pub(super) fn unresolved_undo_path(error: &impl std::fmt::Debug) -> IoError {
+    io::Error::new(io::ErrorKind::InvalidInput, format!("{error:?}")).into()
+}
+
 pub(super) fn content_refusal(error: io::Error) -> Why {
     if error
         .get_ref()
@@ -61,6 +66,8 @@ pub(super) fn failed_trash_dir(error: io::Error, parent: &Path) -> Why {
             "could not create trash directory {}: {error}",
             display.display()
         ),
+        operation: None,
+        os_error: None,
     })
 }
 
