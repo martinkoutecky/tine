@@ -19,7 +19,10 @@ fn graph_with_target(
     blocks: usize,
     target: usize,
 ) -> (tempfile::TempDir, Store, PageId) {
-    let dir = tempfile::Builder::new().prefix("i13-cost-").tempdir().unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("i13-cost-")
+        .tempdir()
+        .unwrap();
     let root = dir.path().to_path_buf();
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
@@ -33,7 +36,11 @@ fn graph_with_target(
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
-    (dir, store, PageId::from(format!("pages/Page{target:04}.md")))
+    (
+        dir,
+        store,
+        PageId::from(format!("pages/Page{target:04}.md")),
+    )
 }
 
 fn edit(pages: usize, blocks: usize) -> (Counts, usize) {

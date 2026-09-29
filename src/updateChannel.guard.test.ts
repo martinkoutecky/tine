@@ -25,7 +25,10 @@ describe("og update channel", () => {
 
   it("the Tauri updater endpoint is the og-preview download, not releases/latest", () => {
     const conf = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
-    expect(conf.identifier).toBe("page.tine.TineOG");
+    // Identity is spelled only in the switch (src/appIdentity.guard.test.ts): this channel
+    // exists because the running build is NOT the released identity.
+    const sw = JSON.parse(readFileSync(new URL("../src-tauri/app-identity.json", import.meta.url), "utf8"));
+    expect(sw.ship, "this guard is for the experiment identity; a release build ships releases/latest").not.toBe("release");
     const endpoints: string[] = conf.plugins.updater.endpoints;
     expect(endpoints.length, RULE).toBeGreaterThan(0);
     for (const endpoint of endpoints) {
