@@ -145,12 +145,14 @@ interface RelativeMovePlan {
  * 6eea5b70c, GH #240). Captured IDs are stable-deduped, then descendants of
  * another captured ID are subsumed. Any malformed tree, read-only page, a
  * target inside a moved subtree, or an outline-depth overflow refuses the whole
- * move before anything changes. */
+ * move before anything changes. Only the depth refusal is the user's to learn
+ * about ("too-deep", checked last so a no-op drop into its own subtree stays
+ * silent); the rest are no-op gestures or stale ids, silent as in `moveBlock`. */
 function relativeMovePlan(
   capturedIds: readonly string[],
   targetId: string,
   position: "before" | "after" | "child",
-): RelativeMovePlan | null {
+): RelativeMovePlan | "too-deep" | null {
   const unique = [...new Set(capturedIds)];
   if (!unique.length || unique.some((id) => !doc.byId[id])) return null;
   const captured = new Set(unique);
@@ -192,6 +194,7 @@ function relativeMovePlan(
     return node.children.every((childId) => doc.byId[childId]?.parent === id && visit(childId, page, nextAncestry));
   };
   const sourcePages: string[] = [];
+  let tooDeep = false;
   for (const id of roots) {
     const node = doc.byId[id];
     if (!blockWritable(id)) return null;
@@ -200,12 +203,13 @@ function relativeMovePlan(
     if (node.parent !== null && doc.byId[node.parent]?.page !== node.page) return null;
     if (!visit(id, node.page, new Set())) return null;
     // A nested drop lands UNDER the target, one level deeper than its siblings.
-    if (!existingSubtreeFits(id, position === "child" ? targetId : destinationParent)) return null;
+    if (!existingSubtreeFits(id, position === "child" ? targetId : destinationParent)) tooDeep = true;
     sourcePages.push(node.page);
   }
   if (moved.has(targetId)) return null;
   const uniqueSources = [...new Set(sourcePages)];
   if (uniqueSources.some((page) => !pageWritable(page))) return null;
+  if (tooDeep) return "too-deep";
   return { roots, sourcePages: uniqueSources, destinationPage: target.page };
 }
 
@@ -222,6 +226,11 @@ export async function moveBlocksRelative(
   position: "before" | "after" | "child",
 ): Promise<boolean> {
   const plan = relativeMovePlan(capturedIds, targetId, position);
+  if (plan === "too-deep") {
+    // Same notice as `moveBlock` (C3Y Y5: a refused drop used to vanish).
+    pushToast("Outline is too deep to move", "error");
+    return false;
+  }
   if (!plan) return false;
   const pages = [...new Set([plan.destinationPage, ...plan.sourcePages])];
   const crossSources = plan.sourcePages.filter((page) => page !== plan.destinationPage);
