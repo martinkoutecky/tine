@@ -132,6 +132,39 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  it.each([true, false])("pins the page file before Delete confirmation (explicit path %s)", async (explicit) => {
+    load();
+    setDoc("pages", 0, "id", "pages/one.md");
+    let finish!: (confirmed: boolean) => void;
+    vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, { name: "P", pageKind: "page", ...(explicit ? { path: "pages/one.md" } : {}) }, true);
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Delete page"))!.click();
+    // Same graph, new unique title claimant while native confirm is unanswered.
+    setDoc("pages", 0, "id", "pages/two.md");
+    finish(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(remove).not.toHaveBeenCalled();
+    expect(pageByName("P")?.id).toBe("pages/two.md");
+    dispose();
+  });
+
+  it("reopening a page menu replaces the previous file target", async () => {
+    load(); setDoc("pages", 0, "id", "pages/one.md");
+    const remove = vi.spyOn(backend(), "deletePage").mockResolvedValue();
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, { name: "P", pageKind: "page", path: "pages/one.md" }, true);
+    setDoc("pages", 0, "id", "pages/two.md");
+    openPageContextMenu(10, 10, { name: "P", pageKind: "page", path: "pages/two.md" }, true);
+    const action = document.querySelector<HTMLElement>('[data-page-action-id="delete-page"]');
+    expect(action).not.toBeNull();
+    action!.click();
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("P", "page", "pages/two.md"));
+    dispose();
+  });
+
   it("context Copy/Cut block each leave a fresh exact private payload", async () => {
     load();
     setDoc("byId", "parent", "raw", "Parent\nid:: 11111111-1111-1111-1111-111111111111");

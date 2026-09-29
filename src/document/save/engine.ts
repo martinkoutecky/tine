@@ -6,7 +6,7 @@ import { captureBinding, type Binding, stillBound } from "../../binding";
 import { pageToDto, appendAliasDraft, aliasDraftBlocks, replaceLandedAliasDraft } from "../convert";
 import type { BlockDto, PageDto, PageKind } from "../../types";
 import { backend, saveOnePage, type SavePageEntry } from "../../backend";
-import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
+import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath, reportPageLoadRefusal, reloadDisposition } from "../workingSet";
 import { editingId } from "../../editorController";
 import { pagePropertyEntries } from "../../editor/properties";
 import { graphOwner, readOwned } from "../../owned";
@@ -521,7 +521,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
         if (!owner || owner.read_only || owner.guide) return failGroup(g, { index: order.indexOf(name), family: "alias-owner-busy", undoFailed: [] }, order);
         if (order.some((member) => member !== name && pageByName(member)?.id === owner.id))
           return failGroup(g, { index: order.indexOf(name), family: "repeated", undoFailed: [] }, order);
-        if (isDirty(owner.name) || isSaving(owner.name) || isConflicted(owner.name)) {
+        if (reloadDisposition(owner.name) !== "reload") {
           markConflict(name, { kind: "alias-owner-busy" });
           return abortGroup(g);
         }
@@ -583,8 +583,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     for (let i = 0; i < order.length; i++) {
       const name = order[i], target = ids.get(name)!;
       if (!target.owner) continue;
-      if (dirty.has(name) || isDirty(target.owner.name) || isSaving(target.owner.name)
-          || isConflicted(target.owner.name) || pageInstanceGeneration(target.owner.name) !== target.ownerGeneration) {
+      if (dirty.has(name) || reloadDisposition(target.owner.name) !== "reload" || pageInstanceGeneration(target.owner.name) !== target.ownerGeneration) {
         markConflict(name, { kind: "alias-owner-busy" });
         continue;
       }
@@ -916,7 +915,7 @@ async function doSave(
         // guarded save; forceSave must not clobber an externally edited owner.
         const owner = resolved.owners[0] && await backend().getPageByPath(resolved.owners[0]);
         if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
-        if (!owner || owner.read_only || owner.guide || isDirty(owner.name) || isSaving(owner.name) || isConflicted(owner.name)) {
+        if (!owner || owner.read_only || owner.guide || reloadDisposition(owner.name) !== "reload") {
           throw new Error("conflict");
         }
         const ownerGeneration = pageInstanceGeneration(owner.name);
@@ -931,8 +930,7 @@ async function doSave(
           kinds: ["insert-blocks", "delete-page"] }, binding.backendGeneration);
         landedAliasDrafts.set(name, { owner: owner.id, blocks: aliasDraftBlocks(dto), generation });
         if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
-        if (dirty.has(name) || isDirty(owner.name) || isSaving(owner.name)
-            || isConflicted(owner.name) || pageInstanceGeneration(owner.name) !== ownerGeneration) {
+        if (dirty.has(name) || reloadDisposition(owner.name) !== "reload" || pageInstanceGeneration(owner.name) !== ownerGeneration) {
           // The saved snapshot is durable, but a later edit must remain visible
           // in the draft rather than being discarded by the route change.
           throw new Error("conflict");

@@ -278,7 +278,7 @@ function Capture() {
   type PendingCapture = {
     id: string;
     attemptsStarted: number;
-    payload: QuickCaptureRequest;
+    payload: QuickCaptureRequest & { bindingGeneration: number };
     target: string;
     unlisten?: () => void;
     timer?: number;
@@ -332,11 +332,15 @@ function Capture() {
   const submitScope = {};
   let submitAlive = true;
   onCleanup(() => { submitAlive = false; });
+  const scratchMarkdown = () => roots().map((r) => blockSubtreeMarkdown(r)).join("\n");
+  let scratchRevision = 0;
   const submit = () => {
     if (pendingCapture) return;
     const submitOwner = latestOwner(submitScope, "capture", () => submitAlive);
-    const md = roots().map((r) => blockSubtreeMarkdown(r)).join("\n").trim();
-    const pageTitle = title().trim();
+    const submittedScratch = scratchMarkdown(), submittedTitle = title();
+    const submittedRevision = scratchRevision;
+    const bindingGeneration = backend().graphBindingGeneration();
+    const md = submittedScratch.trim(), pageTitle = submittedTitle.trim();
     void (async () => {
       if (!md) {
         setCaptureStatus("idle");
@@ -363,7 +367,7 @@ function Capture() {
       const pending: PendingCapture = {
         id,
         attemptsStarted: 0,
-        payload: { id, target, text: md, title: pageTitle },
+        payload: { id, target, bindingGeneration, text: md, title: pageTitle },
         target,
       };
       const finish = async (ok: boolean) => {
@@ -372,8 +376,15 @@ function Capture() {
         if (ok) {
           setCaptureStatus("idle");
           setCaptureMessage("");
+          // The ack owns the submitted snapshot, not edits made while transport
+          // or save awaited. Input revisions also cover DOM-local IME text.
+          if (scratchRevision !== submittedRevision || scratchMarkdown() !== submittedScratch || title() !== submittedTitle) {
+            setCaptureMessage("Submitted capture saved — newer edits kept");
+            scheduleFit();
+            return;
+          }
           clearScratch();
-          setTitle(""); // reset for the next capture — don't carry over the filed text
+          setTitle("");
           await hideWindow();
         } else {
           setCaptureStatus("error");
@@ -423,7 +434,7 @@ function Capture() {
           giveUp();
           return;
         }
-        scheduleTimeout();
+        if (pendingCapture === pending) scheduleTimeout();
       };
       try {
         const unlisten = await listen<QuickCaptureAck>("quick-capture-ack", (e) => {
@@ -443,6 +454,7 @@ function Capture() {
   };
 
   const cancel = () => {
+    latestOwner(submitScope, "capture");
     disposePendingCapture();
     setCaptureStatus("idle");
     setCaptureMessage("");
@@ -562,7 +574,7 @@ function Capture() {
 
   return (
     <CaptureCtx.Provider value={captureApi}>
-      <div class="capture-shell">
+      <div class="capture-shell" onInput={() => { scratchRevision++; }} onCompositionStart={() => { scratchRevision++; }}>
         <Show when={ready()}>
           {/* Optional page title. Filled → the capture becomes a NEW page; empty →
               appended to today. Plain Enter drops into the bullet; the submit

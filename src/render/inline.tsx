@@ -785,6 +785,59 @@ function removeMediaToken(blockId: string, token: MediaToken | undefined): boole
   return docNode(blockId)?.raw === next;
 }
 
+// One media resize lifecycle for images and video. The component owns every
+// listener; only the initiating pointer and original graph/block can commit.
+function mediaResizeGrip(
+  wrapper: () => HTMLSpanElement | undefined,
+  media: () => HTMLElement | undefined,
+  blockId: () => string | undefined,
+  token: () => MediaToken | undefined,
+  minimum: number,
+): (event: PointerEvent) => void {
+  let alive = true, cancel = () => {};
+  onCleanup(() => { alive = false; cancel(); });
+  createEffect(() => { graphEpoch(); blockId(); token(); cancel(); });
+  return (event) => {
+    cancel();
+    const wrap = wrapper(), id = blockId(), original = id && docNode(id), source = token();
+    if (!wrap || !id || !original || event.button !== 0) return;
+    const owner = graphOwner(() => alive && docNode(id) === original);
+    event.preventDefault(); event.stopPropagation();
+    const grip = event.currentTarget as HTMLElement;
+    const refW = blockRefWidth(wrap), startX = event.clientX, startW = wrap.getBoundingClientRect().width;
+    const oldWidth = wrap.style.width, element = media(), oldMediaWidth = element?.style.width ?? "";
+    if (element) element.style.width = "100%";
+    const stop = (restore = true) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancelled);
+      window.removeEventListener("blur", cancel);
+      grip.removeEventListener("lostpointercapture", cancelled);
+      if (restore) { wrap.style.width = oldWidth; if (element) element.style.width = oldMediaWidth; }
+      cancel = () => {};
+    };
+    const move = (next: PointerEvent) => {
+      if (!owner()) { cancel(); return; }
+      if (next.pointerId !== event.pointerId) return;
+      wrap.style.width = `${Math.max(minimum, Math.min(refW, startW + next.clientX - startX))}px`;
+    };
+    const up = (next: PointerEvent) => {
+      if (!owner()) { cancel(); return; }
+      if (next.pointerId !== event.pointerId) return;
+      const pct = Math.max(5, Math.min(100, Math.round(wrap.getBoundingClientRect().width / refW * 100)));
+      stop(false);
+      writeMediaWidth(id, source, pct);
+    };
+    const cancelled = (next: PointerEvent) => { if (next.pointerId === event.pointerId) cancel(); };
+    cancel = () => stop();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancelled);
+    window.addEventListener("blur", cancel);
+    grip.addEventListener("lostpointercapture", cancelled);
+  };
+}
+
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
 // are read from disk via the backend and shown as a blob URL. When rendered
 // inside a real block (`blockId` set, not the lightbox/capture scratch), a
@@ -848,28 +901,7 @@ function AssetImage(props: {
 
   let wrapEl: HTMLSpanElement | undefined;
   let imgEl: HTMLImageElement | undefined;
-  const onGripDown = (e: PointerEvent) => {
-    if (!wrapEl || !props.blockId) return;
-    e.preventDefault();
-    e.stopPropagation(); // don't start a block drag / open the lightbox
-    const refW = blockRefWidth(wrapEl);
-    const startX = e.clientX;
-    const startW = wrapEl.getBoundingClientRect().width;
-    if (imgEl) imgEl.style.width = "100%"; // make the image track the wrapper during the drag
-    const move = (me: PointerEvent) => {
-      const w = Math.max(24, Math.min(refW, startW + (me.clientX - startX)));
-      if (wrapEl) wrapEl.style.width = `${w}px`; // live feedback during the drag
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
-      const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
-      writeMediaWidth(props.blockId!, props.token, pct);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
+  const onGripDown = mediaResizeGrip(() => wrapEl, () => imgEl, () => props.blockId, () => props.token, 24);
 
   // Hover actions (graph assets in a real block only — like OG's asset action bar):
   // copy the image to the OS clipboard, and trash it (drop the block reference + move
@@ -1103,28 +1135,7 @@ function MediaEmbed(props: {
   // width %). Audio uses the widen toggle instead, so no grip there.
   let wrapEl: HTMLSpanElement | undefined;
   let mediaEl: HTMLVideoElement | HTMLAudioElement | undefined;
-  const onGripDown = (e: PointerEvent) => {
-    if (!wrapEl || !props.blockId) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const refW = blockRefWidth(wrapEl);
-    const startX = e.clientX;
-    const startW = wrapEl.getBoundingClientRect().width;
-    if (mediaEl) mediaEl.style.width = "100%";
-    const move = (me: PointerEvent) => {
-      const w = Math.max(80, Math.min(refW, startW + (me.clientX - startX)));
-      if (wrapEl) wrapEl.style.width = `${w}px`;
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
-      const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
-      writeMediaWidth(props.blockId!, props.token, pct);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
+  const onGripDown = mediaResizeGrip(() => wrapEl, () => mediaEl, () => props.blockId, () => props.token, 80);
 
   // A persisted `{:width N%}` sizes the video wrapper (image fills it at 100%).
   const wrapStyle = () =>

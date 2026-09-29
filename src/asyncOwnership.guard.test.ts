@@ -38,4 +38,39 @@ describe("async ownership guard", () => {
     expect(session, `${RULE}: session restore must discard a stale graph read`).toMatch(/export async function restoreSession[\s\S]*graphOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.loadSession[\s\S]*result\.kind === "stale"/);
   });
 
+  it("owns capture delivery, acknowledgement, page targets and media gestures", () => {
+    check("src/App.tsx", "export async function installQuickCaptureReceiver(", "export function App(", [
+      /bindingGeneration !== backend\(\)\.graphBindingGeneration\(\)/,
+      /graphOwner\(owner\)/, /writeOwned\(saveOwner/,
+      /readOwnedResource\(owner, listen/, /if \(!owner\(\) \|\| e\.payload\?\.target/,
+    ]);
+    check("src/capture.tsx", "  const scratchMarkdown =", "  const captureApi:", [
+      /const bindingGeneration = backend\(\)\.graphBindingGeneration\(\)/,
+      /payload: \{ id, target, bindingGeneration/,
+      /scratchRevision !== submittedRevision/, /scratchMarkdown\(\) !== submittedScratch/, /title\(\) !== submittedTitle/,
+      /if \(pendingCapture === pending\) scheduleTimeout\(\)/,
+    ]);
+    check("src/components/ContextMenu.tsx", "function PageMenu(", "export function deletePageMenuLabel(", [
+      /const path = props\.path \?\? openedPage\?\.id/,
+      /deletePage\(name, kind, captured\.path/,
+    ]);
+    const menu = section("src/components/ContextMenu.tsx", '<Match when={m().kind === "page"}>', '<Match when={m().kind === "sheet"}>');
+    expect(menu, `${RULE}: each newly opened PageMenu owns its own snapshot`).toMatch(/<Show when=\{m\(\)\} keyed>/);
+    expect(menu, `${RULE}: PageMenu must retain the opened file path; exemplar PageMenu.remove`).toMatch(/path=\{/);
+    const inline = readFileSync("src/render/inline.tsx", "utf8");
+    expect([...inline.matchAll(/const onGripDown = mediaResizeGrip\(/g)], `${RULE}: image and video use one owned gesture; exemplar mediaResizeGrip`).toHaveLength(2);
+    check("src/render/inline.tsx", "function mediaResizeGrip(", "// Image embed:", [
+      /graphOwner\(\(\) => alive && docNode\(id\) === original\)/,
+      /onCleanup\(\(\) => \{ alive = false; cancel\(\); \}\)/,
+      /next\.pointerId !== event\.pointerId/,
+      /removeEventListener\("pointercancel", cancelled\)/,
+      /removeEventListener\("lostpointercapture", cancelled\)/,
+    ]);
+    expect([...inline.matchAll(/window\.addEventListener\("pointer(?:move|up)"/g)], `${RULE}: media listeners belong to mediaResizeGrip, never component copies`).toHaveLength(2);
+    const save = readFileSync("src/document/save/engine.ts", "utf8");
+    expect([...save.matchAll(/reloadDisposition\((?:target\.)?owner\.name\) !== "reload"/g)],
+      `${RULE}: alias owner replacement must ask reloadDisposition before and after single/group saves; exemplar runGroup`).toHaveLength(4);
+    expect(save, `${RULE}: no alias-owner busy-check copies; exemplar reloadDisposition`).not.toMatch(/is(?:Dirty|Saving|Conflicted)\((?:target\.)?owner\.name\)/);
+  });
+
 });

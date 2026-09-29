@@ -92,3 +92,43 @@ describe("media token edits target the clicked token", () => {
     dispose();
   });
 });
+
+describe("media resize gesture ownership", () => {
+  it.each(["png", "mp4"].flatMap((ext) => ["pointercancel", "lostpointercapture", "unmount", "graph switch"].map((retire) => [ext, retire])))("%s resize ends on %s and cannot edit the next graph", async (ext, retire) => {
+    const raw = `![a](../assets/x.${ext})`;
+    vi.spyOn(backend(), "streamAsset").mockResolvedValue("https://assets.test/video.mp4");
+    {
+      resetStore();
+      const { host, dispose } = await mount(raw);
+      await vi.waitFor(() => expect(host.querySelector(".img-resize-grip")).not.toBeNull());
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 100 } as DOMRect);
+      const removed = vi.spyOn(window, "removeEventListener");
+      const grip = host.querySelector(".img-resize-grip")!;
+      grip.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 7, clientX: 0 }));
+      if (retire === "pointercancel") window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 7 }));
+      if (retire === "lostpointercapture") grip.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 7 }));
+      if (retire === "unmount") dispose();
+      resetStore();
+      loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw, collapsed: false, children: [] }] });
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 50 }));
+      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7 }));
+      expect(doc.byId.body.raw, retire).toBe(raw);
+      for (const event of ["pointermove", "pointerup", "pointercancel", "blur"]) {
+        expect(removed.mock.calls.some(([name]) => name === event), `release ${event} on ${retire}`).toBe(true);
+      }
+      if (retire !== "unmount") dispose();
+      host.remove();
+    }
+  });
+
+  it("only the initiating pointer can finish a resize", async () => {
+    const { host, dispose } = await mount(IMG);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 100 } as DOMRect);
+    host.querySelector(".img-resize-grip")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 7 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 8 }));
+    expect(doc.byId.body.raw).toBe(IMG);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7 }));
+    expect(doc.byId.body.raw).toContain('{:width "100%"}');
+    dispose();
+  });
+});

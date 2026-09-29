@@ -101,6 +101,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Delayed actions retain their original targets and newer input** (OG-K3).
+  Quick Capture refuses delivery after its destination graph changes and keeps
+  scratch/title edits made while saving. Page-menu deletion retains its file
+  target through confirmation, alias saves preserve active editor/IME drafts,
+  and cancelled or unmounted image/video resizes cannot edit another graph.
+
 - **A second file holding a page's name is never shown or written as that page** (master 7bd793bd0, og J1).
   When a duplicate journal day (left by sync or a date-format change) or a same-named page opened by path
   was open with unsaved input, the journals feed showed it as the requested day, so what was typed there

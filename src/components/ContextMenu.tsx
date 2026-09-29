@@ -208,14 +208,17 @@ export function ContextMenu(): JSX.Element {
                 />
               </Match>
               <Match when={m().kind === "page"}>
-                <PageMenu
-                  name={(m() as { name: string }).name}
-                  pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
-                  fileActions={(m() as { fileActions?: boolean }).fileActions ?? false}
-                  x={m().x}
-                  y={m().y}
-                  close={close}
-                />
+                <Show when={m()} keyed>
+                  {(page) => <PageMenu
+                    name={(page as { name: string }).name}
+                    pageKind={(page as { pageKind: "journal" | "page" }).pageKind}
+                    path={(page as { path?: string }).path}
+                    fileActions={(page as { fileActions?: boolean }).fileActions ?? false}
+                    x={page.x}
+                    y={page.y}
+                    close={close}
+                  />}
+                </Show>
               </Match>
               <Match when={m().kind === "sheet"}>
                 <SheetMenu
@@ -791,7 +794,10 @@ function PageMenu(props: {
   y: number;
   close: (restoreFocus?: boolean) => void;
 }): JSX.Element {
-  const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(props.path ? { path: props.path } : {}) });
+  // A name-only caller still pins the loaded file when the menu opens.
+  const openedPage = pageByName(props.name);
+  const path = props.path ?? openedPage?.id;
+  const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(path ? { path } : {}) });
   const fav = () => isFavorite(props.name, props.pageKind);
   const readOnly = () => {
     const page = pageByName(props.name);
@@ -846,6 +852,10 @@ function PageMenu(props: {
     // delete the page with no prompt.
     const confirmed = await readOwned(owner, backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.`));
     if (confirmed.kind === "stale" || !confirmed.value) return;
+    if (!captured.path && (pageByName(name) !== openedPage || pageByName(name)?.id !== path)) {
+      pushToast("This page target changed; reopen the page actions menu.", "error");
+      return;
+    }
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
@@ -896,8 +906,8 @@ function PageMenu(props: {
       label: "Copy page as Markdown",
       run: () => {
         const owner = graphOwner();
-        const request = props.path
-          ? backend().getPageByPath(props.path)
+        const request = path
+          ? backend().getPageByPath(path)
           : backend().getPage(props.name, props.pageKind);
         void readOwned(owner, request).then((result) => {
           if (result.kind === "stale") return;
@@ -941,7 +951,7 @@ function PageMenu(props: {
       {/* Rename is page-only. It expands into an inline input (like MakeTemplate)
           because window.prompt is a silent no-op in WebKitGTK. */}
       <Show when={!readOnly() && pageMenuAvailability(props.pageKind).rename}>
-        <RenamePage name={props.name} pageKind={props.pageKind} path={props.path} close={props.close} />
+        <RenamePage name={props.name} pageKind={props.pageKind} path={path} close={props.close} />
       </Show>
       <Show when={!readOnly() && pageMenuAvailability(props.pageKind).delete}>
         <button

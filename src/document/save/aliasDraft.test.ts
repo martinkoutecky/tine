@@ -5,6 +5,8 @@ import { conflictReason, persistTogether, resolveConflict } from "./engine";
 import { doc } from "../model";
 import { initParser } from "../../render/parse";
 import { setToasts } from "../../toasts";
+import { startEditing, endEdit } from "../../editorController";
+import { pinPageWhileDrafting } from "../workingSet";
 import type { BlockDto, PageRead } from "../../types";
 
 // L13 (B): an alias draft's first save appends it to the alias owner; an edit
@@ -94,5 +96,49 @@ describe("alias draft save", () => {
     expect(disk.raws).toEqual(["owner", "a", "b1"]);
     expect(await resolveConflict("Draft", "mine")).toBe(true);
     expect(disk.raws).toEqual(["owner", "a", "b2"]);
+  });
+});
+
+describe("alias owner replacement protects uncommitted input", () => {
+  it.each(["single", "group"] as const)("%s refuses an owner already held by an IME editor", async (mode) => {
+    loadFeed([{ ...page("Draft", ["draft"], "x"), id: undefined, rev: undefined }, page("Owner", ["owner"], "owner-0"), page("Other", ["other"], "other-0")]);
+    const disk = ownerDisk(["owner"]);
+    const ownerRoot = pageByName("Owner")!.roots[0];
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["owner-1", "other-1"] });
+    startEditing(ownerRoot, 0, null); // IME value is still DOM-local; no setRaw.
+    setRaw(pageByName("Draft")!.roots[0], "draft edited");
+    try {
+      if (mode === "group") void persistTogether(["Draft", "Other"], "move-blocks");
+      expect(await flushPage("Draft")).toBe(false);
+      expect(save).not.toHaveBeenCalled();
+      expect(doc.byId[ownerRoot]?.raw).toBe("owner");
+      expect(disk.raws).toEqual(["owner"]);
+    } finally { endEdit("page-navigation"); }
+  });
+
+  it.each(["single", "group"] as const)("%s preserves an owner whose editor/draft becomes busy during the save", async (mode) => {
+    for (const hold of ["editor", "draft"] as const) {
+      resetStore();
+      loadFeed([{ ...page("Draft", ["draft"], "x"), id: undefined, rev: undefined }, page("Owner", ["owner"], "owner-0"), page("Other", ["other"], "other-0")]);
+      const disk = ownerDisk(["owner"]);
+      const ownerRoot = pageByName("Owner")!.roots[0];
+      let release = () => {};
+      vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
+        disk.raws = entries.find((entry) => entry.id === "pages/Owner.md")!.page.blocks.map((b) => b.raw);
+        if (hold === "editor") startEditing(ownerRoot, 0, null);
+        else release = pinPageWhileDrafting(() => "Owner");
+        return { ok: entries.map(() => "owner-1") };
+      });
+      setRaw(pageByName("Draft")!.roots[0], "draft edited");
+      try {
+        if (mode === "group") void persistTogether(["Draft", "Other"], "move-blocks");
+        await flushPage("Draft");
+        expect(pageByName("Draft")).toBeDefined();
+        expect(isConflicted("Draft")).toBe(true);
+        expect(doc.byId[ownerRoot]?.raw).toBe("owner");
+        expect(disk.raws).toEqual(["owner", "draft edited"]);
+      } finally { endEdit("page-navigation"); release(); }
+      vi.restoreAllMocks();
+    }
   });
 });
